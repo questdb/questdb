@@ -3285,13 +3285,12 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
     public void testO3InvalidatesHeadCheckpoint() throws Exception {
         // Phase 2a.8: an O3 base commit (min ts strictly below the LV's
         // latestSeenTs watermark) cannot be replayed in WAL order without
-        // corrupting per-partition window state, so the prior head .cp is
-        // retired immediately. Restart recovery then falls through to the
-        // head-miss replay path (replay from viewLowerBoundTimestamp).
-        // The current cycle still feeds the O3 batch through the in-WAL-order
-        // pipeline; the view's live output for the batch is wrong (Phase 1b
-        // disposition). The ts-sorted re-execution that would correct the
-        // live output is deferred past 2a.8.
+        // corrupting per-partition window state, so the refresh worker
+        // rolls back the in-flight WAL writer, branches to o3Replay, and
+        // re-feeds base data in ts order from a TableReader. The prior
+        // head .cp is retired by the replay path; a fresh head reflecting
+        // the post-replay state is written before the cycle returns so
+        // restart can short-circuit to head-hit for any subsequent O3.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
@@ -3343,30 +3342,45 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                     drainJob(job);
                     drainWalQueue();
 
-                    Assert.assertEquals(
-                            "head metadata cleared on O3 detection",
+                    final long postO3HeadLvSeqTxn = lv.getHeadCheckpointLvSeqTxn();
+                    Assert.assertNotEquals(
+                            "head metadata refreshed post O3 replay",
                             Numbers.LONG_NULL,
-                            lv.getHeadCheckpointLvSeqTxn()
+                            postO3HeadLvSeqTxn
                     );
-                    Assert.assertEquals(
-                            "head_checkpoint_max_ts cleared on O3 detection",
+                    Assert.assertNotEquals(
+                            "post-replay head lvSeqTxn differs from the pre-O3 head",
+                            preO3HeadLvSeqTxn,
+                            postO3HeadLvSeqTxn
+                    );
+                    Assert.assertNotEquals(
+                            "head_checkpoint_max_ts populated post O3 replay",
                             Numbers.LONG_NULL,
                             lv.getHeadCheckpointMaxTs()
                     );
-                    Assert.assertEquals(
-                            "head_checkpoint_state_bytes cleared on O3 detection",
+                    Assert.assertNotEquals(
+                            "head_checkpoint_state_bytes populated post O3 replay",
                             0L,
                             lv.getHeadCheckpointStateBytes()
                     );
 
-                    // The on-disk file is gone too. Re-derive the path
-                    // because the helper mutates the Path in place.
+                    // The pre-O3 .cp is gone (retired by the replay path).
+                    // Re-derive the path because the helper mutates it in
+                    // place.
                     cpPath.of(engine.getConfiguration().getDbRoot())
                             .concat(token)
                             .concat(LiveViewCheckpointWriter.CHECKPOINT_DIR_NAME)
                             .slash();
                     LiveViewCheckpointWriter.appendCpFileName(cpPath, preO3HeadLvSeqTxn);
-                    Assert.assertFalse("head .cp unlinked after O3 detection", ff.exists(cpPath.$()));
+                    Assert.assertFalse("pre-O3 head .cp unlinked", ff.exists(cpPath.$()));
+
+                    // The fresh post-replay .cp is on disk at the new lvSeqTxn.
+                    cpPath.of(engine.getConfiguration().getDbRoot())
+                            .concat(token)
+                            .concat(LiveViewCheckpointWriter.CHECKPOINT_DIR_NAME)
+                            .slash();
+                    LiveViewCheckpointWriter.appendCpFileName(cpPath, postO3HeadLvSeqTxn);
+                    Assert.assertTrue("post-replay head .cp on disk", ff.exists(cpPath.$()));
                 }
             }
 

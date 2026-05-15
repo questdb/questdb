@@ -871,6 +871,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         boolean readerAttached = false;
         boolean restoredOk = false;
         long appendedRows = 0;
+        long replayMaxTs = Numbers.LONG_NULL;
         try {
             engine.detachReader(reader);
             executionContext.of(reader);
@@ -931,6 +932,9 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         Record outRecord = windowCursor.getRecord();
                         while (windowCursor.hasNext()) {
                             long ts = outRecord.getTimestamp(cursorTimestampIndex);
+                            if (replayMaxTs == Numbers.LONG_NULL || ts > replayMaxTs) {
+                                replayMaxTs = ts;
+                            }
                             TableWriter.Row row = walWriter.newRow(ts);
                             copier.copy(executionContext, outRecord, row);
                             row.append();
@@ -968,6 +972,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         }
         instance.setLastProcessedSeqTxn(advanceTo);
         instance.setAppliedWatermark(advanceTo);
+        boolean lvConsumedPersisted = false;
         try {
             engine.advanceLiveViewConsumedSeqTxn(
                     instance.getLiveViewToken(),
@@ -975,6 +980,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     blockFileWriter,
                     path
             );
+            lvConsumedPersisted = true;
         } catch (CairoException e) {
             LOG.critical().$("could not advance live view consumed seqTxn after O3 head-hit replay [view=")
                     .$(viewName)
@@ -982,11 +988,16 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     .$(", error=").$safe(e.getFlyweightMessage()).I$();
             persistState(instance);
         }
-        // Retire the head .cp the replay was built on; the follow-up commit
-        // writes a fresh one. Until then, the next refresh cycle's
-        // first-commit cadence trigger handles it.
-        if (instance.getHeadCheckpointLvSeqTxn() != Numbers.LONG_NULL) {
-            invalidateHeadOnO3(instance, advanceTo, Numbers.LONG_NULL, Numbers.LONG_NULL);
+        if (lvConsumedPersisted && appendedRows > 0) {
+            // Retire the head .cp the replay was built on (its state is
+            // strictly older than what we just wrote) then write a fresh
+            // post-replay head. The retire-then-write ordering puts
+            // maybeWriteHeadCheckpoint on its first-cp cadence path, which
+            // unconditionally writes regardless of row/duration cadence.
+            if (instance.getHeadCheckpointLvSeqTxn() != Numbers.LONG_NULL) {
+                invalidateHeadOnO3(instance, advanceTo, Numbers.LONG_NULL, Numbers.LONG_NULL);
+            }
+            maybeWriteHeadCheckpoint(instance, windowFactory, advanceTo, replayMaxTs, appendedRows);
         }
         LOG.info().$("live view O3 head-hit replay completed [view=")
                 .$(viewName)
@@ -1050,6 +1061,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         TableReader reader = waitForApply(baseToken, advanceTo);
         boolean readerAttached = false;
         long appendedRows = 0;
+        long replayMaxTs = Numbers.LONG_NULL;
         try {
             engine.detachReader(reader);
             executionContext.of(reader);
@@ -1087,6 +1099,9 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         Record outRecord = windowCursor.getRecord();
                         while (windowCursor.hasNext()) {
                             long ts = outRecord.getTimestamp(cursorTimestampIndex);
+                            if (replayMaxTs == Numbers.LONG_NULL || ts > replayMaxTs) {
+                                replayMaxTs = ts;
+                            }
                             TableWriter.Row row = walWriter.newRow(ts);
                             copier.copy(executionContext, outRecord, row);
                             row.append();
@@ -1118,6 +1133,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         }
         instance.setLastProcessedSeqTxn(advanceTo);
         instance.setAppliedWatermark(advanceTo);
+        boolean lvConsumedPersisted = false;
         try {
             engine.advanceLiveViewConsumedSeqTxn(
                     instance.getLiveViewToken(),
@@ -1125,12 +1141,22 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     blockFileWriter,
                     path
             );
+            lvConsumedPersisted = true;
         } catch (CairoException e) {
             LOG.critical().$("could not advance live view consumed seqTxn after O3 replay [view=")
                     .$(viewName)
                     .$(", advanceTo=").$(advanceTo)
                     .$(", error=").$safe(e.getFlyweightMessage()).I$();
             persistState(instance);
+        }
+        if (lvConsumedPersisted && appendedRows > 0) {
+            // Post-replay head: head metadata was cleared at the top of this
+            // function, so maybeWriteHeadCheckpoint's first-cp cadence path
+            // fires unconditionally and writes a fresh head reflecting the
+            // post-replay state. Restart can then short-circuit to head-hit
+            // for a subsequent O3 in the head's hit zone instead of paying
+            // for another full head-miss replay.
+            maybeWriteHeadCheckpoint(instance, windowFactory, advanceTo, replayMaxTs, appendedRows);
         }
         LOG.info().$("live view O3 head-miss replay completed [view=")
                 .$(viewName)
