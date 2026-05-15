@@ -3448,6 +3448,79 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRestartRestoresFirstLastValueFromHeadCheckpoint() throws Exception {
+        // Phase 2b.3d/e: first_value() and last_value() over (PARTITION BY ...
+        // ROWS N PRECEDING ...) are now snapshot-capable, in both the parent
+        // ("respect nulls", default) and IGNORE NULLS subclass variants. The
+        // four migrated classes have distinct slot layouts:
+        //   - FirstValue parent:   3 LONG slots
+        //   - FirstNotNull:        4 LONG slots
+        //   - LastValue parent:    2 LONG slots (3rd reserved)
+        //   - LastNotNull:         1 TYPED + 2 LONG slots
+        // The LV below routes through all four code paths; w1 fires when
+        // rowsHi == 0 (frame includes current row) for first_value variants
+        // and the IGNORE NULLS last_value path; w2 fires when rowsHi < 0 for
+        // the respect-nulls last_value parent (rowsHi == 0 would route to
+        // LastValueIncludeCurrent, which has no snapshot support).
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+                    "SELECT ts, sym, " +
+                    "  first_value(x) OVER w1 AS fv, " +
+                    "  first_value(x) IGNORE NULLS OVER w1 AS fvn, " +
+                    "  last_value(x) IGNORE NULLS OVER w1 AS lvn, " +
+                    "  last_value(x) OVER w2 AS lv " +
+                    "FROM base " +
+                    "WINDOW " +
+                    "  w1 AS (PARTITION BY sym ORDER BY ts ROWS 2 PRECEDING), " +
+                    "  w2 AS (PARTITION BY sym ORDER BY ts ROWS BETWEEN 3 PRECEDING AND 1 PRECEDING)");
+
+            final long preHeadLvSeqTxn;
+            final long preLastProcessed;
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                setCurrentMicros(0L);
+                execute("INSERT INTO base (ts, sym, x) VALUES " +
+                        "('2026-09-01T00:00:00.000000Z', 'a', 1.0), " +
+                        "('2026-09-01T01:00:00.000000Z', 'a', 2.0), " +
+                        "('2026-09-01T02:00:00.000000Z', 'a', 3.0), " +
+                        "('2026-09-01T00:00:00.000000Z', 'b', 10.0), " +
+                        "('2026-09-01T01:00:00.000000Z', 'b', 20.0)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                preHeadLvSeqTxn = instance.getHeadCheckpointLvSeqTxn();
+                preLastProcessed = instance.getLastProcessedSeqTxn();
+                Assert.assertNotEquals(
+                        "head .cp must be written for an LV with first_value/last_value bounded ROWS now that 2b.3d/e makes them snapshot-capable",
+                        Numbers.LONG_NULL,
+                        preHeadLvSeqTxn
+                );
+                Assert.assertTrue(
+                        "snapshot capability cached after first successful flush",
+                        instance.isSnapshotCapability()
+                );
+            }
+
+            engine.getLiveViewRegistry().clear();
+            engine.buildViewGraphs();
+
+            LiveViewInstance reloaded = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(reloaded);
+            Assert.assertEquals(preHeadLvSeqTxn, reloaded.getHeadCheckpointLvSeqTxn());
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+            }
+            Assert.assertTrue(reloaded.isCheckpointRestoreAttempted());
+            Assert.assertEquals(preLastProcessed, reloaded.getLastProcessedSeqTxn());
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
     public void testRestartRestoresLagFromHeadCheckpoint() throws Exception {
         // Phase 2b.2: lag() is now snapshot-capable. End-to-end check that a
         // refresh cycle writes a head .cp, a simulated restart re-discovers
