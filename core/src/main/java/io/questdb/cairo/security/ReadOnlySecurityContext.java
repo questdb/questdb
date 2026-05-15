@@ -167,6 +167,15 @@ public class ReadOnlySecurityContext implements SecurityContext {
     }
 
     @Override
+    public void authorizeReadRemoteParquet(@org.jetbrains.annotations.NotNull CharSequence uri) {
+        // Read-only contexts deny remote parquet by default - this is an explicit
+        // permission gate Enterprise users opt into via READ_REMOTE_PARQUET. The
+        // OSS SecurityContext default that allows the op only ever applies in
+        // contexts that don't load this read-only base.
+        throw CairoException.authorization().put("permission denied").setCacheable(true);
+    }
+
+    @Override
     public void authorizeHttp() {
     }
 
