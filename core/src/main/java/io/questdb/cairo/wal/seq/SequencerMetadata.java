@@ -30,6 +30,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.IndexType;
 import io.questdb.cairo.TableColumnMetadata;
+import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.cairo.TableStructure;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
@@ -57,6 +58,7 @@ import static io.questdb.cairo.TableUtils.*;
 import static io.questdb.cairo.wal.WalUtils.*;
 
 public class SequencerMetadata extends AbstractRecordMetadata implements TableRecordMetadata, Closeable {
+    private final CairoConfiguration configuration;
     private final int commitMode;
     private final FilesFacade ff;
     private final MemoryMARW metaMem;
@@ -72,6 +74,7 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
     }
 
     public SequencerMetadata(CairoConfiguration configuration, boolean readonly) {
+        this.configuration = configuration;
         this.ff = configuration.getFilesFacade();
         this.commitMode = configuration.getCommitMode();
         this.readonly = readonly;
@@ -279,6 +282,20 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
         }
     }
 
+    void openFromInitialMetadata(Path path, int pathLen, TableToken tableToken) {
+        assert !readonly;
+        try (TableReaderMetadata initialMetadata = new TableReaderMetadata(configuration)) {
+            try {
+                // _meta.0 is the immutable create-time metadata; recovery replays committed changes over it.
+                initialMetadata.loadMetadata(path.trimTo(pathLen).concat(WalUtils.INITIAL_META_FILE_NAME).$());
+            } finally {
+                path.trimTo(pathLen);
+            }
+            copyFrom(initialMetadata, tableToken, initialMetadata.getTableId());
+        }
+        openSmallFile(ff, path, pathLen, metaMem, META_FILE_NAME, MemoryTag.MMAP_SEQUENCER_METADATA);
+    }
+
     public void removeColumn(CharSequence columnName) {
         removeColumnFromMetadata(columnName, columnNameIndexMap, columnMetadata);
         structureVersion.incrementAndGet();
@@ -293,6 +310,11 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
         if (!Chars.equalsIgnoreCaseNc(toTableName, tableToken.getTableName())) {
             tableToken = tableToken.renamed(Chars.toString(toTableName));
         }
+        structureVersion.incrementAndGet();
+    }
+
+    void skipTableRename() {
+        // Replaying historical renames can move metadata away from the registry token after rename chains or abandoned renames.
         structureVersion.incrementAndGet();
     }
 

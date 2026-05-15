@@ -109,6 +109,10 @@ public class TableTransactionLog implements Closeable {
         txnLogFile.fullSync();
     }
 
+    long getMaxMetadataVersion() {
+        return maxMetadataVersion.get();
+    }
+
     public void open(Path path) {
         if (rootPath.size() == 0) {
             assert txnLogFile == null;

@@ -37,6 +37,7 @@ import io.questdb.cairo.wal.WalUtils;
 import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.std.Chars;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Misc;
 import io.questdb.std.SimpleReadWriteLock;
@@ -54,6 +55,7 @@ import static io.questdb.cairo.wal.WalUtils.WAL_INDEX_FILE_NAME;
 public class TableSequencerImpl implements TableSequencer {
     private static final Log LOG = LogFactory.getLog(TableSequencerImpl.class);
     private final static BinaryAlterSerializer alterCommandWalFormatter = new BinaryAlterSerializer();
+    private static final String METADATA_VERSION_MISMATCH_MESSAGE = "metadata version does not match runtime version";
     private final CairoEngine engine;
     private final SequencerMetadata metadata;
     private final SequencerMetadataService metadataSvc;
@@ -122,8 +124,9 @@ public class TableSequencerImpl implements TableSequencer {
         }
         try {
             walIdGenerator.open(path);
-            metadata.open(path, rootLen, tableToken);
+            // The txn log is the recovery authority; open it before _meta so a damaged _meta can be rebuilt.
             tableTransactionLog.open(path);
+            openOrRecoverMetadata(tableTransactionLog.getMaxMetadataVersion());
         } catch (CairoException ex) {
             closeLocked();
             if (ex.isTableDropped()) {
@@ -408,19 +411,7 @@ public class TableSequencerImpl implements TableSequencer {
             return null;
         }
 
-        try (TableMetadataChangeLog metaChangeCursor = tableTransactionLog.getTableMetadataChangeLog(
-                metadata.getMetadataVersion(), alterCommandWalFormatter)
-        ) {
-            boolean updated = false;
-            while (metaChangeCursor.hasNext()) {
-                TableMetadataChange change = metaChangeCursor.next();
-                change.apply(metadataSvc, true);
-                updated = true;
-            }
-            if (updated) {
-                metadata.syncToMetaFile();
-            }
-        }
+        reconcileMetadataWithCommittedLog(tableTransactionLog.getMaxMetadataVersion());
         long lastTxn = tableTransactionLog.lastTxn();
         LOG.info()
                 .$("reloaded table sequencer [table=").$(tableToken)
@@ -499,6 +490,86 @@ public class TableSequencerImpl implements TableSequencer {
         if (txn == Long.MAX_VALUE || seqTxnTracker.notifyOnCommit(txn)) {
             engine.notifyWalTxnCommitted(tableToken);
         }
+    }
+
+    private void openOrRecoverMetadata(long committedStructureVersion) {
+        try {
+            metadata.open(path, rootLen, tableToken);
+        } catch (CairoException ex) {
+            if (tableTransactionLog.isDropped() || !isRecoverableSequencerMetadataOpenFailure(ex)) {
+                throw ex;
+            }
+            LOG.error().$("could not open sequencer metadata, rebuilding from transaction log [table=").$(tableToken)
+                    .$(", committedStructureVersion=").$(committedStructureVersion)
+                    .$(", error=").$safe(ex.getMessage())
+                    .I$();
+            rebuildMetadataFromCommittedLog(committedStructureVersion);
+            return;
+        }
+        reconcileMetadataWithCommittedLog(committedStructureVersion);
+    }
+
+    private void rebuildMetadataFromCommittedLog(long committedStructureVersion) {
+        metadata.openFromInitialMetadata(path, rootLen, tableToken);
+        replayCommittedMetadataChanges(0, committedStructureVersion);
+    }
+
+    private void reconcileMetadataWithCommittedLog(long committedStructureVersion) {
+        if (tableTransactionLog.isDropped()) {
+            return;
+        }
+
+        long metaVersion = metadata.getMetadataVersion();
+        if (metaVersion == committedStructureVersion) {
+            return;
+        }
+
+        // _meta can be behind, ahead, or partially rewritten. Rebuild from _meta.0 and replay committed sidecars.
+        rebuildMetadataFromCommittedLog(committedStructureVersion);
+    }
+
+    private void replayCommittedMetadataChanges(long metaVersion, long committedStructureVersion) {
+        try (TableMetadataChangeLog metaChangeCursor = tableTransactionLog.getTableMetadataChangeLog(
+                metaVersion, alterCommandWalFormatter)
+        ) {
+            while (metaChangeCursor.hasNext()) {
+                replayCommittedMetadataChange(metaChangeCursor.next());
+            }
+        }
+
+        if (metadata.getMetadataVersion() != committedStructureVersion) {
+            throw CairoException.critical(0)
+                    .put("could not recover sequencer metadata [table=").put(tableToken)
+                    .put(", metaVersion=").put(metadata.getMetadataVersion())
+                    .put(", committedStructureVersion=").put(committedStructureVersion)
+                    .put(']');
+        }
+
+        metadata.syncToMetaFile();
+        tableToken = metadata.getTableToken();
+    }
+
+    private void replayCommittedMetadataChange(TableMetadataChange change) {
+        if (change instanceof AlterOperation) {
+            final AlterOperation alter = (AlterOperation) change;
+            if (alter.getCommand() == AlterOperation.RENAME_TABLE) {
+                replayCommittedRename();
+                return;
+            }
+        }
+        change.apply(metadataSvc, true);
+    }
+
+    private void replayCommittedRename() {
+        // The registry token was seeded into metadata before replay. Historical rename sidecars only advance the version.
+        metadata.skipTableRename();
+    }
+
+    private boolean isRecoverableSequencerMetadataOpenFailure(CairoException ex) {
+        // Future-format metadata is not a torn write; rebuilding it with this binary would risk downgrading it.
+        return ex.isFileCannotRead()
+                || ex.getErrno() == 0
+                || (ex.isMetadataValidation() && !Chars.contains(ex.getFlyweightMessage(), METADATA_VERSION_MISMATCH_MESSAGE));
     }
 
     void readLock() {
