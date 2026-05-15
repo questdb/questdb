@@ -825,12 +825,173 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 .$(", headLvSeqTxn=").$(headLvSeqTxn)
                 .$(", headMaxTs=").$(headMaxTs).I$();
 
-        // Head-hit branch lands in the follow-up commit. For now both paths
-        // route through head-miss: identical on-disk effect (REPLACE_RANGE
-        // rewrites the affected partitions), at a higher compute cost
-        // because the replay starts from viewLowerBoundTimestamp rather
-        // than head.maxTimestamp.
-        o3HeadMissReplay(instance, windowFactory, baseToken, advanceTo);
+        if (headHitEligible) {
+            o3HeadHitReplay(instance, windowFactory, baseToken, advanceTo, headLvSeqTxn, headMaxTs);
+        } else {
+            o3HeadMissReplay(instance, windowFactory, baseToken, advanceTo);
+        }
+    }
+
+    /**
+     * Phase 2a.8 head-hit replay: rolls window state back to the head .cp's
+     * snapshot moment (clear per-function maps, then restore from disk),
+     * scans the base table from {@code headMaxTs + 1} forward, and emits
+     * a single REPLACE_RANGE commit covering {@code [headMaxTs + 1, +inf)}.
+     * Cheaper than head-miss because the head's state already reflects
+     * everything in {@code [viewLowerBoundTimestamp, headMaxTs]} - the
+     * replay only re-evaluates the small tail.
+     * <p>
+     * Caller has already verified that the head is hit-eligible (a head
+     * exists and its {@code maxTimestamp <= lateRowTs}). The restoration
+     * itself can still fail at this point (corrupt .cp, unsupported
+     * format version): when that happens, {@code restoreFromHead} unlinks
+     * the .cp + clears head metadata, and this method falls through to
+     * {@code o3HeadMissReplay} so the LV ends in a consistent state.
+     * <p>
+     * The head .cp is retired after the apply commit succeeds (its state
+     * underwrites the replay we just wrote). The follow-up commit writes
+     * a fresh post-replay head; until then the next refresh cycle's
+     * first-commit cadence trigger picks up the slack.
+     */
+    private void o3HeadHitReplay(
+            LiveViewInstance instance,
+            WindowRecordCursorFactory windowFactory,
+            TableToken baseToken,
+            long advanceTo,
+            long headLvSeqTxn,
+            long headMaxTs
+    ) throws SqlException {
+        final String viewName = instance.getDefinition().getViewName();
+        // Replay starts strictly above headMaxTs because the head's state
+        // already covers rows up to and including headMaxTs. The same value
+        // doubles as the REPLACE_RANGE low boundary so the apply step
+        // rewrites only the affected partitions.
+        final long replayLowTs = headMaxTs + 1;
+        TableReader reader = waitForApply(baseToken, advanceTo);
+        boolean readerAttached = false;
+        boolean restoredOk = false;
+        long appendedRows = 0;
+        try {
+            engine.detachReader(reader);
+            executionContext.of(reader);
+            readerAttached = true;
+
+            RecordCursorFactory filterFactory = windowFactory.getBaseFactory();
+            final Function filter = filterFactory.getFilter();
+            RecordCursorFactory pageFrameFactory = filter != null ? filterFactory.getBaseFactory() : filterFactory;
+            RecordMetadata baseMetadata = pageFrameFactory.getMetadata();
+            final int baseTimestampIndex = baseMetadata.getTimestampIndex();
+            RecordMetadata outMetadata = windowFactory.getMetadata();
+            final int cursorTimestampIndex = outMetadata.getTimestampIndex();
+
+            try (WalWriter walWriter = engine.getWalWriter(instance.getLiveViewToken())) {
+                RecordToRowCopier copier = ensureCopier(instance, windowFactory, walWriter);
+                try (RecordCursor pageCursor = pageFrameFactory.getCursor(executionContext)) {
+                    tsLowerBoundCursor.of(pageCursor, baseTimestampIndex, replayLowTs);
+                    RecordCursor source = tsLowerBoundCursor;
+                    if (filter != null) {
+                        filteringCursor.of(source, filter, executionContext);
+                        source = filteringCursor;
+                    }
+                    final LiveViewWindow anchorWindow = instance.getAnchorWindow();
+                    if (anchorWindow != null) {
+                        anchorDispatchingCursor.of(
+                                source,
+                                anchorWindow,
+                                instance,
+                                baseTimestampIndex,
+                                executionContext
+                        );
+                        source = anchorDispatchingCursor;
+                    }
+                    RecordCursor windowCursor = windowFactory.getIncrementalCursor(source, executionContext);
+                    // getIncrementalCursor wiped the anchor map via the
+                    // AnchorDispatchingCursor.toTop chain. Clear per-function
+                    // partition maps too so any drift past the head's snapshot
+                    // moment is discarded, then re-populate everything from
+                    // the head .cp. Order matters: cursor-open wipe -> maps
+                    // clear -> restore.
+                    final ObjList<WindowFunction> functions = windowFactory.getWindowFunctions();
+                    for (int i = 0, n = functions.size(); i < n; i++) {
+                        Map m = functions.getQuick(i).getPartitionMap();
+                        if (m != null) {
+                            m.clear();
+                        }
+                    }
+                    if (!restoreFromHead(instance, windowFactory, headLvSeqTxn, restoredHeadState)) {
+                        // restoreFromHead retired the corrupt .cp + cleared head
+                        // metadata. State is now empty across the board - the
+                        // same starting condition head-miss replay expects.
+                        // Close out and let the outer guard dispatch to it.
+                        windowCursor.close();
+                        return;
+                    }
+                    restoredOk = true;
+                    try {
+                        Record outRecord = windowCursor.getRecord();
+                        while (windowCursor.hasNext()) {
+                            long ts = outRecord.getTimestamp(cursorTimestampIndex);
+                            TableWriter.Row row = walWriter.newRow(ts);
+                            copier.copy(executionContext, outRecord, row);
+                            row.append();
+                            appendedRows++;
+                        }
+                    } finally {
+                        windowCursor.close();
+                    }
+                    if (appendedRows > 0) {
+                        walWriter.commitLiveViewWithReplaceRange(advanceTo, replayLowTs, Long.MAX_VALUE);
+                    }
+                }
+            }
+        } finally {
+            if (readerAttached) {
+                executionContext.clearReader();
+                engine.attachReader(reader);
+            }
+            reader.close();
+        }
+
+        if (!restoredOk) {
+            // Falling through to the head-miss path. The reader/walWriter
+            // we held are released by the finally above; head-miss opens
+            // its own. The head .cp is already gone (restoreFromHead did
+            // it) so head-miss's invalidateHeadOnO3 no-ops.
+            LOG.info().$("live view O3 head-hit replay falling through to head-miss [view=")
+                    .$(viewName).I$();
+            o3HeadMissReplay(instance, windowFactory, baseToken, advanceTo);
+            return;
+        }
+
+        if (appendedRows > 0) {
+            applyJob.applyWalDirect(instance.getLiveViewToken(), Job.RUNNING_STATUS);
+        }
+        instance.setLastProcessedSeqTxn(advanceTo);
+        instance.setAppliedWatermark(advanceTo);
+        try {
+            engine.advanceLiveViewConsumedSeqTxn(
+                    instance.getLiveViewToken(),
+                    advanceTo,
+                    blockFileWriter,
+                    path
+            );
+        } catch (CairoException e) {
+            LOG.critical().$("could not advance live view consumed seqTxn after O3 head-hit replay [view=")
+                    .$(viewName)
+                    .$(", advanceTo=").$(advanceTo)
+                    .$(", error=").$safe(e.getFlyweightMessage()).I$();
+            persistState(instance);
+        }
+        // Retire the head .cp the replay was built on; the follow-up commit
+        // writes a fresh one. Until then, the next refresh cycle's
+        // first-commit cadence trigger handles it.
+        if (instance.getHeadCheckpointLvSeqTxn() != Numbers.LONG_NULL) {
+            invalidateHeadOnO3(instance, advanceTo, Numbers.LONG_NULL, Numbers.LONG_NULL);
+        }
+        LOG.info().$("live view O3 head-hit replay completed [view=")
+                .$(viewName)
+                .$(", advanceTo=").$(advanceTo)
+                .$(", rowsEmitted=").$(appendedRows).I$();
     }
 
     /**
