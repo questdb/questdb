@@ -53,9 +53,10 @@ import static io.questdb.cairo.wal.WalUtils.SEQ_DIR;
 import static io.questdb.cairo.wal.WalUtils.WAL_INDEX_FILE_NAME;
 
 public class TableSequencerImpl implements TableSequencer {
+    private static final String FILE_TOO_SMALL_MESSAGE = "File is too small";
     private static final Log LOG = LogFactory.getLog(TableSequencerImpl.class);
-    private final static BinaryAlterSerializer alterCommandWalFormatter = new BinaryAlterSerializer();
     private static final String METADATA_VERSION_MISMATCH_MESSAGE = "metadata version does not match runtime version";
+    private final static BinaryAlterSerializer alterCommandWalFormatter = new BinaryAlterSerializer();
     private final CairoEngine engine;
     private final SequencerMetadata metadata;
     private final SequencerMetadataService metadataSvc;
@@ -465,6 +466,13 @@ public class TableSequencerImpl implements TableSequencer {
         path.trimTo(rootLen);
     }
 
+    private boolean isRecoverableSequencerMetadataOpenFailure(CairoException ex) {
+        // Future-format metadata is not a torn write; rebuilding it with this binary would risk downgrading it.
+        return ex.isFileCannotRead()
+                || Chars.startsWith(ex.getFlyweightMessage(), FILE_TOO_SMALL_MESSAGE)
+                || (ex.isMetadataValidation() && !Chars.contains(ex.getFlyweightMessage(), METADATA_VERSION_MISMATCH_MESSAGE));
+    }
+
     private long nextTxn(
             int walId,
             int segmentId,
@@ -499,7 +507,7 @@ public class TableSequencerImpl implements TableSequencer {
             if (tableTransactionLog.isDropped() || !isRecoverableSequencerMetadataOpenFailure(ex)) {
                 throw ex;
             }
-            LOG.error().$("could not open sequencer metadata, rebuilding from transaction log [table=").$(tableToken)
+            LOG.critical().$("could not open sequencer metadata, rebuilding from transaction log [table=").$(tableToken)
                     .$(", committedStructureVersion=").$(committedStructureVersion)
                     .$(", error=").$safe(ex.getMessage())
                     .I$();
@@ -511,7 +519,7 @@ public class TableSequencerImpl implements TableSequencer {
 
     private void rebuildMetadataFromCommittedLog(long committedStructureVersion) {
         metadata.openFromInitialMetadata(path, rootLen, tableToken);
-        replayCommittedMetadataChanges(0, committedStructureVersion);
+        replayCommittedMetadataChanges(0, committedStructureVersion, false);
     }
 
     private void reconcileMetadataWithCommittedLog(long committedStructureVersion) {
@@ -524,16 +532,33 @@ public class TableSequencerImpl implements TableSequencer {
             return;
         }
 
-        // _meta can be behind, ahead, or partially rewritten. Rebuild from _meta.0 and replay committed sidecars.
+        if (metaVersion < committedStructureVersion) {
+            // Normal catch-up: preserve the old reload() behavior by applying only the missing sidecars.
+            replayCommittedMetadataChanges(metaVersion, committedStructureVersion, true);
+            return;
+        }
+
+        // _meta is ahead of the committed txn log. Discard it and rebuild from _meta.0.
         rebuildMetadataFromCommittedLog(committedStructureVersion);
     }
 
-    private void replayCommittedMetadataChanges(long metaVersion, long committedStructureVersion) {
+    private void replayCommittedMetadataChange(TableMetadataChange change, boolean applyRenameSidecars) {
+        if (!applyRenameSidecars && change instanceof AlterOperation) {
+            final AlterOperation alter = (AlterOperation) change;
+            if (alter.getCommand() == AlterOperation.RENAME_TABLE) {
+                replayCommittedRename();
+                return;
+            }
+        }
+        change.apply(metadataSvc, true);
+    }
+
+    private void replayCommittedMetadataChanges(long metaVersion, long committedStructureVersion, boolean applyRenameSidecars) {
         try (TableMetadataChangeLog metaChangeCursor = tableTransactionLog.getTableMetadataChangeLog(
                 metaVersion, alterCommandWalFormatter)
         ) {
             while (metaChangeCursor.hasNext()) {
-                replayCommittedMetadataChange(metaChangeCursor.next());
+                replayCommittedMetadataChange(metaChangeCursor.next(), applyRenameSidecars);
             }
         }
 
@@ -549,27 +574,10 @@ public class TableSequencerImpl implements TableSequencer {
         tableToken = metadata.getTableToken();
     }
 
-    private void replayCommittedMetadataChange(TableMetadataChange change) {
-        if (change instanceof AlterOperation) {
-            final AlterOperation alter = (AlterOperation) change;
-            if (alter.getCommand() == AlterOperation.RENAME_TABLE) {
-                replayCommittedRename();
-                return;
-            }
-        }
-        change.apply(metadataSvc, true);
-    }
-
     private void replayCommittedRename() {
-        // The registry token was seeded into metadata before replay. Historical rename sidecars only advance the version.
+        // Full rebuild starts from the registry token, the durable table-name authority. Historical
+        // rename sidecars can otherwise move metadata away from the registry after abandoned renames or rename chains.
         metadata.skipTableRename();
-    }
-
-    private boolean isRecoverableSequencerMetadataOpenFailure(CairoException ex) {
-        // Future-format metadata is not a torn write; rebuilding it with this binary would risk downgrading it.
-        return ex.isFileCannotRead()
-                || ex.getErrno() == 0
-                || (ex.isMetadataValidation() && !Chars.contains(ex.getFlyweightMessage(), METADATA_VERSION_MISMATCH_MESSAGE));
     }
 
     void readLock() {

@@ -2707,7 +2707,7 @@ public class TableWriterTest extends AbstractCairoTest {
                 mem.sync(false);
                 mem.setTruncateSize(TableTransactionLogFile.HEADER_SIZE + TableTransactionLogV1.RECORD_SIZE + TableTransactionLogFile.TX_LOG_STRUCTURE_VERSION_OFFSET + Long.BYTES);
             }
-            assertException("alter table " + PRODUCT + " add column abc INT;", 0, "possible corruption in transaction metadata [table=product~1, offset=24, newVersion=1]");
+            assertException("alter table " + PRODUCT + " add column abc INT;", 12, "expected to read table structure changes but there is no saved in the sequencer");
         });
     }
 

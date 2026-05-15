@@ -222,6 +222,72 @@ public class TableSequencerImplTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testOpenFailsClosedWhenSequencerMetaVersionIsUnsupportedV1() throws Exception {
+        testOpenFailsClosedWhenSequencerMetaVersionIsUnsupported();
+    }
+
+    @Test
+    public void testOpenFailsClosedWhenSequencerMetaVersionIsUnsupportedV2() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, 10);
+        testOpenFailsClosedWhenSequencerMetaVersionIsUnsupported();
+    }
+
+    @Test
+    public void testOpenIgnoresUncommittedMetadataSidecarTailV1() throws Exception {
+        testOpenIgnoresUncommittedMetadataSidecarTail();
+    }
+
+    @Test
+    public void testOpenIgnoresUncommittedMetadataSidecarTailV2() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, 10);
+        testOpenIgnoresUncommittedMetadataSidecarTail();
+    }
+
+    @Test
+    public void testOpenRebuildsSequencerMetaAheadOfTxnLogV1() throws Exception {
+        testOpenRebuildsSequencerMetaAheadOfTxnLog();
+    }
+
+    @Test
+    public void testOpenRebuildsSequencerMetaAheadOfTxnLogV2() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, 10);
+        testOpenRebuildsSequencerMetaAheadOfTxnLog();
+    }
+
+    @Test
+    public void testOpenRebuildsUnreadableSequencerMetaV1() throws Exception {
+        testOpenRebuildsUnreadableSequencerMeta();
+    }
+
+    @Test
+    public void testOpenRebuildsUnreadableSequencerMetaV2() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, 10);
+        testOpenRebuildsUnreadableSequencerMeta();
+    }
+
+    @Test
+    public void testOpenRecoversCommittedRenameWhenRegistryAlreadyRenamedV1() throws Exception {
+        testOpenRecoversCommittedRenameWhenRegistryAlreadyRenamed();
+    }
+
+    @Test
+    public void testOpenRecoversCommittedRenameWhenRegistryAlreadyRenamedV2() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, 10);
+        testOpenRecoversCommittedRenameWhenRegistryAlreadyRenamed();
+    }
+
+    @Test
+    public void testOpenRepairsSequencerMetaBehindTxnLogV1() throws Exception {
+        testOpenRepairsSequencerMetaBehindTxnLog();
+    }
+
+    @Test
+    public void testOpenRepairsSequencerMetaBehindTxnLogV2() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, 10);
+        testOpenRepairsSequencerMetaBehindTxnLog();
+    }
+
+    @Test
     public void testOpenSequencerAfterFullDropTranslatesEnoentToTableDropped() throws Exception {
         assertMemoryLeak(() -> {
             String tableName = testName.getMethodName();
@@ -260,72 +326,6 @@ public class TableSequencerImplTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testOpenRebuildsSequencerMetaAheadOfTxnLogV1() throws Exception {
-        testOpenRebuildsSequencerMetaAheadOfTxnLog();
-    }
-
-    @Test
-    public void testOpenRebuildsSequencerMetaAheadOfTxnLogV2() throws Exception {
-        node1.setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, 10);
-        testOpenRebuildsSequencerMetaAheadOfTxnLog();
-    }
-
-    @Test
-    public void testOpenFailsClosedWhenSequencerMetaVersionIsUnsupportedV1() throws Exception {
-        testOpenFailsClosedWhenSequencerMetaVersionIsUnsupported();
-    }
-
-    @Test
-    public void testOpenFailsClosedWhenSequencerMetaVersionIsUnsupportedV2() throws Exception {
-        node1.setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, 10);
-        testOpenFailsClosedWhenSequencerMetaVersionIsUnsupported();
-    }
-
-    @Test
-    public void testOpenIgnoresUncommittedMetadataSidecarTailV1() throws Exception {
-        testOpenIgnoresUncommittedMetadataSidecarTail();
-    }
-
-    @Test
-    public void testOpenIgnoresUncommittedMetadataSidecarTailV2() throws Exception {
-        node1.setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, 10);
-        testOpenIgnoresUncommittedMetadataSidecarTail();
-    }
-
-    @Test
-    public void testOpenRepairsSequencerMetaBehindTxnLogV1() throws Exception {
-        testOpenRepairsSequencerMetaBehindTxnLog();
-    }
-
-    @Test
-    public void testOpenRepairsSequencerMetaBehindTxnLogV2() throws Exception {
-        node1.setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, 10);
-        testOpenRepairsSequencerMetaBehindTxnLog();
-    }
-
-    @Test
-    public void testOpenRebuildsUnreadableSequencerMetaV1() throws Exception {
-        testOpenRebuildsUnreadableSequencerMeta();
-    }
-
-    @Test
-    public void testOpenRebuildsUnreadableSequencerMetaV2() throws Exception {
-        node1.setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, 10);
-        testOpenRebuildsUnreadableSequencerMeta();
-    }
-
-    @Test
-    public void testOpenReplaysCommittedRenameWhenRegistryAlreadyRenamedV1() throws Exception {
-        testOpenReplaysCommittedRenameWhenRegistryAlreadyRenamed();
-    }
-
-    @Test
-    public void testOpenReplaysCommittedRenameWhenRegistryAlreadyRenamedV2() throws Exception {
-        node1.setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, 10);
-        testOpenReplaysCommittedRenameWhenRegistryAlreadyRenamed();
-    }
-
-    @Test
     public void testOpenSkipsCommittedRenameWhenRegistryStillHasOldNameV1() throws Exception {
         testOpenSkipsCommittedRenameWhenRegistryStillHasOldName();
     }
@@ -356,6 +356,17 @@ public class TableSequencerImplTest extends AbstractCairoTest {
     public void testOpenSkipsStaleRenameBeforeLaterDurableRenameV2() throws Exception {
         node1.setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, 10);
         testOpenSkipsStaleRenameBeforeLaterDurableRename();
+    }
+
+    @Test
+    public void testReloadRebuildsSequencerMetaAheadOfTxnLogV1() throws Exception {
+        testReloadRebuildsSequencerMetaAheadOfTxnLog();
+    }
+
+    @Test
+    public void testReloadRebuildsSequencerMetaAheadOfTxnLogV2() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, 10);
+        testReloadRebuildsSequencerMetaAheadOfTxnLog();
     }
 
     @Test
@@ -505,6 +516,16 @@ public class TableSequencerImplTest extends AbstractCairoTest {
         }
     }
 
+    private void rewriteSequencerMetadataIndexOffset(TableToken tableToken, long structureVersion, long offset) {
+        FilesFacade ff = configuration.getFilesFacade();
+        try (Path path = new Path(); MemoryCMARW metaIndexMem = Vm.getCMARWInstance()) {
+            pathToSequencerFile(path, tableToken, WalUtils.TXNLOG_FILE_NAME_META_INX);
+            metaIndexMem.smallFile(ff, path.$(), MemoryTag.MMAP_TX_LOG);
+            metaIndexMem.putLong(structureVersion * Long.BYTES, offset);
+            metaIndexMem.sync(false);
+        }
+    }
+
     private void runAddColumnRace(CyclicBarrier barrier, String tableName, int iterations, int readerThreads, AtomicReference<Throwable> exception, Runnable runnable) throws Exception {
         assertMemoryLeak(() -> {
             TableModel model = new TableModel(configuration, tableName, PartitionBy.HOUR)
@@ -544,26 +565,6 @@ public class TableSequencerImplTest extends AbstractCairoTest {
         } catch (Throwable e) {
             exception.set(e);
         }
-    }
-
-    private void testOpenRebuildsSequencerMetaAheadOfTxnLog() throws Exception {
-        assertMemoryLeak(() -> {
-            String tableName = testName.getMethodName();
-            TableToken tableToken = createWalTable(tableName);
-
-            addIntColumn(tableToken, "c1");
-            addIntColumn(tableToken, "c2");
-            engine.clear();
-            rewriteSequencerMaxTxn(tableToken, 1);
-
-            engine.getTableSequencerAPI().openSequencer(tableToken);
-            engine.clear();
-            assertSequencerMetadata(tableToken, 1, new String[]{"c1"}, new String[]{"c2"});
-
-            addIntColumn(tableToken, "c3");
-            assertSequencerMetadata(tableToken, 2, new String[]{"c1", "c3"}, new String[]{"c2"});
-            assertMaxStructureVersion(tableToken, 2);
-        });
     }
 
     private void testOpenFailsClosedWhenSequencerMetaVersionIsUnsupported() throws Exception {
@@ -611,27 +612,23 @@ public class TableSequencerImplTest extends AbstractCairoTest {
         });
     }
 
-    private void testOpenRepairsSequencerMetaBehindTxnLog() throws Exception {
+    private void testOpenRebuildsSequencerMetaAheadOfTxnLog() throws Exception {
         assertMemoryLeak(() -> {
             String tableName = testName.getMethodName();
             TableToken tableToken = createWalTable(tableName);
-            String snapshotFileName = TableUtils.META_FILE_NAME + ".v1";
 
             addIntColumn(tableToken, "c1");
-            engine.clear();
-            copySequencerFile(tableToken, TableUtils.META_FILE_NAME, snapshotFileName);
-
             addIntColumn(tableToken, "c2");
             engine.clear();
-            copySequencerFile(tableToken, snapshotFileName, TableUtils.META_FILE_NAME);
+            rewriteSequencerMaxTxn(tableToken, 1);
 
             engine.getTableSequencerAPI().openSequencer(tableToken);
             engine.clear();
-            assertSequencerMetadata(tableToken, 2, new String[]{"c1", "c2"}, new String[0]);
+            assertSequencerMetadata(tableToken, 1, new String[]{"c1"}, new String[]{"c2"});
 
             addIntColumn(tableToken, "c3");
-            assertSequencerMetadata(tableToken, 3, new String[]{"c1", "c2", "c3"}, new String[0]);
-            assertMaxStructureVersion(tableToken, 3);
+            assertSequencerMetadata(tableToken, 2, new String[]{"c1", "c3"}, new String[]{"c2"});
+            assertMaxStructureVersion(tableToken, 2);
         });
     }
 
@@ -655,20 +652,17 @@ public class TableSequencerImplTest extends AbstractCairoTest {
         });
     }
 
-    private void testOpenReplaysCommittedRenameWhenRegistryAlreadyRenamed() throws Exception {
+    private void testOpenRecoversCommittedRenameWhenRegistryAlreadyRenamed() throws Exception {
         assertMemoryLeak(() -> {
             String tableName = testName.getMethodName();
             String newTableName = tableName + "_new";
             TableToken tableToken = createWalTable(tableName);
-            String snapshotFileName = TableUtils.META_FILE_NAME + ".before_rename";
 
             addIntColumn(tableToken, "c1");
-            engine.clear();
-            copySequencerFile(tableToken, TableUtils.META_FILE_NAME, snapshotFileName);
 
             TableToken renamedTableToken = renameTable(tableName, newTableName);
             engine.clear();
-            copySequencerFile(tableToken, snapshotFileName, TableUtils.META_FILE_NAME);
+            rewriteSequencerMetaSize(renamedTableToken, 0);
 
             engine.getTableSequencerAPI().openSequencer(renamedTableToken);
             engine.clear();
@@ -683,22 +677,72 @@ public class TableSequencerImplTest extends AbstractCairoTest {
         });
     }
 
+    private void testOpenRepairsSequencerMetaBehindTxnLog() throws Exception {
+        assertMemoryLeak(() -> {
+            String tableName = testName.getMethodName();
+            TableToken tableToken = createWalTable(tableName);
+            String snapshotFileName = TableUtils.META_FILE_NAME + ".v1";
+
+            addIntColumn(tableToken, "c1");
+            engine.clear();
+            copySequencerFile(tableToken, TableUtils.META_FILE_NAME, snapshotFileName);
+
+            addIntColumn(tableToken, "c2");
+            engine.clear();
+            copySequencerFile(tableToken, snapshotFileName, TableUtils.META_FILE_NAME);
+            // If recovery rebuilt from version 0, this missing historical sidecar would fail the open.
+            rewriteSequencerMetadataIndexOffset(tableToken, 0, -1);
+
+            engine.getTableSequencerAPI().openSequencer(tableToken);
+            engine.clear();
+            assertSequencerMetadata(tableToken, 2, new String[]{"c1", "c2"}, new String[0]);
+
+            addIntColumn(tableToken, "c3");
+            assertSequencerMetadata(tableToken, 3, new String[]{"c1", "c2", "c3"}, new String[0]);
+            assertMaxStructureVersion(tableToken, 3);
+        });
+    }
+
+    private void testOpenSkipsCommittedRenameWhenRegistryStillHasOldName() throws Exception {
+        assertMemoryLeak(() -> {
+            String tableName = testName.getMethodName();
+            String newTableName = tableName + "_new";
+            TableToken tableToken = createWalTable(tableName);
+
+            addIntColumn(tableToken, "c1");
+
+            try (WalWriter ww = engine.getWalWriter(tableToken)) {
+                ww.renameTable(tableName, newTableName, AllowAllSecurityContext.INSTANCE);
+            }
+            engine.clear();
+            rewriteSequencerMetaSize(tableToken, 0);
+
+            engine.getTableSequencerAPI().openSequencer(tableToken);
+            engine.clear();
+            Assert.assertNotNull(engine.getTableTokenIfExists(tableName));
+            Assert.assertNull(engine.getTableTokenIfExists(newTableName));
+            assertSequencerTableName(tableToken, tableName);
+            assertSequencerMetadata(tableToken, 2, new String[]{"c1"}, new String[0]);
+
+            addIntColumn(tableToken, "c2");
+            assertSequencerMetadata(tableToken, 3, new String[]{"c1", "c2"}, new String[0]);
+            assertMaxStructureVersion(tableToken, 3);
+        });
+    }
+
     private void testOpenSkipsRenameChainWhenRegistryHasFinalName() throws Exception {
         assertMemoryLeak(() -> {
             String tableName = testName.getMethodName();
             String intermediateTableName = tableName + "_b";
             String newTableName = tableName + "_c";
             TableToken tableToken = createWalTable(tableName);
-            String snapshotFileName = TableUtils.META_FILE_NAME + ".before_renames";
 
             addIntColumn(tableToken, "c1");
-            engine.clear();
-            copySequencerFile(tableToken, TableUtils.META_FILE_NAME, snapshotFileName);
 
             renameTable(tableName, intermediateTableName);
             TableToken renamedTableToken = renameTable(intermediateTableName, newTableName);
             engine.clear();
-            copySequencerFile(tableToken, snapshotFileName, TableUtils.META_FILE_NAME);
+            rewriteSequencerMetaSize(renamedTableToken, 0);
 
             engine.getTableSequencerAPI().openSequencer(renamedTableToken);
             engine.clear();
@@ -720,11 +764,8 @@ public class TableSequencerImplTest extends AbstractCairoTest {
             String abandonedTableName = tableName + "_b";
             String newTableName = tableName + "_c";
             TableToken tableToken = createWalTable(tableName);
-            String snapshotFileName = TableUtils.META_FILE_NAME + ".before_renames";
 
             addIntColumn(tableToken, "c1");
-            engine.clear();
-            copySequencerFile(tableToken, TableUtils.META_FILE_NAME, snapshotFileName);
 
             try (WalWriter ww = engine.getWalWriter(tableToken)) {
                 ww.renameTable(tableName, abandonedTableName, AllowAllSecurityContext.INSTANCE);
@@ -732,7 +773,7 @@ public class TableSequencerImplTest extends AbstractCairoTest {
             engine.clear();
             TableToken renamedTableToken = renameTable(tableName, newTableName);
             engine.clear();
-            copySequencerFile(tableToken, snapshotFileName, TableUtils.META_FILE_NAME);
+            rewriteSequencerMetaSize(renamedTableToken, 0);
 
             engine.getTableSequencerAPI().openSequencer(renamedTableToken);
             engine.clear();
@@ -748,33 +789,22 @@ public class TableSequencerImplTest extends AbstractCairoTest {
         });
     }
 
-    private void testOpenSkipsCommittedRenameWhenRegistryStillHasOldName() throws Exception {
+    private void testReloadRebuildsSequencerMetaAheadOfTxnLog() throws Exception {
         assertMemoryLeak(() -> {
             String tableName = testName.getMethodName();
-            String newTableName = tableName + "_new";
             TableToken tableToken = createWalTable(tableName);
-            String snapshotFileName = TableUtils.META_FILE_NAME + ".before_rename";
 
             addIntColumn(tableToken, "c1");
-            engine.clear();
-            copySequencerFile(tableToken, TableUtils.META_FILE_NAME, snapshotFileName);
-
-            try (WalWriter ww = engine.getWalWriter(tableToken)) {
-                ww.renameTable(tableName, newTableName, AllowAllSecurityContext.INSTANCE);
-            }
-            engine.clear();
-            copySequencerFile(tableToken, snapshotFileName, TableUtils.META_FILE_NAME);
-
-            engine.getTableSequencerAPI().openSequencer(tableToken);
-            engine.clear();
-            Assert.assertNotNull(engine.getTableTokenIfExists(tableName));
-            Assert.assertNull(engine.getTableTokenIfExists(newTableName));
-            assertSequencerTableName(tableToken, tableName);
-            assertSequencerMetadata(tableToken, 2, new String[]{"c1"}, new String[0]);
-
             addIntColumn(tableToken, "c2");
-            assertSequencerMetadata(tableToken, 3, new String[]{"c1", "c2"}, new String[0]);
-            assertMaxStructureVersion(tableToken, 3);
+            rewriteSequencerMaxTxn(tableToken, 1);
+
+            engine.getTableSequencerAPI().reload(tableToken);
+            engine.clear();
+            assertSequencerMetadata(tableToken, 1, new String[]{"c1"}, new String[]{"c2"});
+
+            addIntColumn(tableToken, "c3");
+            assertSequencerMetadata(tableToken, 2, new String[]{"c1", "c3"}, new String[]{"c2"});
+            assertMaxStructureVersion(tableToken, 2);
         });
     }
 
