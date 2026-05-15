@@ -1168,6 +1168,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public long getSqlParquetHiveMaxCacheBytes() {
+        return getDelegate().getSqlParquetHiveMaxCacheBytes();
+    }
+
+    @Override
     public int getSqlParquetHiveMaxOpenFiles() {
         return getDelegate().getSqlParquetHiveMaxOpenFiles();
     }

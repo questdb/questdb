@@ -26,9 +26,11 @@ package io.questdb.test.griffin.engine.table.parquet;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.TableReader;
+import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.engine.functions.table.HivePartitionedReadParquetPageFrameCursor;
 import io.questdb.griffin.engine.functions.table.ReadParquetFunctionFactory;
 import io.questdb.griffin.engine.table.ParquetRowGroupFilter;
 import io.questdb.griffin.engine.table.parquet.ParquetCompression;
@@ -84,7 +86,7 @@ public class HivePartitionedReadParquetFunctionTest extends AbstractCairoTest {
                             "id\n1\n2\n3\n4\n5\n",
                             factory,
                             true,
-                            false,
+                            true, // partition-predicate residual elimination makes size() exact
                             false,
                             sqlExecutionContext
                     );
@@ -445,7 +447,8 @@ public class HivePartitionedReadParquetFunctionTest extends AbstractCairoTest {
             assertPlanNoLeakCheck(
                     sink,
                     "Parquet glob scan\n" +
-                            "  glob: plan/day=*/data.parquet\n"
+                            "  glob: plan/day=*/data.parquet\n" +
+                            "  files: 2\n"
             );
         });
     }
@@ -485,6 +488,9 @@ public class HivePartitionedReadParquetFunctionTest extends AbstractCairoTest {
             writeParquet("pdp/day=2026-01-01/data.parquet", "src");
             writeParquet("pdp/day=2026-01-02/data.parquet", "src");
 
+            // expectSize=true: the partition-equality predicate is fully consumed by
+            // the hive cursor's file-level prune, and the cursor reports an exact
+            // prune-aware row count via size().
             assertQueryNoLeakCheck(
                     "id\tday\n" +
                             "1\t2026-01-02T00:00:00.000Z\n" +
@@ -493,7 +499,7 @@ public class HivePartitionedReadParquetFunctionTest extends AbstractCairoTest {
                     "select id, day from read_parquet('pdp/day=*/data.parquet') where day = '2026-01-02' order by id",
                     null,
                     true,
-                    false
+                    true
             );
         });
     }
@@ -969,7 +975,10 @@ public class HivePartitionedReadParquetFunctionTest extends AbstractCairoTest {
                         "select id from read_parquet('plev/day=*/data.parquet') where day = '2026-12-02'",
                         ctx
                 ).getRecordCursorFactory()) {
-                    assertCursor("id\n1\n2\n3\n4\n5\n", factory, true, false, false, ctx);
+                    // sizeExpected=true: the hive cursor's prune-aware size() reports the
+                    // exact surviving row count when the WHERE is a partition predicate
+                    // that the cursor fully consumes.
+                    assertCursor("id\n1\n2\n3\n4\n5\n", factory, true, true, false, ctx);
                 }
             });
         });
@@ -990,6 +999,58 @@ public class HivePartitionedReadParquetFunctionTest extends AbstractCairoTest {
                 ).getRecordCursorFactory()) {
                     assertCursor("count\n3\n", factory, false, true, false, ctx);
                 }
+            });
+        });
+    }
+
+    @Test
+    public void testFileLevelPruningActuallyOpensOnlyMatchingFile() throws Exception {
+        // The other File-level pruning tests assert RESULT correctness; this one
+        // asserts WORK reduction - the cursor must open exactly one file out of 30
+        // for an equality filter on the partition column. Without pruning the cursor
+        // would open all 30 and rely on the row-level filter to discard 29 files'
+        // worth of decoded rows, which is exactly the scenario file pruning exists
+        // to avoid.
+        assertMemoryLeak(() -> {
+            execute("create table src as (select cast(x as int) as id from long_sequence(3))");
+            for (int d = 1; d <= 30; d++) {
+                writeParquet(String.format("pfp/day=2026-01-%02d/data.parquet", d), "src");
+            }
+
+            // Force re-enumeration each test (factory is per-compile). Uses `select id`
+            // (not count(*)) so the cursor actually iterates - count(*) over a partition
+            // predicate is now satisfied by the prune-aware size() shortcut, which
+            // computes the answer from cached footer row counts without opening any
+            // files. Iteration is the only way to assert open-count.
+            withWorkerPool(2, (compiler, ctx) -> {
+                HivePartitionedReadParquetPageFrameCursor.resetFilesOpenedCount();
+                try (RecordCursorFactory factory = compiler.compile(
+                        "select id from read_parquet('pfp/day=*/data.parquet') where day = '2026-01-15'",
+                        ctx
+                ).getRecordCursorFactory()) {
+                    assertCursor("id\n1\n2\n3\n", factory, true, true, false, ctx);
+                }
+                final long opened = HivePartitionedReadParquetPageFrameCursor.getFilesOpenedCount();
+                Assert.assertEquals(
+                        "WHERE day = '2026-01-15' should open exactly 1 of 30 files, opened " + opened,
+                        1L, opened
+                );
+            });
+
+            // BETWEEN range: 3 of 30
+            withWorkerPool(2, (compiler, ctx) -> {
+                HivePartitionedReadParquetPageFrameCursor.resetFilesOpenedCount();
+                try (RecordCursorFactory factory = compiler.compile(
+                        "select id from read_parquet('pfp/day=*/data.parquet') where day between '2026-01-10' and '2026-01-12'",
+                        ctx
+                ).getRecordCursorFactory()) {
+                    assertCursor("id\n1\n2\n3\n1\n2\n3\n1\n2\n3\n", factory, true, true, false, ctx);
+                }
+                final long opened = HivePartitionedReadParquetPageFrameCursor.getFilesOpenedCount();
+                Assert.assertEquals(
+                        "BETWEEN should open exactly 3 of 30 files, opened " + opened,
+                        3L, opened
+                );
             });
         });
     }
@@ -1173,6 +1234,57 @@ public class HivePartitionedReadParquetFunctionTest extends AbstractCairoTest {
                     true,
                     true
             );
+        });
+    }
+
+    @Test
+    public void testProjectionPushdownSkipsPartitionBufferAllocs() throws Exception {
+        // When the query projection does not reference any partition column the
+        // cursor must skip per-file alloc + fill of the partition virtual buffers.
+        // For a 5-file hive glob and a sum() over a data column, that is 5 skips.
+        // A query that does reference the partition column must NOT skip.
+        assertMemoryLeak(() -> {
+            execute("create table src as (select cast(x as int) as id, cast(x * 2 as long) as v from long_sequence(3))");
+            for (int d = 1; d <= 5; d++) {
+                writeParquet(String.format("pjs/day=2026-08-%02d/data.parquet", d), "src");
+            }
+
+            // sum(v) reads only `v` - day not in projection, partition buffer skip MUST fire.
+            withWorkerPool(2, (compiler, ctx) -> {
+                HivePartitionedReadParquetPageFrameCursor.resetPartitionBufferAllocsSkipped();
+                try (RecordCursorFactory factory = compiler.compile(
+                        "select sum(v) from read_parquet('pjs/day=*/data.parquet')",
+                        ctx
+                ).getRecordCursorFactory()) {
+                    assertCursor("sum\n60\n", factory, false, true, false, ctx);
+                }
+                final long skipped = HivePartitionedReadParquetPageFrameCursor.getPartitionBufferAllocsSkipped();
+                Assert.assertEquals(
+                        "sum(v) should skip partition buffer alloc on all 5 files, skipped " + skipped,
+                        5L, skipped
+                );
+            });
+
+            // select day reads the partition column - skip must NOT fire.
+            withWorkerPool(2, (compiler, ctx) -> {
+                HivePartitionedReadParquetPageFrameCursor.resetPartitionBufferAllocsSkipped();
+                try (RecordCursorFactory factory = compiler.compile(
+                        "select count(day) from read_parquet('pjs/day=*/data.parquet')",
+                        ctx
+                ).getRecordCursorFactory()) {
+                    try (RecordCursor cursor = factory.getCursor(ctx)) {
+                        // drain
+                        while (cursor.hasNext()) {
+                            // no-op
+                        }
+                    }
+                }
+                final long skipped = HivePartitionedReadParquetPageFrameCursor.getPartitionBufferAllocsSkipped();
+                Assert.assertEquals(
+                        "count(day) projects the partition column - skip must NOT fire, skipped " + skipped,
+                        0L, skipped
+                );
+            });
         });
     }
 

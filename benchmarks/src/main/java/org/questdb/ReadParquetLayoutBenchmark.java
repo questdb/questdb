@@ -36,8 +36,12 @@ import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.griffin.engine.table.parquet.ParquetCompression;
+import io.questdb.griffin.engine.table.parquet.ParquetVersion;
 import io.questdb.griffin.engine.table.parquet.PartitionDescriptor;
 import io.questdb.griffin.engine.table.parquet.PartitionEncoder;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Unsafe;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolConfiguration;
@@ -92,6 +96,14 @@ public class ReadParquetLayoutBenchmark {
     private static final String[] SYMBOLS = {"BTC", "ETH", "USDC", "USDT"};
     private static final int WORKER_COUNT = 4;
     private static final String READY_MARKER = "READY";
+    // Schema column index of the `symbol` column - matches the order in the CREATE TABLE
+    // statement below. Used to enable a bloom filter on this column at parquet write time.
+    private static final int SYMBOL_COLUMN_INDEX = 1;
+    // 100k rows per row group. Partition files (50k rows) collapse to one row group;
+    // the L1 single file (6M rows) splits into 60 row groups - lower footer overhead
+    // than the previous 8k default while still giving the row-group filter enough
+    // granularity to prune on bloom-filtered columns when the data is skewed.
+    private static final long ROW_GROUP_SIZE_ROWS = 100_000;
 
     @Param({"L1_SINGLE_FILE", "L2_NATIVE_NONE", "L3_HIVE_DAY", "L4_NATIVE_DAY", "L5_HIVE_DAY_SYM"})
     public Layout layout;
@@ -134,7 +146,16 @@ public class ReadParquetLayoutBenchmark {
                 .build();
 
         new Runner(opt).run();
+        // Worker pool threads are non-daemon; without explicit teardown the JVM
+        // stays alive after Runner.run() returns, holding the data-dir file lock
+        // and blocking any follow-up bench invocation from starting cleanly.
+        tearDownShared();
         LogFactory.haltInstance();
+        // Belt-and-braces: if anything in QuestDB's runtime spawned a stray
+        // non-daemon thread that tearDownShared didn't catch, force the JVM to
+        // exit so we don't end up with zombie processes holding the data-dir
+        // lock between bench invocations.
+        System.exit(0);
     }
 
     @Benchmark
@@ -185,6 +206,15 @@ public class ReadParquetLayoutBenchmark {
             @Override
             public int getWorkerCount() {
                 return WORKER_COUNT;
+            }
+
+            // JMH invokes this benchmark via its own main, so the System.exit +
+            // tearDownShared in our main() never runs. Daemon workers let the JVM
+            // exit once Runner.run() returns, releasing the data-dir file lock for
+            // the next bench invocation.
+            @Override
+            public boolean isDaemonPool() {
+                return true;
             }
         });
         WorkerPoolUtils.setupQueryJobs(pool, engine);
@@ -325,29 +355,40 @@ public class ReadParquetLayoutBenchmark {
                     ctx
             );
 
-            // L1: dump all 6M rows to a single parquet file.
-            System.out.println("[bench]   writing L1 single file...");
-            writePartition(engine, "src_native", 0, new File(benchDir, "single.parquet"));
+            // Allocate one-int native buffer holding the column index for the bloom
+            // filter (just `symbol`). Reused across every parquet write below; freed
+            // once we're done. The native parquet writer copies the value out, so
+            // sharing one buffer across writes is safe.
+            final long bloomColIdxPtr = Unsafe.malloc(4L, MemoryTag.NATIVE_DEFAULT);
+            try {
+                Unsafe.getUnsafe().putInt(bloomColIdxPtr, SYMBOL_COLUMN_INDEX);
 
-            // L3: 30 files, hive layout 'hive_day/day=YYYY-MM-DD/data.parquet'.
-            System.out.println("[bench]   writing L3 hive day partitioned (" + DAYS + " files)...");
-            writeHiveByDay(engine, "src_native_part", new File(benchDir, "hive_day"));
+                // L1: dump all 6M rows to a single parquet file.
+                System.out.println("[bench]   writing L1 single file...");
+                writePartition(engine, "src_native", 0, new File(benchDir, "single.parquet"), bloomColIdxPtr);
 
-            // L5: 30 * 4 = 120 files, 'hive_day_sym/day=.../symbol=.../data.parquet'.
-            // Build a per-symbol temp table partitioned by day, then encode each of
-            // its DAY partitions to its symbol subdirectory.
-            System.out.println("[bench]   writing L5 hive day+symbol partitioned (" + (DAYS * SYMBOLS.length) + " files)...");
-            for (String sym : SYMBOLS) {
-                final String tmp = "tmp_" + sym;
-                engine.execute(
-                        "create table " + tmp + " as (" +
-                                "select * from src_native where symbol = '" + sym + "'" +
-                                ") timestamp(ts) partition by day bypass wal",
-                        ctx
-                );
-                File symRoot = new File(benchDir, "hive_day_sym");
-                writeHiveByDayUnderSymbol(engine, tmp, sym, symRoot);
-                engine.execute("drop table " + tmp, ctx);
+                // L3: 30 files, hive layout 'hive_day/day=YYYY-MM-DD/data.parquet'.
+                System.out.println("[bench]   writing L3 hive day partitioned (" + DAYS + " files)...");
+                writeHiveByDay(engine, "src_native_part", new File(benchDir, "hive_day"), bloomColIdxPtr);
+
+                // L5: 30 * 4 = 120 files, 'hive_day_sym/day=.../symbol=.../data.parquet'.
+                // Build a per-symbol temp table partitioned by day, then encode each of
+                // its DAY partitions to its symbol subdirectory.
+                System.out.println("[bench]   writing L5 hive day+symbol partitioned (" + (DAYS * SYMBOLS.length) + " files)...");
+                for (String sym : SYMBOLS) {
+                    final String tmp = "tmp_" + sym;
+                    engine.execute(
+                            "create table " + tmp + " as (" +
+                                    "select * from src_native where symbol = '" + sym + "'" +
+                                    ") timestamp(ts) partition by day bypass wal",
+                            ctx
+                    );
+                    File symRoot = new File(benchDir, "hive_day_sym");
+                    writeHiveByDayUnderSymbol(engine, tmp, sym, symRoot, bloomColIdxPtr);
+                    engine.execute("drop table " + tmp, ctx);
+                }
+            } finally {
+                Unsafe.free(bloomColIdxPtr, 4L, MemoryTag.NATIVE_DEFAULT);
             }
         }
         try {
@@ -393,7 +434,30 @@ public class ReadParquetLayoutBenchmark {
         return date.toEpochDay() * 86_400_000_000L;
     }
 
-    private static void writeHiveByDay(CairoEngine engine, String tableName, File rootDir) {
+    // Writes the descriptor with a bloom filter on `symbol` and a smaller-than-default
+    // rowgroup. bloomColIdxPtr points at a single int (SYMBOL_COLUMN_INDEX); the caller
+    // owns the allocation. Mirrors the simple PartitionEncoder.encode() defaults for
+    // every other knob - the only delta is bloom + rowgroup size.
+    private static void encodeWithBloomAndRowGroups(PartitionDescriptor desc, Path path, long bloomColIdxPtr) {
+        PartitionEncoder.encodeWithOptions(
+                desc,
+                path,
+                ParquetCompression.COMPRESSION_UNCOMPRESSED,
+                true,  // statisticsEnabled
+                false, // rawArrayEncoding
+                ROW_GROUP_SIZE_ROWS,
+                0,     // default data page size
+                ParquetVersion.PARQUET_VERSION_V1,
+                bloomColIdxPtr,
+                1,     // one bloom-filtered column (symbol)
+                PartitionEncoder.DEFAULT_BLOOM_FILTER_FPP,
+                0.0,
+                -1,
+                -1L
+        );
+    }
+
+    private static void writeHiveByDay(CairoEngine engine, String tableName, File rootDir, long bloomColIdxPtr) {
         try (Path path = new Path();
              Path dir = new Path();
              PartitionDescriptor desc = new PartitionDescriptor();
@@ -406,7 +470,7 @@ public class ReadParquetLayoutBenchmark {
                 Files.createDirectories(java.nio.file.Path.of(dir.toString()));
                 path.of(rootDir.getAbsolutePath()).concat(dayDir).concat("data.parquet");
                 PartitionEncoder.populateFromTableReader(reader, desc, p);
-                PartitionEncoder.encode(desc, path);
+                encodeWithBloomAndRowGroups(desc, path, bloomColIdxPtr);
                 desc.clear();
             }
         } catch (java.io.IOException e) {
@@ -414,7 +478,7 @@ public class ReadParquetLayoutBenchmark {
         }
     }
 
-    private static void writeHiveByDayUnderSymbol(CairoEngine engine, String tableName, String sym, File rootDir) {
+    private static void writeHiveByDayUnderSymbol(CairoEngine engine, String tableName, String sym, File rootDir, long bloomColIdxPtr) {
         try (Path path = new Path();
              Path dir = new Path();
              PartitionDescriptor desc = new PartitionDescriptor();
@@ -427,7 +491,7 @@ public class ReadParquetLayoutBenchmark {
                 Files.createDirectories(java.nio.file.Path.of(dir.toString()));
                 path.of(rootDir.getAbsolutePath()).concat(relDir).concat("data.parquet");
                 PartitionEncoder.populateFromTableReader(reader, desc, p);
-                PartitionEncoder.encode(desc, path);
+                encodeWithBloomAndRowGroups(desc, path, bloomColIdxPtr);
                 desc.clear();
             }
         } catch (java.io.IOException e) {
@@ -435,13 +499,13 @@ public class ReadParquetLayoutBenchmark {
         }
     }
 
-    private static void writePartition(CairoEngine engine, String tableName, int partitionIndex, File outFile) {
+    private static void writePartition(CairoEngine engine, String tableName, int partitionIndex, File outFile, long bloomColIdxPtr) {
         try (Path path = new Path();
              PartitionDescriptor desc = new PartitionDescriptor();
              TableReader reader = engine.getReader(tableName)) {
             path.of(outFile.getAbsolutePath());
             PartitionEncoder.populateFromTableReader(reader, desc, partitionIndex);
-            PartitionEncoder.encode(desc, path);
+            encodeWithBloomAndRowGroups(desc, path, bloomColIdxPtr);
         }
     }
 

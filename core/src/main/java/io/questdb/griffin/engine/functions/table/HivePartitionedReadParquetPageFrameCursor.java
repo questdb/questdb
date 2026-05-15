@@ -68,6 +68,9 @@ import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.Nullable;
 
+import java.util.Arrays;
+import java.util.concurrent.atomic.AtomicLong;
+
 import static io.questdb.griffin.engine.functions.table.ReadParquetRecordCursor.canProjectMetadata;
 
 /**
@@ -88,19 +91,30 @@ import static io.questdb.griffin.engine.functions.table.ReadParquetRecordCursor.
  */
 public class HivePartitionedReadParquetPageFrameCursor implements PageFrameCursor {
     private static final Log LOG = LogFactory.getLog(HivePartitionedReadParquetPageFrameCursor.class);
+    // Cumulative count of files this cursor type has opened across the JVM lifetime.
+    // Used by tests to confirm file-level pruning eliminates work, not just rows.
+    // Same convention as ParquetRowGroupFilter.rowGroupsSkipped.
+    private static final AtomicLong filesOpenedCount = new AtomicLong();
+    // Cumulative count of files for which we skipped per-file partition virtual
+    // buffer allocation+fill because no partition column is in the projection.
+    // Lets tests confirm the projection-pushdown shortcut is firing in queries
+    // where it should (typical: SELECT sum(col) FROM read_parquet(hive_glob)).
+    private static final AtomicLong partitionBufferAllocsSkipped = new AtomicLong();
     // VARCHAR slice aux entry layout, mirrored from VarcharTypeDriver so the
     // partition virtual buffers can be hand-encoded. Each aux entry is 16 bytes:
     //   bytes 0-3: header = (size << 4) | (ascii ? 2 : 0) | (null ? 4 : 0)
     //   bytes 4-7: reserved (zero)
     //   bytes 8-15: absolute pointer to value bytes
+    private static final int PREFETCH_AHEAD = 3;
     private static final int VARCHAR_AUX_ENTRY_BYTES = 16;
     private static final int VARCHAR_HEADER_FLAG_ASCII = 2;
     private final ColumnMapping columnMapping = new ColumnMapping();
+    // Per-file cache handles (factory-owned); slot index aligns with decoders.
+    // The cursor borrows references; it must not free entries here - the factory's
+    // LRU cache does that.
+    private final ObjList<HivePartitionedReadParquetRecordCursorFactory.CachedFile> cachedFiles = new ObjList<>();
     private final ObjList<ParquetFileDecoder> decoders = new ObjList<>();
-    private final LongList fds = new LongList();
     private final FilesFacade ff;
-    private final LongList fileAddrs = new LongList();
-    private final LongList fileSizes = new LongList();
     private final LongList filterBufEnds = new LongList();
     private final ObjList<DirectLongList> filterLists = new ObjList<>();
     private final BoolList filterPrepared = new BoolList();
@@ -132,6 +146,12 @@ public class HivePartitionedReadParquetPageFrameCursor implements PageFrameCurso
     private final LongList partitionBufferSizes = new LongList();
     private final IntList partitionBufferTypeWidths = new IntList();
     private final int partitionColumnCount;
+    // True for partition columns that are referenced by the query's projection (or
+    // every entry if no projection pushdown). False entries skip allocate+fill of
+    // the per-rowgroup virtual buffer - downstream never reads it. Common win for
+    // aggregates over data columns (e.g. sum(price) from read_parquet(...)) where
+    // the hive partition column is in the schema but not consumed.
+    private final boolean[] partitionColumnInProjection;
     private final ObjList<String> partitionColumnNames;
     private final IntList partitionColumnTypes;
     // Per pruned-column mapping computed by the factory's setQueryProjectedMetadata.
@@ -141,6 +161,10 @@ public class HivePartitionedReadParquetPageFrameCursor implements PageFrameCurso
     private final @Nullable int[] projectedToParquetWriterIdx;
     private final @Nullable int[] projectedToPartitionIdx;
     private final @Nullable ObjList<PushdownFilterExtractor.PushdownFilterCondition> pushdownFilterConditions;
+    // Back-reference to the owning factory so size() / calculateSize() can use the
+    // factory-level cached row count instead of re-walking matchedFiles on every
+    // cursor open. The factory outlives the cursor and survives close/reopen.
+    private final HivePartitionedReadParquetRecordCursorFactory factory;
     private int currentFileIndex = -1;
     private long cumulativePartitionLo = 0;
     private SqlExecutionContext executionContext;
@@ -178,7 +202,8 @@ public class HivePartitionedReadParquetPageFrameCursor implements PageFrameCurso
             int maxConcurrentOpenFiles,
             @Nullable int[] projectedToParquetWriterIdx,
             @Nullable int[] projectedToPartitionIdx,
-            @Nullable ObjList<PushdownFilterExtractor.PushdownFilterCondition> pushdownFilterConditions
+            @Nullable ObjList<PushdownFilterExtractor.PushdownFilterCondition> pushdownFilterConditions,
+            HivePartitionedReadParquetRecordCursorFactory factory
     ) {
         this.ff = ff;
         this.matchedFiles = matchedFiles;
@@ -192,17 +217,38 @@ public class HivePartitionedReadParquetPageFrameCursor implements PageFrameCurso
         this.projectedToParquetWriterIdx = projectedToParquetWriterIdx;
         this.projectedToPartitionIdx = projectedToPartitionIdx;
         this.pushdownFilterConditions = pushdownFilterConditions;
+        this.factory = factory;
         this.prunePartitionValues = new long[this.partitionColumnCount];
         this.prunePartitionPresent = new boolean[this.partitionColumnCount];
         this.prunePartitionByteLo = new int[this.partitionColumnCount];
         this.prunePartitionByteHi = new int[this.partitionColumnCount];
+        this.partitionColumnInProjection = new boolean[this.partitionColumnCount];
+        if (projectedToPartitionIdx == null) {
+            // No projection pushdown - full schema reads every partition column.
+            Arrays.fill(this.partitionColumnInProjection, true);
+        } else {
+            for (int i = 0; i < projectedToPartitionIdx.length; i++) {
+                int p = projectedToPartitionIdx[i];
+                if (p >= 0 && p < this.partitionColumnCount) {
+                    this.partitionColumnInProjection[p] = true;
+                }
+            }
+        }
     }
 
     @Override
     public void calculateSize(RecordCursor.Counter counter) {
-        // Eager total: walk metadata of every remaining file. Used by limit/skip planning.
+        if (pushdownFilterConditions != null && pushdownFilterConditions.size() > 0) {
+            // Use the prune-aware total computed from the factory's per-file row count
+            // cache. Subtract cumulativePartitionLo so this works mid-iteration too -
+            // the counter sees only what's still to be emitted.
+            long pruned = computePrunedTotal();
+            counter.add(pruned - cumulativePartitionLo);
+            return;
+        }
         if (totalRowCount < 0) {
-            computeTotalRowCount();
+            totalRowCount = factory.getCachedTotalRowCount(ff);
+            isTotalRowCountFinalised = true;
         }
         counter.add(totalRowCount - cumulativePartitionLo);
     }
@@ -219,9 +265,7 @@ public class HivePartitionedReadParquetPageFrameCursor implements PageFrameCurso
         // reuse condition fail naturally; resetting isTotalRowCountFinalised stops size()
         // from returning a value backed by freed state.
         decoders.clear();
-        fds.clear();
-        fileAddrs.clear();
-        fileSizes.clear();
+        cachedFiles.clear();
         filterLists.clear();
         filterValues.clear();
         filterBufEnds.clear();
@@ -308,6 +352,16 @@ public class HivePartitionedReadParquetPageFrameCursor implements PageFrameCurso
 
     public void of(SqlExecutionContext executionContext) {
         this.executionContext = executionContext;
+        // Pay file open + mmap + footer parse for the whole matched-file set in
+        // parallel with this cursor's first frame decode. Subsequent cursor opens
+        // skip the prefetch (entries are already cached) and benefit purely from
+        // cache hits. Skipped when partition pruning conditions are set - parsing
+        // partition values on a glob-wide pre-open without prune-aware filtering
+        // would spend work on files the cursor will skip anyway, and the
+        // openNextFile prefetch-ahead path applies the prune predicate correctly.
+        if (pushdownFilterConditions == null || pushdownFilterConditions.size() == 0) {
+            factory.schedulePrefetchAll(ff);
+        }
         toTop();
     }
 
@@ -326,8 +380,16 @@ public class HivePartitionedReadParquetPageFrameCursor implements PageFrameCurso
 
     @Override
     public long size() {
+        // With partition pushdown, the emitted row count is the sum of surviving
+        // files' counts after applying the prune predicate. The factory caches both
+        // the totals AND the per-file counts so we never re-open files - we just
+        // walk matchedFiles, parse the partition value, test, and sum on hit.
+        if (pushdownFilterConditions != null && pushdownFilterConditions.size() > 0) {
+            return computePrunedTotal();
+        }
         if (totalRowCount < 0) {
-            computeTotalRowCount();
+            totalRowCount = factory.getCachedTotalRowCount(ff);
+            isTotalRowCountFinalised = true;
         }
         return totalRowCount;
     }
@@ -356,9 +418,7 @@ public class HivePartitionedReadParquetPageFrameCursor implements PageFrameCurso
         // owned by the factory.
         closeAllOpenFiles();
         decoders.clear();
-        fds.clear();
-        fileAddrs.clear();
-        fileSizes.clear();
+        cachedFiles.clear();
         filterLists.clear();
         filterValues.clear();
         filterBufEnds.clear();
@@ -396,6 +456,23 @@ public class HivePartitionedReadParquetPageFrameCursor implements PageFrameCurso
         if (partitionColumnCount == 0) {
             return;
         }
+        // Skip the per-file rowgroup probe + alloc + fill entirely when nothing in
+        // the projection references a partition column. The metadata walk alone is
+        // not free, and the allocations below are sized to maxRowGroupSize - 50k+
+        // bytes per column per file is wasted otherwise. Pushdown filter eval
+        // still works because the prune pass uses prunePartitionValues which
+        // openNextFile already populated from the path.
+        boolean anyProjected = false;
+        for (int c = 0; c < partitionColumnCount; c++) {
+            if (partitionColumnInProjection[c]) {
+                anyProjected = true;
+                break;
+            }
+        }
+        if (!anyProjected) {
+            partitionBufferAllocsSkipped.incrementAndGet();
+            return;
+        }
         final int rgCount = decoder.metadata().getRowGroupCount();
         int maxRowGroupSize = 0;
         for (int i = 0; i < rgCount; i++) {
@@ -410,6 +487,11 @@ public class HivePartitionedReadParquetPageFrameCursor implements PageFrameCurso
         // openNextFile parses partition values into prunePartition* before calling us,
         // so the byte ranges below come for free.
         for (int c = 0; c < partitionColumnCount; c++) {
+            if (!partitionColumnInProjection[c]) {
+                // Slot stays at the zero defaults pushed above; populatePartitionBuffersFromPath
+                // skips zero-address slots, and downstream never reads the column.
+                continue;
+            }
             int type = partitionColumnTypes.getQuick(c);
             int slot = fileIndex * partitionColumnCount + c;
             if (ColumnType.tagOf(type) == ColumnType.VARCHAR) {
@@ -472,6 +554,32 @@ public class HivePartitionedReadParquetPageFrameCursor implements PageFrameCurso
         }
     }
 
+    // Walk matchedFiles, apply the partition prune predicate per file, sum the per-file
+    // row counts of survivors using the factory's cached per-file row counts. Avoids
+    // any file open by reusing the count cache; allocates no temp data structures.
+    // Returns the row count the cursor would emit if drained end-to-end with the
+    // current pushdownFilterConditions in effect.
+    private long computePrunedTotal() {
+        if (pushdownFilterConditions == null || pushdownFilterConditions.size() == 0) {
+            // No filter - the cached total is exact.
+            return factory.getCachedTotalRowCount(ff);
+        }
+        ensureFilterConditionsInitialised();
+        final io.questdb.std.LongList perFile = factory.getCachedPerFileRowCounts(ff);
+        long sum = 0;
+        for (int i = 0, n = matchedFiles.size(); i < n; i++) {
+            Utf8Sequence filePath = matchedFiles.getQuick(i);
+            if (partitionColumnCount > 0) {
+                parsePartitionValues(filePath, prunePartitionValues, prunePartitionPresent);
+                if (isPrunedByParsedPartition()) {
+                    continue;
+                }
+            }
+            sum += perFile.getQuick(i);
+        }
+        return sum;
+    }
+
     private boolean canCompareTyped(int columnType) {
         // DOUBLE is intentionally excluded: equality on doubles is fraught (NaN
         // never compares equal, and decimal literals don't round-trip exactly
@@ -499,23 +607,12 @@ public class HivePartitionedReadParquetPageFrameCursor implements PageFrameCurso
         if (fileIndex < 0 || fileIndex >= decoders.size()) {
             return;
         }
-        ParquetFileDecoder decoder = decoders.getQuick(fileIndex);
-        if (decoder != null) {
-            Misc.free(decoder);
-            decoders.setQuick(fileIndex, null);
-        }
-        long fd = fds.getQuick(fileIndex);
-        if (fd != -1) {
-            ff.close(fd);
-            fds.setQuick(fileIndex, -1);
-        }
-        long addr = fileAddrs.getQuick(fileIndex);
-        long size = fileSizes.getQuick(fileIndex);
-        if (addr != 0) {
-            ff.munmap(addr, size, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
-            fileAddrs.setQuick(fileIndex, 0);
-            fileSizes.setQuick(fileIndex, 0);
-        }
+        // Decoder + fd + mmap belong to the factory's CachedFile - DON'T free here.
+        // Just unreference so the cursor doesn't keep using a stale decoder after a
+        // cache eviction would have invalidated it. The factory's LRU determines
+        // when the underlying OS resources are actually released.
+        decoders.setQuick(fileIndex, null);
+        cachedFiles.setQuick(fileIndex, null);
         DirectLongList fl = filterLists.getQuick(fileIndex);
         if (fl != null) {
             Misc.free(fl);
@@ -543,35 +640,6 @@ public class HivePartitionedReadParquetPageFrameCursor implements PageFrameCurso
                 partitionAuxBufferSizes.setQuick(slot, 0);
             }
         }
-    }
-
-    private void computeTotalRowCount() {
-        // Walk matchedFiles (no directory re-walk - the factory enumerated once at
-        // planning time) and open each file's metadata to sum row counts. Used as the
-        // size() fallback when next() hasn't yet driven iteration.
-        long total = 0;
-        try (Path tempPath = new Path(MemoryTag.NATIVE_PATH);
-             ParquetFileDecoder probe = new ParquetFileDecoder()) {
-            for (int i = 0, n = matchedFiles.size(); i < n; i++) {
-                DirectUtf8Sequence filePath = matchedFiles.getQuick(i);
-                tempPath.of(filePath);
-                final long fd = TableUtils.openRO(ff, tempPath.$(), LOG);
-                long addr = 0;
-                long size = 0;
-                try {
-                    size = ff.length(fd);
-                    addr = TableUtils.mapRO(ff, fd, size, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
-                    probe.of(addr, size, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
-                    total += probe.metadata().getRowCount();
-                } finally {
-                    ff.close(fd);
-                    if (addr != 0) {
-                        ff.munmap(addr, size, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
-                    }
-                }
-            }
-        }
-        totalRowCount = total;
     }
 
     private void ensureFilterConditionsInitialised() {
@@ -902,47 +970,44 @@ public class HivePartitionedReadParquetPageFrameCursor implements PageFrameCurso
             }
         } while (isPruned);
         final int fileIndex = ++currentFileIndex;
-        if (path == null) {
-            path = new Path(MemoryTag.NATIVE_PATH);
-        }
-        path.of(filePath);
-        final long fd = TableUtils.openRO(ff, path.$(), LOG);
-        long addr = 0;
-        long size = 0;
-        ParquetFileDecoder decoder = null;
-        try {
-            size = ff.length(fd);
-            addr = TableUtils.mapRO(ff, fd, size, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
-            decoder = new ParquetFileDecoder();
-            decoder.of(addr, size, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
-            if (parquetColumnCount > 0 && !canProjectMetadata(parquetMetadata, decoder, null, null)) {
-                throw CairoException.nonCritical()
-                        .put("parquet schema mismatch: file '")
-                        .put(path)
-                        .put("' is incompatible with the schema of the first matched file");
-            }
-        } catch (Throwable th) {
-            if (addr != 0) {
-                ff.munmap(addr, size, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
-            }
-            ff.close(fd);
-            Misc.free(decoder);
-            throw th;
+        // Factory-owned cache returns the parsed ParquetFileDecoder plus the fd and
+        // mmap it sits over. The cursor borrows the decoder reference; the cache
+        // owns the lifetime and the cursor MUST NOT free anything in CachedFile.
+        final HivePartitionedReadParquetRecordCursorFactory.CachedFile cachedFile = factory.openCachedFile(filePath, ff);
+        final ParquetFileDecoder decoder = cachedFile.decoder;
+        if (parquetColumnCount > 0 && !canProjectMetadata(parquetMetadata, decoder, null, null)) {
+            throw CairoException.nonCritical()
+                    .put("parquet schema mismatch: file '")
+                    .put(filePath)
+                    .put("' is incompatible with the schema of the first matched file");
         }
         decoders.add(decoder);
-        fds.add(fd);
-        fileAddrs.add(addr);
-        fileSizes.add(size);
+        cachedFiles.add(cachedFile);
         filterLists.add(null);
         filterValues.add(null);
         filterBufEnds.add(0);
         filterPrepared.add(false);
+        filesOpenedCount.incrementAndGet();
 
         prepareFilterListForFile(fileIndex, decoder);
         allocatePartitionBuffersForFile(fileIndex, filePath, decoder);
 
         if (!isTotalRowCountFinalised) {
             runningRowCount += decoder.metadata().getRowCount();
+        }
+
+        // Async-prefetch the next few files into the factory cache so their
+        // open+mmap+parse-footer cost is paid in parallel with this file's frame
+        // consumption. Skipped when partition-level pruning is in play - the
+        // prefetcher doesn't apply the prune predicate and would otherwise waste
+        // work + cache slots on files the cursor will skip. FdCache + MmapCache
+        // dedupe the OS resources so concurrent open vs cursor's later sync open
+        // converge on a single entry.
+        if (pushdownFilterConditions == null || pushdownFilterConditions.size() == 0) {
+            final int prefetchLimit = Math.min(matchedFiles.size(), globIndex + PREFETCH_AHEAD);
+            for (int i = globIndex; i < prefetchLimit; i++) {
+                factory.schedulePrefetch(matchedFiles.getQuick(i), ff);
+            }
         }
 
         frame.rowGroupIndex = -1;
@@ -1036,6 +1101,33 @@ public class HivePartitionedReadParquetPageFrameCursor implements PageFrameCurso
             }
             segStart = segEnd + 1;
         }
+    }
+
+    /**
+     * Returns the number of files this cursor type has opened since the JVM started
+     * (or since the last {@link #resetFilesOpenedCount()}). Tests use this to assert
+     * file-level partition pruning works - the row results alone can't distinguish
+     * "pruned out" from "loaded and row-level-filtered".
+     */
+    public static long getFilesOpenedCount() {
+        return filesOpenedCount.get();
+    }
+
+    /**
+     * Returns the number of files for which we skipped per-file partition virtual
+     * buffer allocation+fill because the query's projection did not reference any
+     * partition column. Tests assert this fires for aggregates like SELECT sum(col).
+     */
+    public static long getPartitionBufferAllocsSkipped() {
+        return partitionBufferAllocsSkipped.get();
+    }
+
+    public static void resetFilesOpenedCount() {
+        filesOpenedCount.set(0);
+    }
+
+    public static void resetPartitionBufferAllocsSkipped() {
+        partitionBufferAllocsSkipped.set(0);
     }
 
     /**

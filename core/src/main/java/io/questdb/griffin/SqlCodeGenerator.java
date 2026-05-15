@@ -4163,6 +4163,14 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             if (factory.mayHaveParquetPartitions(executionContext) && executionContext.isParquetRowGroupPruningEnabled()) {
                 factory.setPushdownFilterCondition(pushdownFilterExtractor.extractAndCompile(
                         sqlNodeStack, sqlNodeStack2, filterExpr, factory.getMetadata(), functionParser, executionContext));
+                // If the cursor's pushdown is precise enough to fully cover the WHERE
+                // (e.g. hive partition-column predicates that prune at file level), drop
+                // the row-level filter entirely. The row-level pass would otherwise
+                // re-evaluate a tautology against every emitted row.
+                if (factory.isFilterFullyConsumedByPushdown(filterExpr)) {
+                    filter.close();
+                    return factory;
+                }
             }
 
             final boolean enableParallelFilter = executionContext.isParallelFilterEnabled();

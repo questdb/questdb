@@ -751,6 +751,15 @@ public interface CairoConfiguration {
 
     int getSqlParquetHiveMaxOpenFiles();
 
+    /**
+     * Total mmap byte budget for the per-hive-factory {@code CachedFile} cache.
+     * Reads of any parquet file beyond this size pressure the LRU into evicting
+     * older entries even when the entry-count cap is not reached. Protects against
+     * address-space exhaustion when matched parquet files are individually large.
+     * Default is large enough for typical OLAP workloads; lower for sandboxed envs.
+     */
+    long getSqlParquetHiveMaxCacheBytes();
+
     int getSqlPivotMaxProducedColumns();
 
     int getSqlSmallMapKeyCapacity();
