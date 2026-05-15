@@ -144,15 +144,25 @@ public class MinLongWindowFunctionFactory extends AbstractWindowFunctionFactory 
 
                     int timestampIndex = windowContext.getTimestampIndex();
 
+                    final boolean liveView = windowContext.isLiveView();
                     Map map = null;
                     MemoryARW mem = null;
                     MemoryARW dequeMem = null;
                     try {
+                        final ArrayColumnTypes valueTypes;
+                        if (rowsLo == Long.MIN_VALUE) {
+                            valueTypes = liveView
+                                    ? MaxLongWindowFunctionFactory.MAX_OVER_PARTITION_RANGE_COLUMN_TYPES_LV
+                                    : MaxLongWindowFunctionFactory.MAX_OVER_PARTITION_RANGE_COLUMN_TYPES;
+                        } else {
+                            valueTypes = liveView
+                                    ? MaxLongWindowFunctionFactory.MAX_OVER_PARTITION_RANGE_BOUNDED_COLUMN_TYPES_LV
+                                    : MaxLongWindowFunctionFactory.MAX_OVER_PARTITION_RANGE_BOUNDED_COLUMN_TYPES;
+                        }
                         map = MapFactory.createUnorderedMap(
                                 configuration,
                                 partitionByKeyTypes,
-                                rowsLo == Long.MIN_VALUE ? MaxLongWindowFunctionFactory.MAX_OVER_PARTITION_RANGE_COLUMN_TYPES :
-                                        MaxLongWindowFunctionFactory.MAX_OVER_PARTITION_RANGE_BOUNDED_COLUMN_TYPES
+                                valueTypes
                         );
                         mem = Vm.getCARWInstance(
                                 configuration.getSqlWindowStorePageSize(),
@@ -180,7 +190,10 @@ public class MinLongWindowFunctionFactory extends AbstractWindowFunctionFactory 
                                 configuration.getSqlWindowInitialRangeBufferSize(),
                                 timestampIndex,
                                 LESS_THAN,
-                                NAME
+                                NAME,
+                                partitionByKeyTypes,
+                                liveView,
+                                configuration
                         );
                     } catch (Throwable th) {
                         Misc.free(map);

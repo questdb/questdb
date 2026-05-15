@@ -601,7 +601,10 @@ public class WindowFunctionUnitTest extends AbstractCairoTest {
                         2,
                         0,
                         MaxDoubleWindowFunctionFactory.GREATER_THAN,
-                        MaxDoubleWindowFunctionFactory.NAME
+                        MaxDoubleWindowFunctionFactory.NAME,
+                        null,
+                        false,
+                        null
                 ),
                 Double::max
         );
@@ -621,7 +624,10 @@ public class WindowFunctionUnitTest extends AbstractCairoTest {
                 configuration.getSqlWindowInitialRangeBufferSize(),
                 0,
                 MaxDoubleWindowFunctionFactory.GREATER_THAN,
-                MaxDoubleWindowFunctionFactory.NAME
+                MaxDoubleWindowFunctionFactory.NAME,
+                null,
+                false,
+                null
         );
         f.computeNext(TestDefaults.createRecord(columnTypes, (long) 1, 2, (long) 1));
         Assert.assertEquals(Double.NaN, f.getDouble(null), 0);
@@ -751,7 +757,10 @@ public class WindowFunctionUnitTest extends AbstractCairoTest {
                 2,
                 0,
                 MaxDoubleWindowFunctionFactory.GREATER_THAN,
-                MaxDoubleWindowFunctionFactory.NAME
+                MaxDoubleWindowFunctionFactory.NAME,
+                null,
+                false,
+                null
         );
         f.computeNext(TestDefaults.createRecord(columnTypes, (long) 1472, 6, (long) 1));
         f.computeNext(TestDefaults.createRecord(columnTypes, (long) 15169, 6, (long) 2));
@@ -775,7 +784,10 @@ public class WindowFunctionUnitTest extends AbstractCairoTest {
                 1024,
                 0,
                 MaxDoubleWindowFunctionFactory.GREATER_THAN,
-                MaxDoubleWindowFunctionFactory.NAME
+                MaxDoubleWindowFunctionFactory.NAME,
+                null,
+                false,
+                null
         );
         long a = -1930193130;
         long b = -1137976524;
@@ -806,7 +818,10 @@ public class WindowFunctionUnitTest extends AbstractCairoTest {
                         2,
                         0,
                         MinDoubleWindowFunctionFactory.LESS_THAN,
-                        MinDoubleWindowFunctionFactory.NAME
+                        MinDoubleWindowFunctionFactory.NAME,
+                        null,
+                        false,
+                        null
                 ),
                 Double::min
         );
@@ -826,7 +841,10 @@ public class WindowFunctionUnitTest extends AbstractCairoTest {
                 configuration.getSqlWindowInitialRangeBufferSize(),
                 0,
                 MinDoubleWindowFunctionFactory.LESS_THAN,
-                MinDoubleWindowFunctionFactory.NAME
+                MinDoubleWindowFunctionFactory.NAME,
+                null,
+                false,
+                null
         );
         f.computeNext(TestDefaults.createRecord(columnTypes, (long) 1, 2, (long) 1));
         Assert.assertEquals(Double.NaN, f.getDouble(null), 0);
@@ -956,7 +974,10 @@ public class WindowFunctionUnitTest extends AbstractCairoTest {
                 2,
                 0,
                 MinDoubleWindowFunctionFactory.LESS_THAN,
-                MinDoubleWindowFunctionFactory.NAME
+                MinDoubleWindowFunctionFactory.NAME,
+                null,
+                false,
+                null
         );
         f.computeNext(TestDefaults.createRecord(columnTypes, (long) 1472, 6, (long) 1));
         f.computeNext(TestDefaults.createRecord(columnTypes, (long) 15169, 6, (long) 2));
@@ -980,7 +1001,10 @@ public class WindowFunctionUnitTest extends AbstractCairoTest {
                 1024,
                 0,
                 MinDoubleWindowFunctionFactory.LESS_THAN,
-                MinDoubleWindowFunctionFactory.NAME
+                MinDoubleWindowFunctionFactory.NAME,
+                null,
+                false,
+                null
         );
         long a = -1930193130;
         long b = -1137976524;
