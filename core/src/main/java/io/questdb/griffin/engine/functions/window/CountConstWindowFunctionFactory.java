@@ -124,13 +124,15 @@ public class CountConstWindowFunctionFactory extends AbstractWindowFunctionFacto
 
                     int timestampIndex = windowContext.getTimestampIndex();
 
+                    final boolean liveView = windowContext.isLiveView();
                     Map map = null;
                     MemoryARW mem = null;
                     try {
                         map = MapFactory.createUnorderedMap(
                                 configuration,
                                 partitionByKeyTypes,
-                                CountFunctionFactoryHelper.COUNT_OVER_PARTITION_RANGE_COLUMN_TYPES
+                                liveView ? CountFunctionFactoryHelper.COUNT_OVER_PARTITION_RANGE_COLUMN_TYPES_LV
+                                        : CountFunctionFactoryHelper.COUNT_OVER_PARTITION_RANGE_COLUMN_TYPES
                         );
                         mem = Vm.getCARWInstance(
                                 configuration.getSqlWindowStorePageSize(),
@@ -149,7 +151,10 @@ public class CountConstWindowFunctionFactory extends AbstractWindowFunctionFacto
                                 configuration.getSqlWindowInitialRangeBufferSize(),
                                 timestampIndex,
                                 null,
-                                isRecordNotNull
+                                isRecordNotNull,
+                                partitionByKeyTypes,
+                                liveView,
+                                configuration
                         );
                     } catch (Throwable th) {
                         Misc.free(map);

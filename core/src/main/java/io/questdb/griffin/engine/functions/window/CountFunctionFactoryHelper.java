@@ -62,6 +62,7 @@ public class CountFunctionFactoryHelper {
     public static final ArrayColumnTypes COUNT_COLUMN_TYPES;
     public static final ArrayColumnTypes COUNT_COLUMN_TYPES_LV;
     public static final ArrayColumnTypes COUNT_OVER_PARTITION_RANGE_COLUMN_TYPES;
+    public static final ArrayColumnTypes COUNT_OVER_PARTITION_RANGE_COLUMN_TYPES_LV;
     public static final ArrayColumnTypes COUNT_OVER_PARTITION_ROWS_COLUMN_TYPES;
     public static final ArrayColumnTypes COUNT_OVER_PARTITION_ROWS_COLUMN_TYPES_LV;
     static final String COUNT_NAME = "count";
@@ -131,13 +132,15 @@ public class CountFunctionFactoryHelper {
 
                     int timestampIndex = windowContext.getTimestampIndex();
 
+                    final boolean liveView = windowContext.isLiveView();
                     Map map = null;
                     MemoryARW mem = null;
                     try {
                         map = MapFactory.createUnorderedMap(
                                 configuration,
                                 partitionByKeyTypes,
-                                CountFunctionFactoryHelper.COUNT_OVER_PARTITION_RANGE_COLUMN_TYPES
+                                liveView ? CountFunctionFactoryHelper.COUNT_OVER_PARTITION_RANGE_COLUMN_TYPES_LV
+                                        : CountFunctionFactoryHelper.COUNT_OVER_PARTITION_RANGE_COLUMN_TYPES
                         );
                         mem = Vm.getCARWInstance(
                                 configuration.getSqlWindowStorePageSize(),
@@ -156,7 +159,10 @@ public class CountFunctionFactoryHelper {
                                 configuration.getSqlWindowInitialRangeBufferSize(),
                                 timestampIndex,
                                 args.get(0),
-                                isRecordNotNull
+                                isRecordNotNull,
+                                partitionByKeyTypes,
+                                liveView,
+                                configuration
                         );
                     } catch (Throwable th) {
                         Misc.free(map);
@@ -398,17 +404,23 @@ public class CountFunctionFactoryHelper {
     public static class CountOverPartitionRangeFrameFunction extends BasePartitionedWindowFunction implements WindowLongFunction {
 
         private static final int RECORD_SIZE = Long.BYTES;
+        private final CairoConfiguration configuration;
         private final boolean frameIncludesCurrentValue;
         private final boolean frameLoBounded;
         private final LongList freeList = new LongList();
         private final int initialBufferSize;
         private final IsRecordNotNull isNotNullFunc;
+        private final ArrayColumnTypes keyColumnTypes;
+        private final boolean liveView;
+        private final ArrayColumnTypes mapValueTypes;
         private final long maxDiff;
         private final MemoryARW memory;
         private final AbstractWindowFunctionFactory.RingBufferDesc memoryDesc = new AbstractWindowFunctionFactory.RingBufferDesc();
         private final long minDiff;
         private final int timestampIndex;
+        private final int tombstoneValueIndex;
         private long count;
+        private long tombstoneCount;
 
         public CountOverPartitionRangeFrameFunction(
                 Map map,
@@ -420,7 +432,10 @@ public class CountFunctionFactoryHelper {
                 int initialBufferSize,
                 int timestampIdx,
                 Function arg,
-                IsRecordNotNull isNotNullFunc
+                IsRecordNotNull isNotNullFunc,
+                ColumnTypes partitionByKeyTypes,
+                boolean liveView,
+                CairoConfiguration configuration
         ) {
             super(map, partitionByRecord, partitionBySink, arg);
             frameLoBounded = rangeLo != Long.MIN_VALUE;
@@ -431,6 +446,25 @@ public class CountFunctionFactoryHelper {
             this.timestampIndex = timestampIdx;
             frameIncludesCurrentValue = rangeHi == 0;
             this.isNotNullFunc = isNotNullFunc;
+            this.liveView = liveView;
+            this.configuration = configuration;
+            if (liveView) {
+                ArrayColumnTypes keyTypesCopy = new ArrayColumnTypes();
+                for (int i = 0, n = partitionByKeyTypes.getColumnCount(); i < n; i++) {
+                    keyTypesCopy.add(partitionByKeyTypes.getColumnType(i));
+                }
+                this.keyColumnTypes = keyTypesCopy;
+                ArrayColumnTypes valueTypesCopy = new ArrayColumnTypes();
+                for (int i = 0, n = COUNT_OVER_PARTITION_RANGE_COLUMN_TYPES_LV.getColumnCount(); i < n; i++) {
+                    valueTypesCopy.add(COUNT_OVER_PARTITION_RANGE_COLUMN_TYPES_LV.getColumnType(i));
+                }
+                this.mapValueTypes = valueTypesCopy;
+                this.tombstoneValueIndex = 5;
+            } else {
+                this.keyColumnTypes = null;
+                this.mapValueTypes = null;
+                this.tombstoneValueIndex = -1;
+            }
         }
 
         @Override
@@ -557,6 +591,39 @@ public class CountFunctionFactoryHelper {
             mapValue.putLong(2, size);
             mapValue.putLong(3, capacity);
             mapValue.putLong(4, firstIdx);
+            if (tombstoneValueIndex >= 0 && mapValue.getByte(tombstoneValueIndex) != 0) {
+                mapValue.putByte(tombstoneValueIndex, (byte) 0);
+                tombstoneCount--;
+            }
+        }
+
+        @Override
+        public void compactPartitionMap() {
+            if (tombstoneValueIndex < 0 || tombstoneCount == 0) {
+                return;
+            }
+            Map scratch = MapFactory.createUnorderedMap(configuration, keyColumnTypes, mapValueTypes);
+            try {
+                MapRecordCursor cursor = map.getCursor();
+                MapRecord record = map.getRecord();
+                while (cursor.hasNext()) {
+                    MapValue srcValue = record.getValue();
+                    if (srcValue.getByte(tombstoneValueIndex) == 1) {
+                        continue;
+                    }
+                    long srcKeyHash = record.keyHashCode();
+                    MapKey dstKey = scratch.withKey();
+                    record.copyToKey(dstKey);
+                    MapValue dstValue = dstKey.createValue(srcKeyHash);
+                    record.copyValue(dstValue);
+                }
+                Misc.free(map);
+                map = scratch;
+                scratch = null;
+                tombstoneCount = 0;
+            } finally {
+                Misc.free(scratch);
+            }
         }
 
         @Override
@@ -574,6 +641,11 @@ public class CountFunctionFactoryHelper {
             return WindowFunction.ZERO_PASS;
         }
 
+        @Override
+        public Map getPartitionMap() {
+            return map;
+        }
+
 
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
@@ -586,6 +658,7 @@ public class CountFunctionFactoryHelper {
             super.reopen();
             // memory will allocate on first use
             this.count = 0;
+            tombstoneCount = 0;
         }
 
         @Override
@@ -593,6 +666,114 @@ public class CountFunctionFactoryHelper {
             super.reset();
             memory.close();
             freeList.clear();
+            tombstoneCount = 0;
+        }
+
+        @Override
+        public void resetPartition(Record record) {
+            // ANCHOR-driven reset (see Avg/Sum RANGE for context). Drop the
+            // partition's frame to empty; ring slot stays allocated.
+            partitionByRecord.of(record);
+            MapKey key = map.withKey();
+            key.put(partitionByRecord, partitionBySink);
+            MapValue value = key.findValue();
+            if (value != null) {
+                value.putLong(0, 0L);
+                // slot 1 (startOffset) stays.
+                value.putLong(2, 0L);
+                // slot 3 (capacity) stays.
+                value.putLong(4, 0L);
+                if (tombstoneValueIndex >= 0 && value.getByte(tombstoneValueIndex) == 0) {
+                    value.putByte(tombstoneValueIndex, (byte) 1);
+                    tombstoneCount++;
+                }
+            }
+        }
+
+        @Override
+        public void restore(MemoryR source, int formatVersion) {
+            map.clear();
+            memory.truncate();
+            freeList.clear();
+            tombstoneCount = 0;
+            long srcOffset = 0;
+            final long partitionCount = source.getLong(srcOffset);
+            srcOffset += Long.BYTES;
+            for (long p = 0; p < partitionCount; p++) {
+                MapKey key = map.withKey();
+                srcOffset = LiveViewSnapshotKeyCodec.readKey(key, source, srcOffset, keyColumnTypes);
+                MapValue value = key.createValue();
+                final long frameSize = source.getLong(srcOffset);
+                srcOffset += Long.BYTES;
+                final long size = source.getLong(srcOffset);
+                srcOffset += Long.BYTES;
+                final long capacity = Math.max(size, initialBufferSize);
+                final long newStartOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
+                for (long i = 0; i < size; i++) {
+                    memory.putLong(newStartOffset + i * RECORD_SIZE, source.getLong(srcOffset));
+                    srcOffset += Long.BYTES;
+                }
+                value.putLong(0, frameSize);
+                value.putLong(1, newStartOffset);
+                value.putLong(2, size);
+                value.putLong(3, capacity);
+                value.putLong(4, 0L);
+                if (tombstoneValueIndex >= 0) {
+                    value.putByte(tombstoneValueIndex, (byte) 0);
+                }
+            }
+        }
+
+        @Override
+        public void snapshot(MemoryA sink) {
+            MapRecordCursor cursor = map.getCursor();
+            MapRecord record = map.getRecord();
+            long liveCount = 0;
+            while (cursor.hasNext()) {
+                if (tombstoneValueIndex < 0 || record.getValue().getByte(tombstoneValueIndex) == 0) {
+                    liveCount++;
+                }
+            }
+            sink.putLong(liveCount);
+
+            cursor.toTop();
+            final int keyStartIndex = mapValueTypes != null
+                    ? mapValueTypes.getColumnCount()
+                    : COUNT_OVER_PARTITION_RANGE_COLUMN_TYPES.getColumnCount();
+            while (cursor.hasNext()) {
+                final MapValue value = record.getValue();
+                if (tombstoneValueIndex >= 0 && value.getByte(tombstoneValueIndex) != 0) {
+                    continue;
+                }
+                LiveViewSnapshotKeyCodec.writeKey(sink, record, keyColumnTypes, keyStartIndex);
+                sink.putLong(value.getLong(0));
+                final long startOffset = value.getLong(1);
+                final long size = value.getLong(2);
+                final long capacity = value.getLong(3);
+                final long firstIdx = value.getLong(4);
+                sink.putLong(size);
+                for (long i = 0; i < size; i++) {
+                    final long idx = (firstIdx + i) % capacity;
+                    sink.putLong(memory.getLong(startOffset + idx * RECORD_SIZE));
+                }
+            }
+        }
+
+        @Override
+        public int snapshotFormatVersion() {
+            return 1;
+        }
+
+        @Override
+        public int snapshotMinSupportedVersion() {
+            return 1;
+        }
+
+        @Override
+        public boolean supportsSnapshot() {
+            return liveView
+                    && keyColumnTypes != null
+                    && LiveViewSnapshotKeyCodec.isAllTypesSupported(keyColumnTypes);
         }
 
         @Override
@@ -626,6 +807,7 @@ public class CountFunctionFactoryHelper {
             super.toTop();
             memory.truncate();
             freeList.clear();
+            tombstoneCount = 0;
         }
     }
 
@@ -1569,6 +1751,14 @@ public class CountFunctionFactoryHelper {
         COUNT_OVER_PARTITION_RANGE_COLUMN_TYPES.add(ColumnType.LONG);  // native buffer size
         COUNT_OVER_PARTITION_RANGE_COLUMN_TYPES.add(ColumnType.LONG);  // native buffer capacity
         COUNT_OVER_PARTITION_RANGE_COLUMN_TYPES.add(ColumnType.LONG);  // index of first buffered element
+
+        COUNT_OVER_PARTITION_RANGE_COLUMN_TYPES_LV = new ArrayColumnTypes();
+        COUNT_OVER_PARTITION_RANGE_COLUMN_TYPES_LV.add(ColumnType.LONG);  // current frame count
+        COUNT_OVER_PARTITION_RANGE_COLUMN_TYPES_LV.add(ColumnType.LONG);  // native array start offset
+        COUNT_OVER_PARTITION_RANGE_COLUMN_TYPES_LV.add(ColumnType.LONG);  // native buffer size
+        COUNT_OVER_PARTITION_RANGE_COLUMN_TYPES_LV.add(ColumnType.LONG);  // native buffer capacity
+        COUNT_OVER_PARTITION_RANGE_COLUMN_TYPES_LV.add(ColumnType.LONG);  // index of first buffered element
+        COUNT_OVER_PARTITION_RANGE_COLUMN_TYPES_LV.add(ColumnType.BYTE);  // tombstone (anchor-driven compaction)
 
         COUNT_OVER_PARTITION_ROWS_COLUMN_TYPES = new ArrayColumnTypes();
         COUNT_OVER_PARTITION_ROWS_COLUMN_TYPES.add(ColumnType.LONG);  // count

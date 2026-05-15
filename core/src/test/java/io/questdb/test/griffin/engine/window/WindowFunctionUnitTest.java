@@ -216,7 +216,10 @@ public class WindowFunctionUnitTest extends AbstractCairoTest {
                         2,
                         0,
                         TestDefaults.createLongFunction(x -> x.getLong(2)),
-                        CountDoubleWindowFunctionFactory.isRecordNotNull
+                        CountDoubleWindowFunctionFactory.isRecordNotNull,
+                        null,
+                        false,
+                        null
                 ),
                 Long::sum,
                 CountDoubleWindowFunctionFactory.isRecordNotNull
