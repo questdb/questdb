@@ -3113,6 +3113,18 @@ public class IODispatcherTest extends AbstractTest {
     }
 
     @Test
+    public void testJsonQueryCharNullIsEmptyString() throws Exception {
+        getSimpleTester().run((engine, _) -> {
+            engine.execute("create table x (c char)");
+            engine.execute("insert into x values (null)");
+            testHttpClient.assertGet(
+                    "{\"query\":\"select c from x\",\"columns\":[{\"name\":\"c\",\"type\":\"CHAR\"}],\"timestamp\":-1,\"dataset\":[[\"\"]],\"count\":1}",
+                    "select c from x"
+            );
+        });
+    }
+
+    @Test
     public void testJsonQueryCommentOnlyMultiline_apiV2() throws Exception {
         String expectedErrorResponse = """
                 HTTP/1.1 200 OK\r
