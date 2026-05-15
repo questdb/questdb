@@ -262,14 +262,15 @@ public class QwpWalAppender implements QuietCloseable {
     }
 
     /**
-     * Maps a QWP v1 type code to QuestDB column type, with cursor access for decimal scale.
+     * Maps a QWP v1 type code to QuestDB column type, folding per-column metadata
+     * (decimal scale, geohash bit precision) from the cursor when needed.
      *
      * @param qwpType    QWP v1 type code
-     * @param tableBlock table block cursor for accessing decimal scale
+     * @param tableBlock table block cursor positioned on the column
      * @param colIndex   column index
-     * @return QuestDB column type
+     * @return QuestDB column type, or {@link ColumnType#UNDEFINED} if cursor metadata is out of range
      */
-    private static int mapQwpTypeToQuestDB(int qwpType, QwpTableBlockCursor tableBlock, int colIndex) {
+    public static int mapQwpTypeToQuestDB(int qwpType, QwpTableBlockCursor tableBlock, int colIndex) {
         switch (qwpType) {
             case TYPE_DECIMAL64 -> {
                 int scale = tableBlock.getDecimalColumn(colIndex).getScale() & 0xFF;
