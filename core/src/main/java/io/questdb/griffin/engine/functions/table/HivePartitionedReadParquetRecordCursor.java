@@ -207,11 +207,18 @@ public class HivePartitionedReadParquetRecordCursor implements NoRandomAccessRec
         if (partitionCount == 0) {
             return;
         }
-        final int n = filePath.size();
-        int segStart = Math.min(nonGlobRootLen, n);
-        while (segStart < n) {
+        // Walk DIRECTORY segments only - the filename is intentionally excluded so a
+        // name like 'foo=bar.parquet' isn't misread as a partition. Mirrors the
+        // boundary applied by ReadParquetFunctionFactory.parsePartitionColumns at
+        // planning time.
+        final int dirEnd = lastPathSeparator(filePath, nonGlobRootLen);
+        if (dirEnd < 0) {
+            return;
+        }
+        int segStart = Math.min(nonGlobRootLen, dirEnd);
+        while (segStart < dirEnd) {
             int segEnd = segStart;
-            while (segEnd < n) {
+            while (segEnd < dirEnd) {
                 byte b = filePath.byteAt(segEnd);
                 if (b == '/' || b == Files.SEPARATOR) {
                     break;
@@ -248,11 +255,21 @@ public class HivePartitionedReadParquetRecordCursor implements NoRandomAccessRec
                     storePartitionValue(matchedIdx, filePath, eqIdx + 1, segEnd);
                 }
             }
-            if (segEnd >= n) {
+            if (segEnd >= dirEnd) {
                 break;
             }
             segStart = segEnd + 1;
         }
+    }
+
+    private static int lastPathSeparator(Utf8Sequence path, int from) {
+        for (int i = path.size() - 1; i >= from; i--) {
+            byte b = path.byteAt(i);
+            if (b == '/' || b == Files.SEPARATOR) {
+                return i;
+            }
+        }
+        return -1;
     }
 
     private void storePartitionValue(int idx, Utf8Sequence filePath, int lo, int hi) {

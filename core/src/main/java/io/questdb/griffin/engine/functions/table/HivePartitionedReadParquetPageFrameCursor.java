@@ -966,12 +966,20 @@ public class HivePartitionedReadParquetPageFrameCursor implements PageFrameCurso
         if (partitionColumnCount == 0) {
             return;
         }
-        final int n = filePath.size();
-        int segStart = Math.min(nonGlobRootLen, n);
+        // Walk DIRECTORY segments only - the filename (last segment) is intentionally
+        // excluded so a name like 'foo=bar.parquet' is never misread as a partition.
+        // ReadParquetFunctionFactory.parsePartitionColumns applies the same boundary
+        // at planning time; the two must agree or planning and runtime would disagree
+        // on what columns the path produces.
+        final int dirEnd = lastPathSeparator(filePath, nonGlobRootLen);
+        if (dirEnd < 0) {
+            return;
+        }
+        int segStart = Math.min(nonGlobRootLen, dirEnd);
         final StringSink sink = Misc.getThreadLocalSink();
-        while (segStart < n) {
+        while (segStart < dirEnd) {
             int segEnd = segStart;
-            while (segEnd < n) {
+            while (segEnd < dirEnd) {
                 byte b = filePath.byteAt(segEnd);
                 if (b == '/' || b == Files.SEPARATOR) {
                     break;
@@ -1023,11 +1031,27 @@ public class HivePartitionedReadParquetPageFrameCursor implements PageFrameCurso
                     }
                 }
             }
-            if (segEnd >= n) {
+            if (segEnd >= dirEnd) {
                 break;
             }
             segStart = segEnd + 1;
         }
+    }
+
+    /**
+     * Returns the byte offset of the last directory separator in {@code path} at or
+     * after {@code from}, or -1 if none. Mirrors
+     * {@link ReadParquetFunctionFactory#lastPathSeparator} - the two must agree so
+     * planning and runtime see the same set of partition-producing segments.
+     */
+    private static int lastPathSeparator(Utf8Sequence path, int from) {
+        for (int i = path.size() - 1; i >= from; i--) {
+            byte b = path.byteAt(i);
+            if (b == '/' || b == Files.SEPARATOR) {
+                return i;
+            }
+        }
+        return -1;
     }
 
     private long parseTyped(CharSequence cs, int columnType) throws NumericException {

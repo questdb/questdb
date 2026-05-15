@@ -29,6 +29,7 @@ import io.questdb.cairo.TableReader;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.engine.functions.table.ReadParquetFunctionFactory;
 import io.questdb.griffin.engine.table.ParquetRowGroupFilter;
 import io.questdb.griffin.engine.table.parquet.ParquetCompression;
 import io.questdb.griffin.engine.table.parquet.ParquetVersion;
@@ -1083,6 +1084,72 @@ public class HivePartitionedReadParquetFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTildeExpansionResolvesAgainstUserHome() {
+        // Unit test for ReadParquetFunctionFactory.expandHomeDir(). Validates the
+        // helper that lets users write read_parquet('~/data/foo.parquet'). The
+        // expanded path still has to live under sql.copy.input.root - this is a
+        // resolution convenience, not a sandbox bypass.
+        final String savedHome = System.getProperty("user.home");
+        try {
+            System.setProperty("user.home", "/test/home/qdb");
+            // '~/foo.parquet' -> '/test/home/qdb/foo.parquet'
+            CharSequence expanded = ReadParquetFunctionFactory.expandHomeDir("~/foo.parquet");
+            Assert.assertEquals("/test/home/qdb/foo.parquet", expanded.toString());
+            // Bare '~' resolves to the home directory itself.
+            CharSequence bare = ReadParquetFunctionFactory.expandHomeDir("~");
+            Assert.assertEquals("/test/home/qdb", bare.toString());
+            // '~user/...' (other-user expansion) is intentionally NOT expanded - we
+            // pass through and let the sandbox check reject it consistently.
+            CharSequence other = ReadParquetFunctionFactory.expandHomeDir("~root/x");
+            Assert.assertEquals("~root/x", other.toString());
+            // Paths that don't start with '~' pass through unchanged.
+            CharSequence plain = ReadParquetFunctionFactory.expandHomeDir("/abs/path/x");
+            Assert.assertEquals("/abs/path/x", plain.toString());
+            CharSequence rel = ReadParquetFunctionFactory.expandHomeDir("rel/x");
+            Assert.assertEquals("rel/x", rel.toString());
+            // Empty / null inputs round-trip unchanged.
+            Assert.assertEquals("", ReadParquetFunctionFactory.expandHomeDir("").toString());
+            Assert.assertNull(ReadParquetFunctionFactory.expandHomeDir(null));
+        } finally {
+            if (savedHome != null) {
+                System.setProperty("user.home", savedHome);
+            } else {
+                System.clearProperty("user.home");
+            }
+        }
+    }
+
+    @Test
+    public void testFilenameWithEqualsNotMisinterpretedAsPartition() throws Exception {
+        // Hive convention puts partitions in DIRECTORY names. A file named
+        // 'foo=bar.parquet' is a real file name that happens to contain '=', not a
+        // partition. The partition parser must walk only directory segments and skip
+        // the last (filename) segment so the schema doesn't sprout a spurious 'foo'
+        // column. Both the planning-time parser and the cursor-time parser must
+        // agree on this or the query would crash on column-count mismatch.
+        assertMemoryLeak(() -> {
+            execute("create table src as (select cast(x as int) as id from long_sequence(2))");
+            writeParquet("fneq/day=2026-06-01/foo=bar.parquet", "src");
+
+            // Schema should only have id + day. NO 'foo' column.
+            assertQueryNoLeakCheck(
+                    "id\tday\n" +
+                            "1\t2026-06-01T00:00:00.000Z\n" +
+                            "2\t2026-06-01T00:00:00.000Z\n",
+                    "select id, day from read_parquet('fneq/day=*/foo=bar.parquet') order by id",
+                    null, true, true
+            );
+            // Confirm 'foo' really doesn't exist by selecting it explicitly.
+            try {
+                execute("select foo from read_parquet('fneq/day=*/foo=bar.parquet')");
+                Assert.fail("expected SqlException - foo should not be exposed as a column");
+            } catch (SqlException expected) {
+                TestUtils.assertContains(expected.getFlyweightMessage(), "Invalid column");
+            }
+        });
+    }
+
+    @Test
     public void testProjectionPushdownPartitionColumnOnly() throws Exception {
         // SqlCodeGenerator pushes the {day} projection down through the hive factory.
         // The cursor's columnMapping then references only the partition virtual column
@@ -1133,6 +1200,144 @@ public class HivePartitionedReadParquetFunctionTest extends AbstractCairoTest {
                     null,
                     true,
                     true
+            );
+        });
+    }
+
+    @Test
+    public void testCachedListReuseAcrossMultipleExecutions() throws Exception {
+        // The factory caches matchedFiles once at planning time. Reusing the same
+        // factory across many getCursor() calls must produce identical results - any
+        // accidental mutation of the cached list (e.g. by the cursor freeing it on
+        // close) would manifest as the second pass returning a different / empty
+        // result or NPE'ing.
+        assertMemoryLeak(() -> {
+            execute("create table src as (select cast(x as int) as id from long_sequence(3))");
+            writeParquet("creuse/day=2026-07-01/data.parquet", "src");
+            writeParquet("creuse/day=2026-07-02/data.parquet", "src");
+
+            try (SqlCompiler compiler = engine.getSqlCompiler();
+                 RecordCursorFactory factory = compiler.compile(
+                         "select id, day from read_parquet('creuse/day=*/data.parquet') order by day, id",
+                         sqlExecutionContext
+                 ).getRecordCursorFactory()) {
+                final String expected = "id\tday\n" +
+                        "1\t2026-07-01T00:00:00.000Z\n" +
+                        "2\t2026-07-01T00:00:00.000Z\n" +
+                        "3\t2026-07-01T00:00:00.000Z\n" +
+                        "1\t2026-07-02T00:00:00.000Z\n" +
+                        "2\t2026-07-02T00:00:00.000Z\n" +
+                        "3\t2026-07-02T00:00:00.000Z\n";
+                for (int i = 0; i < 5; i++) {
+                    assertCursor(expected, factory, true, true, false, sqlExecutionContext);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testCachedListSnapshotsAtCompileTime() throws Exception {
+        // matchedFiles is built at planning time. Files added AFTER the factory is
+        // compiled must not appear in subsequent executions of the same factory -
+        // the query result is a snapshot pinned to compile-time directory state.
+        // This is the same semantics QuestDB applies to table metadata.
+        assertMemoryLeak(() -> {
+            execute("create table src as (select cast(x as int) as id from long_sequence(2))");
+            writeParquet("csnap/day=2026-08-01/data.parquet", "src");
+
+            try (SqlCompiler compiler = engine.getSqlCompiler();
+                 RecordCursorFactory factory = compiler.compile(
+                         "select count(*) from read_parquet('csnap/day=*/data.parquet')",
+                         sqlExecutionContext
+                 ).getRecordCursorFactory()) {
+                assertCursor("count\n2\n", factory, false, true, false, sqlExecutionContext);
+                // Drop a new partition into the same glob. The next execution must still
+                // see the original 2-row total - the cached file list isn't refreshed.
+                writeParquet("csnap/day=2026-08-02/data.parquet", "src");
+                assertCursor("count\n2\n", factory, false, true, false, sqlExecutionContext);
+            }
+            // A freshly compiled factory does pick up the new file - cache is per-compile,
+            // not global.
+            assertQueryNoLeakCheck(
+                    "count\n4\n",
+                    "select count(*) from read_parquet('csnap/day=*/data.parquet')",
+                    null, false, true
+            );
+        });
+    }
+
+    @Test
+    public void testCachedListDeletedFileRaisesClearError() throws Exception {
+        // matchedFiles points at paths the planner saw. If one of them is removed
+        // before iteration the cursor's per-file openRO must surface a clear
+        // CairoException naming the missing path, not crash or silently skip it.
+        assertMemoryLeak(() -> {
+            execute("create table src as (select cast(x as int) as id from long_sequence(2))");
+            writeParquet("cdel/day=2026-09-01/data.parquet", "src");
+            writeParquet("cdel/day=2026-09-02/data.parquet", "src");
+
+            try (SqlCompiler compiler = engine.getSqlCompiler();
+                 RecordCursorFactory factory = compiler.compile(
+                         "select id from read_parquet('cdel/day=*/data.parquet')",
+                         sqlExecutionContext
+                 ).getRecordCursorFactory()) {
+                // Remove one of the files between planning and execution.
+                final FilesFacade ff = engine.getConfiguration().getFilesFacade();
+                try (Path p = new Path()) {
+                    p.of(root).concat("cdel/day=2026-09-02/data.parquet").$();
+                    Assert.assertTrue("delete should succeed", ff.removeQuiet(p.$()));
+                }
+                try (io.questdb.cairo.sql.RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    while (cursor.hasNext()) {
+                        cursor.getRecord().getInt(0);
+                    }
+                    Assert.fail("expected CairoException - cached path no longer exists");
+                } catch (io.questdb.cairo.CairoException expected) {
+                    TestUtils.assertContains(expected.getFlyweightMessage(), "could not open");
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testAllFilesPrunedByPartitionFilterReturnsEmpty() throws Exception {
+        // Every file pruned out by the partition-level filter. Cursor must produce
+        // zero rows cleanly - no crash, no leftover state. count(*) verifies via
+        // the size()-driven path; the row scan verifies via the iteration path.
+        assertMemoryLeak(() -> {
+            execute("create table src as (select cast(x as int) as id from long_sequence(3))");
+            writeParquet("callp/day=2026-10-01/data.parquet", "src");
+            writeParquet("callp/day=2026-10-02/data.parquet", "src");
+
+            assertQueryNoLeakCheck(
+                    "count\n0\n",
+                    "select count(*) from read_parquet('callp/day=*/data.parquet') where day = '2027-01-01'",
+                    null, false, true
+            );
+            assertQueryNoLeakCheck(
+                    "id\n",
+                    "select id from read_parquet('callp/day=*/data.parquet') where day > '2030-01-01' order by id",
+                    null, true, false
+            );
+        });
+    }
+
+    @Test
+    public void testSizeBeforeIterationUsesCachedList() throws Exception {
+        // computeTotalRowCount is invoked by size() / calculateSize when called before
+        // next() has driven iteration. It walks matchedFiles directly (no fresh glob
+        // enumeration). This test exercises that path: count(*) on a glob factory
+        // compiles to a path that asks for size() up front.
+        assertMemoryLeak(() -> {
+            execute("create table src as (select cast(x as int) as id from long_sequence(7))");
+            writeParquet("csz/day=2026-11-01/data.parquet", "src");
+            writeParquet("csz/day=2026-11-02/data.parquet", "src");
+            writeParquet("csz/day=2026-11-03/data.parquet", "src");
+
+            assertQueryNoLeakCheck(
+                    "count\n21\n",
+                    "select count(*) from read_parquet('csz/day=*/data.parquet')",
+                    null, false, true
             );
         });
     }

@@ -258,12 +258,20 @@ public class ReadParquetFunctionFactory implements FunctionFactory {
             ObjList<String> outNames,
             IntList outTypes
     ) {
+        // Only walk DIRECTORY segments between rootLen and the last path separator.
+        // Hive convention puts partitions in directory names; a filename like
+        // 'foo=bar.parquet' is not a partition (foo / bar.parquet) - it's a literal
+        // file name that happens to contain '='. Skipping the filename here avoids
+        // that misclassification across every hive read.
+        final int dirEnd = lastPathSeparator(path, rootLen);
+        if (dirEnd < 0) {
+            return;
+        }
         final StringSink keySink = Misc.getThreadLocalSink();
-        final int n = path.size();
-        int segStart = Math.min(rootLen, n);
-        while (segStart < n) {
+        int segStart = Math.min(rootLen, dirEnd);
+        while (segStart < dirEnd) {
             int segEnd = segStart;
-            while (segEnd < n) {
+            while (segEnd < dirEnd) {
                 byte b = path.byteAt(segEnd);
                 if (b == '/' || b == Files.SEPARATOR) {
                     break;
@@ -295,11 +303,28 @@ public class ReadParquetFunctionFactory implements FunctionFactory {
                     }
                 }
             }
-            if (segEnd >= n) {
+            if (segEnd >= dirEnd) {
                 break;
             }
             segStart = segEnd + 1;
         }
+    }
+
+    /**
+     * Returns the byte offset of the last {@code /} or {@link Files#SEPARATOR} in
+     * {@code path} at or after {@code rootLen}, i.e. the separator that closes the
+     * last directory segment before the filename. Returns -1 if there is none -
+     * the path has no directory segments between {@code rootLen} and the end and
+     * the partition parser should bail out.
+     */
+    static int lastPathSeparator(Utf8Sequence path, int rootLen) {
+        for (int i = path.size() - 1; i >= rootLen; i--) {
+            byte b = path.byteAt(i);
+            if (b == '/' || b == Files.SEPARATOR) {
+                return i;
+            }
+        }
+        return -1;
     }
 
     private static int demoteTypeToFit(Utf8Sequence path, int lo, int hi, int currentType) {
@@ -371,6 +396,13 @@ public class ReadParquetFunctionFactory implements FunctionFactory {
         if (Chars.isBlank(filePath)) {
             throw SqlException.$(position, "parquet file path pattern is empty");
         }
+        // Expand a leading ~ / ~/ to the JVM's user.home before any further check, so
+        // the sandbox check below sees the resolved absolute path. This matches
+        // DuckDB's behaviour and gives users a portable shorthand for paths under
+        // their home directory. Bare `~` or `~/...` only - we don't support `~user/`
+        // (other-user expansion) since that opens questions about which user's home
+        // is meant when the server runs as a service account.
+        filePath = expandHomeDir(filePath);
         if (Chars.contains(filePath, "../") || Chars.contains(filePath, "..\\")) {
             throw SqlException.$(position, "relative path is not allowed");
         }
@@ -393,5 +425,44 @@ public class ReadParquetFunctionFactory implements FunctionFactory {
             }
         }
         path.of(sqlCopyInputRoot).concat(filePath);
+    }
+
+    /**
+     * Expands a leading {@code ~} or {@code ~/} in {@code filePath} to the JVM's
+     * {@code user.home} system property. Returns the original sequence unchanged if
+     * no expansion applies. {@code ~user/} (other-user home) is not supported -
+     * such a path is returned as-is and will fail the sandbox check downstream.
+     * <p>
+     * The expansion happens BEFORE the sandbox check, so the expanded path still has
+     * to live under {@code sql.copy.input.root} - this is a path-resolution
+     * convenience, not a sandbox bypass.
+     */
+    public static CharSequence expandHomeDir(CharSequence filePath) {
+        if (filePath == null || filePath.length() == 0 || filePath.charAt(0) != '~') {
+            return filePath;
+        }
+        // Single '~' or '~' immediately followed by a path separator.
+        final int len = filePath.length();
+        if (len > 1) {
+            char c = filePath.charAt(1);
+            if (c != '/' && c != Files.SEPARATOR) {
+                // '~something' that isn't '~/' - leave as-is so the sandbox check rejects
+                // it consistently rather than guessing at user-name resolution.
+                return filePath;
+            }
+        }
+        String home = System.getProperty("user.home");
+        if (home == null || home.isEmpty()) {
+            return filePath;
+        }
+        StringSink sink = new StringSink();
+        sink.put(home);
+        // Drop the leading '~'. For '~/foo' this yields home + '/foo'. For bare '~' it's
+        // just home. For '~' followed by Files.SEPARATOR we still consume that '~' and
+        // keep the separator so the join is clean.
+        for (int i = 1; i < len; i++) {
+            sink.put(filePath.charAt(i));
+        }
+        return sink;
     }
 }
