@@ -56,6 +56,22 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
         of(configuration, path, name, columnNameTxn, partitionTxn, columnTop, metadata, columnVersionReader, partitionTimestamp);
     }
 
+    public PostingIndexBwdReader(
+            CairoConfiguration configuration,
+            Path path,
+            CharSequence name,
+            long columnNameTxn,
+            long partitionTxn,
+            long columnTop,
+            RecordMetadata metadata,
+            ColumnVersionReader columnVersionReader,
+            long partitionTimestamp,
+            long pinnedTableTxn
+    ) {
+        setPinnedTableTxn(pinnedTableTxn);
+        of(configuration, path, name, columnNameTxn, partitionTxn, columnTop, metadata, columnVersionReader, partitionTimestamp);
+    }
+
     @Override
     public void close() {
         super.close();

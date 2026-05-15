@@ -3403,6 +3403,14 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                             indexWriter.setMaxValue(newPartitionSize - 1);
                         }
 
+                        // Tag the chain entry with the upcoming txn so that if
+                        // the surrounding O3 / parquet-rewrite path crashes
+                        // before txWriter.commit lands, recoveryDropAbandoned
+                        // on the next writer-open drops this entry. Without
+                        // the tag, slot[0].TXN_AT_SEAL defaults to 0 and the
+                        // entry would be undroppable, surfacing stale rows.
+                        // No-op on BitmapIndexWriter.
+                        indexWriter.setNextTxnAtSeal(tableWriter.getTxn() + 1L);
                         if (IndexType.isPosting(indexType)) {
                             indexWriter.commitDense();
                         } else {

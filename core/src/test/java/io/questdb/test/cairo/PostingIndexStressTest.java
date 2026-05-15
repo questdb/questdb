@@ -2115,7 +2115,7 @@ public class PostingIndexStressTest extends AbstractCairoTest {
                 final int plen = path.size();
                 String name = "auto_seal_max";
 
-                int batchCount = PostingIndexUtils.MAX_GEN_COUNT + 1; // 168
+                int batchCount = PostingIndexUtils.MAX_GEN_COUNT + 1;
 
                 try (PostingIndexWriter writer = new PostingIndexWriter(configuration, path, name, COLUMN_NAME_TXN_NONE)) {
                     for (int batch = 0; batch < batchCount; batch++) {
@@ -2129,8 +2129,9 @@ public class PostingIndexStressTest extends AbstractCairoTest {
 
                     // After MAX_GEN_COUNT+1 commits, auto-seal should have triggered,
                     // reducing genCount back to 1 (sealed) plus any commits after seal.
-                    // The auto-seal fires at genCount > MAX_GEN_COUNT, so after the 168th
-                    // commit genCount becomes 168 > 167, triggering seal() which sets it to 1.
+                    // The auto-seal fires at genCount >= MAX_GEN_COUNT, so after the
+                    // (MAX_GEN_COUNT+1)-th commit genCount triggers seal() which sets it
+                    // back to 1.
                     Assert.assertTrue(
                             "genCount should be <= MAX_GEN_COUNT after auto-seal, was " + writer.getGenCount(),
                             writer.getGenCount() <= PostingIndexUtils.MAX_GEN_COUNT);

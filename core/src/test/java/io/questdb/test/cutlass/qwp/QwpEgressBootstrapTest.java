@@ -683,7 +683,7 @@ public class QwpEgressBootstrapTest extends AbstractBootstrapTest {
     }
 
     /**
-     * Spec {@code docs/QWP_EGRESS_EXTENSION.md:278-279} requires the server to send
+     * Spec {@code docs/qwp/wire-egress.md:278-279} requires the server to send
      * one RESULT_BATCH with row_count = 0 on every empty result, including when the
      * schema id is reused from an earlier query on the same connection. Otherwise
      * the client's per-query onBatch callback never fires and downstream consumers
@@ -1680,7 +1680,7 @@ public class QwpEgressBootstrapTest extends AbstractBootstrapTest {
     }
 
     /**
-     * C1: spec divergence on symbol dictionaries. {@code docs/QWP_EGRESS_EXTENSION.md}
+     * C1: spec divergence on symbol dictionaries. {@code docs/qwp/wire-egress.md}
      * sec 12 says egress uses connection-scoped delta dictionaries; the Phase-1 implementation
      * sends an inline per-batch dict every time. This test pins the actual wire behavior
      * so spec or implementation drift gets caught loudly.
