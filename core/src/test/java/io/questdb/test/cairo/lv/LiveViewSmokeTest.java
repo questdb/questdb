@@ -3389,6 +3389,355 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testO3HeadMissReplaysFromLowerBound() throws Exception {
+        // Phase 2a.8: an O3 row with ts strictly below the head's maxTimestamp
+        // forces a head-miss replay. The path resets every window-function map,
+        // wipes the anchor map, scans the base TableReader from
+        // viewLowerBoundTimestamp through advanceTo, emits a single REPLACE_RANGE
+        // commit, and writes a fresh head reflecting the post-replay state.
+        // After the dust settles the LV output reads the cumulative sum across
+        // all rows in ts order - matching what the non-incremental SELECT
+        // against the base would produce.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+                    "SELECT ts, sym, sum(x) OVER w AS s FROM base " +
+                    "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                setCurrentMicros(0L);
+                execute("INSERT INTO base (ts, sym, x) VALUES " +
+                        "('2026-11-01T00:00:10.000000Z', 'a', 1.0), " +
+                        "('2026-11-01T00:00:20.000000Z', 'a', 2.0)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull(lv);
+                final long preO3HeadLvSeqTxn = lv.getHeadCheckpointLvSeqTxn();
+                Assert.assertNotEquals(Numbers.LONG_NULL, preO3HeadLvSeqTxn);
+                Assert.assertEquals(
+                        MicrosFormatUtils.parseUTCTimestamp("2026-11-01T00:00:20.000000Z"),
+                        lv.getHeadCheckpointMaxTs()
+                );
+
+                // Drop an O3 row at ts strictly below headMaxTs. lateRowTs=05
+                // < headMaxTs=20 - head-miss eligibility is the only path.
+                setCurrentMicros(200_000L);
+                execute("INSERT INTO base (ts, sym, x) VALUES " +
+                        "('2026-11-01T00:00:05.000000Z', 'a', 3.0)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                // Post-replay LV output is the cumulative sum across all three
+                // rows in ts-ascending order: 3 -> 3+1=4 -> 4+2=6.
+                assertSql(
+                        "ts\tsym\ts\n" +
+                                "2026-11-01T00:00:05.000000Z\ta\t3.0\n" +
+                                "2026-11-01T00:00:10.000000Z\ta\t4.0\n" +
+                                "2026-11-01T00:00:20.000000Z\ta\t6.0\n",
+                        "SELECT ts, sym, s FROM lv ORDER BY ts"
+                );
+
+                // A fresh head has landed at a new lvSeqTxn, the prior one is
+                // gone on disk.
+                Assert.assertNotEquals(preO3HeadLvSeqTxn, lv.getHeadCheckpointLvSeqTxn());
+                Assert.assertNotEquals(Numbers.LONG_NULL, lv.getHeadCheckpointLvSeqTxn());
+            }
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testO3HeadHitReplaysFromHead() throws Exception {
+        // Phase 2a.8: an O3 row with ts > head.maxTimestamp drops into the
+        // head-hit branch. State rolls back to the head's snapshot moment
+        // (restoreFromHead populates anchor + function maps), the replay
+        // scans only the rows past head.maxTimestamp, and emits a single
+        // REPLACE_RANGE commit covering (head.maxTimestamp, +inf). LV
+        // output afterwards is the cumulative sum across all rows in
+        // ts-ascending order.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+                    "SELECT ts, sym, sum(x) OVER w AS s FROM base " +
+                    "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                // Batch 1: two rows. Drain writes a head at maxTs=20.
+                setCurrentMicros(0L);
+                execute("INSERT INTO base (ts, sym, x) VALUES " +
+                        "('2026-11-01T00:00:10.000000Z', 'a', 1.0), " +
+                        "('2026-11-01T00:00:20.000000Z', 'a', 2.0)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull(lv);
+                final long preO3HeadLvSeqTxn = lv.getHeadCheckpointLvSeqTxn();
+                Assert.assertNotEquals(Numbers.LONG_NULL, preO3HeadLvSeqTxn);
+                Assert.assertEquals(
+                        MicrosFormatUtils.parseUTCTimestamp("2026-11-01T00:00:20.000000Z"),
+                        lv.getHeadCheckpointMaxTs()
+                );
+
+                // Batch 2: two more rows in WAL order. Cadence triggers
+                // (default 1M rows / 5 min) do not fire, so the head
+                // metadata still points at the batch-1 head.
+                setCurrentMicros(150_000L);
+                execute("INSERT INTO base (ts, sym, x) VALUES " +
+                        "('2026-11-01T00:00:30.000000Z', 'a', 3.0), " +
+                        "('2026-11-01T00:00:40.000000Z', 'a', 4.0)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                Assert.assertEquals(
+                        "head metadata unchanged after batch 2 (cadence did not fire)",
+                        preO3HeadLvSeqTxn,
+                        lv.getHeadCheckpointLvSeqTxn()
+                );
+                Assert.assertEquals(
+                        MicrosFormatUtils.parseUTCTimestamp("2026-11-01T00:00:40.000000Z"),
+                        lv.getLatestSeenTs()
+                );
+
+                // O3 row at ts=25 sits strictly between headMaxTs=20 and
+                // latestSeenTs=40, so head-hit eligibility applies
+                // (headMaxTs <= lateRowTs).
+                setCurrentMicros(400_000L);
+                execute("INSERT INTO base (ts, sym, x) VALUES " +
+                        "('2026-11-01T00:00:25.000000Z', 'a', 5.0)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                // Post-replay output: cumulative sum across all five rows
+                // ordered by ts.
+                assertSql(
+                        "ts\tsym\ts\n" +
+                                "2026-11-01T00:00:10.000000Z\ta\t1.0\n" +
+                                "2026-11-01T00:00:20.000000Z\ta\t3.0\n" +
+                                "2026-11-01T00:00:25.000000Z\ta\t8.0\n" +
+                                "2026-11-01T00:00:30.000000Z\ta\t11.0\n" +
+                                "2026-11-01T00:00:40.000000Z\ta\t15.0\n",
+                        "SELECT ts, sym, s FROM lv ORDER BY ts"
+                );
+
+                Assert.assertNotEquals(preO3HeadLvSeqTxn, lv.getHeadCheckpointLvSeqTxn());
+                Assert.assertNotEquals(Numbers.LONG_NULL, lv.getHeadCheckpointLvSeqTxn());
+                Assert.assertEquals(
+                        "post-replay head maxTs reflects max row in replay output",
+                        MicrosFormatUtils.parseUTCTimestamp("2026-11-01T00:00:40.000000Z"),
+                        lv.getHeadCheckpointMaxTs()
+                );
+            }
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testO3StormAtFixedHorizon() throws Exception {
+        // Phase 2a.8: repeated O3 rows at the same historical horizon (well
+        // below headMaxTs) fall into the head-miss path each time per RFC 123
+        // §"O3 storms at a fixed historical horizon". Every event triggers a
+        // full replay from viewLowerBoundTimestamp and writes one fresh head.
+        // After three such events the LV output reflects all rows in ts order.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+                    "SELECT ts, sym, sum(x) OVER w AS s FROM base " +
+                    "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                setCurrentMicros(0L);
+                execute("INSERT INTO base (ts, sym, x) VALUES " +
+                        "('2026-11-01T00:00:50.000000Z', 'a', 1.0)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull(lv);
+                long lastHeadLvSeqTxn = lv.getHeadCheckpointLvSeqTxn();
+                Assert.assertNotEquals(Numbers.LONG_NULL, lastHeadLvSeqTxn);
+
+                String[] o3Inserts = new String[]{
+                        "('2026-11-01T00:00:05.000000Z', 'a', 2.0)",
+                        "('2026-11-01T00:00:06.000000Z', 'a', 3.0)",
+                        "('2026-11-01T00:00:07.000000Z', 'a', 4.0)",
+                };
+                long microtime = 200_000L;
+                for (int i = 0; i < o3Inserts.length; i++) {
+                    setCurrentMicros(microtime);
+                    execute("INSERT INTO base (ts, sym, x) VALUES " + o3Inserts[i]);
+                    drainWalQueue();
+                    drainJob(job);
+                    drainWalQueue();
+                    microtime += 200_000L;
+
+                    // Each storm event writes a fresh head with a new lvSeqTxn.
+                    long head = lv.getHeadCheckpointLvSeqTxn();
+                    Assert.assertNotEquals("storm event #" + i + " did not refresh the head", lastHeadLvSeqTxn, head);
+                    Assert.assertNotEquals(Numbers.LONG_NULL, head);
+                    lastHeadLvSeqTxn = head;
+                }
+
+                // Final LV output covers all four rows in ts order with the
+                // cumulative sum across the day-anchored bucket.
+                assertSql(
+                        "ts\tsym\ts\n" +
+                                "2026-11-01T00:00:05.000000Z\ta\t2.0\n" +
+                                "2026-11-01T00:00:06.000000Z\ta\t5.0\n" +
+                                "2026-11-01T00:00:07.000000Z\ta\t9.0\n" +
+                                "2026-11-01T00:00:50.000000Z\ta\t10.0\n",
+                        "SELECT ts, sym, s FROM lv ORDER BY ts"
+                );
+            }
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testO3WritesFreshCheckpointPostReplay() throws Exception {
+        // Phase 2a.8: after the O3 replay path drives an apply commit, the
+        // head metadata trio (lvSeqTxn, maxTs, stateBytes) reflects the
+        // post-replay state - not the pre-O3 state, and not LONG_NULL.
+        // The .cp file exists on disk at the new lvSeqTxn.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+                    "SELECT ts, sym, sum(x) OVER w AS s FROM base " +
+                    "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                setCurrentMicros(0L);
+                execute("INSERT INTO base (ts, sym, x) VALUES " +
+                        "('2026-11-01T00:00:10.000000Z', 'a', 1.0), " +
+                        "('2026-11-01T00:00:20.000000Z', 'a', 2.0)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull(lv);
+                final long preO3HeadLvSeqTxn = lv.getHeadCheckpointLvSeqTxn();
+                final long preO3StateBytes = lv.getHeadCheckpointStateBytes();
+                Assert.assertNotEquals(Numbers.LONG_NULL, preO3HeadLvSeqTxn);
+                Assert.assertTrue(preO3StateBytes > 0L);
+
+                setCurrentMicros(200_000L);
+                execute("INSERT INTO base (ts, sym, x) VALUES " +
+                        "('2026-11-01T00:00:05.000000Z', 'a', 5.0)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                final long postReplayLvSeqTxn = lv.getHeadCheckpointLvSeqTxn();
+                Assert.assertNotEquals(Numbers.LONG_NULL, postReplayLvSeqTxn);
+                Assert.assertNotEquals(preO3HeadLvSeqTxn, postReplayLvSeqTxn);
+                Assert.assertNotEquals(Numbers.LONG_NULL, lv.getHeadCheckpointMaxTs());
+                Assert.assertTrue(
+                        "post-replay state_bytes populated",
+                        lv.getHeadCheckpointStateBytes() > 0L
+                );
+
+                TableToken token = lv.getLiveViewToken();
+                FilesFacade ff = engine.getConfiguration().getFilesFacade();
+                try (Path cpPath = new Path()) {
+                    cpPath.of(engine.getConfiguration().getDbRoot())
+                            .concat(token)
+                            .concat(LiveViewCheckpointWriter.CHECKPOINT_DIR_NAME)
+                            .slash();
+                    LiveViewCheckpointWriter.appendCpFileName(cpPath, postReplayLvSeqTxn);
+                    Assert.assertTrue("post-replay head .cp exists", ff.exists(cpPath.$()));
+
+                    cpPath.of(engine.getConfiguration().getDbRoot())
+                            .concat(token)
+                            .concat(LiveViewCheckpointWriter.CHECKPOINT_DIR_NAME)
+                            .slash();
+                    LiveViewCheckpointWriter.appendCpFileName(cpPath, preO3HeadLvSeqTxn);
+                    Assert.assertFalse("pre-O3 head .cp unlinked", ff.exists(cpPath.$()));
+                }
+            }
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testO3DetectionFiresForNonAnchoredLv() throws Exception {
+        // Phase 2a.8 (non-anchored stamp): the row-loop stamp updates
+        // latestSeenTs for LVs without an anchored named window. Pre-fix,
+        // only AnchorDispatchingCursor stamped, so non-anchored LVs never
+        // drove O3 detection. The test uses row_number() OVER (), which the
+        // factory specialises into SequenceRowNumberFunction (no per-partition
+        // map). That puts the LV on the not-snapshot-capable branch of the
+        // replay path: the O3 cycle invalidates the head, advances the
+        // watermarks, and trails for the O3 batch. Detection itself - what
+        // the row-loop stamp enables - is the surface this test pins.
+        // Head-miss / head-hit content correctness is covered by
+        // testO3HeadMissReplaysFromLowerBound and testO3HeadHitReplaysFromHead
+        // against anchored snapshot-capable LVs.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base");
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                setCurrentMicros(0L);
+                execute("INSERT INTO base (ts, x) VALUES " +
+                        "('2026-11-01T00:00:10.000000Z', 1.0), " +
+                        "('2026-11-01T00:00:20.000000Z', 2.0)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull(lv);
+                Assert.assertNull("LV has no anchored window", lv.getAnchorWindow());
+                Assert.assertEquals(
+                        "row-loop stamp updates latestSeenTs without an anchor cursor",
+                        MicrosFormatUtils.parseUTCTimestamp("2026-11-01T00:00:20.000000Z"),
+                        lv.getLatestSeenTs()
+                );
+                final long lastProcessedAfterBatch1 = lv.getLastProcessedSeqTxn();
+
+                // Drop an O3 row. The detect block fires because latestSeenTs
+                // is populated; the not-snapshot-capable LV then takes the
+                // skip branch in o3Replay.
+                setCurrentMicros(200_000L);
+                execute("INSERT INTO base (ts, x) VALUES " +
+                        "('2026-11-01T00:00:05.000000Z', 3.0)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                // The watermark stays at 20 thanks to the monotonic clamp,
+                // and lastProcessedSeqTxn advances so the next cycle does
+                // not re-iterate the O3 batch in WAL order.
+                Assert.assertEquals(
+                        "monotonic clamp keeps latestSeenTs at the pre-O3 high water",
+                        MicrosFormatUtils.parseUTCTimestamp("2026-11-01T00:00:20.000000Z"),
+                        lv.getLatestSeenTs()
+                );
+                Assert.assertTrue(
+                        "lastProcessedSeqTxn advanced past the O3 base seqTxn",
+                        lv.getLastProcessedSeqTxn() > lastProcessedAfterBatch1
+                );
+            }
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
     public void testFreezeGateSkipsRefreshTurn() throws Exception {
         // Phase 2a.9c: DatabaseCheckpointAgent toggles freezeInProgress around
         // its per-LV file copy so the refresh worker does not advance _lv.s /
