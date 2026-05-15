@@ -162,7 +162,10 @@ public class WindowFunctionUnitTest extends AbstractCairoTest {
                         TestDefaults.createVirtualRecord(TestDefaults.createIntFunction(x -> x.getInt(1))),
                         TestDefaults.createRecordSink((r, w) -> w.putInt(r.getInt(0))),
                         rangeLo,
-                        rangeHi
+                        rangeHi,
+                        null,
+                        false,
+                        null
                 ),
                 Long::sum,
                 CountConstWindowFunctionFactory.isRecordNotNull
@@ -233,7 +236,10 @@ public class WindowFunctionUnitTest extends AbstractCairoTest {
                         rangeHi,
                         TestDefaults.createLongFunction(x -> x.getLong(2)),
                         TestDefaults.createMemoryCARW(),
-                        CountDoubleWindowFunctionFactory.isRecordNotNull
+                        CountDoubleWindowFunctionFactory.isRecordNotNull,
+                        null,
+                        false,
+                        null
                 ),
                 Long::sum,
                 CountConstWindowFunctionFactory.isRecordNotNull

@@ -60,8 +60,10 @@ import io.questdb.std.Vect;
 
 public class CountFunctionFactoryHelper {
     public static final ArrayColumnTypes COUNT_COLUMN_TYPES;
+    public static final ArrayColumnTypes COUNT_COLUMN_TYPES_LV;
     public static final ArrayColumnTypes COUNT_OVER_PARTITION_RANGE_COLUMN_TYPES;
     public static final ArrayColumnTypes COUNT_OVER_PARTITION_ROWS_COLUMN_TYPES;
+    public static final ArrayColumnTypes COUNT_OVER_PARTITION_ROWS_COLUMN_TYPES_LV;
     static final String COUNT_NAME = "count";
 
     static Function newCountWindowFunction(AbstractWindowFunctionFactory factory,
@@ -200,12 +202,15 @@ public class CountFunctionFactoryHelper {
                 }
                 //between [unbounded | x] preceding and [x preceding | current row]
                 else {
+                    final boolean liveView = windowContext.isLiveView();
                     Map map = null;
                     try {
                         map = MapFactory.createUnorderedMap(
                                 configuration,
                                 partitionByKeyTypes,
-                                CountFunctionFactoryHelper.COUNT_OVER_PARTITION_ROWS_COLUMN_TYPES
+                                liveView
+                                        ? CountFunctionFactoryHelper.COUNT_OVER_PARTITION_ROWS_COLUMN_TYPES_LV
+                                        : CountFunctionFactoryHelper.COUNT_OVER_PARTITION_ROWS_COLUMN_TYPES
                         );
                         MemoryARW mem = Vm.getCARWInstance(
                                 configuration.getSqlWindowStorePageSize(),
@@ -221,7 +226,10 @@ public class CountFunctionFactoryHelper {
                                 rowsHi,
                                 args.get(0),
                                 mem,
-                                isRecordNotNull
+                                isRecordNotNull,
+                                partitionByKeyTypes,
+                                liveView,
+                                configuration
                         );
                     } catch (Throwable th) {
                         Misc.free(map);
@@ -634,7 +642,13 @@ public class CountFunctionFactoryHelper {
         private final IsRecordNotNull isRecordNotNull;
         // holds fixed-size ring buffers of boolean values
         private final MemoryARW memory;
+        private final CairoConfiguration configuration;
+        private final ArrayColumnTypes keyColumnTypes;
+        private final boolean liveView;
+        private final ArrayColumnTypes mapValueTypes;
+        private final int tombstoneValueIndex;
         protected long count;
+        private long tombstoneCount;
 
         public CountOverPartitionRowsFrameFunction(
                 Map map,
@@ -644,7 +658,10 @@ public class CountFunctionFactoryHelper {
                 long rowsHi,
                 Function arg,
                 MemoryARW memory,
-                IsRecordNotNull isRecordNotNull
+                IsRecordNotNull isRecordNotNull,
+                ColumnTypes partitionByKeyTypes,
+                boolean liveView,
+                CairoConfiguration configuration
         ) {
             super(map, partitionByRecord, partitionBySink, arg);
 
@@ -661,6 +678,25 @@ public class CountFunctionFactoryHelper {
 
             this.memory = memory;
             this.isRecordNotNull = isRecordNotNull;
+            this.liveView = liveView;
+            this.configuration = configuration;
+            if (liveView) {
+                ArrayColumnTypes keyTypesCopy = new ArrayColumnTypes();
+                for (int i = 0, n = partitionByKeyTypes.getColumnCount(); i < n; i++) {
+                    keyTypesCopy.add(partitionByKeyTypes.getColumnType(i));
+                }
+                this.keyColumnTypes = keyTypesCopy;
+                ArrayColumnTypes valueTypesCopy = new ArrayColumnTypes();
+                for (int i = 0, n = COUNT_OVER_PARTITION_ROWS_COLUMN_TYPES_LV.getColumnCount(); i < n; i++) {
+                    valueTypesCopy.add(COUNT_OVER_PARTITION_ROWS_COLUMN_TYPES_LV.getColumnType(i));
+                }
+                this.mapValueTypes = valueTypesCopy;
+                this.tombstoneValueIndex = 3;
+            } else {
+                this.keyColumnTypes = null;
+                this.mapValueTypes = null;
+                this.tombstoneValueIndex = -1;
+            }
         }
 
         @Override
@@ -717,6 +753,39 @@ public class CountFunctionFactoryHelper {
             value.putLong(1, (loIdx + 1) % bufferSize);
             value.putLong(2, startOffset);//not necessary because it doesn't change
             memory.putBool(startOffset + loIdx, isNotNull);
+            if (tombstoneValueIndex >= 0 && value.getByte(tombstoneValueIndex) != 0) {
+                value.putByte(tombstoneValueIndex, (byte) 0);
+                tombstoneCount--;
+            }
+        }
+
+        @Override
+        public void compactPartitionMap() {
+            if (tombstoneValueIndex < 0 || tombstoneCount == 0) {
+                return;
+            }
+            Map scratch = MapFactory.createUnorderedMap(configuration, keyColumnTypes, mapValueTypes);
+            try {
+                MapRecordCursor cursor = map.getCursor();
+                MapRecord record = map.getRecord();
+                while (cursor.hasNext()) {
+                    MapValue srcValue = record.getValue();
+                    if (srcValue.getByte(tombstoneValueIndex) == 1) {
+                        continue;
+                    }
+                    long srcKeyHash = record.keyHashCode();
+                    MapKey dstKey = scratch.withKey();
+                    record.copyToKey(dstKey);
+                    MapValue dstValue = dstKey.createValue(srcKeyHash);
+                    record.copyValue(dstValue);
+                }
+                Misc.free(map);
+                map = scratch;
+                scratch = null;
+                tombstoneCount = 0;
+            } finally {
+                Misc.free(scratch);
+            }
         }
 
         @Override
@@ -734,6 +803,11 @@ public class CountFunctionFactoryHelper {
             return WindowFunction.ZERO_PASS;
         }
 
+        @Override
+        public Map getPartitionMap() {
+            return map;
+        }
+
 
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
@@ -744,6 +818,7 @@ public class CountFunctionFactoryHelper {
         @Override
         public void reopen() {
             super.reopen();
+            tombstoneCount = 0;
             // memory will allocate on first use
         }
 
@@ -751,6 +826,108 @@ public class CountFunctionFactoryHelper {
         public void reset() {
             super.reset();
             memory.close();
+            tombstoneCount = 0;
+        }
+
+        @Override
+        public void resetPartition(Record record) {
+            // ANCHOR-driven reset. Zero the count + loIdx; refill the boolean
+            // ring with false so the new anchor bucket starts with an empty
+            // frame.
+            partitionByRecord.of(record);
+            MapKey key = map.withKey();
+            key.put(partitionByRecord, partitionBySink);
+            MapValue value = key.findValue();
+            if (value != null) {
+                final long startOffset = value.getLong(2);
+                value.putLong(0, 0L);
+                value.putLong(1, 0L);
+                for (int i = 0; i < bufferSize; i++) {
+                    memory.putBool(startOffset + i, false);
+                }
+                if (tombstoneValueIndex >= 0 && value.getByte(tombstoneValueIndex) == 0) {
+                    value.putByte(tombstoneValueIndex, (byte) 1);
+                    tombstoneCount++;
+                }
+            }
+        }
+
+        @Override
+        public void restore(MemoryR source, int formatVersion) {
+            map.clear();
+            memory.truncate();
+            tombstoneCount = 0;
+            long srcOffset = 0;
+            final long partitionCount = source.getLong(srcOffset);
+            srcOffset += Long.BYTES;
+            for (long p = 0; p < partitionCount; p++) {
+                MapKey key = map.withKey();
+                srcOffset = LiveViewSnapshotKeyCodec.readKey(key, source, srcOffset, keyColumnTypes);
+                MapValue value = key.createValue();
+                final long partitionCountVal = source.getLong(srcOffset);
+                srcOffset += Long.BYTES;
+                final long loIdx = source.getLong(srcOffset);
+                srcOffset += Long.BYTES;
+                final long newStartOffset = memory.appendAddressFor(bufferSize) - memory.getPageAddress(0);
+                for (int i = 0; i < bufferSize; i++) {
+                    memory.putBool(newStartOffset + i, source.getBool(srcOffset));
+                    srcOffset += 1;
+                }
+                value.putLong(0, partitionCountVal);
+                value.putLong(1, loIdx);
+                value.putLong(2, newStartOffset);
+                if (tombstoneValueIndex >= 0) {
+                    value.putByte(tombstoneValueIndex, (byte) 0);
+                }
+            }
+        }
+
+        @Override
+        public void snapshot(MemoryA sink) {
+            MapRecordCursor cursor = map.getCursor();
+            MapRecord record = map.getRecord();
+            long liveCount = 0;
+            while (cursor.hasNext()) {
+                if (tombstoneValueIndex < 0 || record.getValue().getByte(tombstoneValueIndex) == 0) {
+                    liveCount++;
+                }
+            }
+            sink.putLong(liveCount);
+
+            cursor.toTop();
+            final int keyStartIndex = mapValueTypes != null
+                    ? mapValueTypes.getColumnCount()
+                    : COUNT_OVER_PARTITION_ROWS_COLUMN_TYPES.getColumnCount();
+            while (cursor.hasNext()) {
+                final MapValue value = record.getValue();
+                if (tombstoneValueIndex >= 0 && value.getByte(tombstoneValueIndex) != 0) {
+                    continue;
+                }
+                LiveViewSnapshotKeyCodec.writeKey(sink, record, keyColumnTypes, keyStartIndex);
+                sink.putLong(value.getLong(0));
+                sink.putLong(value.getLong(1));
+                final long startOffset = value.getLong(2);
+                for (int i = 0; i < bufferSize; i++) {
+                    sink.putBool(memory.getBool(startOffset + i));
+                }
+            }
+        }
+
+        @Override
+        public int snapshotFormatVersion() {
+            return 1;
+        }
+
+        @Override
+        public int snapshotMinSupportedVersion() {
+            return 1;
+        }
+
+        @Override
+        public boolean supportsSnapshot() {
+            return liveView
+                    && keyColumnTypes != null
+                    && LiveViewSnapshotKeyCodec.isAllTypesSupported(keyColumnTypes);
         }
 
         @Override
@@ -784,6 +961,7 @@ public class CountFunctionFactoryHelper {
         public void toTop() {
             super.toTop();
             memory.truncate();
+            tombstoneCount = 0;
         }
     }
 
@@ -1396,5 +1574,15 @@ public class CountFunctionFactoryHelper {
         COUNT_OVER_PARTITION_ROWS_COLUMN_TYPES.add(ColumnType.LONG);  // count
         COUNT_OVER_PARTITION_ROWS_COLUMN_TYPES.add(ColumnType.LONG);  // position of current oldest element
         COUNT_OVER_PARTITION_ROWS_COLUMN_TYPES.add(ColumnType.LONG);  // start offset of native array
+
+        COUNT_COLUMN_TYPES_LV = new ArrayColumnTypes();
+        COUNT_COLUMN_TYPES_LV.add(ColumnType.LONG);  // count(*) currentSize
+        COUNT_COLUMN_TYPES_LV.add(ColumnType.BYTE);  // tombstone (anchor-driven compaction)
+
+        COUNT_OVER_PARTITION_ROWS_COLUMN_TYPES_LV = new ArrayColumnTypes();
+        COUNT_OVER_PARTITION_ROWS_COLUMN_TYPES_LV.add(ColumnType.LONG);  // count
+        COUNT_OVER_PARTITION_ROWS_COLUMN_TYPES_LV.add(ColumnType.LONG);  // position of current oldest element
+        COUNT_OVER_PARTITION_ROWS_COLUMN_TYPES_LV.add(ColumnType.LONG);  // start offset of native array
+        COUNT_OVER_PARTITION_ROWS_COLUMN_TYPES_LV.add(ColumnType.BYTE);  // tombstone (anchor-driven compaction)
     }
 }
