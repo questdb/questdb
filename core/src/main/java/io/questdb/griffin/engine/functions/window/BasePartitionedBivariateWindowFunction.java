@@ -35,7 +35,9 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Misc;
 
 public abstract class BasePartitionedBivariateWindowFunction extends BaseBivariateWindowFunction implements Reopenable {
-    protected final Map map;
+    // Non-final so compactPartitionMap can swap the Map instance. Single-writer
+    // (refresh worker), no synchronization needed.
+    protected Map map;
     protected final VirtualRecord partitionByRecord;
     protected final RecordSink partitionBySink;
 

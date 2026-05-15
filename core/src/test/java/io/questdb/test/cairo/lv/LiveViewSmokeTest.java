@@ -3448,6 +3448,78 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRestartRestoresStatefulEmaFamilyFromHeadCheckpoint() throws Exception {
+        // Phase 2b.5 (Group #6 — Stateful + EMA family): the UNBOUNDED +
+        // ANCHOR variants now ship snapshot/restore. Six classes migrated:
+        //   StdDevOverUnboundedPartitionRowsFrameFunction (covers stddev_*,
+        //     var_*; 3 slots, Welford mean/m2/count)
+        //   BivarStatOverUnboundedPartitionRowsFrameFunction (covers corr,
+        //     covar_*; 6 slots, paired Welford)
+        //   EmaOverPartitionFunction + EmaTimeWeightedOverPartitionFunction
+        //     (3 slots: ema, prevTimestamp, hasValue)
+        //   VwemaOverPartitionFunction + VwemaTimeWeightedOverPartitionFunction
+        //     (4 slots: numerator, denominator, prevTimestamp, hasValue)
+        // All six are fixed-shape with no ring buffer, so snapshot/restore
+        // is a straight slot-by-slot round-trip.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x DOUBLE, y DOUBLE, vol DOUBLE) " +
+                    "TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+                    "SELECT ts, sym, " +
+                    "  stddev_samp(x) OVER (PARTITION BY sym ORDER BY ts) AS sd, " +
+                    "  corr(x, y) OVER (PARTITION BY sym ORDER BY ts) AS cr, " +
+                    "  avg(x, 'period', 5) OVER (PARTITION BY sym ORDER BY ts) AS ep, " +
+                    "  avg(x, 'minute', 5) OVER (PARTITION BY sym ORDER BY ts) AS et, " +
+                    "  avg(x, 'period', 5, vol) OVER (PARTITION BY sym ORDER BY ts) AS vp, " +
+                    "  avg(x, 'minute', 5, vol) OVER (PARTITION BY sym ORDER BY ts) AS vt " +
+                    "FROM base");
+
+            final long preHeadLvSeqTxn;
+            final long preLastProcessed;
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                setCurrentMicros(0L);
+                execute("INSERT INTO base (ts, sym, x, y, vol) VALUES " +
+                        "('2026-09-01T00:00:00.000000Z', 'a', 1.0, 10.0, 100.0), " +
+                        "('2026-09-01T01:00:00.000000Z', 'a', 2.0, 20.0, 150.0), " +
+                        "('2026-09-01T02:00:00.000000Z', 'a', 3.0, 30.0, 200.0), " +
+                        "('2026-09-01T00:00:00.000000Z', 'b', 5.0, 50.0, 500.0), " +
+                        "('2026-09-01T01:00:00.000000Z', 'b', 6.0, 60.0, 600.0)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                preHeadLvSeqTxn = instance.getHeadCheckpointLvSeqTxn();
+                preLastProcessed = instance.getLastProcessedSeqTxn();
+                Assert.assertNotEquals(
+                        "head .cp must be written for an LV with stddev/corr/ema/vwema now that 2b.5 makes them snapshot-capable",
+                        Numbers.LONG_NULL,
+                        preHeadLvSeqTxn
+                );
+                Assert.assertTrue(
+                        "snapshot capability cached after first successful flush",
+                        instance.isSnapshotCapability()
+                );
+            }
+
+            engine.getLiveViewRegistry().clear();
+            engine.buildViewGraphs();
+
+            LiveViewInstance reloaded = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(reloaded);
+            Assert.assertEquals(preHeadLvSeqTxn, reloaded.getHeadCheckpointLvSeqTxn());
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+            }
+            Assert.assertTrue(reloaded.isCheckpointRestoreAttempted());
+            Assert.assertEquals(preLastProcessed, reloaded.getLastProcessedSeqTxn());
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
     public void testRestartRestoresBoundedRowsMinMaxFromHeadCheckpoint() throws Exception {
         // Phase 2b.4: min/max over (PARTITION BY ... ROWS N PRECEDING ...) are
         // now snapshot-capable. The single MaxMinOverPartitionRowsFrameFunction
