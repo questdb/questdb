@@ -128,6 +128,12 @@ public class HivePartitionedReadParquetPageFrameCursor implements PageFrameCurso
     private final int partitionColumnCount;
     private final ObjList<String> partitionColumnNames;
     private final IntList partitionColumnTypes;
+    // Per pruned-column mapping computed by the factory's setQueryProjectedMetadata.
+    // Both null means no projection - buildColumnMapping falls back to the default
+    // (parquet columns first, then partition virtual columns). For each entry, exactly
+    // one of projectedToParquetWriterIdx / projectedToPartitionIdx is >= 0 (the other -1).
+    private final @Nullable int[] projectedToParquetWriterIdx;
+    private final @Nullable int[] projectedToPartitionIdx;
     private final @Nullable ObjList<PushdownFilterExtractor.PushdownFilterCondition> pushdownFilterConditions;
     private int currentFileIndex = -1;
     private long cumulativePartitionLo = 0;
@@ -162,6 +168,8 @@ public class HivePartitionedReadParquetPageFrameCursor implements PageFrameCurso
             IntList partitionColumnTypes,
             int nonGlobRootByteLen,
             int maxConcurrentOpenFiles,
+            @Nullable int[] projectedToParquetWriterIdx,
+            @Nullable int[] projectedToPartitionIdx,
             @Nullable ObjList<PushdownFilterExtractor.PushdownFilterCondition> pushdownFilterConditions
     ) {
         this.ff = ff;
@@ -173,6 +181,8 @@ public class HivePartitionedReadParquetPageFrameCursor implements PageFrameCurso
         this.partitionColumnCount = partitionColumnNames.size();
         this.nonGlobRootLen = nonGlobRootByteLen;
         this.maxConcurrentOpenFiles = maxConcurrentOpenFiles;
+        this.projectedToParquetWriterIdx = projectedToParquetWriterIdx;
+        this.projectedToPartitionIdx = projectedToPartitionIdx;
         this.pushdownFilterConditions = pushdownFilterConditions;
         this.prunePartitionValues = new long[this.partitionColumnCount];
         this.prunePartitionPresent = new boolean[this.partitionColumnCount];
@@ -428,13 +438,27 @@ public class HivePartitionedReadParquetPageFrameCursor implements PageFrameCurso
 
     private void buildColumnMapping() {
         columnMapping.clear();
-        // Parquet columns: writer index is the parquet position (external files have no field IDs).
+        if (projectedToParquetWriterIdx != null) {
+            // Projection pushdown: only the columns the query references, in query order.
+            // For parquet columns the writer index is the parquet position (external
+            // files have no field IDs). For partition virtual columns the writer index
+            // is a sentinel that won't match any parquet column, so PageFrameMemoryPool's
+            // openParquet skips them and the virtual page overlay fills their slots.
+            for (int i = 0, n = projectedToParquetWriterIdx.length; i < n; i++) {
+                int parquetIdx = projectedToParquetWriterIdx[i];
+                if (parquetIdx >= 0) {
+                    columnMapping.addColumn(i, parquetIdx);
+                } else {
+                    int partIdx = projectedToPartitionIdx[i];
+                    columnMapping.addColumn(i, Integer.MAX_VALUE - partIdx);
+                }
+            }
+            return;
+        }
+        // Full schema: parquet columns first, then partition virtual columns.
         for (int i = 0; i < parquetColumnCount; i++) {
             columnMapping.addColumn(i, i);
         }
-        // Partition virtual columns: writer index is a sentinel that won't match any
-        // parquet column, so openParquet skips them and the virtual page overlay fills
-        // their slots instead.
         for (int i = 0; i < partitionColumnCount; i++) {
             columnMapping.addColumn(parquetColumnCount + i, Integer.MAX_VALUE - i);
         }
@@ -1096,19 +1120,19 @@ public class HivePartitionedReadParquetPageFrameCursor implements PageFrameCurso
 
         @Override
         public long getVirtualAuxPageAddress(int columnIndex) {
-            if (columnIndex < parquetColumnCount) {
+            int partCol = partitionColumnIndexFor(columnIndex);
+            if (partCol < 0) {
                 return 0;
             }
-            int partCol = columnIndex - parquetColumnCount;
             return partitionAuxBufferAddrs.getQuick(partitionIndex * partitionColumnCount + partCol);
         }
 
         @Override
         public long getVirtualAuxPageSize(int columnIndex) {
-            if (columnIndex < parquetColumnCount) {
+            int partCol = partitionColumnIndexFor(columnIndex);
+            if (partCol < 0) {
                 return 0;
             }
-            int partCol = columnIndex - parquetColumnCount;
             if (partitionAuxBufferAddrs.getQuick(partitionIndex * partitionColumnCount + partCol) == 0) {
                 return 0;
             }
@@ -1118,19 +1142,19 @@ public class HivePartitionedReadParquetPageFrameCursor implements PageFrameCurso
 
         @Override
         public long getVirtualPageAddress(int columnIndex) {
-            if (columnIndex < parquetColumnCount) {
+            int partCol = partitionColumnIndexFor(columnIndex);
+            if (partCol < 0) {
                 return 0;
             }
-            int partCol = columnIndex - parquetColumnCount;
             return partitionBufferAddrs.getQuick(partitionIndex * partitionColumnCount + partCol);
         }
 
         @Override
         public long getVirtualPageSize(int columnIndex) {
-            if (columnIndex < parquetColumnCount) {
+            int partCol = partitionColumnIndexFor(columnIndex);
+            if (partCol < 0) {
                 return 0;
             }
-            int partCol = columnIndex - parquetColumnCount;
             final int slot = partitionIndex * partitionColumnCount + partCol;
             // For VARCHAR, the data page size is the allocated value byte count, independent
             // of row group size. For fixed-size types it scales with the row group.
@@ -1139,6 +1163,23 @@ public class HivePartitionedReadParquetPageFrameCursor implements PageFrameCurso
             }
             int typeWidth = partitionBufferTypeWidths.getQuick(slot);
             return (long) rowGroupSize * typeWidth;
+        }
+
+        /**
+         * Maps a {@code columnIndex} (in the cursor's reported schema) to the original
+         * partition column index, or returns -1 if that column is a parquet column.
+         * Handles both projection cases - projected via the per-column mapping the
+         * factory supplied, or full schema via the "parquet first, partition columns
+         * after" layout that buildColumnMapping installs.
+         */
+        private int partitionColumnIndexFor(int columnIndex) {
+            if (projectedToPartitionIdx != null) {
+                return projectedToPartitionIdx[columnIndex];
+            }
+            if (columnIndex < parquetColumnCount) {
+                return -1;
+            }
+            return columnIndex - parquetColumnCount;
         }
     }
 }

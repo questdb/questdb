@@ -993,6 +993,61 @@ public class HivePartitionedReadParquetFunctionTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testProjectionPushdownPartitionColumnOnly() throws Exception {
+        // SqlCodeGenerator pushes the {day} projection down through the hive factory.
+        // The cursor's columnMapping then references only the partition virtual column
+        // and no parquet column - the parquet decoder must skip the data columns. If
+        // the pushdown were not wired through, downstream would see a single-column
+        // metadata while the cursor produced multi-column frames, blowing up on
+        // type / index mismatch.
+        assertMemoryLeak(() -> {
+            execute("create table src as (select cast(x as int) as id, x::varchar as label from long_sequence(2))");
+            writeParquet("pdp_only/day=2026-04-01/data.parquet", "src");
+            writeParquet("pdp_only/day=2026-04-02/data.parquet", "src");
+
+            assertQueryNoLeakCheck(
+                    "day\n" +
+                            "2026-04-01T00:00:00.000Z\n" +
+                            "2026-04-01T00:00:00.000Z\n" +
+                            "2026-04-02T00:00:00.000Z\n" +
+                            "2026-04-02T00:00:00.000Z\n",
+                    "select day from read_parquet('pdp_only/day=*/data.parquet') order by day",
+                    null,
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testProjectionPushdownReordersColumns() throws Exception {
+        // Pushed-down projection rearranges columns: query asks for {day, id} but the
+        // factory's natural schema is {id, ..., day}. The cursor must respect the
+        // query's column order or downstream operators will read parquet bytes through
+        // the wrong type / index.
+        assertMemoryLeak(() -> {
+            execute("create table src as (select" +
+                    " cast(x as int) as id," +
+                    " ('row_' || x)::varchar as label" +
+                    " from long_sequence(2))");
+            writeParquet("pdp_reord/day=2026-05-01/data.parquet", "src");
+            writeParquet("pdp_reord/day=2026-05-02/data.parquet", "src");
+
+            assertQueryNoLeakCheck(
+                    "day\tid\n" +
+                            "2026-05-01T00:00:00.000Z\t1\n" +
+                            "2026-05-01T00:00:00.000Z\t2\n" +
+                            "2026-05-02T00:00:00.000Z\t1\n" +
+                            "2026-05-02T00:00:00.000Z\t2\n",
+                    "select day, id from read_parquet('pdp_reord/day=*/data.parquet') order by day, id",
+                    null,
+                    true,
+                    true
+            );
+        });
+    }
+
     /**
      * Convenience for parallel test cases: runs the given block with a fresh worker pool of
      * {@code workerCount}, then halts the pool. The runnable receives a compiler and the

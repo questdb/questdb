@@ -30,12 +30,14 @@ import io.questdb.cairo.ProjectableRecordCursorFactory;
 import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.table.PageFrameRecordCursorImpl;
 import io.questdb.griffin.engine.table.PageFrameRowCursorFactory;
 import io.questdb.griffin.engine.table.PushdownFilterExtractor;
+import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
@@ -78,6 +80,12 @@ public class HivePartitionedReadParquetRecordCursorFactory extends ProjectableRe
     private final IntList partitionColumnTypes;
     private PageFrameRecordCursorImpl pageFrameRecordCursor;
     private HivePartitionedReadParquetPageFrameCursor pageFrameCursor;
+    // Per pruned-column metadata, built by setQueryProjectedMetadata. For each
+    // entry, exactly one of projectedToParquetWriterIdx / projectedToPartitionIdx
+    // is >= 0 (the other is -1). Both null means no projection - cursor uses the
+    // full schema with parquet columns first then partition virtual columns.
+    private int[] projectedToParquetWriterIdx;
+    private int[] projectedToPartitionIdx;
     private @Nullable ObjList<PushdownFilterExtractor.PushdownFilterCondition> pushdownFilterConditions;
 
     public HivePartitionedReadParquetRecordCursorFactory(
@@ -125,6 +133,8 @@ public class HivePartitionedReadParquetRecordCursorFactory extends ProjectableRe
                     partitionColumnTypes,
                     nonGlobRootByteLen,
                     configuration.getSqlParquetHiveMaxOpenFiles(),
+                    projectedToParquetWriterIdx,
+                    projectedToPartitionIdx,
                     pushdownFilterConditions
             );
         }
@@ -150,12 +160,46 @@ public class HivePartitionedReadParquetRecordCursorFactory extends ProjectableRe
     }
 
     @Override
-    public void setQueryProjectedMetadata(io.questdb.cairo.sql.RecordMetadata metadata) {
-        // Intentionally ignored. The page-frame cursor produces frames with the full
-        // schema (parquet columns + partition virtual columns), so adopting a pruned
-        // metadata view at the factory level would mis-align column indices for
-        // downstream consumers. Wiring column projection through to the cursor is a
-        // follow-up - until then we report the full schema unchanged.
+    public void setQueryProjectedMetadata(RecordMetadata metadata) {
+        super.setQueryProjectedMetadata(metadata);
+        // Compute the projection -> (parquet writer index, partition column index)
+        // mapping for the cursor. Each pruned column is either a real parquet column
+        // (look it up by name in parquetMetadata, store its position as the writer
+        // index that PageFrameMemoryPool will use to find it in the file's column id
+        // map) or a hive partition virtual column (store the original partition
+        // index so the virtual page overlay can address the right per-file buffer).
+        // Sentinels: -1 in the array we don't apply to a given column.
+        final int n = metadata.getColumnCount();
+        final int[] parquetWriterIdx = new int[n];
+        final int[] partitionIdx = new int[n];
+        for (int i = 0; i < n; i++) {
+            CharSequence name = metadata.getColumnName(i);
+            int pIdx = indexOfPartitionColumn(name);
+            if (pIdx >= 0) {
+                parquetWriterIdx[i] = -1;
+                partitionIdx[i] = pIdx;
+            } else {
+                int pqIdx = parquetMetadata.getColumnIndexQuiet(name);
+                // SqlCodeGenerator only projects columns that exist in the factory's
+                // declared metadata, so a projected column we don't recognise here
+                // is a contract violation worth surfacing rather than silently
+                // dropping.
+                assert pqIdx >= 0 : "projected column not in parquet or partition schema: " + name;
+                parquetWriterIdx[i] = pqIdx;
+                partitionIdx[i] = -1;
+            }
+        }
+        this.projectedToParquetWriterIdx = parquetWriterIdx;
+        this.projectedToPartitionIdx = partitionIdx;
+    }
+
+    private int indexOfPartitionColumn(CharSequence name) {
+        for (int i = 0, n = partitionColumnNames.size(); i < n; i++) {
+            if (Chars.equalsIgnoreCase(partitionColumnNames.getQuick(i), name)) {
+                return i;
+            }
+        }
+        return -1;
     }
 
     @Override
@@ -213,6 +257,8 @@ public class HivePartitionedReadParquetRecordCursorFactory extends ProjectableRe
                     partitionColumnTypes,
                     nonGlobRootByteLen,
                     configuration.getSqlParquetHiveMaxOpenFiles(),
+                    projectedToParquetWriterIdx,
+                    projectedToPartitionIdx,
                     pushdownFilterConditions
             );
         }
