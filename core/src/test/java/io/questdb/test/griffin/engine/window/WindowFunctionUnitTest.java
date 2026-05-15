@@ -95,7 +95,10 @@ public class WindowFunctionUnitTest extends AbstractCairoTest {
                         rangeLo,
                         rangeHi,
                         TestDefaults.createLongFunction(x -> x.getLong(2)),
-                        TestDefaults.createMemoryCARW()
+                        TestDefaults.createMemoryCARW(),
+                        null,
+                        false,
+                        null
                 ),
                 Double::sum
         );
