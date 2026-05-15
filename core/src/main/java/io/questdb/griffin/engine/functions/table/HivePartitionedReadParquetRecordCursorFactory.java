@@ -29,7 +29,6 @@ import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.ProjectableRecordCursorFactory;
 import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
@@ -41,6 +40,7 @@ import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
+import io.questdb.std.str.DirectUtf8StringList;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -71,8 +71,13 @@ import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
 public class HivePartitionedReadParquetRecordCursorFactory extends ProjectableRecordCursorFactory {
     private final boolean canPageFrame;
     private final CairoConfiguration configuration;
-    private final RecordCursorFactory globCursorFactory;
     private final CharSequence globPattern;
+    // The matched file list is enumerated once at planning time and held here for
+    // the factory's lifetime. Both cursor backends iterate this list directly - no
+    // per-getCursor / per-size() / per-iteration directory walks. Owned by the
+    // factory; freed in _close. Critical prep for remote-backed reads where
+    // re-enumeration is expensive.
+    private final DirectUtf8StringList matchedFiles;
     private final int nonGlobRootByteLen;
     private final int parquetColumnCount;
     private final GenericRecordMetadata parquetMetadata;
@@ -90,7 +95,7 @@ public class HivePartitionedReadParquetRecordCursorFactory extends ProjectableRe
 
     public HivePartitionedReadParquetRecordCursorFactory(
             @NotNull CairoConfiguration configuration,
-            @NotNull RecordCursorFactory globCursorFactory,
+            @NotNull DirectUtf8StringList matchedFiles,
             @NotNull CharSequence globPattern,
             int nonGlobRootByteLen,
             @NotNull GenericRecordMetadata wrappingMetadata,
@@ -100,7 +105,7 @@ public class HivePartitionedReadParquetRecordCursorFactory extends ProjectableRe
     ) {
         super(wrappingMetadata);
         this.configuration = configuration;
-        this.globCursorFactory = globCursorFactory;
+        this.matchedFiles = matchedFiles;
         this.globPattern = globPattern.toString();
         this.nonGlobRootByteLen = nonGlobRootByteLen;
         this.parquetColumnCount = parquetMetadata.getColumnCount();
@@ -126,7 +131,7 @@ public class HivePartitionedReadParquetRecordCursorFactory extends ProjectableRe
         if (pageFrameCursor == null) {
             pageFrameCursor = new HivePartitionedReadParquetPageFrameCursor(
                     configuration.getFilesFacade(),
-                    globCursorFactory.getCursor(executionContext),
+                    matchedFiles,
                     parquetMetadata,
                     parquetColumnCount,
                     partitionColumnNames,
@@ -214,14 +219,13 @@ public class HivePartitionedReadParquetRecordCursorFactory extends ProjectableRe
 
     @Override
     protected void _close() {
-        Misc.free(globCursorFactory);
+        Misc.free(matchedFiles);
         Misc.free(pageFrameRecordCursor);
         Misc.free(pageFrameCursor);
         Misc.freeObjListAndClear(pushdownFilterConditions);
     }
 
     private RecordCursor getLegacyCursor(SqlExecutionContext executionContext) throws SqlException {
-        final RecordCursor globCursor = globCursorFactory.getCursor(executionContext);
         ReadParquetRecordCursor parquetCursor = null;
         try {
             parquetCursor = new ReadParquetRecordCursor(
@@ -230,7 +234,7 @@ public class HivePartitionedReadParquetRecordCursorFactory extends ProjectableRe
                     pushdownFilterConditions
             );
             HivePartitionedReadParquetRecordCursor cursor = new HivePartitionedReadParquetRecordCursor(
-                    globCursor,
+                    matchedFiles,
                     parquetCursor,
                     nonGlobRootByteLen,
                     parquetColumnCount,
@@ -241,7 +245,6 @@ public class HivePartitionedReadParquetRecordCursorFactory extends ProjectableRe
             return cursor;
         } catch (Throwable th) {
             Misc.free(parquetCursor);
-            globCursor.close();
             throw th;
         }
     }
@@ -250,7 +253,7 @@ public class HivePartitionedReadParquetRecordCursorFactory extends ProjectableRe
         if (pageFrameCursor == null) {
             pageFrameCursor = new HivePartitionedReadParquetPageFrameCursor(
                     configuration.getFilesFacade(),
-                    globCursorFactory.getCursor(executionContext),
+                    matchedFiles,
                     parquetMetadata,
                     parquetColumnCount,
                     partitionColumnNames,

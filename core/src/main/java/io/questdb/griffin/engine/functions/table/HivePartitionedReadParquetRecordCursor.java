@@ -30,7 +30,6 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -51,6 +50,7 @@ import io.questdb.std.ObjList;
 import io.questdb.std.datetime.microtime.MicrosFormatUtils;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
 import io.questdb.std.str.CharSink;
+import io.questdb.std.str.DirectUtf8StringList;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf16Sink;
@@ -69,7 +69,11 @@ import io.questdb.std.str.Utf8s;
  * upstream.
  */
 public class HivePartitionedReadParquetRecordCursor implements NoRandomAccessRecordCursor {
-    private final RecordCursor globCursor;
+    // The factory enumerates files once at planning time and owns matchedFiles;
+    // this cursor borrows a reference and walks it with globIndex. Avoids the
+    // re-enumeration the previous globCursor-driven design did on every toTop /
+    // skipRows / calculateSize.
+    private final DirectUtf8StringList matchedFiles;
     private final int nonGlobRootLen;
     private final int parquetColumnCount;
     private final ReadParquetRecordCursor parquetCursor;
@@ -81,18 +85,19 @@ public class HivePartitionedReadParquetRecordCursor implements NoRandomAccessRec
     private final Path path = new Path(MemoryTag.NATIVE_PATH);
     private final HivePartitionedRecord wrappingRecord;
     private SqlExecutionContext executionContext;
+    private int globIndex = 0;
     private boolean isOpen = true;
     private boolean parquetCursorPositioned;
 
     public HivePartitionedReadParquetRecordCursor(
-            RecordCursor globCursor,
+            DirectUtf8StringList matchedFiles,
             ReadParquetRecordCursor parquetCursor,
             int nonGlobRootByteLen,
             int parquetColumnCount,
             ObjList<String> partitionColumnNames,
             IntList partitionColumnTypes
     ) {
-        this.globCursor = globCursor;
+        this.matchedFiles = matchedFiles;
         this.parquetCursor = parquetCursor;
         this.nonGlobRootLen = nonGlobRootByteLen;
         this.parquetColumnCount = parquetColumnCount;
@@ -113,13 +118,10 @@ public class HivePartitionedReadParquetRecordCursor implements NoRandomAccessRec
     @Override
     public void calculateSize(SqlExecutionCircuitBreaker circuitBreaker, Counter counter) {
         // Fast path: walk each matched file, pull row count from its metadata, move on.
-        globCursor.toTop();
+        globIndex = 0;
         parquetCursorPositioned = false;
-        while (!circuitBreaker.checkIfTripped()) {
-            if (!globCursor.hasNext()) {
-                break;
-            }
-            switchToNextParquetFileMetadata();
+        while (!circuitBreaker.checkIfTripped() && globIndex < matchedFiles.size()) {
+            switchToNextParquetFileMetadata(matchedFiles.getQuick(globIndex++));
             parquetCursor.calculateSize(circuitBreaker, counter);
         }
     }
@@ -129,7 +131,7 @@ public class HivePartitionedReadParquetRecordCursor implements NoRandomAccessRec
         if (isOpen) {
             isOpen = false;
             Misc.free(parquetCursor);
-            Misc.free(globCursor);
+            // matchedFiles is owned by the factory; do not free it here.
             Misc.free(path);
             for (int i = 0, n = partitionVarcharValues.size(); i < n; i++) {
                 partitionVarcharValues.getQuick(i).clear();
@@ -148,16 +150,17 @@ public class HivePartitionedReadParquetRecordCursor implements NoRandomAccessRec
             if (parquetCursorPositioned && parquetCursor.hasNext()) {
                 return true;
             }
-            if (!globCursor.hasNext()) {
+            if (globIndex >= matchedFiles.size()) {
                 return false;
             }
-            switchToNextParquetFile();
+            switchToNextParquetFile(matchedFiles.getQuick(globIndex++));
         }
     }
 
     public void of(SqlExecutionContext executionContext) {
         this.executionContext = executionContext;
         parquetCursorPositioned = false;
+        globIndex = 0;
     }
 
     @Override
@@ -172,13 +175,10 @@ public class HivePartitionedReadParquetRecordCursor implements NoRandomAccessRec
 
     @Override
     public void skipRows(Counter counter) {
-        globCursor.toTop();
+        globIndex = 0;
         parquetCursorPositioned = false;
-        while (counter.get() > 0) {
-            if (!globCursor.hasNext()) {
-                break;
-            }
-            switchToNextParquetFileMetadata();
+        while (counter.get() > 0 && globIndex < matchedFiles.size()) {
+            switchToNextParquetFileMetadata(matchedFiles.getQuick(globIndex++));
             long remainingBefore = counter.get();
             long rowsInFile = parquetCursor.size();
             if (rowsInFile <= remainingBefore) {
@@ -194,7 +194,7 @@ public class HivePartitionedReadParquetRecordCursor implements NoRandomAccessRec
     @Override
     public void toTop() {
         parquetCursorPositioned = false;
-        globCursor.toTop();
+        globIndex = 0;
     }
 
     private void parsePartitionValues(Utf8Sequence filePath) {
@@ -311,15 +311,13 @@ public class HivePartitionedReadParquetRecordCursor implements NoRandomAccessRec
         }
     }
 
-    private void switchToNextParquetFile() {
-        Utf8Sequence filePath = globCursor.getRecord().getVarcharA(0);
+    private void switchToNextParquetFile(Utf8Sequence filePath) {
         parsePartitionValues(filePath);
         path.of(filePath);
         switchCurrentFileToFullRead();
     }
 
-    private void switchToNextParquetFileMetadata() {
-        Utf8Sequence filePath = globCursor.getRecord().getVarcharA(0);
+    private void switchToNextParquetFileMetadata(Utf8Sequence filePath) {
         path.of(filePath);
         parquetCursor.ofMetadata(path.$());
         parquetCursorPositioned = false;

@@ -56,6 +56,7 @@ import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.datetime.microtime.MicrosFormatUtils;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
+import io.questdb.std.str.DirectUtf8StringList;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
@@ -148,12 +149,18 @@ public class ReadParquetFunctionFactory implements FunctionFactory {
         // cursor returns are byte-oriented; a UTF-16 char count would mis-locate
         // partition segments under non-ASCII roots.
         final int nonGlobRootByteLen = GlobFilesFunctionFactory.extractNonGlobPrefixByteLength(resolvedPath);
+        // Enumerate matched files once at planning time, save the list, and hand
+        // ownership to the hive factory. Both cursor backends then iterate the
+        // cached list instead of re-walking the directory tree on every
+        // getCursor / size() / iteration call. Critical for remote-backed reads
+        // where each enumeration round-trip is expensive.
         final ObjList<Function> globArgs = new ObjList<>();
         globArgs.add(new StrConstant(resolvedPattern));
         final IntList globArgPos = new IntList();
         globArgPos.add(argPos.getQuick(0));
         Function globFunc = new GlobFilesFunctionFactory().newInstance(position, globArgs, globArgPos, configuration, context);
         RecordCursorFactory globFactory = globFunc.getRecordCursorFactory();
+        DirectUtf8StringList matchedFiles = new DirectUtf8StringList(128, 8);
         try {
             final GenericRecordMetadata parquetMetadata = new GenericRecordMetadata();
             final ObjList<String> partitionColumnNames = new ObjList<>();
@@ -162,8 +169,10 @@ public class ReadParquetFunctionFactory implements FunctionFactory {
                 if (!globCursor.hasNext()) {
                     throw SqlException.$(argPos.getQuick(0), "glob did not match any files: ").put(originalPattern);
                 }
-                // Decode schema from the first matched file.
+                // Decode schema from the first matched file. The path stays referenced
+                // through matchedFiles so we don't need to copy the bytes twice.
                 final Utf8Sequence firstFile = globCursor.getRecord().getVarcharA(0);
+                matchedFiles.put(firstFile);
                 final FilesFacade ff = configuration.getFilesFacade();
                 final Path firstFilePath = Path.getThreadLocal("").of(firstFile);
                 final long fd = TableUtils.openRO(ff, firstFilePath.$(), LOG);
@@ -187,17 +196,24 @@ public class ReadParquetFunctionFactory implements FunctionFactory {
                 // and demote each column's inferred type to the loosest one that fits every
                 // value observed. Files that happen to be enumerated first without partitions
                 // don't hide the schema; names that would shadow real parquet columns are dropped.
+                // We also save each path into matchedFiles so the cursor doesn't re-walk.
                 parsePartitionColumns(firstFile, nonGlobRootByteLen, parquetMetadata,
                         partitionColumnNames, partitionColumnTypes);
                 while (globCursor.hasNext()) {
+                    Utf8Sequence path = globCursor.getRecord().getVarcharA(0);
+                    matchedFiles.put(path);
                     parsePartitionColumns(
-                            globCursor.getRecord().getVarcharA(0),
+                            path,
                             nonGlobRootByteLen,
                             parquetMetadata,
                             partitionColumnNames,
                             partitionColumnTypes
                     );
                 }
+            } finally {
+                // Drop the glob factory: we've drained it into matchedFiles and the hive
+                // factory doesn't need it for runtime iteration.
+                Misc.free(globFactory);
             }
             final GenericRecordMetadata wrappingMetadata = new GenericRecordMetadata();
             for (int i = 0, n = parquetMetadata.getColumnCount(); i < n; i++) {
@@ -212,7 +228,7 @@ public class ReadParquetFunctionFactory implements FunctionFactory {
             context.storeTelemetry(TelemetryEvent.READ_PARQUET, TelemetryOrigin.NO_MATTERS);
             return new CursorFunction(new HivePartitionedReadParquetRecordCursorFactory(
                     configuration,
-                    globFactory,
+                    matchedFiles,
                     originalPattern,
                     nonGlobRootByteLen,
                     wrappingMetadata,
@@ -221,7 +237,7 @@ public class ReadParquetFunctionFactory implements FunctionFactory {
                     partitionColumnTypes
             ));
         } catch (Throwable th) {
-            Misc.free(globFactory);
+            Misc.free(matchedFiles);
             throw th;
         }
     }
