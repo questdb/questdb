@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.functions.window;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.Reopenable;
 import io.questdb.cairo.map.Map;
@@ -106,7 +107,13 @@ public class LeadDateFunctionFactory extends AbstractWindowFunctionFactory {
                                          Function arg,
                                          boolean ignoreNulls,
                                          Function defaultValue,
-                                         long offset) {
+                                         long offset,
+                                         @SuppressWarnings("unused") ColumnTypes partitionByKeyTypes,
+                                         @SuppressWarnings("unused") boolean liveView,
+                                         @SuppressWarnings("unused") CairoConfiguration configuration) {
+            // lead() is rejected at LIVE VIEW CREATE, so the live-view params
+            // never have a meaningful value to honour - they're carried here
+            // only to satisfy the shared constructor functional interface.
             super(map, partitionByRecord, partitionBySink, memory, arg, ignoreNulls, defaultValue, offset);
         }
 

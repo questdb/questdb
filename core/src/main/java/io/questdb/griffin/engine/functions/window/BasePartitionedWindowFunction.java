@@ -36,9 +36,11 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Misc;
 
 public abstract class BasePartitionedWindowFunction extends BaseWindowFunction implements Reopenable {
-    protected final Map map;
     protected final VirtualRecord partitionByRecord;
     protected final RecordSink partitionBySink;
+    // Non-final so subclasses can swap the partition state Map during
+    // anchor-driven compaction (see compactPartitionMap on WindowFunction).
+    protected Map map;
 
     public BasePartitionedWindowFunction(Map map, VirtualRecord partitionByRecord, RecordSink partitionBySink, Function arg) {
         super(arg);
