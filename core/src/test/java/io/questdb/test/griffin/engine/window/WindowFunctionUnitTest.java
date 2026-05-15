@@ -372,7 +372,10 @@ public class WindowFunctionUnitTest extends AbstractCairoTest {
                             TestDefaults.createLongFunction(x -> x.getLong(2)),
                             TestDefaults.createMemoryCARW(),
                             2,
-                            0
+                            0,
+                            null,
+                            false,
+                            null
                     );
                 },
                 (a, b) -> a
@@ -492,7 +495,10 @@ public class WindowFunctionUnitTest extends AbstractCairoTest {
                             TestDefaults.createLongFunction(x -> x.getLong(2)),
                             TestDefaults.createMemoryCARW(),
                             2,
-                            0
+                            0,
+                            null,
+                            false,
+                            null
                     );
                 },
                 (a, b) -> a
