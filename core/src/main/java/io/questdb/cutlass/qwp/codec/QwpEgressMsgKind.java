@@ -29,7 +29,7 @@ import java.nio.charset.StandardCharsets;
 /**
  * QWP egress message-kind discriminator. The first byte of every egress payload
  * identifies which of the egress message types it carries. See
- * {@code docs/QWP_EGRESS_EXTENSION.md} sec 5 for the authoritative list.
+ * {@code docs/qwp/wire-egress.md} sec 5 for the authoritative list.
  */
 public final class QwpEgressMsgKind {
     /**
@@ -38,10 +38,20 @@ public final class QwpEgressMsgKind {
      * Sent between result boundaries when a cache reaches its configured
      * soft cap. Recipient clears the indicated caches; subsequent RESULT_BATCH
      * and schema-reference frames assume a fresh starting state. See
-     * {@code docs/QWP_EGRESS_EXTENSION.md} sec 12.
+     * {@code docs/qwp/wire-egress.md} sec 12.
      */
     public static final byte CACHE_RESET = 0x17;
     public static final byte CANCEL = 0x14;
+    /**
+     * {@code SERVER_INFO.capabilities} bit advertising that the frame ends with
+     * an additional {@code zone_id:u16_len+utf8} field after {@code node_id}.
+     * Servers set the bit when the operator has configured a zone; clients use
+     * the value to prefer same-zone endpoints (see {@code docs/qwp/failover.md}
+     * sec 2 and {@code docs/qwp/wire-egress.md} sec 11.8). When the bit is
+     * unset, the trailer is absent entirely so a v2.0 client reading a v2.1
+     * server with no zone configured sees the original byte layout.
+     */
+    public static final int CAP_ZONE = 0x00000001;
     public static final byte CREDIT = 0x15;
     /**
      * Server-to-client ack for successful non-SELECT queries (DDL, INSERT,
@@ -101,8 +111,9 @@ public final class QwpEgressMsgKind {
      * <p>
      * Body layout (little-endian): {@code msg_kind:u8, role:u8, epoch:u64,
      * capabilities:u32, server_wall_ns:i64, cluster_id:u16_len+utf8,
-     * node_id:u16_len+utf8}. The byte-value 0x17 is claimed by
-     * {@link #CACHE_RESET}; SERVER_INFO lives at 0x18.
+     * node_id:u16_len+utf8} followed by an optional {@code zone_id:u16_len+utf8}
+     * gated by the {@link #CAP_ZONE} bit in {@code capabilities}. The byte-value
+     * 0x17 is claimed by {@link #CACHE_RESET}; SERVER_INFO lives at 0x18.
      */
     public static final byte SERVER_INFO = 0x18;
     private static final byte[] ROLE_NAME_BYTES_PRIMARY = "PRIMARY".getBytes(StandardCharsets.US_ASCII);

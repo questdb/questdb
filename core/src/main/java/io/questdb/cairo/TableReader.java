@@ -371,6 +371,10 @@ public class TableReader implements Closeable, SymbolTableSource {
         final long partitionTxn = txFile.getPartitionNameTxn(partitionIndex);
         IndexReader indexReader = getIndexReaderIfExists(partitionIndex, columnIndex, direction);
         if (indexReader != null) {
+            // Single choke point for refreshing the scoreboard pin on cached
+            // readers. TableReader.txn advances through several paths
+            // (goActive / reload / ...); setting it here covers all of them.
+            indexReader.setPinnedTableTxn(txn);
             if (
                     !indexReader.isOpen()
                             || indexReader.getColumnTxn() != columnNameTxn
@@ -1055,7 +1059,8 @@ public class TableReader implements Closeable, SymbolTableSource {
                         getColumnTop(columnBase, columnIndex),
                         metadata,
                         columnVersionReader,
-                        partitionTimestamp
+                        partitionTimestamp,
+                        txn
                 );
                 if (direction == IndexReader.DIR_BACKWARD) {
                     indexes.setQuick(globalIndex, reader);

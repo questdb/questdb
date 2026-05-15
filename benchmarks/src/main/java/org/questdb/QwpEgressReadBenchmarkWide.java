@@ -35,6 +35,7 @@ import java.io.InputStreamReader;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Paths;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.ResultSet;
@@ -69,7 +70,7 @@ import java.util.concurrent.TimeUnit;
  */
 public class QwpEgressReadBenchmarkWide {
 
-    private static final long DEFAULT_ROW_COUNT = 10_000_000L;
+    private static final long DEFAULT_ROW_COUNT = 1000_000_000L;
     // Distinct value count for each of s1..s5. Chosen high enough to stress the
     // SYMBOL dict path: 100_000 unique values per column means the connection-scoped
     // delta dict grows for most of the batch sequence rather than settling into a
@@ -146,7 +147,12 @@ public class QwpEgressReadBenchmarkWide {
         String[] s5Pool = buildSymbolPool("s5_");
         // auto_flush_rows sized so the ILP frame stays under the server's 2 MiB
         // WebSocket buffer given our 15-column row layout (~130 bytes/row encoded).
-        try (Sender sender = Sender.fromConfig("ws::addr=" + HOST + ":" + HTTP_PORT + ";auto_flush_rows=10000;")) {
+        String sfDir = Paths.get(System.getProperty("java.io.tmpdir"),
+                "qdb-sf-ingress-bench-" + System.nanoTime()).toString();
+
+        String sf = "sf_dir=" + sfDir + ";";
+
+        try (Sender sender = Sender.fromConfig("ws::addr=" + HOST + ":" + HTTP_PORT + ";auto_flush_rows=10000;" + sf)) {
             for (long i = 1; i <= ROW_COUNT; i++) {
                 int h1 = (int) (i % HIGH_CARD);
                 int h2 = (int) ((i + 20_000) % HIGH_CARD);

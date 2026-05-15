@@ -163,7 +163,7 @@ public class PostingIndexOomFallbackTest extends AbstractCairoTest {
 
     /**
      * Pathological-budget regression: a per-key spill budget so tight
-     * that periodic flushes accumulate past MAX_GEN_COUNT (143). Each
+     * that periodic flushes accumulate past MAX_GEN_COUNT. Each
      * flush bumps genCount by one; once it crosses MAX_GEN_COUNT,
      * flushAllPending fires an inline seal() which frees both pending
      * and spill buffers. The compactIfOverBudget call site inside

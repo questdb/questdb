@@ -196,6 +196,57 @@ public class QwpEgressErrorCoverageTest extends AbstractBootstrapTest {
     }
 
     @Test
+    public void testOversizedQueryFrameSurfacesCloseDiagnostic() throws Exception {
+        // Regression: when a QUERY frame's declared payload exceeds the
+        // server's recv buffer, the egress upgrade processor must emit a
+        // protocol-level CLOSE(1009) before disconnecting, not just slam the
+        // socket. The client's I/O loop converts a WebSocket close from the
+        // server into a transport error whose message embeds the close code
+        // and reason -- the assertion checks both halves of that chain.
+        TestUtils.assertMemoryLeak(() -> {
+            // Tight recv buffer; default send buffer left alone so the CLOSE
+            // frame itself has plenty of room to land. Keep the buffer big
+            // enough for the WebSocket handshake (a few hundred bytes) and
+            // SERVER_INFO probe traffic, but small enough that a multi-KB
+            // SQL string forces totalFrameSize > recvBufferSize.
+            try (TestServerMain serverMain = startWithEnvVariables(
+                    "QDB_HTTP_RECV_BUFFER_SIZE", "2048")) {
+                serverMain.execute("CREATE TABLE oversize_query(id LONG, ts TIMESTAMP) "
+                        + "TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+                // Build a SQL whose UTF-8 size comfortably exceeds the recv buffer.
+                // The string literal sits inside a WHERE clause so the parser
+                // doesn't fast-fail at a syntactic limit before the frame is
+                // even sent.
+                StringBuilder bigLiteral = new StringBuilder(4096);
+                bigLiteral.repeat("x", 4000);
+                String sql = "SELECT id FROM oversize_query WHERE '"
+                        + bigLiteral + "' = 'placeholder'";
+
+                try (QwpQueryClient client = QwpQueryClient.fromConfig(
+                        "ws::addr=127.0.0.1:" + HTTP_PORT + ";failover=off;")) {
+                    client.connect();
+
+                    String[] errorMsg = {null};
+                    byte[] errorStatus = {0};
+                    client.execute(sql, failIfSuccess(errorStatus, errorMsg));
+
+                    Assert.assertNotNull(
+                            "execute() must surface a transport error when the server "
+                                    + "rejects the oversized QUERY frame",
+                            errorMsg[0]);
+                    // The client wraps the WebSocket close into a transport error
+                    // whose text reads: "server closed connection: code=<n> reason=<text>".
+                    // Pin both halves so a future regression that silently downgrades
+                    // the diagnostic (skipping the CLOSE, dropping the reason) fails.
+                    TestUtils.assertContains(errorMsg[0], "code=1009");
+                    TestUtils.assertContains(errorMsg[0], "frame payload exceeds");
+                }
+            }
+        });
+    }
+
+    @Test
     public void testPeerDisconnectMidStreamDoesNotCrashServer() throws Exception {
         // Client opens a big streaming query, then closes before consuming all
         // batches. Server observes PeerDisconnectedException / ServerDisconnect
