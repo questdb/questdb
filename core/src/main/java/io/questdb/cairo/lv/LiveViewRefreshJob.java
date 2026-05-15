@@ -551,13 +551,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         // Anchor dispatch sits between the filter (or raw WAL cursor)
                         // and the window cursor so window functions see resetPartition
                         // before pass1 evaluates the row.
-                        anchorDispatchingCursor.of(
-                                source,
-                                anchorWindow,
-                                instance,
-                                baseMetadata.getTimestampIndex(),
-                                executionContext
-                        );
+                        anchorDispatchingCursor.of(source, anchorWindow, executionContext);
                         source = anchorDispatchingCursor;
                     }
 
@@ -569,6 +563,12 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                             if (batchMaxTs == Numbers.LONG_NULL || ts > batchMaxTs) {
                                 batchMaxTs = ts;
                             }
+                            // Drive the O3 detection watermark from the post-
+                            // window row loop so every LV - anchored or not -
+                            // contributes. Monotonic clamp inside setLatestSeenTs
+                            // guarantees the next O3 row cannot retroactively
+                            // lower the watermark.
+                            instance.setLatestSeenTs(ts);
                             TableWriter.Row row = walWriter.newRow(ts);
                             copier.copy(executionContext, outRecord, row);
                             row.append();
@@ -896,13 +896,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     }
                     final LiveViewWindow anchorWindow = instance.getAnchorWindow();
                     if (anchorWindow != null) {
-                        anchorDispatchingCursor.of(
-                                source,
-                                anchorWindow,
-                                instance,
-                                baseTimestampIndex,
-                                executionContext
-                        );
+                        anchorDispatchingCursor.of(source, anchorWindow, executionContext);
                         source = anchorDispatchingCursor;
                     }
                     RecordCursor windowCursor = windowFactory.getIncrementalCursor(source, executionContext);
@@ -935,6 +929,11 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                             if (replayMaxTs == Numbers.LONG_NULL || ts > replayMaxTs) {
                                 replayMaxTs = ts;
                             }
+                            // Re-stamp the O3 detection watermark off the post-
+                            // window output. The monotonic clamp on the setter
+                            // means re-iterating rows the head already covered
+                            // never lowers it.
+                            instance.setLatestSeenTs(ts);
                             TableWriter.Row row = walWriter.newRow(ts);
                             copier.copy(executionContext, outRecord, row);
                             row.append();
@@ -1085,13 +1084,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         source = filteringCursor;
                     }
                     if (anchorWindow != null) {
-                        anchorDispatchingCursor.of(
-                                source,
-                                anchorWindow,
-                                instance,
-                                baseTimestampIndex,
-                                executionContext
-                        );
+                        anchorDispatchingCursor.of(source, anchorWindow, executionContext);
                         source = anchorDispatchingCursor;
                     }
                     RecordCursor windowCursor = windowFactory.getIncrementalCursor(source, executionContext);
@@ -1102,6 +1095,11 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                             if (replayMaxTs == Numbers.LONG_NULL || ts > replayMaxTs) {
                                 replayMaxTs = ts;
                             }
+                            // Re-stamp the O3 detection watermark off the post-
+                            // window output so any subsequent O3 in the same
+                            // worker cycle is caught against the just-rebuilt
+                            // state.
+                            instance.setLatestSeenTs(ts);
                             TableWriter.Row row = walWriter.newRow(ts);
                             copier.copy(executionContext, outRecord, row);
                             row.append();

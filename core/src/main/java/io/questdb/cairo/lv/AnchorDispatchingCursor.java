@@ -40,19 +40,19 @@ import io.questdb.griffin.SqlExecutionContext;
  * source / filter cursor and the {@code WindowRecordCursorFactory.getIncrementalCursor},
  * so the window function's pass1 sees state already reset for the current
  * partition+anchor.
+ * <p>
+ * Per-row {@code latestSeenTs} stamping lives on the refresh-job row loop
+ * (after the window cursor produces a row) rather than here, so that LVs
+ * without an anchored named window also drive the O3 detection watermark.
  */
 final class AnchorDispatchingCursor implements RecordCursor {
     private RecordCursor base;
-    private int baseTimestampIndex = -1;
-    private LiveViewInstance instance;
     private LiveViewWindow window;
 
     @Override
     public void close() {
         base = null;
         window = null;
-        instance = null;
-        baseTimestampIndex = -1;
     }
 
     @Override
@@ -75,13 +75,7 @@ final class AnchorDispatchingCursor implements RecordCursor {
         if (!base.hasNext()) {
             return false;
         }
-        Record record = base.getRecord();
-        window.processRow(record);
-        // The O3 detection path compares the next batch's min ts against the
-        // watermark this maintains. The setter clamps so the update is
-        // monotonic - a late row arriving after we've already detected it
-        // won't lower the watermark and mask further late rows behind it.
-        instance.setLatestSeenTs(record.getTimestamp(baseTimestampIndex));
+        window.processRow(base.getRecord());
         return true;
     }
 
@@ -93,14 +87,10 @@ final class AnchorDispatchingCursor implements RecordCursor {
     public void of(
             RecordCursor base,
             LiveViewWindow window,
-            LiveViewInstance instance,
-            int baseTimestampIndex,
             SqlExecutionContext executionContext
     ) throws SqlException {
         this.base = base;
         this.window = window;
-        this.instance = instance;
-        this.baseTimestampIndex = baseTimestampIndex;
         // The anchor expression is initialised once per refresh cycle so that bind
         // variables and any per-cursor cached state pick up the current source.
         window.init(base, executionContext);
