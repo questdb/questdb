@@ -3592,6 +3592,209 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRestartRestoresBoundedRangeAggregatesFromHeadCheckpoint() throws Exception {
+        // Phase 2b.6a/b: avg/sum/count(*)/count(arg) over (PARTITION BY ...
+        // RANGE BETWEEN '<n>' <unit> PRECEDING AND ...) are now snapshot-
+        // capable. End-to-end check that an LV combining all of them writes a
+        // head .cp and the first post-restart refresh tick rehydrates the
+        // partition maps. Variable-length deque serialisation: snapshot writes
+        // size + size * (LONG ts, DOUBLE/LONG value); restore re-allocates the
+        // ring at capacity = max(size, initialBufferSize).
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+                    "SELECT ts, sym, " +
+                    "  avg(x) OVER w AS a, " +
+                    "  sum(x) OVER w AS s, " +
+                    "  count(*) OVER w AS cs, " +
+                    "  count(x) OVER w AS cx " +
+                    "FROM base " +
+                    "WINDOW w AS (PARTITION BY sym ORDER BY ts RANGE BETWEEN '2' HOUR PRECEDING AND CURRENT ROW)");
+
+            final long preHeadLvSeqTxn;
+            final long preLastProcessed;
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                setCurrentMicros(0L);
+                execute("INSERT INTO base (ts, sym, x) VALUES " +
+                        "('2026-09-01T00:00:00.000000Z', 'a', 1.0), " +
+                        "('2026-09-01T01:00:00.000000Z', 'a', 2.0), " +
+                        "('2026-09-01T02:00:00.000000Z', 'a', 3.0), " +
+                        "('2026-09-01T00:00:00.000000Z', 'b', 10.0), " +
+                        "('2026-09-01T01:00:00.000000Z', 'b', 20.0)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                preHeadLvSeqTxn = instance.getHeadCheckpointLvSeqTxn();
+                preLastProcessed = instance.getLastProcessedSeqTxn();
+                Assert.assertNotEquals(
+                        "head .cp must be written for an LV with bounded RANGE aggregates now that 2b.6a/b makes them snapshot-capable",
+                        Numbers.LONG_NULL,
+                        preHeadLvSeqTxn
+                );
+                Assert.assertTrue(
+                        "snapshot capability cached after first successful flush",
+                        instance.isSnapshotCapability()
+                );
+            }
+
+            engine.getLiveViewRegistry().clear();
+            engine.buildViewGraphs();
+
+            LiveViewInstance reloaded = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(reloaded);
+            Assert.assertEquals(preHeadLvSeqTxn, reloaded.getHeadCheckpointLvSeqTxn());
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+            }
+            Assert.assertTrue(reloaded.isCheckpointRestoreAttempted());
+            Assert.assertEquals(preLastProcessed, reloaded.getLastProcessedSeqTxn());
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testRestartRestoresBoundedRangeFirstLastValueFromHeadCheckpoint() throws Exception {
+        // Phase 2b.6d/e: first_value() and last_value() over (PARTITION BY ...
+        // RANGE BETWEEN ...) are now snapshot-capable across Double / Long /
+        // Timestamp factories and respect-nulls vs IGNORE NULLS variants.
+        // First and last share the same per-partition slot count in their LV
+        // value-types static; snapshot/restore are overridden per class to
+        // handle their distinct slot orderings.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+                    "SELECT ts, sym, " +
+                    "  first_value(x) OVER w1 AS fv, " +
+                    "  first_value(x) IGNORE NULLS OVER w1 AS fvn, " +
+                    "  last_value(x) IGNORE NULLS OVER w1 AS lvn, " +
+                    "  last_value(x) OVER w2 AS lv " +
+                    "FROM base " +
+                    "WINDOW " +
+                    "  w1 AS (PARTITION BY sym ORDER BY ts RANGE BETWEEN '2' HOUR PRECEDING AND CURRENT ROW), " +
+                    "  w2 AS (PARTITION BY sym ORDER BY ts RANGE BETWEEN '3' HOUR PRECEDING AND '1' HOUR PRECEDING)");
+
+            final long preHeadLvSeqTxn;
+            final long preLastProcessed;
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                setCurrentMicros(0L);
+                execute("INSERT INTO base (ts, sym, x) VALUES " +
+                        "('2026-09-01T00:00:00.000000Z', 'a', 1.0), " +
+                        "('2026-09-01T01:00:00.000000Z', 'a', 2.0), " +
+                        "('2026-09-01T02:00:00.000000Z', 'a', 3.0), " +
+                        "('2026-09-01T00:00:00.000000Z', 'b', 10.0), " +
+                        "('2026-09-01T01:00:00.000000Z', 'b', 20.0)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                preHeadLvSeqTxn = instance.getHeadCheckpointLvSeqTxn();
+                preLastProcessed = instance.getLastProcessedSeqTxn();
+                Assert.assertNotEquals(
+                        "head .cp must be written for an LV with first_value/last_value bounded RANGE now that 2b.6d/e makes them snapshot-capable",
+                        Numbers.LONG_NULL,
+                        preHeadLvSeqTxn
+                );
+                Assert.assertTrue(
+                        "snapshot capability cached after first successful flush",
+                        instance.isSnapshotCapability()
+                );
+            }
+
+            engine.getLiveViewRegistry().clear();
+            engine.buildViewGraphs();
+
+            LiveViewInstance reloaded = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(reloaded);
+            Assert.assertEquals(preHeadLvSeqTxn, reloaded.getHeadCheckpointLvSeqTxn());
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+            }
+            Assert.assertTrue(reloaded.isCheckpointRestoreAttempted());
+            Assert.assertEquals(preLastProcessed, reloaded.getLastProcessedSeqTxn());
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testRestartRestoresBoundedRangeMinMaxFromHeadCheckpoint() throws Exception {
+        // Phase 2b.6c: min/max over (PARTITION BY ... RANGE BETWEEN ...) are
+        // now snapshot-capable. The MaxMinOverPartitionRangeFrameFunction
+        // class carries two state shapes:
+        //   - frameLoBounded == true:  ring + monotonic deque (9 LONG slots)
+        //   - frameLoBounded == false: ring + scalar max/min (5 LONGs + 1
+        //                              typed DOUBLE/LONG/TIMESTAMP)
+        // Both flavours need to round-trip through .cp. The LV below exercises
+        // both: w1 uses RANGE BETWEEN '2' HOUR PRECEDING AND CURRENT ROW
+        // (bounded lower) and w2 uses RANGE BETWEEN UNBOUNDED PRECEDING AND
+        // '1' HOUR PRECEDING (unbounded lower). min() and max() share the
+        // implementation class via a comparator parameter, so covering both
+        // functions also covers Min* and Max* factories at once.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+                    "SELECT ts, sym, " +
+                    "  min(x) OVER w1 AS mn, " +
+                    "  max(x) OVER w1 AS mx, " +
+                    "  min(x) OVER w2 AS mnu, " +
+                    "  max(x) OVER w2 AS mxu " +
+                    "FROM base " +
+                    "WINDOW " +
+                    "  w1 AS (PARTITION BY sym ORDER BY ts RANGE BETWEEN '2' HOUR PRECEDING AND CURRENT ROW), " +
+                    "  w2 AS (PARTITION BY sym ORDER BY ts RANGE BETWEEN UNBOUNDED PRECEDING AND '1' HOUR PRECEDING)");
+
+            final long preHeadLvSeqTxn;
+            final long preLastProcessed;
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                setCurrentMicros(0L);
+                execute("INSERT INTO base (ts, sym, x) VALUES " +
+                        "('2026-09-01T00:00:00.000000Z', 'a', 1.0), " +
+                        "('2026-09-01T01:00:00.000000Z', 'a', 2.0), " +
+                        "('2026-09-01T02:00:00.000000Z', 'a', 3.0), " +
+                        "('2026-09-01T00:00:00.000000Z', 'b', 10.0), " +
+                        "('2026-09-01T01:00:00.000000Z', 'b', 20.0)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                preHeadLvSeqTxn = instance.getHeadCheckpointLvSeqTxn();
+                preLastProcessed = instance.getLastProcessedSeqTxn();
+                Assert.assertNotEquals(
+                        "head .cp must be written for an LV with min/max bounded RANGE now that 2b.6c makes them snapshot-capable",
+                        Numbers.LONG_NULL,
+                        preHeadLvSeqTxn
+                );
+                Assert.assertTrue(
+                        "snapshot capability cached after first successful flush",
+                        instance.isSnapshotCapability()
+                );
+            }
+
+            engine.getLiveViewRegistry().clear();
+            engine.buildViewGraphs();
+
+            LiveViewInstance reloaded = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(reloaded);
+            Assert.assertEquals(preHeadLvSeqTxn, reloaded.getHeadCheckpointLvSeqTxn());
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+            }
+            Assert.assertTrue(reloaded.isCheckpointRestoreAttempted());
+            Assert.assertEquals(preLastProcessed, reloaded.getLastProcessedSeqTxn());
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
     public void testRestartRestoresFirstLastValueFromHeadCheckpoint() throws Exception {
         // Phase 2b.3d/e: first_value() and last_value() over (PARTITION BY ...
         // ROWS N PRECEDING ...) are now snapshot-capable, in both the parent
