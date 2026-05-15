@@ -87,14 +87,14 @@ public class HivePartitionedReadParquetRecordCursor implements NoRandomAccessRec
     public HivePartitionedReadParquetRecordCursor(
             RecordCursor globCursor,
             ReadParquetRecordCursor parquetCursor,
-            CharSequence nonGlobRoot,
+            int nonGlobRootByteLen,
             int parquetColumnCount,
             ObjList<String> partitionColumnNames,
             IntList partitionColumnTypes
     ) {
         this.globCursor = globCursor;
         this.parquetCursor = parquetCursor;
-        this.nonGlobRootLen = nonGlobRoot.length();
+        this.nonGlobRootLen = nonGlobRootByteLen;
         this.parquetColumnCount = parquetColumnCount;
         this.partitionColumnNames = partitionColumnNames;
         this.partitionColumnTypes = partitionColumnTypes;

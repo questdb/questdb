@@ -131,6 +131,8 @@ public enum PropertyKey implements ConfigPropertyKey {
     CAIRO_SQL_PARALLEL_WORK_STEALING_SPIN_TIMEOUT("cairo.sql.parallel.work.stealing.spin.timeout"),
     CAIRO_SQL_PARALLEL_READ_PARQUET_ENABLED("cairo.sql.parallel.read.parquet.enabled"),
     CAIRO_SQL_PARQUET_FRAME_CACHE_CAPACITY("cairo.sql.parquet.frame.cache.capacity"),
+    CAIRO_SQL_PARQUET_HIVE_MAX_OPEN_FILES("cairo.sql.parquet.hive.max.open.files"),
+    CAIRO_SQL_PARQUET_HIVE_PARALLEL_ENABLED("cairo.sql.parquet.hive.parallel.enabled"),
     CAIRO_SQL_PARQUET_ROW_GROUP_PRUNING_ENABLED("cairo.sql.parquet.row.group.pruning.enabled"),
     CAIRO_PAGE_FRAME_SHARD_COUNT("cairo.page.frame.shard.count"),
     CAIRO_PAGE_FRAME_TASK_POOL_CAPACITY("cairo.page.frame.task.pool.capacity"),

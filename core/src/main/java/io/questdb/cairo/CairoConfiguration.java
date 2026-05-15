@@ -749,6 +749,8 @@ public interface CairoConfiguration {
 
     int getSqlParquetFrameCacheCapacity();
 
+    int getSqlParquetHiveMaxOpenFiles();
+
     int getSqlPivotMaxProducedColumns();
 
     int getSqlSmallMapKeyCapacity();
@@ -972,6 +974,8 @@ public interface CairoConfiguration {
     boolean isSqlParallelTopKEnabled();
 
     boolean isSqlParallelWindowJoinEnabled();
+
+    boolean isSqlParquetHiveParallelEnabled();
 
     boolean isSqlParquetRowGroupPruningEnabled();
 

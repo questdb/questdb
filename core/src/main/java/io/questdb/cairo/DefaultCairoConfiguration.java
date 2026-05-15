@@ -1167,6 +1167,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getSqlParquetHiveMaxOpenFiles() {
+        return 4096;
+    }
+
+    @Override
     public int getSqlPivotMaxProducedColumns() {
         return 5_000;
     }
@@ -1652,6 +1657,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public boolean isSqlParallelWindowJoinEnabled() {
+        return true;
+    }
+
+    @Override
+    public boolean isSqlParquetHiveParallelEnabled() {
         return true;
     }
 

@@ -410,10 +410,18 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
     }
 
     /**
-     * Replaces parquet buffer slots for any column whose frame supplied a non-zero
-     * virtual page address. Called after {@link ParquetBuffers#decode} so the
-     * decoded parquet addresses are in place; the overlay only writes slots the
-     * decoder left at zero. No-op for frames without virtual columns.
+     * Writes the frame's virtual page addresses into the parquet buffers for any
+     * column where the frame reported a non-zero virtual address. Called after
+     * {@link ParquetBuffers#decode} so the decoded parquet addresses are in place
+     * and this overlay can patch in extra addresses on top.
+     * <p>
+     * Contract: virtual columns must not overlap with parquet columns - producers
+     * are expected to report a non-zero virtual address only for columns the
+     * decoder leaves at zero (e.g. hive partition keys absent from the parquet
+     * schema). The overlay does not enforce this; a producer that violates the
+     * contract will silently see its parquet-decoded address overwritten.
+     * <p>
+     * No-op for frames without any non-zero virtual address.
      */
     private void overlayVirtualPages(ParquetBuffers buffers, int frameIndex) {
         final int colCount = addressCache.getColumnCount();

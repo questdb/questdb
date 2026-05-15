@@ -24,10 +24,9 @@
 
 package io.questdb.griffin.engine.functions.table;
 
+import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
-import io.questdb.cairo.MutableMetadataRecordCursorFactory;
 import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -56,20 +55,23 @@ import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
  * <p>
  * Two execution paths coexist:
  * <ul>
- *   <li>Parallel page frame path when no partition column is VARCHAR. Emits one
- *       frame per parquet row group across all files; partition values come from
- *       per-file native buffers via the virtual page overlay.</li>
- *   <li>Sequential record cursor path when any partition column is VARCHAR.
- *       Walks files single-threaded and materialises partition values on the
- *       wrapping {@link io.questdb.cairo.sql.Record}.</li>
+ *   <li>Page-frame path (default). Emits one frame per parquet row group across
+ *       all files; partition values come from per-file native buffers via the
+ *       virtual page overlay. Supports every inferred partition column type, and
+ *       the surrounding async filter pipeline executes frames in parallel when
+ *       worker threads are available.</li>
+ *   <li>Sequential record cursor path, used when
+ *       {@code cairo.sql.parquet.hive.parallel.enabled=false}. Walks files
+ *       single-threaded and materialises partition values on the wrapping
+ *       {@link io.questdb.cairo.sql.Record}. Provided as a safety fallback.</li>
  * </ul>
  */
-public class HivePartitionedReadParquetRecordCursorFactory extends MutableMetadataRecordCursorFactory {
+public class HivePartitionedReadParquetRecordCursorFactory extends AbstractRecordCursorFactory {
     private final boolean canPageFrame;
     private final CairoConfiguration configuration;
     private final RecordCursorFactory globCursorFactory;
     private final CharSequence globPattern;
-    private final CharSequence nonGlobRoot;
+    private final int nonGlobRootByteLen;
     private final int parquetColumnCount;
     private final GenericRecordMetadata parquetMetadata;
     private final ObjList<String> partitionColumnNames;
@@ -82,7 +84,7 @@ public class HivePartitionedReadParquetRecordCursorFactory extends MutableMetada
             @NotNull CairoConfiguration configuration,
             @NotNull RecordCursorFactory globCursorFactory,
             @NotNull CharSequence globPattern,
-            @NotNull CharSequence nonGlobRoot,
+            int nonGlobRootByteLen,
             @NotNull GenericRecordMetadata wrappingMetadata,
             @NotNull GenericRecordMetadata parquetMetadata,
             @NotNull ObjList<String> partitionColumnNames,
@@ -92,12 +94,12 @@ public class HivePartitionedReadParquetRecordCursorFactory extends MutableMetada
         this.configuration = configuration;
         this.globCursorFactory = globCursorFactory;
         this.globPattern = globPattern.toString();
-        this.nonGlobRoot = nonGlobRoot.toString();
+        this.nonGlobRootByteLen = nonGlobRootByteLen;
         this.parquetColumnCount = parquetMetadata.getColumnCount();
         this.parquetMetadata = parquetMetadata;
         this.partitionColumnNames = partitionColumnNames;
         this.partitionColumnTypes = partitionColumnTypes;
-        this.canPageFrame = computeCanPageFrame(partitionColumnTypes);
+        this.canPageFrame = configuration.isSqlParquetHiveParallelEnabled();
     }
 
     @Override
@@ -121,7 +123,8 @@ public class HivePartitionedReadParquetRecordCursorFactory extends MutableMetada
                     parquetColumnCount,
                     partitionColumnNames,
                     partitionColumnTypes,
-                    nonGlobRoot,
+                    nonGlobRootByteLen,
+                    configuration.getSqlParquetHiveMaxOpenFiles(),
                     pushdownFilterConditions
             );
         }
@@ -136,9 +139,8 @@ public class HivePartitionedReadParquetRecordCursorFactory extends MutableMetada
 
     @Override
     public boolean recordCursorSupportsRandomAccess() {
-        // The page-frame-backed cursor (used when no VARCHAR partition columns are present)
-        // wraps a PageFrameRecordCursorImpl which supports random access. The legacy path
-        // walks files sequentially and does not.
+        // The page-frame-backed cursor wraps a PageFrameRecordCursorImpl which supports
+        // random access. The sequential fallback walks files in order and does not.
         return canPageFrame;
     }
 
@@ -165,14 +167,6 @@ public class HivePartitionedReadParquetRecordCursorFactory extends MutableMetada
         Misc.freeObjListAndClear(pushdownFilterConditions);
     }
 
-    private static boolean computeCanPageFrame(IntList partitionColumnTypes) {
-        // All inferred partition types (INT, LONG, DATE, TIMESTAMP, DOUBLE, VARCHAR)
-        // are now supported on the parallel page-frame path. VARCHAR partition
-        // values are surfaced through hand-encoded aux+data pages in
-        // HivePartitionedReadParquetPageFrameCursor#fillVarcharPartitionBuffer.
-        return true;
-    }
-
     private RecordCursor getLegacyCursor(SqlExecutionContext executionContext) throws SqlException {
         final RecordCursor globCursor = globCursorFactory.getCursor(executionContext);
         ReadParquetRecordCursor parquetCursor = null;
@@ -185,7 +179,7 @@ public class HivePartitionedReadParquetRecordCursorFactory extends MutableMetada
             HivePartitionedReadParquetRecordCursor cursor = new HivePartitionedReadParquetRecordCursor(
                     globCursor,
                     parquetCursor,
-                    nonGlobRoot,
+                    nonGlobRootByteLen,
                     parquetColumnCount,
                     partitionColumnNames,
                     partitionColumnTypes
@@ -208,7 +202,8 @@ public class HivePartitionedReadParquetRecordCursorFactory extends MutableMetada
                     parquetColumnCount,
                     partitionColumnNames,
                     partitionColumnTypes,
-                    nonGlobRoot,
+                    nonGlobRootByteLen,
+                    configuration.getSqlParquetHiveMaxOpenFiles(),
                     pushdownFilterConditions
             );
         }

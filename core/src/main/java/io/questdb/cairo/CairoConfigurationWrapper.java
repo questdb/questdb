@@ -1168,6 +1168,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getSqlParquetHiveMaxOpenFiles() {
+        return getDelegate().getSqlParquetHiveMaxOpenFiles();
+    }
+
+    @Override
     public int getSqlPivotMaxProducedColumns() {
         return getDelegate().getSqlPivotMaxProducedColumns();
     }
@@ -1655,6 +1660,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public boolean isSqlParallelWindowJoinEnabled() {
         return getDelegate().isSqlParallelWindowJoinEnabled();
+    }
+
+    @Override
+    public boolean isSqlParquetHiveParallelEnabled() {
+        return getDelegate().isSqlParquetHiveParallelEnabled();
     }
 
     @Override

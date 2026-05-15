@@ -29,6 +29,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.VarcharTypeDriver;
 import io.questdb.cairo.sql.ColumnMapping;
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.PartitionFormat;
@@ -39,13 +40,13 @@ import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.vm.MemoryCARWImpl;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.engine.table.ParquetRowGroupFilter;
 import io.questdb.griffin.engine.table.PushdownFilterExtractor;
 import io.questdb.griffin.engine.table.parquet.ParquetFileDecoder;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.BoolList;
+import io.questdb.std.Chars;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
@@ -59,7 +60,6 @@ import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.microtime.MicrosFormatUtils;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
-import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
@@ -80,40 +80,42 @@ import static io.questdb.griffin.engine.functions.table.ReadParquetRecordCursor.
  * has moved past their file, so in-flight worker frames stay valid while older
  * files retire.
  * <p>
- * Variable-length partition columns (VARCHAR) are not yet supported on the
- * parallel path; the factory falls back to the sequential record cursor when
- * any partition column is VARCHAR.
+ * All inferred partition column types (INT, LONG, DATE, TIMESTAMP, DOUBLE,
+ * VARCHAR) are supported. VARCHAR partition values are surfaced through
+ * hand-encoded aux+data pages built in {@link #fillVarcharPartitionBuffer}.
  */
 public class HivePartitionedReadParquetPageFrameCursor implements PageFrameCursor {
-    // Safety net for runaway-glob scenarios. The cursor cannot proactively close
-    // older files because their frames may still be in flight on worker threads;
-    // we rely on the consumer's releaseOpenPartitions calls to bound memory. If
-    // a consumer never calls release (or it's heavily delayed), a glob over many
-    // thousands of files could exhaust fds / address space. Fail fast with a
-    // pointer at the cause when the in-flight file count crosses this threshold.
-    private static final int MAX_CONCURRENT_OPEN_FILES = 4096;
-    // Mirrors VarcharTypeDriver private constants; kept in sync so we can encode
-    // aux entries by hand for the partition virtual columns. Format reference:
-    // VarcharTypeDriver#appendValue.
-    private static final int VARCHAR_HEADER_FLAG_ASCII = 2;
-    private static final int VARCHAR_HEADER_FLAG_INLINED = 1;
-    private static final int VARCHAR_HEADER_FLAGS_WIDTH = 4;
-    private static final int VARCHAR_AUX_ENTRY_BYTES = 16;
     private static final Log LOG = LogFactory.getLog(HivePartitionedReadParquetPageFrameCursor.class);
+    // VARCHAR slice aux entry layout, mirrored from VarcharTypeDriver so the
+    // partition virtual buffers can be hand-encoded. Each aux entry is 16 bytes:
+    //   bytes 0-3: header = (size << 4) | (ascii ? 2 : 0) | (null ? 4 : 0)
+    //   bytes 4-7: reserved (zero)
+    //   bytes 8-15: absolute pointer to value bytes
+    private static final int VARCHAR_AUX_ENTRY_BYTES = 16;
+    private static final int VARCHAR_HEADER_FLAG_ASCII = 2;
     private final ColumnMapping columnMapping = new ColumnMapping();
     private final ObjList<ParquetFileDecoder> decoders = new ObjList<>();
+    private final LongList fds = new LongList();
     private final FilesFacade ff;
     private final LongList fileAddrs = new LongList();
     private final LongList fileSizes = new LongList();
-    private final LongList fds = new LongList();
     private final LongList filterBufEnds = new LongList();
     private final ObjList<DirectLongList> filterLists = new ObjList<>();
     private final BoolList filterPrepared = new BoolList();
     private final ObjList<MemoryCARWImpl> filterValues = new ObjList<>();
     private final HivePartitionedPageFrame frame = new HivePartitionedPageFrame();
     private final RecordCursor globCursor;
-    private final RecordMetadata parquetMetadata;
+    // Safety net for runaway-glob scenarios. The cursor cannot proactively close
+    // older files because their frames may still be in flight on worker threads;
+    // we rely on the consumer's releaseOpenPartitions calls to bound memory. If
+    // a consumer never calls release (or it's heavily delayed), a glob over many
+    // thousands of files could exhaust fds / address space. Fail fast when the
+    // in-flight file count crosses this threshold. Configured via
+    // cairo.sql.parquet.hive.max.open.files (default 4096).
+    private final int maxConcurrentOpenFiles;
+    private final int nonGlobRootLen;
     private final int parquetColumnCount;
+    private final RecordMetadata parquetMetadata;
     // Per-file partition buffers, flat-indexed by fileIndex * partitionColumnCount + partitionCol.
     // For fixed-size types, partitionBufferAddrs/Sizes is the only buffer; aux is unused (0).
     // For VARCHAR, partitionBufferAddrs/Sizes is the data page and partitionAuxBufferAddrs/Sizes
@@ -121,34 +123,33 @@ public class HivePartitionedReadParquetPageFrameCursor implements PageFrameCurso
     private final LongList partitionAuxBufferAddrs = new LongList();
     private final LongList partitionAuxBufferSizes = new LongList();
     private final LongList partitionBufferAddrs = new LongList();
-    private final IntList partitionBufferTypeWidths = new IntList();
     private final LongList partitionBufferSizes = new LongList();
+    private final IntList partitionBufferTypeWidths = new IntList();
+    private final int partitionColumnCount;
     private final ObjList<String> partitionColumnNames;
     private final IntList partitionColumnTypes;
-    private final int partitionColumnCount;
-    private final int nonGlobRootLen;
+    private final @Nullable ObjList<PushdownFilterExtractor.PushdownFilterCondition> pushdownFilterConditions;
+    private int currentFileIndex = -1;
+    private long cumulativePartitionLo = 0;
+    private SqlExecutionContext executionContext;
+    // If releaseOpenPartitions retired any decoder, cheap toTop reuse is unsafe
+    // (a released decoder is null in the list and we'd need to reopen — orders
+    // of complexity beyond the simple advance-through-list path).
+    private boolean isAnyFileReleased = false;
+    private boolean isFilterConditionsInitialised = false;
+    // Row counts are accumulated as files open during normal iteration so that
+    // size() after a full scan does not need a separate probe walk.
+    private boolean isTotalRowCountFinalised = false;
+    private int lowestOpenFileIndex = 0;
     // Lazy: freed in close, re-allocated on next openNextFile so the cursor can
     // survive close-reopen cycles via the factory's caching pattern.
     private Path path;
-    private final @Nullable ObjList<PushdownFilterExtractor.PushdownFilterCondition> pushdownFilterConditions;
-    private SqlExecutionContext executionContext;
     // Scratch arrays for per-file partition value parsing during file pruning and
     // VARCHAR buffer fill. Sized to partitionColumnCount; reused across files.
     private int[] prunePartitionByteHi;
     private int[] prunePartitionByteLo;
     private boolean[] prunePartitionPresent;
     private long[] prunePartitionValues;
-    private int currentFileIndex = -1;
-    private long cumulativePartitionLo = 0;
-    private boolean isFilterConditionsInitialised = false;
-    // If releaseOpenPartitions retired any decoder, cheap toTop reuse is unsafe
-    // (a released decoder is null in the list and we'd need to reopen — orders
-    // of complexity beyond the simple advance-through-list path).
-    private boolean isAnyFileReleased = false;
-    // Row counts are accumulated as files open during normal iteration so that
-    // size() after a full scan does not need a separate probe walk.
-    private boolean isTotalRowCountFinalised = false;
-    private int lowestOpenFileIndex = 0;
     private long runningRowCount = 0;
     private long totalRowCount = -1;
 
@@ -159,7 +160,8 @@ public class HivePartitionedReadParquetPageFrameCursor implements PageFrameCurso
             int parquetColumnCount,
             ObjList<String> partitionColumnNames,
             IntList partitionColumnTypes,
-            CharSequence nonGlobRoot,
+            int nonGlobRootByteLen,
+            int maxConcurrentOpenFiles,
             @Nullable ObjList<PushdownFilterExtractor.PushdownFilterCondition> pushdownFilterConditions
     ) {
         this.ff = ff;
@@ -169,7 +171,8 @@ public class HivePartitionedReadParquetPageFrameCursor implements PageFrameCurso
         this.partitionColumnNames = partitionColumnNames;
         this.partitionColumnTypes = partitionColumnTypes;
         this.partitionColumnCount = partitionColumnNames.size();
-        this.nonGlobRootLen = nonGlobRoot.length();
+        this.nonGlobRootLen = nonGlobRootByteLen;
+        this.maxConcurrentOpenFiles = maxConcurrentOpenFiles;
         this.pushdownFilterConditions = pushdownFilterConditions;
         this.prunePartitionValues = new long[this.partitionColumnCount];
         this.prunePartitionPresent = new boolean[this.partitionColumnCount];
@@ -363,6 +366,66 @@ public class HivePartitionedReadParquetPageFrameCursor implements PageFrameCurso
         buildColumnMapping();
     }
 
+    private void allocatePartitionBuffersForFile(int fileIndex, Utf8Sequence filePath, ParquetFileDecoder decoder) {
+        // Reserve slots in the flat per-file × per-col arrays.
+        for (int c = 0; c < partitionColumnCount; c++) {
+            partitionBufferAddrs.add(0);
+            partitionBufferSizes.add(0);
+            partitionBufferTypeWidths.add(0);
+            partitionAuxBufferAddrs.add(0);
+            partitionAuxBufferSizes.add(0);
+        }
+        if (partitionColumnCount == 0) {
+            return;
+        }
+        final int rgCount = decoder.metadata().getRowGroupCount();
+        int maxRowGroupSize = 0;
+        for (int i = 0; i < rgCount; i++) {
+            int rgSize = decoder.metadata().getRowGroupSize(i);
+            if (rgSize > maxRowGroupSize) {
+                maxRowGroupSize = rgSize;
+            }
+        }
+        if (maxRowGroupSize == 0) {
+            return;
+        }
+        // openNextFile parses partition values into prunePartition* before calling us,
+        // so the byte ranges below come for free.
+        for (int c = 0; c < partitionColumnCount; c++) {
+            int type = partitionColumnTypes.getQuick(c);
+            int slot = fileIndex * partitionColumnCount + c;
+            if (ColumnType.tagOf(type) == ColumnType.VARCHAR) {
+                final long auxSize = (long) maxRowGroupSize * VARCHAR_AUX_ENTRY_BYTES;
+                final long auxAddr = Unsafe.malloc(auxSize, MemoryTag.NATIVE_DEFAULT);
+                // Slice format: the aux entry holds an absolute pointer into the data
+                // buffer plus a length. We allocate enough room for the value bytes
+                // once (every aux entry will point at the same start). Null/empty
+                // values get a 1-byte allocation so the data pointer is non-zero —
+                // the virtual-page overlay only fires when the data address is non-zero.
+                int valueBytes = 0;
+                if (prunePartitionPresent[c]) {
+                    valueBytes = prunePartitionByteHi[c] - prunePartitionByteLo[c];
+                }
+                final long dataSize = Math.max(valueBytes, 1);
+                final long dataAddr = Unsafe.malloc(dataSize, MemoryTag.NATIVE_DEFAULT);
+                partitionAuxBufferAddrs.setQuick(slot, auxAddr);
+                partitionAuxBufferSizes.setQuick(slot, auxSize);
+                partitionBufferAddrs.setQuick(slot, dataAddr);
+                partitionBufferSizes.setQuick(slot, dataSize);
+                partitionBufferTypeWidths.setQuick(slot, VARCHAR_AUX_ENTRY_BYTES);
+            } else {
+                int typeWidth = ColumnType.sizeOf(type);
+                long bufferSize = (long) maxRowGroupSize * typeWidth;
+                long bufferAddr = Unsafe.malloc(bufferSize, MemoryTag.NATIVE_DEFAULT);
+                partitionBufferAddrs.setQuick(slot, bufferAddr);
+                partitionBufferSizes.setQuick(slot, bufferSize);
+                partitionBufferTypeWidths.setQuick(slot, typeWidth);
+            }
+        }
+        // Populate buffers by parsing partition values from the file path.
+        populatePartitionBuffersFromPath(fileIndex, filePath, maxRowGroupSize);
+    }
+
     private void buildColumnMapping() {
         columnMapping.clear();
         // Parquet columns: writer index is the parquet position (external files have no field IDs).
@@ -374,6 +437,22 @@ public class HivePartitionedReadParquetPageFrameCursor implements PageFrameCurso
         // their slots instead.
         for (int i = 0; i < partitionColumnCount; i++) {
             columnMapping.addColumn(parquetColumnCount + i, Integer.MAX_VALUE - i);
+        }
+    }
+
+    private boolean canCompareTyped(int columnType) {
+        // DOUBLE is intentionally excluded: equality on doubles is fraught (NaN
+        // never compares equal, and decimal literals don't round-trip exactly
+        // through Double). A spuriously-pruned file is a correctness bug; better
+        // to let the row-level filter handle DOUBLE conditions.
+        switch (ColumnType.tagOf(columnType)) {
+            case ColumnType.INT:
+            case ColumnType.LONG:
+            case ColumnType.DATE:
+            case ColumnType.TIMESTAMP:
+                return true;
+            default:
+                return false;
         }
     }
 
@@ -464,6 +543,20 @@ public class HivePartitionedReadParquetPageFrameCursor implements PageFrameCurso
         globCursor.toTop();
     }
 
+    private void ensureFilterConditionsInitialised() {
+        if (isFilterConditionsInitialised || pushdownFilterConditions == null) {
+            return;
+        }
+        try {
+            for (int i = 0, n = pushdownFilterConditions.size(); i < n; i++) {
+                pushdownFilterConditions.getQuick(i).init(executionContext);
+            }
+        } catch (SqlException e) {
+            throw CairoException.nonCritical().put("failed to init pushdown filter: ").put(e.getFlyweightMessage());
+        }
+        isFilterConditionsInitialised = true;
+    }
+
     private void fillPartitionBuffer(long addr, int rowCount, int columnType, long longValue, boolean present) {
         if (!present) {
             switch (ColumnType.tagOf(columnType)) {
@@ -507,177 +600,6 @@ public class HivePartitionedReadParquetPageFrameCursor implements PageFrameCurso
                 break;
             default:
                 throw CairoException.nonCritical().put("unsupported partition column type for parallel hive read [type=").put(ColumnType.nameOf(columnType)).put(']');
-        }
-    }
-
-    /**
-     * Advance to the next file. If a previous pass has already populated the decoder
-     * pool (cheap toTop reuse), advance to the next live decoder in the list. Only
-     * fall through to {@link #openNextFile()} when no pre-opened file remains, which
-     * also handles the fresh-pass case where the list is empty.
-     */
-    private boolean moveToNextFile() {
-        int next = currentFileIndex + 1;
-        if (next < decoders.size() && decoders.getQuick(next) != null) {
-            currentFileIndex = next;
-            frame.rowGroupIndex = -1;
-            return true;
-        }
-        return openNextFile();
-    }
-
-    private boolean openNextFile() {
-        // Safety net against runaway globs where the consumer never calls
-        // releaseOpenPartitions: bound the in-flight open file count.
-        if (decoders.size() - lowestOpenFileIndex >= MAX_CONCURRENT_OPEN_FILES) {
-            throw CairoException.nonCritical()
-                    .put("hive glob has too many concurrently open files (")
-                    .put(decoders.size() - lowestOpenFileIndex)
-                    .put("); narrow the glob or reduce the page frame reduce queue capacity");
-        }
-        // Cheap pre-screen: parse partition values from the path and check if any
-        // pushdown filter condition rejects them. If so, skip the file entirely
-        // without opening an fd or mmaping the parquet content.
-        Utf8Sequence filePath;
-        do {
-            if (!globCursor.hasNext()) {
-                return false;
-            }
-            filePath = globCursor.getRecord().getVarcharA(0);
-        } while (partitionColumnCount > 0 && canPruneFileByPartition(filePath));
-        final int fileIndex = ++currentFileIndex;
-        if (path == null) {
-            path = new Path(MemoryTag.NATIVE_PATH);
-        }
-        path.of(filePath);
-        final long fd = TableUtils.openRO(ff, path.$(), LOG);
-        long addr = 0;
-        long size = 0;
-        ParquetFileDecoder decoder = null;
-        try {
-            size = ff.length(fd);
-            addr = TableUtils.mapRO(ff, fd, size, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
-            decoder = new ParquetFileDecoder();
-            decoder.of(addr, size, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
-            if (parquetColumnCount > 0 && !canProjectMetadata(parquetMetadata, decoder, null, null)) {
-                throw CairoException.nonCritical()
-                        .put("parquet schema mismatch: file '")
-                        .put(path)
-                        .put("' is incompatible with the schema of the first matched file");
-            }
-        } catch (Throwable th) {
-            if (addr != 0) {
-                ff.munmap(addr, size, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
-            }
-            ff.close(fd);
-            Misc.free(decoder);
-            throw th;
-        }
-        decoders.add(decoder);
-        fds.add(fd);
-        fileAddrs.add(addr);
-        fileSizes.add(size);
-        filterLists.add(null);
-        filterValues.add(null);
-        filterBufEnds.add(0);
-        filterPrepared.add(false);
-
-        prepareFilterListForFile(fileIndex, decoder);
-        allocatePartitionBuffersForFile(fileIndex, filePath, decoder);
-
-        if (!isTotalRowCountFinalised) {
-            runningRowCount += decoder.metadata().getRowCount();
-        }
-
-        frame.rowGroupIndex = -1;
-        return true;
-    }
-
-    private void allocatePartitionBuffersForFile(int fileIndex, Utf8Sequence filePath, ParquetFileDecoder decoder) {
-        // Reserve slots in the flat per-file × per-col arrays.
-        for (int c = 0; c < partitionColumnCount; c++) {
-            partitionBufferAddrs.add(0);
-            partitionBufferSizes.add(0);
-            partitionBufferTypeWidths.add(0);
-            partitionAuxBufferAddrs.add(0);
-            partitionAuxBufferSizes.add(0);
-        }
-        if (partitionColumnCount == 0) {
-            return;
-        }
-        final int rgCount = decoder.metadata().getRowGroupCount();
-        int maxRowGroupSize = 0;
-        for (int i = 0; i < rgCount; i++) {
-            int rgSize = decoder.metadata().getRowGroupSize(i);
-            if (rgSize > maxRowGroupSize) {
-                maxRowGroupSize = rgSize;
-            }
-        }
-        if (maxRowGroupSize == 0) {
-            return;
-        }
-        // Parse partition values once so we know each VARCHAR value's byte range before
-        // sizing its data buffer.
-        parsePartitionValues(filePath, prunePartitionValues, prunePartitionPresent);
-        for (int c = 0; c < partitionColumnCount; c++) {
-            int type = partitionColumnTypes.getQuick(c);
-            int slot = fileIndex * partitionColumnCount + c;
-            if (ColumnType.tagOf(type) == ColumnType.VARCHAR) {
-                final long auxSize = (long) maxRowGroupSize * VARCHAR_AUX_ENTRY_BYTES;
-                final long auxAddr = Unsafe.malloc(auxSize, MemoryTag.NATIVE_DEFAULT);
-                // Slice format: the aux entry holds an absolute pointer into the data
-                // buffer plus a length. We allocate enough room for the value bytes
-                // once (every aux entry will point at the same start). Null/empty
-                // values get a 1-byte allocation so the data pointer is non-zero —
-                // the virtual-page overlay only fires when the data address is non-zero.
-                int valueBytes = 0;
-                if (prunePartitionPresent[c]) {
-                    valueBytes = prunePartitionByteHi[c] - prunePartitionByteLo[c];
-                }
-                final long dataSize = Math.max(valueBytes, 1);
-                final long dataAddr = Unsafe.malloc(dataSize, MemoryTag.NATIVE_DEFAULT);
-                partitionAuxBufferAddrs.setQuick(slot, auxAddr);
-                partitionAuxBufferSizes.setQuick(slot, auxSize);
-                partitionBufferAddrs.setQuick(slot, dataAddr);
-                partitionBufferSizes.setQuick(slot, dataSize);
-                partitionBufferTypeWidths.setQuick(slot, VARCHAR_AUX_ENTRY_BYTES);
-            } else {
-                int typeWidth = ColumnType.sizeOf(type);
-                long bufferSize = (long) maxRowGroupSize * typeWidth;
-                long bufferAddr = Unsafe.malloc(bufferSize, MemoryTag.NATIVE_DEFAULT);
-                partitionBufferAddrs.setQuick(slot, bufferAddr);
-                partitionBufferSizes.setQuick(slot, bufferSize);
-                partitionBufferTypeWidths.setQuick(slot, typeWidth);
-            }
-        }
-        // Populate buffers by parsing partition values from the file path.
-        populatePartitionBuffersFromPath(fileIndex, filePath, maxRowGroupSize);
-    }
-
-    private void populatePartitionBuffersFromPath(int fileIndex, Utf8Sequence filePath, int rowCount) {
-        // Parse into scratch arrays (reused for pruning).
-        parsePartitionValues(filePath, prunePartitionValues, prunePartitionPresent);
-        for (int c = 0; c < partitionColumnCount; c++) {
-            int slot = fileIndex * partitionColumnCount + c;
-            long addr = partitionBufferAddrs.getQuick(slot);
-            if (addr == 0) {
-                continue;
-            }
-            int type = partitionColumnTypes.getQuick(c);
-            if (ColumnType.tagOf(type) == ColumnType.VARCHAR) {
-                long auxAddr = partitionAuxBufferAddrs.getQuick(slot);
-                fillVarcharPartitionBuffer(
-                        auxAddr,
-                        addr,
-                        rowCount,
-                        prunePartitionPresent[c] ? filePath : null,
-                        prunePartitionPresent[c] ? prunePartitionByteLo[c] : 0,
-                        prunePartitionPresent[c] ? prunePartitionByteHi[c] : 0
-                );
-            } else {
-                fillPartitionBuffer(addr, rowCount, type,
-                        prunePartitionValues[c], prunePartitionPresent[c]);
-            }
         }
     }
 
@@ -731,6 +653,198 @@ public class HivePartitionedReadParquetPageFrameCursor implements PageFrameCurso
             Unsafe.getUnsafe().putLong(entryAddr, entryLo);
             Unsafe.getUnsafe().putLong(entryAddr + 8, entryHi);
         }
+    }
+
+    /**
+     * Compares one value-function from a pushdown condition against the typed
+     * partition value. Returns true if the function's value matches the
+     * partition value under the partition column's type.
+     * <p>
+     * Returns false (i.e. keep the file) if the function's typed accessor
+     * raises a known evaluation error - the row-level filter will still
+     * exercise the condition. Errors of types we don't expect (e.g. OOM,
+     * assertion failures) propagate so they're not silently swallowed.
+     */
+    private boolean functionMatchesPartition(Function f, int partitionType, long partitionValue) {
+        try {
+            switch (ColumnType.tagOf(partitionType)) {
+                case ColumnType.INT:
+                    return f.getInt(null) == (int) partitionValue;
+                case ColumnType.LONG:
+                    return f.getLong(null) == partitionValue;
+                case ColumnType.DATE:
+                    return f.getDate(null) == partitionValue;
+                case ColumnType.TIMESTAMP:
+                    return f.getTimestamp(null) == partitionValue;
+                default:
+                    return false;
+            }
+        } catch (CairoException | NumericException ignored) {
+            return false;
+        }
+    }
+
+    private int indexOfPartitionColumn(CharSequence name) {
+        for (int i = 0; i < partitionColumnCount; i++) {
+            if (Chars.equalsIgnoreCase(partitionColumnNames.getQuick(i), name)) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    /**
+     * Returns true if pushdown filter conditions referencing partition columns
+     * rule out every row of the current file, based on the partition values
+     * already parsed into {@code prunePartition*}. Conservative: any unsupported
+     * operator yields false (file kept). Conditions referencing parquet columns
+     * are ignored here; row-group statistics handle those once the file is open.
+     */
+    private boolean isPrunedByParsedPartition() {
+        if (pushdownFilterConditions == null || pushdownFilterConditions.size() == 0) {
+            return false;
+        }
+        ensureFilterConditionsInitialised();
+
+        for (int i = 0, n = pushdownFilterConditions.size(); i < n; i++) {
+            PushdownFilterExtractor.PushdownFilterCondition cond = pushdownFilterConditions.getQuick(i);
+            int partCol = indexOfPartitionColumn(cond.getColumnName());
+            if (partCol < 0) {
+                continue;
+            }
+            int op = cond.getOperationType();
+            boolean present = prunePartitionPresent[partCol];
+
+            if (op == PushdownFilterExtractor.OP_IS_NULL) {
+                if (present) return true;
+                continue;
+            }
+            if (op == PushdownFilterExtractor.OP_IS_NOT_NULL) {
+                if (!present) return true;
+                continue;
+            }
+            if (op != PushdownFilterExtractor.OP_EQ) {
+                // Other ops (LT, GT, BETWEEN, NEQ) - skip conservatively. Could be added
+                // later but the IN/=/IS NULL cases cover the common hive query shape.
+                continue;
+            }
+            if (!present) {
+                // OP_EQ against a NULL partition value never matches.
+                return true;
+            }
+            final int type = partitionColumnTypes.getQuick(partCol);
+            if (!canCompareTyped(type)) {
+                continue;
+            }
+            final ObjList<Function> vals = cond.getValueFunctions();
+            if (vals.size() == 0) {
+                continue;
+            }
+            boolean anyMatch = false;
+            for (int v = 0, vn = vals.size(); v < vn; v++) {
+                if (functionMatchesPartition(vals.getQuick(v), type, prunePartitionValues[partCol])) {
+                    anyMatch = true;
+                    break;
+                }
+            }
+            if (!anyMatch) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Advance to the next file. If a previous pass has already populated the decoder
+     * pool (cheap toTop reuse), advance to the next live decoder in the list. Only
+     * fall through to {@link #openNextFile()} when no pre-opened file remains, which
+     * also handles the fresh-pass case where the list is empty.
+     */
+    private boolean moveToNextFile() {
+        int next = currentFileIndex + 1;
+        if (next < decoders.size() && decoders.getQuick(next) != null) {
+            currentFileIndex = next;
+            frame.rowGroupIndex = -1;
+            return true;
+        }
+        return openNextFile();
+    }
+
+    private boolean openNextFile() {
+        // Safety net against runaway globs where the consumer never calls
+        // releaseOpenPartitions: bound the in-flight open file count.
+        if (decoders.size() - lowestOpenFileIndex >= maxConcurrentOpenFiles) {
+            throw CairoException.nonCritical()
+                    .put("hive glob has too many concurrently open files (")
+                    .put(decoders.size() - lowestOpenFileIndex)
+                    .put("); narrow the glob, reduce the page frame reduce queue capacity, ")
+                    .put("or raise cairo.sql.parquet.hive.max.open.files");
+        }
+        // Cheap pre-screen: parse partition values from the path and check if any
+        // pushdown filter condition rejects them. If so, skip the file entirely
+        // without opening an fd or mmaping the parquet content. Parsing once here
+        // also primes the prunePartition* scratch arrays so allocatePartitionBuffersForFile
+        // and the buffer fill below can reuse the result without re-walking the path.
+        Utf8Sequence filePath;
+        boolean isPruned;
+        do {
+            if (!globCursor.hasNext()) {
+                return false;
+            }
+            filePath = globCursor.getRecord().getVarcharA(0);
+            if (partitionColumnCount > 0) {
+                parsePartitionValues(filePath, prunePartitionValues, prunePartitionPresent);
+                isPruned = isPrunedByParsedPartition();
+            } else {
+                isPruned = false;
+            }
+        } while (isPruned);
+        final int fileIndex = ++currentFileIndex;
+        if (path == null) {
+            path = new Path(MemoryTag.NATIVE_PATH);
+        }
+        path.of(filePath);
+        final long fd = TableUtils.openRO(ff, path.$(), LOG);
+        long addr = 0;
+        long size = 0;
+        ParquetFileDecoder decoder = null;
+        try {
+            size = ff.length(fd);
+            addr = TableUtils.mapRO(ff, fd, size, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
+            decoder = new ParquetFileDecoder();
+            decoder.of(addr, size, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
+            if (parquetColumnCount > 0 && !canProjectMetadata(parquetMetadata, decoder, null, null)) {
+                throw CairoException.nonCritical()
+                        .put("parquet schema mismatch: file '")
+                        .put(path)
+                        .put("' is incompatible with the schema of the first matched file");
+            }
+        } catch (Throwable th) {
+            if (addr != 0) {
+                ff.munmap(addr, size, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
+            }
+            ff.close(fd);
+            Misc.free(decoder);
+            throw th;
+        }
+        decoders.add(decoder);
+        fds.add(fd);
+        fileAddrs.add(addr);
+        fileSizes.add(size);
+        filterLists.add(null);
+        filterValues.add(null);
+        filterBufEnds.add(0);
+        filterPrepared.add(false);
+
+        prepareFilterListForFile(fileIndex, decoder);
+        allocatePartitionBuffersForFile(fileIndex, filePath, decoder);
+
+        if (!isTotalRowCountFinalised) {
+            runningRowCount += decoder.metadata().getRowCount();
+        }
+
+        frame.rowGroupIndex = -1;
+        return true;
     }
 
     /**
@@ -814,128 +928,6 @@ public class HivePartitionedReadParquetPageFrameCursor implements PageFrameCurso
         }
     }
 
-    /**
-     * Returns true if pushdown filter conditions referencing partition columns
-     * rule out every row of the file at {@code filePath}. Conservative: any
-     * unsupported operator yields false (file kept). Conditions referencing
-     * parquet columns are ignored here; row-group statistics handle those once
-     * the file is open.
-     */
-    private boolean canPruneFileByPartition(Utf8Sequence filePath) {
-        if (pushdownFilterConditions == null || pushdownFilterConditions.size() == 0) {
-            return false;
-        }
-        ensureFilterConditionsInitialised();
-        parsePartitionValues(filePath, prunePartitionValues, prunePartitionPresent);
-
-        for (int i = 0, n = pushdownFilterConditions.size(); i < n; i++) {
-            PushdownFilterExtractor.PushdownFilterCondition cond = pushdownFilterConditions.getQuick(i);
-            int partCol = indexOfPartitionColumn(cond.getColumnName());
-            if (partCol < 0) {
-                continue;
-            }
-            int op = cond.getOperationType();
-            boolean present = prunePartitionPresent[partCol];
-
-            if (op == PushdownFilterExtractor.OP_IS_NULL) {
-                if (present) return true;
-                continue;
-            }
-            if (op == PushdownFilterExtractor.OP_IS_NOT_NULL) {
-                if (!present) return true;
-                continue;
-            }
-            if (op != PushdownFilterExtractor.OP_EQ) {
-                // Other ops (LT, GT, BETWEEN, NEQ) - skip conservatively. Could be added
-                // later but the IN/=/IS NULL cases cover the common hive query shape.
-                continue;
-            }
-            if (!present) {
-                // OP_EQ against a NULL partition value never matches.
-                return true;
-            }
-            final int type = partitionColumnTypes.getQuick(partCol);
-            if (!canCompareTyped(type)) {
-                continue;
-            }
-            final ObjList<Function> vals = cond.getValueFunctions();
-            if (vals.size() == 0) {
-                continue;
-            }
-            boolean anyMatch = false;
-            for (int v = 0, vn = vals.size(); v < vn; v++) {
-                if (functionMatchesPartition(vals.getQuick(v), type, prunePartitionValues[partCol])) {
-                    anyMatch = true;
-                    break;
-                }
-            }
-            if (!anyMatch) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    private boolean canCompareTyped(int columnType) {
-        switch (ColumnType.tagOf(columnType)) {
-            case ColumnType.INT:
-            case ColumnType.LONG:
-            case ColumnType.DATE:
-            case ColumnType.TIMESTAMP:
-                return true;
-            default:
-                return false;
-        }
-    }
-
-    /**
-     * Compares one value-function from a pushdown condition against the typed
-     * partition value. Returns true if the function's value matches the
-     * partition value under the partition column's type.
-     */
-    private boolean functionMatchesPartition(Function f, int partitionType, long partitionValue) {
-        try {
-            switch (ColumnType.tagOf(partitionType)) {
-                case ColumnType.INT:
-                    return f.getInt(null) == (int) partitionValue;
-                case ColumnType.LONG:
-                    return f.getLong(null) == partitionValue;
-                case ColumnType.DATE:
-                    return f.getDate(null) == partitionValue;
-                case ColumnType.TIMESTAMP:
-                    return f.getTimestamp(null) == partitionValue;
-                default:
-                    return false;
-            }
-        } catch (Throwable ignored) {
-            // If the function can't be evaluated as the expected type, be conservative.
-            return false;
-        }
-    }
-
-    private int indexOfPartitionColumn(CharSequence name) {
-        for (int i = 0; i < partitionColumnCount; i++) {
-            if (io.questdb.std.Chars.equalsIgnoreCase(partitionColumnNames.getQuick(i), name)) {
-                return i;
-            }
-        }
-        return -1;
-    }
-
-    private void ensureFilterConditionsInitialised() {
-        if (isFilterConditionsInitialised || pushdownFilterConditions == null) {
-            return;
-        }
-        try {
-            for (int i = 0, n = pushdownFilterConditions.size(); i < n; i++) {
-                pushdownFilterConditions.getQuick(i).init(executionContext);
-            }
-        } catch (SqlException e) {
-            throw CairoException.nonCritical().put("failed to init pushdown filter: ").put(e.getFlyweightMessage());
-        }
-        isFilterConditionsInitialised = true;
-    }
-
     private long parseTyped(CharSequence cs, int columnType) throws NumericException {
         switch (ColumnType.tagOf(columnType)) {
             case ColumnType.INT:
@@ -953,36 +945,74 @@ public class HivePartitionedReadParquetPageFrameCursor implements PageFrameCurso
         }
     }
 
+    private void populatePartitionBuffersFromPath(int fileIndex, Utf8Sequence filePath, int rowCount) {
+        // openNextFile (via parsePartitionValues) primed the prunePartition* scratch
+        // arrays for this file; reuse them rather than re-walking the path.
+        for (int c = 0; c < partitionColumnCount; c++) {
+            int slot = fileIndex * partitionColumnCount + c;
+            long addr = partitionBufferAddrs.getQuick(slot);
+            if (addr == 0) {
+                continue;
+            }
+            int type = partitionColumnTypes.getQuick(c);
+            if (ColumnType.tagOf(type) == ColumnType.VARCHAR) {
+                long auxAddr = partitionAuxBufferAddrs.getQuick(slot);
+                fillVarcharPartitionBuffer(
+                        auxAddr,
+                        addr,
+                        rowCount,
+                        prunePartitionPresent[c] ? filePath : null,
+                        prunePartitionPresent[c] ? prunePartitionByteLo[c] : 0,
+                        prunePartitionPresent[c] ? prunePartitionByteHi[c] : 0
+                );
+            } else {
+                fillPartitionBuffer(addr, rowCount, type,
+                        prunePartitionValues[c], prunePartitionPresent[c]);
+            }
+        }
+    }
+
     private void prepareFilterListForFile(int fileIndex, ParquetFileDecoder decoder) {
         if (pushdownFilterConditions == null || pushdownFilterConditions.size() == 0) {
             return;
         }
         // Filter init runs at most once per cursor lifetime - see ensureFilterConditionsInitialised.
         ensureFilterConditionsInitialised();
-        DirectLongList filterList = new DirectLongList(
-                (long) pushdownFilterConditions.size() * ParquetRowGroupFilter.LONGS_PER_FILTER,
-                MemoryTag.NATIVE_PARQUET_PARTITION_DECODER,
-                true
-        );
-        MemoryCARWImpl filterVals = new MemoryCARWImpl(
-                ParquetRowGroupFilter.FILTER_BUFFER_PAGE_SIZE,
-                ParquetRowGroupFilter.FILTER_BUFFER_MAX_PAGES,
-                MemoryTag.NATIVE_PARQUET_PARTITION_DECODER
-        );
-        boolean prepared = ParquetRowGroupFilter.prepareFilterList(
-                decoder.metadata(),
-                pushdownFilterConditions,
-                filterList,
-                filterVals
-        );
-        if (prepared) {
-            filterLists.setQuick(fileIndex, filterList);
-            filterValues.setQuick(fileIndex, filterVals);
-            filterBufEnds.setQuick(fileIndex, filterVals.getAddress() + filterVals.getAppendOffset());
-            filterPrepared.set(fileIndex, true);
-        } else {
-            Misc.free(filterList);
-            Misc.free(filterVals);
+        DirectLongList filterList = null;
+        MemoryCARWImpl filterVals = null;
+        boolean stashed = false;
+        try {
+            filterList = new DirectLongList(
+                    (long) pushdownFilterConditions.size() * ParquetRowGroupFilter.LONGS_PER_FILTER,
+                    MemoryTag.NATIVE_PARQUET_PARTITION_DECODER,
+                    true
+            );
+            filterVals = new MemoryCARWImpl(
+                    ParquetRowGroupFilter.FILTER_BUFFER_PAGE_SIZE,
+                    ParquetRowGroupFilter.FILTER_BUFFER_MAX_PAGES,
+                    MemoryTag.NATIVE_PARQUET_PARTITION_DECODER
+            );
+            boolean prepared = ParquetRowGroupFilter.prepareFilterList(
+                    decoder.metadata(),
+                    pushdownFilterConditions,
+                    filterList,
+                    filterVals
+            );
+            if (prepared) {
+                filterLists.setQuick(fileIndex, filterList);
+                filterValues.setQuick(fileIndex, filterVals);
+                filterBufEnds.setQuick(fileIndex, filterVals.getAddress() + filterVals.getAppendOffset());
+                filterPrepared.set(fileIndex, true);
+                stashed = true;
+            }
+        } finally {
+            // If prepareFilterList threw or the filter wasn't actually prepared, release
+            // the local allocations - they were never stashed in the per-file lists, so
+            // closeFile() would not see them.
+            if (!stashed) {
+                Misc.free(filterList);
+                Misc.free(filterVals);
+            }
         }
     }
 
@@ -1110,11 +1140,5 @@ public class HivePartitionedReadParquetPageFrameCursor implements PageFrameCurso
             int typeWidth = partitionBufferTypeWidths.getQuick(slot);
             return (long) rowGroupSize * typeWidth;
         }
-    }
-
-    // Suppress unused field warning - kept to align lifetime with cursor and document the contract.
-    @SuppressWarnings("unused")
-    private void unusedSink() {
-        // ensures imports above (LPSZ) are tracked
     }
 }

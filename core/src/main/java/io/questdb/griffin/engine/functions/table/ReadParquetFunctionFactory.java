@@ -142,7 +142,12 @@ public class ReadParquetFunctionFactory implements FunctionFactory {
         // checkPathIsSafeToRead has already resolved the pattern against sql.copy.input.root.
         // Hand the resolved pattern to GlobFilesFunctionFactory so it can enumerate matches.
         final String resolvedPattern = resolvedPath.toString();
-        final CharSequence nonGlobRoot = GlobFilesFunctionFactory.extractNonGlobPrefix(resolvedPattern).toString();
+        // Byte length of the non-glob prefix: the offset (in UTF-8 bytes) at which
+        // hive partition segments begin in every matched file's path. Computed from
+        // the resolved Path's underlying Utf8Sequence because file paths the glob
+        // cursor returns are byte-oriented; a UTF-16 char count would mis-locate
+        // partition segments under non-ASCII roots.
+        final int nonGlobRootByteLen = GlobFilesFunctionFactory.extractNonGlobPrefixByteLength(resolvedPath);
         final ObjList<Function> globArgs = new ObjList<>();
         globArgs.add(new StrConstant(resolvedPattern));
         final IntList globArgPos = new IntList();
@@ -182,12 +187,12 @@ public class ReadParquetFunctionFactory implements FunctionFactory {
                 // and demote each column's inferred type to the loosest one that fits every
                 // value observed. Files that happen to be enumerated first without partitions
                 // don't hide the schema; names that would shadow real parquet columns are dropped.
-                parsePartitionColumns(firstFile, nonGlobRoot.length(), parquetMetadata,
+                parsePartitionColumns(firstFile, nonGlobRootByteLen, parquetMetadata,
                         partitionColumnNames, partitionColumnTypes);
                 while (globCursor.hasNext()) {
                     parsePartitionColumns(
                             globCursor.getRecord().getVarcharA(0),
-                            nonGlobRoot.length(),
+                            nonGlobRootByteLen,
                             parquetMetadata,
                             partitionColumnNames,
                             partitionColumnTypes
@@ -209,7 +214,7 @@ public class ReadParquetFunctionFactory implements FunctionFactory {
                     configuration,
                     globFactory,
                     originalPattern,
-                    nonGlobRoot,
+                    nonGlobRootByteLen,
                     wrappingMetadata,
                     parquetMetadata,
                     partitionColumnNames,
@@ -285,9 +290,10 @@ public class ReadParquetFunctionFactory implements FunctionFactory {
         if (currentType == ColumnType.VARCHAR) {
             return ColumnType.VARCHAR;
         }
-        // Safe to reuse the same thread-local sink as parsePartitionColumns: the key string
-        // it built has already been retained as a heap String at this point.
-        final StringSink sink = Misc.getThreadLocalSink();
+        // Uses a local sink to avoid coupling with the thread-local sink that
+        // parsePartitionColumns holds the key string in; planning-time path so
+        // the allocation is acceptable.
+        final StringSink sink = new StringSink();
         Utf8s.utf8ToUtf16(path, lo, hi, sink);
         int type = currentType;
         while (type != ColumnType.VARCHAR) {

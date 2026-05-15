@@ -516,6 +516,8 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final long sqlParallelWorkStealingSpinTimeout;
     private final int sqlParallelWorkStealingThreshold;
     private final int sqlParquetFrameCacheCapacity;
+    private final int sqlParquetHiveMaxOpenFiles;
+    private final boolean sqlParquetHiveParallelEnabled;
     private final boolean sqlParquetRowGroupPruningEnabled;
     private final int sqlPivotForColumnPoolCapacity;
     private final int sqlPivotMaxProducedColumns;
@@ -2117,6 +2119,8 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.sqlParallelWorkStealingThreshold = getInt(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_WORK_STEALING_THRESHOLD, 16);
             this.sqlParallelWorkStealingSpinTimeout = getNanos(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_WORK_STEALING_SPIN_TIMEOUT, 50_000);
             this.sqlParquetFrameCacheCapacity = Math.max(getInt(properties, env, PropertyKey.CAIRO_SQL_PARQUET_FRAME_CACHE_CAPACITY, 8), 8);
+            this.sqlParquetHiveMaxOpenFiles = Math.max(getInt(properties, env, PropertyKey.CAIRO_SQL_PARQUET_HIVE_MAX_OPEN_FILES, 4096), 1);
+            this.sqlParquetHiveParallelEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_PARQUET_HIVE_PARALLEL_ENABLED, true);
             this.sqlParquetRowGroupPruningEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_PARQUET_ROW_GROUP_PRUNING_ENABLED, true);
             this.sqlOrderBySortEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_ORDER_BY_SORT_ENABLED, true);
             this.copierChunkedEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_COPIER_CHUNKED, true);
@@ -4537,6 +4541,16 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getSqlParquetFrameCacheCapacity() {
             return sqlParquetFrameCacheCapacity;
+        }
+
+        @Override
+        public int getSqlParquetHiveMaxOpenFiles() {
+            return sqlParquetHiveMaxOpenFiles;
+        }
+
+        @Override
+        public boolean isSqlParquetHiveParallelEnabled() {
+            return sqlParquetHiveParallelEnabled;
         }
 
         @Override

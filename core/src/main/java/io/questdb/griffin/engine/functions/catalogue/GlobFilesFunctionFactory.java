@@ -110,6 +110,40 @@ public class GlobFilesFunctionFactory implements FunctionFactory {
     }
 
     /**
+     * Byte-oriented twin of {@link #extractNonGlobPrefix(CharSequence)} for
+     * UTF-8 paths. Returns the byte length of the leading non-glob portion of
+     * {@code pattern}, i.e. the offset at which hive partition key=value
+     * segments begin in a matched file's UTF-8 path. Callers that operate on
+     * {@code Utf8Sequence} file paths must use this so the offset is in bytes,
+     * not UTF-16 chars.
+     */
+    public static int extractNonGlobPrefixByteLength(Utf8Sequence pattern) {
+        int lastSep = -1;
+        int n = pattern.size();
+        for (int i = 0; i < n; i++) {
+            byte c = pattern.byteAt(i);
+            if (c == '\\' && Files.SEPARATOR != '\\' && i + 1 < n) {
+                byte next = pattern.byteAt(i + 1);
+                if (next == '*' || next == '?' || next == '[' || next == ']' || next == '\\') {
+                    i++;
+                    continue;
+                }
+            }
+            if (c == '/' || c == Files.SEPARATOR) {
+                lastSep = i;
+                continue;
+            }
+            if (c == '*' || c == '?' || c == '[') {
+                if (lastSep < 0) {
+                    return 0;
+                }
+                return lastSep + 1;
+            }
+        }
+        return n;
+    }
+
+    /**
      * Find all files matching the glob pattern.
      *
      * @param ff             FilesFacade for file operations
