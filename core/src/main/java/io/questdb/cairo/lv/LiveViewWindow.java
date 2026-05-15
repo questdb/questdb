@@ -512,6 +512,16 @@ public class LiveViewWindow implements QuietCloseable {
             throw t;
         }
         Misc.free(oldMap);
+        // Dispatch through every function so per-function maps shed their own
+        // tombstoned entries. Functions that don't track tombstones (the
+        // not-yet-migrated families) keep the default no-op and their maps
+        // stay unchanged - which is why this method stays @TestOnly until 2b.6
+        // closes the last migration. Auto-trigger from processRow would
+        // corrupt the unmigrated functions' state by dropping anchor entries
+        // their maps still reference.
+        for (int i = 0, n = functions.size(); i < n; i++) {
+            functions.getQuick(i).compactPartitionMap();
+        }
     }
 
     private long readAnchorValue(Record record) {
