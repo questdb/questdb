@@ -191,6 +191,19 @@ public class QwpWalAppender implements QuietCloseable {
                 .put(']');
     }
 
+    private static CairoException geoHashPrecisionMismatchException(
+            int columnType, int wireBits, QwpTableBlockCursor tableBlock, int col
+    ) {
+        return CairoException.nonCritical()
+                .put("GeoHash precision mismatch [column=")
+                .put(tableBlock.getColumnDef(col).getName())
+                .put(", columnType=")
+                .put(ColumnType.nameOf(columnType))
+                .put(", wireBits=")
+                .put(wireBits)
+                .put(']');
+    }
+
     private static int getArrayBatchDimensionality(
             QwpArrayColumnCursor cursor,
             int rowCount,
@@ -507,6 +520,12 @@ public class QwpWalAppender implements QuietCloseable {
                          ColumnType.UUID, ColumnType.LONG256,
                          ColumnType.GEOBYTE, ColumnType.GEOSHORT, ColumnType.GEOINT, ColumnType.GEOLONG -> {
                         if (cursor instanceof QwpGeoHashColumnCursor geoHashCursor) {
+                            if (ColumnType.isGeoHash(columnType)) {
+                                int wireBits = geoHashCursor.getPrecision();
+                                if (wireBits != ColumnType.getGeoHashBits(columnType)) {
+                                    throw geoHashPrecisionMismatchException(columnType, wireBits, tableBlock, col);
+                                }
+                            }
                             appender.putGeoHashColumn(columnIndex, geoHashCursor, rowCount, columnType);
                         } else if (cursor instanceof QwpFixedWidthColumnCursor fixedCursor) {
                             if (!isFixedTypeCoercionAllowed(qwpType, columnType)) {
