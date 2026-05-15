@@ -191,15 +191,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
 
     @Test
     public void testCreateTableAsParquet() throws Exception {
-        // Same weights as testConvertPartitionToParquet, with two differences:
-        //  - no CONVERT PARTITION operations (partitionToParquetProb and
-        //    partitionToNativeProb set to 0) — partitions are already parquet
-        //    from inception, so converting them is meaningless,
-        //  - no ALTER TABLE SET FORMAT operations (setDefaultPartitionFormatProb
-        //    set to 0) — the table already starts as FORMAT PARQUET,
-        //  - WAL tables created with FORMAT PARQUET from the very first
-        //    CREATE TABLE so every new partition lands directly as parquet
-        //    via writeFreshParquetFromO3.
+        // Creates WAL table in parquet format and keeps then run all parquet supported operations.
         Rnd rnd = generateRandom(LOG);
         setTestParams(rnd);
         setCreateWalAsParquet(true);

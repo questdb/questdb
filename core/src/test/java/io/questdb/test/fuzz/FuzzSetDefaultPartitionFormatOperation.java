@@ -75,6 +75,16 @@ public class FuzzSetDefaultPartitionFormatOperation implements FuzzTransactionOp
                 throw e;
             }
         } catch (SqlException e) {
+            // SQL-level guards in alterTableSetFormat throw SqlException
+            // (not CairoException) when FORMAT PARQUET targets a non-WAL
+            // table, a non-partitioned table, or a materialized view. The
+            // fuzz applies the same operation to the non-WAL ground-truth
+            // table, so these rejections are expected and must be swallowed
+            // rather than failing the test.
+            if (Chars.contains(e.getFlyweightMessage(), "FORMAT PARQUET is only supported")
+                    || Chars.contains(e.getFlyweightMessage(), "FORMAT PARQUET is not supported")) {
+                return true;
+            }
             throw new RuntimeException(e);
         }
     }
