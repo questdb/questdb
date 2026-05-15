@@ -58,8 +58,11 @@ import io.questdb.std.str.Utf8s;
 public class QwpProcessorState implements QuietCloseable, ConnectionAware {
     static final int SEND_STATE_READY = 0;
     static final int SEND_STATE_RESUME_ACK = 1;
+    static final int SEND_STATE_RESUME_ACK_THEN_CLOSE = 7;
     static final int SEND_STATE_RESUME_ACK_THEN_ERROR = 3;
+    static final int SEND_STATE_RESUME_CLOSE = 6;
     static final int SEND_STATE_RESUME_DURABLE_ACK = 4;
+    static final int SEND_STATE_RESUME_DURABLE_ACK_THEN_CLOSE = 8;
     static final int SEND_STATE_RESUME_DURABLE_ACK_THEN_ERROR = 5;
     static final int SEND_STATE_RESUME_ERROR = 2;
     private static final Log LOG = LogFactory.getLog(QwpProcessorState.class);
@@ -67,6 +70,7 @@ public class QwpProcessorState implements QuietCloseable, ConnectionAware {
     private final LineHttpProcessorConfiguration configuration;
     // Delta symbol dictionary for this connection
     private final ObjList<String> connectionSymbolDict = new ObjList<>();
+    private final StringSink deferredCloseReason = new StringSink();
     private final StringSink deferredErrorMessage = new StringSink();
     private final CharSequenceLongHashMap durableProgressSnapshot = new CharSequenceLongHashMap();
     private final StringSink error = new StringSink();
@@ -84,6 +88,7 @@ public class QwpProcessorState implements QuietCloseable, ConnectionAware {
     private int bufferPosition;
     private int bufferSize;
     private Status currentStatus = Status.OK;
+    private int deferredCloseCode = -1;
     private long deferredErrorSequence = -1;
     private byte deferredErrorStatus;
     private boolean durableAckEnabled;
@@ -232,6 +237,14 @@ public class QwpProcessorState implements QuietCloseable, ConnectionAware {
             size += 2 + Utf8s.utf8Bytes(keys.getQuick(i)) + 8;
         }
         return size;
+    }
+
+    public int getDeferredCloseCode() {
+        return deferredCloseCode;
+    }
+
+    public CharSequence getDeferredCloseReason() {
+        return deferredCloseReason;
     }
 
     public CharSequence getDeferredErrorMessage() {
@@ -401,6 +414,7 @@ public class QwpProcessorState implements QuietCloseable, ConnectionAware {
         resumeAckSequence = -1;
         sendState = SEND_STATE_READY;
         clearDeferredError();
+        clearDeferredClose();
         wsHandshakeSent = false;
 
         // Drop any durable-ack state; the connection is going away, so even if
@@ -451,6 +465,46 @@ public class QwpProcessorState implements QuietCloseable, ConnectionAware {
     public void onErrorSent() {
         clearDeferredError();
         sendState = SEND_STATE_READY;
+    }
+
+    /**
+     * Records that the CLOSE frame itself was partially flushed to the OS buffer.
+     * The framework's send buffer holds the rest; the resume path will finish
+     * flushing and then disconnect. Deferred close-code/reason are no longer
+     * needed because the bytes are already written.
+     */
+    public void onFatalCloseSendBlocked() {
+        clearDeferredClose();
+        sendState = SEND_STATE_RESUME_CLOSE;
+    }
+
+    /**
+     * Records that a fatal CLOSE could not be written immediately because an
+     * ACK/durable-ACK/error response is in flight. Stores the close code and
+     * reason so the resume path can emit the CLOSE frame after the in-flight
+     * response drains.
+     */
+    public void onFatalCloseBlocked(int closeCode, CharSequence reason) {
+        deferredCloseCode = closeCode;
+        deferredCloseReason.clear();
+        if (reason != null) {
+            deferredCloseReason.put(reason);
+        }
+
+        if (sendState == SEND_STATE_RESUME_ACK || sendState == SEND_STATE_RESUME_ACK_THEN_ERROR
+                || sendState == SEND_STATE_RESUME_ACK_THEN_CLOSE) {
+            sendState = SEND_STATE_RESUME_ACK_THEN_CLOSE;
+        } else if (sendState == SEND_STATE_RESUME_DURABLE_ACK
+                || sendState == SEND_STATE_RESUME_DURABLE_ACK_THEN_ERROR
+                || sendState == SEND_STATE_RESUME_DURABLE_ACK_THEN_CLOSE) {
+            sendState = SEND_STATE_RESUME_DURABLE_ACK_THEN_CLOSE;
+        } else {
+            // RESUME_ERROR collapses to RESUME_CLOSE — the app-level error
+            // would have followed the same disconnect anyway, and the CLOSE
+            // frame is a stronger protocol-level signal.
+            clearDeferredError();
+            sendState = SEND_STATE_RESUME_CLOSE;
+        }
     }
 
     /**
@@ -615,6 +669,11 @@ public class QwpProcessorState implements QuietCloseable, ConnectionAware {
             return Status.SECURITY_ERROR;
         }
         return e.isCritical() ? Status.INTERNAL_ERROR : Status.NOT_ACCEPTING_WRITES;
+    }
+
+    private void clearDeferredClose() {
+        deferredCloseCode = -1;
+        deferredCloseReason.clear();
     }
 
     private void clearDeferredError() {

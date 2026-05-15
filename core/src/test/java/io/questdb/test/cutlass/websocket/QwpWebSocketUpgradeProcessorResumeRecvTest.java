@@ -445,6 +445,10 @@ public class QwpWebSocketUpgradeProcessorResumeRecvTest extends AbstractCairoTes
 
     @Test
     public void testFrameTooLargeWhenSendBusy() throws Exception {
+        // Regression: previously the CLOSE frame was silently skipped when an
+        // ACK was in flight, so the client saw an ECONNRESET with no protocol
+        // diagnostic. Now the fatal CLOSE is deferred via the send state
+        // machine and emitted once the pending ACK drains via resumeSend.
         assertMemoryLeak(() -> {
             HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
             QwpWebSocketUpgradeProcessor processor = new QwpWebSocketUpgradeProcessor(engine, httpConfig);
@@ -469,17 +473,87 @@ public class QwpWebSocketUpgradeProcessorResumeRecvTest extends AbstractCairoTes
                     httpConfig, mockNf, mockRawSocket, recvBuf, RECV_BUFFER_SIZE
             )) {
                 QwpProcessorState state = setupState(httpConfig, context);
-                // Set send state to non-READY so CLOSE frame is skipped
+                // Force send state to non-READY (an ACK is in flight). With
+                // the old behaviour the CLOSE would be skipped; now it is
+                // queued for the resume path.
                 state.onAckBlocked(0);
 
                 try {
                     processor.resumeRecv(context);
+                    Assert.fail("Expected PeerIsSlowToReadException (deferred CLOSE)");
+                } catch (PeerIsSlowToReadException e) {
+                    // expected: CLOSE was deferred behind the in-flight ACK.
+                }
+                // No bytes written yet — CLOSE is queued.
+                Assert.assertEquals(0, mockRawSocket.sendCallCount);
+                // State transitioned to RESUME_ACK_THEN_CLOSE (== 7).
+                Assert.assertEquals(7, state.getSendState());
+
+                // Dispatcher comes back via resumeSend: pending ACK drains,
+                // then the deferred CLOSE frame is written and the framework
+                // raises ServerDisconnect.
+                try {
+                    processor.resumeSend(context);
+                    Assert.fail("Expected ServerDisconnectException after deferred CLOSE flush");
+                } catch (ServerDisconnectException e) {
+                    // expected
+                }
+                Assert.assertTrue(
+                        "CLOSE frame must be sent on resume",
+                        mockRawSocket.sendCallCount >= 1
+                );
+                // First two payload bytes of the CLOSE frame carry the close
+                // code in network order. Confirm it is 1009 (MESSAGE_TOO_BIG).
+                int headerSize = (Unsafe.getByte(sendBuf + 1) & 0x7F) <= 125 ? 2 : 4;
+                int hi = Unsafe.getByte(sendBuf + headerSize) & 0xFF;
+                int lo = Unsafe.getByte(sendBuf + headerSize + 1) & 0xFF;
+                Assert.assertEquals(1009, (hi << 8) | lo);
+            } finally {
+                Unsafe.free(recvBuf, RECV_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+                Unsafe.free(sendBuf, SEND_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
+    @Test
+    public void testFrameTooLargeForRecvBufferWhenSendBusy() throws Exception {
+        // Regression: the recvBufferLen >= recvBufferSize path in resumeRecv
+        // previously threw ServerDisconnect without sending any CLOSE frame
+        // (even when the send buffer was clear). It now routes through
+        // sendFatalClose, deferring behind an in-flight ACK if needed.
+        assertMemoryLeak(() -> {
+            HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
+            QwpWebSocketUpgradeProcessor processor = new QwpWebSocketUpgradeProcessor(engine, httpConfig);
+
+            long recvBuf = Unsafe.malloc(RECV_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+            long sendBuf = Unsafe.malloc(SEND_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+            MockRawSocket mockRawSocket = new MockRawSocket(sendBuf, SEND_BUFFER_SIZE);
+            try (TestableContext context = new TestableContext(
+                    httpConfig, new MockNetworkFacade(new byte[0]),
+                    mockRawSocket, recvBuf, RECV_BUFFER_SIZE
+            )) {
+                QwpProcessorState state = setupState(httpConfig, context);
+                // Mark the recv buffer as full so the "frame too large for
+                // recv buffer" branch fires before recvRaw is consulted.
+                state.setRecvBufferLen(RECV_BUFFER_SIZE);
+                state.onAckBlocked(0);
+
+                try {
+                    processor.resumeRecv(context);
+                    Assert.fail("Expected PeerIsSlowToReadException (deferred CLOSE)");
+                } catch (PeerIsSlowToReadException e) {
+                    // expected
+                }
+                Assert.assertEquals(0, mockRawSocket.sendCallCount);
+                Assert.assertEquals(7, state.getSendState()); // RESUME_ACK_THEN_CLOSE
+
+                try {
+                    processor.resumeSend(context);
                     Assert.fail("Expected ServerDisconnectException");
                 } catch (ServerDisconnectException e) {
                     // expected
                 }
-                // CLOSE frame skipped because send buffer busy
-                Assert.assertEquals(0, mockRawSocket.sendCallCount);
+                Assert.assertTrue(mockRawSocket.sendCallCount >= 1);
             } finally {
                 Unsafe.free(recvBuf, RECV_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
                 Unsafe.free(sendBuf, SEND_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
