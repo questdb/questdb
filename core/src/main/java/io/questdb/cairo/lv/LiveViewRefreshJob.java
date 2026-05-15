@@ -36,6 +36,7 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.file.BlockFileWriter;
+import io.questdb.cairo.map.Map;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.cairo.vm.api.MemoryCARW;
@@ -72,6 +73,7 @@ import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
+import io.questdb.std.Os;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
@@ -163,6 +165,10 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     // the other staging-related fields so the per-FLUSH-cycle code path can
     // mutate without per-call allocation.
     private final IntList tierColumnTypes = new IntList();
+    // Wraps the page-frame cursor during O3 replay so pre-LB rows never reach
+    // window.processRow. Single instance reused across cycles; rebound via
+    // of() each replay.
+    private final TimestampLowerBoundCursor tsLowerBoundCursor = new TimestampLowerBoundCursor();
     private final ObjList<LiveViewInstance> viewInstanceSink = new ObjList<>();
     private final WalEventReader walEventReader;
     // Reusable WAL-segment cursors hoisted out of incrementalRefresh — each
@@ -440,12 +446,12 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         // Tracked here unconditionally (the staging path tracks stagingMaxTs only
         // when populateTier is true, so we cannot reuse it).
         long batchMaxTs = Numbers.LONG_NULL;
-        // True when any txn in this cycle arrived out-of-order. Suppresses the
-        // end-of-cycle head-checkpoint write because the in-WAL-order pipeline
-        // produced state that does not match a ts-sorted execution; persisting
-        // that state under a fresh head would corrupt restart recovery just as
-        // badly as keeping the prior (now-cleared) head.
-        boolean cycleHadO3 = false;
+        // True when a base txn in this cycle arrived with min ts below the LV's
+        // latestSeenTs watermark. On detect, the WAL writer is rolled back, the
+        // txn loop breaks, and the post-loop replay path takes over.
+        boolean o3Detected = false;
+        long o3LateRowTs = Numbers.LONG_NULL;
+        long o3SeqTxn = Numbers.LONG_NULL;
         long stagingMaxTs = Numbers.LONG_NULL;
         long stagingMinTs = Numbers.LONG_NULL;
         try (WalWriter walWriter = engine.getWalWriter(instance.getLiveViewToken())) {
@@ -489,20 +495,29 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     WalEventCursor.DataInfo dataInfo = eventCursor.getDataInfo();
                     // Out-of-order detection. A commit whose min ts sits below
                     // the LV's latestSeenTs watermark cannot be processed in
-                    // WAL order without corrupting window-function state, so
-                    // any prior head .cp is invalidated here so a later
-                    // restart falls through to head-miss replay. V1 still
-                    // feeds this batch through the in-WAL-order pipeline; the
-                    // current cycle's window output for the affected partitions
-                    // is wrong (same disposition as Phase 1b), and the
-                    // ts-sorted re-execution is on the deferred list. We also
-                    // suppress this cycle's head .cp write so the next cycle
-                    // does not persist the known-wrong state under a fresh head.
+                    // WAL order without corrupting window-function state.
+                    // Discard any rows queued earlier in this cycle, break
+                    // out of the loop, and hand off to o3Replay below, which
+                    // re-feeds base data in ts order via TableReader and
+                    // emits a single REPLACE_RANGE commit covering everything
+                    // from viewLowerBoundTimestamp (head-miss) or the head's
+                    // maxTimestamp (head-hit, follow-up commit) forward.
                     final long latestSeen = instance.getLatestSeenTs();
                     final long txnMinTs = dataInfo.getMinTimestamp();
                     if (latestSeen != Numbers.LONG_NULL && txnMinTs < latestSeen) {
-                        invalidateHeadOnO3(instance, txn, txnMinTs, latestSeen);
-                        cycleHadO3 = true;
+                        walWriter.rollback();
+                        o3Detected = true;
+                        o3LateRowTs = txnMinTs;
+                        o3SeqTxn = txn;
+                        // Reset cycle-local accounting so the post-loop apply
+                        // branch does not see stale state (it never runs in
+                        // this cycle, but the explicit reset keeps the
+                        // invariants narrow).
+                        appendedRows = 0;
+                        batchMaxTs = Numbers.LONG_NULL;
+                        stagingMinTs = Numbers.LONG_NULL;
+                        stagingMaxTs = Numbers.LONG_NULL;
+                        break;
                     }
                     long startRow = dataInfo.getStartRowID();
                     long endRow = dataInfo.getEndRowID();
@@ -591,6 +606,17 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             }
         }
 
+        if (o3Detected) {
+            // The replay path opens its own WalWriter and TableReader on the
+            // base, drives the ts-sorted re-execution, commits a single
+            // REPLACE_RANGE block, applies inline, and advances the LV
+            // watermarks itself. Returning here keeps the in-WAL-order
+            // post-cycle branch out of the picture; the next refresh tick
+            // resumes from o3SeqTxn + 1.
+            o3Replay(instance, windowFactory, o3LateRowTs, baseToken, o3SeqTxn);
+            return;
+        }
+
         if (advanceTo > instance.getLastProcessedSeqTxn()) {
             // Advance the in-memory watermarks first; both advanceLiveViewConsumedSeqTxn
             // and persistState below read these to write a single, consistent _lv.s.
@@ -661,7 +687,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 // advanced, the in-mem tier just trails for this cycle.
                 publishToInMemoryTier(instance, stagingMaxTs);
             }
-            if (lvConsumedPersisted && appendedRows > 0 && !cycleHadO3) {
+            if (lvConsumedPersisted && appendedRows > 0) {
                 // 2a.4 head-checkpoint write hook. Ordered after the apply's
                 // _txn advance and the lvConsumedSeqTxn publish so the .cp on
                 // disk reflects state that is also durably committed in the
@@ -669,10 +695,9 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 // (RFC 123 "Flush" step 4): the prior head remains addressable
                 // and the next eligible cycle retries.
                 //
-                // cycleHadO3 suppresses the write because the in-WAL-order
-                // pipeline state for the affected partitions is wrong; the
-                // ts-sorted replay path that would restore correctness is
-                // deferred past 2a.8.
+                // O3 cycles never reach this branch: detect rolls back the
+                // in-WAL-order draft and hands off to o3Replay, which writes
+                // its own fresh head on completion (follow-up commit).
                 maybeWriteHeadCheckpoint(instance, windowFactory, advanceTo, batchMaxTs, appendedRows);
             }
         }
@@ -730,6 +755,14 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * compiled SELECT's filter / anchor / window cursor stack, commits via
      * {@link WalWriter#commitLiveViewWithReplaceRange(long, long, long)},
      * applies inline, and writes a fresh head .cp post-replay.
+     * <p>
+     * Replay only fires for snapshot-capable LVs - the per-function state
+     * resets used here rely on every WindowFunction exposing its partition
+     * Map via {@link WindowFunction#getPartitionMap()}. Non-capable LVs fall
+     * back to head invalidation only (the prior Option 1 disposition); their
+     * live output for the O3 batch is wrong until the next refresh cycle,
+     * matching the Phase 1b behaviour for any LV whose SELECT contains a
+     * function still on the default-throw snapshot path.
      *
      * @param instance      live view being replayed
      * @param windowFactory the LV's compiled SELECT (window cursor stack)
@@ -747,17 +780,233 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             long lateRowTs,
             TableToken baseToken,
             long advanceTo
-    ) {
-        // 2a.8 follow-up scaffold: callers exist only after the detect path
-        // is rewired (next commit). For now the body is unimplemented; any
-        // accidental call surfaces immediately rather than silently no-op'ing.
-        throw CairoException.critical(0)
-                .put("o3Replay not yet implemented [view=")
-                .put(instance.getDefinition().getViewName())
-                .put(", baseToken=").put(baseToken.getTableName())
-                .put(", lateRowTs=").put(lateRowTs)
-                .put(", advanceTo=").put(advanceTo)
-                .put(']');
+    ) throws SqlException {
+        final String viewName = instance.getDefinition().getViewName();
+        if (!instance.isSnapshotCapability()) {
+            // No clean per-function reset API for the unmigrated families;
+            // recompiling the factory would wipe everything but is heavy.
+            // Match the Option 1 disposition for these LVs: log critical,
+            // retire the head .cp so restart cannot restore stale state,
+            // accept that the live output for the O3 batch is wrong until
+            // a non-O3 cycle naturally advances state.
+            invalidateHeadOnO3(instance, advanceTo, lateRowTs, instance.getLatestSeenTs());
+            LOG.critical().$("live view O3 replay skipped, snapshot capability is false [view=")
+                    .$(viewName)
+                    .$(", advanceTo=").$(advanceTo)
+                    .$(", lateRowTs=").$(lateRowTs).I$();
+            // Advance the watermarks so the next cycle does not re-process
+            // the O3 batch in WAL order again.
+            instance.setLastProcessedSeqTxn(advanceTo);
+            instance.setAppliedWatermark(advanceTo);
+            try {
+                engine.advanceLiveViewConsumedSeqTxn(
+                        instance.getLiveViewToken(),
+                        advanceTo,
+                        blockFileWriter,
+                        path
+                );
+            } catch (CairoException e) {
+                LOG.critical().$("could not advance live view consumed seqTxn on skipped O3 replay [view=")
+                        .$(viewName)
+                        .$(", advanceTo=").$(advanceTo)
+                        .$(", error=").$safe(e.getFlyweightMessage()).I$();
+                persistState(instance);
+            }
+            return;
+        }
+
+        final long headLvSeqTxn = instance.getHeadCheckpointLvSeqTxn();
+        final long headMaxTs = instance.getHeadCheckpointMaxTs();
+        final boolean headHitEligible = headLvSeqTxn != Numbers.LONG_NULL && headMaxTs <= lateRowTs;
+        LOG.info().$("live view O3 replay [view=").$(viewName)
+                .$(", lateRowTs=").$(lateRowTs)
+                .$(", advanceTo=").$(advanceTo)
+                .$(", headHitEligible=").$(headHitEligible)
+                .$(", headLvSeqTxn=").$(headLvSeqTxn)
+                .$(", headMaxTs=").$(headMaxTs).I$();
+
+        // Head-hit branch lands in the follow-up commit. For now both paths
+        // route through head-miss: identical on-disk effect (REPLACE_RANGE
+        // rewrites the affected partitions), at a higher compute cost
+        // because the replay starts from viewLowerBoundTimestamp rather
+        // than head.maxTimestamp.
+        o3HeadMissReplay(instance, windowFactory, baseToken, advanceTo);
+    }
+
+    /**
+     * Phase 2a.8 head-miss replay path: discards every window-function
+     * partition map and the anchor map, opens the base table at applied
+     * watermark &gt;= {@code advanceTo}, drives the compiled SELECT's
+     * filter / anchor / window cursor stack over the {@code TableReader}'s
+     * ts-sorted view starting from {@code viewLowerBoundTimestamp}, emits
+     * a single REPLACE_RANGE commit covering everything from the lower
+     * bound through positive infinity, and applies inline.
+     * <p>
+     * Cost is O(retained_rows x n_window_functions) of {@code computeNext}
+     * plus the partition-rewrite I/O - acceptable for short-lived views
+     * but several seconds to minutes for long-lived ones, per the RFC
+     * cost model. The head-hit branch (follow-up commit) will avoid the
+     * worst of this by starting from the head's {@code maxTimestamp}.
+     * <p>
+     * Apply-lag handling: a base-table {@code TableReader} obtained right
+     * after detection may not yet reflect {@code advanceTo} because the
+     * global {@code ApplyWal2TableJob} runs asynchronously. The replay
+     * polls until the reader's {@code getSeqTxn() >= advanceTo}, bounded
+     * by {@code cairo.live.view.flush.retry.max.duration} so a stalled
+     * apply trips the flush-retry budget rather than spinning forever.
+     */
+    private void o3HeadMissReplay(
+            LiveViewInstance instance,
+            WindowRecordCursorFactory windowFactory,
+            TableToken baseToken,
+            long advanceTo
+    ) throws SqlException {
+        final String viewName = instance.getDefinition().getViewName();
+        // Retire any existing head .cp. The follow-up commit writes a fresh
+        // one post-replay; until then the next refresh cycle's first-commit
+        // cadence trigger will write it.
+        if (instance.getHeadCheckpointLvSeqTxn() != Numbers.LONG_NULL) {
+            invalidateHeadOnO3(instance, advanceTo, Numbers.LONG_NULL, Numbers.LONG_NULL);
+        }
+
+        // Wipe per-function partition state and the anchor map. The
+        // compiled factory's WindowFunction instances stay live so the
+        // cursor chain below can reuse them; only their accumulated state
+        // resets.
+        final ObjList<WindowFunction> functions = windowFactory.getWindowFunctions();
+        for (int i = 0, n = functions.size(); i < n; i++) {
+            Map m = functions.getQuick(i).getPartitionMap();
+            if (m != null) {
+                m.clear();
+            }
+        }
+        final LiveViewWindow anchorWindow = instance.getAnchorWindow();
+        if (anchorWindow != null) {
+            anchorWindow.toTop();
+        }
+
+        final long viewLowerBoundTimestamp = instance.getDefinition().getViewLowerBoundTimestamp();
+        TableReader reader = waitForApply(baseToken, advanceTo);
+        boolean readerAttached = false;
+        long appendedRows = 0;
+        try {
+            engine.detachReader(reader);
+            executionContext.of(reader);
+            readerAttached = true;
+
+            RecordCursorFactory filterFactory = windowFactory.getBaseFactory();
+            final Function filter = filterFactory.getFilter();
+            RecordCursorFactory pageFrameFactory = filter != null ? filterFactory.getBaseFactory() : filterFactory;
+            RecordMetadata baseMetadata = pageFrameFactory.getMetadata();
+            final int baseTimestampIndex = baseMetadata.getTimestampIndex();
+            RecordMetadata outMetadata = windowFactory.getMetadata();
+            final int cursorTimestampIndex = outMetadata.getTimestampIndex();
+
+            try (WalWriter walWriter = engine.getWalWriter(instance.getLiveViewToken())) {
+                RecordToRowCopier copier = ensureCopier(instance, windowFactory, walWriter);
+                try (RecordCursor pageCursor = pageFrameFactory.getCursor(executionContext)) {
+                    tsLowerBoundCursor.of(pageCursor, baseTimestampIndex, viewLowerBoundTimestamp);
+                    RecordCursor source = tsLowerBoundCursor;
+                    if (filter != null) {
+                        filteringCursor.of(source, filter, executionContext);
+                        source = filteringCursor;
+                    }
+                    if (anchorWindow != null) {
+                        anchorDispatchingCursor.of(
+                                source,
+                                anchorWindow,
+                                instance,
+                                baseTimestampIndex,
+                                executionContext
+                        );
+                        source = anchorDispatchingCursor;
+                    }
+                    RecordCursor windowCursor = windowFactory.getIncrementalCursor(source, executionContext);
+                    try {
+                        Record outRecord = windowCursor.getRecord();
+                        while (windowCursor.hasNext()) {
+                            long ts = outRecord.getTimestamp(cursorTimestampIndex);
+                            TableWriter.Row row = walWriter.newRow(ts);
+                            copier.copy(executionContext, outRecord, row);
+                            row.append();
+                            appendedRows++;
+                        }
+                    } finally {
+                        windowCursor.close();
+                    }
+
+                    if (appendedRows > 0) {
+                        walWriter.commitLiveViewWithReplaceRange(
+                                advanceTo,
+                                viewLowerBoundTimestamp,
+                                Long.MAX_VALUE
+                        );
+                    }
+                }
+            }
+        } finally {
+            if (readerAttached) {
+                executionContext.clearReader();
+                engine.attachReader(reader);
+            }
+            reader.close();
+        }
+
+        if (appendedRows > 0) {
+            applyJob.applyWalDirect(instance.getLiveViewToken(), Job.RUNNING_STATUS);
+        }
+        instance.setLastProcessedSeqTxn(advanceTo);
+        instance.setAppliedWatermark(advanceTo);
+        try {
+            engine.advanceLiveViewConsumedSeqTxn(
+                    instance.getLiveViewToken(),
+                    advanceTo,
+                    blockFileWriter,
+                    path
+            );
+        } catch (CairoException e) {
+            LOG.critical().$("could not advance live view consumed seqTxn after O3 replay [view=")
+                    .$(viewName)
+                    .$(", advanceTo=").$(advanceTo)
+                    .$(", error=").$safe(e.getFlyweightMessage()).I$();
+            persistState(instance);
+        }
+        LOG.info().$("live view O3 head-miss replay completed [view=")
+                .$(viewName)
+                .$(", advanceTo=").$(advanceTo)
+                .$(", rowsEmitted=").$(appendedRows).I$();
+    }
+
+    /**
+     * Returns a base-table {@code TableReader} whose {@code getSeqTxn() >=
+     * targetSeqTxn}, polling the reader pool until {@code ApplyWal2TableJob}
+     * has caught up. Bounded by
+     * {@code cairo.live.view.flush.retry.max.duration}; on timeout the
+     * caller's flush-retry budget ticks and the view is eventually
+     * invalidated via the unified path.
+     */
+    private TableReader waitForApply(TableToken baseToken, long targetSeqTxn) {
+        final long maxWaitUs = engine.getConfiguration().getLiveViewFlushRetryMaxDurationMicros();
+        final long startUs = engine.getConfiguration().getMicrosecondClock().getTicks();
+        TableReader reader = engine.getReader(baseToken);
+        while (reader.getSeqTxn() < targetSeqTxn) {
+            long elapsedUs = engine.getConfiguration().getMicrosecondClock().getTicks() - startUs;
+            if (elapsedUs >= maxWaitUs) {
+                long readerSeqTxn = reader.getSeqTxn();
+                reader.close();
+                throw CairoException.nonCritical()
+                        .put("live view base reader apply lag exceeded retry budget [baseToken=")
+                        .put(baseToken.getTableName())
+                        .put(", targetSeqTxn=").put(targetSeqTxn)
+                        .put(", readerSeqTxn=").put(readerSeqTxn)
+                        .put(", elapsedUs=").put(elapsedUs)
+                        .put(']');
+            }
+            reader.close();
+            Os.sleep(20);
+            reader = engine.getReader(baseToken);
+        }
+        return reader;
     }
 
     /**
