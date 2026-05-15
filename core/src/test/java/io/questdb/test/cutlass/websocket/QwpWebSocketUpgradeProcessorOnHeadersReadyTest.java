@@ -35,6 +35,7 @@ import io.questdb.cutlass.http.HttpRequestHeader;
 import io.questdb.cutlass.http.LocalValue;
 import io.questdb.cutlass.qwp.codec.QwpEgressMsgKind;
 import io.questdb.cutlass.qwp.codec.QwpServerInfoProvider;
+import io.questdb.cutlass.qwp.protocol.QwpConstants;
 import io.questdb.cutlass.qwp.server.QwpProcessorState;
 import io.questdb.cutlass.qwp.server.QwpWebSocketUpgradeProcessor;
 import io.questdb.network.PeerDisconnectedException;
@@ -67,6 +68,46 @@ public class QwpWebSocketUpgradeProcessorOnHeadersReadyTest extends AbstractCair
     @Test
     public void testOnHeadersReadyAcceptsStandaloneRole() throws Exception {
         assertMemoryLeak(() -> assertHandshakeAcceptedForRole(QwpEgressMsgKind.ROLE_STANDALONE, "STANDALONE"));
+    }
+
+    @Test
+    public void testOnHeadersReadyAdvertisesEffectiveBatchSize() throws Exception {
+        // The handshake response must carry X-QWP-Max-Batch-Size with the
+        // *effective* cap -- min(recvBufferSize - frame_overhead, MAX_BATCH_SIZE)
+        // -- so a wide-row client clamps to the value the server will actually
+        // accept on the wire rather than the QWP protocol ceiling. Advertising
+        // the protocol ceiling alone leaves clients hitting 1009 close on
+        // default deployments where recvBufferSize is well below 16 MB.
+        assertMemoryLeak(() -> {
+            HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
+            QwpWebSocketUpgradeProcessor processor = new QwpWebSocketUpgradeProcessor(engine, httpConfig);
+
+            long bufferAddr = Unsafe.malloc(HANDSHAKE_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+            try (
+                    MockHttpRequestHeader header = new MockHttpRequestHeader();
+                    TestableContext context = new TestableContext(httpConfig, header, new MockRawSocket(bufferAddr, HANDSHAKE_BUFFER_SIZE))
+            ) {
+                header.setHeader("Upgrade", "websocket");
+                header.setHeader("Connection", "Upgrade");
+                header.setHeader("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ==");
+                header.setHeader("Sec-WebSocket-Version", "13");
+
+                processor.onHeadersReady(context);
+
+                String response = readResponse(bufferAddr, context.getMockRawSocket().sentSize);
+                int expected = Math.min(
+                        Math.max(0, httpConfig.getRecvBufferSize() - 14),
+                        QwpConstants.DEFAULT_MAX_BATCH_SIZE);
+                String expectedHeader = "\r\nX-QWP-Max-Batch-Size: " + expected + "\r\n";
+                Assert.assertTrue(
+                        "response must carry X-QWP-Max-Batch-Size = " + expected + ", got: " + response,
+                        response.contains(expectedHeader));
+                Assert.assertTrue("advertised value must not exceed QWP protocol ceiling",
+                        expected <= QwpConstants.DEFAULT_MAX_BATCH_SIZE);
+            } finally {
+                Unsafe.free(bufferAddr, HANDSHAKE_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
     }
 
     @Test

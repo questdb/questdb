@@ -398,10 +398,14 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
      */
     @Test
     public void testCloseRethrowsLatchedTerminalError() throws Exception {
-        // Tight server recv buffer + no client-side row cap forces the
-        // 1000-row default batch to overflow on flush.
+        // Tight server recv buffer + a client configured to bypass the byte
+        // auto-flush (so it cannot self-clamp to the server-advertised cap)
+        // forces the 1000-row default batch to overflow on flush. When the
+        // server advertises X-QWP-Max-Batch-Size at handshake the default
+        // sender clamps to it -- this test explicitly disables that path by
+        // setting auto_flush_bytes=off so the rejection branch still fires.
         runInContext((port) -> {
-            try (QwpWebSocketSender sender = connectWs(port)) {
+            try (QwpWebSocketSender sender = connectWs(port, /*rows*/ 0, /*bytes*/ 0, /*intervalNanos*/ 0L)) {
                 for (int i = 0; i < 1500; i++) {
                     sender.table("close_rethrow")
                             .stringColumn("payload", "x".repeat(64))
