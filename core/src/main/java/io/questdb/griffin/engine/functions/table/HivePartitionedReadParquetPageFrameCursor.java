@@ -680,31 +680,38 @@ public class HivePartitionedReadParquetPageFrameCursor implements PageFrameCurso
     }
 
     /**
-     * Compares one value-function from a pushdown condition against the typed
-     * partition value. Returns true if the function's value matches the
-     * partition value under the partition column's type.
-     * <p>
-     * Returns false (i.e. keep the file) if the function's typed accessor
-     * raises a known evaluation error - the row-level filter will still
-     * exercise the condition. Errors of types we don't expect (e.g. OOM,
-     * assertion failures) propagate so they're not silently swallowed.
+     * Compares two typed long values under {@code partitionType}. INT values are
+     * compared as 32-bit signed ints (the long storage simply sign-extends from
+     * int); LONG, DATE, TIMESTAMP compare as native longs.
      */
-    private boolean functionMatchesPartition(Function f, int partitionType, long partitionValue) {
-        try {
-            switch (ColumnType.tagOf(partitionType)) {
-                case ColumnType.INT:
-                    return f.getInt(null) == (int) partitionValue;
-                case ColumnType.LONG:
-                    return f.getLong(null) == partitionValue;
-                case ColumnType.DATE:
-                    return f.getDate(null) == partitionValue;
-                case ColumnType.TIMESTAMP:
-                    return f.getTimestamp(null) == partitionValue;
-                default:
-                    return false;
-            }
-        } catch (CairoException | NumericException ignored) {
-            return false;
+    private int compareTyped(long a, long b, int partitionType) {
+        if (ColumnType.tagOf(partitionType) == ColumnType.INT) {
+            return Integer.compare((int) a, (int) b);
+        }
+        return Long.compare(a, b);
+    }
+
+    /**
+     * Evaluates a constant value-function as a long under {@code partitionType}.
+     * Throws {@link CairoException} or {@link NumericException} when the function
+     * can't produce a value of that type - the caller treats that as "couldn't
+     * evaluate" and keeps the file so the row-level filter can re-try.
+     * <p>
+     * canCompareTyped should have screened the type before this is called, so an
+     * unreachable default is a contract violation.
+     */
+    private long evalFunctionTyped(Function f, int partitionType) {
+        switch (ColumnType.tagOf(partitionType)) {
+            case ColumnType.INT:
+                return f.getInt(null);
+            case ColumnType.LONG:
+                return f.getLong(null);
+            case ColumnType.DATE:
+                return f.getDate(null);
+            case ColumnType.TIMESTAMP:
+                return f.getTimestamp(null);
+            default:
+                throw new IllegalStateException("evalFunctionTyped on unsupported partition type: " + ColumnType.nameOf(partitionType));
         }
     }
 
@@ -739,6 +746,8 @@ public class HivePartitionedReadParquetPageFrameCursor implements PageFrameCurso
             int op = cond.getOperationType();
             boolean present = prunePartitionPresent[partCol];
 
+            // Null checks come before the type filter because they apply to every
+            // partition column type.
             if (op == PushdownFilterExtractor.OP_IS_NULL) {
                 if (present) return true;
                 continue;
@@ -747,32 +756,94 @@ public class HivePartitionedReadParquetPageFrameCursor implements PageFrameCurso
                 if (!present) return true;
                 continue;
             }
-            if (op != PushdownFilterExtractor.OP_EQ) {
-                // Other ops (LT, GT, BETWEEN, NEQ) - skip conservatively. Could be added
-                // later but the IN/=/IS NULL cases cover the common hive query shape.
-                continue;
-            }
-            if (!present) {
-                // OP_EQ against a NULL partition value never matches.
-                return true;
-            }
+
+            // Comparison ops need a typed comparable value. canCompareTyped intentionally
+            // excludes DOUBLE (NaN, decimal-literal round-trip) and VARCHAR (the typed
+            // long array doesn't hold the byte range).
             final int type = partitionColumnTypes.getQuick(partCol);
             if (!canCompareTyped(type)) {
                 continue;
+            }
+            if (!present) {
+                // Any typed comparison against a NULL partition value matches no rows,
+                // so the file can be pruned.
+                return true;
             }
             final ObjList<Function> vals = cond.getValueFunctions();
             if (vals.size() == 0) {
                 continue;
             }
-            boolean anyMatch = false;
-            for (int v = 0, vn = vals.size(); v < vn; v++) {
-                if (functionMatchesPartition(vals.getQuick(v), type, prunePartitionValues[partCol])) {
-                    anyMatch = true;
-                    break;
+            final long pv = prunePartitionValues[partCol];
+            try {
+                switch (op) {
+                    case PushdownFilterExtractor.OP_EQ: {
+                        // EQ accepts a value list - this also covers col IN (a, b, c)
+                        // which the extractor folds into OP_EQ with multiple values.
+                        boolean anyMatch = false;
+                        for (int v = 0, vn = vals.size(); v < vn; v++) {
+                            if (compareTyped(pv, evalFunctionTyped(vals.getQuick(v), type), type) == 0) {
+                                anyMatch = true;
+                                break;
+                            }
+                        }
+                        if (!anyMatch) {
+                            return true;
+                        }
+                        break;
+                    }
+                    case PushdownFilterExtractor.OP_LT: {
+                        if (compareTyped(pv, evalFunctionTyped(vals.getQuick(0), type), type) >= 0) {
+                            return true;
+                        }
+                        break;
+                    }
+                    case PushdownFilterExtractor.OP_LE: {
+                        if (compareTyped(pv, evalFunctionTyped(vals.getQuick(0), type), type) > 0) {
+                            return true;
+                        }
+                        break;
+                    }
+                    case PushdownFilterExtractor.OP_GT: {
+                        if (compareTyped(pv, evalFunctionTyped(vals.getQuick(0), type), type) <= 0) {
+                            return true;
+                        }
+                        break;
+                    }
+                    case PushdownFilterExtractor.OP_GE: {
+                        if (compareTyped(pv, evalFunctionTyped(vals.getQuick(0), type), type) < 0) {
+                            return true;
+                        }
+                        break;
+                    }
+                    case PushdownFilterExtractor.OP_BETWEEN: {
+                        if (vals.size() < 2) {
+                            continue;
+                        }
+                        long v1 = evalFunctionTyped(vals.getQuick(0), type);
+                        long v2 = evalFunctionTyped(vals.getQuick(1), type);
+                        // PushdownFilterExtractor doesn't normalise bound order, so we
+                        // accept BETWEEN written as either lo..hi or hi..lo here.
+                        long lo;
+                        long hi;
+                        if (compareTyped(v1, v2, type) <= 0) {
+                            lo = v1;
+                            hi = v2;
+                        } else {
+                            lo = v2;
+                            hi = v1;
+                        }
+                        if (compareTyped(pv, lo, type) < 0 || compareTyped(pv, hi, type) > 0) {
+                            return true;
+                        }
+                        break;
+                    }
+                    default:
+                        // Unknown / future operator - conservative keep.
+                        break;
                 }
-            }
-            if (!anyMatch) {
-                return true;
+            } catch (CairoException | NumericException ignored) {
+                // Value function can't be evaluated as the expected type. Keep the file
+                // so the row-level filter has a chance.
             }
         }
         return false;

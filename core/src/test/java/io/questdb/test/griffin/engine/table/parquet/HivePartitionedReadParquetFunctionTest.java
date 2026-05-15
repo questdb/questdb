@@ -994,6 +994,95 @@ public class HivePartitionedReadParquetFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFileLevelPruningRangeOperators() throws Exception {
+        // Range pushdown (<, <=, >, >=) on the inferred DATE partition column. Each
+        // assertion picks a cut point and verifies the matching row count - the cursor
+        // should only iterate files whose partition value satisfies the predicate.
+        assertMemoryLeak(() -> {
+            execute("create table src as (select cast(x as int) as id from long_sequence(5))");
+            writeParquet("prng/day=2026-03-01/data.parquet", "src");
+            writeParquet("prng/day=2026-03-02/data.parquet", "src");
+            writeParquet("prng/day=2026-03-03/data.parquet", "src");
+            writeParquet("prng/day=2026-03-04/data.parquet", "src");
+
+            assertQueryNoLeakCheck(
+                    "count\n10\n", // 2026-03-03 + 2026-03-04
+                    "select count(*) from read_parquet('prng/day=*/data.parquet') where day > '2026-03-02'",
+                    null, false, true
+            );
+            assertQueryNoLeakCheck(
+                    "count\n15\n", // 2026-03-02 + 2026-03-03 + 2026-03-04
+                    "select count(*) from read_parquet('prng/day=*/data.parquet') where day >= '2026-03-02'",
+                    null, false, true
+            );
+            assertQueryNoLeakCheck(
+                    "count\n5\n", // 2026-03-01 only
+                    "select count(*) from read_parquet('prng/day=*/data.parquet') where day < '2026-03-02'",
+                    null, false, true
+            );
+            assertQueryNoLeakCheck(
+                    "count\n10\n", // 2026-03-01 + 2026-03-02
+                    "select count(*) from read_parquet('prng/day=*/data.parquet') where day <= '2026-03-02'",
+                    null, false, true
+            );
+        });
+    }
+
+    @Test
+    public void testFileLevelPruningBetween() throws Exception {
+        // BETWEEN pushdown keeps the inclusive range and auto-swaps reversed bounds.
+        assertMemoryLeak(() -> {
+            execute("create table src as (select cast(x as int) as id from long_sequence(2))");
+            writeParquet("pbet/day=2026-04-01/data.parquet", "src");
+            writeParquet("pbet/day=2026-04-02/data.parquet", "src");
+            writeParquet("pbet/day=2026-04-03/data.parquet", "src");
+            writeParquet("pbet/day=2026-04-04/data.parquet", "src");
+            writeParquet("pbet/day=2026-04-05/data.parquet", "src");
+
+            assertQueryNoLeakCheck(
+                    "count\n6\n", // 02 + 03 + 04
+                    "select count(*) from read_parquet('pbet/day=*/data.parquet') where day between '2026-04-02' and '2026-04-04'",
+                    null, false, true
+            );
+            // Reversed bounds: should still match 02..04 because BETWEEN auto-swaps.
+            assertQueryNoLeakCheck(
+                    "count\n6\n",
+                    "select count(*) from read_parquet('pbet/day=*/data.parquet') where day between '2026-04-04' and '2026-04-02'",
+                    null, false, true
+            );
+            // Degenerate: lo == hi keeps only that file.
+            assertQueryNoLeakCheck(
+                    "count\n2\n",
+                    "select count(*) from read_parquet('pbet/day=*/data.parquet') where day between '2026-04-03' and '2026-04-03'",
+                    null, false, true
+            );
+        });
+    }
+
+    @Test
+    public void testFileLevelPruningRangeOnInt() throws Exception {
+        // Range pushdown on an INT-inferred partition column exercises the int-cast
+        // branch of compareTyped (long storage is sign-extended from int).
+        assertMemoryLeak(() -> {
+            execute("create table src as (select cast(x as int) as id from long_sequence(3))");
+            writeParquet("prngi/yr=2024/data.parquet", "src");
+            writeParquet("prngi/yr=2025/data.parquet", "src");
+            writeParquet("prngi/yr=2026/data.parquet", "src");
+
+            assertQueryNoLeakCheck(
+                    "count\n6\n", // 2025 + 2026
+                    "select count(*) from read_parquet('prngi/yr=*/data.parquet') where yr >= 2025",
+                    null, false, true
+            );
+            assertQueryNoLeakCheck(
+                    "count\n3\n", // 2024 only
+                    "select count(*) from read_parquet('prngi/yr=*/data.parquet') where yr < 2025",
+                    null, false, true
+            );
+        });
+    }
+
+    @Test
     public void testProjectionPushdownPartitionColumnOnly() throws Exception {
         // SqlCodeGenerator pushes the {day} projection down through the hive factory.
         // The cursor's columnMapping then references only the partition virtual column
