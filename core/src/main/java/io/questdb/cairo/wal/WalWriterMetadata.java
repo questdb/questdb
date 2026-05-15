@@ -124,7 +124,8 @@ public class WalWriterMetadata extends AbstractRecordMetadata implements TableRe
             int writerIndex,
             boolean isDedupKey,
             boolean symbolIsCached,
-            int symbolCapacity
+            int symbolCapacity,
+            @Transient IntList coveringColumnIndices
     ) {
         addColumn0(
                 columnName,

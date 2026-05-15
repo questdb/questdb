@@ -39,6 +39,7 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Chars;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.SimpleReadWriteLock;
 import io.questdb.std.datetime.MicrosecondClock;
@@ -247,6 +248,7 @@ public class TableSequencerImpl implements TableSequencer {
         for (int i = 0; i < columnCount; i++) {
             int columnType = metadata.getColumnType(i);
             int columnOrder = metadata.getReadColumnOrder().getQuick(i);
+            IntList coveringColumnIndices = metadata.getColumnMetadata(i).getCoveringColumnIndices();
             sink.addColumn(
                     metadata.getColumnName(i),
                     columnType,
@@ -256,7 +258,8 @@ public class TableSequencerImpl implements TableSequencer {
                     i,
                     metadata.isDedupKey(i),
                     metadata.getColumnMetadata(i).isSymbolCacheFlag(),
-                    metadata.getColumnMetadata(i).getSymbolCapacity()
+                    metadata.getColumnMetadata(i).getSymbolCapacity(),
+                    coveringColumnIndices
             );
             if (columnType > -1) {
                 reorderNeeded |= lastOrder > columnOrder;

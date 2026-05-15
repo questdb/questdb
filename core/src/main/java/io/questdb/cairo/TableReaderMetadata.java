@@ -182,6 +182,11 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
     }
 
     @Override
+    public IntList getCoveringColumnIndices(int columnIndex) {
+        return getColumnMetadata(columnIndex).getCoveringColumnIndices();
+    }
+
+    @Override
     public int getPartitionBy() {
         return partitionBy;
     }

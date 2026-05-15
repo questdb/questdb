@@ -28,6 +28,8 @@ import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.security.AllowAllSecurityContext;
@@ -41,6 +43,7 @@ import io.questdb.cairo.wal.seq.TableTransactionLog;
 import io.questdb.cairo.wal.seq.TableTransactionLogFile;
 import io.questdb.cairo.wal.seq.TransactionLogCursor;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
@@ -266,6 +269,17 @@ public class TableSequencerImplTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testOpenRebuildsCreateTimeCoveringIndexV1() throws Exception {
+        testOpenRebuildsCreateTimeCoveringIndex();
+    }
+
+    @Test
+    public void testOpenRebuildsCreateTimeCoveringIndexV2() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, 10);
+        testOpenRebuildsCreateTimeCoveringIndex();
+    }
+
+    @Test
     public void testOpenRecoversCommittedRenameWhenRegistryAlreadyRenamedV1() throws Exception {
         testOpenRecoversCommittedRenameWhenRegistryAlreadyRenamed();
     }
@@ -437,6 +451,57 @@ public class TableSequencerImplTest extends AbstractCairoTest {
         }
     }
 
+    private void assertSequencerCoveringIndexIncludes(TableToken tableToken, String indexedColumn, String coveringColumn) {
+        try (TableRecordMetadata metadata = engine.getSequencerMetadata(tableToken)) {
+            int indexedColumnIndex = metadata.getColumnIndexQuiet(indexedColumn);
+            int coveringColumnIndex = metadata.getColumnIndexQuiet(coveringColumn);
+            Assert.assertTrue("expected indexed column to exist: " + indexedColumn, indexedColumnIndex > -1);
+            Assert.assertTrue("expected covering column to exist: " + coveringColumn, coveringColumnIndex > -1);
+
+            IntList coveringIndices = metadata.getColumnMetadata(indexedColumnIndex).getCoveringColumnIndices();
+            Assert.assertNotNull("expected INCLUDE list to exist for column: " + indexedColumn, coveringIndices);
+            Assert.assertTrue(
+                    "expected INCLUDE list for " + indexedColumn + " to contain " + coveringColumn,
+                    coveringIndices.contains(metadata.getWriterIndex(coveringColumnIndex))
+            );
+        }
+    }
+
+    private void assertTableCoveringIndexIncludes(String tableName, String indexedColumn, String coveringColumn) {
+        try (TableReader reader = engine.getReader(tableName)) {
+            TableRecordMetadata metadata = reader.getMetadata();
+            int indexedColumnIndex = metadata.getColumnIndexQuiet(indexedColumn);
+            int coveringColumnIndex = metadata.getColumnIndexQuiet(coveringColumn);
+            Assert.assertTrue("expected indexed column to exist: " + indexedColumn, indexedColumnIndex > -1);
+            Assert.assertTrue("expected covering column to exist: " + coveringColumn, coveringColumnIndex > -1);
+
+            IntList coveringIndices = metadata.getColumnMetadata(indexedColumnIndex).getCoveringColumnIndices();
+            Assert.assertNotNull("expected table INCLUDE list to exist for column: " + indexedColumn, coveringIndices);
+            Assert.assertTrue(
+                    "expected table INCLUDE list for " + indexedColumn + " to contain " + coveringColumn,
+                    coveringIndices.contains(metadata.getWriterIndex(coveringColumnIndex))
+            );
+        }
+    }
+
+    private void assertInitialSequencerMetadataCoveringIndexIncludes(TableToken tableToken, String indexedColumn, String coveringColumn) {
+        try (Path path = new Path(); TableReaderMetadata metadata = new TableReaderMetadata(engine.getConfiguration())) {
+            pathToSequencerFile(path, tableToken, WalUtils.INITIAL_META_FILE_NAME);
+            metadata.loadMetadata(path.$());
+            int indexedColumnIndex = metadata.getColumnIndexQuiet(indexedColumn);
+            int coveringColumnIndex = metadata.getColumnIndexQuiet(coveringColumn);
+            Assert.assertTrue("expected initial indexed column to exist: " + indexedColumn, indexedColumnIndex > -1);
+            Assert.assertTrue("expected initial covering column to exist: " + coveringColumn, coveringColumnIndex > -1);
+
+            IntList coveringIndices = metadata.getColumnMetadata(indexedColumnIndex).getCoveringColumnIndices();
+            Assert.assertNotNull("expected initial INCLUDE list to exist for column: " + indexedColumn, coveringIndices);
+            Assert.assertTrue(
+                    "expected initial INCLUDE list for " + indexedColumn + " to contain " + coveringColumn,
+                    coveringIndices.contains(metadata.getWriterIndex(coveringColumnIndex))
+            );
+        }
+    }
+
     private void assertSequencerTableName(TableToken tableToken, String expectedTableName) {
         try (TableRecordMetadata metadata = engine.getSequencerMetadata(tableToken)) {
             Assert.assertEquals(expectedTableName, metadata.getTableToken().getTableName());
@@ -463,6 +528,15 @@ public class TableSequencerImplTest extends AbstractCairoTest {
                 .timestamp("ts")
                 .wal();
         return createTable(model);
+    }
+
+    private TableToken createWalTableWithCoveringIndex(String tableName) throws Exception {
+        execute("create table " + tableName + " (" +
+                "sym symbol index type posting include (price), " +
+                "price double, " +
+                "ts timestamp" +
+                ") timestamp(ts) partition by hour WAL");
+        return engine.verifyTableName(tableName);
     }
 
     private void pathToSequencerFile(Path path, TableToken tableToken, CharSequence fileName) {
@@ -649,6 +723,28 @@ public class TableSequencerImplTest extends AbstractCairoTest {
             addIntColumn(tableToken, "c3");
             assertSequencerMetadata(tableToken, 3, new String[]{"c1", "c2", "c3"}, new String[0]);
             assertMaxStructureVersion(tableToken, 3);
+        });
+    }
+
+    private void testOpenRebuildsCreateTimeCoveringIndex() throws Exception {
+        assertMemoryLeak(() -> {
+            String tableName = testName.getMethodName();
+            TableToken tableToken = createWalTableWithCoveringIndex(tableName);
+            assertTableCoveringIndexIncludes(tableName, "sym", "price");
+            assertInitialSequencerMetadataCoveringIndexIncludes(tableToken, "sym", "price");
+
+            engine.clear();
+            rewriteSequencerMetaSize(tableToken, 0);
+
+            engine.getTableSequencerAPI().openSequencer(tableToken);
+            engine.clear();
+            assertSequencerMetadata(tableToken, 0, new String[]{"sym", "price"}, new String[0]);
+            assertSequencerCoveringIndexIncludes(tableToken, "sym", "price");
+
+            addIntColumn(tableToken, "c1");
+            assertSequencerMetadata(tableToken, 1, new String[]{"sym", "price", "c1"}, new String[0]);
+            assertSequencerCoveringIndexIncludes(tableToken, "sym", "price");
+            assertMaxStructureVersion(tableToken, 1);
         });
     }
 
