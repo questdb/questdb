@@ -3334,6 +3334,122 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLagSnapshotRestoreRoundTripsState() throws Exception {
+        // Phase 2b.2: snapshot() / restore() round-trip the lag function's
+        // per-partition firstIdx + count and the raw ring buffer contents
+        // through a MemoryCARW buffer. Isolates the codec round-trip from the
+        // end-to-end .cp path so a regression in the ring-blob serializer
+        // surfaces here before the integration test sees it.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+                    "SELECT ts, sym, lag(x, 2) OVER w AS prev FROM base " +
+                    "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                setCurrentMicros(0L);
+                execute("INSERT INTO base (ts, sym, x) VALUES " +
+                        "('2026-09-01T00:00:00.000000Z', 'a', 1.0), " +
+                        "('2026-09-01T01:00:00.000000Z', 'a', 2.0), " +
+                        "('2026-09-01T02:00:00.000000Z', 'a', 3.0), " +
+                        "('2026-09-01T00:00:00.000000Z', 'b', 10.0), " +
+                        "('2026-09-01T01:00:00.000000Z', 'b', 20.0)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+            }
+
+            LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
+            WindowFunction lagFn = lv.getAnchorWindow().getFunctions().getQuick(0);
+            Assert.assertTrue("lag reports snapshot capability after 2b.2a", lagFn.supportsSnapshot());
+            Assert.assertEquals(2L, lagFn.getPartitionMap().size());
+
+            try (MemoryCARW buf = Vm.getCARWInstance(64 * 1024L, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
+                lagFn.snapshot(buf);
+                final long snapshotBytes = buf.getAppendOffset();
+                Assert.assertTrue("snapshot wrote some bytes", snapshotBytes > 0);
+                lagFn.getPartitionMap().clear();
+                Assert.assertEquals(0L, lagFn.getPartitionMap().size());
+                lagFn.restore(buf, lagFn.snapshotFormatVersion());
+                Assert.assertEquals(
+                        "restore rehydrates the same partition count snapshot captured",
+                        2L,
+                        lagFn.getPartitionMap().size()
+                );
+            }
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testRestartRestoresLagFromHeadCheckpoint() throws Exception {
+        // Phase 2b.2: lag() is now snapshot-capable. End-to-end check that a
+        // refresh cycle writes a head .cp, a simulated restart re-discovers
+        // it, and the first post-restart refresh tick rehydrates the lag
+        // function's partition map. Mirrors testRestartRestoresRankFromHead
+        // Checkpoint for the lag ring-blob path.
+        //
+        // The post-restart-then-new-commit scenario is intentionally NOT
+        // covered: getIncrementalCursor's pre-existing toTop chain wipes the
+        // anchor map and function maps at the start of each refresh cycle,
+        // so a new commit immediately after restore would discard the
+        // rehydrated state. That cross-cycle wipe is tracked under 2a.8's
+        // "known limitations".
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+                    "SELECT ts, sym, lag(x, 1) OVER w AS prev FROM base " +
+                    "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
+
+            final long preHeadLvSeqTxn;
+            final long preLastProcessed;
+            final long preFunctionMapSize;
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                setCurrentMicros(0L);
+                execute("INSERT INTO base (ts, sym, x) VALUES " +
+                        "('2026-09-01T00:00:00.000000Z', 'a', 1.0), " +
+                        "('2026-09-01T01:00:00.000000Z', 'a', 2.0), " +
+                        "('2026-09-01T00:00:00.000000Z', 'b', 3.0)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                preHeadLvSeqTxn = instance.getHeadCheckpointLvSeqTxn();
+                preLastProcessed = instance.getLastProcessedSeqTxn();
+                preFunctionMapSize = instance.getAnchorWindow().getFunctions().getQuick(0).getPartitionMap().size();
+                Assert.assertNotEquals(
+                        "head .cp must be written for an LV with lag() now that 2b.2a makes it snapshot-capable",
+                        Numbers.LONG_NULL,
+                        preHeadLvSeqTxn
+                );
+                Assert.assertEquals("two partition keys seeded pre-restart", 2L, preFunctionMapSize);
+            }
+
+            engine.getLiveViewRegistry().clear();
+            engine.buildViewGraphs();
+
+            LiveViewInstance reloaded = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(reloaded);
+            Assert.assertEquals(preHeadLvSeqTxn, reloaded.getHeadCheckpointLvSeqTxn());
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+            }
+            Assert.assertTrue(reloaded.isCheckpointRestoreAttempted());
+            Assert.assertEquals(preLastProcessed, reloaded.getLastProcessedSeqTxn());
+            Assert.assertEquals(
+                    "lag's partition map rehydrates to its pre-restart partition count",
+                    preFunctionMapSize,
+                    reloaded.getAnchorWindow().getFunctions().getQuick(0).getPartitionMap().size()
+            );
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
     public void testLatestSeenTsAdvancesAcrossRows() throws Exception {
         // Phase 2a.8: the anchor-dispatch cursor stamps the per-LV latestSeenTs
         // watermark on every base row consumed by the refresh worker. This is
