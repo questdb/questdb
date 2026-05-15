@@ -208,8 +208,9 @@ public class AlterOperation extends AbstractOperation implements Mutable {
                     securityContext.authorizeAlterTableDropPartition(tableToken);
             case ATTACH_PARTITION -> securityContext.authorizeAlterTableAttachPartition(tableToken);
             case DETACH_PARTITION -> securityContext.authorizeAlterTableDetachPartition(tableToken);
-            case SET_PARAM_MAX_UNCOMMITTED_ROWS, SET_PARAM_COMMIT_LAG, SET_TTL, SET_DEFAULT_PARTITION_FORMAT ->
+            case SET_PARAM_MAX_UNCOMMITTED_ROWS, SET_PARAM_COMMIT_LAG, SET_TTL ->
                     securityContext.authorizeAlterTableSetParam(tableToken);
+            case SET_DEFAULT_PARTITION_FORMAT -> securityContext.authorizeAlterTableSetFormat(tableToken);
             case SET_DEDUP_ENABLE -> securityContext.authorizeAlterTableDedupEnable(tableToken);
             case SET_DEDUP_DISABLE -> securityContext.authorizeAlterTableDedupDisable(tableToken);
             case CONVERT_PARTITION_TO_PARQUET ->
