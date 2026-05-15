@@ -222,6 +222,49 @@ public class WebSocketHandshakeTest extends AbstractWebSocketTest {
     }
 
     @Test
+    public void testResponseSizeWithMaxBatchSize() throws Exception {
+        assertMemoryLeak(() -> {
+            String acceptKey = "s3pPLMBiTxaQ9kYGzzhZRbK+xOo=";
+            int maxBatchSize = 16 * 1024 * 1024;
+            int expectedSize = QwpWebSocketHttpProcessor.responseSize(
+                    acceptKey, 1, null, false, null, maxBatchSize);
+
+            long buf = allocateBuffer(512);
+            try {
+                int written = QwpWebSocketHttpProcessor.writeResponse(
+                        buf, acceptKey, 1, null, false, null, maxBatchSize);
+                Assert.assertEquals(expectedSize, written);
+
+                String response = new String(readBytes(buf, written), StandardCharsets.US_ASCII);
+                Assert.assertTrue("expected X-QWP-Max-Batch-Size header, got: " + response,
+                        response.contains("X-QWP-Max-Batch-Size: " + maxBatchSize + "\r\n"));
+                Assert.assertTrue(response.endsWith("\r\n\r\n"));
+            } finally {
+                freeBuffer(buf, 512);
+            }
+        });
+    }
+
+    @Test
+    public void testWriteResponseOmitsMaxBatchSizeWhenZero() throws Exception {
+        assertMemoryLeak(() -> {
+            String acceptKey = "s3pPLMBiTxaQ9kYGzzhZRbK+xOo=";
+
+            long buf = allocateBuffer(256);
+            try {
+                int written = QwpWebSocketHttpProcessor.writeResponse(
+                        buf, acceptKey, 1, null, false, null, 0);
+
+                String response = new String(readBytes(buf, written), StandardCharsets.US_ASCII);
+                Assert.assertFalse("did not expect X-QWP-Max-Batch-Size header, got: " + response,
+                        response.contains("X-QWP-Max-Batch-Size"));
+            } finally {
+                freeBuffer(buf, 256);
+            }
+        });
+    }
+
+    @Test
     public void testThreadSafety() throws InterruptedException {
         // Test that accept key computation is thread-safe
         String clientKey = "dGhlIHNhbXBsZSBub25jZQ==";

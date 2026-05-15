@@ -108,6 +108,12 @@ public class QwpWebSocketHttpProcessor implements HttpRequestHandler {
     // frames, so the client must fail at handshake rather than wait forever.
     private static final byte[] RESPONSE_DURABLE_ACK_ENABLED =
             "\r\nX-QWP-Durable-Ack: enabled".getBytes(StandardCharsets.US_ASCII);
+    // Advertises the server's hard cap on QWP message payload bytes so the
+    // ingest client can size its batches without trial-and-error. Without this
+    // hint a wide-row sender would have to discover the cap by sending an
+    // oversized batch and reacting to STATUS_PARSE_ERROR.
+    private static final byte[] RESPONSE_MAX_BATCH_SIZE_PREFIX =
+            "\r\nX-QWP-Max-Batch-Size: ".getBytes(StandardCharsets.US_ASCII);
     // Response template
     private static final byte[] RESPONSE_PREFIX =
             "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ".getBytes(StandardCharsets.US_ASCII);
@@ -282,14 +288,20 @@ public class QwpWebSocketHttpProcessor implements HttpRequestHandler {
         return responseSize(acceptKey, qwpVersion, contentEncoding, false, null);
     }
 
+    public static int responseSize(String acceptKey, int qwpVersion, String contentEncoding, boolean durableAckEnabled, byte[] roleBytes) {
+        return responseSize(acceptKey, qwpVersion, contentEncoding, durableAckEnabled, roleBytes, 0);
+    }
+
     /**
      * Same as {@link #responseSize(String, int)} but accounts for an optional
      * {@code X-QWP-Content-Encoding} header echoing the negotiated compression
      * codec, an optional {@code X-QWP-Durable-Ack: enabled} confirmation
-     * header, and an optional {@code X-QuestDB-Role} header advertising the
-     * server role. Pass {@code null} / {@code false} to skip any of them.
+     * header, an optional {@code X-QuestDB-Role} header advertising the
+     * server role, and an optional {@code X-QWP-Max-Batch-Size} header
+     * advertising the server's ingest payload cap in bytes. Pass {@code null}
+     * / {@code false} / {@code 0} to skip any of them.
      */
-    public static int responseSize(String acceptKey, int qwpVersion, String contentEncoding, boolean durableAckEnabled, byte[] roleBytes) {
+    public static int responseSize(String acceptKey, int qwpVersion, String contentEncoding, boolean durableAckEnabled, byte[] roleBytes, int maxBatchSize) {
         int size = RESPONSE_PREFIX.length + acceptKey.length()
                 + RESPONSE_AFTER_ACCEPT.length + digitCount(qwpVersion)
                 + RESPONSE_SUFFIX.length;
@@ -301,6 +313,9 @@ public class QwpWebSocketHttpProcessor implements HttpRequestHandler {
         }
         if (roleBytes != null) {
             size += RESPONSE_ROLE_PREFIX.length + roleBytes.length;
+        }
+        if (maxBatchSize > 0) {
+            size += RESPONSE_MAX_BATCH_SIZE_PREFIX.length + intDigitCount(maxBatchSize);
         }
         return size;
     }
@@ -392,16 +407,22 @@ public class QwpWebSocketHttpProcessor implements HttpRequestHandler {
         return writeResponse(buf, acceptKey, qwpVersion, contentEncoding, false, null);
     }
 
+    public static int writeResponse(long buf, String acceptKey, int qwpVersion, String contentEncoding, boolean durableAckEnabled, byte[] roleBytes) {
+        return writeResponse(buf, acceptKey, qwpVersion, contentEncoding, durableAckEnabled, roleBytes, 0);
+    }
+
     /**
      * Same as {@link #writeResponse(long, String, int)} but appends an optional
      * {@code X-QWP-Content-Encoding} header echoing the negotiated compression
      * codec (e.g. {@code zstd;level=3}), an optional
      * {@code X-QWP-Durable-Ack: enabled} confirmation that this connection
-     * will receive {@code STATUS_DURABLE_ACK} frames, and an optional
-     * {@code X-QuestDB-Role} header advertising the server role.
-     * Pass {@code null} / {@code false} to skip any of them.
+     * will receive {@code STATUS_DURABLE_ACK} frames, an optional
+     * {@code X-QuestDB-Role} header advertising the server role, and an
+     * optional {@code X-QWP-Max-Batch-Size} header advertising the server's
+     * ingest payload cap in bytes. Pass {@code null} / {@code false} /
+     * {@code 0} to skip any of them.
      */
-    public static int writeResponse(long buf, String acceptKey, int qwpVersion, String contentEncoding, boolean durableAckEnabled, byte[] roleBytes) {
+    public static int writeResponse(long buf, String acceptKey, int qwpVersion, String contentEncoding, boolean durableAckEnabled, byte[] roleBytes, int maxBatchSize) {
         int offset = 0;
 
         for (byte b : RESPONSE_PREFIX) {
@@ -451,6 +472,16 @@ public class QwpWebSocketHttpProcessor implements HttpRequestHandler {
             }
         }
 
+        if (maxBatchSize > 0) {
+            for (byte b : RESPONSE_MAX_BATCH_SIZE_PREFIX) {
+                Unsafe.putByte(buf + offset++, b);
+            }
+            byte[] maxBatchBytes = Integer.toString(maxBatchSize).getBytes(StandardCharsets.US_ASCII);
+            for (byte b : maxBatchBytes) {
+                Unsafe.putByte(buf + offset++, b);
+            }
+        }
+
         for (byte b : RESPONSE_SUFFIX) {
             Unsafe.putByte(buf + offset++, b);
         }
@@ -492,5 +523,21 @@ public class QwpWebSocketHttpProcessor implements HttpRequestHandler {
         if (value < 10) return 1;
         if (value < 100) return 2;
         return 3; // QWP version will not exceed 255
+    }
+
+    private static int intDigitCount(int value) {
+        if (value < 0) {
+            return Integer.toString(value).length();
+        }
+        if (value < 10) return 1;
+        if (value < 100) return 2;
+        if (value < 1_000) return 3;
+        if (value < 10_000) return 4;
+        if (value < 100_000) return 5;
+        if (value < 1_000_000) return 6;
+        if (value < 10_000_000) return 7;
+        if (value < 100_000_000) return 8;
+        if (value < 1_000_000_000) return 9;
+        return 10;
     }
 }

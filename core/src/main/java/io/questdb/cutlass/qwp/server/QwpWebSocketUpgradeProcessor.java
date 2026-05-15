@@ -291,7 +291,9 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
                 && Utf8s.equalsIgnoreCaseAscii(durableAckHeader, QwpWebSocketHttpProcessor.HEADER_VALUE_DURABLE_ACK_ENABLED);
         boolean durableAckEnabled = durableAckRequested && engine.getDurableAckRegistry().isEnabled();
 
-        int requiredHandshakeSize = QwpWebSocketHttpProcessor.responseSize(acceptKey, negotiatedVersion, null, durableAckEnabled, roleBytes);
+        int requiredHandshakeSize = QwpWebSocketHttpProcessor.responseSize(
+                acceptKey, negotiatedVersion, null, durableAckEnabled, roleBytes,
+                QwpConstants.DEFAULT_MAX_BATCH_SIZE);
         if (requiredHandshakeSize > bufferSize) {
             throw responseDoesNotFitSendBuffer(context.getFd(), "101 handshake response", bufferSize, requiredHandshakeSize);
         }
@@ -315,7 +317,9 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
         state.setDurableAckEnabled(durableAckEnabled);
 
         // Write the 101 Switching Protocols response (reuse the pre-computed accept key)
-        int bytesWritten = QwpWebSocketHttpProcessor.writeResponse(bufferAddr, acceptKey, negotiatedVersion, null, durableAckEnabled, roleBytes);
+        int bytesWritten = QwpWebSocketHttpProcessor.writeResponse(
+                bufferAddr, acceptKey, negotiatedVersion, null, durableAckEnabled, roleBytes,
+                QwpConstants.DEFAULT_MAX_BATCH_SIZE);
         if (bytesWritten <= 0) {
             throw responseDoesNotFitSendBuffer(context.getFd(), "101 handshake response", bufferSize, requiredHandshakeSize);
         }
