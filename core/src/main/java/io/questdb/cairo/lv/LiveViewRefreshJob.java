@@ -435,6 +435,12 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         // Tracked here unconditionally (the staging path tracks stagingMaxTs only
         // when populateTier is true, so we cannot reuse it).
         long batchMaxTs = Numbers.LONG_NULL;
+        // True when any txn in this cycle arrived out-of-order. Suppresses the
+        // end-of-cycle head-checkpoint write because the in-WAL-order pipeline
+        // produced state that does not match a ts-sorted execution; persisting
+        // that state under a fresh head would corrupt restart recovery just as
+        // badly as keeping the prior (now-cleared) head.
+        boolean cycleHadO3 = false;
         long stagingMaxTs = Numbers.LONG_NULL;
         long stagingMinTs = Numbers.LONG_NULL;
         try (WalWriter walWriter = engine.getWalWriter(instance.getLiveViewToken())) {
@@ -476,6 +482,23 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     }
 
                     WalEventCursor.DataInfo dataInfo = eventCursor.getDataInfo();
+                    // Out-of-order detection. A commit whose min ts sits below
+                    // the LV's latestSeenTs watermark cannot be processed in
+                    // WAL order without corrupting window-function state, so
+                    // any prior head .cp is invalidated here so a later
+                    // restart falls through to head-miss replay. V1 still
+                    // feeds this batch through the in-WAL-order pipeline; the
+                    // current cycle's window output for the affected partitions
+                    // is wrong (same disposition as Phase 1b), and the
+                    // ts-sorted re-execution is on the deferred list. We also
+                    // suppress this cycle's head .cp write so the next cycle
+                    // does not persist the known-wrong state under a fresh head.
+                    final long latestSeen = instance.getLatestSeenTs();
+                    final long txnMinTs = dataInfo.getMinTimestamp();
+                    if (latestSeen != Numbers.LONG_NULL && txnMinTs < latestSeen) {
+                        invalidateHeadOnO3(instance, txn, txnMinTs, latestSeen);
+                        cycleHadO3 = true;
+                    }
                     long startRow = dataInfo.getStartRowID();
                     long endRow = dataInfo.getEndRowID();
                     if (endRow <= startRow) {
@@ -633,16 +656,63 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 // advanced, the in-mem tier just trails for this cycle.
                 publishToInMemoryTier(instance, stagingMaxTs);
             }
-            if (lvConsumedPersisted && appendedRows > 0) {
+            if (lvConsumedPersisted && appendedRows > 0 && !cycleHadO3) {
                 // 2a.4 head-checkpoint write hook. Ordered after the apply's
                 // _txn advance and the lvConsumedSeqTxn publish so the .cp on
                 // disk reflects state that is also durably committed in the
                 // LV's own table. A failure here does not invalidate the view
                 // (RFC 123 "Flush" step 4): the prior head remains addressable
                 // and the next eligible cycle retries.
+                //
+                // cycleHadO3 suppresses the write because the in-WAL-order
+                // pipeline state for the affected partitions is wrong; the
+                // ts-sorted replay path that would restore correctness is
+                // deferred past 2a.8.
                 maybeWriteHeadCheckpoint(instance, windowFactory, advanceTo, batchMaxTs, appendedRows);
             }
         }
+    }
+
+    /**
+     * Phase 2a.8 head invalidation on out-of-order arrival. The current cycle
+     * still feeds the offending batch through the in-WAL-order pipeline (so
+     * the live output for the affected partitions is wrong for this batch -
+     * same disposition Phase 1b shipped with); the value of this helper is
+     * narrower: the on-disk head no longer reflects the rows the LV will
+     * eventually need to replay, so it must be retired now to keep restart
+     * recovery sound. The view falls through to head-miss replay on the
+     * next restart, which restarts the window state from
+     * {@code viewLowerBoundTimestamp}.
+     * <p>
+     * Best-effort: a removeQuiet failure is logged but does not invalidate
+     * the view. Clearing the in-memory head metadata to {@code LONG_NULL}
+     * stops the catalogue from advertising a head that may or may not still
+     * be on disk.
+     */
+    private void invalidateHeadOnO3(LiveViewInstance instance, long seqTxn, long txnMinTs, long latestSeenTs) {
+        final long headLvSeqTxn = instance.getHeadCheckpointLvSeqTxn();
+        LOG.critical().$("live view out-of-order base commit; invalidating head checkpoint [view=")
+                .$(instance.getDefinition().getViewName())
+                .$(", baseSeqTxn=").$(seqTxn)
+                .$(", txnMinTs=").$(txnMinTs)
+                .$(", latestSeenTs=").$(latestSeenTs)
+                .$(", headLvSeqTxn=").$(headLvSeqTxn)
+                .I$();
+        if (headLvSeqTxn != Numbers.LONG_NULL) {
+            path.of(engine.getConfiguration().getDbRoot())
+                    .concat(instance.getLiveViewToken())
+                    .concat(LiveViewCheckpointWriter.CHECKPOINT_DIR_NAME)
+                    .slash();
+            LiveViewCheckpointWriter.appendCpFileName(path, headLvSeqTxn);
+            try {
+                engine.getConfiguration().getFilesFacade().removeQuiet(path.$());
+            } catch (Throwable t) {
+                LOG.error().$("could not unlink head checkpoint on O3 [view=")
+                        .$(instance.getDefinition().getViewName())
+                        .$(", error=").$(t).I$();
+            }
+        }
+        instance.setHeadCheckpoint(Numbers.LONG_NULL, Numbers.LONG_NULL, 0L, Numbers.LONG_NULL);
     }
 
     /**

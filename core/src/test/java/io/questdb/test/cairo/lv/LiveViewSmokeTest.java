@@ -3282,6 +3282,99 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testO3InvalidatesHeadCheckpoint() throws Exception {
+        // Phase 2a.8: an O3 base commit (min ts strictly below the LV's
+        // latestSeenTs watermark) cannot be replayed in WAL order without
+        // corrupting per-partition window state, so the prior head .cp is
+        // retired immediately. Restart recovery then falls through to the
+        // head-miss replay path (replay from viewLowerBoundTimestamp).
+        // The current cycle still feeds the O3 batch through the in-WAL-order
+        // pipeline; the view's live output for the batch is wrong (Phase 1b
+        // disposition). The ts-sorted re-execution that would correct the
+        // live output is deferred past 2a.8.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+                    "SELECT ts, sym, sum(x) OVER w AS s FROM base " +
+                    "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                setCurrentMicros(0L);
+                execute("INSERT INTO base (ts, sym, x) VALUES " +
+                        "('2026-11-01T00:00:10.000000Z', 'a', 1.0), " +
+                        "('2026-11-01T00:00:20.000000Z', 'b', 3.0)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull(lv);
+                final long preO3HeadLvSeqTxn = lv.getHeadCheckpointLvSeqTxn();
+                Assert.assertNotEquals(
+                        "head .cp was written before the O3 commit",
+                        Numbers.LONG_NULL,
+                        preO3HeadLvSeqTxn
+                );
+                Assert.assertEquals(
+                        "latestSeenTs equals max(ts) of the first batch",
+                        MicrosFormatUtils.parseUTCTimestamp("2026-11-01T00:00:20.000000Z"),
+                        lv.getLatestSeenTs()
+                );
+
+                // The head .cp lives at <root>/<lv_dir>/_checkpoints/<lvSeqTxn>.cp.
+                TableToken token = lv.getLiveViewToken();
+                FilesFacade ff = engine.getConfiguration().getFilesFacade();
+                try (Path cpPath = new Path()) {
+                    cpPath.of(engine.getConfiguration().getDbRoot())
+                            .concat(token)
+                            .concat(LiveViewCheckpointWriter.CHECKPOINT_DIR_NAME)
+                            .slash();
+                    LiveViewCheckpointWriter.appendCpFileName(cpPath, preO3HeadLvSeqTxn);
+                    Assert.assertTrue("head .cp exists on disk before O3", ff.exists(cpPath.$()));
+
+                    // Insert an out-of-order row: ts (00:00:05) is strictly
+                    // below the watermark (00:00:20). Advance microtime past
+                    // the FLUSH EVERY gate so the refresh worker actually
+                    // ticks rather than no-oping on the rate limiter.
+                    setCurrentMicros(200_000L);
+                    execute("INSERT INTO base (ts, sym, x) VALUES " +
+                            "('2026-11-01T00:00:05.000000Z', 'a', 2.0)");
+                    drainWalQueue();
+                    drainJob(job);
+                    drainWalQueue();
+
+                    Assert.assertEquals(
+                            "head metadata cleared on O3 detection",
+                            Numbers.LONG_NULL,
+                            lv.getHeadCheckpointLvSeqTxn()
+                    );
+                    Assert.assertEquals(
+                            "head_checkpoint_max_ts cleared on O3 detection",
+                            Numbers.LONG_NULL,
+                            lv.getHeadCheckpointMaxTs()
+                    );
+                    Assert.assertEquals(
+                            "head_checkpoint_state_bytes cleared on O3 detection",
+                            0L,
+                            lv.getHeadCheckpointStateBytes()
+                    );
+
+                    // The on-disk file is gone too. Re-derive the path
+                    // because the helper mutates the Path in place.
+                    cpPath.of(engine.getConfiguration().getDbRoot())
+                            .concat(token)
+                            .concat(LiveViewCheckpointWriter.CHECKPOINT_DIR_NAME)
+                            .slash();
+                    LiveViewCheckpointWriter.appendCpFileName(cpPath, preO3HeadLvSeqTxn);
+                    Assert.assertFalse("head .cp unlinked after O3 detection", ff.exists(cpPath.$()));
+                }
+            }
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
     public void testFreezeGateSkipsRefreshTurn() throws Exception {
         // Phase 2a.9c: DatabaseCheckpointAgent toggles freezeInProgress around
         // its per-LV file copy so the refresh worker does not advance _lv.s /
