@@ -270,7 +270,6 @@ public class QwpWalAppender implements QuietCloseable {
      * @return QuestDB column type
      */
     private static int mapQwpTypeToQuestDB(int qwpType, QwpTableBlockCursor tableBlock, int colIndex) {
-        // For decimal types, we need to get the scale from the cursor
         switch (qwpType) {
             case TYPE_DECIMAL64 -> {
                 int scale = tableBlock.getDecimalColumn(colIndex).getScale() & 0xFF;
@@ -286,6 +285,13 @@ public class QwpWalAppender implements QuietCloseable {
                 int scale = tableBlock.getDecimalColumn(colIndex).getScale() & 0xFF;
                 int precision = Decimals.getDecimalTagPrecision(ColumnType.DECIMAL256);
                 return ColumnType.getDecimalType(ColumnType.DECIMAL256, precision, scale);
+            }
+            case TYPE_GEOHASH -> {
+                int bits = tableBlock.getGeoHashColumn(colIndex).getPrecision();
+                if (bits < ColumnType.GEOBYTE_MIN_BITS || bits > ColumnType.GEOLONG_MAX_BITS) {
+                    return ColumnType.UNDEFINED;
+                }
+                return ColumnType.getGeoHashTypeWithBits(bits);
             }
             default -> {
                 return mapQwpTypeToQuestDB(qwpType);

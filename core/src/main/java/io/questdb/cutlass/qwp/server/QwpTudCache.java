@@ -617,6 +617,13 @@ public class QwpTudCache implements QuietCloseable {
                 }
                 return ColumnType.encodeArrayType(ColumnType.DOUBLE, nDims);
             }
+            if (typeCode == QwpConstants.TYPE_GEOHASH) {
+                final int bits = cursor.getGeoHashColumn(schemaIndex).getPrecision();
+                if (bits < ColumnType.GEOBYTE_MIN_BITS || bits > ColumnType.GEOLONG_MAX_BITS) {
+                    return ColumnType.UNDEFINED;
+                }
+                return ColumnType.getGeoHashTypeWithBits(bits);
+            }
             return QwpWalAppender.mapQwpTypeToQuestDB(typeCode);
         }
     }
