@@ -3383,6 +3383,71 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRestartRestoresBoundedRowsAggregatesFromHeadCheckpoint() throws Exception {
+        // Phase 2b.3a/b/c: avg, sum, count(*), count(arg), and ksum over
+        // (PARTITION BY ... ROWS N PRECEDING ...) are now snapshot-capable.
+        // End-to-end check that an LV combining all of them writes a head .cp
+        // and the first post-restart refresh tick rehydrates the partition
+        // maps. No ANCHOR is involved - the validator rejects ANCHOR over
+        // bounded frames, so this exercises the no-anchor snapshot path.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+                    "SELECT ts, sym, " +
+                    "  avg(x) OVER w AS a, " +
+                    "  sum(x) OVER w AS s, " +
+                    "  count(*) OVER w AS cs, " +
+                    "  count(x) OVER w AS cx, " +
+                    "  ksum(x) OVER w AS k " +
+                    "FROM base " +
+                    "WINDOW w AS (PARTITION BY sym ORDER BY ts ROWS 2 PRECEDING)");
+
+            final long preHeadLvSeqTxn;
+            final long preLastProcessed;
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                setCurrentMicros(0L);
+                execute("INSERT INTO base (ts, sym, x) VALUES " +
+                        "('2026-09-01T00:00:00.000000Z', 'a', 1.0), " +
+                        "('2026-09-01T01:00:00.000000Z', 'a', 2.0), " +
+                        "('2026-09-01T02:00:00.000000Z', 'a', 3.0), " +
+                        "('2026-09-01T00:00:00.000000Z', 'b', 10.0), " +
+                        "('2026-09-01T01:00:00.000000Z', 'b', 20.0)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                preHeadLvSeqTxn = instance.getHeadCheckpointLvSeqTxn();
+                preLastProcessed = instance.getLastProcessedSeqTxn();
+                Assert.assertNotEquals(
+                        "head .cp must be written for an LV with bounded ROWS aggregates now that 2b.3a/b/c makes them snapshot-capable",
+                        Numbers.LONG_NULL,
+                        preHeadLvSeqTxn
+                );
+                Assert.assertTrue(
+                        "snapshot capability cached after first successful flush",
+                        instance.isSnapshotCapability()
+                );
+            }
+
+            engine.getLiveViewRegistry().clear();
+            engine.buildViewGraphs();
+
+            LiveViewInstance reloaded = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(reloaded);
+            Assert.assertEquals(preHeadLvSeqTxn, reloaded.getHeadCheckpointLvSeqTxn());
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+            }
+            Assert.assertTrue(reloaded.isCheckpointRestoreAttempted());
+            Assert.assertEquals(preLastProcessed, reloaded.getLastProcessedSeqTxn());
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
     public void testRestartRestoresLagFromHeadCheckpoint() throws Exception {
         // Phase 2b.2: lag() is now snapshot-capable. End-to-end check that a
         // refresh cycle writes a head .cp, a simulated restart re-discovers
