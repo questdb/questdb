@@ -24,9 +24,9 @@
 
 package io.questdb.griffin.engine.functions.table;
 
-import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.GenericRecordMetadata;
+import io.questdb.cairo.ProjectableRecordCursorFactory;
 import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -66,7 +66,7 @@ import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
  *       {@link io.questdb.cairo.sql.Record}. Provided as a safety fallback.</li>
  * </ul>
  */
-public class HivePartitionedReadParquetRecordCursorFactory extends AbstractRecordCursorFactory {
+public class HivePartitionedReadParquetRecordCursorFactory extends ProjectableRecordCursorFactory {
     private final boolean canPageFrame;
     private final CairoConfiguration configuration;
     private final RecordCursorFactory globCursorFactory;
@@ -147,6 +147,15 @@ public class HivePartitionedReadParquetRecordCursorFactory extends AbstractRecor
     @Override
     public void setPushdownFilterCondition(ObjList<PushdownFilterExtractor.PushdownFilterCondition> pushdownFilterConditions) {
         this.pushdownFilterConditions = pushdownFilterConditions;
+    }
+
+    @Override
+    public void setQueryProjectedMetadata(io.questdb.cairo.sql.RecordMetadata metadata) {
+        // Intentionally ignored. The page-frame cursor produces frames with the full
+        // schema (parquet columns + partition virtual columns), so adopting a pruned
+        // metadata view at the factory level would mis-align column indices for
+        // downstream consumers. Wiring column projection through to the cursor is a
+        // follow-up - until then we report the full schema unchanged.
     }
 
     @Override
