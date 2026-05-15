@@ -198,7 +198,7 @@ public class SumLong256GroupByFunction extends Long256Function implements GroupB
 
     @Override
     public boolean supportsParallelism() {
-        return true;
+        return UnaryFunction.super.supportsParallelism();
     }
 
     private Long256 getLong256(Record rec, Long256Impl long256) {

@@ -34,6 +34,7 @@ import io.questdb.griffin.engine.functions.DoubleFunction;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.Numbers;
+import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 import org.jetbrains.annotations.NotNull;
 
@@ -51,17 +52,41 @@ public class NSumDoubleGroupByFunction extends DoubleFunction implements GroupBy
     @Override
     public void computeBatch(MapValue mapValue, long dataAddr, int rowCount, long startRowId) {
         if (rowCount > 0) {
-            final double batchSum = Vect.sumDoubleNeumaier(dataAddr, rowCount);
-            if (Numbers.isFinite(batchSum)) {
-                final long existingCount = mapValue.getLong(valueIndex + 2);
-                if (existingCount > 0) {
-                    sum(mapValue, batchSum, mapValue.getDouble(valueIndex), mapValue.getDouble(valueIndex + 1));
-                } else {
-                    mapValue.putDouble(valueIndex, batchSum);
-                    mapValue.putDouble(valueIndex + 1, 0.0);
+            double batchSum = Vect.sumDoubleNeumaier(dataAddr, rowCount);
+            if (!Numbers.isFinite(batchSum)) {
+                // Native sumDoubleNeumaier only filters NaN. A single +/-Inf row poisons the
+                // whole batch sum (sum stays Inf or collapses to NaN when +Inf and -Inf cancel).
+                // computeNext skips both NaN and Inf via Numbers.isFinite; re-sum in Java to
+                // match that semantics for the batched path.
+                batchSum = 0;
+                double bc = 0;
+                boolean hasFinite = false;
+                for (int i = 0; i < rowCount; i++) {
+                    final double v = Unsafe.getDouble(dataAddr + ((long) i << 3));
+                    if (Numbers.isFinite(v)) {
+                        final double t = batchSum + v;
+                        if (Math.abs(batchSum) >= Math.abs(v)) {
+                            bc += (batchSum - t) + v;
+                        } else {
+                            bc += (v - t) + batchSum;
+                        }
+                        batchSum = t;
+                        hasFinite = true;
+                    }
                 }
-                mapValue.addLong(valueIndex + 2, 1);
+                if (!hasFinite) {
+                    return;
+                }
+                batchSum += bc;
             }
+            final long existingCount = mapValue.getLong(valueIndex + 2);
+            if (existingCount > 0) {
+                sum(mapValue, batchSum, mapValue.getDouble(valueIndex), mapValue.getDouble(valueIndex + 1));
+            } else {
+                mapValue.putDouble(valueIndex, batchSum);
+                mapValue.putDouble(valueIndex + 1, 0.0);
+            }
+            mapValue.addLong(valueIndex + 2, 1);
         }
     }
 

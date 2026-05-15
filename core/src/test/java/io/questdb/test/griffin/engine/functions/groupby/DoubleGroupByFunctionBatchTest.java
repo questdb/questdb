@@ -270,6 +270,59 @@ public class DoubleGroupByFunctionBatchTest {
         }
     }
 
+    // computeNext skips +/-Inf via Numbers.isFinite, so the batched path must do the same.
+    // A single +Inf row must not poison the rest of the batch. Use 12 rows so the SIMD
+    // body (8-wide on x86) runs and the Inf falls inside it, exercising the path that
+    // would otherwise only filter NaN.
+    @Test
+    public void testKSumDoubleBatchInfinityIsSkipped() {
+        KSumDoubleGroupByFunction function = new KSumDoubleGroupByFunction(DoubleColumn.newInstance(COLUMN_INDEX));
+        try (SimpleMapValue value = prepare(function)) {
+            long ptr = allocateDoubles(
+                    1.0, 2.0, 3.0, Double.POSITIVE_INFINITY, 4.0, 5.0, 6.0, 7.0,
+                    8.0, 9.0, 10.0, 11.0
+            );
+            function.computeBatch(value, ptr, 12, 0);
+
+            // 1+2+...+11 = 66, Inf skipped.
+            Assert.assertEquals(66.0, function.getDouble(value), 0.0);
+        }
+    }
+
+    // +Inf and -Inf in the same batch collapse to NaN inside the native sum. The
+    // batched path must still produce the sum of the finite rows.
+    @Test
+    public void testKSumDoubleBatchInfinityPairCollapsesToFinite() {
+        KSumDoubleGroupByFunction function = new KSumDoubleGroupByFunction(DoubleColumn.newInstance(COLUMN_INDEX));
+        try (SimpleMapValue value = prepare(function)) {
+            long ptr = allocateDoubles(
+                    1.0, Double.POSITIVE_INFINITY, 2.0, 3.0, 4.0, Double.NEGATIVE_INFINITY, 5.0, 6.0,
+                    7.0, 8.0
+            );
+            function.computeBatch(value, ptr, 10, 0);
+
+            // 1+2+...+8 = 36, both Inf skipped.
+            Assert.assertEquals(36.0, function.getDouble(value), 0.0);
+        }
+    }
+
+    // A batch with one Inf must not poison the running sum produced by subsequent
+    // all-finite batches. 9 rows so the SIMD body processes the +Inf row.
+    @Test
+    public void testKSumDoubleBatchInfinityPoisoningDoesNotPersist() {
+        KSumDoubleGroupByFunction function = new KSumDoubleGroupByFunction(DoubleColumn.newInstance(COLUMN_INDEX));
+        try (SimpleMapValue value = prepare(function)) {
+            long ptr = allocateDoubles(1.0, 2.0, 3.0, 4.0, Double.POSITIVE_INFINITY, 5.0, 6.0, 7.0, 8.0);
+            function.computeBatch(value, ptr, 9, 0);
+
+            ptr = allocateDoubles(10.0, 20.0);
+            function.computeBatch(value, ptr, 2, 0);
+
+            // 1+2+...+8 = 36, plus 10+20 = 66.
+            Assert.assertEquals(66.0, function.getDouble(value), 0.0);
+        }
+    }
+
     // Kahan compensation should be applied across batch boundaries: many small values
     // added one big value should produce a more accurate result than naive sum.
     @Test
@@ -533,6 +586,48 @@ public class DoubleGroupByFunctionBatchTest {
             function.computeBatch(value, ptr, 2, 0);
 
             Assert.assertTrue(Double.isNaN(function.getDouble(value)));
+        }
+    }
+
+    // computeNext skips +/-Inf via Numbers.isFinite, so the batched path must do the same.
+    // A single +Inf row must not poison the rest of the batch.
+    @Test
+    public void testNSumDoubleBatchInfinityIsSkipped() {
+        NSumDoubleGroupByFunction function = new NSumDoubleGroupByFunction(DoubleColumn.newInstance(COLUMN_INDEX));
+        try (SimpleMapValue value = prepare(function)) {
+            long ptr = allocateDoubles(1.0, 2.0, Double.POSITIVE_INFINITY, 3.0);
+            function.computeBatch(value, ptr, 4, 0);
+
+            Assert.assertEquals(6.0, function.getDouble(value), 0.0);
+        }
+    }
+
+    // +Inf and -Inf in the same batch would collapse to NaN inside the native sum.
+    // The batched path must still produce the sum of the finite rows.
+    @Test
+    public void testNSumDoubleBatchInfinityPairCollapsesToFinite() {
+        NSumDoubleGroupByFunction function = new NSumDoubleGroupByFunction(DoubleColumn.newInstance(COLUMN_INDEX));
+        try (SimpleMapValue value = prepare(function)) {
+            long ptr = allocateDoubles(1.0, Double.POSITIVE_INFINITY, Double.NEGATIVE_INFINITY, 2.0);
+            function.computeBatch(value, ptr, 4, 0);
+
+            Assert.assertEquals(3.0, function.getDouble(value), 0.0);
+        }
+    }
+
+    // A batch with one Inf must not poison the running sum produced by subsequent
+    // all-finite batches.
+    @Test
+    public void testNSumDoubleBatchInfinityPoisoningDoesNotPersist() {
+        NSumDoubleGroupByFunction function = new NSumDoubleGroupByFunction(DoubleColumn.newInstance(COLUMN_INDEX));
+        try (SimpleMapValue value = prepare(function)) {
+            long ptr = allocateDoubles(1.0, Double.POSITIVE_INFINITY);
+            function.computeBatch(value, ptr, 2, 0);
+
+            ptr = allocateDoubles(2.0, 3.0);
+            function.computeBatch(value, ptr, 2, 0);
+
+            Assert.assertEquals(6.0, function.getDouble(value), 0.0);
         }
     }
 

@@ -39,8 +39,6 @@ import org.junit.Test;
 
 public class Long256GroupByFunctionBatchTest {
     private static final int COLUMN_INDEX = 789;
-    // Each Long256 stored as 4 contiguous longs in column buffer.
-    private static final int LONG256_BYTES = 4 * Long.BYTES;
     private long lastAllocated;
     private long lastSize;
 
