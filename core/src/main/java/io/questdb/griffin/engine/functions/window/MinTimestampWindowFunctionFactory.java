@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions.window;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.map.Map;
@@ -244,16 +245,22 @@ public class MinTimestampWindowFunctionFactory extends AbstractWindowFunctionFac
                 }
                 //between [unbounded | x] preceding and [x preceding | current row]
                 else {
+                    final boolean liveView = windowContext.isLiveView();
                     Map map = null;
                     MemoryARW mem = null;
                     MemoryARW dequeMem = null;
                     try {
-                        map = MapFactory.createUnorderedMap(
-                                configuration,
-                                partitionByKeyTypes,
-                                rowsLo == Long.MIN_VALUE ? MaxTimestampWindowFunctionFactory.MAX_OVER_PARTITION_ROWS_COLUMN_TYPES :
-                                        MaxTimestampWindowFunctionFactory.MAX_OVER_PARTITION_ROWS_BOUNDED_COLUMN_TYPES
-                        );
+                        final ArrayColumnTypes valueTypes;
+                        if (rowsLo == Long.MIN_VALUE) {
+                            valueTypes = liveView
+                                    ? MaxTimestampWindowFunctionFactory.MAX_OVER_PARTITION_ROWS_COLUMN_TYPES_LV
+                                    : MaxTimestampWindowFunctionFactory.MAX_OVER_PARTITION_ROWS_COLUMN_TYPES;
+                        } else {
+                            valueTypes = liveView
+                                    ? MaxTimestampWindowFunctionFactory.MAX_OVER_PARTITION_ROWS_BOUNDED_COLUMN_TYPES_LV
+                                    : MaxTimestampWindowFunctionFactory.MAX_OVER_PARTITION_ROWS_BOUNDED_COLUMN_TYPES;
+                        }
+                        map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, valueTypes);
                         mem = Vm.getCARWInstance(
                                 configuration.getSqlWindowStorePageSize(),
                                 configuration.getSqlWindowStoreMaxPages(),
@@ -278,7 +285,10 @@ public class MinTimestampWindowFunctionFactory extends AbstractWindowFunctionFac
                                 mem,
                                 dequeMem,
                                 LESS_THAN,
-                                NAME
+                                NAME,
+                                partitionByKeyTypes,
+                                liveView,
+                                configuration
                         );
                     } catch (Throwable th) {
                         Misc.free(map);

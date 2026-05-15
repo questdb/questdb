@@ -647,7 +647,10 @@ public class WindowFunctionUnitTest extends AbstractCairoTest {
                         TestDefaults.createMemoryCARW(),
                         TestDefaults.createMemoryCARW(),
                         MaxDoubleWindowFunctionFactory.GREATER_THAN,
-                        MaxDoubleWindowFunctionFactory.NAME
+                        MaxDoubleWindowFunctionFactory.NAME,
+                        null,
+                        false,
+                        null
                 ),
                 Double::max
         );
@@ -849,7 +852,10 @@ public class WindowFunctionUnitTest extends AbstractCairoTest {
                         TestDefaults.createMemoryCARW(),
                         TestDefaults.createMemoryCARW(),
                         MinDoubleWindowFunctionFactory.LESS_THAN,
-                        MinDoubleWindowFunctionFactory.NAME
+                        MinDoubleWindowFunctionFactory.NAME,
+                        null,
+                        false,
+                        null
                 ),
                 Double::min
         );
