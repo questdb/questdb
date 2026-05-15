@@ -145,6 +145,11 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     private final PageFrameMemoryPool memoryPool = new PageFrameMemoryPool(0);
     private final Path path = new Path();
     private final LiveViewRefreshTask refreshTask = new LiveViewRefreshTask();
+    // Reusable holder for the values restoreFromHead reads out of the head .cp.
+    // One instance per worker; mutated only on the refresh-worker thread between
+    // restoreFromHead calls. Avoids per-call allocations on the restart and O3
+    // head-hit paths.
+    private final RestoredHeadState restoredHeadState = new RestoredHeadState();
     // Per-worker staging buffer reused across cycles. Allocated lazily on the
     // first refresh of an LV whose output schema is fully supported by the
     // in-mem tier; reshaped (freed + reallocated) if the next LV's schema
@@ -716,6 +721,46 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     }
 
     /**
+     * Phase 2a.8 out-of-order replay. Called from {@code incrementalRefresh}
+     * after detection rolls back the in-WAL-order draft for the offending
+     * cycle. Picks the head-hit branch when an in-disk head exists and its
+     * {@code maxTimestamp <= lateRowTs}; falls back to head-miss replay from
+     * {@code viewLowerBoundTimestamp} otherwise. Either branch reads the base
+     * table via {@code TableReader} in ts-ascending order through the
+     * compiled SELECT's filter / anchor / window cursor stack, commits via
+     * {@link WalWriter#commitLiveViewWithReplaceRange(long, long, long)},
+     * applies inline, and writes a fresh head .cp post-replay.
+     *
+     * @param instance      live view being replayed
+     * @param windowFactory the LV's compiled SELECT (window cursor stack)
+     * @param lateRowTs     {@code dataInfo.getMinTimestamp()} that triggered
+     *                      O3 detection
+     * @param baseToken     base table token (passed in so the replay path
+     *                      doesn't re-look-it-up from the definition)
+     * @param advanceTo     base seqTxn the replay must cover; also the value
+     *                      passed to {@code commitLiveViewWithReplaceRange}
+     *                      so the LV's lvConsumedSeqTxn advances after apply
+     */
+    private void o3Replay(
+            LiveViewInstance instance,
+            WindowRecordCursorFactory windowFactory,
+            long lateRowTs,
+            TableToken baseToken,
+            long advanceTo
+    ) {
+        // 2a.8 follow-up scaffold: callers exist only after the detect path
+        // is rewired (next commit). For now the body is unimplemented; any
+        // accidental call surfaces immediately rather than silently no-op'ing.
+        throw CairoException.critical(0)
+                .put("o3Replay not yet implemented [view=")
+                .put(instance.getDefinition().getViewName())
+                .put(", baseToken=").put(baseToken.getTableName())
+                .put(", lateRowTs=").put(lateRowTs)
+                .put(", advanceTo=").put(advanceTo)
+                .put(']');
+    }
+
+    /**
      * Phase 2a.4 head-checkpoint write hook. Computes the per-LV snapshot
      * capability on the first call, accumulates the cycle's row count into
      * the cadence counter, and writes a fresh {@code <lvSeqTxn>.cp} when
@@ -833,22 +878,30 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     }
 
     /**
-     * Phase 2a.7 restart-restore: opens the head {@code .cp} (stamped on the
-     * instance by the startup sweep), rehydrates the LV's window state from
-     * the manifest + anchor block + per-function blocks, then advances
-     * {@code lastProcessedSeqTxn} to the manifest's {@code baseSeqTxn} so the
-     * upcoming incremental refresh resumes one step past the head.
+     * Opens the head {@code .cp} at {@code headLvSeqTxn} and rehydrates the LV's
+     * window state (anchor map + per-function maps) from the manifest + anchor
+     * block + per-function blocks. Populates {@code out} with the manifest's
+     * {@code baseSeqTxn}, {@code maxTimestamp}, and the file's byte length.
      * <p>
-     * Failure handling: any structural error (CRC fail, magic mismatch,
-     * missing function class, anchor type mismatch) unlinks the head .cp
-     * and clears the head metadata on the instance. The LV is not
-     * invalidated - {@code .cp} is derived state, and the upcoming refresh
-     * cycle falls through to the head-miss replay path
-     * (RFC 123 §"Checkpoint stream", §"Corruption handling"). A fresh head
-     * is written by the same cycle once it lands rows.
+     * Callers (restart restore and the 2a.8 O3 head-hit replay) decide what to
+     * do with the restored watermarks and whether to refresh the head metadata
+     * trio on the instance; this helper restricts itself to state restore +
+     * failure cleanup so both call sites share the same disk read path.
+     * <p>
+     * Failure handling: any structural error (CRC fail, magic mismatch, missing
+     * function class, anchor type mismatch) is best-effort cleaned up here -
+     * the helper logs critical, unlinks the corrupt {@code .cp}, clears the
+     * head metadata on the instance, and returns {@code false}. The LV is not
+     * invalidated; the caller falls through to the head-miss replay path
+     * (RFC 123 §"Checkpoint stream", §"Corruption handling").
      */
-    private void tryRestoreFromHead(LiveViewInstance instance, WindowRecordCursorFactory windowFactory) {
-        final long headLvSeqTxn = instance.getHeadCheckpointLvSeqTxn();
+    private boolean restoreFromHead(
+            LiveViewInstance instance,
+            WindowRecordCursorFactory windowFactory,
+            long headLvSeqTxn,
+            RestoredHeadState out
+    ) {
+        out.reset();
         path.of(engine.getConfiguration().getDbRoot())
                 .concat(instance.getLiveViewToken())
                 .concat(LiveViewCheckpointWriter.CHECKPOINT_DIR_NAME)
@@ -866,14 +919,12 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             );
         }
 
-        long restoredMaxTs = Numbers.LONG_NULL;
-        long restoredStateBytes = 0L;
         try {
             checkpointReader.of(path.$());
             checkpointReader.readManifestInto(checkpointManifest);
-            final long manifestBaseSeqTxn = checkpointManifest.getBaseSeqTxn();
-            restoredMaxTs = checkpointManifest.getMaxTimestamp();
-            restoredStateBytes = engine.getConfiguration().getFilesFacade().length(path.$());
+            out.manifestBaseSeqTxn = checkpointManifest.getBaseSeqTxn();
+            out.maxTimestamp = checkpointManifest.getMaxTimestamp();
+            out.stateBytes = engine.getConfiguration().getFilesFacade().length(path.$());
 
             final LiveViewWindow anchorWindow = instance.getAnchorWindow();
             final ObjList<WindowFunction> functions = windowFactory.getWindowFunctions();
@@ -908,21 +959,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         break;
                 }
             }
-
-            // Advance the refresh worker's view of the base position to the
-            // manifest's baseSeqTxn; the next incrementalRefresh resumes one
-            // step past it. appliedWatermark mirrors lastProcessed in
-            // Phase 1b (the seam_ts is anchored at the WAL commit boundary,
-            // see incrementalRefresh).
-            instance.setLastProcessedSeqTxn(manifestBaseSeqTxn);
-            instance.setAppliedWatermark(manifestBaseSeqTxn);
-            // Refresh the head metadata trio with the real maxTs + stateBytes
-            // we just read; the startup sweep stamped placeholder values.
-            // writtenUs stays LONG_NULL so the next cycle's cadence check
-            // treats this as "first commit" and writes a fresh head soon
-            // after - RFC 123 §"Restart recovery": re-emit a fresh .cp after
-            // the first post-restart refresh cycle.
-            instance.setHeadCheckpoint(headLvSeqTxn, restoredMaxTs, restoredStateBytes, Numbers.LONG_NULL);
+            return true;
         } catch (Throwable t) {
             LOG.critical().$("could not restore live view from head checkpoint [view=")
                     .$(instance.getDefinition().getViewName())
@@ -939,12 +976,56 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         .$(", error=").$(rmErr).I$();
             }
             instance.setHeadCheckpoint(Numbers.LONG_NULL, Numbers.LONG_NULL, 0L, Numbers.LONG_NULL);
+            return false;
         } finally {
             try {
                 checkpointReader.close();
             } catch (Throwable ignored) {
             }
         }
+    }
+
+    /**
+     * Phase 2a.7 restart-restore: opens the head {@code .cp} (stamped on the
+     * instance by the startup sweep), rehydrates the LV's window state from
+     * the manifest + anchor block + per-function blocks, then advances
+     * {@code lastProcessedSeqTxn} to the manifest's {@code baseSeqTxn} so the
+     * upcoming incremental refresh resumes one step past the head.
+     * <p>
+     * Failure handling: any structural error (CRC fail, magic mismatch,
+     * missing function class, anchor type mismatch) unlinks the head .cp
+     * and clears the head metadata on the instance. The LV is not
+     * invalidated - {@code .cp} is derived state, and the upcoming refresh
+     * cycle falls through to the head-miss replay path
+     * (RFC 123 §"Checkpoint stream", §"Corruption handling"). A fresh head
+     * is written by the same cycle once it lands rows.
+     */
+    private void tryRestoreFromHead(LiveViewInstance instance, WindowRecordCursorFactory windowFactory) {
+        final long headLvSeqTxn = instance.getHeadCheckpointLvSeqTxn();
+        if (!restoreFromHead(instance, windowFactory, headLvSeqTxn, restoredHeadState)) {
+            // restoreFromHead has already unlinked the corrupt .cp and
+            // cleared head metadata; nothing more to do here.
+            return;
+        }
+        // Advance the refresh worker's view of the base position to the
+        // manifest's baseSeqTxn; the next incrementalRefresh resumes one
+        // step past it. appliedWatermark mirrors lastProcessed in
+        // Phase 1b (the seam_ts is anchored at the WAL commit boundary,
+        // see incrementalRefresh).
+        instance.setLastProcessedSeqTxn(restoredHeadState.manifestBaseSeqTxn);
+        instance.setAppliedWatermark(restoredHeadState.manifestBaseSeqTxn);
+        // Refresh the head metadata trio with the real maxTs + stateBytes
+        // we just read; the startup sweep stamped placeholder values.
+        // writtenUs stays LONG_NULL so the next cycle's cadence check
+        // treats this as "first commit" and writes a fresh head soon
+        // after - RFC 123 §"Restart recovery": re-emit a fresh .cp after
+        // the first post-restart refresh cycle.
+        instance.setHeadCheckpoint(
+                headLvSeqTxn,
+                restoredHeadState.maxTimestamp,
+                restoredHeadState.stateBytes,
+                Numbers.LONG_NULL
+        );
     }
 
     /**
@@ -1369,5 +1450,23 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             break;
         }
         throw new IllegalStateException("compiled factory does not contain a WindowRecordCursorFactory");
+    }
+
+    /**
+     * Output bundle for {@link #restoreFromHead(LiveViewInstance, WindowRecordCursorFactory, long, RestoredHeadState)}.
+     * The fields capture the values restart-restore and O3 head-hit replay
+     * both need after the disk read completes; the helper rewrites them on
+     * each successful call and the caller reads them immediately.
+     */
+    private static final class RestoredHeadState {
+        long manifestBaseSeqTxn;
+        long maxTimestamp;
+        long stateBytes;
+
+        void reset() {
+            manifestBaseSeqTxn = Numbers.LONG_NULL;
+            maxTimestamp = Numbers.LONG_NULL;
+            stateBytes = 0L;
+        }
     }
 }
