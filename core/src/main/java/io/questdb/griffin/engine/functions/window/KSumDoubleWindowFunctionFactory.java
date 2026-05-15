@@ -73,6 +73,9 @@ public class KSumDoubleWindowFunctionFactory extends AbstractWindowFunctionFacto
     private static final ArrayColumnTypes KSUM_OVER_PARTITION_RANGE_COLUMN_TYPES;
     // Column types for partition rows frame: sum, compensation, count, loIdx, startOffset
     private static final ArrayColumnTypes KSUM_OVER_PARTITION_ROWS_COLUMN_TYPES;
+    // Live-view variant of KSUM_OVER_PARTITION_ROWS_COLUMN_TYPES with the BYTE
+    // tombstone slot appended for anchor-driven compaction.
+    private static final ArrayColumnTypes KSUM_OVER_PARTITION_ROWS_COLUMN_TYPES_LV;
     private static final String NAME = "ksum";
     private static final String SIGNATURE = NAME + "(D)";
 
@@ -213,13 +216,15 @@ public class KSumDoubleWindowFunctionFactory extends AbstractWindowFunctionFacto
                 }
                 // between [unbounded | x] preceding and [x preceding | current row]
                 else {
+                    final boolean liveView = windowContext.isLiveView();
                     Map map = null;
                     MemoryARW mem = null;
                     try {
                         map = MapFactory.createUnorderedMap(
                                 configuration,
                                 partitionByKeyTypes,
-                                KSUM_OVER_PARTITION_ROWS_COLUMN_TYPES
+                                liveView ? KSUM_OVER_PARTITION_ROWS_COLUMN_TYPES_LV
+                                        : KSUM_OVER_PARTITION_ROWS_COLUMN_TYPES
                         );
                         mem = Vm.getCARWInstance(
                                 configuration.getSqlWindowStorePageSize(),
@@ -234,7 +239,10 @@ public class KSumDoubleWindowFunctionFactory extends AbstractWindowFunctionFacto
                                 rowsLo,
                                 rowsHi,
                                 args.get(0),
-                                mem
+                                mem,
+                                partitionByKeyTypes,
+                                liveView,
+                                configuration
                         );
                     } catch (Throwable th) {
                         Misc.free(map);
@@ -695,14 +703,20 @@ public class KSumDoubleWindowFunctionFactory extends AbstractWindowFunctionFacto
     }
 
     // handles ksum() over (partition by x [order by o] rows between y and z)
-    static class KSumOverPartitionRowsFrameFunction extends BasePartitionedWindowFunction implements WindowDoubleFunction {
+    public static class KSumOverPartitionRowsFrameFunction extends BasePartitionedWindowFunction implements WindowDoubleFunction {
 
         private final int bufferSize;
         private final boolean frameIncludesCurrentValue;
         private final boolean frameLoBounded;
         private final int frameSize;
         private final MemoryARW memory;
+        private final CairoConfiguration configuration;
+        private final ArrayColumnTypes keyColumnTypes;
+        private final boolean liveView;
+        private final ArrayColumnTypes mapValueTypes;
+        private final int tombstoneValueIndex;
         private double sum;
+        private long tombstoneCount;
 
         public KSumOverPartitionRowsFrameFunction(
                 Map map,
@@ -711,7 +725,10 @@ public class KSumDoubleWindowFunctionFactory extends AbstractWindowFunctionFacto
                 long rowsLo,
                 long rowsHi,
                 Function arg,
-                MemoryARW memory
+                MemoryARW memory,
+                ColumnTypes partitionByKeyTypes,
+                boolean liveView,
+                CairoConfiguration configuration
         ) {
             super(map, partitionByRecord, partitionBySink, arg);
 
@@ -727,6 +744,25 @@ public class KSumDoubleWindowFunctionFactory extends AbstractWindowFunctionFacto
             frameIncludesCurrentValue = rowsHi == 0;
 
             this.memory = memory;
+            this.liveView = liveView;
+            this.configuration = configuration;
+            if (liveView) {
+                ArrayColumnTypes keyTypesCopy = new ArrayColumnTypes();
+                for (int i = 0, n = partitionByKeyTypes.getColumnCount(); i < n; i++) {
+                    keyTypesCopy.add(partitionByKeyTypes.getColumnType(i));
+                }
+                this.keyColumnTypes = keyTypesCopy;
+                ArrayColumnTypes valueTypesCopy = new ArrayColumnTypes();
+                for (int i = 0, n = KSUM_OVER_PARTITION_ROWS_COLUMN_TYPES_LV.getColumnCount(); i < n; i++) {
+                    valueTypesCopy.add(KSUM_OVER_PARTITION_ROWS_COLUMN_TYPES_LV.getColumnType(i));
+                }
+                this.mapValueTypes = valueTypesCopy;
+                this.tombstoneValueIndex = 5;
+            } else {
+                this.keyColumnTypes = null;
+                this.mapValueTypes = null;
+                this.tombstoneValueIndex = -1;
+            }
         }
 
         @Override
@@ -818,6 +854,39 @@ public class KSumDoubleWindowFunctionFactory extends AbstractWindowFunctionFacto
             value.putLong(3, (loIdx + 1) % bufferSize);
             value.putLong(4, startOffset);
             memory.putDouble(startOffset + loIdx * Double.BYTES, d);
+            if (tombstoneValueIndex >= 0 && value.getByte(tombstoneValueIndex) != 0) {
+                value.putByte(tombstoneValueIndex, (byte) 0);
+                tombstoneCount--;
+            }
+        }
+
+        @Override
+        public void compactPartitionMap() {
+            if (tombstoneValueIndex < 0 || tombstoneCount == 0) {
+                return;
+            }
+            Map scratch = MapFactory.createUnorderedMap(configuration, keyColumnTypes, mapValueTypes);
+            try {
+                MapRecordCursor cursor = map.getCursor();
+                MapRecord record = map.getRecord();
+                while (cursor.hasNext()) {
+                    MapValue srcValue = record.getValue();
+                    if (srcValue.getByte(tombstoneValueIndex) == 1) {
+                        continue;
+                    }
+                    long srcKeyHash = record.keyHashCode();
+                    MapKey dstKey = scratch.withKey();
+                    record.copyToKey(dstKey);
+                    MapValue dstValue = dstKey.createValue(srcKeyHash);
+                    record.copyValue(dstValue);
+                }
+                Misc.free(map);
+                map = scratch;
+                scratch = null;
+                tombstoneCount = 0;
+            } finally {
+                Misc.free(scratch);
+            }
         }
 
         @Override
@@ -836,6 +905,11 @@ public class KSumDoubleWindowFunctionFactory extends AbstractWindowFunctionFacto
         }
 
         @Override
+        public Map getPartitionMap() {
+            return map;
+        }
+
+        @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
             Unsafe.putDouble(spi.getAddress(recordOffset, columnIndex), sum);
@@ -844,12 +918,125 @@ public class KSumDoubleWindowFunctionFactory extends AbstractWindowFunctionFacto
         @Override
         public void reopen() {
             super.reopen();
+            tombstoneCount = 0;
         }
 
         @Override
         public void reset() {
             super.reset();
             memory.close();
+            tombstoneCount = 0;
+        }
+
+        @Override
+        public void resetPartition(Record record) {
+            // ANCHOR-driven reset. Zero sum / compensation / count / loIdx
+            // and refill the ring with NaN so the next row re-anchors cleanly.
+            partitionByRecord.of(record);
+            MapKey key = map.withKey();
+            key.put(partitionByRecord, partitionBySink);
+            MapValue value = key.findValue();
+            if (value != null) {
+                final long startOffset = value.getLong(4);
+                value.putDouble(0, 0.0);
+                value.putDouble(1, 0.0);
+                value.putLong(2, 0L);
+                value.putLong(3, 0L);
+                for (int i = 0; i < bufferSize; i++) {
+                    memory.putDouble(startOffset + (long) i * Double.BYTES, Double.NaN);
+                }
+                if (tombstoneValueIndex >= 0 && value.getByte(tombstoneValueIndex) == 0) {
+                    value.putByte(tombstoneValueIndex, (byte) 1);
+                    tombstoneCount++;
+                }
+            }
+        }
+
+        @Override
+        public void restore(MemoryR source, int formatVersion) {
+            map.clear();
+            memory.truncate();
+            tombstoneCount = 0;
+            long srcOffset = 0;
+            final long partitionCount = source.getLong(srcOffset);
+            srcOffset += Long.BYTES;
+            final long ringBytes = (long) bufferSize * Double.BYTES;
+            for (long p = 0; p < partitionCount; p++) {
+                MapKey key = map.withKey();
+                srcOffset = LiveViewSnapshotKeyCodec.readKey(key, source, srcOffset, keyColumnTypes);
+                MapValue value = key.createValue();
+                final double partitionSum = source.getDouble(srcOffset);
+                srcOffset += Double.BYTES;
+                final double compensation = source.getDouble(srcOffset);
+                srcOffset += Double.BYTES;
+                final long partitionCountVal = source.getLong(srcOffset);
+                srcOffset += Long.BYTES;
+                final long loIdx = source.getLong(srcOffset);
+                srcOffset += Long.BYTES;
+                final long newStartOffset = memory.appendAddressFor(ringBytes) - memory.getPageAddress(0);
+                for (int i = 0; i < bufferSize; i++) {
+                    memory.putDouble(newStartOffset + (long) i * Double.BYTES, source.getDouble(srcOffset));
+                    srcOffset += Double.BYTES;
+                }
+                value.putDouble(0, partitionSum);
+                value.putDouble(1, compensation);
+                value.putLong(2, partitionCountVal);
+                value.putLong(3, loIdx);
+                value.putLong(4, newStartOffset);
+                if (tombstoneValueIndex >= 0) {
+                    value.putByte(tombstoneValueIndex, (byte) 0);
+                }
+            }
+        }
+
+        @Override
+        public void snapshot(MemoryA sink) {
+            MapRecordCursor cursor = map.getCursor();
+            MapRecord record = map.getRecord();
+            long liveCount = 0;
+            while (cursor.hasNext()) {
+                if (tombstoneValueIndex < 0 || record.getValue().getByte(tombstoneValueIndex) == 0) {
+                    liveCount++;
+                }
+            }
+            sink.putLong(liveCount);
+
+            cursor.toTop();
+            final int keyStartIndex = mapValueTypes != null
+                    ? mapValueTypes.getColumnCount()
+                    : KSUM_OVER_PARTITION_ROWS_COLUMN_TYPES.getColumnCount();
+            while (cursor.hasNext()) {
+                final MapValue value = record.getValue();
+                if (tombstoneValueIndex >= 0 && value.getByte(tombstoneValueIndex) != 0) {
+                    continue;
+                }
+                LiveViewSnapshotKeyCodec.writeKey(sink, record, keyColumnTypes, keyStartIndex);
+                sink.putDouble(value.getDouble(0));
+                sink.putDouble(value.getDouble(1));
+                sink.putLong(value.getLong(2));
+                sink.putLong(value.getLong(3));
+                final long startOffset = value.getLong(4);
+                for (int i = 0; i < bufferSize; i++) {
+                    sink.putDouble(memory.getDouble(startOffset + (long) i * Double.BYTES));
+                }
+            }
+        }
+
+        @Override
+        public int snapshotFormatVersion() {
+            return 1;
+        }
+
+        @Override
+        public int snapshotMinSupportedVersion() {
+            return 1;
+        }
+
+        @Override
+        public boolean supportsSnapshot() {
+            return liveView
+                    && keyColumnTypes != null
+                    && LiveViewSnapshotKeyCodec.isAllTypesSupported(keyColumnTypes);
         }
 
         @Override
@@ -878,6 +1065,7 @@ public class KSumDoubleWindowFunctionFactory extends AbstractWindowFunctionFacto
         public void toTop() {
             super.toTop();
             memory.truncate();
+            tombstoneCount = 0;
         }
     }
 
@@ -1571,6 +1759,14 @@ public class KSumDoubleWindowFunctionFactory extends AbstractWindowFunctionFacto
         KSUM_OVER_PARTITION_ROWS_COLUMN_TYPES.add(ColumnType.LONG);   // count
         KSUM_OVER_PARTITION_ROWS_COLUMN_TYPES.add(ColumnType.LONG);   // loIdx
         KSUM_OVER_PARTITION_ROWS_COLUMN_TYPES.add(ColumnType.LONG);   // startOffset
+
+        KSUM_OVER_PARTITION_ROWS_COLUMN_TYPES_LV = new ArrayColumnTypes();
+        KSUM_OVER_PARTITION_ROWS_COLUMN_TYPES_LV.add(ColumnType.DOUBLE); // sum
+        KSUM_OVER_PARTITION_ROWS_COLUMN_TYPES_LV.add(ColumnType.DOUBLE); // compensation (c)
+        KSUM_OVER_PARTITION_ROWS_COLUMN_TYPES_LV.add(ColumnType.LONG);   // count
+        KSUM_OVER_PARTITION_ROWS_COLUMN_TYPES_LV.add(ColumnType.LONG);   // loIdx
+        KSUM_OVER_PARTITION_ROWS_COLUMN_TYPES_LV.add(ColumnType.LONG);   // startOffset
+        KSUM_OVER_PARTITION_ROWS_COLUMN_TYPES_LV.add(ColumnType.BYTE);   // tombstone
 
         KSUM_OVER_PARTITION_RANGE_COLUMN_TYPES = new ArrayColumnTypes();
         KSUM_OVER_PARTITION_RANGE_COLUMN_TYPES.add(ColumnType.DOUBLE); // sum
