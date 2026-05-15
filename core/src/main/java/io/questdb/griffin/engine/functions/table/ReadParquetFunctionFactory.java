@@ -35,6 +35,7 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RemoteParquetFsProvider;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -60,10 +61,59 @@ import io.questdb.std.str.DirectUtf8StringList;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8String;
 import io.questdb.std.str.Utf8s;
+
+import java.util.Iterator;
+import java.util.ServiceLoader;
 
 public class ReadParquetFunctionFactory implements FunctionFactory {
     private static final Log LOG = LogFactory.getLog(ReadParquetFunctionFactory.class);
+    // Resolved at class init: zero or more remote-FS providers contributed via
+    // ServiceLoader. The OSS distribution ships none, so this is typically empty
+    // and the URI scheme check below is a single instanceof on each parquet read.
+    // Enterprise registers one for S3 / GCS / Azure / NFS via OpenDAL.
+    private static final ObjList<RemoteParquetFsProvider> REMOTE_PROVIDERS = loadRemoteProviders();
+
+    private static ObjList<RemoteParquetFsProvider> loadRemoteProviders() {
+        final ObjList<RemoteParquetFsProvider> out = new ObjList<>();
+        try {
+            final ServiceLoader<RemoteParquetFsProvider> sl = ServiceLoader.load(RemoteParquetFsProvider.class);
+            final Iterator<RemoteParquetFsProvider> it = sl.iterator();
+            while (it.hasNext()) {
+                try {
+                    out.add(it.next());
+                } catch (Throwable th) {
+                    // A misregistered provider must not poison the SPI - log and skip.
+                    LOG.error().$("remote parquet provider load failed [error=").$(th.getMessage()).$(']').$();
+                }
+            }
+        } catch (Throwable th) {
+            LOG.error().$("ServiceLoader for RemoteParquetFsProvider failed [error=").$(th.getMessage()).$(']').$();
+        }
+        if (out.size() > 0) {
+            LOG.info().$("loaded remote parquet providers [count=").$(out.size()).$(']').$();
+        }
+        return out;
+    }
+
+    /**
+     * First registered provider that claims {@code uri}, or {@code null} if none.
+     * Cheap enough to call on every {@code read_parquet} invocation - each provider's
+     * {@link RemoteParquetFsProvider#canHandle} is required to be a scheme/prefix check.
+     */
+    private static RemoteParquetFsProvider findRemoteProvider(CharSequence uri) {
+        if (uri == null || REMOTE_PROVIDERS.size() == 0) {
+            return null;
+        }
+        for (int i = 0, n = REMOTE_PROVIDERS.size(); i < n; i++) {
+            RemoteParquetFsProvider p = REMOTE_PROVIDERS.getQuick(i);
+            if (p.canHandle(uri)) {
+                return p;
+            }
+        }
+        return null;
+    }
 
     @Override
     public String getSignature() {
@@ -87,6 +137,20 @@ public class ReadParquetFunctionFactory implements FunctionFactory {
             filePath = args.getQuick(0).getStrA(null);
         } catch (CairoException e) {
             throw SqlException.$(argPos.getQuick(0), e.getFlyweightMessage());
+        }
+
+        // Remote-storage dispatch BEFORE the sandbox check: any URI a provider
+        // claims bypasses checkPathIsSafeToRead and routes to the provider's
+        // local-cache resolver. The OSS distribution registers no providers, so
+        // this path is a no-op without Enterprise; the user gets the existing
+        // sandbox error when they try s3:// against bare OSS.
+        final RemoteParquetFsProvider remoteProvider = findRemoteProvider(filePath);
+        if (remoteProvider != null) {
+            final CharSequence remoteNonGlobPrefix = GlobFilesFunctionFactory.extractNonGlobPrefix(filePath);
+            if (!Chars.equals(remoteNonGlobPrefix, filePath)) {
+                return newRemoteGlobInstance(argPos, configuration, context, filePath, remoteProvider);
+            }
+            return newRemoteSingleInstance(argPos, configuration, context, filePath, remoteProvider);
         }
 
         try {
@@ -173,72 +237,164 @@ public class ReadParquetFunctionFactory implements FunctionFactory {
                 // through matchedFiles so we don't need to copy the bytes twice.
                 final Utf8Sequence firstFile = globCursor.getRecord().getVarcharA(0);
                 matchedFiles.put(firstFile);
-                final FilesFacade ff = configuration.getFilesFacade();
-                final Path firstFilePath = Path.getThreadLocal("").of(firstFile);
-                final long fd = TableUtils.openRO(ff, firstFilePath.$(), LOG);
-                long addr = 0;
-                long fileSize = 0;
-                try (ParquetFileDecoder decoder = new ParquetFileDecoder()) {
-                    fileSize = ff.length(fd);
-                    addr = TableUtils.mapRO(ff, fd, fileSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
-                    decoder.of(addr, fileSize, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
-                    decoder.metadata().copyToSansUnsupported(parquetMetadata, true);
-                    if (parquetMetadata.getColumnCount() == 0) {
-                        throw SqlException.$(argPos.getQuick(0), "no supported columns found in parquet file: ").put(firstFile);
-                    }
-                } finally {
-                    ff.close(fd);
-                    if (addr != 0) {
-                        ff.munmap(addr, fileSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
-                    }
-                }
-                // Take the union of key=value partition keys seen across all matched files,
-                // and demote each column's inferred type to the loosest one that fits every
-                // value observed. Files that happen to be enumerated first without partitions
-                // don't hide the schema; names that would shadow real parquet columns are dropped.
-                // We also save each path into matchedFiles so the cursor doesn't re-walk.
-                parsePartitionColumns(firstFile, nonGlobRootByteLen, parquetMetadata,
-                        partitionColumnNames, partitionColumnTypes);
                 while (globCursor.hasNext()) {
                     Utf8Sequence path = globCursor.getRecord().getVarcharA(0);
                     matchedFiles.put(path);
-                    parsePartitionColumns(
-                            path,
-                            nonGlobRootByteLen,
-                            parquetMetadata,
-                            partitionColumnNames,
-                            partitionColumnTypes
-                    );
                 }
             } finally {
                 // Drop the glob factory: we've drained it into matchedFiles and the hive
                 // factory doesn't need it for runtime iteration.
                 Misc.free(globFactory);
             }
-            final GenericRecordMetadata wrappingMetadata = new GenericRecordMetadata();
-            for (int i = 0, n = parquetMetadata.getColumnCount(); i < n; i++) {
-                wrappingMetadata.add(parquetMetadata.getColumnMetadata(i));
-            }
-            for (int i = 0, n = partitionColumnNames.size(); i < n; i++) {
-                wrappingMetadata.add(new TableColumnMetadata(
-                        partitionColumnNames.getQuick(i),
-                        partitionColumnTypes.getQuick(i)
-                ));
-            }
-            context.storeTelemetry(TelemetryEvent.READ_PARQUET, TelemetryOrigin.NO_MATTERS);
-            return new CursorFunction(new HivePartitionedReadParquetRecordCursorFactory(
-                    configuration,
-                    matchedFiles,
-                    originalPattern,
-                    nonGlobRootByteLen,
-                    wrappingMetadata,
-                    parquetMetadata,
-                    partitionColumnNames,
-                    partitionColumnTypes
-            ));
+            return buildHiveFactoryFromLocalFiles(
+                    argPos, configuration, context, matchedFiles, nonGlobRootByteLen, originalPattern
+            );
         } catch (Throwable th) {
             Misc.free(matchedFiles);
             throw th;
+        }
+    }
+
+    /**
+     * Finalises a {@link HivePartitionedReadParquetRecordCursorFactory} given an
+     * already-enumerated, locally-resolved file list. Used by both the local glob
+     * path and the remote-provider path - the only thing those differ on is how
+     * {@code matchedFiles} was populated. Decodes the first file's parquet schema,
+     * walks every path to union {@code key=value} segments into the partition
+     * column set, and constructs the wrapping metadata. {@code matchedFiles}
+     * ownership transfers to the returned factory; the caller must not free it.
+     */
+    private Function buildHiveFactoryFromLocalFiles(
+            IntList argPos,
+            CairoConfiguration configuration,
+            SqlExecutionContext context,
+            DirectUtf8StringList matchedFiles,
+            int nonGlobRootByteLen,
+            CharSequence originalPattern
+    ) throws SqlException {
+        final GenericRecordMetadata parquetMetadata = new GenericRecordMetadata();
+        final ObjList<String> partitionColumnNames = new ObjList<>();
+        final IntList partitionColumnTypes = new IntList();
+        if (matchedFiles.size() == 0) {
+            throw SqlException.$(argPos.getQuick(0), "glob did not match any files: ").put(originalPattern);
+        }
+        final FilesFacade ff = configuration.getFilesFacade();
+        final Utf8Sequence firstFile = matchedFiles.getQuick(0);
+        final Path firstFilePath = Path.getThreadLocal("").of(firstFile);
+        final long fd = TableUtils.openRO(ff, firstFilePath.$(), LOG);
+        long addr = 0;
+        long fileSize = 0;
+        try (ParquetFileDecoder decoder = new ParquetFileDecoder()) {
+            fileSize = ff.length(fd);
+            addr = TableUtils.mapRO(ff, fd, fileSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
+            decoder.of(addr, fileSize, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
+            decoder.metadata().copyToSansUnsupported(parquetMetadata, true);
+            if (parquetMetadata.getColumnCount() == 0) {
+                throw SqlException.$(argPos.getQuick(0), "no supported columns found in parquet file: ").put(firstFile);
+            }
+        } finally {
+            ff.close(fd);
+            if (addr != 0) {
+                ff.munmap(addr, fileSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
+            }
+        }
+        // Take the union of key=value partition keys seen across all matched files,
+        // and demote each column's inferred type to the loosest one that fits every
+        // value observed. Files that happen to be enumerated first without partitions
+        // don't hide the schema; names that would shadow real parquet columns are dropped.
+        for (int i = 0, n = matchedFiles.size(); i < n; i++) {
+            parsePartitionColumns(
+                    matchedFiles.getQuick(i),
+                    nonGlobRootByteLen,
+                    parquetMetadata,
+                    partitionColumnNames,
+                    partitionColumnTypes
+            );
+        }
+        final GenericRecordMetadata wrappingMetadata = new GenericRecordMetadata();
+        for (int i = 0, n = parquetMetadata.getColumnCount(); i < n; i++) {
+            wrappingMetadata.add(parquetMetadata.getColumnMetadata(i));
+        }
+        for (int i = 0, n = partitionColumnNames.size(); i < n; i++) {
+            wrappingMetadata.add(new TableColumnMetadata(
+                    partitionColumnNames.getQuick(i),
+                    partitionColumnTypes.getQuick(i)
+            ));
+        }
+        context.storeTelemetry(TelemetryEvent.READ_PARQUET, TelemetryOrigin.NO_MATTERS);
+        return new CursorFunction(new HivePartitionedReadParquetRecordCursorFactory(
+                configuration,
+                matchedFiles,
+                originalPattern,
+                nonGlobRootByteLen,
+                wrappingMetadata,
+                parquetMetadata,
+                partitionColumnNames,
+                partitionColumnTypes
+        ));
+    }
+
+    private Function newRemoteGlobInstance(
+            IntList argPos,
+            CairoConfiguration configuration,
+            SqlExecutionContext context,
+            CharSequence globUri,
+            RemoteParquetFsProvider provider
+    ) throws SqlException {
+        // Provider downloads every matched object into its local cache and returns
+        // absolute local paths plus the nonGlobRootByteLen the hive partition parser
+        // should use against those paths. After this we're back on the local-files
+        // code path - the hive cursor doesn't know or care that the source was remote.
+        final RemoteParquetFsProvider.ResolvedGlob resolved = provider.expandAndResolveGlob(globUri, argPos.getQuick(0), context);
+        final DirectUtf8StringList matchedFiles = resolved.getMatchedFiles();
+        try {
+            return buildHiveFactoryFromLocalFiles(
+                    argPos, configuration, context, matchedFiles, resolved.getNonGlobRootByteLen(), globUri
+            );
+        } catch (Throwable th) {
+            Misc.free(matchedFiles);
+            throw th;
+        }
+    }
+
+    private Function newRemoteSingleInstance(
+            IntList argPos,
+            CairoConfiguration configuration,
+            SqlExecutionContext context,
+            CharSequence uri,
+            RemoteParquetFsProvider provider
+    ) throws SqlException {
+        // Provider downloads the single object into its local cache and returns an
+        // absolute local path. From here we're identical to a local single-file read.
+        final Utf8String localPath = provider.resolveLocal(uri, argPos.getQuick(0), context);
+        try {
+            final Path path = Path.getThreadLocal("").of(localPath);
+            final FilesFacade ff = configuration.getFilesFacade();
+            final long fd = TableUtils.openRO(ff, path.$(), LOG);
+            long addr = 0;
+            long fileSize = 0;
+            try (ParquetFileDecoder decoder = new ParquetFileDecoder()) {
+                fileSize = ff.length(fd);
+                addr = TableUtils.mapRO(ff, fd, fileSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
+                decoder.of(addr, fileSize, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
+                final GenericRecordMetadata metadata = new GenericRecordMetadata();
+                decoder.metadata().copyToSansUnsupported(metadata, true);
+                if (metadata.getColumnCount() == 0) {
+                    throw SqlException.$(argPos.getQuick(0), "no supported columns found in parquet file: ").put(uri);
+                }
+                context.storeTelemetry(TelemetryEvent.READ_PARQUET, TelemetryOrigin.NO_MATTERS);
+                if (context.isParallelReadParquetEnabled()) {
+                    return new CursorFunction(new ReadParquetPageFrameRecordCursorFactory(path, metadata));
+                }
+                return new CursorFunction(new ReadParquetRecordCursorFactory(path, metadata));
+            } finally {
+                ff.close(fd);
+                if (addr != 0) {
+                    ff.munmap(addr, fileSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
+                }
+            }
+        } catch (CairoException e) {
+            throw SqlException.$(argPos.getQuick(0), "error reading remote parquet file ").put('[').put(e.getErrno()).put("]: ").put(e.getFlyweightMessage());
         }
     }
 
