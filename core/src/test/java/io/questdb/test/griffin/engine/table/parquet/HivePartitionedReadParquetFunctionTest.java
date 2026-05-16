@@ -448,6 +448,7 @@ public class HivePartitionedReadParquetFunctionTest extends AbstractCairoTest {
                     sink,
                     "Parquet glob scan\n" +
                             "  glob: plan/day=*/data.parquet\n" +
+                            "  scheme: local\n" +
                             "  files: 2\n"
             );
         });

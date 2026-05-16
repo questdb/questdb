@@ -506,10 +506,35 @@ public class HivePartitionedReadParquetRecordCursorFactory extends ProjectableRe
     @Override
     public void toPlan(PlanSink sink) {
         sink.type("Parquet glob scan").attr("glob").val(globPattern);
+        // Surface the URI scheme so an operator running EXPLAIN can tell at a
+        // glance whether this read is local or remote. Useful in incident
+        // response - "is this query slow because we're hitting S3?" answered
+        // by the plan without grepping logs.
+        sink.attr("scheme").val(schemeOf(globPattern));
         // matchedFiles is the planning-time snapshot - users running EXPLAIN want to
         // see how wide the glob actually opened up, especially for diagnosing whether
         // a glob accidentally matched the whole tree.
         sink.attr("files").val(matchedFiles.size());
+    }
+
+    /**
+     * Extract the URI scheme prefix ({@code s3}, {@code gcs}, {@code azblob},
+     * {@code fs}) or "local" for paths with no {@code ://} delimiter. The
+     * pattern is the original user-typed glob, so scheme is whatever the
+     * user wrote regardless of whether a remote provider later resolved it
+     * to a local cache path.
+     */
+    private static String schemeOf(CharSequence pattern) {
+        if (pattern == null) {
+            return "local";
+        }
+        int n = pattern.length();
+        for (int i = 0; i < n - 2; i++) {
+            if (pattern.charAt(i) == ':' && pattern.charAt(i + 1) == '/' && pattern.charAt(i + 2) == '/') {
+                return pattern.subSequence(0, i).toString();
+            }
+        }
+        return "local";
     }
 
     @Override
