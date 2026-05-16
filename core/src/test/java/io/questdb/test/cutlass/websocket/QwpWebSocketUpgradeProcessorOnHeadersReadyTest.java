@@ -78,8 +78,27 @@ public class QwpWebSocketUpgradeProcessorOnHeadersReadyTest extends AbstractCair
         // accept on the wire rather than the QWP protocol ceiling. Advertising
         // the protocol ceiling alone leaves clients hitting 1009 close on
         // default deployments where recvBufferSize is well below 16 MB.
+        //
+        // Pin the advertised value against a fixed recvBufferSize so a drift
+        // in MAX_WS_FRAME_HEADER_BYTES (currently 14; if it changed to 10 a
+        // re-derived expected would silently track it and the wire contract
+        // could regress unobserved) fails this test instead of passing.
         assertMemoryLeak(() -> {
-            HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
+            // 128 KiB recv buffer; chosen well under DEFAULT_MAX_BATCH_SIZE so
+            // the test exercises the recv-buffer-minus-frame-overhead branch
+            // of the cap formula rather than the protocol ceiling branch.
+            final int recvBufferSize = 128 * 1024;
+            // Derivation: min(131072 - 14, 16 MiB) = min(131058, 16 MiB) = 131058.
+            // Updating MAX_WS_FRAME_HEADER_BYTES on the server side must be
+            // accompanied by updating this literal.
+            final int expectedAdvertisedCap = 131058;
+
+            HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration) {
+                @Override
+                public int getRecvBufferSize() {
+                    return recvBufferSize;
+                }
+            };
             QwpWebSocketUpgradeProcessor processor = new QwpWebSocketUpgradeProcessor(engine, httpConfig);
 
             long bufferAddr = Unsafe.malloc(HANDSHAKE_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
@@ -95,15 +114,14 @@ public class QwpWebSocketUpgradeProcessorOnHeadersReadyTest extends AbstractCair
                 processor.onHeadersReady(context);
 
                 String response = readResponse(bufferAddr, context.getMockRawSocket().sentSize);
-                int expected = Math.min(
-                        Math.max(0, httpConfig.getRecvBufferSize() - 14),
-                        QwpConstants.DEFAULT_MAX_BATCH_SIZE);
-                String expectedHeader = "\r\nX-QWP-Max-Batch-Size: " + expected + "\r\n";
+                String expectedHeader = "\r\nX-QWP-Max-Batch-Size: " + expectedAdvertisedCap + "\r\n";
                 Assert.assertTrue(
-                        "response must carry X-QWP-Max-Batch-Size = " + expected + ", got: " + response,
+                        "response must carry X-QWP-Max-Batch-Size = " + expectedAdvertisedCap
+                                + ", got: " + response,
                         response.contains(expectedHeader));
-                Assert.assertTrue("advertised value must not exceed QWP protocol ceiling",
-                        expected <= QwpConstants.DEFAULT_MAX_BATCH_SIZE);
+                Assert.assertTrue(
+                        "advertised value must not exceed QWP protocol ceiling",
+                        expectedAdvertisedCap <= QwpConstants.DEFAULT_MAX_BATCH_SIZE);
             } finally {
                 Unsafe.free(bufferAddr, HANDSHAKE_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
             }

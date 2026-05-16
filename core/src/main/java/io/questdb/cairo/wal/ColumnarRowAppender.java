@@ -386,6 +386,23 @@ public interface ColumnarRowAppender {
     void putFixedToVarcharColumn(int columnIndex, QwpFixedWidthColumnCursor cursor, int rowCount);
 
     /**
+     * Writes a TYPE_INT wire column to an IPv4 column with NULL-sentinel translation.
+     * <p>
+     * INT and IPv4 share the 4-byte wire encoding but disagree on the NULL bit pattern
+     * ({@code Integer.MIN_VALUE} vs {@code 0}). The IPv4 ingress arm accepts TYPE_INT
+     * as a legacy-client migration path; this method walks the cursor per row and
+     * writes {@link Numbers#IPv4_NULL} (0) for {@code cursor.isNull()} rows, the int
+     * verbatim otherwise. Without this translation the no-bitmap memcpy fast path in
+     * {@code putFixedColumn} would land the INT_NULL bit pattern verbatim and the
+     * value would read back as the address {@code 128.0.0.0}.
+     *
+     * @param columnIndex the column index in the table
+     * @param cursor      the fixed-width column cursor (TYPE_INT wire type)
+     * @param rowCount    total number of rows
+     */
+    void putIntToIPv4Column(int columnIndex, QwpFixedWidthColumnCursor cursor, int rowCount);
+
+    /**
      * Writes a fixed-width float/double column to any DECIMAL column with scale conversion.
      * <p>
      * Reads floating-point values from the cursor via getDouble() and converts to

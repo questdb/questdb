@@ -243,6 +243,19 @@ public class QwpWalAppender implements QuietCloseable {
      * Only types within the same family are allowed (e.g., integer↔integer, float↔float),
      * plus integer→float/double cross-family coercion.
      * Other cross-family coercions (e.g., UUID→SHORT) are rejected to prevent silent data corruption.
+     * <p>
+     * TYPE_IPV4 is intentionally absent from every arm. The IPv4 column type has its
+     * own dedicated arm in {@code appendToWalColumnar} that accepts TYPE_IPV4 and
+     * TYPE_INT sources (the latter as a legacy-client migration path with NULL
+     * sentinel translation). The reverse direction -- TYPE_IPV4 wire into a BYTE /
+     * SHORT / INT / LONG column -- is deliberately rejected: while the wire layout
+     * is bit-identical to TYPE_INT, the two NULL sentinels disagree (INT_NULL =
+     * Integer.MIN_VALUE, IPv4_NULL = 0). A valid IPv4 address with bit pattern
+     * Integer.MIN_VALUE (i.e. 128.0.0.0) would land as INT_NULL on the integer side
+     * and surface as SQL NULL on read -- a valid IP silently turning into NULL is
+     * a worse surprise than rejecting the coercion. Clients that hold int bits and
+     * want to ingest into an IPv4 column should send TYPE_INT and rely on the
+     * IPv4-arm migration path; nothing supports the reverse direction.
      */
     private static boolean isFixedTypeCoercionAllowed(byte qwpType, int columnType) {
         int colTag = ColumnType.tagOf(columnType);
@@ -510,15 +523,31 @@ public class QwpWalAppender implements QuietCloseable {
                     case ColumnType.IPv4 -> {
                         // IPv4 wire is 4 LE bytes, identical to INT. QuestDB stores IPv4 as
                         // a 4-byte int column with the bit pattern 0 reserved as NULL, so a
-                        // direct copy plus the standard null bitmap is correct. Clients that
-                        // start with a string IP literal should parse it on the client side
-                        // (Numbers.parseIPv4) and send the int via ipv4Column().
+                        // direct copy plus the standard null bitmap is correct for TYPE_IPV4
+                        // sources. Clients that start with a string IP literal should parse it
+                        // on the client side (Numbers.parseIPv4) and send the int via
+                        // ipv4Column().
+                        //
+                        // TYPE_INT is also accepted as a legacy-client migration path, but the
+                        // two types disagree on the NULL bit pattern (INT_NULL = MIN_VALUE
+                        // vs IPv4_NULL = 0). Route TYPE_INT through putIntToIPv4Column so the
+                        // per-row sentinel translation fires; the fast-path memcpy in
+                        // putFixedColumn would otherwise land MIN_VALUE verbatim and the value
+                        // would read back as 128.0.0.0 instead of NULL.
+                        //
+                        // The reverse direction (TYPE_IPV4 wire into a BYTE/SHORT/INT/LONG
+                        // column) is intentionally not symmetric -- see the Javadoc on
+                        // isFixedTypeCoercionAllowed for the NULL-sentinel reasoning.
                         if (cursor instanceof QwpFixedWidthColumnCursor fixedCursor
                                 && (qwpType == TYPE_IPV4 || qwpType == TYPE_INT)
                                 && fixedCursor.getValueSize() == 4) {
-                            appender.putFixedColumn(columnIndex, fixedCursor.getValuesAddress(),
-                                    fixedCursor.getValueCount(), fixedCursor.getValueSize(),
-                                    fixedCursor.getNullBitmapAddress(), rowCount);
+                            if (qwpType == TYPE_INT) {
+                                appender.putIntToIPv4Column(columnIndex, fixedCursor, rowCount);
+                            } else {
+                                appender.putFixedColumn(columnIndex, fixedCursor.getValuesAddress(),
+                                        fixedCursor.getValueCount(), fixedCursor.getValueSize(),
+                                        fixedCursor.getNullBitmapAddress(), rowCount);
+                            }
                         } else {
                             throw coercionNotSupportedException(qwpType, columnType, tableBlock, col);
                         }
@@ -660,6 +689,18 @@ public class QwpWalAppender implements QuietCloseable {
                         }
                     }
                     case ColumnType.VARCHAR -> {
+                        // The BINARY arm above accepts both TYPE_BINARY and
+                        // TYPE_VARCHAR sources because their wire layouts match.
+                        // The reverse -- TYPE_BINARY into a VARCHAR target --
+                        // must be rejected: raw opaque bytes (possibly non-UTF-8)
+                        // landing in a column QuestDB treats as UTF-8 silently
+                        // breaks the VARCHAR invariant. Without this guard, the
+                        // QwpStringColumnCursor arm below pattern-matches by
+                        // class only and routes BINARY bytes through
+                        // putVarcharColumn unchecked.
+                        if (qwpType == TYPE_BINARY) {
+                            throw coercionNotSupportedException(qwpType, columnType, tableBlock, col);
+                        }
                         switch (cursor) {
                             case QwpStringColumnCursor strCursor ->
                                     appender.putVarcharColumn(columnIndex, strCursor, rowCount);

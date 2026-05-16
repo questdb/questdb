@@ -383,6 +383,47 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
     }
 
     @Test
+    public void testIntColumnIntoIPv4TranslatesNullSentinel() throws Exception {
+        runInContext((port) -> {
+            String table = "test_qwp_int_to_ipv4_null";
+            // The IPv4 arm of QwpWalAppender.appendToWalColumnar accepts
+            // qwpType == TYPE_INT as a legacy-client migration path (a
+            // client that predates TYPE_IPV4 can still ingest into an
+            // IPv4 column by sending int bits). But INT's NULL sentinel
+            // (Integer.MIN_VALUE = 0x80000000) is not IPv4's NULL
+            // sentinel (0 = 0.0.0.0). Without translation the bit
+            // pattern lands verbatim through putFixedColumn's no-bitmap
+            // memcpy fast path, and reads back as the valid address
+            // 128.0.0.0 -- silently changing what the user wrote (a
+            // NULL on the INT side) into a non-null IPv4 value.
+            execute("CREATE TABLE " + table + " (addr IPv4, ts TIMESTAMP) "
+                    + "TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            try (QwpWebSocketSender sender = connectWs(port)) {
+                sender.table(table)
+                        .intColumn("addr", Integer.MIN_VALUE)   // INT_NULL
+                        .at(1_000_000, ChronoUnit.MICROS);
+                // Sanity row to confirm the TYPE_INT migration path
+                // still ingests real values correctly after the fix.
+                sender.table(table)
+                        .intColumn("addr", 0x0A000001)          // 10.0.0.1
+                        .at(2_000_000, ChronoUnit.MICROS);
+                sender.flush();
+            }
+
+            drainWalQueue();
+            assertSql(
+                    "SELECT coalesce(addr::string, 'null') v FROM " + table + " ORDER BY ts",
+                    """
+                            v
+                            null
+                            10.0.0.1
+                            """
+            );
+        });
+    }
+
+    @Test
     public void testAutoCreateIPv4Column() throws Exception {
         runInContext((port) -> {
             String table = "test_qwp_auto_ipv4";
@@ -556,6 +597,52 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             assertSql(
                     "SELECT length(b) AS len FROM " + table,
                     "len\n5\n"
+            );
+        });
+    }
+
+    @Test
+    public void testBinarySourceRejectedByVarcharTarget() throws Exception {
+        runInContext((port) -> {
+            String table = "test_qwp_varchar_rejects_binary";
+            // Pre-create the table with a VARCHAR column. The client sends
+            // TYPE_BINARY via binaryColumn(...), targeting that existing
+            // VARCHAR column. QwpWalAppender's VARCHAR arm pattern-matches
+            // the cursor by class (QwpStringColumnCursor handles both
+            // BINARY and VARCHAR wire layouts since they share the same
+            // offsets + bytes encoding) without checking qwpType, so today
+            // TYPE_BINARY bytes pass through putVarcharColumn unchecked and
+            // raw (possibly non-UTF-8) bytes land in a column QuestDB
+            // treats as UTF-8. The asymmetric BINARY arm has the symmetric
+            // qwpType guard (testBinaryColumnVarcharSourceCoercesToBinary
+            // pins the accepted direction); this test pins that the
+            // opposite direction is rejected.
+            execute("CREATE TABLE " + table + " (v VARCHAR, ts TIMESTAMP) "
+                    + "TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            // Non-UTF-8 bytes: 0x80 is a continuation byte without a lead,
+            // 0xFF is never valid UTF-8. If these land in a VARCHAR column
+            // they break the UTF-8 invariant the rest of QuestDB assumes.
+            byte[] payload = {(byte) 0x80, (byte) 0xFF, 0x00, 0x7F};
+
+            try (QwpWebSocketSender sender = connectWs(port)) {
+                sender.table(table)
+                        .binaryColumn("v", payload)
+                        .at(1_000_000, ChronoUnit.MICROS);
+                try {
+                    sender.flush();
+                } catch (LineSenderException ignored) {
+                    // After the fix the server may surface the coercion
+                    // failure synchronously; before the fix it silently
+                    // accepts the row. Either way the count check below
+                    // is the definitive assertion.
+                }
+            }
+
+            drainWalQueue();
+            assertSql(
+                    "SELECT count() FROM " + table,
+                    "count\n0\n"
             );
         });
     }
@@ -1768,6 +1855,106 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
                     """
                             from_uuid\tfrom_timestamp
                             a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11\t2022-02-25T00:00:00.000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testCoercionToStringAndVarcharFromIPv4() throws Exception {
+        runInContext((port) -> {
+            String table = "test_qwp_ipv4_to_string_varchar";
+            // QwpFixedWidthColumnCursor reads TYPE_IPV4 wire data (4-byte
+            // int). When a client targets a pre-existing STRING or VARCHAR
+            // column with ipv4Column(...), appendToWalColumnar dispatches
+            // through the QwpFixedWidthColumnCursor arm of the STRING /
+            // VARCHAR switch. isIntegerWireType(qwpType) returns false for
+            // TYPE_IPV4 (the helper only covers BYTE/SHORT/INT/LONG), so
+            // the cursor falls into putFixedOtherToStringColumn /
+            // putFixedOtherToVarcharColumn, whose per-row formatter
+            // (formatFixedOtherValue) had no TYPE_IPV4 arm and threw
+            // "unsupported wire type for string conversion: 24" mid-row.
+            //
+            // After the fix, TYPE_IPV4 is formatted as a dotted-quad via
+            // Numbers.intToIPv4Sink and round-trips cleanly through both
+            // STRING and VARCHAR target columns. The IPv4 NULL sentinel
+            // (0) also round-trips as SQL NULL: the cursor's sentinel-null
+            // arm (added in the same series of fixes) classifies bit
+            // pattern 0 as null, so the per-row formatter is never called
+            // for that row.
+            execute("CREATE TABLE " + table + " ("
+                    + "addr_str STRING, addr_vc VARCHAR, ts TIMESTAMP"
+                    + ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            try (QwpWebSocketSender sender = connectWs(port)) {
+                sender.table(table)
+                        .ipv4Column("addr_str", 0xC0A80101)         // 192.168.1.1
+                        .ipv4Column("addr_vc", 0xC0A80101)
+                        .at(1_000_000, ChronoUnit.MICROS);
+                // Sentinel row: bit pattern 0 must surface as SQL NULL on
+                // both targets, not as "0.0.0.0".
+                sender.table(table)
+                        .ipv4Column("addr_str", 0)
+                        .ipv4Column("addr_vc", 0)
+                        .at(2_000_000, ChronoUnit.MICROS);
+                sender.flush();
+            }
+
+            drainWalQueue();
+            assertSql(
+                    "SELECT coalesce(addr_str, 'null') s, coalesce(addr_vc, 'null') v"
+                            + " FROM " + table + " ORDER BY ts",
+                    """
+                            s\tv
+                            192.168.1.1\t192.168.1.1
+                            null\tnull
+                            """);
+        });
+    }
+
+    @Test
+    public void testCoercionToStringPreservesUuidAndLong256NullSentinels() throws Exception {
+        runInContext((port) -> {
+            String table = "test_qwp_uuid_long256_null_to_string";
+            // The cursor's isCurrentValueSentinelNull arms for TYPE_UUID and
+            // TYPE_LONG256 (added alongside the IPv4 sentinel arm) flow
+            // through cursor.isNull() consumed by the per-row loops in
+            // WalColumnarRowAppender.putFixedOtherToStringColumn and
+            // putFixedOtherToVarcharColumn. testCoercionToString /
+            // testCoercionToVarchar already exercise the happy path for
+            // UUID and LONG256 with random non-sentinel values, but neither
+            // pins what happens when the NULL bit pattern reaches the
+            // formatter: it must round-trip as SQL NULL, not as the
+            // literal "00000000-0000-0000-0000-000000000000" /
+            // "0x000...000" hex render. This test pins all four cells of
+            // the {UUID, LONG256} x {STRING, VARCHAR} matrix for the
+            // type-specific NULL sentinel.
+            execute("CREATE TABLE " + table + " (" +
+                    "uuid_str STRING, uuid_vc VARCHAR, " +
+                    "l256_str STRING, l256_vc VARCHAR, " +
+                    "ts TIMESTAMP" +
+                    ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            try (QwpWebSocketSender sender = connectWs(port)) {
+                sender.table(table)
+                        // UUID NULL is (LONG_NULL, LONG_NULL) per Uuid.isNull.
+                        .uuidColumn("uuid_str", Long.MIN_VALUE, Long.MIN_VALUE)
+                        .uuidColumn("uuid_vc", Long.MIN_VALUE, Long.MIN_VALUE)
+                        // LONG256 NULL is all four longs == LONG_NULL per
+                        // Long256Impl.NULL_LONG256 static init.
+                        .long256Column("l256_str", Long.MIN_VALUE, Long.MIN_VALUE, Long.MIN_VALUE, Long.MIN_VALUE)
+                        .long256Column("l256_vc", Long.MIN_VALUE, Long.MIN_VALUE, Long.MIN_VALUE, Long.MIN_VALUE)
+                        .at(1_000_000, ChronoUnit.MICROS);
+                sender.flush();
+            }
+
+            drainWalQueue();
+            assertSql("SELECT count() FROM " + table, "count\n1\n");
+            assertSql(
+                    "SELECT uuid_str IS NULL AS u_s, uuid_vc IS NULL AS u_v,"
+                            + " l256_str IS NULL AS l_s, l256_vc IS NULL AS l_v FROM " + table,
+                    """
+                            u_s\tu_v\tl_s\tl_v
+                            true\ttrue\ttrue\ttrue
                             """);
         });
     }

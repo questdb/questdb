@@ -206,11 +206,23 @@ public class QwpRow {
     }
 
     /**
-     * Records a BINARY value as a byte slice. Pass a non-null array (use
-     * {@code new byte[0]} for empty); omit the column entirely to model an
-     * explicit NULL through the bitmap path.
+     * Records a BINARY value as a byte slice. The array must be non-null
+     * and non-empty: QuestDB's BINARY storage layer
+     * ({@code MemoryPARWImpl.putBin}) writes the {@code NULL_LEN} sentinel
+     * when {@code len == 0}, so an empty {@code byte[]} round-trips as SQL
+     * NULL on read and would diverge from this oracle's
+     * "expected-non-null, length 0" read assertion. To model an explicit
+     * NULL omit the column from the row entirely; the WAL writer marks it
+     * via the null bitmap.
+     *
+     * @throws IllegalArgumentException if {@code value} is null or empty
      */
     public QwpRow setBinary(String name, byte[] value) {
+        if (value == null || value.length == 0) {
+            throw new IllegalArgumentException(
+                    "setBinary requires a non-null, non-empty array (storage treats len=0 as NULL);"
+                            + " omit the column to model SQL NULL");
+        }
         TypedValue v = put(name);
         v.type = ValueType.BINARY;
         v.bin = value;

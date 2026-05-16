@@ -849,6 +849,22 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
     }
 
     @Override
+    public void putIntToIPv4Column(int columnIndex, QwpFixedWidthColumnCursor cursor, int rowCount) {
+        checkInColumnarWrite();
+        MemoryMA dataMem = walWriter.getDataColumn(columnIndex);
+        cursor.resetRowPosition();
+        for (int row = 0; row < rowCount; row++) {
+            cursor.advanceRow();
+            if (cursor.isNull()) {
+                dataMem.putInt(Numbers.IPv4_NULL);
+            } else {
+                dataMem.putInt((int) cursor.getLong());
+            }
+        }
+        walWriter.setRowValueNotNullColumnar(columnIndex, startRowId + rowCount - 1);
+    }
+
+    @Override
     public void putFloatToDecimalColumn(
             int columnIndex,
             QwpFixedWidthColumnCursor cursor,
@@ -1928,6 +1944,13 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
             case TYPE_TIMESTAMP -> MicrosFormatUtils.appendDateTime(sink, cursor.getTimestamp());
             case TYPE_TIMESTAMP_NANOS -> MicrosFormatUtils.appendDateTime(sink, cursor.getTimestamp() / 1000);
             case TYPE_CHAR -> sink.putAscii((char) cursor.getShort());
+            // The IPv4 NULL sentinel (bit pattern 0) is filtered upstream by
+            // cursor.isNull() in the calling per-row loop (added together
+            // with the IPv4 arm in isCurrentValueSentinelNull); this arm
+            // only fires for non-null IPv4 values. Numbers.intToIPv4Sink
+            // would render 0 as "0.0.0.0" if called for a NULL row, but
+            // that path is unreachable here.
+            case TYPE_IPV4 -> Numbers.intToIPv4Sink(sink, (int) cursor.getLong());
             default -> throw CairoException.nonCritical()
                     .put("unsupported wire type for string conversion: ").put(ilpType);
         }
