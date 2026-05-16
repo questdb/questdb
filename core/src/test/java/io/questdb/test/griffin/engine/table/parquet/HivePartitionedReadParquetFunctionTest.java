@@ -1531,6 +1531,48 @@ public class HivePartitionedReadParquetFunctionTest extends AbstractCairoTest {
         }
     }
 
+    @Test
+    public void testFactoryCloseDoesNotSelfDeadlockOnPrefetch() throws Exception {
+        // Regression for a self-deadlock that made every hive-glob factory
+        // close pay a full 2-second timeout. The factory's _close used to be
+        // `synchronized void` and called prefetchExecutor.awaitTermination(2s)
+        // INSIDE the monitor; a prefetch task parked on openCachedFile's
+        // synchronized acquire could never make progress because the lock it
+        // needed was held by the very call awaiting its termination. The
+        // shutdown is now done outside the monitor so parked tasks acquire
+        // the lock, see closed=true, and exit fast via the CairoException
+        // path. 500 ms is comfortably above the new ~100 ms ceiling but well
+        // below the buggy 2 s cap - if the regression returns the assertion
+        // fires loud.
+        assertMemoryLeak(() -> {
+            execute("create table src as (select x as id from long_sequence(1))");
+            // Several files so the factory pre-schedules prefetch opens.
+            writeParquet("ppfclose/day=2026-07-01/data.parquet", "src");
+            writeParquet("ppfclose/day=2026-07-02/data.parquet", "src");
+            writeParquet("ppfclose/day=2026-07-03/data.parquet", "src");
+            writeParquet("ppfclose/day=2026-07-04/data.parquet", "src");
+
+            // Compile + open + close. count(*) finishes in microseconds and
+            // tries to close before all prefetches complete - that's the path
+            // that used to deadlock for 2 s.
+            io.questdb.cairo.sql.RecordCursorFactory factory = select(
+                    "select count(*) from read_parquet('ppfclose/day=*/data.parquet')"
+            );
+            try (io.questdb.cairo.sql.RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                Assert.assertTrue(cursor.hasNext());
+                Assert.assertEquals(4L, cursor.getRecord().getLong(0));
+            }
+            long t0 = System.nanoTime();
+            factory.close();
+            long elapsedMs = (System.nanoTime() - t0) / 1_000_000L;
+            Assert.assertTrue(
+                    "factory close took " + elapsedMs + " ms; the 2-second prefetch-executor "
+                            + "awaitTermination self-deadlock has regressed",
+                    elapsedMs < 500
+            );
+        });
+    }
+
     private void writeParquet(String relativePath, String tableName) {
         FilesFacade ff = configuration.getFilesFacade();
         try (
