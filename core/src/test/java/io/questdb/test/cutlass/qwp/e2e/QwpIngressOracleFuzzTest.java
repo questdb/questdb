@@ -773,6 +773,36 @@ public class QwpIngressOracleFuzzTest extends AbstractCairoTest {
     }
 
     /**
+     * Map an id (or any long seed) to a GEOHASH bit pattern in the low
+     * {@code precisionBits} bits. Top bits are masked off so the value fits
+     * the declared precision; the server-side GEOHASH NULL sentinel (-1
+     * truncated to storage width) is unreachable for {@code precisionBits < 60}
+     * because the high bit of the storage word is never set.
+     */
+    private static String base32GeoHashFromId(long id, int chars) {
+        // QuestDB's base32 alphabet (matches io.questdb.cairo.GeoHashes#base32):
+        // skips 'a', 'i', 'l', 'o' versus straight 0-9a-z.
+        final char[] alphabet = {
+                '0', '1', '2', '3', '4', '5', '6', '7',
+                '8', '9', 'b', 'c', 'd', 'e', 'f', 'g',
+                'h', 'j', 'k', 'm', 'n', 'p', 'q', 'r',
+                's', 't', 'u', 'v', 'w', 'x', 'y', 'z'
+        };
+        long mixed = id * 0x9E37_79B9_7F4A_7C15L + 0x0123_4567_89AB_CDEFL;
+        char[] out = new char[chars];
+        for (int i = chars - 1; i >= 0; i--) {
+            out[i] = alphabet[(int) (mixed & 0x1F)];
+            mixed >>>= 5;
+        }
+        return new String(out);
+    }
+
+    private static long deriveGeoHash(long seed, int precisionBits) {
+        long mixed = seed * 0x9E37_79B9_7F4A_7C15L + 0x0123_4567_89AB_CDEFL;
+        return precisionBits >= 64 ? mixed : mixed & ((1L << precisionBits) - 1L);
+    }
+
+    /**
      * Map an id (or any long seed) to a packed IPv4 address that is guaranteed
      * non-zero. QuestDB reserves the bit pattern 0 as the IPv4 NULL sentinel,
      * so we OR a high bit into the derived address; this keeps the oracle's
@@ -838,6 +868,14 @@ public class QwpIngressOracleFuzzTest extends AbstractCairoTest {
         // value across the full id range. Skippable like the other base columns to
         // exercise the explicit-NULL bitmap path through SF replay.
         if (!shouldFuzz(rnd, COLUMN_SKIP_FACTOR)) row.setIPv4("ip", deriveIPv4(id));
+        // GEOHASH at four precisions, one per storage class (GEOBYTE/SHORT/INT/LONG)
+        // plus a non-multiple-of-5 precision (g7) so the server's bit-precise
+        // encoding path is exercised alongside the base32-aligned ones.
+        if (!shouldFuzz(rnd, COLUMN_SKIP_FACTOR)) row.setGeoHash("g5", deriveGeoHash(id, 5), 5);
+        if (!shouldFuzz(rnd, COLUMN_SKIP_FACTOR)) row.setGeoHash("g7", deriveGeoHash(id, 7), 7);
+        if (!shouldFuzz(rnd, COLUMN_SKIP_FACTOR)) row.setGeoHash("g15", deriveGeoHash(id, 15), 15);
+        if (!shouldFuzz(rnd, COLUMN_SKIP_FACTOR)) row.setGeoHash("g20", deriveGeoHash(id, 20), 20);
+        if (!shouldFuzz(rnd, COLUMN_SKIP_FACTOR)) row.setGeoHash("g35", deriveGeoHash(id, 35), 35);
         if (!shouldFuzz(rnd, COLUMN_SKIP_FACTOR))
             row.setDoubleArray1d("da", deriveDoubleArr1d(id, rnd.nextBoolean() ? -1.0 : 1.0));
         if (!shouldFuzz(rnd, COLUMN_SKIP_FACTOR))
@@ -890,7 +928,7 @@ public class QwpIngressOracleFuzzTest extends AbstractCairoTest {
         // write the extra expect type-default NULL at assertion time.
         // Numeric extras get the same independent sign-flip treatment as
         // base columns.
-        switch (rnd.nextInt(20)) {
+        switch (rnd.nextInt(24)) {
             case 0:
                 row.setLong("ex_l_0", maybeNegate(rnd, id * 7L));
                 break;
@@ -986,6 +1024,24 @@ public class QwpIngressOracleFuzzTest extends AbstractCairoTest {
                 // Auto-created IPv4 extra. Two distinct columns spread the per-id values
                 // out so neither column degenerates into a single repeated address.
                 row.setIPv4("ex_ip_" + (id & 1L), deriveIPv4(id + 0x9E37_79B9L));
+                break;
+            case 20:
+                // Auto-created GEOHASH(5b) extra -> GEOBYTE storage.
+                row.setGeoHash("ex_g5", deriveGeoHash(id + 0x1111_1111L, 5), 5);
+                break;
+            case 21:
+                // Auto-created GEOHASH(15b) extra -> GEOSHORT storage.
+                row.setGeoHash("ex_g15", deriveGeoHash(id + 0x2222_2222L, 15), 15);
+                break;
+            case 22:
+                // Auto-created GEOHASH(20b) extra -> GEOINT storage; takes the
+                // base32-string overload so the client-side base32 decoder is
+                // exercised on the auto-create path too.
+                row.setGeoHash("ex_g20", base32GeoHashFromId(id, 4));
+                break;
+            case 23:
+                // Auto-created GEOHASH(35b) extra -> GEOLONG storage.
+                row.setGeoHash("ex_g35", deriveGeoHash(id + 0x4444_4444L, 35), 35);
                 break;
         }
     }
@@ -1109,6 +1165,11 @@ public class QwpIngressOracleFuzzTest extends AbstractCairoTest {
                             + "l256 LONG256, "
                             + "tn TIMESTAMP_NS, "
                             + "ip IPv4, "
+                            + "g5 GEOHASH(5b), "
+                            + "g7 GEOHASH(7b), "
+                            + "g15 GEOHASH(15b), "
+                            + "g20 GEOHASH(20b), "
+                            + "g35 GEOHASH(35b), "
                             + "da DOUBLE[], "
                             + "da2 DOUBLE[][], "
                             + "da3 DOUBLE[][][], "

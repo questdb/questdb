@@ -68,13 +68,21 @@ public class QwpSenderFuzzTest extends AbstractQwpWebSocketTest {
     // colNameBases / colTypes / colValueBases are partitioned: the first
     // LEGACY_COLUMN_COUNT entries are STRING/DOUBLE columns and participate
     // in the full skip / new-column-injection fuzz; the rest are typed
-    // columns (BYTE, SHORT, INT, FLOAT, CHAR, UUID, LONG256, TIMESTAMP_NANO)
-    // that are always set on every row and never auto-injected as extras.
-    // Reason: typed columns whose unset cells render differently from their
-    // type-default (e.g. BYTE 0 vs INT NULL) would clash with the oracle's
-    // single-default-per-column model once startAlterTableThread converts
-    // them across the integer family.
+    // columns (BYTE, SHORT, INT, FLOAT, CHAR, UUID, LONG256, TIMESTAMP_NANO,
+    // GEOHASH at four precisions) that are always set on every row and never
+    // auto-injected as extras. Reason: typed columns whose unset cells render
+    // differently from their type-default (e.g. BYTE 0 vs INT NULL) would
+    // clash with the oracle's single-default-per-column model once
+    // startAlterTableThread converts them across the integer family.
     private static final int LEGACY_COLUMN_COUNT = 6;
+    // QuestDB's base32 alphabet (matches io.questdb.cairo.GeoHashes#base32):
+    // skips 'a', 'i', 'l', 'o' versus straight 0-9a-z.
+    private static final char[] GEO_HASH_BASE32 = {
+            '0', '1', '2', '3', '4', '5', '6', '7',
+            '8', '9', 'b', 'c', 'd', 'e', 'f', 'g',
+            'h', 'j', 'k', 'm', 'n', 'p', 'q', 'r',
+            's', 't', 'u', 'v', 'w', 'x', 'y', 'z'
+    };
     private static final Log LOG = LogFactory.getLog(QwpSenderFuzzTest.class);
     private static final int MAX_NUM_OF_SKIPPED_COLS = 2;
     private static final int NEW_COLUMN_RANDOMIZE_FACTOR = 2;
@@ -96,23 +104,34 @@ public class QwpSenderFuzzTest extends AbstractQwpWebSocketTest {
             {"flag_c", "FLAG_C", "Flag_C"},
             {"sensor_id_u", "SENSOR_ID_U", "Sensor_Id_U"},
             {"token_l256", "TOKEN_L256", "Token_L256"},
-            {"event_at_ns", "EVENT_AT_NS", "Event_At_Ns"}
+            {"event_at_ns", "EVENT_AT_NS", "Event_At_Ns"},
+            {"loc_g5", "LOC_G5", "Loc_G5"},
+            {"loc_g15", "LOC_G15", "Loc_G15"},
+            {"loc_g20", "LOC_G20", "Loc_G20"},
+            {"loc_g35", "LOC_G35", "Loc_G35"}
     };
     // New non-string/non-double types added to fuzz native wire-type emission
     // through the QWP sender. Their addColumnValue cases yield exactly the
     // text representation that CursorPrinter writes for each type so the
     // TableData oracle's two-pass assertion matches.
     // int[] (not short[]) because TIMESTAMP_NANO is an int sentinel
-    // (1 << 18 | TIMESTAMP) outside the short range.
+    // (1 << 18 | TIMESTAMP) outside the short range. GEOBYTE/GEOSHORT/GEOINT/
+    // GEOLONG act as storage-class discriminants; addColumnValue maps each to
+    // a fixed precision (5b / 15b / 20b / 35b — all multiples of 5 so the
+    // cursor renders bare base32, matching the yielded string verbatim).
     private final int[] colTypes = new int[]{STRING, DOUBLE, DOUBLE, DOUBLE, STRING, DOUBLE,
-            BYTE, SHORT, INT, FLOAT, CHAR, UUID, LONG256, TIMESTAMP_NANO};
+            BYTE, SHORT, INT, FLOAT, CHAR, UUID, LONG256, TIMESTAMP_NANO,
+            GEOBYTE, GEOSHORT, GEOINT, GEOLONG};
     // Integer-family value bases (indices 6..9, for BYTE/SHORT/INT/FLOAT) are
     // capped so the *10 + d arithmetic stays within byte range. When the
     // alter-table thread narrows a column across the integer family (e.g.
     // INT -> BYTE), each previously-written value casts losslessly and the
     // oracle's stored yield still matches what the cursor renders.
+    // GEOHASH value bases are unused; the geohash cases generate random base32
+    // strings independent of valueBase.
     private final String[] colValueBases = new String[]{"europe", "8", "2", "1", "note", "6",
-            "5", "9", "11", "7", "M", "u", "l", "1700000000000000000"};
+            "5", "9", "11", "7", "M", "u", "l", "1700000000000000000",
+            "", "", "", ""};
     private final char[] nonAsciiChars = {'ó', 'í', 'Á', 'ч', 'Ъ', 'Ж', 'ю', 0x3000, 0x3080, 0x3a55};
     private final String[][] symbolNameBases = new String[][]{
             {"location", "Location", "LOCATION", "loCATion", "LocATioN"},
@@ -498,6 +517,10 @@ public class QwpSenderFuzzTest extends AbstractQwpWebSocketTest {
                 NanosFormatUtils.appendDateTimeNSec(sink, nanos);
                 yield sink.toString();
             }
+            case GEOBYTE -> randomGeoHash(sender, colName, 1, rnd);   // GEOHASH(5b)
+            case GEOSHORT -> randomGeoHash(sender, colName, 3, rnd);  // GEOHASH(15b)
+            case GEOINT -> randomGeoHash(sender, colName, 4, rnd);    // GEOHASH(20b)
+            case GEOLONG -> randomGeoHash(sender, colName, 7, rnd);   // GEOHASH(35b)
             default -> {
                 sender.stringColumn(colName, valueBase);
                 yield valueBase;
@@ -548,6 +571,22 @@ public class QwpSenderFuzzTest extends AbstractQwpWebSocketTest {
 
     private String addSymbolValue(int index, CharSequence colName, QwpWebSocketSender sender, Rnd rnd) {
         return addColumnValue(SYMBOL, symbolValueBases[index], colName, sender, rnd);
+    }
+
+    /**
+     * Emit a GEOHASH column from a random {@code chars}-char base32 string and
+     * yield the same string back. With precisions that are multiples of 5
+     * CursorPrinter renders the stored value as bare base32 (no '#' prefix),
+     * so the yield matches what the oracle reads back verbatim.
+     */
+    private String randomGeoHash(QwpWebSocketSender sender, CharSequence colName, int chars, Rnd rnd) {
+        char[] buf = new char[chars];
+        for (int i = 0; i < chars; i++) {
+            buf[i] = GEO_HASH_BASE32[rnd.nextInt(GEO_HASH_BASE32.length)];
+        }
+        String hash = new String(buf);
+        sender.geoHashColumn(colName, hash);
+        return hash;
     }
 
     private void assertTable(TableData table, String tableName) {

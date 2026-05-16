@@ -267,6 +267,71 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
     }
 
     @Test
+    public void testAutoCreateGeoHashColumns() throws Exception {
+        runInContext((port) -> {
+            String table = "test_qwp_auto_geohash";
+            // Pre-create the table without geohash columns so QwpWalAppender
+            // auto-creates them at each declared precision -- the wire-side
+            // precision drives the chosen storage class:
+            //   5b  -> GEOBYTE  (GEOHASH(1c))
+            //   15b -> GEOSHORT (GEOHASH(3c))
+            //   20b -> GEOINT   (GEOHASH(4c))
+            //   35b -> GEOLONG  (GEOHASH(7c))
+            execute("CREATE TABLE " + table + " (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            try (QwpWebSocketSender sender = connectWs(port)) {
+                // Row 1: long+precision overload, hitting all four storage classes.
+                // High bits set in the long are masked by the sender; the row
+                // should round-trip the low precisionBits intact.
+                sender.table(table)
+                        .geoHashColumn("g5", 0x1FL, 5)
+                        .geoHashColumn("g15", 0x7FFFL, 15)
+                        .geoHashColumn("g20", 0xF_FFFFL, 20)
+                        .geoHashColumn("g35", 0x7_FFFF_FFFFL, 35)
+                        .at(1_000_000, ChronoUnit.MICROS);
+                // Row 2: base32 string overload; lengths derive precision as len*5.
+                // "s24se0g" lands inside GEOHASH(35b)/GEOLONG storage.
+                sender.table(table)
+                        .geoHashColumn("g5", "u")
+                        .geoHashColumn("g15", "u33")
+                        .geoHashColumn("g20", "u33d")
+                        .geoHashColumn("g35", "s24se0g")
+                        .at(2_000_000, ChronoUnit.MICROS);
+                // Row 3: skip all geohash columns -> writes implicit NULLs via the
+                // null bitmap, exercising the sparse path.
+                sender.table(table)
+                        .at(3_000_000, ChronoUnit.MICROS);
+                sender.flush();
+            }
+
+            drainWalQueue();
+            // Verify auto-created column types match the declared precisions.
+            assertSql(
+                    "SELECT \"column\", type FROM table_columns('" + table + "') WHERE \"column\" LIKE 'g%' ORDER BY \"column\"",
+                    """
+                            column\ttype
+                            g15\tGEOHASH(3c)
+                            g20\tGEOHASH(4c)
+                            g35\tGEOHASH(7c)
+                            g5\tGEOHASH(1c)
+                            """
+            );
+            // Round-trip values. Row 1 was bit-packed: 0x1F renders as 'z' (the
+            // last base32 digit), 0x7FFF / 0xFFFFF / 0x7FFFFFFFF are the all-ones
+            // payload for each precision and render to the top base32 chars.
+            assertSql(
+                    "SELECT g5, g15, g20, g35 FROM " + table + " ORDER BY ts",
+                    """
+                            g5\tg15\tg20\tg35
+                            z\tzzz\tzzzz\tzzzzzzz
+                            u\tu33\tu33d\ts24se0g
+                            \t\t\t
+                            """
+            );
+        });
+    }
+
+    @Test
     public void testAutoCreateIPv4Column() throws Exception {
         runInContext((port) -> {
             String table = "test_qwp_auto_ipv4";
@@ -2200,6 +2265,104 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
         });
     }
 
+    /**
+     * Regression check for the between-batch GEOHASH precision lock. When a
+     * column has zero values in a batch (every row leaves it null), the wire
+     * encoder must still emit the schema-locked precision varint rather than
+     * the writer's {@code precision = 1} fallback -- otherwise the strict
+     * server-side check added in {@code 91c0824b0d} rejects the batch as
+     * <pre>
+     *   GeoHash precision mismatch [column=g, columnType=GEOHASH(4c), wireBits=1]
+     * </pre>
+     * once the column has been auto-created at a real precision. The fix lives
+     * in {@code ColumnBuffer.reset()}, which now preserves
+     * {@code geohashPrecision} across batches.
+     */
+    @Test
+    public void testGeoHashColumnPrecisionPersistsAcrossBatches() throws Exception {
+        runInContext((port) -> {
+            String table = "test_qwp_geohash_persists_precision";
+            execute("CREATE TABLE " + table + " (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            try (QwpWebSocketSender sender = connectWs(port)) {
+                // Batch 1: write "g" with 20-bit precision. Server auto-creates
+                // GEOHASH(4c).
+                sender.table(table)
+                        .geoHashColumn("g", "u33d")
+                        .at(1_000_000, ChronoUnit.MICROS);
+                sender.flush();
+                drainWalQueue();
+
+                // Batch 2: no row writes "g". The column persists in the
+                // sender's buffer schema (reset() keeps column defs) but its
+                // geohashPrecision was reset to -1. The encoder writes
+                // precision varint = 1, which the server rejects.
+                sender.table(table)
+                        .longColumn("other", 1L)
+                        .at(2_000_000, ChronoUnit.MICROS);
+                sender.flush();
+            }
+
+            drainWalQueue();
+            // Expected once fixed: both rows ingested.
+            assertSql("SELECT count() FROM " + table, "count\n2\n");
+        });
+    }
+
+    @Test
+    public void testGeoHashColumnValidation() throws Exception {
+        // Client-side validation of the public geoHashColumn API: precision out
+        // of range, null/empty/too-long/invalid base32 string, and precision
+        // mismatch within a single column over multiple rows. None of these
+        // should reach the wire; the sender raises LineSenderException before
+        // anything is encoded.
+        runInContext((port) -> {
+            try (QwpWebSocketSender sender = connectWs(port)) {
+                sender.table("dummy");
+                assertThrowsContains(() -> sender.geoHashColumn("g", 0L, 0),
+                        "invalid GEOHASH precision");
+                sender.cancelRow();
+
+                sender.table("dummy");
+                assertThrowsContains(() -> sender.geoHashColumn("g", 0L, 61),
+                        "invalid GEOHASH precision");
+                sender.cancelRow();
+
+                sender.table("dummy");
+                assertThrowsContains(() -> sender.geoHashColumn("g", (CharSequence) null),
+                        "GEOHASH string cannot be null");
+                sender.cancelRow();
+
+                sender.table("dummy");
+                assertThrowsContains(() -> sender.geoHashColumn("g", ""),
+                        "GEOHASH string cannot be empty");
+                sender.cancelRow();
+
+                sender.table("dummy");
+                assertThrowsContains(() -> sender.geoHashColumn("g", "0123456789abc"),
+                        "GEOHASH string exceeds 12 characters");
+                sender.cancelRow();
+
+                sender.table("dummy");
+                // 'a' is reserved (not in geohash base32 alphabet); the decoder
+                // rejects it as an invalid character.
+                assertThrowsContains(() -> sender.geoHashColumn("g", "ua"),
+                        "invalid GEOHASH string");
+                sender.cancelRow();
+
+                // Precision is locked on first value; a subsequent row at a
+                // different precision must throw before reaching the wire.
+                sender.table("dummy")
+                        .geoHashColumn("g", 0L, 20)
+                        .at(1_000_000, ChronoUnit.MICROS);
+                sender.table("dummy");
+                assertThrowsContains(() -> sender.geoHashColumn("g", 0L, 25),
+                        "GeoHash precision mismatch");
+                sender.cancelRow();
+            }
+        });
+    }
+
     @Test
     public void testGeoHashWirePrecisionMismatchRejected() throws Exception {
         runInContext((port) -> {
@@ -3561,6 +3724,17 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             drainWalQueue();
             assertSql("SELECT count() FROM " + table, "count\n1\n");
         });
+    }
+
+    private static void assertThrowsContains(Runnable action, String expectedMsgPart) {
+        try {
+            action.run();
+            Assert.fail("Expected LineSenderException containing '" + expectedMsgPart + "'");
+        } catch (LineSenderException e) {
+            String msg = e.getMessage();
+            Assert.assertTrue("Expected LineSenderException containing '" + expectedMsgPart
+                    + "' but got: " + msg, msg != null && msg.contains(expectedMsgPart));
+        }
     }
 
     private static void assertCoercionError(

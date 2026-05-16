@@ -25,6 +25,7 @@
 package io.questdb.test.cutlass.qwp.load;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordMetadata;
@@ -188,6 +189,11 @@ public class QwpRow {
                 case IPV4:
                     sender.ipv4Column(name, v.ipv4);
                     break;
+                case GEOHASH:
+                    // QWP wire form carries the bits + precision pair; the server
+                    // auto-creates GEOHASH(Nb) sized to fit the declared precision.
+                    qwp.geoHashColumn(name, v.geoHash, v.geoHashBits);
+                    break;
                 case SYMBOL:
                     // already emitted
                     break;
@@ -280,6 +286,39 @@ public class QwpRow {
         TypedValue v = put(name);
         v.type = ValueType.FLOAT;
         v.f = value;
+    }
+
+    /**
+     * Records a GEOHASH value with explicit bit precision. {@code precisionBits}
+     * must be in {@code [1, 60]} and is locked at the column on the first row
+     * (the server auto-creates {@code GEOHASH(Nb)} sized to fit).
+     */
+    public QwpRow setGeoHash(String name, long bits, int precisionBits) {
+        TypedValue v = put(name);
+        v.type = ValueType.GEOHASH;
+        // Mask high bits so the stored expectation matches what the wire encoder
+        // and server-side null bitmap interpret (low precisionBits significant).
+        v.geoHash = precisionBits >= 64 ? bits : bits & ((1L << precisionBits) - 1L);
+        v.geoHashBits = precisionBits;
+        return this;
+    }
+
+    /**
+     * Records a GEOHASH from a base32 string (one char = 5 bits). Convenience
+     * for tests that want to read back exactly the string they wrote: the
+     * server stores the bits and renders them back as the same base32 string.
+     */
+    public QwpRow setGeoHash(String name, String base32) {
+        long bits = 0;
+        int len = base32.length();
+        for (int i = 0; i < len; i++) {
+            byte b = GeoHashes.encodeChar(base32.charAt(i));
+            if (b < 0) {
+                throw new IllegalArgumentException("invalid GEOHASH character '" + base32.charAt(i) + "' in: " + base32);
+            }
+            bits = (bits << 5) | b;
+        }
+        return setGeoHash(name, bits, len * 5);
     }
 
     public void setInt(String name, int value) {
@@ -459,6 +498,44 @@ public class QwpRow {
                 }
                 break;
             }
+            case ColumnType.GEOBYTE: {
+                // Server auto-creates GEOHASH(<=8b) as GEOBYTE storage; tv.geoHash
+                // already holds the low precisionBits, sign-narrow to byte to match.
+                byte actual = record.getGeoByte(columnIndex);
+                if (tv == null) {
+                    Assert.assertEquals(name + " expected NULL row=" + rowOrdinal, GeoHashes.BYTE_NULL, actual);
+                } else {
+                    Assert.assertEquals(name + " row=" + rowOrdinal, (byte) tv.geoHash, actual);
+                }
+                break;
+            }
+            case ColumnType.GEOSHORT: {
+                short actual = record.getGeoShort(columnIndex);
+                if (tv == null) {
+                    Assert.assertEquals(name + " expected NULL row=" + rowOrdinal, GeoHashes.SHORT_NULL, actual);
+                } else {
+                    Assert.assertEquals(name + " row=" + rowOrdinal, (short) tv.geoHash, actual);
+                }
+                break;
+            }
+            case ColumnType.GEOINT: {
+                int actual = record.getGeoInt(columnIndex);
+                if (tv == null) {
+                    Assert.assertEquals(name + " expected NULL row=" + rowOrdinal, GeoHashes.INT_NULL, actual);
+                } else {
+                    Assert.assertEquals(name + " row=" + rowOrdinal, (int) tv.geoHash, actual);
+                }
+                break;
+            }
+            case ColumnType.GEOLONG: {
+                long actual = record.getGeoLong(columnIndex);
+                if (tv == null) {
+                    Assert.assertEquals(name + " expected NULL row=" + rowOrdinal, GeoHashes.NULL, actual);
+                } else {
+                    Assert.assertEquals(name + " row=" + rowOrdinal, tv.geoHash, actual);
+                }
+                break;
+            }
             case ColumnType.FLOAT: {
                 float actual = record.getFloat(columnIndex);
                 if (tv == null) {
@@ -614,7 +691,7 @@ public class QwpRow {
 
     public enum ValueType {
         BOOLEAN, BYTE, SHORT, INT, LONG, FLOAT, DOUBLE, CHAR, STRING, SYMBOL,
-        UUID, LONG256, TIMESTAMP_NANO, IPV4,
+        UUID, LONG256, TIMESTAMP_NANO, IPV4, GEOHASH,
         DOUBLE_ARRAY_1D, DOUBLE_ARRAY_2D, DOUBLE_ARRAY_3D,
         DECIMAL64, DECIMAL128, DECIMAL256
     }
@@ -636,6 +713,8 @@ public class QwpRow {
         public long dec64Value;
         public int decScale;
         public float f;
+        public long geoHash;
+        public int geoHashBits;
         public int i32;
         public int ipv4;
         public long l;
