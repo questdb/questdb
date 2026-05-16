@@ -194,12 +194,27 @@ public class QwpRow {
                     // auto-creates GEOHASH(Nb) sized to fit the declared precision.
                     qwp.geoHashColumn(name, v.geoHash, v.geoHashBits);
                     break;
+                case BINARY:
+                    sender.binaryColumn(name, v.bin);
+                    break;
                 case SYMBOL:
                     // already emitted
                     break;
             }
         }
         qwp.at(tsMicros, ChronoUnit.MICROS);
+    }
+
+    /**
+     * Records a BINARY value as a byte slice. Pass a non-null array (use
+     * {@code new byte[0]} for empty); omit the column entirely to model an
+     * explicit NULL through the bitmap path.
+     */
+    public QwpRow setBinary(String name, byte[] value) {
+        TypedValue v = put(name);
+        v.type = ValueType.BINARY;
+        v.bin = value;
+        return this;
     }
 
     public void setBool(String name, boolean value) {
@@ -609,6 +624,23 @@ public class QwpRow {
                 }
                 break;
             }
+            case ColumnType.BINARY: {
+                io.questdb.std.BinarySequence actual = record.getBin(columnIndex);
+                if (tv == null) {
+                    Assert.assertNull(name + " expected NULL row=" + rowOrdinal, actual);
+                } else {
+                    Assert.assertNotNull(name + " unexpectedly NULL row=" + rowOrdinal, actual);
+                    Assert.assertEquals(name + " length row=" + rowOrdinal, tv.bin.length, actual.length());
+                    for (int i = 0; i < tv.bin.length; i++) {
+                        Assert.assertEquals(
+                                name + " byte[" + i + "] row=" + rowOrdinal,
+                                tv.bin[i],
+                                actual.byteAt(i)
+                        );
+                    }
+                }
+                break;
+            }
             case ColumnType.SYMBOL: {
                 CharSequence actual = record.getSymA(columnIndex);
                 if (tv == null) {
@@ -691,7 +723,7 @@ public class QwpRow {
 
     public enum ValueType {
         BOOLEAN, BYTE, SHORT, INT, LONG, FLOAT, DOUBLE, CHAR, STRING, SYMBOL,
-        UUID, LONG256, TIMESTAMP_NANO, IPV4, GEOHASH,
+        UUID, LONG256, TIMESTAMP_NANO, IPV4, GEOHASH, BINARY,
         DOUBLE_ARRAY_1D, DOUBLE_ARRAY_2D, DOUBLE_ARRAY_3D,
         DECIMAL64, DECIMAL128, DECIMAL256
     }
@@ -699,6 +731,7 @@ public class QwpRow {
     public static final class TypedValue {
         public boolean b;
         public byte b8;
+        public byte[] bin;
         public char c;
         public double d;
         public double[] da1;

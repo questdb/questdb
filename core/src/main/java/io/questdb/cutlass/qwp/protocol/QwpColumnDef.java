@@ -26,6 +26,7 @@ package io.questdb.cutlass.qwp.protocol;
 
 import java.nio.charset.StandardCharsets;
 
+import static io.questdb.cutlass.qwp.protocol.QwpConstants.TYPE_BINARY;
 import static io.questdb.cutlass.qwp.protocol.QwpConstants.TYPE_BOOLEAN;
 import static io.questdb.cutlass.qwp.protocol.QwpConstants.TYPE_BYTE;
 import static io.questdb.cutlass.qwp.protocol.QwpConstants.TYPE_CHAR;
@@ -158,8 +159,7 @@ public final class QwpColumnDef {
      * @throws QwpParseException if type code is invalid
      */
     public void validate() throws QwpParseException {
-        // Explicit allowlist of ingest-supported wire types. BINARY (0x17) is defined
-        // by the egress codec but has no ingest decoder yet, so it stays rejected.
+        // Explicit allowlist of ingest-supported wire types.
         switch (typeCode) {
             case TYPE_BOOLEAN:
             case TYPE_BYTE:
@@ -175,6 +175,7 @@ public final class QwpColumnDef {
             case TYPE_LONG256:
             case TYPE_GEOHASH:
             case TYPE_VARCHAR:
+            case TYPE_BINARY:
             case TYPE_TIMESTAMP_NANOS:
             case TYPE_DOUBLE_ARRAY:
             case TYPE_LONG_ARRAY:

@@ -112,6 +112,7 @@ public class QwpWalAppender implements QuietCloseable {
             case TYPE_FLOAT -> ColumnType.FLOAT;
             case TYPE_DOUBLE -> ColumnType.DOUBLE;
             case TYPE_VARCHAR -> ColumnType.VARCHAR;
+            case TYPE_BINARY -> ColumnType.BINARY;
             case TYPE_SYMBOL -> ColumnType.SYMBOL;
             case TYPE_TIMESTAMP -> ColumnType.TIMESTAMP;
             case TYPE_TIMESTAMP_NANOS -> ColumnType.TIMESTAMP_NANO;
@@ -643,6 +644,19 @@ public class QwpWalAppender implements QuietCloseable {
                                     fixedCursor.getNullBitmapAddress(), rowCount);
                         } else {
                             throw typeMismatchException(qwpType, columnType, tableBlock, col);
+                        }
+                    }
+                    case ColumnType.BINARY -> {
+                        // BINARY accepts opaque byte payloads only -- TYPE_BINARY on the wire,
+                        // or TYPE_VARCHAR if the client routed bytes through the string layout
+                        // (the two share an identical offset+bytes encoding). Any other source
+                        // cursor would mean reinterpreting numeric or structured data as raw
+                        // bytes, which is almost always a user error, so reject it.
+                        if (cursor instanceof QwpStringColumnCursor strCursor
+                                && (qwpType == TYPE_BINARY || qwpType == TYPE_VARCHAR)) {
+                            appender.putBinaryColumn(columnIndex, strCursor, rowCount);
+                        } else {
+                            throw coercionNotSupportedException(qwpType, columnType, tableBlock, col);
                         }
                     }
                     case ColumnType.VARCHAR -> {

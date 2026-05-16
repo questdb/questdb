@@ -204,6 +204,27 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
     }
 
     @Override
+    public void putBinaryColumn(int columnIndex, QwpStringColumnCursor cursor, int rowCount) throws QwpParseException {
+        checkInColumnarWrite();
+
+        MemoryMA dataMem = walWriter.getDataColumn(columnIndex);
+        MemoryMA auxMem = walWriter.getAuxColumn(columnIndex);
+
+        cursor.resetRowPosition();
+        for (int row = 0; row < rowCount; row++) {
+            cursor.advanceRow();
+            if (cursor.isNull()) {
+                auxMem.putLong(dataMem.putNullBin());
+            } else {
+                DirectUtf8Sequence value = cursor.getUtf8Value();
+                auxMem.putLong(dataMem.putBin(value.ptr(), value.size()));
+            }
+        }
+
+        walWriter.setRowValueNotNullColumnar(columnIndex, startRowId + rowCount - 1);
+    }
+
+    @Override
     public void putBooleanColumn(int columnIndex, QwpBooleanColumnCursor cursor, int rowCount) {
         checkInColumnarWrite();
 

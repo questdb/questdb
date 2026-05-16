@@ -117,6 +117,16 @@ public interface ColumnarRowAppender {
                         int rowCount, int columnType) throws QwpParseException;
 
     /**
+     * Writes a BINARY column from raw byte slices delivered by the streaming string
+     * cursor (BINARY shares the VARCHAR wire layout).
+     *
+     * @param columnIndex the column index in the table
+     * @param cursor      the string column cursor (used as raw byte source)
+     * @param rowCount    total number of rows
+     */
+    void putBinaryColumn(int columnIndex, QwpStringColumnCursor cursor, int rowCount) throws QwpParseException;
+
+    /**
      * Writes a BOOLEAN column.
      * <p>
      * Boolean values are bit-packed in QWP v1 wire format but stored as bytes in WAL.

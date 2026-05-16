@@ -480,7 +480,10 @@ public class QwpTableBlockCursor implements Mutable {
                 timestampColumnIndices[timestampColumnCount++] = colIndex;
                 yield tsCursor.of(dataAddress, dataLength, rowCount, typeCode, gorillaEnabled);
             }
-            case TYPE_VARCHAR -> {
+            case TYPE_VARCHAR, TYPE_BINARY -> {
+                // BINARY shares VARCHAR's wire layout (offsets + concatenated bytes),
+                // so the same streaming cursor decodes both. Callers branch on the
+                // column's declared type code when interpreting the byte payload.
                 QwpStringColumnCursor strCursor;
                 if (cursor instanceof QwpStringColumnCursor c) {
                     strCursor = c;

@@ -65,6 +65,14 @@ import static io.questdb.cairo.ColumnType.*;
 
 public class QwpSenderFuzzTest extends AbstractQwpWebSocketTest {
 
+    // QuestDB's base32 alphabet (matches io.questdb.cairo.GeoHashes#base32):
+    // skips 'a', 'i', 'l', 'o' versus straight 0-9a-z.
+    private static final char[] GEO_HASH_BASE32 = {
+            '0', '1', '2', '3', '4', '5', '6', '7',
+            '8', '9', 'b', 'c', 'd', 'e', 'f', 'g',
+            'h', 'j', 'k', 'm', 'n', 'p', 'q', 'r',
+            's', 't', 'u', 'v', 'w', 'x', 'y', 'z'
+    };
     // colNameBases / colTypes / colValueBases are partitioned: the first
     // LEGACY_COLUMN_COUNT entries are STRING/DOUBLE columns and participate
     // in the full skip / new-column-injection fuzz; the rest are typed
@@ -75,14 +83,6 @@ public class QwpSenderFuzzTest extends AbstractQwpWebSocketTest {
     // clash with the oracle's single-default-per-column model once
     // startAlterTableThread converts them across the integer family.
     private static final int LEGACY_COLUMN_COUNT = 6;
-    // QuestDB's base32 alphabet (matches io.questdb.cairo.GeoHashes#base32):
-    // skips 'a', 'i', 'l', 'o' versus straight 0-9a-z.
-    private static final char[] GEO_HASH_BASE32 = {
-            '0', '1', '2', '3', '4', '5', '6', '7',
-            '8', '9', 'b', 'c', 'd', 'e', 'f', 'g',
-            'h', 'j', 'k', 'm', 'n', 'p', 'q', 'r',
-            's', 't', 'u', 'v', 'w', 'x', 'y', 'z'
-    };
     private static final Log LOG = LogFactory.getLog(QwpSenderFuzzTest.class);
     private static final int MAX_NUM_OF_SKIPPED_COLS = 2;
     private static final int NEW_COLUMN_RANDOMIZE_FACTOR = 2;
@@ -108,7 +108,8 @@ public class QwpSenderFuzzTest extends AbstractQwpWebSocketTest {
             {"loc_g5", "LOC_G5", "Loc_G5"},
             {"loc_g15", "LOC_G15", "Loc_G15"},
             {"loc_g20", "LOC_G20", "Loc_G20"},
-            {"loc_g35", "LOC_G35", "Loc_G35"}
+            {"loc_g35", "LOC_G35", "Loc_G35"},
+            {"payload_bin", "PAYLOAD_BIN", "Payload_Bin"}
     };
     // New non-string/non-double types added to fuzz native wire-type emission
     // through the QWP sender. Their addColumnValue cases yield exactly the
@@ -121,7 +122,7 @@ public class QwpSenderFuzzTest extends AbstractQwpWebSocketTest {
     // cursor renders bare base32, matching the yielded string verbatim).
     private final int[] colTypes = new int[]{STRING, DOUBLE, DOUBLE, DOUBLE, STRING, DOUBLE,
             BYTE, SHORT, INT, FLOAT, CHAR, UUID, LONG256, TIMESTAMP_NANO,
-            GEOBYTE, GEOSHORT, GEOINT, GEOLONG};
+            GEOBYTE, GEOSHORT, GEOINT, GEOLONG, BINARY};
     // Integer-family value bases (indices 6..9, for BYTE/SHORT/INT/FLOAT) are
     // capped so the *10 + d arithmetic stays within byte range. When the
     // alter-table thread narrows a column across the integer family (e.g.
@@ -131,7 +132,7 @@ public class QwpSenderFuzzTest extends AbstractQwpWebSocketTest {
     // strings independent of valueBase.
     private final String[] colValueBases = new String[]{"europe", "8", "2", "1", "note", "6",
             "5", "9", "11", "7", "M", "u", "l", "1700000000000000000",
-            "", "", "", ""};
+            "", "", "", "", ""};
     private final char[] nonAsciiChars = {'ó', 'í', 'Á', 'ч', 'Ъ', 'Ж', 'ю', 0x3000, 0x3080, 0x3a55};
     private final String[][] symbolNameBases = new String[][]{
             {"location", "Location", "LOCATION", "loCATion", "LocATioN"},
@@ -521,6 +522,7 @@ public class QwpSenderFuzzTest extends AbstractQwpWebSocketTest {
             case GEOSHORT -> randomGeoHash(sender, colName, 3, rnd);  // GEOHASH(15b)
             case GEOINT -> randomGeoHash(sender, colName, 4, rnd);    // GEOHASH(20b)
             case GEOLONG -> randomGeoHash(sender, colName, 7, rnd);   // GEOHASH(35b)
+            case BINARY -> randomBinaryOneByte(sender, colName, rnd);
             default -> {
                 sender.stringColumn(colName, valueBase);
                 yield valueBase;
@@ -571,22 +573,6 @@ public class QwpSenderFuzzTest extends AbstractQwpWebSocketTest {
 
     private String addSymbolValue(int index, CharSequence colName, QwpWebSocketSender sender, Rnd rnd) {
         return addColumnValue(SYMBOL, symbolValueBases[index], colName, sender, rnd);
-    }
-
-    /**
-     * Emit a GEOHASH column from a random {@code chars}-char base32 string and
-     * yield the same string back. With precisions that are multiples of 5
-     * CursorPrinter renders the stored value as bare base32 (no '#' prefix),
-     * so the yield matches what the oracle reads back verbatim.
-     */
-    private String randomGeoHash(QwpWebSocketSender sender, CharSequence colName, int chars, Rnd rnd) {
-        char[] buf = new char[chars];
-        for (int i = 0; i < chars; i++) {
-            buf[i] = GEO_HASH_BASE32[rnd.nextInt(GEO_HASH_BASE32.length)];
-        }
-        String hash = new String(buf);
-        sender.geoHashColumn(colName, hash);
-        return hash;
     }
 
     private void assertTable(TableData table, String tableName) {
@@ -753,6 +739,37 @@ public class QwpSenderFuzzTest extends AbstractQwpWebSocketTest {
     private CharSequence pickTableName(Rnd rnd) {
         String tableName = rnd.nextInt(UPPERCASE_TABLE_RANDOMIZE_FACTOR) == 0 ? "WEATHER" : "weather";
         return tableName + rnd.nextInt(numOfTables);
+    }
+
+    /**
+     * Emit a BINARY column with a random 1-byte payload and yield the exact
+     * text that {@code CursorPrinter} -> {@code Chars.toSink(BinarySequence,...)}
+     * produces for that payload: an 8-digit hex offset, a space, then the
+     * lowercase hex of the byte. Single-byte payloads keep the render to one
+     * line; multi-byte payloads would need to reproduce the 16-byte wrap rule.
+     */
+    private String randomBinaryOneByte(QwpWebSocketSender sender, CharSequence colName, Rnd rnd) {
+        byte b = (byte) rnd.nextInt(256);
+        sender.binaryColumn(colName, new byte[]{b});
+        char[] hex = io.questdb.std.Numbers.hexDigits;
+        int v = b & 0xFF;
+        return "00000000 " + hex[v >>> 4] + hex[v & 0xF];
+    }
+
+    /**
+     * Emit a GEOHASH column from a random {@code chars}-char base32 string and
+     * yield the same string back. With precisions that are multiples of 5
+     * CursorPrinter renders the stored value as bare base32 (no '#' prefix),
+     * so the yield matches what the oracle reads back verbatim.
+     */
+    private String randomGeoHash(QwpWebSocketSender sender, CharSequence colName, int chars, Rnd rnd) {
+        char[] buf = new char[chars];
+        for (int i = 0; i < chars; i++) {
+            buf[i] = GEO_HASH_BASE32[rnd.nextInt(GEO_HASH_BASE32.length)];
+        }
+        String hash = new String(buf);
+        sender.geoHashColumn(colName, hash);
+        return hash;
     }
 
     private void runTest() throws Exception {

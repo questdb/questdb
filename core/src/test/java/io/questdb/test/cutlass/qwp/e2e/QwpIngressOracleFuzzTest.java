@@ -797,6 +797,25 @@ public class QwpIngressOracleFuzzTest extends AbstractCairoTest {
         return new String(out);
     }
 
+    /**
+     * Map an id (or any long seed) to a deterministic byte array. The bytes are
+     * derived from a splitmix-style mixer of {@code seed} so identical seeds
+     * yield identical payloads, which is what the oracle's deferred assertion
+     * compares against on read.
+     */
+    private static byte[] deriveBinary(long seed, int len) {
+        byte[] out = new byte[len];
+        long state = seed * 0xBF58_476D_1CE4_E5B9L + 0x94D0_49BB_1331_11EBL;
+        for (int i = 0; i < len; i++) {
+            // splitmix64 step: keeps successive bytes well-mixed without ever
+            // hitting the cold-pattern degenerate case len==0 .. len==1 hit.
+            state = (state ^ (state >>> 30)) * 0xBF58_476D_1CE4_E5B9L;
+            state = (state ^ (state >>> 27)) * 0x94D0_49BB_1331_11EBL;
+            out[i] = (byte) (state ^ (state >>> 31));
+        }
+        return out;
+    }
+
     private static long deriveGeoHash(long seed, int precisionBits) {
         long mixed = seed * 0x9E37_79B9_7F4A_7C15L + 0x0123_4567_89AB_CDEFL;
         return precisionBits >= 64 ? mixed : mixed & ((1L << precisionBits) - 1L);
@@ -876,6 +895,11 @@ public class QwpIngressOracleFuzzTest extends AbstractCairoTest {
         if (!shouldFuzz(rnd, COLUMN_SKIP_FACTOR)) row.setGeoHash("g15", deriveGeoHash(id, 15), 15);
         if (!shouldFuzz(rnd, COLUMN_SKIP_FACTOR)) row.setGeoHash("g20", deriveGeoHash(id, 20), 20);
         if (!shouldFuzz(rnd, COLUMN_SKIP_FACTOR)) row.setGeoHash("g35", deriveGeoHash(id, 35), 35);
+        // BINARY: derive a small byte slice from id; capped at 32 bytes to keep
+        // batch sizes manageable and to ensure variable-length offset arithmetic
+        // is exercised. Skippable like the other base columns, so the explicit-
+        // NULL bitmap path goes through SF replay too.
+        if (!shouldFuzz(rnd, COLUMN_SKIP_FACTOR)) row.setBinary("bin", deriveBinary(id, 1 + (int) (id & 0x1FL)));
         if (!shouldFuzz(rnd, COLUMN_SKIP_FACTOR))
             row.setDoubleArray1d("da", deriveDoubleArr1d(id, rnd.nextBoolean() ? -1.0 : 1.0));
         if (!shouldFuzz(rnd, COLUMN_SKIP_FACTOR))
@@ -928,7 +952,7 @@ public class QwpIngressOracleFuzzTest extends AbstractCairoTest {
         // write the extra expect type-default NULL at assertion time.
         // Numeric extras get the same independent sign-flip treatment as
         // base columns.
-        switch (rnd.nextInt(24)) {
+        switch (rnd.nextInt(25)) {
             case 0:
                 row.setLong("ex_l_0", maybeNegate(rnd, id * 7L));
                 break;
@@ -1033,15 +1057,28 @@ public class QwpIngressOracleFuzzTest extends AbstractCairoTest {
                 // Auto-created GEOHASH(15b) extra -> GEOSHORT storage.
                 row.setGeoHash("ex_g15", deriveGeoHash(id + 0x2222_2222L, 15), 15);
                 break;
-            case 22:
-                // Auto-created GEOHASH(20b) extra -> GEOINT storage; takes the
-                // base32-string overload so the client-side base32 decoder is
-                // exercised on the auto-create path too.
-                row.setGeoHash("ex_g20", base32GeoHashFromId(id, 4));
+            case 22: {
+                // Auto-created GEOHASH extra via the base32-string overload, so
+                // the client-side base32 decoder gets coverage on the
+                // auto-create path too. Length is randomized in [1, 11] so all
+                // four storage classes (GEOBYTE/SHORT/INT/LONG) get exercised
+                // across runs. Each length gets its own column name --
+                // GEOHASH precision is schema-locked on first write, so a
+                // shared name would conflict across rows of different lengths.
+                int chars = rnd.nextInt(11) + 1;
+                row.setGeoHash("ex_g_b32_" + chars + "c", base32GeoHashFromId(id, chars));
                 break;
+            }
             case 23:
                 // Auto-created GEOHASH(35b) extra -> GEOLONG storage.
                 row.setGeoHash("ex_g35", deriveGeoHash(id + 0x4444_4444L, 35), 35);
+                break;
+            case 24:
+                // Auto-created BINARY extra. Two distinct columns (ex_bin_0 /
+                // ex_bin_1) spread the per-id values out so neither column
+                // degenerates into a single repeated payload.
+                row.setBinary("ex_bin_" + (id & 1L),
+                        deriveBinary(id + 0x5555_5555L, 1 + (int) (id & 0x0FL)));
                 break;
         }
     }
@@ -1170,6 +1207,7 @@ public class QwpIngressOracleFuzzTest extends AbstractCairoTest {
                             + "g15 GEOHASH(15b), "
                             + "g20 GEOHASH(20b), "
                             + "g35 GEOHASH(35b), "
+                            + "bin BINARY, "
                             + "da DOUBLE[], "
                             + "da2 DOUBLE[][], "
                             + "da3 DOUBLE[][][], "

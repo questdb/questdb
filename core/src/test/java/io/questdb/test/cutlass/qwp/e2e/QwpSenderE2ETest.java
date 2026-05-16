@@ -32,6 +32,9 @@ import io.questdb.client.cutlass.qwp.protocol.QwpTableBuffer;
 import io.questdb.client.std.Decimal128;
 import io.questdb.client.std.Decimal256;
 import io.questdb.client.std.Decimal64;
+import io.questdb.client.std.bytes.DirectByteSlice;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Unsafe;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -214,6 +217,54 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
 
             drainWalQueue();
             assertSql("SELECT count() FROM test_at_now", "count\n1\n");
+        });
+    }
+
+    @Test
+    public void testAutoCreateBinaryColumn() throws Exception {
+        runInContext((port) -> {
+            String table = "test_qwp_auto_binary";
+            // Pre-create without the binary column so QwpWalAppender promotes
+            // TYPE_BINARY on first ingest to a BINARY column.
+            execute("CREATE TABLE " + table + " (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            byte[] payload = {0x00, 0x7F, (byte) 0x80, (byte) 0xFF, 0x10, 0x20};
+
+            try (QwpWebSocketSender sender = connectWs(port)) {
+                sender.table(table)
+                        .binaryColumn("b", payload)
+                        .at(1_000_000, ChronoUnit.MICROS);
+                // Row 2 omits the column -- implicit NULL via the null bitmap.
+                sender.table(table)
+                        .at(2_000_000, ChronoUnit.MICROS);
+                // Row 3 ships a zero-length value. QuestDB's BINARY storage
+                // layer (MemoryPARWImpl.putBin) writes the NULL_LEN sentinel
+                // when len == 0, so an empty byte[] round-trips as NULL on
+                // read -- there is no length-0 non-null BINARY in the storage
+                // contract. We send it anyway to pin that quirk in case it
+                // ever changes.
+                sender.table(table)
+                        .binaryColumn("b", new byte[0])
+                        .at(3_000_000, ChronoUnit.MICROS);
+                sender.flush();
+            }
+
+            drainWalQueue();
+            assertSql(
+                    "SELECT \"column\", type FROM table_columns('" + table + "') WHERE \"column\" = 'b'",
+                    "column\ttype\nb\tBINARY\n"
+            );
+            // length() returns -1 for NULL and the byte count otherwise.
+            // Rows 2 and 3 both surface as -1 (see comment on row 3 above).
+            assertSql(
+                    "SELECT length(b) AS len FROM " + table + " ORDER BY ts",
+                    """
+                            len
+                            6
+                            -1
+                            -1
+                            """
+            );
         });
     }
 
@@ -414,6 +465,97 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             assertSql(
                     "SELECT \"column\", type FROM table_columns('" + table + "') WHERE \"column\" = 'msg'",
                     "column\ttype\nmsg\tVARCHAR\n"
+            );
+        });
+    }
+
+    @Test
+    public void testBinaryColumnFromNativePointer() throws Exception {
+        // Exercises the zero-allocation overloads binaryColumn(name, ptr, len)
+        // and binaryColumn(name, DirectByteSlice). Both must land the same
+        // bytes as the byte[] form.
+        runInContext((port) -> {
+            String table = "test_qwp_binary_ptr";
+            execute("CREATE TABLE " + table + " (b BINARY, ts TIMESTAMP) "
+                    + "TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            byte[] payload = {(byte) 0xDE, (byte) 0xAD, (byte) 0xBE, (byte) 0xEF};
+            long ptr = Unsafe.malloc(payload.length, MemoryTag.NATIVE_DEFAULT);
+            try {
+                for (int i = 0; i < payload.length; i++) {
+                    Unsafe.putByte(ptr + i, payload[i]);
+                }
+
+                try (QwpWebSocketSender sender = connectWs(port)) {
+                    sender.table(table)
+                            .binaryColumn("b", ptr, payload.length)
+                            .at(1_000_000, ChronoUnit.MICROS);
+                    DirectByteSlice slice = new DirectByteSlice().of(ptr, payload.length);
+                    sender.table(table)
+                            .binaryColumn("b", slice)
+                            .at(2_000_000, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+            } finally {
+                Unsafe.free(ptr, payload.length, MemoryTag.NATIVE_DEFAULT);
+            }
+
+            drainWalQueue();
+            assertSql(
+                    "SELECT length(b) AS len FROM " + table + " ORDER BY ts",
+                    """
+                            len
+                            4
+                            4
+                            """
+            );
+        });
+    }
+
+    @Test
+    public void testBinaryColumnValidation() throws Exception {
+        // Client-side validation of the binaryColumn API. A null reference is
+        // rejected so the NULL contract stays explicit (callers must omit the
+        // column instead, which routes through the null bitmap). Nothing here
+        // should reach the wire.
+        runInContext((port) -> {
+            try (QwpWebSocketSender sender = connectWs(port)) {
+                sender.table("dummy");
+                assertThrowsContains(() -> sender.binaryColumn("b", (byte[]) null),
+                        "BINARY value cannot be null");
+                sender.cancelRow();
+                sender.table("dummy");
+                assertThrowsContains(() ->
+                                sender.binaryColumn("b", (io.questdb.client.std.bytes.DirectByteSlice) null),
+                        "BINARY slice cannot be null");
+                sender.cancelRow();
+            }
+        });
+    }
+
+    @Test
+    public void testBinaryColumnVarcharSourceCoercesToBinary() throws Exception {
+        runInContext((port) -> {
+            String table = "test_qwp_binary_from_varchar";
+            // Pre-create the table with a BINARY column. The client only has a
+            // stringColumn(...) helper, which sends TYPE_VARCHAR; QwpWalAppender's
+            // BINARY arm accepts both TYPE_BINARY and TYPE_VARCHAR sources because
+            // their wire layouts are identical, so the raw UTF-8 bytes land as
+            // BINARY without any reinterpretation step.
+            execute("CREATE TABLE " + table + " (b BINARY, ts TIMESTAMP) "
+                    + "TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            try (QwpWebSocketSender sender = connectWs(port)) {
+                sender.table(table)
+                        .stringColumn("b", "hello") // 5 UTF-8 bytes
+                        .at(1_000_000, ChronoUnit.MICROS);
+                sender.flush();
+            }
+
+            drainWalQueue();
+            assertSql(
+                    "SELECT length(b) AS len FROM " + table,
+                    "len\n5\n"
             );
         });
     }
@@ -2329,7 +2471,7 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
                 sender.cancelRow();
 
                 sender.table("dummy");
-                assertThrowsContains(() -> sender.geoHashColumn("g", (CharSequence) null),
+                assertThrowsContains(() -> sender.geoHashColumn("g", null),
                         "GEOHASH string cannot be null");
                 sender.cancelRow();
 
@@ -3726,17 +3868,6 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
         });
     }
 
-    private static void assertThrowsContains(Runnable action, String expectedMsgPart) {
-        try {
-            action.run();
-            Assert.fail("Expected LineSenderException containing '" + expectedMsgPart + "'");
-        } catch (LineSenderException e) {
-            String msg = e.getMessage();
-            Assert.assertTrue("Expected LineSenderException containing '" + expectedMsgPart
-                    + "' but got: " + msg, msg != null && msg.contains(expectedMsgPart));
-        }
-    }
-
     private static void assertCoercionError(
             int port, String table,
             java.util.function.BiConsumer<QwpWebSocketSender, String> sendAction,
@@ -3765,6 +3896,17 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             Assert.assertTrue("Expected error containing '" + expectedMsgPart1 +
                             "' and '" + expectedMsgPart2 + "' but got: " + msg,
                     msg != null && msg.contains(expectedMsgPart1) && msg.contains(expectedMsgPart2));
+        }
+    }
+
+    private static void assertThrowsContains(Runnable action, String expectedMsgPart) {
+        try {
+            action.run();
+            Assert.fail("Expected LineSenderException containing '" + expectedMsgPart + "'");
+        } catch (LineSenderException e) {
+            String msg = e.getMessage();
+            Assert.assertTrue("Expected LineSenderException containing '" + expectedMsgPart
+                    + "' but got: " + msg, msg != null && msg.contains(expectedMsgPart));
         }
     }
 
