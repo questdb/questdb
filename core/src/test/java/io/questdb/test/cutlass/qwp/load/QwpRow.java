@@ -29,10 +29,12 @@ import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.client.Sender;
+import io.questdb.client.cutlass.qwp.client.QwpWebSocketSender;
 import io.questdb.client.std.Decimal128;
 import io.questdb.client.std.Decimal256;
 import io.questdb.client.std.Decimal64;
 import io.questdb.std.Decimals;
+import io.questdb.std.Long256;
 import io.questdb.std.LowerCaseCharSequenceObjHashMap;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
@@ -110,64 +112,106 @@ public class QwpRow {
      * with {@code at(tsMicros, MICROS)}.
      */
     public void publishTo(Sender sender, String tableName, String idColumnName) {
-        sender.table(tableName);
+        // QWP WebSocket connection ("ws::") always returns a QwpWebSocketSender, which
+        // exposes per-wire-type setters (byte/short/int/float/char/uuid/long256) that
+        // the public Sender interface does not. We need the cast to fuzz those wire
+        // types end-to-end.
+        QwpWebSocketSender qwp = (QwpWebSocketSender) sender;
+        qwp.table(tableName);
         for (int i = 0, n = orderedNames.size(); i < n; i++) {
             CharSequence name = orderedNames.getQuick(i);
             TypedValue v = values.get(name);
             if (v.type == ValueType.SYMBOL) {
-                sender.symbol(name, v.s);
+                qwp.symbol(name, v.s);
             }
         }
-        sender.longColumn(idColumnName, id);
+        qwp.longColumn(idColumnName, id);
         for (int i = 0, n = orderedNames.size(); i < n; i++) {
             CharSequence name = orderedNames.getQuick(i);
             TypedValue v = values.get(name);
             switch (v.type) {
                 case BOOLEAN:
-                    sender.boolColumn(name, v.b);
+                    qwp.boolColumn(name, v.b);
+                    break;
+                case BYTE:
+                    qwp.byteColumn(name, v.b8);
+                    break;
+                case SHORT:
+                    qwp.shortColumn(name, v.s16);
+                    break;
+                case INT:
+                    qwp.intColumn(name, v.i32);
                     break;
                 case LONG:
-                    sender.longColumn(name, v.l);
+                    qwp.longColumn(name, v.l);
+                    break;
+                case FLOAT:
+                    qwp.floatColumn(name, v.f);
                     break;
                 case DOUBLE:
-                    sender.doubleColumn(name, v.d);
+                    qwp.doubleColumn(name, v.d);
+                    break;
+                case CHAR:
+                    qwp.charColumn(name, v.c);
                     break;
                 case STRING:
-                    sender.stringColumn(name, v.s);
+                    qwp.stringColumn(name, v.s);
+                    break;
+                case UUID:
+                    // QwpWebSocketSender.uuidColumn signature is (name, lo, hi).
+                    qwp.uuidColumn(name, v.uuidLo, v.uuidHi);
+                    break;
+                case LONG256:
+                    qwp.long256Column(name, v.l256_0, v.l256_1, v.l256_2, v.l256_3);
+                    break;
+                case TIMESTAMP_NANO:
+                    qwp.timestampColumn(name, v.tsNanos, ChronoUnit.NANOS);
                     break;
                 case DOUBLE_ARRAY_1D:
-                    sender.doubleArray(name, v.da1);
+                    qwp.doubleArray(name, v.da1);
                     break;
                 case DOUBLE_ARRAY_2D:
-                    sender.doubleArray(name, v.da2);
+                    qwp.doubleArray(name, v.da2);
                     break;
                 case DOUBLE_ARRAY_3D:
-                    sender.doubleArray(name, v.da3);
+                    qwp.doubleArray(name, v.da3);
                     break;
                 case DECIMAL64:
-                    sender.decimalColumn(name, Decimal64.fromLong(v.dec64Value, v.decScale));
+                    qwp.decimalColumn(name, Decimal64.fromLong(v.dec64Value, v.decScale));
                     break;
                 case DECIMAL128:
-                    sender.decimalColumn(name, new Decimal128(v.dec128Hi, v.dec128Lo, v.decScale));
+                    qwp.decimalColumn(name, new Decimal128(v.dec128Hi, v.dec128Lo, v.decScale));
                     break;
                 case DECIMAL256:
-                    sender.decimalColumn(name, new Decimal256(v.dec256Hh, v.dec256Hl, v.dec256Lh, v.dec256Ll, v.decScale));
+                    qwp.decimalColumn(name, new Decimal256(v.dec256Hh, v.dec256Hl, v.dec256Lh, v.dec256Ll, v.decScale));
                     break;
                 case IPV4:
-                    sender.ipv4Column(name, v.i);
+                    sender.ipv4Column(name, v.ipv4);
                     break;
                 case SYMBOL:
                     // already emitted
                     break;
             }
         }
-        sender.at(tsMicros, ChronoUnit.MICROS);
+        qwp.at(tsMicros, ChronoUnit.MICROS);
     }
 
     public void setBool(String name, boolean value) {
         TypedValue v = put(name);
         v.type = ValueType.BOOLEAN;
         v.b = value;
+    }
+
+    public void setByte(String name, byte value) {
+        TypedValue v = put(name);
+        v.type = ValueType.BYTE;
+        v.b8 = value;
+    }
+
+    public void setChar(String name, char value) {
+        TypedValue v = put(name);
+        v.type = ValueType.CHAR;
+        v.c = value;
     }
 
     public void setDecimal128(String name, long hi, long lo, int scale) {
@@ -203,7 +247,7 @@ public class QwpRow {
     public QwpRow setIPv4(String name, int address) {
         TypedValue v = put(name);
         v.type = ValueType.IPV4;
-        v.i = address;
+        v.ipv4 = address;
         return this;
     }
 
@@ -232,11 +276,38 @@ public class QwpRow {
         v.da3 = value;
     }
 
+    public void setFloat(String name, float value) {
+        TypedValue v = put(name);
+        v.type = ValueType.FLOAT;
+        v.f = value;
+    }
+
+    public void setInt(String name, int value) {
+        TypedValue v = put(name);
+        v.type = ValueType.INT;
+        v.i32 = value;
+    }
+
     public QwpRow setLong(String name, long value) {
         TypedValue v = put(name);
         v.type = ValueType.LONG;
         v.l = value;
         return this;
+    }
+
+    public void setLong256(String name, long l0, long l1, long l2, long l3) {
+        TypedValue v = put(name);
+        v.type = ValueType.LONG256;
+        v.l256_0 = l0;
+        v.l256_1 = l1;
+        v.l256_2 = l2;
+        v.l256_3 = l3;
+    }
+
+    public void setShort(String name, short value) {
+        TypedValue v = put(name);
+        v.type = ValueType.SHORT;
+        v.s16 = value;
     }
 
     public QwpRow setString(String name, String value) {
@@ -250,6 +321,19 @@ public class QwpRow {
         TypedValue v = put(name);
         v.type = ValueType.SYMBOL;
         v.s = value;
+    }
+
+    public void setTimestampNano(String name, long valueNanos) {
+        TypedValue v = put(name);
+        v.type = ValueType.TIMESTAMP_NANO;
+        v.tsNanos = valueNanos;
+    }
+
+    public void setUuid(String name, long hi, long lo) {
+        TypedValue v = put(name);
+        v.type = ValueType.UUID;
+        v.uuidHi = hi;
+        v.uuidLo = lo;
     }
 
     private static void assertArray1dDoubleEquals(String name, double[] expected, ArrayView actual, long rowOrdinal) {
@@ -316,6 +400,17 @@ public class QwpRow {
     }
 
     private static void assertCell(String name, int colType, TypedValue tv, Record record, int columnIndex, long rowOrdinal) {
+        // TIMESTAMP_NANO and TIMESTAMP share the same tag (TIMESTAMP); the high bit
+        // discriminates them. Handle TIMESTAMP_NANO before falling into the tag switch.
+        if (ColumnType.isTimestampNano(colType)) {
+            long actual = record.getTimestamp(columnIndex);
+            if (tv == null) {
+                Assert.assertEquals(name + " expected NULL row=" + rowOrdinal, Numbers.LONG_NULL, actual);
+            } else {
+                Assert.assertEquals(name + " row=" + rowOrdinal, tv.tsNanos, actual);
+            }
+            return;
+        }
         short tag = ColumnType.tagOf(colType);
         switch (tag) {
             case ColumnType.BOOLEAN: {
@@ -323,6 +418,27 @@ public class QwpRow {
                 // for the oracle MUST always set BOOLEAN columns.
                 boolean expected = tv != null && tv.b;
                 Assert.assertEquals(name + " row=" + rowOrdinal, expected, record.getBool(columnIndex));
+                break;
+            }
+            case ColumnType.BYTE: {
+                // BYTE has no NULL; absent column reads as 0. Producers must always set it.
+                byte expected = tv == null ? 0 : tv.b8;
+                Assert.assertEquals(name + " row=" + rowOrdinal, expected, record.getByte(columnIndex));
+                break;
+            }
+            case ColumnType.SHORT: {
+                // SHORT has no NULL; absent column reads as 0. Producers must always set it.
+                short expected = tv == null ? 0 : tv.s16;
+                Assert.assertEquals(name + " row=" + rowOrdinal, expected, record.getShort(columnIndex));
+                break;
+            }
+            case ColumnType.INT: {
+                int actual = record.getInt(columnIndex);
+                if (tv == null) {
+                    Assert.assertEquals(name + " expected NULL row=" + rowOrdinal, Numbers.INT_NULL, actual);
+                } else {
+                    Assert.assertEquals(name + " row=" + rowOrdinal, tv.i32, actual);
+                }
                 break;
             }
             case ColumnType.LONG: {
@@ -339,7 +455,16 @@ public class QwpRow {
                 if (tv == null) {
                     Assert.assertEquals(name + " expected NULL row=" + rowOrdinal, Numbers.IPv4_NULL, actual);
                 } else {
-                    Assert.assertEquals(name + " row=" + rowOrdinal, tv.i, actual);
+                    Assert.assertEquals(name + " row=" + rowOrdinal, tv.ipv4, actual);
+                }
+                break;
+            }
+            case ColumnType.FLOAT: {
+                float actual = record.getFloat(columnIndex);
+                if (tv == null) {
+                    Assert.assertTrue(name + " expected NULL row=" + rowOrdinal, Float.isNaN(actual));
+                } else {
+                    Assert.assertEquals(name + " row=" + rowOrdinal, tv.f, actual, 0.0f);
                 }
                 break;
             }
@@ -349,6 +474,39 @@ public class QwpRow {
                     Assert.assertFalse(name + " expected NULL row=" + rowOrdinal, Numbers.isFinite(actual));
                 } else {
                     Assert.assertEquals(name + " row=" + rowOrdinal, tv.d, actual, 0.0);
+                }
+                break;
+            }
+            case ColumnType.CHAR: {
+                // CHAR NULL is '\0'; absent column reads as '\0'. Producers must always set it.
+                char expected = tv == null ? Numbers.CHAR_NULL : tv.c;
+                Assert.assertEquals(name + " row=" + rowOrdinal, expected, record.getChar(columnIndex));
+                break;
+            }
+            case ColumnType.UUID: {
+                long actualHi = record.getLong128Hi(columnIndex);
+                long actualLo = record.getLong128Lo(columnIndex);
+                if (tv == null) {
+                    Assert.assertEquals(name + ".hi expected NULL row=" + rowOrdinal, Numbers.LONG_NULL, actualHi);
+                    Assert.assertEquals(name + ".lo expected NULL row=" + rowOrdinal, Numbers.LONG_NULL, actualLo);
+                } else {
+                    Assert.assertEquals(name + ".hi row=" + rowOrdinal, tv.uuidHi, actualHi);
+                    Assert.assertEquals(name + ".lo row=" + rowOrdinal, tv.uuidLo, actualLo);
+                }
+                break;
+            }
+            case ColumnType.LONG256: {
+                Long256 actual = record.getLong256A(columnIndex);
+                if (tv == null) {
+                    Assert.assertEquals(name + ".l0 expected NULL row=" + rowOrdinal, Numbers.LONG_NULL, actual.getLong0());
+                    Assert.assertEquals(name + ".l1 expected NULL row=" + rowOrdinal, Numbers.LONG_NULL, actual.getLong1());
+                    Assert.assertEquals(name + ".l2 expected NULL row=" + rowOrdinal, Numbers.LONG_NULL, actual.getLong2());
+                    Assert.assertEquals(name + ".l3 expected NULL row=" + rowOrdinal, Numbers.LONG_NULL, actual.getLong3());
+                } else {
+                    Assert.assertEquals(name + ".l0 row=" + rowOrdinal, tv.l256_0, actual.getLong0());
+                    Assert.assertEquals(name + ".l1 row=" + rowOrdinal, tv.l256_1, actual.getLong1());
+                    Assert.assertEquals(name + ".l2 row=" + rowOrdinal, tv.l256_2, actual.getLong2());
+                    Assert.assertEquals(name + ".l3 row=" + rowOrdinal, tv.l256_3, actual.getLong3());
                 }
                 break;
             }
@@ -455,13 +613,16 @@ public class QwpRow {
     }
 
     public enum ValueType {
-        BOOLEAN, LONG, DOUBLE, STRING, SYMBOL, IPV4,
+        BOOLEAN, BYTE, SHORT, INT, LONG, FLOAT, DOUBLE, CHAR, STRING, SYMBOL,
+        UUID, LONG256, TIMESTAMP_NANO, IPV4,
         DOUBLE_ARRAY_1D, DOUBLE_ARRAY_2D, DOUBLE_ARRAY_3D,
         DECIMAL64, DECIMAL128, DECIMAL256
     }
 
     public static final class TypedValue {
         public boolean b;
+        public byte b8;
+        public char c;
         public double d;
         public double[] da1;
         public double[][] da2;
@@ -474,9 +635,19 @@ public class QwpRow {
         public long dec256Ll;
         public long dec64Value;
         public int decScale;
-        public int i;
+        public float f;
+        public int i32;
+        public int ipv4;
         public long l;
+        public long l256_0;
+        public long l256_1;
+        public long l256_2;
+        public long l256_3;
         public String s;
+        public short s16;
+        public long tsNanos;
         public ValueType type;
+        public long uuidHi;
+        public long uuidLo;
     }
 }

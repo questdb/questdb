@@ -28,6 +28,7 @@ import io.questdb.client.Sender;
 import io.questdb.client.SenderError;
 import io.questdb.client.cutlass.line.LineSenderException;
 import io.questdb.client.cutlass.qwp.client.QwpWebSocketSender;
+import io.questdb.client.cutlass.qwp.protocol.QwpTableBuffer;
 import io.questdb.client.std.Decimal128;
 import io.questdb.client.std.Decimal256;
 import io.questdb.client.std.Decimal64;
@@ -41,6 +42,8 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
+
+import static io.questdb.client.cutlass.qwp.protocol.QwpConstants.TYPE_GEOHASH;
 
 /**
  * End-to-end tests for the QWP (QuestDB Wire Protocol) WebSocket sender.
@@ -2194,6 +2197,26 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
                             -2.25
                             0.0
                             """);
+        });
+    }
+
+    @Test
+    public void testGeoHashWirePrecisionMismatchRejected() throws Exception {
+        runInContext((port) -> {
+            String table = "test_qwp_geohash_prec_mismatch";
+            execute("CREATE TABLE " + table + " (col GEOHASH(5b), ts TIMESTAMP) " +
+                    "TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            assertCoercionError(port, table,
+                    (s, t) -> {
+                        QwpTableBuffer buf = s.getTableBuffer(t);
+                        QwpTableBuffer.ColumnBuffer col = buf.getOrCreateColumn("col", TYPE_GEOHASH, true);
+                        // Wire precision is 35 bits (5-byte values); the column is 5 bits (1-byte storage).
+                        // The server must reject this batch instead of silently truncating.
+                        col.addGeoHash(0x123456789AL, 35);
+                        s.at(1_000_000_000L, ChronoUnit.MICROS);
+                    },
+                    "GeoHash precision mismatch", "GEOHASH");
         });
     }
 

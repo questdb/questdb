@@ -192,6 +192,19 @@ public class QwpWalAppender implements QuietCloseable {
                 .put(']');
     }
 
+    private static CairoException geoHashPrecisionMismatchException(
+            int columnType, int wireBits, QwpTableBlockCursor tableBlock, int col
+    ) {
+        return CairoException.nonCritical()
+                .put("GeoHash precision mismatch [column=")
+                .put(tableBlock.getColumnDef(col).getName())
+                .put(", columnType=")
+                .put(ColumnType.nameOf(columnType))
+                .put(", wireBits=")
+                .put(wireBits)
+                .put(']');
+    }
+
     private static int getArrayBatchDimensionality(
             QwpArrayColumnCursor cursor,
             int rowCount,
@@ -263,15 +276,15 @@ public class QwpWalAppender implements QuietCloseable {
     }
 
     /**
-     * Maps a QWP v1 type code to QuestDB column type, with cursor access for decimal scale.
+     * Maps a QWP v1 type code to QuestDB column type, folding per-column metadata
+     * (decimal scale, geohash bit precision) from the cursor when needed.
      *
      * @param qwpType    QWP v1 type code
-     * @param tableBlock table block cursor for accessing decimal scale
+     * @param tableBlock table block cursor positioned on the column
      * @param colIndex   column index
-     * @return QuestDB column type
+     * @return QuestDB column type, or {@link ColumnType#UNDEFINED} if cursor metadata is out of range
      */
-    private static int mapQwpTypeToQuestDB(int qwpType, QwpTableBlockCursor tableBlock, int colIndex) {
-        // For decimal types, we need to get the scale from the cursor
+    public static int mapQwpTypeToQuestDB(int qwpType, QwpTableBlockCursor tableBlock, int colIndex) {
         switch (qwpType) {
             case TYPE_DECIMAL64 -> {
                 int scale = tableBlock.getDecimalColumn(colIndex).getScale() & 0xFF;
@@ -287,6 +300,13 @@ public class QwpWalAppender implements QuietCloseable {
                 int scale = tableBlock.getDecimalColumn(colIndex).getScale() & 0xFF;
                 int precision = Decimals.getDecimalTagPrecision(ColumnType.DECIMAL256);
                 return ColumnType.getDecimalType(ColumnType.DECIMAL256, precision, scale);
+            }
+            case TYPE_GEOHASH -> {
+                int bits = tableBlock.getGeoHashColumn(colIndex).getPrecision();
+                if (bits < ColumnType.GEOBYTE_MIN_BITS || bits > ColumnType.GEOLONG_MAX_BITS) {
+                    return ColumnType.UNDEFINED;
+                }
+                return ColumnType.getGeoHashTypeWithBits(bits);
             }
             default -> {
                 return mapQwpTypeToQuestDB(qwpType);
@@ -516,87 +536,100 @@ public class QwpWalAppender implements QuietCloseable {
                          ColumnType.DATE,
                          ColumnType.UUID, ColumnType.LONG256,
                          ColumnType.GEOBYTE, ColumnType.GEOSHORT, ColumnType.GEOINT, ColumnType.GEOLONG -> {
-                        if (cursor instanceof QwpGeoHashColumnCursor geoHashCursor) {
-                            appender.putGeoHashColumn(columnIndex, geoHashCursor, rowCount, columnType);
-                        } else if (cursor instanceof QwpFixedWidthColumnCursor fixedCursor) {
-                            if (!isFixedTypeCoercionAllowed(qwpType, columnType)) {
-                                throw coercionNotSupportedException(qwpType, columnType, tableBlock, col);
+                        switch (cursor) {
+                            case QwpGeoHashColumnCursor geoHashCursor -> {
+                                if (ColumnType.isGeoHash(columnType)) {
+                                    int wireBits = geoHashCursor.getPrecision();
+                                    if (wireBits != ColumnType.getGeoHashBits(columnType)) {
+                                        throw geoHashPrecisionMismatchException(columnType, wireBits, tableBlock, col);
+                                    }
+                                }
+                                appender.putGeoHashColumn(columnIndex, geoHashCursor, rowCount, columnType);
                             }
-                            int wireSize = fixedCursor.getValueSize();
-                            int columnSize = ColumnType.sizeOf(columnType);
-                            int colTag = ColumnType.tagOf(columnType);
-                            boolean isIntegerWire = isIntegerWireType(qwpType);
-                            boolean isFloatWire = isFloatWireType(qwpType);
-                            boolean isFloatTarget = colTag == ColumnType.FLOAT || colTag == ColumnType.DOUBLE;
-                            boolean isIntegerTarget = colTag == ColumnType.BYTE || colTag == ColumnType.SHORT
-                                    || colTag == ColumnType.INT || colTag == ColumnType.LONG;
-                            if (isIntegerWire && (isFloatTarget || wireSize != columnSize)) {
-                                // Integer → float/double, integer widening (INT → LONG), or
-                                // integer narrowing with overflow check (INT → BYTE, INT → SHORT)
-                                appender.putIntegerToNumericColumn(columnIndex, fixedCursor, rowCount, columnType);
-                            } else if (isFloatWire && (isIntegerTarget || wireSize != columnSize)) {
-                                // Float → integer (with whole-number + range check),
-                                // float widening (FLOAT → DOUBLE), or
-                                // float narrowing (DOUBLE → FLOAT)
-                                appender.putFloatToNumericColumn(columnIndex, fixedCursor, rowCount, columnType);
-                            } else if (wireSize == columnSize || columnSize <= 0) {
-                                appender.putFixedColumn(columnIndex, fixedCursor.getValuesAddress(),
-                                        fixedCursor.getValueCount(), fixedCursor.getValueSize(),
-                                        fixedCursor.getNullBitmapAddress(), rowCount);
-                            } else {
-                                throw coercionNotSupportedException(qwpType, columnType, tableBlock, col);
+                            case QwpFixedWidthColumnCursor fixedCursor -> {
+                                if (!isFixedTypeCoercionAllowed(qwpType, columnType)) {
+                                    throw coercionNotSupportedException(qwpType, columnType, tableBlock, col);
+                                }
+                                int wireSize = fixedCursor.getValueSize();
+                                int columnSize = ColumnType.sizeOf(columnType);
+                                int colTag = ColumnType.tagOf(columnType);
+                                boolean isIntegerWire = isIntegerWireType(qwpType);
+                                boolean isFloatWire = isFloatWireType(qwpType);
+                                boolean isFloatTarget = colTag == ColumnType.FLOAT || colTag == ColumnType.DOUBLE;
+                                boolean isIntegerTarget = colTag == ColumnType.BYTE || colTag == ColumnType.SHORT
+                                        || colTag == ColumnType.INT || colTag == ColumnType.LONG;
+                                if (isIntegerWire && (isFloatTarget || wireSize != columnSize)) {
+                                    // Integer → float/double, integer widening (INT → LONG), or
+                                    // integer narrowing with overflow check (INT → BYTE, INT → SHORT)
+                                    appender.putIntegerToNumericColumn(columnIndex, fixedCursor, rowCount, columnType);
+                                } else if (isFloatWire && (isIntegerTarget || wireSize != columnSize)) {
+                                    // Float → integer (with whole-number + range check),
+                                    // float widening (FLOAT → DOUBLE), or
+                                    // float narrowing (DOUBLE → FLOAT)
+                                    appender.putFloatToNumericColumn(columnIndex, fixedCursor, rowCount, columnType);
+                                } else if (wireSize == columnSize || columnSize <= 0) {
+                                    appender.putFixedColumn(columnIndex, fixedCursor.getValuesAddress(),
+                                            fixedCursor.getValueCount(), fixedCursor.getValueSize(),
+                                            fixedCursor.getNullBitmapAddress(), rowCount);
+                                } else {
+                                    throw coercionNotSupportedException(qwpType, columnType, tableBlock, col);
+                                }
                             }
-                        } else if (cursor instanceof QwpBooleanColumnCursor boolCursor) {
-                            int colTag = ColumnType.tagOf(columnType);
-                            if (colTag == ColumnType.BYTE || colTag == ColumnType.SHORT
-                                    || colTag == ColumnType.INT || colTag == ColumnType.LONG
-                                    || colTag == ColumnType.FLOAT || colTag == ColumnType.DOUBLE) {
-                                appender.putBooleanToNumericColumn(columnIndex, boolCursor, rowCount, columnType);
-                            } else {
-                                throw typeMismatchException(qwpType, columnType, tableBlock, col);
+                            case QwpBooleanColumnCursor boolCursor -> {
+                                int colTag = ColumnType.tagOf(columnType);
+                                if (colTag == ColumnType.BYTE || colTag == ColumnType.SHORT
+                                        || colTag == ColumnType.INT || colTag == ColumnType.LONG
+                                        || colTag == ColumnType.FLOAT || colTag == ColumnType.DOUBLE) {
+                                    appender.putBooleanToNumericColumn(columnIndex, boolCursor, rowCount, columnType);
+                                } else {
+                                    throw typeMismatchException(qwpType, columnType, tableBlock, col);
+                                }
                             }
-                        } else if (cursor instanceof QwpStringColumnCursor strCursor) {
-                            int colTag = ColumnType.tagOf(columnType);
-                            switch (colTag) {
-                                case ColumnType.UUID ->
-                                        appender.putStringToUuidColumn(columnIndex, strCursor, rowCount);
-                                case ColumnType.LONG256 ->
-                                        appender.putStringToLong256Column(columnIndex, strCursor, rowCount);
-                                case ColumnType.GEOBYTE, ColumnType.GEOSHORT, ColumnType.GEOINT, ColumnType.GEOLONG ->
-                                        appender.putStringToGeoHashColumn(columnIndex, strCursor, rowCount, columnType);
-                                default ->
-                                        appender.putStringToNumericColumn(columnIndex, strCursor, rowCount, columnType);
+                            case QwpStringColumnCursor strCursor -> {
+                                int colTag = ColumnType.tagOf(columnType);
+                                switch (colTag) {
+                                    case ColumnType.UUID ->
+                                            appender.putStringToUuidColumn(columnIndex, strCursor, rowCount);
+                                    case ColumnType.LONG256 ->
+                                            appender.putStringToLong256Column(columnIndex, strCursor, rowCount);
+                                    case ColumnType.GEOBYTE, ColumnType.GEOSHORT, ColumnType.GEOINT,
+                                         ColumnType.GEOLONG ->
+                                            appender.putStringToGeoHashColumn(columnIndex, strCursor, rowCount, columnType);
+                                    default ->
+                                            appender.putStringToNumericColumn(columnIndex, strCursor, rowCount, columnType);
+                                }
                             }
-                        } else {
-                            throw typeMismatchException(qwpType, columnType, tableBlock, col);
+                            case null, default -> throw typeMismatchException(qwpType, columnType, tableBlock, col);
                         }
                     }
                     case ColumnType.TIMESTAMP -> {
                         // Non-designated timestamp (handles both micros and nanos precision via tagOf)
-                        if (cursor instanceof QwpTimestampColumnCursor tsCursor) {
-                            // Check for precision mismatch
-                            boolean wireIsNanos = (qwpType == TYPE_TIMESTAMP_NANOS);
-                            boolean columnIsNanos = (columnType == ColumnType.TIMESTAMP_NANO);
-                            if (wireIsNanos != columnIsNanos || !tsCursor.supportsDirectAccess()) {
-                                // Precision mismatch or Gorilla-encoded - must iterate with conversion
-                                appender.putTimestampColumnWithConversion(columnIndex, tsCursor, rowCount,
-                                        qwpType, columnType, false, Numbers.LONG_NULL);
-                            } else {
-                                // Direct access, no conversion needed
-                                appender.putFixedColumn(columnIndex, tsCursor.getValuesAddress(),
-                                        tsCursor.getValueCount(), 8, tsCursor.getNullBitmapAddress(), rowCount);
+                        switch (cursor) {
+                            case QwpTimestampColumnCursor tsCursor -> {
+                                // Check for precision mismatch
+                                boolean wireIsNanos = (qwpType == TYPE_TIMESTAMP_NANOS);
+                                boolean columnIsNanos = (columnType == ColumnType.TIMESTAMP_NANO);
+                                if (wireIsNanos != columnIsNanos || !tsCursor.supportsDirectAccess()) {
+                                    // Precision mismatch or Gorilla-encoded - must iterate with conversion
+                                    appender.putTimestampColumnWithConversion(columnIndex, tsCursor, rowCount,
+                                            qwpType, columnType, false, Numbers.LONG_NULL);
+                                } else {
+                                    // Direct access, no conversion needed
+                                    appender.putFixedColumn(columnIndex, tsCursor.getValuesAddress(),
+                                            tsCursor.getValueCount(), 8, tsCursor.getNullBitmapAddress(), rowCount);
+                                }
                             }
-                        } else if (cursor instanceof QwpFixedWidthColumnCursor fixedCursor) {
-                            if (isIntegerWireType(qwpType)) {
-                                // Integer → timestamp: raw epoch offset
-                                appender.putIntegerToNumericColumn(columnIndex, fixedCursor, rowCount, columnType);
-                            } else {
-                                throw coercionNotSupportedException(qwpType, columnType, tableBlock, col);
+                            case QwpFixedWidthColumnCursor fixedCursor -> {
+                                if (isIntegerWireType(qwpType)) {
+                                    // Integer → timestamp: raw epoch offset
+                                    appender.putIntegerToNumericColumn(columnIndex, fixedCursor, rowCount, columnType);
+                                } else {
+                                    throw coercionNotSupportedException(qwpType, columnType, tableBlock, col);
+                                }
                             }
-                        } else if (cursor instanceof QwpStringColumnCursor strCursor) {
-                            appender.putStringToTimestampColumn(columnIndex, strCursor, rowCount, columnType);
-                        } else {
-                            throw typeMismatchException(qwpType, columnType, tableBlock, col);
+                            case QwpStringColumnCursor strCursor ->
+                                    appender.putStringToTimestampColumn(columnIndex, strCursor, rowCount, columnType);
+                            case null, default -> throw typeMismatchException(qwpType, columnType, tableBlock, col);
                         }
                     }
                     case ColumnType.CHAR -> {
@@ -613,151 +646,159 @@ public class QwpWalAppender implements QuietCloseable {
                         }
                     }
                     case ColumnType.VARCHAR -> {
-                        if (cursor instanceof QwpStringColumnCursor strCursor) {
-                            appender.putVarcharColumn(columnIndex, strCursor, rowCount);
-                        } else if (cursor instanceof QwpBooleanColumnCursor boolCursor) {
-                            appender.putBooleanToVarcharColumn(columnIndex, boolCursor, rowCount);
-                        } else if (cursor instanceof QwpTimestampColumnCursor tsCursor) {
-                            appender.putTimestampToVarcharColumn(columnIndex, tsCursor, rowCount, qwpType);
-                        } else if (cursor instanceof QwpGeoHashColumnCursor geoCursor) {
-                            appender.putGeoHashToVarcharColumn(columnIndex, geoCursor, rowCount);
-                        } else if (cursor instanceof QwpDecimalColumnCursor decCursor) {
-                            appender.putDecimalToVarcharColumn(columnIndex, decCursor, rowCount);
-                        } else if (cursor instanceof QwpSymbolColumnCursor symCursor) {
-                            appender.putSymbolToVarcharColumn(columnIndex, symCursor, rowCount);
-                        } else if (cursor instanceof QwpFixedWidthColumnCursor fixedCursor) {
-                            if (isIntegerWireType(qwpType)) {
-                                appender.putFixedToVarcharColumn(columnIndex, fixedCursor, rowCount);
-                            } else if (isFloatWireType(qwpType)) {
-                                appender.putFloatToVarcharColumn(columnIndex, fixedCursor, rowCount);
-                            } else {
-                                appender.putFixedOtherToVarcharColumn(columnIndex, fixedCursor, rowCount, qwpType);
+                        switch (cursor) {
+                            case QwpStringColumnCursor strCursor ->
+                                    appender.putVarcharColumn(columnIndex, strCursor, rowCount);
+                            case QwpBooleanColumnCursor boolCursor ->
+                                    appender.putBooleanToVarcharColumn(columnIndex, boolCursor, rowCount);
+                            case QwpTimestampColumnCursor tsCursor ->
+                                    appender.putTimestampToVarcharColumn(columnIndex, tsCursor, rowCount, qwpType);
+                            case QwpGeoHashColumnCursor geoCursor ->
+                                    appender.putGeoHashToVarcharColumn(columnIndex, geoCursor, rowCount);
+                            case QwpDecimalColumnCursor decCursor ->
+                                    appender.putDecimalToVarcharColumn(columnIndex, decCursor, rowCount);
+                            case QwpSymbolColumnCursor symCursor ->
+                                    appender.putSymbolToVarcharColumn(columnIndex, symCursor, rowCount);
+                            case QwpFixedWidthColumnCursor fixedCursor -> {
+                                if (isIntegerWireType(qwpType)) {
+                                    appender.putFixedToVarcharColumn(columnIndex, fixedCursor, rowCount);
+                                } else if (isFloatWireType(qwpType)) {
+                                    appender.putFloatToVarcharColumn(columnIndex, fixedCursor, rowCount);
+                                } else {
+                                    appender.putFixedOtherToVarcharColumn(columnIndex, fixedCursor, rowCount, qwpType);
+                                }
                             }
-                        } else {
-                            throw typeMismatchException(qwpType, columnType, tableBlock, col);
+                            case null, default -> throw typeMismatchException(qwpType, columnType, tableBlock, col);
                         }
                     }
                     case ColumnType.STRING -> {
-                        if (cursor instanceof QwpStringColumnCursor strCursor) {
-                            appender.putStringColumn(columnIndex, strCursor, rowCount);
-                        } else if (cursor instanceof QwpBooleanColumnCursor boolCursor) {
-                            appender.putBooleanToStringColumn(columnIndex, boolCursor, rowCount);
-                        } else if (cursor instanceof QwpTimestampColumnCursor tsCursor) {
-                            appender.putTimestampToStringColumn(columnIndex, tsCursor, rowCount, qwpType);
-                        } else if (cursor instanceof QwpGeoHashColumnCursor geoCursor) {
-                            appender.putGeoHashToStringColumn(columnIndex, geoCursor, rowCount);
-                        } else if (cursor instanceof QwpDecimalColumnCursor decCursor) {
-                            appender.putDecimalToStringColumn(columnIndex, decCursor, rowCount);
-                        } else if (cursor instanceof QwpSymbolColumnCursor symCursor) {
-                            appender.putSymbolToStringColumn(columnIndex, symCursor, rowCount);
-                        } else if (cursor instanceof QwpFixedWidthColumnCursor fixedCursor) {
-                            if (isIntegerWireType(qwpType)) {
-                                appender.putFixedToStringColumn(columnIndex, fixedCursor, rowCount);
-                            } else if (isFloatWireType(qwpType)) {
-                                appender.putFloatToStringColumn(columnIndex, fixedCursor, rowCount);
-                            } else {
-                                appender.putFixedOtherToStringColumn(columnIndex, fixedCursor, rowCount, qwpType);
+                        switch (cursor) {
+                            case QwpStringColumnCursor strCursor ->
+                                    appender.putStringColumn(columnIndex, strCursor, rowCount);
+                            case QwpBooleanColumnCursor boolCursor ->
+                                    appender.putBooleanToStringColumn(columnIndex, boolCursor, rowCount);
+                            case QwpTimestampColumnCursor tsCursor ->
+                                    appender.putTimestampToStringColumn(columnIndex, tsCursor, rowCount, qwpType);
+                            case QwpGeoHashColumnCursor geoCursor ->
+                                    appender.putGeoHashToStringColumn(columnIndex, geoCursor, rowCount);
+                            case QwpDecimalColumnCursor decCursor ->
+                                    appender.putDecimalToStringColumn(columnIndex, decCursor, rowCount);
+                            case QwpSymbolColumnCursor symCursor ->
+                                    appender.putSymbolToStringColumn(columnIndex, symCursor, rowCount);
+                            case QwpFixedWidthColumnCursor fixedCursor -> {
+                                if (isIntegerWireType(qwpType)) {
+                                    appender.putFixedToStringColumn(columnIndex, fixedCursor, rowCount);
+                                } else if (isFloatWireType(qwpType)) {
+                                    appender.putFloatToStringColumn(columnIndex, fixedCursor, rowCount);
+                                } else {
+                                    appender.putFixedOtherToStringColumn(columnIndex, fixedCursor, rowCount, qwpType);
+                                }
                             }
-                        } else {
-                            throw typeMismatchException(qwpType, columnType, tableBlock, col);
+                            case null, default -> throw typeMismatchException(qwpType, columnType, tableBlock, col);
                         }
                     }
                     case ColumnType.SYMBOL -> {
-                        if (cursor instanceof QwpSymbolColumnCursor symCursor) {
-                            if (symbolCache != null && symCursor.isDeltaMode()) {
-                                long tableId = tud.getTableToken().getTableId();
-                                int initialSymbolCount = walWriter.getSymbolCountWatermark(columnIndex);
-                                appender.putSymbolColumn(
-                                        columnIndex,
-                                        symCursor,
-                                        rowCount,
-                                        symbolCache,
-                                        tableId,
-                                        initialSymbolCount
-                                );
-                            } else {
-                                appender.putSymbolColumn(columnIndex, symCursor, rowCount);
+                        switch (cursor) {
+                            case QwpSymbolColumnCursor symCursor -> {
+                                if (symbolCache != null && symCursor.isDeltaMode()) {
+                                    long tableId = tud.getTableToken().getTableId();
+                                    int initialSymbolCount = walWriter.getSymbolCountWatermark(columnIndex);
+                                    appender.putSymbolColumn(
+                                            columnIndex,
+                                            symCursor,
+                                            rowCount,
+                                            symbolCache,
+                                            tableId,
+                                            initialSymbolCount
+                                    );
+                                } else {
+                                    appender.putSymbolColumn(columnIndex, symCursor, rowCount);
+                                }
                             }
-                        } else if (cursor instanceof QwpFixedWidthColumnCursor fixedCursor) {
-                            if (isIntegerWireType(qwpType)) {
-                                appender.putFixedToSymbolColumn(columnIndex, fixedCursor, rowCount);
-                            } else if (isFloatWireType(qwpType)) {
-                                appender.putFloatToSymbolColumn(columnIndex, fixedCursor, rowCount);
-                            } else {
-                                throw typeMismatchException(qwpType, columnType, tableBlock, col);
+                            case QwpFixedWidthColumnCursor fixedCursor -> {
+                                if (isIntegerWireType(qwpType)) {
+                                    appender.putFixedToSymbolColumn(columnIndex, fixedCursor, rowCount);
+                                } else if (isFloatWireType(qwpType)) {
+                                    appender.putFloatToSymbolColumn(columnIndex, fixedCursor, rowCount);
+                                } else {
+                                    throw typeMismatchException(qwpType, columnType, tableBlock, col);
+                                }
                             }
-                        } else if (cursor instanceof QwpStringColumnCursor strCursor) {
-                            appender.putStringToSymbolColumn(columnIndex, strCursor, rowCount);
-                        } else {
-                            throw typeMismatchException(qwpType, columnType, tableBlock, col);
+                            case QwpStringColumnCursor strCursor ->
+                                    appender.putStringToSymbolColumn(columnIndex, strCursor, rowCount);
+                            case null, default -> throw typeMismatchException(qwpType, columnType, tableBlock, col);
                         }
                     }
                     case ColumnType.DECIMAL8, ColumnType.DECIMAL16, ColumnType.DECIMAL32 -> {
-                        if (cursor instanceof QwpDecimalColumnCursor decCursor) {
-                            appender.putDecimalToSmallDecimalColumn(columnIndex, decCursor, rowCount, columnType);
-                        } else if (cursor instanceof QwpFixedWidthColumnCursor fixedCursor) {
-                            if (isFloatWireType(qwpType)) {
-                                appender.putFloatToDecimalColumn(columnIndex, fixedCursor, rowCount, columnType);
-                            } else if (isIntegerWireType(qwpType)) {
-                                appender.putFixedToSmallDecimalColumn(columnIndex, fixedCursor, rowCount, columnType);
-                            } else {
-                                throw typeMismatchException(qwpType, columnType, tableBlock, col);
+                        switch (cursor) {
+                            case QwpDecimalColumnCursor decCursor ->
+                                    appender.putDecimalToSmallDecimalColumn(columnIndex, decCursor, rowCount, columnType);
+                            case QwpFixedWidthColumnCursor fixedCursor -> {
+                                if (isFloatWireType(qwpType)) {
+                                    appender.putFloatToDecimalColumn(columnIndex, fixedCursor, rowCount, columnType);
+                                } else if (isIntegerWireType(qwpType)) {
+                                    appender.putFixedToSmallDecimalColumn(columnIndex, fixedCursor, rowCount, columnType);
+                                } else {
+                                    throw typeMismatchException(qwpType, columnType, tableBlock, col);
+                                }
                             }
-                        } else if (cursor instanceof QwpStringColumnCursor strCursor) {
-                            appender.putStringToDecimalColumn(columnIndex, strCursor, rowCount, columnType);
-                        } else {
-                            throw typeMismatchException(qwpType, columnType, tableBlock, col);
+                            case QwpStringColumnCursor strCursor ->
+                                    appender.putStringToDecimalColumn(columnIndex, strCursor, rowCount, columnType);
+                            case null, default -> throw typeMismatchException(qwpType, columnType, tableBlock, col);
                         }
                     }
                     case ColumnType.DECIMAL64 -> {
-                        if (cursor instanceof QwpDecimalColumnCursor decCursor) {
-                            appender.putDecimal64Column(columnIndex, decCursor, rowCount, columnType);
-                        } else if (cursor instanceof QwpFixedWidthColumnCursor fixedCursor) {
-                            if (isFloatWireType(qwpType)) {
-                                appender.putFloatToDecimalColumn(columnIndex, fixedCursor, rowCount, columnType);
-                            } else if (isIntegerWireType(qwpType)) {
-                                appender.putFixedToDecimal64Column(columnIndex, fixedCursor, rowCount, columnType);
-                            } else {
-                                throw typeMismatchException(qwpType, columnType, tableBlock, col);
+                        switch (cursor) {
+                            case QwpDecimalColumnCursor decCursor ->
+                                    appender.putDecimal64Column(columnIndex, decCursor, rowCount, columnType);
+                            case QwpFixedWidthColumnCursor fixedCursor -> {
+                                if (isFloatWireType(qwpType)) {
+                                    appender.putFloatToDecimalColumn(columnIndex, fixedCursor, rowCount, columnType);
+                                } else if (isIntegerWireType(qwpType)) {
+                                    appender.putFixedToDecimal64Column(columnIndex, fixedCursor, rowCount, columnType);
+                                } else {
+                                    throw typeMismatchException(qwpType, columnType, tableBlock, col);
+                                }
                             }
-                        } else if (cursor instanceof QwpStringColumnCursor strCursor) {
-                            appender.putStringToDecimalColumn(columnIndex, strCursor, rowCount, columnType);
-                        } else {
-                            throw typeMismatchException(qwpType, columnType, tableBlock, col);
+                            case QwpStringColumnCursor strCursor ->
+                                    appender.putStringToDecimalColumn(columnIndex, strCursor, rowCount, columnType);
+                            case null, default -> throw typeMismatchException(qwpType, columnType, tableBlock, col);
                         }
                     }
                     case ColumnType.DECIMAL128 -> {
-                        if (cursor instanceof QwpDecimalColumnCursor decCursor) {
-                            appender.putDecimal128Column(columnIndex, decCursor, rowCount, columnType);
-                        } else if (cursor instanceof QwpFixedWidthColumnCursor fixedCursor) {
-                            if (isFloatWireType(qwpType)) {
-                                appender.putFloatToDecimalColumn(columnIndex, fixedCursor, rowCount, columnType);
-                            } else if (isIntegerWireType(qwpType)) {
-                                appender.putFixedToDecimal128Column(columnIndex, fixedCursor, rowCount, columnType);
-                            } else {
-                                throw typeMismatchException(qwpType, columnType, tableBlock, col);
+                        switch (cursor) {
+                            case QwpDecimalColumnCursor decCursor ->
+                                    appender.putDecimal128Column(columnIndex, decCursor, rowCount, columnType);
+                            case QwpFixedWidthColumnCursor fixedCursor -> {
+                                if (isFloatWireType(qwpType)) {
+                                    appender.putFloatToDecimalColumn(columnIndex, fixedCursor, rowCount, columnType);
+                                } else if (isIntegerWireType(qwpType)) {
+                                    appender.putFixedToDecimal128Column(columnIndex, fixedCursor, rowCount, columnType);
+                                } else {
+                                    throw typeMismatchException(qwpType, columnType, tableBlock, col);
+                                }
                             }
-                        } else if (cursor instanceof QwpStringColumnCursor strCursor) {
-                            appender.putStringToDecimalColumn(columnIndex, strCursor, rowCount, columnType);
-                        } else {
-                            throw typeMismatchException(qwpType, columnType, tableBlock, col);
+                            case QwpStringColumnCursor strCursor ->
+                                    appender.putStringToDecimalColumn(columnIndex, strCursor, rowCount, columnType);
+                            case null, default -> throw typeMismatchException(qwpType, columnType, tableBlock, col);
                         }
                     }
                     case ColumnType.DECIMAL256 -> {
-                        if (cursor instanceof QwpDecimalColumnCursor decCursor) {
-                            appender.putDecimal256Column(columnIndex, decCursor, rowCount, columnType);
-                        } else if (cursor instanceof QwpFixedWidthColumnCursor fixedCursor) {
-                            if (isFloatWireType(qwpType)) {
-                                appender.putFloatToDecimalColumn(columnIndex, fixedCursor, rowCount, columnType);
-                            } else if (isIntegerWireType(qwpType)) {
-                                appender.putFixedToDecimal256Column(columnIndex, fixedCursor, rowCount, columnType);
-                            } else {
-                                throw typeMismatchException(qwpType, columnType, tableBlock, col);
+                        switch (cursor) {
+                            case QwpDecimalColumnCursor decCursor ->
+                                    appender.putDecimal256Column(columnIndex, decCursor, rowCount, columnType);
+                            case QwpFixedWidthColumnCursor fixedCursor -> {
+                                if (isFloatWireType(qwpType)) {
+                                    appender.putFloatToDecimalColumn(columnIndex, fixedCursor, rowCount, columnType);
+                                } else if (isIntegerWireType(qwpType)) {
+                                    appender.putFixedToDecimal256Column(columnIndex, fixedCursor, rowCount, columnType);
+                                } else {
+                                    throw typeMismatchException(qwpType, columnType, tableBlock, col);
+                                }
                             }
-                        } else if (cursor instanceof QwpStringColumnCursor strCursor) {
-                            appender.putStringToDecimalColumn(columnIndex, strCursor, rowCount, columnType);
-                        } else {
-                            throw typeMismatchException(qwpType, columnType, tableBlock, col);
+                            case QwpStringColumnCursor strCursor ->
+                                    appender.putStringToDecimalColumn(columnIndex, strCursor, rowCount, columnType);
+                            case null, default -> throw typeMismatchException(qwpType, columnType, tableBlock, col);
                         }
                     }
                     default -> {

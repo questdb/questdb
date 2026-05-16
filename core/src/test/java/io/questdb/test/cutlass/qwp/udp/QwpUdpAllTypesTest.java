@@ -477,6 +477,26 @@ public class QwpUdpAllTypesTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testGeoHashAutoCreateGeoByte() throws Exception {
+        assertGeoHashAutoCreate("t_geo_auto_byte", "s", 5, "GEOHASH(1c)");
+    }
+
+    @Test
+    public void testGeoHashAutoCreateGeoInt() throws Exception {
+        assertGeoHashAutoCreate("t_geo_auto_int", "s24s", 20, "GEOHASH(4c)");
+    }
+
+    @Test
+    public void testGeoHashAutoCreateGeoLong() throws Exception {
+        assertGeoHashAutoCreate("t_geo_auto_long", "s24se0g", 35, "GEOHASH(7c)");
+    }
+
+    @Test
+    public void testGeoHashAutoCreateGeoShort() throws Exception {
+        assertGeoHashAutoCreate("t_geo_auto_short", "s24", 15, "GEOHASH(3c)");
+    }
+
+    @Test
     public void testGeoHashDirect() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t_geo (val GEOHASH(6c), timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY WAL");
@@ -934,6 +954,35 @@ public class QwpUdpAllTypesTest extends AbstractCairoTest {
             assertSql(
                     "val\nhello varchar\n",
                     "SELECT val FROM t_varchar"
+            );
+        });
+    }
+
+    private void assertGeoHashAutoCreate(
+            String tableName,
+            String hash,
+            int precisionBits,
+            String expectedColumnType
+    ) throws Exception {
+        assertMemoryLeak(() -> {
+            try (QwpUdpReceiver receiver = receiverFactory.create(LOW_COMMIT_RATE_CONF, engine)) {
+                sendDirectRow(tableName, tb -> {
+                    QwpTableBuffer.ColumnBuffer col = tb.getOrCreateColumn("val", TYPE_GEOHASH, true);
+                    col.addGeoHash(GeoHashes.fromString(hash), precisionBits);
+                    QwpTableBuffer.ColumnBuffer ts = tb.getOrCreateDesignatedTimestampColumn(TYPE_TIMESTAMP);
+                    ts.addLong(1_000_000L);
+                    tb.nextRow();
+                });
+                drainReceiver(receiver);
+            }
+            drainWalQueue();
+            assertSql(
+                    "type\n" + expectedColumnType + "\n",
+                    "SELECT type FROM (SHOW COLUMNS FROM " + tableName + ") WHERE column = 'val'"
+            );
+            assertSql(
+                    "val\n" + hash + "\n",
+                    "SELECT val FROM " + tableName
             );
         });
     }
