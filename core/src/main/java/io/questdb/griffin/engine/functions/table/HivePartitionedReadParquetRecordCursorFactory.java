@@ -349,6 +349,21 @@ public class HivePartitionedReadParquetRecordCursorFactory extends ProjectableRe
     }
 
     /**
+     * Returns per-file footer row counts only if the cache has already been
+     * populated by a prior {@link #getCachedTotalRowCount} call; returns
+     * {@code null} otherwise without forcing the bulk walk. The cursor's
+     * prune-aware count path uses this to avoid opening every matched file
+     * when a partition filter would skip most of them - falling back to
+     * opening only survivors via {@link #openCachedFile}.
+     */
+    public synchronized io.questdb.std.LongList getCachedPerFileRowCountsIfPopulated() {
+        if (cachedTotalRowCount < 0) {
+            return null;
+        }
+        return cachedPerFileRowCounts;
+    }
+
+    /**
      * Returns per-file footer row counts in the same order as the matchedFiles list.
      * Triggers the full walk on first call (via {@link #getCachedTotalRowCount}); cheap
      * thereafter. The cursor uses this to compute prune-aware row totals without

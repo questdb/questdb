@@ -554,18 +554,27 @@ public class HivePartitionedReadParquetPageFrameCursor implements PageFrameCurso
         }
     }
 
-    // Walk matchedFiles, apply the partition prune predicate per file, sum the per-file
-    // row counts of survivors using the factory's cached per-file row counts. Avoids
-    // any file open by reusing the count cache; allocates no temp data structures.
-    // Returns the row count the cursor would emit if drained end-to-end with the
-    // current pushdownFilterConditions in effect.
+    // Walk matchedFiles, apply the partition prune predicate per file, sum the
+    // row counts of survivors. For survivors that already have a cached row
+    // count from a prior no-filter call, reuse it; otherwise open the file on
+    // demand via the factory's CachedFile cache and read the count from its
+    // footer. Critically, when the partition filter prunes most files (e.g.
+    // count(*) WHERE day='2026-05-01' on an 8-day glob), we no longer force
+    // the full computeTotalRowCount walk that opens every file - we open only
+    // the surviving file(s). Previously a 1-of-8 filter still paid 8 file
+    // opens because computePrunedTotal called getCachedPerFileRowCounts which
+    // eagerly walks every matched file.
     private long computePrunedTotal() {
         if (pushdownFilterConditions == null || pushdownFilterConditions.size() == 0) {
-            // No filter - the cached total is exact.
+            // No filter - the cached total is exact and the bulk walk amortises
+            // across future queries via the cache.
             return factory.getCachedTotalRowCount(ff);
         }
         ensureFilterConditionsInitialised();
-        final io.questdb.std.LongList perFile = factory.getCachedPerFileRowCounts(ff);
+        // perFile is non-null only if a prior no-filter call (or earlier prune-
+        // aware call that filled it) already populated the cache. Don't force
+        // the fill here - that's the optimization.
+        final io.questdb.std.LongList perFile = factory.getCachedPerFileRowCountsIfPopulated();
         long sum = 0;
         for (int i = 0, n = matchedFiles.size(); i < n; i++) {
             Utf8Sequence filePath = matchedFiles.getQuick(i);
@@ -575,7 +584,16 @@ public class HivePartitionedReadParquetPageFrameCursor implements PageFrameCurso
                     continue;
                 }
             }
-            sum += perFile.getQuick(i);
+            if (perFile != null) {
+                // Cache hit - no file open needed.
+                sum += perFile.getQuick(i);
+            } else {
+                // Cache miss - open only this survivor's footer through the
+                // factory's LRU. Subsequent next() walks may reuse the same
+                // entry; the open cost is paid once per file regardless.
+                HivePartitionedReadParquetRecordCursorFactory.CachedFile cf = factory.openCachedFile(filePath, ff);
+                sum += cf.decoder.metadata().getRowCount();
+            }
         }
         return sum;
     }
