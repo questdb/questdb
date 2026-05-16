@@ -27,7 +27,27 @@ package io.questdb.cutlass.qwp.protocol;
 import java.nio.charset.StandardCharsets;
 
 import static io.questdb.cutlass.qwp.protocol.QwpConstants.TYPE_BOOLEAN;
+import static io.questdb.cutlass.qwp.protocol.QwpConstants.TYPE_BYTE;
 import static io.questdb.cutlass.qwp.protocol.QwpConstants.TYPE_CHAR;
+import static io.questdb.cutlass.qwp.protocol.QwpConstants.TYPE_DATE;
+import static io.questdb.cutlass.qwp.protocol.QwpConstants.TYPE_DECIMAL128;
+import static io.questdb.cutlass.qwp.protocol.QwpConstants.TYPE_DECIMAL256;
+import static io.questdb.cutlass.qwp.protocol.QwpConstants.TYPE_DECIMAL64;
+import static io.questdb.cutlass.qwp.protocol.QwpConstants.TYPE_DOUBLE;
+import static io.questdb.cutlass.qwp.protocol.QwpConstants.TYPE_DOUBLE_ARRAY;
+import static io.questdb.cutlass.qwp.protocol.QwpConstants.TYPE_FLOAT;
+import static io.questdb.cutlass.qwp.protocol.QwpConstants.TYPE_GEOHASH;
+import static io.questdb.cutlass.qwp.protocol.QwpConstants.TYPE_INT;
+import static io.questdb.cutlass.qwp.protocol.QwpConstants.TYPE_IPV4;
+import static io.questdb.cutlass.qwp.protocol.QwpConstants.TYPE_LONG;
+import static io.questdb.cutlass.qwp.protocol.QwpConstants.TYPE_LONG256;
+import static io.questdb.cutlass.qwp.protocol.QwpConstants.TYPE_LONG_ARRAY;
+import static io.questdb.cutlass.qwp.protocol.QwpConstants.TYPE_SHORT;
+import static io.questdb.cutlass.qwp.protocol.QwpConstants.TYPE_SYMBOL;
+import static io.questdb.cutlass.qwp.protocol.QwpConstants.TYPE_TIMESTAMP;
+import static io.questdb.cutlass.qwp.protocol.QwpConstants.TYPE_TIMESTAMP_NANOS;
+import static io.questdb.cutlass.qwp.protocol.QwpConstants.TYPE_UUID;
+import static io.questdb.cutlass.qwp.protocol.QwpConstants.TYPE_VARCHAR;
 
 /**
  * Represents a column definition in a QWP v1 schema.
@@ -138,14 +158,37 @@ public final class QwpColumnDef {
      * @throws QwpParseException if type code is invalid
      */
     public void validate() throws QwpParseException {
-        // Valid type codes: TYPE_BOOLEAN (0x01) through TYPE_CHAR (0x16)
-        // This includes all basic types, arrays, decimals, and char
-        boolean valid = (typeCode >= TYPE_BOOLEAN && typeCode <= TYPE_CHAR);
-        if (!valid) {
-            throw QwpParseException.create(
-                    QwpParseException.ErrorCode.INVALID_COLUMN_TYPE,
-                    "invalid column type code: 0x" + Integer.toHexString(typeCode)
-            );
+        // Explicit allowlist of ingest-supported wire types. BINARY (0x17) is defined
+        // by the egress codec but has no ingest decoder yet, so it stays rejected.
+        switch (typeCode) {
+            case TYPE_BOOLEAN:
+            case TYPE_BYTE:
+            case TYPE_SHORT:
+            case TYPE_INT:
+            case TYPE_LONG:
+            case TYPE_FLOAT:
+            case TYPE_DOUBLE:
+            case TYPE_SYMBOL:
+            case TYPE_TIMESTAMP:
+            case TYPE_DATE:
+            case TYPE_UUID:
+            case TYPE_LONG256:
+            case TYPE_GEOHASH:
+            case TYPE_VARCHAR:
+            case TYPE_TIMESTAMP_NANOS:
+            case TYPE_DOUBLE_ARRAY:
+            case TYPE_LONG_ARRAY:
+            case TYPE_DECIMAL64:
+            case TYPE_DECIMAL128:
+            case TYPE_DECIMAL256:
+            case TYPE_CHAR:
+            case TYPE_IPV4:
+                return;
+            default:
+                throw QwpParseException.create(
+                        QwpParseException.ErrorCode.INVALID_COLUMN_TYPE,
+                        "invalid column type code: 0x" + Integer.toHexString(typeCode & 0xFF)
+                );
         }
     }
 }

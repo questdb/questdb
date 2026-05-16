@@ -541,6 +541,16 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
                         }
                     }
                 }
+                case ColumnType.IPv4 -> {
+                    for (int row = 0; row < rowCount; row++) {
+                        if (QwpNullBitmap.isNull(nullBitmapAddress, row)) {
+                            dataMem.putInt(Numbers.IPv4_NULL);
+                        } else {
+                            dataMem.putInt(Unsafe.getInt(valuesAddress + (long) valueIdx * 4));
+                            valueIdx++;
+                        }
+                    }
+                }
                 case ColumnType.FLOAT -> {
                     for (int row = 0; row < rowCount; row++) {
                         if (QwpNullBitmap.isNull(nullBitmapAddress, row)) {

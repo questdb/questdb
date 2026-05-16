@@ -771,6 +771,16 @@ public class QwpIngressOracleFuzzTest extends AbstractCairoTest {
         };
     }
 
+    /**
+     * Map an id (or any long seed) to a packed IPv4 address that is guaranteed
+     * non-zero. QuestDB reserves the bit pattern 0 as the IPv4 NULL sentinel,
+     * so we OR a high bit into the derived address; this keeps the oracle's
+     * non-null assertions unambiguous while still spanning the full 32-bit space.
+     */
+    private static int deriveIPv4(long seed) {
+        return (int) (seed * 2_654_435_761L) | 0x01_00_00_01;
+    }
+
     private static long directorySizeBytes(File dir) {
         if (!dir.exists()) {
             return 0;
@@ -799,6 +809,11 @@ public class QwpIngressOracleFuzzTest extends AbstractCairoTest {
         if (!shouldFuzz(rnd, COLUMN_SKIP_FACTOR)) row.setDouble("d", maybeNegate(rnd, id * 1.5));
         if (!shouldFuzz(rnd, COLUMN_SKIP_FACTOR)) row.setString("s", "s_" + id + maybeNonAscii(rnd));
         if (!shouldFuzz(rnd, COLUMN_SKIP_FACTOR)) row.setSymbol("sym", "sym_" + (id & 0xFL) + maybeNonAscii(rnd));
+        // IPv4: derive a 4-byte address from id; bit pattern 0 is the QuestDB IPv4
+        // NULL sentinel, so we OR in a constant high bit to guarantee a non-null
+        // value across the full id range. Skippable like the other base columns to
+        // exercise the explicit-NULL bitmap path through SF replay.
+        if (!shouldFuzz(rnd, COLUMN_SKIP_FACTOR)) row.setIPv4("ip", deriveIPv4(id));
         if (!shouldFuzz(rnd, COLUMN_SKIP_FACTOR))
             row.setDoubleArray1d("da", deriveDoubleArr1d(id, rnd.nextBoolean() ? -1.0 : 1.0));
         if (!shouldFuzz(rnd, COLUMN_SKIP_FACTOR))
@@ -851,7 +866,7 @@ public class QwpIngressOracleFuzzTest extends AbstractCairoTest {
         // write the extra expect type-default NULL at assertion time.
         // Numeric extras get the same independent sign-flip treatment as
         // base columns.
-        switch (rnd.nextInt(14)) {
+        switch (rnd.nextInt(15)) {
             case 0:
                 row.setLong("ex_l_0", maybeNegate(rnd, id * 7L));
                 break;
@@ -922,6 +937,11 @@ public class QwpIngressOracleFuzzTest extends AbstractCairoTest {
                         rnd.nextBoolean());
                 break;
             }
+            case 14:
+                // Auto-created IPv4 extra. Two distinct columns spread the per-id values
+                // out so neither column degenerates into a single repeated address.
+                row.setIPv4("ex_ip_" + (id & 1L), deriveIPv4(id + 0x9E37_79B9L));
+                break;
         }
     }
 
@@ -1028,6 +1048,7 @@ public class QwpIngressOracleFuzzTest extends AbstractCairoTest {
                             + "d DOUBLE, "
                             + "s STRING, "
                             + "sym SYMBOL, "
+                            + "ip IPv4, "
                             + "da DOUBLE[], "
                             + "da2 DOUBLE[][], "
                             + "da3 DOUBLE[][][], "

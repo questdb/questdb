@@ -56,6 +56,7 @@ public class QwpColumnDefTest {
                 QwpConstants.TYPE_DECIMAL128,
                 QwpConstants.TYPE_DECIMAL256,
                 QwpConstants.TYPE_CHAR,
+                QwpConstants.TYPE_IPV4,
         };
         for (byte type : validTypes) {
             QwpColumnDef col = new QwpColumnDef("col", type);

@@ -264,6 +264,49 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
     }
 
     @Test
+    public void testAutoCreateIPv4Column() throws Exception {
+        runInContext((port) -> {
+            String table = "test_qwp_auto_ipv4";
+            // Pre-create the table without the IPv4 column so QwpWalAppender
+            // auto-creates it, exercising the TYPE_IPV4 branch in
+            // mapQwpTypeToQuestDB plus the IPv4 null-aware arm in
+            // WalColumnarRowAppender.putFixedColumn (a null row forces the
+            // sparse path; 0.0.0.0 is QuestDB's IPv4 NULL sentinel).
+            execute("CREATE TABLE " + table + " (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            try (QwpWebSocketSender sender = connectWs(port)) {
+                sender.table(table)
+                        .ipv4Column("addr", 0xC0A80101) // 192.168.1.1
+                        .at(1_000_000, ChronoUnit.MICROS);
+                // Same column omitted on row 2 -> auto-NULL via the writer's null-aware path.
+                sender.table(table)
+                        .at(2_000_000, ChronoUnit.MICROS);
+                // String-overload parses the dotted-quad client-side.
+                sender.table(table)
+                        .ipv4Column("addr", "10.0.0.1")
+                        .at(3_000_000, ChronoUnit.MICROS);
+                sender.flush();
+            }
+
+            drainWalQueue();
+            // Verify the column was auto-created with the right QuestDB type.
+            assertSql(
+                    "SELECT type FROM table_columns('" + table + "') WHERE column = 'addr'",
+                    "type\nIPv4\n"
+            );
+            assertSql(
+                    "SELECT coalesce(addr::string, 'null') v FROM " + table + " ORDER BY ts",
+                    """
+                            v
+                            192.168.1.1
+                            null
+                            10.0.0.1
+                            """
+            );
+        });
+    }
+
+    @Test
     public void testAutoCreateNewColumnsDisabled() throws Exception {
         runInContextNoAutoCreate((port) -> {
             String table = "test_qwp_no_auto_col";

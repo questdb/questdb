@@ -153,6 +153,9 @@ public class QwpRow {
                 case DECIMAL256:
                     sender.decimalColumn(name, new Decimal256(v.dec256Hh, v.dec256Hl, v.dec256Lh, v.dec256Ll, v.decScale));
                     break;
+                case IPV4:
+                    sender.ipv4Column(name, v.i);
+                    break;
                 case SYMBOL:
                     // already emitted
                     break;
@@ -190,6 +193,18 @@ public class QwpRow {
         v.type = ValueType.DECIMAL64;
         v.dec64Value = unscaledValue;
         v.decScale = scale;
+    }
+
+    /**
+     * Records a packed IPv4 address. The bit pattern 0 is reserved as QuestDB's
+     * IPv4 NULL sentinel; pass a non-zero address (or skip the column to model
+     * an explicit NULL) to keep the oracle's expectations unambiguous.
+     */
+    public QwpRow setIPv4(String name, int address) {
+        TypedValue v = put(name);
+        v.type = ValueType.IPV4;
+        v.i = address;
+        return this;
     }
 
     public QwpRow setDouble(String name, double value) {
@@ -319,6 +334,15 @@ public class QwpRow {
                 }
                 break;
             }
+            case ColumnType.IPv4: {
+                int actual = record.getIPv4(columnIndex);
+                if (tv == null) {
+                    Assert.assertEquals(name + " expected NULL row=" + rowOrdinal, Numbers.IPv4_NULL, actual);
+                } else {
+                    Assert.assertEquals(name + " row=" + rowOrdinal, tv.i, actual);
+                }
+                break;
+            }
             case ColumnType.DOUBLE: {
                 double actual = record.getDouble(columnIndex);
                 if (tv == null) {
@@ -431,7 +455,7 @@ public class QwpRow {
     }
 
     public enum ValueType {
-        BOOLEAN, LONG, DOUBLE, STRING, SYMBOL,
+        BOOLEAN, LONG, DOUBLE, STRING, SYMBOL, IPV4,
         DOUBLE_ARRAY_1D, DOUBLE_ARRAY_2D, DOUBLE_ARRAY_3D,
         DECIMAL64, DECIMAL128, DECIMAL256
     }
@@ -450,6 +474,7 @@ public class QwpRow {
         public long dec256Ll;
         public long dec64Value;
         public int decScale;
+        public int i;
         public long l;
         public String s;
         public ValueType type;

@@ -457,7 +457,7 @@ public class QwpTableBlockCursor implements Mutable {
                 booleanColumnIndices[booleanColumnCount++] = colIndex;
                 yield boolCursor.of(dataAddress, dataLength, rowCount);
             }
-            case TYPE_BYTE, TYPE_SHORT, TYPE_CHAR, TYPE_INT, TYPE_LONG,
+            case TYPE_BYTE, TYPE_SHORT, TYPE_CHAR, TYPE_INT, TYPE_IPV4, TYPE_LONG,
                  TYPE_FLOAT, TYPE_DOUBLE, TYPE_DATE, TYPE_UUID, TYPE_LONG256 -> {
                 QwpFixedWidthColumnCursor fixedCursor;
                 if (cursor instanceof QwpFixedWidthColumnCursor c) {

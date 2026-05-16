@@ -107,6 +107,7 @@ public class QwpWalAppender implements QuietCloseable {
             case TYPE_SHORT -> ColumnType.SHORT;
             case TYPE_CHAR -> ColumnType.CHAR;
             case TYPE_INT -> ColumnType.INT;
+            case TYPE_IPV4 -> ColumnType.IPv4;
             case TYPE_LONG -> ColumnType.LONG;
             case TYPE_FLOAT -> ColumnType.FLOAT;
             case TYPE_DOUBLE -> ColumnType.DOUBLE;
@@ -485,6 +486,22 @@ public class QwpWalAppender implements QuietCloseable {
 
                 // Regular columns
                 switch (ColumnType.tagOf(columnType)) {
+                    case ColumnType.IPv4 -> {
+                        // IPv4 wire is 4 LE bytes, identical to INT. QuestDB stores IPv4 as
+                        // a 4-byte int column with the bit pattern 0 reserved as NULL, so a
+                        // direct copy plus the standard null bitmap is correct. Clients that
+                        // start with a string IP literal should parse it on the client side
+                        // (Numbers.parseIPv4) and send the int via ipv4Column().
+                        if (cursor instanceof QwpFixedWidthColumnCursor fixedCursor
+                                && (qwpType == TYPE_IPV4 || qwpType == TYPE_INT)
+                                && fixedCursor.getValueSize() == 4) {
+                            appender.putFixedColumn(columnIndex, fixedCursor.getValuesAddress(),
+                                    fixedCursor.getValueCount(), fixedCursor.getValueSize(),
+                                    fixedCursor.getNullBitmapAddress(), rowCount);
+                        } else {
+                            throw coercionNotSupportedException(qwpType, columnType, tableBlock, col);
+                        }
+                    }
                     case ColumnType.BOOLEAN -> {
                         if (cursor instanceof QwpBooleanColumnCursor boolCursor) {
                             appender.putBooleanColumn(columnIndex, boolCursor, rowCount);
