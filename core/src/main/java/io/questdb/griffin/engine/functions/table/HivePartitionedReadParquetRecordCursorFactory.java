@@ -538,37 +538,50 @@ public class HivePartitionedReadParquetRecordCursorFactory extends ProjectableRe
     }
 
     @Override
-    protected synchronized void _close() {
-        // Synchronised on `this` so we share the lock with openCachedFile and
-        // schedulePrefetch. shutdownNow().awaitTermination cannot preempt a thread
-        // parked on a synchronized acquire (Thread.interrupt only flags the thread,
-        // it does not break monitor entry), so a prefetch task blocked on the lock
-        // will eventually acquire it after _close releases the monitor on return -
-        // and would then mmap + parse + insert into a cleared map. Setting `closed`
-        // up front and gating openCachedFile on it ensures that late acquirer throws
-        // instead of mutating state.
-        closed = true;
-        if (prefetchExecutor != null) {
-            prefetchExecutor.shutdownNow();
+    protected void _close() {
+        // Two-phase shutdown. Phase 1: take the monitor briefly to (a) flip
+        // the `closed` flag so subsequent schedulePrefetch / openCachedFile
+        // calls short-circuit, (b) snapshot the executor reference, and (c)
+        // free all owned state. Phase 2: shut the executor down OUTSIDE the
+        // monitor so any prefetch task already parked on openCachedFile's
+        // synchronized acquire can grab the lock, observe closed=true, and
+        // exit fast via the CairoException path. Doing the shutdown inside
+        // the synchronized block self-deadlocked: awaitTermination always
+        // timed out at its 2-second cap because parked tasks could never
+        // acquire the lock to make progress.
+        ExecutorService toShutdown;
+        synchronized (this) {
+            if (closed) {
+                return;
+            }
+            closed = true;
+            toShutdown = prefetchExecutor;
+            prefetchExecutor = null;
+            Misc.free(matchedFiles);
+            Misc.free(pageFrameRecordCursor);
+            Misc.free(pageFrameCursor);
+            Misc.freeObjListAndClear(pushdownFilterConditions);
+            for (int i = 0, n = fileCacheLruOrder.size(); i < n; i++) {
+                Misc.free(fileCacheLruOrder.getQuick(i));
+            }
+            fileCacheLruOrder.clear();
+            fileCache.clear();
+            currentCacheBytes = 0;
+            scratchPath = Misc.free(scratchPath);
+        }
+        if (toShutdown != null) {
+            toShutdown.shutdownNow();
+            // Best-effort wait. Most parked tasks bail in under a millisecond
+            // once they acquire the monitor and see closed=true; anything
+            // mid-mmap finishes in single-digit milliseconds. 100 ms is a
+            // safety cap, not the expected cost. The daemon thread will exit
+            // the JVM cleanly even if this times out.
             try {
-                prefetchExecutor.awaitTermination(2, TimeUnit.SECONDS);
+                toShutdown.awaitTermination(100, TimeUnit.MILLISECONDS);
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
             }
-            prefetchExecutor = null;
         }
-        Misc.free(matchedFiles);
-        Misc.free(pageFrameRecordCursor);
-        Misc.free(pageFrameCursor);
-        Misc.freeObjListAndClear(pushdownFilterConditions);
-        // Free any cached files the cursor's iteration brought in.
-        for (int i = 0, n = fileCacheLruOrder.size(); i < n; i++) {
-            Misc.free(fileCacheLruOrder.getQuick(i));
-        }
-        fileCacheLruOrder.clear();
-        fileCache.clear();
-        currentCacheBytes = 0;
-        scratchPath = Misc.free(scratchPath);
     }
 
     /**
