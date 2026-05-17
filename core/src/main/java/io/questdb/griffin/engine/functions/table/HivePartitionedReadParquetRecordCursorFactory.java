@@ -356,6 +356,19 @@ public class HivePartitionedReadParquetRecordCursorFactory extends ProjectableRe
      * when a partition filter would skip most of them - falling back to
      * opening only survivors via {@link #openCachedFile}.
      */
+    /**
+     * Borrowed reference to the planning-time snapshot of matched files. Used
+     * by the footer MIN/MAX shortcut to walk every survivor file and read
+     * per-row-group statistics without going through the iteration cursor.
+     * <p>
+     * Callers MUST treat the returned reference as valid only for the call
+     * duration - this factory still owns the {@link DirectUtf8StringList}
+     * and frees it in {@code _close()}.
+     */
+    public @NotNull DirectUtf8StringList getMatchedFiles() {
+        return matchedFiles;
+    }
+
     public synchronized io.questdb.std.LongList getCachedPerFileRowCountsIfPopulated() {
         if (cachedTotalRowCount < 0) {
             return null;
