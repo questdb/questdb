@@ -801,12 +801,13 @@ public class LineTcpParser implements QuietCloseable {
             // System.err.println("LineTcpParser.ProtoEntity.parse :: " + ((char) last) + ", valueLen: " + valueLen);
             binaryFormat = false;
             switch (last) {
+                case 'u':
                 case 'i':
                     if (valueLen > 1 && value.byteAt(1) != 'x') {
                         return parseLong(ENTITY_TYPE_INTEGER);
                     }
                     if (valueLen > 3 && value.byteAt(0) == '0' && (value.byteAt(1) | 32) == 'x') {
-                        value.decHi(); // remove 'i'
+                        value.decHi(); // remove suffix ('i', 'u')
                         type = ENTITY_TYPE_LONG256;
                         return true;
                     }
@@ -1001,7 +1002,7 @@ public class LineTcpParser implements QuietCloseable {
             try {
                 charSeq.of(value.lo(), value.hi() - 1, true);
                 longValue = Numbers.parseLong(charSeq);
-                value.decHi(); // remove the suffix ('i', 'n', 't', 'm')
+                value.decHi(); // remove the suffix ('i', 'n', 't', 'm', 'u')
                 type = entityType;
             } catch (NumericException notANumber) {
                 unit = TIMESTAMP_UNIT_UNSET;

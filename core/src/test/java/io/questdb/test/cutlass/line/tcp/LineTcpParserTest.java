@@ -75,9 +75,11 @@ public class LineTcpParserTest extends BaseLineTcpContextTest {
 
         assertType(LineTcpParser.ENTITY_TYPE_LONG256, "0x123i");
         assertType(LineTcpParser.ENTITY_TYPE_LONG256, "0x1i");
+        assertType(LineTcpParser.ENTITY_TYPE_LONG256, "0x1234u");
 
         assertType(LineTcpParser.ENTITY_TYPE_INTEGER, "123i");
         assertType(LineTcpParser.ENTITY_TYPE_INTEGER, "1i");
+        assertType(LineTcpParser.ENTITY_TYPE_INTEGER, "1234u");
 
         assertType(LineTcpParser.ENTITY_TYPE_TIMESTAMP, CommonUtils.TIMESTAMP_UNIT_MICROS, "42t");
         assertType(LineTcpParser.ENTITY_TYPE_TIMESTAMP, CommonUtils.TIMESTAMP_UNIT_MICROS, "-42t");
@@ -157,7 +159,8 @@ public class LineTcpParserTest extends BaseLineTcpContextTest {
                                 break;
                             case LineTcpParser.ENTITY_TYPE_INTEGER:
                             case LineTcpParser.ENTITY_TYPE_LONG256:
-                                Assert.assertEquals(expectedValue, entity.getValue().toString() + "i");
+                                String suffix = expectedValue.endsWith("u") ? "u" : "i";
+                                Assert.assertEquals(expectedValue, entity.getValue().toString() + suffix);
                                 break;
                             case LineTcpParser.ENTITY_TYPE_TIMESTAMP:
                                 switch (unit) {
