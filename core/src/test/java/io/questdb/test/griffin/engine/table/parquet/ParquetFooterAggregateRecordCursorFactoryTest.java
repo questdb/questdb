@@ -41,6 +41,8 @@ import org.junit.Assert;
 import org.junit.Test;
 
 public class ParquetFooterAggregateRecordCursorFactoryTest extends AbstractCairoTest {
+    private static final io.questdb.log.Log LOG =
+            io.questdb.log.LogFactory.getLog(ParquetFooterAggregateRecordCursorFactoryTest.class);
 
     @Test
     public void testMinMaxOverManyRowGroups() throws Exception {
@@ -355,6 +357,119 @@ public class ParquetFooterAggregateRecordCursorFactoryTest extends AbstractCairo
                     final Record rec = cursor.getRecord();
                     Assert.assertEquals(2_000_000_000L, rec.getTimestamp(0));
                     Assert.assertEquals(2_000_000_000L + 500L * (1_000 - 1), rec.getTimestamp(1));
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testVerifyAscendingSortAcrossRowGroupsHoldsForQuestDbWriter() throws Exception {
+        // QuestDB's PartitionEncoder writes rows in ts-sorted order across
+        // every row group. The cross-row-group sort-claim verifier must
+        // return true for any file produced this way, regardless of how
+        // many row groups it splits into. Pins the happy path for the
+        // sort-claim hardening helper.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE v AS (" +
+                    "  SELECT timestamp_sequence(1_000L, 10L) AS ts, x AS id" +
+                    "  FROM long_sequence(50_000)" +
+                    ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+            drainWalQueue();
+
+            try (
+                    Path path = new Path();
+                    PartitionDescriptor pd = new PartitionDescriptor();
+                    TableReader reader = engine.getReader("v")
+            ) {
+                path.of(root).concat("v.parquet");
+                PartitionEncoder.populateFromTableReader(reader, pd, 0);
+                PartitionEncoder.encode(pd, path);
+
+                try (io.questdb.griffin.engine.table.parquet.ParquetFileDecoder decoder =
+                             new io.questdb.griffin.engine.table.parquet.ParquetFileDecoder()) {
+                    final io.questdb.std.FilesFacade ff = configuration.getFilesFacade();
+                    final long fd = io.questdb.cairo.TableUtils.openRO(ff, path.$(), LOG);
+                    long addr = 0;
+                    long size = 0;
+                    try {
+                        size = ff.length(fd);
+                        addr = io.questdb.cairo.TableUtils.mapRO(ff, fd, size,
+                                io.questdb.std.MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
+                        decoder.of(addr, size, io.questdb.std.MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
+                        final int tsIdx = decoder.metadata().getTimestampIndex();
+                        Assert.assertTrue("designated timestamp must be present", tsIdx >= 0);
+                        // 50_000 rows with default row-group size 512x512=262144
+                        // give 1 row group in practice; force the assertion to
+                        // hold both for single- and multi-RG files by checking
+                        // the count is >= 1.
+                        Assert.assertTrue(decoder.metadata().getRowGroupCount() >= 1);
+                        Assert.assertTrue(
+                                "verifier must accept QuestDB-written ts column",
+                                decoder.verifyAscendingSortAcrossRowGroups(tsIdx)
+                        );
+                    } finally {
+                        if (addr != 0) {
+                            ff.munmap(addr, size, io.questdb.std.MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
+                        }
+                        ff.close(fd);
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testVerifyAscendingSortAcrossRowGroupsMultipleRowGroups() throws Exception {
+        // Larger row count + tighter row-group sizing forces multiple row
+        // groups, which is where the cross-row-group check actually fires.
+        // Asserts the verifier walks every adjacency.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE w AS (" +
+                    "  SELECT timestamp_sequence(1_000L, 1L) AS ts, x AS id" +
+                    "  FROM long_sequence(20_000)" +
+                    ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+            drainWalQueue();
+
+            try (
+                    Path path = new Path();
+                    PartitionDescriptor pd = new PartitionDescriptor();
+                    TableReader reader = engine.getReader("w")
+            ) {
+                path.of(root).concat("w.parquet");
+                PartitionEncoder.populateFromTableReader(reader, pd, 0);
+                // rowGroupSize=2000 -> 10 row groups for 20k rows.
+                PartitionEncoder.encodeWithOptions(
+                        pd,
+                        path,
+                        io.questdb.griffin.engine.table.parquet.ParquetCompression.COMPRESSION_UNCOMPRESSED,
+                        true,
+                        false,
+                        2_000,
+                        0,
+                        io.questdb.griffin.engine.table.parquet.ParquetVersion.PARQUET_VERSION_V1,
+                        0.0
+                );
+
+                try (io.questdb.griffin.engine.table.parquet.ParquetFileDecoder decoder =
+                             new io.questdb.griffin.engine.table.parquet.ParquetFileDecoder()) {
+                    final io.questdb.std.FilesFacade ff = configuration.getFilesFacade();
+                    final long fd = io.questdb.cairo.TableUtils.openRO(ff, path.$(), LOG);
+                    long addr = 0;
+                    long size = 0;
+                    try {
+                        size = ff.length(fd);
+                        addr = io.questdb.cairo.TableUtils.mapRO(ff, fd, size,
+                                io.questdb.std.MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
+                        decoder.of(addr, size, io.questdb.std.MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
+                        final int tsIdx = decoder.metadata().getTimestampIndex();
+                        Assert.assertTrue(decoder.metadata().getRowGroupCount() >= 2);
+                        Assert.assertTrue(decoder.verifyAscendingSortAcrossRowGroups(tsIdx));
+                    } finally {
+                        if (addr != 0) {
+                            ff.munmap(addr, size, io.questdb.std.MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
+                        }
+                        ff.close(fd);
+                    }
                 }
             }
         });

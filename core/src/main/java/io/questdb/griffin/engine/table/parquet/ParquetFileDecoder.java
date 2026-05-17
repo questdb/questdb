@@ -301,6 +301,63 @@ public class ParquetFileDecoder implements ParquetDecoder, ParquetRowGroupSkippe
         return rowGroupMinValueLong(ptr, rowGroupIndex, columnIndex);
     }
 
+    /**
+     * Verifies that the parquet file's {@code sorting_columns} claim for
+     * {@code columnIndex} ASC actually holds across row group boundaries:
+     * for every adjacent pair {@code (RG[i], RG[i+1])} the per-row-group
+     * statistics must satisfy {@code RG[i].max <= RG[i+1].min}. Files with
+     * a single row group trivially pass.
+     * <p>
+     * This validation is a cheap cross-row-group hardening check for code
+     * paths that ELIDE a sort based on the file's claim (the reverse-scan
+     * shortcut, the footer-only MIN/MAX shortcut). It does NOT verify
+     * within-row-group ordering - that would need a full row decode and
+     * defeats the point of the elision. The cross-RG check catches the
+     * common bug class where a writer appends to an existing parquet
+     * without re-sorting; within-RG misorder is rare in practice and
+     * remains a trust-the-writer hazard.
+     * <p>
+     * Returns {@code true} when the claim is intact OR cannot be evaluated
+     * (e.g., column is not stat-readable - the gate falls back to trust).
+     * Returns {@code false} only when stats are present AND a violation is
+     * observed. The caller decides what to do with the result; this method
+     * has no side effects and never throws based on the data.
+     * <p>
+     * Uses {@link #rowGroupMinValueLong} / {@link #rowGroupMaxValueLong}
+     * under the hood, so only INT/LONG/DATE/TIMESTAMP storage columns are
+     * supported. Other column tags return {@code true} (cannot verify, so
+     * trust the claim).
+     */
+    public boolean verifyAscendingSortAcrossRowGroups(int columnIndex) {
+        assert ptr != 0;
+        final int rgCount = metadata.getRowGroupCount();
+        if (rgCount <= 1) {
+            return true;
+        }
+        long prevMax;
+        try {
+            prevMax = rowGroupMaxValueLong(0, columnIndex);
+        } catch (Throwable ignored) {
+            // Stats unreadable for this column - cannot verify, trust the claim.
+            return true;
+        }
+        for (int rg = 1; rg < rgCount; rg++) {
+            final long currMin;
+            final long currMax;
+            try {
+                currMin = rowGroupMinValueLong(rg, columnIndex);
+                currMax = rowGroupMaxValueLong(rg, columnIndex);
+            } catch (Throwable ignored) {
+                return true;
+            }
+            if (currMin < prevMax) {
+                return false;
+            }
+            prevMax = currMax;
+        }
+        return true;
+    }
+
     private static native boolean canSkipRowGroup(
             long decoderPtr,
             int rowGroupIndex,
