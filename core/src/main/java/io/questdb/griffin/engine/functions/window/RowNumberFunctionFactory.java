@@ -104,9 +104,12 @@ public class RowNumberFunctionFactory implements FunctionFactory {
             ArrayColumnTypes valueTypes = new ArrayColumnTypes();
             valueTypes.add(ColumnType.LONG); // rowNumber
             int lastActivityTsValueIndex = -1;
+            int tombstoneValueIndex = -1;
             if (windowContext.isLiveView()) {
                 valueTypes.add(ColumnType.LONG); // lastActivityTs (live view Phase 5)
                 lastActivityTsValueIndex = 1;
+                valueTypes.add(ColumnType.BYTE); // tombstone (anchor-driven compaction)
+                tombstoneValueIndex = 2;
             }
             Map map = MapFactory.createUnorderedMap(
                     configuration,
@@ -121,6 +124,7 @@ public class RowNumberFunctionFactory implements FunctionFactory {
                     keyTypes,
                     valueTypes,
                     lastActivityTsValueIndex,
+                    tombstoneValueIndex,
                     configuration
             );
         }
@@ -136,12 +140,16 @@ public class RowNumberFunctionFactory implements FunctionFactory {
         private final int lastActivityTsValueIndex;
         private final VirtualRecord partitionByRecord;
         private final RecordSink partitionBySink;
+        // -1 outside live-view mode; index of the BYTE tombstone slot in LV mode.
+        private final int tombstoneValueIndex;
         private final int tsColumnIndex;
         private final ColumnTypes valueColumnTypes;
         private int columnIndex;
         private Map map;
         private long rowNumber;
         private long sizeAfterLastEvict;
+        // Single-writer (refresh worker), not volatile.
+        private long tombstoneCount;
 
         public RowNumberFunction(
                 Map map,
@@ -151,6 +159,7 @@ public class RowNumberFunctionFactory implements FunctionFactory {
                 ColumnTypes keyColumnTypes,
                 ColumnTypes valueColumnTypes,
                 int lastActivityTsValueIndex,
+                int tombstoneValueIndex,
                 CairoConfiguration configuration
         ) {
             this.map = map;
@@ -160,6 +169,7 @@ public class RowNumberFunctionFactory implements FunctionFactory {
             this.keyColumnTypes = keyColumnTypes;
             this.valueColumnTypes = valueColumnTypes;
             this.lastActivityTsValueIndex = lastActivityTsValueIndex;
+            this.tombstoneValueIndex = tombstoneValueIndex;
             this.configuration = configuration;
         }
 
@@ -167,6 +177,35 @@ public class RowNumberFunctionFactory implements FunctionFactory {
         public void close() {
             Misc.free(map);
             Misc.freeObjList(partitionByRecord.getFunctions());
+        }
+
+        @Override
+        public void compactPartitionMap() {
+            if (tombstoneValueIndex < 0 || tombstoneCount == 0) {
+                return;
+            }
+            Map scratch = MapFactory.createUnorderedMap(configuration, keyColumnTypes, valueColumnTypes);
+            try {
+                MapRecordCursor cursor = map.getCursor();
+                MapRecord record = map.getRecord();
+                while (cursor.hasNext()) {
+                    MapValue srcValue = record.getValue();
+                    if (srcValue.getByte(tombstoneValueIndex) == 1) {
+                        continue;
+                    }
+                    long srcKeyHash = record.keyHashCode();
+                    MapKey dstKey = scratch.withKey();
+                    record.copyToKey(dstKey);
+                    MapValue dstValue = dstKey.createValue(srcKeyHash);
+                    record.copyValue(dstValue);
+                }
+                Misc.free(map);
+                map = scratch;
+                scratch = null;
+                tombstoneCount = 0;
+            } finally {
+                Misc.free(scratch);
+            }
         }
 
         @Override
@@ -191,6 +230,10 @@ public class RowNumberFunctionFactory implements FunctionFactory {
                 value.putLong(lastActivityTsValueIndex,
                         tsColumnIndex >= 0 ? record.getTimestamp(tsColumnIndex) : Long.MIN_VALUE);
             }
+            if (tombstoneValueIndex >= 0 && value.getByte(tombstoneValueIndex) != 0) {
+                value.putByte(tombstoneValueIndex, (byte) 0);
+                tombstoneCount--;
+            }
         }
 
         @Override
@@ -203,6 +246,10 @@ public class RowNumberFunctionFactory implements FunctionFactory {
             MapValue value = key.findValue();
             if (value != null) {
                 value.putLong(ROW_NUMBER_VALUE_INDEX, 0L);
+                if (tombstoneValueIndex >= 0 && value.getByte(tombstoneValueIndex) == 0) {
+                    value.putByte(tombstoneValueIndex, (byte) 1);
+                    tombstoneCount++;
+                }
             }
         }
 
@@ -261,6 +308,7 @@ public class RowNumberFunctionFactory implements FunctionFactory {
         public void reopen() {
             rowNumber = 0;
             sizeAfterLastEvict = 0;
+            tombstoneCount = 0;
             map.reopen();
         }
 
@@ -268,6 +316,7 @@ public class RowNumberFunctionFactory implements FunctionFactory {
         public void reset() {
             map.close();
             sizeAfterLastEvict = 0;
+            tombstoneCount = 0;
         }
 
         @Override
@@ -277,6 +326,7 @@ public class RowNumberFunctionFactory implements FunctionFactory {
             // is below snapshotMinSupportedVersion(). Future format bumps add
             // version-dispatch here.
             map.clear();
+            tombstoneCount = 0;
             long offset = 0;
             final long partitionCount = source.getLong(offset);
             offset += Long.BYTES;
@@ -290,6 +340,9 @@ public class RowNumberFunctionFactory implements FunctionFactory {
                     value.putLong(lastActivityTsValueIndex, source.getLong(offset));
                     offset += Long.BYTES;
                 }
+                if (tombstoneValueIndex >= 0) {
+                    value.putByte(tombstoneValueIndex, (byte) 0);
+                }
             }
         }
 
@@ -300,13 +353,25 @@ public class RowNumberFunctionFactory implements FunctionFactory {
 
         @Override
         public void snapshot(MemoryA sink) {
-            sink.putLong(map.size());
+            // Two-pass walk: count non-tombstoned partitions, then emit each.
             MapRecordCursor cursor = map.getCursor();
             MapRecord record = map.getRecord();
+            long liveCount = 0;
+            while (cursor.hasNext()) {
+                if (tombstoneValueIndex < 0 || record.getValue().getByte(tombstoneValueIndex) == 0) {
+                    liveCount++;
+                }
+            }
+            sink.putLong(liveCount);
+
+            cursor.toTop();
             final int keyStartIndex = valueColumnTypes.getColumnCount();
             while (cursor.hasNext()) {
-                LiveViewSnapshotKeyCodec.writeKey(sink, record, keyColumnTypes, keyStartIndex);
                 final MapValue value = record.getValue();
+                if (tombstoneValueIndex >= 0 && value.getByte(tombstoneValueIndex) != 0) {
+                    continue;
+                }
+                LiveViewSnapshotKeyCodec.writeKey(sink, record, keyColumnTypes, keyStartIndex);
                 sink.putLong(value.getLong(ROW_NUMBER_VALUE_INDEX));
                 if (lastActivityTsValueIndex >= 0) {
                     sink.putLong(value.getLong(lastActivityTsValueIndex));
@@ -342,6 +407,7 @@ public class RowNumberFunctionFactory implements FunctionFactory {
         public void toTop() {
             rowNumber = 0;
             sizeAfterLastEvict = 0;
+            tombstoneCount = 0;
             map.clear();
         }
     }

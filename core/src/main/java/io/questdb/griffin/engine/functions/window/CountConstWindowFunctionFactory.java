@@ -101,10 +101,12 @@ public class CountConstWindowFunctionFactory extends AbstractWindowFunctionFacto
                     );
                 } // between unbounded preceding and current row
                 else if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
+                    final boolean liveView = windowContext.isLiveView();
                     Map map = MapFactory.createUnorderedMap(
                             configuration,
                             partitionByKeyTypes,
-                            CountFunctionFactoryHelper.COUNT_COLUMN_TYPES
+                            liveView ? CountFunctionFactoryHelper.COUNT_COLUMN_TYPES_LV
+                                    : CountFunctionFactoryHelper.COUNT_COLUMN_TYPES
                     );
 
                     // same as for rows because calculation stops at current rows even if there are 'equal' following rows
@@ -114,7 +116,9 @@ public class CountConstWindowFunctionFactory extends AbstractWindowFunctionFacto
                             partitionBySink,
                             null,
                             isRecordNotNull,
-                            partitionByKeyTypes
+                            partitionByKeyTypes,
+                            liveView,
+                            configuration
                     );
                 } // range between [unbounded | x] preceding and [x preceding | current row], except unbounded preceding to current row
                 else {
@@ -165,10 +169,12 @@ public class CountConstWindowFunctionFactory extends AbstractWindowFunctionFacto
             } else if (framingMode == WindowExpression.FRAMING_ROWS) {
                 // between unbounded preceding and current row
                 if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
+                    final boolean liveView = windowContext.isLiveView();
                     Map map = MapFactory.createUnorderedMap(
                             configuration,
                             partitionByKeyTypes,
-                            CountFunctionFactoryHelper.COUNT_COLUMN_TYPES
+                            liveView ? CountFunctionFactoryHelper.COUNT_COLUMN_TYPES_LV
+                                    : CountFunctionFactoryHelper.COUNT_COLUMN_TYPES
                     );
 
                     return new CountFunctionFactoryHelper.CountOverUnboundedPartitionRowsFrameFunction(
@@ -177,7 +183,9 @@ public class CountConstWindowFunctionFactory extends AbstractWindowFunctionFacto
                             partitionBySink,
                             null,
                             isRecordNotNull,
-                            partitionByKeyTypes
+                            partitionByKeyTypes,
+                            liveView,
+                            configuration
                     );
                 } // between current row and current row
                 else if (rowsLo == 0 && rowsHi == 0) {

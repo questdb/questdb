@@ -121,10 +121,12 @@ public class MinLongWindowFunctionFactory extends AbstractWindowFunctionFactory 
                     );
                 } // between unbounded preceding and current row
                 else if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
+                    final boolean liveView = windowContext.isLiveView();
                     Map map = MapFactory.createUnorderedMap(
                             configuration,
                             partitionByKeyTypes,
-                            MaxLongWindowFunctionFactory.MAX_COLUMN_TYPES
+                            liveView ? MaxLongWindowFunctionFactory.MAX_COLUMN_TYPES_LV
+                                    : MaxLongWindowFunctionFactory.MAX_COLUMN_TYPES
                     );
 
                     return new MaxLongWindowFunctionFactory.MaxMinOverUnboundedPartitionRowsFrameFunction(
@@ -134,7 +136,9 @@ public class MinLongWindowFunctionFactory extends AbstractWindowFunctionFactory 
                             args.get(0),
                             LESS_THAN,
                             NAME,
-                            partitionByKeyTypes
+                            partitionByKeyTypes,
+                            liveView,
+                            configuration
                     );
                 } // range between [unbounded | x] preceding and [x preceding | current row], except unbounded preceding to current row
                 else {
@@ -205,10 +209,12 @@ public class MinLongWindowFunctionFactory extends AbstractWindowFunctionFactory 
             } else if (framingMode == WindowExpression.FRAMING_ROWS) {
                 // between unbounded preceding and current row
                 if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
+                    final boolean liveView = windowContext.isLiveView();
                     Map map = MapFactory.createUnorderedMap(
                             configuration,
                             partitionByKeyTypes,
-                            MaxLongWindowFunctionFactory.MAX_COLUMN_TYPES
+                            liveView ? MaxLongWindowFunctionFactory.MAX_COLUMN_TYPES_LV
+                                    : MaxLongWindowFunctionFactory.MAX_COLUMN_TYPES
                     );
 
                     return new MaxLongWindowFunctionFactory.MaxMinOverUnboundedPartitionRowsFrameFunction(
@@ -218,7 +224,9 @@ public class MinLongWindowFunctionFactory extends AbstractWindowFunctionFactory 
                             args.get(0),
                             LESS_THAN,
                             NAME,
-                            partitionByKeyTypes
+                            partitionByKeyTypes,
+                            liveView,
+                            configuration
                     );
                 } // between current row and current row
                 else if (rowsLo == 0 && rowsHi == 0) {

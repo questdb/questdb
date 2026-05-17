@@ -125,12 +125,14 @@ public class MinTimestampWindowFunctionFactory extends AbstractWindowFunctionFac
                     }
                 } // between unbounded preceding and current row
                 else if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
+                    final boolean liveView = windowContext.isLiveView();
                     Map map = null;
                     try {
                         map = MapFactory.createUnorderedMap(
                                 configuration,
                                 partitionByKeyTypes,
-                                MaxTimestampWindowFunctionFactory.MAX_COLUMN_TYPES
+                                liveView ? MaxTimestampWindowFunctionFactory.MAX_COLUMN_TYPES_LV
+                                        : MaxTimestampWindowFunctionFactory.MAX_COLUMN_TYPES
                         );
 
                         return new MaxTimestampWindowFunctionFactory.MaxMinOverUnboundedPartitionRowsFrameFunction(
@@ -140,7 +142,9 @@ public class MinTimestampWindowFunctionFactory extends AbstractWindowFunctionFac
                                 args.get(0),
                                 LESS_THAN,
                                 NAME,
-                                partitionByKeyTypes
+                                partitionByKeyTypes,
+                                liveView,
+                                configuration
                         );
                     } catch (Throwable e) {
                         Misc.free(map);
@@ -215,12 +219,14 @@ public class MinTimestampWindowFunctionFactory extends AbstractWindowFunctionFac
             } else if (framingMode == WindowExpression.FRAMING_ROWS) {
                 // between unbounded preceding and current row
                 if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
+                    final boolean liveView = windowContext.isLiveView();
                     Map map = null;
                     try {
                         map = MapFactory.createUnorderedMap(
                                 configuration,
                                 partitionByKeyTypes,
-                                MaxTimestampWindowFunctionFactory.MAX_COLUMN_TYPES
+                                liveView ? MaxTimestampWindowFunctionFactory.MAX_COLUMN_TYPES_LV
+                                        : MaxTimestampWindowFunctionFactory.MAX_COLUMN_TYPES
                         );
 
                         return new MaxTimestampWindowFunctionFactory.MaxMinOverUnboundedPartitionRowsFrameFunction(
@@ -230,7 +236,9 @@ public class MinTimestampWindowFunctionFactory extends AbstractWindowFunctionFac
                                 args.get(0),
                                 LESS_THAN,
                                 NAME,
-                                partitionByKeyTypes
+                                partitionByKeyTypes,
+                                liveView,
+                                configuration
                         );
                     } catch (Throwable e) {
                         Misc.free(map);

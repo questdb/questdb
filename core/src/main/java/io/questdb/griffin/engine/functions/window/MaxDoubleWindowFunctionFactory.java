@@ -64,6 +64,7 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
 
     public static final DoubleComparator GREATER_THAN = (a, b) -> Double.compare(a, b) > 0;
     public static final ArrayColumnTypes MAX_COLUMN_TYPES;
+    public static final ArrayColumnTypes MAX_COLUMN_TYPES_LV;
     public static final ArrayColumnTypes MAX_OVER_PARTITION_RANGE_BOUNDED_COLUMN_TYPES;
     public static final ArrayColumnTypes MAX_OVER_PARTITION_RANGE_BOUNDED_COLUMN_TYPES_LV;
     public static final ArrayColumnTypes MAX_OVER_PARTITION_RANGE_COLUMN_TYPES;
@@ -125,10 +126,11 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                     );
                 } // between unbounded preceding and current row
                 else if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
+                    final boolean liveView = windowContext.isLiveView();
                     Map map = MapFactory.createUnorderedMap(
                             configuration,
                             partitionByKeyTypes,
-                            MAX_COLUMN_TYPES
+                            liveView ? MAX_COLUMN_TYPES_LV : MAX_COLUMN_TYPES
                     );
 
                     return new MaxMinOverUnboundedPartitionRowsFrameFunction(
@@ -138,7 +140,9 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                             args.get(0),
                             GREATER_THAN,
                             NAME,
-                            partitionByKeyTypes
+                            partitionByKeyTypes,
+                            liveView,
+                            configuration
                     );
                 } // range between {unbounded | x} preceding and {x preceding | current row}, except unbounded preceding to current row
                 else {
@@ -205,10 +209,11 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
             } else if (framingMode == WindowExpression.FRAMING_ROWS) {
                 // between unbounded preceding and current row
                 if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
+                    final boolean liveView = windowContext.isLiveView();
                     Map map = MapFactory.createUnorderedMap(
                             configuration,
                             partitionByKeyTypes,
-                            MAX_COLUMN_TYPES
+                            liveView ? MAX_COLUMN_TYPES_LV : MAX_COLUMN_TYPES
                     );
 
                     return new MaxMinOverUnboundedPartitionRowsFrameFunction(
@@ -218,7 +223,9 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                             args.get(0),
                             GREATER_THAN,
                             NAME,
-                            partitionByKeyTypes
+                            partitionByKeyTypes,
+                            liveView,
+                            configuration
                     );
                 } // between current row and current row
                 else if (rowsLo == 0 && rowsHi == 0) {
@@ -1996,9 +2003,18 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
     public static class MaxMinOverUnboundedPartitionRowsFrameFunction extends BasePartitionedWindowFunction implements WindowDoubleFunction {
 
         private final DoubleComparator comparator;
+        private final CairoConfiguration configuration;
         private final ArrayColumnTypes keyColumnTypes;
+        private final boolean liveView;
+        // Full value layout (including tombstone slot) for the
+        // compactPartitionMap scratch Map. Null outside live-view mode.
+        private final ArrayColumnTypes mapValueTypes;
         private final String name;
+        // Value-slot index of the per-partition tombstone byte; -1 outside LV.
+        private final int tombstoneValueIndex;
         private double maxMin;
+        // Single-writer (refresh worker), not volatile.
+        private long tombstoneCount;
 
         public MaxMinOverUnboundedPartitionRowsFrameFunction(Map map,
                                                              VirtualRecord partitionByRecord,
@@ -2006,13 +2022,57 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                                                              Function arg,
                                                              DoubleComparator comparator,
                                                              String name,
-                                                             ColumnTypes partitionByKeyTypes) {
+                                                             ColumnTypes partitionByKeyTypes,
+                                                             boolean liveView,
+                                                             CairoConfiguration configuration) {
             super(map, partitionByRecord, partitionBySink, arg);
             this.comparator = comparator;
             this.name = name;
+            this.liveView = liveView;
+            this.configuration = configuration;
             this.keyColumnTypes = new ArrayColumnTypes();
             for (int i = 0, n = partitionByKeyTypes.getColumnCount(); i < n; i++) {
                 this.keyColumnTypes.add(partitionByKeyTypes.getColumnType(i));
+            }
+            if (liveView) {
+                ArrayColumnTypes valueTypesCopy = new ArrayColumnTypes();
+                for (int i = 0, n = MAX_COLUMN_TYPES_LV.getColumnCount(); i < n; i++) {
+                    valueTypesCopy.add(MAX_COLUMN_TYPES_LV.getColumnType(i));
+                }
+                this.mapValueTypes = valueTypesCopy;
+                this.tombstoneValueIndex = 2;
+            } else {
+                this.mapValueTypes = null;
+                this.tombstoneValueIndex = -1;
+            }
+        }
+
+        @Override
+        public void compactPartitionMap() {
+            if (tombstoneValueIndex < 0 || tombstoneCount == 0) {
+                return;
+            }
+            Map scratch = MapFactory.createUnorderedMap(configuration, keyColumnTypes, mapValueTypes);
+            try {
+                MapRecordCursor cursor = map.getCursor();
+                MapRecord record = map.getRecord();
+                while (cursor.hasNext()) {
+                    MapValue srcValue = record.getValue();
+                    if (srcValue.getByte(tombstoneValueIndex) == 1) {
+                        continue;
+                    }
+                    long srcKeyHash = record.keyHashCode();
+                    MapKey dstKey = scratch.withKey();
+                    record.copyToKey(dstKey);
+                    MapValue dstValue = dstKey.createValue(srcKeyHash);
+                    record.copyValue(dstValue);
+                }
+                Misc.free(map);
+                map = scratch;
+                scratch = null;
+                tombstoneCount = 0;
+            } finally {
+                Misc.free(scratch);
             }
         }
 
@@ -2037,19 +2097,18 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                     }
                     this.maxMin = max;
                 }
+                if (tombstoneValueIndex >= 0 && value.getByte(tombstoneValueIndex) != 0) {
+                    value.putByte(tombstoneValueIndex, (byte) 0);
+                    tombstoneCount--;
+                }
             } else {
                 MapValue value = key.findValue();
                 this.maxMin = value != null && value.getByte(1) == 1 ? value.getDouble(0) : Double.NaN;
+                if (value != null && tombstoneValueIndex >= 0 && value.getByte(tombstoneValueIndex) != 0) {
+                    value.putByte(tombstoneValueIndex, (byte) 0);
+                    tombstoneCount--;
+                }
             }
-        }
-
-        @Override
-        public void resetPartition(Record record) {
-            partitionByRecord.of(record);
-            MapKey key = map.withKey();
-            key.put(partitionByRecord, partitionBySink);
-            MapValue value = key.createValue();
-            value.putByte(1, (byte) 0);
         }
 
         @Override
@@ -2079,8 +2138,34 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         }
 
         @Override
+        public void reopen() {
+            super.reopen();
+            tombstoneCount = 0;
+        }
+
+        @Override
+        public void reset() {
+            super.reset();
+            tombstoneCount = 0;
+        }
+
+        @Override
+        public void resetPartition(Record record) {
+            partitionByRecord.of(record);
+            MapKey key = map.withKey();
+            key.put(partitionByRecord, partitionBySink);
+            MapValue value = key.createValue();
+            value.putByte(1, (byte) 0);
+            if (tombstoneValueIndex >= 0 && value.getByte(tombstoneValueIndex) == 0) {
+                value.putByte(tombstoneValueIndex, (byte) 1);
+                tombstoneCount++;
+            }
+        }
+
+        @Override
         public void restore(MemoryR source, int formatVersion) {
             map.clear();
+            tombstoneCount = 0;
             long offset = 0;
             final long partitionCount = source.getLong(offset);
             offset += Long.BYTES;
@@ -2092,20 +2177,35 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                 offset += Double.BYTES;
                 value.putByte(1, source.getByte(offset));
                 offset += Byte.BYTES;
+                if (tombstoneValueIndex >= 0) {
+                    value.putByte(tombstoneValueIndex, (byte) 0);
+                }
             }
         }
 
         @Override
         public void snapshot(MemoryA sink) {
-            sink.putLong(map.size());
+            // Two-pass walk: count non-tombstoned partitions, then emit each.
             MapRecordCursor cursor = map.getCursor();
             MapRecord record = map.getRecord();
-            // MAX_COLUMN_TYPES = [DOUBLE value, BYTE initialized]. Key sits at
-            // record index 2 in the [values, key] layout.
-            final int keyStartIndex = MAX_COLUMN_TYPES.getColumnCount();
+            long liveCount = 0;
             while (cursor.hasNext()) {
-                LiveViewSnapshotKeyCodec.writeKey(sink, record, keyColumnTypes, keyStartIndex);
+                if (tombstoneValueIndex < 0 || record.getValue().getByte(tombstoneValueIndex) == 0) {
+                    liveCount++;
+                }
+            }
+            sink.putLong(liveCount);
+
+            cursor.toTop();
+            final int keyStartIndex = mapValueTypes != null
+                    ? mapValueTypes.getColumnCount()
+                    : MAX_COLUMN_TYPES.getColumnCount();
+            while (cursor.hasNext()) {
                 final MapValue value = record.getValue();
+                if (tombstoneValueIndex >= 0 && value.getByte(tombstoneValueIndex) != 0) {
+                    continue;
+                }
+                LiveViewSnapshotKeyCodec.writeKey(sink, record, keyColumnTypes, keyStartIndex);
                 sink.putDouble(value.getDouble(0));
                 sink.putByte(value.getByte(1));
             }
@@ -2134,6 +2234,12 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
             sink.val("partition by ");
             sink.val(partitionByRecord.getFunctions());
             sink.val(" rows between unbounded preceding and current row)");
+        }
+
+        @Override
+        public void toTop() {
+            super.toTop();
+            tombstoneCount = 0;
         }
     }
 
@@ -2257,6 +2363,11 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         // MapValue's intrinsic isNew() flips to false on first access, which is too
         // coarse for repeated resets within the same partition.
         MAX_COLUMN_TYPES.add(ColumnType.BYTE); // initialized flag
+
+        MAX_COLUMN_TYPES_LV = new ArrayColumnTypes();
+        MAX_COLUMN_TYPES_LV.add(ColumnType.DOUBLE); // max value
+        MAX_COLUMN_TYPES_LV.add(ColumnType.BYTE);   // initialized flag
+        MAX_COLUMN_TYPES_LV.add(ColumnType.BYTE);   // tombstone (anchor-driven compaction)
 
         MAX_OVER_PARTITION_RANGE_COLUMN_TYPES = new ArrayColumnTypes();
         MAX_OVER_PARTITION_RANGE_COLUMN_TYPES.add(ColumnType.LONG); // frame size

@@ -64,6 +64,7 @@ import io.questdb.std.Vect;
 public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactory {
 
     public static final ArrayColumnTypes AVG_COLUMN_TYPES;
+    public static final ArrayColumnTypes AVG_COLUMN_TYPES_LV;
     public static final ArrayColumnTypes AVG_OVER_PARTITION_RANGE_COLUMN_TYPES;
     public static final ArrayColumnTypes AVG_OVER_PARTITION_RANGE_COLUMN_TYPES_LV;
     public static final ArrayColumnTypes AVG_OVER_PARTITION_ROWS_COLUMN_TYPES;
@@ -121,10 +122,11 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                     );
                 } // between unbounded preceding and current row
                 else if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
+                    final boolean liveView = windowContext.isLiveView();
                     Map map = MapFactory.createUnorderedMap(
                             configuration,
                             partitionByKeyTypes,
-                            AVG_COLUMN_TYPES
+                            liveView ? AVG_COLUMN_TYPES_LV : AVG_COLUMN_TYPES
                     );
 
                     // same as for rows because calculation stops at current rows even if there are 'equal' following rows
@@ -133,7 +135,9 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                             partitionByRecord,
                             partitionBySink,
                             args.get(0),
-                            partitionByKeyTypes
+                            partitionByKeyTypes,
+                            liveView,
+                            configuration
                     );
                 } // range between [unbounded | x] preceding and [x preceding | current row], except unbounded preceding to current row
                 else {
@@ -183,10 +187,11 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
             } else if (framingMode == WindowExpression.FRAMING_ROWS) {
                 // between unbounded preceding and current row
                 if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
+                    final boolean liveView = windowContext.isLiveView();
                     Map map = MapFactory.createUnorderedMap(
                             configuration,
                             partitionByKeyTypes,
-                            AVG_COLUMN_TYPES
+                            liveView ? AVG_COLUMN_TYPES_LV : AVG_COLUMN_TYPES
                     );
 
                     return new AvgOverUnboundedPartitionRowsFrameFunction(
@@ -194,7 +199,9 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                             partitionByRecord,
                             partitionBySink,
                             args.get(0),
-                            partitionByKeyTypes
+                            partitionByKeyTypes,
+                            liveView,
+                            configuration
                     );
                 } // between current row and current row
                 else if (rowsLo == 0 && rowsHi == 0) {
@@ -1693,25 +1700,78 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
     // - avg(a) over (partition by x order by ts range between unbounded preceding and current row)
     // Doesn't require value buffering.
     static class AvgOverUnboundedPartitionRowsFrameFunction extends BasePartitionedWindowFunction implements WindowDoubleFunction {
+        private final CairoConfiguration configuration;
         // Stable snapshot of the partition-by key column types, taken at
         // construction. The factory passes the live WindowContext buffer
         // which it reuses across window-function compiles; the function's
         // own copy keeps the types available after compilation has moved
         // on (live-view snapshot, Phase 5 eviction).
         private final ArrayColumnTypes keyColumnTypes;
+        private final boolean liveView;
+        // Full value layout (including tombstone slot) for the
+        // compactPartitionMap scratch Map. Null outside live-view mode.
+        private final ArrayColumnTypes mapValueTypes;
+        // Value-slot index of the per-partition tombstone byte; -1 outside LV.
+        private final int tombstoneValueIndex;
         private double avg;
+        // Single-writer (refresh worker), not volatile.
+        private long tombstoneCount;
 
         public AvgOverUnboundedPartitionRowsFrameFunction(
                 Map map,
                 VirtualRecord partitionByRecord,
                 RecordSink partitionBySink,
                 Function arg,
-                ColumnTypes partitionByKeyTypes
+                ColumnTypes partitionByKeyTypes,
+                boolean liveView,
+                CairoConfiguration configuration
         ) {
             super(map, partitionByRecord, partitionBySink, arg);
+            this.liveView = liveView;
+            this.configuration = configuration;
             this.keyColumnTypes = new ArrayColumnTypes();
             for (int i = 0, n = partitionByKeyTypes.getColumnCount(); i < n; i++) {
                 this.keyColumnTypes.add(partitionByKeyTypes.getColumnType(i));
+            }
+            if (liveView) {
+                ArrayColumnTypes valueTypesCopy = new ArrayColumnTypes();
+                for (int i = 0, n = AVG_COLUMN_TYPES_LV.getColumnCount(); i < n; i++) {
+                    valueTypesCopy.add(AVG_COLUMN_TYPES_LV.getColumnType(i));
+                }
+                this.mapValueTypes = valueTypesCopy;
+                this.tombstoneValueIndex = 2;
+            } else {
+                this.mapValueTypes = null;
+                this.tombstoneValueIndex = -1;
+            }
+        }
+
+        @Override
+        public void compactPartitionMap() {
+            if (tombstoneValueIndex < 0 || tombstoneCount == 0) {
+                return;
+            }
+            Map scratch = MapFactory.createUnorderedMap(configuration, keyColumnTypes, mapValueTypes);
+            try {
+                MapRecordCursor cursor = map.getCursor();
+                MapRecord record = map.getRecord();
+                while (cursor.hasNext()) {
+                    MapValue srcValue = record.getValue();
+                    if (srcValue.getByte(tombstoneValueIndex) == 1) {
+                        continue;
+                    }
+                    long srcKeyHash = record.keyHashCode();
+                    MapKey dstKey = scratch.withKey();
+                    record.copyToKey(dstKey);
+                    MapValue dstValue = dstKey.createValue(srcKeyHash);
+                    record.copyValue(dstValue);
+                }
+                Misc.free(map);
+                map = scratch;
+                scratch = null;
+                tombstoneCount = 0;
+            } finally {
+                Misc.free(scratch);
             }
         }
 
@@ -1742,6 +1802,10 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
             value.putDouble(0, sum);
             value.putLong(1, count);
             avg = count != 0 ? sum / count : Double.NaN;
+            if (tombstoneValueIndex >= 0 && value.getByte(tombstoneValueIndex) != 0) {
+                value.putByte(tombstoneValueIndex, (byte) 0);
+                tombstoneCount--;
+            }
         }
 
         @Override
@@ -1771,6 +1835,18 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         }
 
         @Override
+        public void reopen() {
+            super.reopen();
+            tombstoneCount = 0;
+        }
+
+        @Override
+        public void reset() {
+            super.reset();
+            tombstoneCount = 0;
+        }
+
+        @Override
         public void resetPartition(Record record) {
             // ANCHOR-driven reset (RFC 123). Zero the [sum, count] slots; next
             // computeNext reads sum=0, count=0 and re-anchors on the post-reset row.
@@ -1781,12 +1857,17 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
             if (value != null) {
                 value.putDouble(0, 0.0);
                 value.putLong(1, 0L);
+                if (tombstoneValueIndex >= 0 && value.getByte(tombstoneValueIndex) == 0) {
+                    value.putByte(tombstoneValueIndex, (byte) 1);
+                    tombstoneCount++;
+                }
             }
         }
 
         @Override
         public void restore(MemoryR source, int formatVersion) {
             map.clear();
+            tombstoneCount = 0;
             long offset = 0;
             final long partitionCount = source.getLong(offset);
             offset += Long.BYTES;
@@ -1798,20 +1879,37 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                 offset += Double.BYTES;
                 value.putLong(1, source.getLong(offset));
                 offset += Long.BYTES;
+                if (tombstoneValueIndex >= 0) {
+                    value.putByte(tombstoneValueIndex, (byte) 0);
+                }
             }
         }
 
         @Override
         public void snapshot(MemoryA sink) {
-            sink.putLong(map.size());
+            // Two-pass walk: first count non-tombstoned partitions, then emit
+            // their state. The cursor is consumed once; toTop() rewinds it for
+            // the emit pass.
             MapRecordCursor cursor = map.getCursor();
             MapRecord record = map.getRecord();
-            // AVG_COLUMN_TYPES = [DOUBLE sum, LONG count], so the key column
-            // sits at record index 2 in the Map's [values, key] record layout.
-            final int keyStartIndex = AVG_COLUMN_TYPES.getColumnCount();
+            long liveCount = 0;
             while (cursor.hasNext()) {
-                LiveViewSnapshotKeyCodec.writeKey(sink, record, keyColumnTypes, keyStartIndex);
+                if (tombstoneValueIndex < 0 || record.getValue().getByte(tombstoneValueIndex) == 0) {
+                    liveCount++;
+                }
+            }
+            sink.putLong(liveCount);
+
+            cursor.toTop();
+            final int keyStartIndex = mapValueTypes != null
+                    ? mapValueTypes.getColumnCount()
+                    : AVG_COLUMN_TYPES.getColumnCount();
+            while (cursor.hasNext()) {
                 final MapValue value = record.getValue();
+                if (tombstoneValueIndex >= 0 && value.getByte(tombstoneValueIndex) != 0) {
+                    continue;
+                }
+                LiveViewSnapshotKeyCodec.writeKey(sink, record, keyColumnTypes, keyStartIndex);
                 sink.putDouble(value.getDouble(0));
                 sink.putLong(value.getLong(1));
             }
@@ -1840,6 +1938,12 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
             sink.val("partition by ");
             sink.val(partitionByRecord.getFunctions());
             sink.val(" rows between unbounded preceding and current row)");
+        }
+
+        @Override
+        public void toTop() {
+            super.toTop();
+            tombstoneCount = 0;
         }
     }
 
@@ -1974,6 +2078,11 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         AVG_COLUMN_TYPES = new ArrayColumnTypes();
         AVG_COLUMN_TYPES.add(ColumnType.DOUBLE);
         AVG_COLUMN_TYPES.add(ColumnType.LONG);
+
+        AVG_COLUMN_TYPES_LV = new ArrayColumnTypes();
+        AVG_COLUMN_TYPES_LV.add(ColumnType.DOUBLE); // sum
+        AVG_COLUMN_TYPES_LV.add(ColumnType.LONG);   // count
+        AVG_COLUMN_TYPES_LV.add(ColumnType.BYTE);   // tombstone (anchor-driven compaction)
 
         AVG_OVER_PARTITION_RANGE_COLUMN_TYPES = new ArrayColumnTypes();
         AVG_OVER_PARTITION_RANGE_COLUMN_TYPES.add(ColumnType.DOUBLE);// current frame sum
