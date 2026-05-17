@@ -166,6 +166,23 @@ public class GenericRecordMetadata extends AbstractRecordMetadata {
         }
     }
 
+    /**
+     * Marks the column at {@code columnIndex} as ordered in the given
+     * direction (+1 ASC, -1 DESC, 0 unsorted). Callers must have ground
+     * truth about source sort order; an incorrect claim here would lead
+     * the optimiser to elide a sort that's actually needed and emit rows
+     * out of order.
+     * <p>
+     * Sparse: only indices touched by this setter carry non-zero values;
+     * unset columns default to 0 via the bounds check in
+     * {@code getColumnOrderBy}.
+     */
+    public void setColumnOrderBy(int columnIndex, int direction) {
+        assert direction == -1 || direction == 0 || direction == 1
+                : "direction must be -1 (DESC), 0 (unsorted), or +1 (ASC)";
+        columnOrderBy.extendAndSet(columnIndex, direction);
+    }
+
     public void setTimestampIndex(int index) {
         this.timestampIndex = index;
     }
