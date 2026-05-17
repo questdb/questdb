@@ -38,6 +38,16 @@ import org.jetbrains.annotations.NotNull;
  * registers one. With no provider, {@code read_parquet('s3://...')} falls through
  * to the local-file path and fails the sandbox check, the same as before.
  * <p>
+ * <b>OSS/Enterprise boundary:</b> all object-store networking, credential
+ * handling, retry logic, and download caching is the provider's responsibility
+ * and MUST live in the Enterprise (or third-party) module. The OSS distribution
+ * carries only this interface, the {@link java.util.ServiceLoader} dispatch in
+ * {@code ReadParquetFunctionFactory}, the
+ * {@code SecurityContext#authorizeReadRemoteParquet} hook (default no-op), and
+ * the existing local-file cursors. No S3, GCS, Azure, HTTP, or OpenDAL code
+ * may be added to the OSS Rust or OSS Java tree - if you find yourself
+ * reaching for an object-store library, you're working in the wrong module.
+ * <p>
  * Providers MUST:
  * <ul>
  *   <li>Implement {@link #canHandle(CharSequence)} cheaply (scheme/prefix check
