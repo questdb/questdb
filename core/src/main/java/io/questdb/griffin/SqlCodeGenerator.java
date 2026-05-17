@@ -321,6 +321,8 @@ import io.questdb.griffin.engine.table.SortedSymbolIndexRecordCursorFactory;
 import io.questdb.griffin.engine.table.SymbolIndexFilteredRowCursorFactory;
 import io.questdb.griffin.engine.table.SymbolIndexRowCursorFactory;
 import io.questdb.griffin.engine.table.VirtualRecordCursorFactory;
+import io.questdb.griffin.engine.functions.table.ParquetFooterAggregateRecordCursorFactory;
+import io.questdb.griffin.engine.functions.table.ReadParquetRecordCursorFactory;
 import io.questdb.griffin.engine.union.ExceptAllRecordCursorFactory;
 import io.questdb.griffin.engine.union.ExceptRecordCursorFactory;
 import io.questdb.griffin.engine.union.IntersectAllRecordCursorFactory;
@@ -8497,6 +8499,68 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             ? CountRecordCursorFactory.DEFAULT_COUNT_METADATA :
                             new GenericRecordMetadata().add(new TableColumnMetadata(Chars.toString(columnName), LONG));
                     return new CountRecordCursorFactory(metadata, generateSubQuery(model, executionContext));
+                }
+            }
+
+            // Footer-only MIN/MAX shortcut for read_parquet(<file>) where the
+            // file declares a sort claim on the designated timestamp via
+            // `sorting_columns`. Replaces what would normally be a full row
+            // decode + per-row scalar accumulation with two JNI calls per row
+            // group (rowGroupMinTimestamp / rowGroupMaxTimestamp), bypassing
+            // the cursor pipeline entirely.
+            //
+            // Pre-checks (cheap, no I/O):
+            //   1. AST shape matches min/max-on-same-column (the predicate)
+            //   2. No WHERE clause on the nested model - a filter would change
+            //      which rows contribute to min/max, and the footer-only
+            //      shortcut has no way to apply row-level filtering
+            //
+            // Late check (after subquery generation; the only path where we
+            // actually open a cursor factory):
+            //   3. The base is a ReadParquetRecordCursorFactory (single-file
+            //      read_parquet, not hive yet)
+            //   4. The aggregate column is the designated timestamp AND the
+            //      parquet file's sorting_columns metadata claims it sorted
+            //
+            // If the late check fails the probe factory is freed and the
+            // normal aggregation path runs (which re-generates the subquery -
+            // wasteful but only fires on the narrow case "AST matches but
+            // source isn't sorted parquet").
+            final CharSequence footerShortcutColumn = tryGetMinMaxAggregateColumn(columns);
+            if (footerShortcutColumn != null) {
+                final IQueryModel nestedModel = model.getNestedModel();
+                if (nestedModel != null && nestedModel.getWhereClause() == null) {
+                    RecordCursorFactory probe = generateSubQuery(model, executionContext);
+                    try {
+                        if (probe instanceof ReadParquetRecordCursorFactory) {
+                            final ReadParquetRecordCursorFactory parquetBase = (ReadParquetRecordCursorFactory) probe;
+                            final RecordMetadata probeMeta = probe.getMetadata();
+                            final int colIdx = probeMeta.getColumnIndexQuiet(footerShortcutColumn);
+                            final int tsIdx = probeMeta.getTimestampIndex();
+                            if (colIdx >= 0 && colIdx == tsIdx && probeMeta.getColumnOrderBy(colIdx) != 0) {
+                                final GenericRecordMetadata outMeta = new GenericRecordMetadata();
+                                final boolean[] kinds = new boolean[columns.size()];
+                                final int colType = probeMeta.getColumnType(colIdx);
+                                for (int i = 0, n = columns.size(); i < n; i++) {
+                                    QueryColumn qc = columns.getQuick(i);
+                                    outMeta.add(new TableColumnMetadata(Chars.toString(qc.getName()), colType));
+                                    kinds[i] = Chars.equalsLowerCaseAscii("max", qc.getAst().token);
+                                }
+                                final ParquetFooterAggregateRecordCursorFactory result =
+                                        new ParquetFooterAggregateRecordCursorFactory(
+                                                parquetBase.getPath(), outMeta, kinds
+                                        );
+                                Misc.free(probe);
+                                return result;
+                            }
+                        }
+                    } catch (Throwable th) {
+                        Misc.free(probe);
+                        throw th;
+                    }
+                    Misc.free(probe);
+                    // Fall through; the normal aggregation path below regenerates
+                    // the subquery and produces the standard plan.
                 }
             }
 
