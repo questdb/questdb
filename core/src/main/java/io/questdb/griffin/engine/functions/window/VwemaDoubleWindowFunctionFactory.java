@@ -269,10 +269,8 @@ public class VwemaDoubleWindowFunctionFactory extends AbstractWindowFunctionFact
         private final boolean liveView;
         private final ArrayColumnTypes mapValueTypes;
         private final double paramValue;
-        private final int tombstoneValueIndex;
         private final Function volumeArg;
         private double vwema;
-        private long tombstoneCount;
 
         VwemaOverPartitionFunction(
                 Map map,
@@ -414,10 +412,6 @@ public class VwemaDoubleWindowFunctionFactory extends AbstractWindowFunctionFact
                     this.vwema = hasValue == 1 ? prevNumerator / prevDenominator : Double.NaN;
                 }
             }
-            if (tombstoneValueIndex >= 0 && mapValue.getByte(tombstoneValueIndex) != 0) {
-                mapValue.putByte(tombstoneValueIndex, (byte) 0);
-                tombstoneCount--;
-            }
         }
 
         @Override
@@ -469,7 +463,7 @@ public class VwemaDoubleWindowFunctionFactory extends AbstractWindowFunctionFact
                 value.putDouble(1, 0.0);
                 value.putLong(2, 0L);
                 value.putLong(3, 0L);
-                if (tombstoneValueIndex >= 0 && value.getByte(tombstoneValueIndex) == 0) {
+                if (!value.isNew() && tombstoneValueIndex >= 0 && value.getByte(tombstoneValueIndex) != 1) {
                     value.putByte(tombstoneValueIndex, (byte) 1);
                     tombstoneCount++;
                 }
@@ -507,7 +501,7 @@ public class VwemaDoubleWindowFunctionFactory extends AbstractWindowFunctionFact
             MapRecord record = map.getRecord();
             long liveCount = 0;
             while (cursor.hasNext()) {
-                if (tombstoneValueIndex < 0 || record.getValue().getByte(tombstoneValueIndex) == 0) {
+                if (tombstoneValueIndex < 0 || record.getValue().getByte(tombstoneValueIndex) != 1) {
                     liveCount++;
                 }
             }
@@ -519,7 +513,7 @@ public class VwemaDoubleWindowFunctionFactory extends AbstractWindowFunctionFact
                     : VWEMA_COLUMN_TYPES.getColumnCount();
             while (cursor.hasNext()) {
                 final MapValue value = record.getValue();
-                if (tombstoneValueIndex >= 0 && value.getByte(tombstoneValueIndex) != 0) {
+                if (tombstoneValueIndex >= 0 && value.getByte(tombstoneValueIndex) == 1) {
                     continue;
                 }
                 LiveViewSnapshotKeyCodec.writeKey(sink, record, keyColumnTypes, keyStartIndex);
@@ -675,10 +669,8 @@ public class VwemaDoubleWindowFunctionFactory extends AbstractWindowFunctionFact
         private final double paramValue;
         private final long tau;
         private final int timestampIndex;
-        private final int tombstoneValueIndex;
         private final Function volumeArg;
         private double vwema;
-        private long tombstoneCount;
 
         VwemaTimeWeightedOverPartitionFunction(
                 Map map,
@@ -833,10 +825,6 @@ public class VwemaDoubleWindowFunctionFactory extends AbstractWindowFunctionFact
                     this.vwema = hasValue == 1 ? prevNumerator / prevDenominator : Double.NaN;
                 }
             }
-            if (tombstoneValueIndex >= 0 && mapValue.getByte(tombstoneValueIndex) != 0) {
-                mapValue.putByte(tombstoneValueIndex, (byte) 0);
-                tombstoneCount--;
-            }
         }
 
         @Override
@@ -888,7 +876,7 @@ public class VwemaDoubleWindowFunctionFactory extends AbstractWindowFunctionFact
                 value.putDouble(1, 0.0);
                 value.putLong(2, 0L);
                 value.putLong(3, 0L);
-                if (tombstoneValueIndex >= 0 && value.getByte(tombstoneValueIndex) == 0) {
+                if (!value.isNew() && tombstoneValueIndex >= 0 && value.getByte(tombstoneValueIndex) != 1) {
                     value.putByte(tombstoneValueIndex, (byte) 1);
                     tombstoneCount++;
                 }
@@ -926,7 +914,7 @@ public class VwemaDoubleWindowFunctionFactory extends AbstractWindowFunctionFact
             MapRecord record = map.getRecord();
             long liveCount = 0;
             while (cursor.hasNext()) {
-                if (tombstoneValueIndex < 0 || record.getValue().getByte(tombstoneValueIndex) == 0) {
+                if (tombstoneValueIndex < 0 || record.getValue().getByte(tombstoneValueIndex) != 1) {
                     liveCount++;
                 }
             }
@@ -938,7 +926,7 @@ public class VwemaDoubleWindowFunctionFactory extends AbstractWindowFunctionFact
                     : VWEMA_COLUMN_TYPES.getColumnCount();
             while (cursor.hasNext()) {
                 final MapValue value = record.getValue();
-                if (tombstoneValueIndex >= 0 && value.getByte(tombstoneValueIndex) != 0) {
+                if (tombstoneValueIndex >= 0 && value.getByte(tombstoneValueIndex) == 1) {
                     continue;
                 }
                 LiveViewSnapshotKeyCodec.writeKey(sink, record, keyColumnTypes, keyStartIndex);

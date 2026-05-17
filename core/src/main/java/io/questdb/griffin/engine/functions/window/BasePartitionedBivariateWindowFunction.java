@@ -27,7 +27,10 @@ package io.questdb.griffin.engine.functions.window;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.Reopenable;
 import io.questdb.cairo.map.Map;
+import io.questdb.cairo.map.MapKey;
+import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.cairo.sql.VirtualRecord;
 import io.questdb.griffin.SqlException;
@@ -40,6 +43,10 @@ public abstract class BasePartitionedBivariateWindowFunction extends BaseBivaria
     protected Map map;
     protected final VirtualRecord partitionByRecord;
     protected final RecordSink partitionBySink;
+    // Live-view tombstone bookkeeping; mirrors BasePartitionedWindowFunction.
+    // Subclasses set tombstoneValueIndex in their constructor.
+    protected int tombstoneValueIndex = -1;
+    protected long tombstoneCount;
 
     public BasePartitionedBivariateWindowFunction(
             Map map,
@@ -68,20 +75,38 @@ public abstract class BasePartitionedBivariateWindowFunction extends BaseBivaria
     }
 
     @Override
+    public void markPartitionAlive(Record record) {
+        if (tombstoneValueIndex < 0 || tombstoneCount == 0) {
+            return;
+        }
+        partitionByRecord.of(record);
+        MapKey key = map.withKey();
+        key.put(partitionByRecord, partitionBySink);
+        MapValue value = key.findValue();
+        if (value != null && value.getByte(tombstoneValueIndex) == 1) {
+            value.putByte(tombstoneValueIndex, (byte) 0);
+            tombstoneCount--;
+        }
+    }
+
+    @Override
     public void reopen() {
         if (map != null) {
             map.reopen();
         }
+        tombstoneCount = 0;
     }
 
     @Override
     public void reset() {
         Misc.free(map);
+        tombstoneCount = 0;
     }
 
     @Override
     public void toTop() {
         super.toTop();
         Misc.clear(map);
+        tombstoneCount = 0;
     }
 }

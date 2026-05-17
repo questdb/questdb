@@ -372,6 +372,27 @@ public interface WindowFunction extends Function {
     }
 
     /**
+     * Clears the per-function tombstone bit for the partition the supplied record
+     * belongs to, if currently set. Called once per row by
+     * {@link io.questdb.cairo.lv.LiveViewWindow#processRow(Record)} (post-projection,
+     * post-filter) before the row reaches the underlying cursor stack's
+     * {@link #computeNext(Record)} dispatch.
+     * <p>
+     * Decouples the "partition saw a row" signal from {@link #computeNext(Record)},
+     * which previously cancelled the tombstone bit set by {@link #resetPartition(Record)}
+     * on the same anchor-cross row. With markPartitionAlive driving the clear,
+     * the anchor-map's tombstoneCount actually grows across anchor crosses and the
+     * compaction trigger can engage in steady state.
+     * <p>
+     * Default no-op; override on every window function that tracks a per-partition
+     * tombstone bit. Implementations must be branchless on the common (no-tombstone)
+     * case -- check the function-local tombstoneCount first and bail before the
+     * Map lookup.
+     */
+    default void markPartitionAlive(Record record) {
+    }
+
+    /**
      * Performs the primary cached traversal for this function.
      * <p>
      * The cached executor calls this method for every window function, including functions whose

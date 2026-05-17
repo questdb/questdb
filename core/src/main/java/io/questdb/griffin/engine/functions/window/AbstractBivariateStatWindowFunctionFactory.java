@@ -1609,9 +1609,7 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
         private final boolean liveView;
         private final ArrayColumnTypes mapValueTypes;
         private final String name;
-        private final int tombstoneValueIndex;
         private double result = Double.NaN;
-        private long tombstoneCount;
 
         BivarStatOverUnboundedPartitionRowsFrameFunction(
                 Map map,
@@ -1731,10 +1729,6 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
             value.putDouble(3, sumYY);
             value.putDouble(4, sumXY);
             value.putLong(5, count);
-            if (tombstoneValueIndex >= 0 && value.getByte(tombstoneValueIndex) != 0) {
-                value.putByte(tombstoneValueIndex, (byte) 0);
-                tombstoneCount--;
-            }
 
             if (isCorrelation) {
                 result = computeCorrWelford(sumXY, sumXX, sumYY, count);
@@ -1794,7 +1788,7 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
                 value.putDouble(3, 0.0);
                 value.putDouble(4, 0.0);
                 value.putLong(5, 0L);
-                if (tombstoneValueIndex >= 0 && value.getByte(tombstoneValueIndex) == 0) {
+                if (!value.isNew() && tombstoneValueIndex >= 0 && value.getByte(tombstoneValueIndex) != 1) {
                     value.putByte(tombstoneValueIndex, (byte) 1);
                     tombstoneCount++;
                 }
@@ -1830,7 +1824,7 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
             MapRecord record = map.getRecord();
             long liveCount = 0;
             while (cursor.hasNext()) {
-                if (tombstoneValueIndex < 0 || record.getValue().getByte(tombstoneValueIndex) == 0) {
+                if (tombstoneValueIndex < 0 || record.getValue().getByte(tombstoneValueIndex) != 1) {
                     liveCount++;
                 }
             }
@@ -1842,7 +1836,7 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
                     : BIVAR_COLUMN_TYPES.getColumnCount();
             while (cursor.hasNext()) {
                 final MapValue value = record.getValue();
-                if (tombstoneValueIndex >= 0 && value.getByte(tombstoneValueIndex) != 0) {
+                if (tombstoneValueIndex >= 0 && value.getByte(tombstoneValueIndex) == 1) {
                     continue;
                 }
                 LiveViewSnapshotKeyCodec.writeKey(sink, record, keyColumnTypes, keyStartIndex);

@@ -426,9 +426,7 @@ public class CountFunctionFactoryHelper {
         private final AbstractWindowFunctionFactory.RingBufferDesc memoryDesc = new AbstractWindowFunctionFactory.RingBufferDesc();
         private final long minDiff;
         private final int timestampIndex;
-        private final int tombstoneValueIndex;
         private long count;
-        private long tombstoneCount;
 
         public CountOverPartitionRangeFrameFunction(
                 Map map,
@@ -599,10 +597,6 @@ public class CountFunctionFactoryHelper {
             mapValue.putLong(2, size);
             mapValue.putLong(3, capacity);
             mapValue.putLong(4, firstIdx);
-            if (tombstoneValueIndex >= 0 && mapValue.getByte(tombstoneValueIndex) != 0) {
-                mapValue.putByte(tombstoneValueIndex, (byte) 0);
-                tombstoneCount--;
-            }
         }
 
         @Override
@@ -691,7 +685,7 @@ public class CountFunctionFactoryHelper {
                 value.putLong(2, 0L);
                 // slot 3 (capacity) stays.
                 value.putLong(4, 0L);
-                if (tombstoneValueIndex >= 0 && value.getByte(tombstoneValueIndex) == 0) {
+                if (!value.isNew() && tombstoneValueIndex >= 0 && value.getByte(tombstoneValueIndex) != 1) {
                     value.putByte(tombstoneValueIndex, (byte) 1);
                     tombstoneCount++;
                 }
@@ -738,7 +732,7 @@ public class CountFunctionFactoryHelper {
             MapRecord record = map.getRecord();
             long liveCount = 0;
             while (cursor.hasNext()) {
-                if (tombstoneValueIndex < 0 || record.getValue().getByte(tombstoneValueIndex) == 0) {
+                if (tombstoneValueIndex < 0 || record.getValue().getByte(tombstoneValueIndex) != 1) {
                     liveCount++;
                 }
             }
@@ -750,7 +744,7 @@ public class CountFunctionFactoryHelper {
                     : COUNT_OVER_PARTITION_RANGE_COLUMN_TYPES.getColumnCount();
             while (cursor.hasNext()) {
                 final MapValue value = record.getValue();
-                if (tombstoneValueIndex >= 0 && value.getByte(tombstoneValueIndex) != 0) {
+                if (tombstoneValueIndex >= 0 && value.getByte(tombstoneValueIndex) == 1) {
                     continue;
                 }
                 LiveViewSnapshotKeyCodec.writeKey(sink, record, keyColumnTypes, keyStartIndex);
@@ -836,9 +830,7 @@ public class CountFunctionFactoryHelper {
         private final ArrayColumnTypes keyColumnTypes;
         private final boolean liveView;
         private final ArrayColumnTypes mapValueTypes;
-        private final int tombstoneValueIndex;
         protected long count;
-        private long tombstoneCount;
 
         public CountOverPartitionRowsFrameFunction(
                 Map map,
@@ -943,10 +935,6 @@ public class CountFunctionFactoryHelper {
             value.putLong(1, (loIdx + 1) % bufferSize);
             value.putLong(2, startOffset);//not necessary because it doesn't change
             memory.putBool(startOffset + loIdx, isNotNull);
-            if (tombstoneValueIndex >= 0 && value.getByte(tombstoneValueIndex) != 0) {
-                value.putByte(tombstoneValueIndex, (byte) 0);
-                tombstoneCount--;
-            }
         }
 
         @Override
@@ -1035,7 +1023,7 @@ public class CountFunctionFactoryHelper {
                 for (int i = 0; i < bufferSize; i++) {
                     memory.putBool(startOffset + i, false);
                 }
-                if (tombstoneValueIndex >= 0 && value.getByte(tombstoneValueIndex) == 0) {
+                if (!value.isNew() && tombstoneValueIndex >= 0 && value.getByte(tombstoneValueIndex) != 1) {
                     value.putByte(tombstoneValueIndex, (byte) 1);
                     tombstoneCount++;
                 }
@@ -1078,7 +1066,7 @@ public class CountFunctionFactoryHelper {
             MapRecord record = map.getRecord();
             long liveCount = 0;
             while (cursor.hasNext()) {
-                if (tombstoneValueIndex < 0 || record.getValue().getByte(tombstoneValueIndex) == 0) {
+                if (tombstoneValueIndex < 0 || record.getValue().getByte(tombstoneValueIndex) != 1) {
                     liveCount++;
                 }
             }
@@ -1090,7 +1078,7 @@ public class CountFunctionFactoryHelper {
                     : COUNT_OVER_PARTITION_ROWS_COLUMN_TYPES.getColumnCount();
             while (cursor.hasNext()) {
                 final MapValue value = record.getValue();
-                if (tombstoneValueIndex >= 0 && value.getByte(tombstoneValueIndex) != 0) {
+                if (tombstoneValueIndex >= 0 && value.getByte(tombstoneValueIndex) == 1) {
                     continue;
                 }
                 LiveViewSnapshotKeyCodec.writeKey(sink, record, keyColumnTypes, keyStartIndex);
@@ -1514,10 +1502,8 @@ public class CountFunctionFactoryHelper {
         // compactPartitionMap scratch Map. Null outside live-view mode.
         private final ArrayColumnTypes mapValueTypes;
         // Value-slot index of the per-partition tombstone byte; -1 outside LV.
-        private final int tombstoneValueIndex;
         private long count;
         // Single-writer (refresh worker), not volatile.
-        private long tombstoneCount;
 
         public CountOverUnboundedPartitionRowsFrameFunction(
                 Map map,
@@ -1594,10 +1580,6 @@ public class CountFunctionFactoryHelper {
             }
             this.count = count;
             value.putLong(0, count);
-            if (tombstoneValueIndex >= 0 && value.getByte(tombstoneValueIndex) != 0) {
-                value.putByte(tombstoneValueIndex, (byte) 0);
-                tombstoneCount--;
-            }
         }
 
         @Override
@@ -1647,7 +1629,7 @@ public class CountFunctionFactoryHelper {
             MapValue value = key.findValue();
             if (value != null) {
                 value.putLong(0, 0L);
-                if (tombstoneValueIndex >= 0 && value.getByte(tombstoneValueIndex) == 0) {
+                if (!value.isNew() && tombstoneValueIndex >= 0 && value.getByte(tombstoneValueIndex) != 1) {
                     value.putByte(tombstoneValueIndex, (byte) 1);
                     tombstoneCount++;
                 }
@@ -1680,7 +1662,7 @@ public class CountFunctionFactoryHelper {
             MapRecord record = map.getRecord();
             long liveCount = 0;
             while (cursor.hasNext()) {
-                if (tombstoneValueIndex < 0 || record.getValue().getByte(tombstoneValueIndex) == 0) {
+                if (tombstoneValueIndex < 0 || record.getValue().getByte(tombstoneValueIndex) != 1) {
                     liveCount++;
                 }
             }
@@ -1695,7 +1677,7 @@ public class CountFunctionFactoryHelper {
                     : COUNT_COLUMN_TYPES.getColumnCount();
             while (cursor.hasNext()) {
                 final MapValue value = record.getValue();
-                if (tombstoneValueIndex >= 0 && value.getByte(tombstoneValueIndex) != 0) {
+                if (tombstoneValueIndex >= 0 && value.getByte(tombstoneValueIndex) == 1) {
                     continue;
                 }
                 LiveViewSnapshotKeyCodec.writeKey(sink, record, keyColumnTypes, keyStartIndex);

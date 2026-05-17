@@ -649,10 +649,8 @@ public class MaxLongWindowFunctionFactory extends AbstractWindowFunctionFactory 
         private final long minDiff;
         private final String name;
         private final int timestampIndex;
-        private final int tombstoneValueIndex;
         // current max value
         private long maxMin;
-        private long tombstoneCount;
 
         /**
          * Constructs a partitioned RANGE-frame window function instance that computes the maximum
@@ -931,10 +929,6 @@ public class MaxLongWindowFunctionFactory extends AbstractWindowFunctionFactory 
             } else {
                 mapValue.putLong(5, this.maxMin);
             }
-            if (tombstoneValueIndex >= 0 && mapValue.getByte(tombstoneValueIndex) != 0) {
-                mapValue.putByte(tombstoneValueIndex, (byte) 0);
-                tombstoneCount--;
-            }
         }
 
         @Override
@@ -1066,7 +1060,7 @@ public class MaxLongWindowFunctionFactory extends AbstractWindowFunctionFactory 
                 } else {
                     value.putLong(5, Numbers.LONG_NULL);
                 }
-                if (tombstoneValueIndex >= 0 && value.getByte(tombstoneValueIndex) == 0) {
+                if (!value.isNew() && tombstoneValueIndex >= 0 && value.getByte(tombstoneValueIndex) != 1) {
                     value.putByte(tombstoneValueIndex, (byte) 1);
                     tombstoneCount++;
                 }
@@ -1148,7 +1142,7 @@ public class MaxLongWindowFunctionFactory extends AbstractWindowFunctionFactory 
             MapRecord record = map.getRecord();
             long liveCount = 0;
             while (cursor.hasNext()) {
-                if (tombstoneValueIndex < 0 || record.getValue().getByte(tombstoneValueIndex) == 0) {
+                if (tombstoneValueIndex < 0 || record.getValue().getByte(tombstoneValueIndex) != 1) {
                     liveCount++;
                 }
             }
@@ -1163,7 +1157,7 @@ public class MaxLongWindowFunctionFactory extends AbstractWindowFunctionFactory 
                     : baseTypes.getColumnCount();
             while (cursor.hasNext()) {
                 final MapValue value = record.getValue();
-                if (tombstoneValueIndex >= 0 && value.getByte(tombstoneValueIndex) != 0) {
+                if (tombstoneValueIndex >= 0 && value.getByte(tombstoneValueIndex) == 1) {
                     continue;
                 }
                 LiveViewSnapshotKeyCodec.writeKey(sink, record, keyColumnTypes, keyStartIndex);
@@ -1287,9 +1281,7 @@ public class MaxLongWindowFunctionFactory extends AbstractWindowFunctionFactory 
         // holds fixed-size ring buffers of long values
         private final MemoryARW memory;
         private final String name;
-        private final int tombstoneValueIndex;
         private long maxMin;
-        private long tombstoneCount;
 
         public MaxMinOverPartitionRowsFrameFunction(
                 Map map,
@@ -1502,10 +1494,6 @@ public class MaxLongWindowFunctionFactory extends AbstractWindowFunctionFactory 
                 value.putLong(4, dequeEndIndex);
             }
             memory.putLong(startOffset + loIdx * Long.BYTES, l);
-            if (tombstoneValueIndex >= 0 && value.getByte(tombstoneValueIndex) != 0) {
-                value.putByte(tombstoneValueIndex, (byte) 0);
-                tombstoneCount--;
-            }
         }
 
         @Override
@@ -1568,7 +1556,7 @@ public class MaxLongWindowFunctionFactory extends AbstractWindowFunctionFactory 
                 } else {
                     value.putLong(2, Numbers.LONG_NULL);
                 }
-                if (tombstoneValueIndex >= 0 && value.getByte(tombstoneValueIndex) == 0) {
+                if (!value.isNew() && tombstoneValueIndex >= 0 && value.getByte(tombstoneValueIndex) != 1) {
                     value.putByte(tombstoneValueIndex, (byte) 1);
                     tombstoneCount++;
                 }
@@ -1637,7 +1625,7 @@ public class MaxLongWindowFunctionFactory extends AbstractWindowFunctionFactory 
             MapRecord record = map.getRecord();
             long liveCount = 0;
             while (cursor.hasNext()) {
-                if (tombstoneValueIndex < 0 || record.getValue().getByte(tombstoneValueIndex) == 0) {
+                if (tombstoneValueIndex < 0 || record.getValue().getByte(tombstoneValueIndex) != 1) {
                     liveCount++;
                 }
             }
@@ -1652,7 +1640,7 @@ public class MaxLongWindowFunctionFactory extends AbstractWindowFunctionFactory 
                     : baseTypes.getColumnCount();
             while (cursor.hasNext()) {
                 final MapValue value = record.getValue();
-                if (tombstoneValueIndex >= 0 && value.getByte(tombstoneValueIndex) != 0) {
+                if (tombstoneValueIndex >= 0 && value.getByte(tombstoneValueIndex) == 1) {
                     continue;
                 }
                 LiveViewSnapshotKeyCodec.writeKey(sink, record, keyColumnTypes, keyStartIndex);
@@ -2432,10 +2420,8 @@ public class MaxLongWindowFunctionFactory extends AbstractWindowFunctionFactory 
         private final ArrayColumnTypes mapValueTypes;
         private final String name;
         // Value-slot index of the per-partition tombstone byte; -1 outside LV.
-        private final int tombstoneValueIndex;
         private long maxMin;
         // Single-writer (refresh worker), not volatile.
-        private long tombstoneCount;
 
         public MaxMinOverUnboundedPartitionRowsFrameFunction(Map map,
                                                              VirtualRecord partitionByRecord,
@@ -2526,17 +2512,9 @@ public class MaxLongWindowFunctionFactory extends AbstractWindowFunctionFactory 
                     }
                     this.maxMin = max;
                 }
-                if (tombstoneValueIndex >= 0 && value.getByte(tombstoneValueIndex) != 0) {
-                    value.putByte(tombstoneValueIndex, (byte) 0);
-                    tombstoneCount--;
-                }
             } else {
                 MapValue value = key.findValue();
                 this.maxMin = value != null && value.getByte(1) == 1 ? value.getLong(0) : Numbers.LONG_NULL;
-                if (value != null && tombstoneValueIndex >= 0 && value.getByte(tombstoneValueIndex) != 0) {
-                    value.putByte(tombstoneValueIndex, (byte) 0);
-                    tombstoneCount--;
-                }
             }
         }
 
@@ -2559,7 +2537,7 @@ public class MaxLongWindowFunctionFactory extends AbstractWindowFunctionFactory 
             key.put(partitionByRecord, partitionBySink);
             MapValue value = key.createValue();
             value.putByte(1, (byte) 0);
-            if (tombstoneValueIndex >= 0 && value.getByte(tombstoneValueIndex) == 0) {
+            if (!value.isNew() && tombstoneValueIndex >= 0 && value.getByte(tombstoneValueIndex) != 1) {
                 value.putByte(tombstoneValueIndex, (byte) 1);
                 tombstoneCount++;
             }
@@ -2643,7 +2621,7 @@ public class MaxLongWindowFunctionFactory extends AbstractWindowFunctionFactory 
             MapRecord record = map.getRecord();
             long liveCount = 0;
             while (cursor.hasNext()) {
-                if (tombstoneValueIndex < 0 || record.getValue().getByte(tombstoneValueIndex) == 0) {
+                if (tombstoneValueIndex < 0 || record.getValue().getByte(tombstoneValueIndex) != 1) {
                     liveCount++;
                 }
             }
@@ -2655,7 +2633,7 @@ public class MaxLongWindowFunctionFactory extends AbstractWindowFunctionFactory 
                     : MAX_COLUMN_TYPES.getColumnCount();
             while (cursor.hasNext()) {
                 final MapValue value = record.getValue();
-                if (tombstoneValueIndex >= 0 && value.getByte(tombstoneValueIndex) != 0) {
+                if (tombstoneValueIndex >= 0 && value.getByte(tombstoneValueIndex) == 1) {
                     continue;
                 }
                 LiveViewSnapshotKeyCodec.writeKey(sink, record, keyColumnTypes, keyStartIndex);

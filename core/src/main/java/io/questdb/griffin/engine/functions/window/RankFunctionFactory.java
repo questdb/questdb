@@ -467,10 +467,6 @@ public class RankFunctionFactory extends AbstractWindowFunctionFactory {
                 mapValue.putLong(lastActivityTsValueIndex,
                         tsColumnIndex >= 0 ? record.getTimestamp(tsColumnIndex) : Long.MIN_VALUE);
             }
-            if (tombstoneValueIndex >= 0 && mapValue.getByte(tombstoneValueIndex) != 0) {
-                mapValue.putByte(tombstoneValueIndex, (byte) 0);
-                tombstoneCount--;
-            }
         }
 
         @Override
@@ -518,6 +514,21 @@ public class RankFunctionFactory extends AbstractWindowFunctionFactory {
         }
 
         @Override
+        public void markPartitionAlive(Record record) {
+            if (tombstoneValueIndex < 0 || tombstoneCount == 0) {
+                return;
+            }
+            partitionByRecord.of(record);
+            MapKey key = map.withKey();
+            key.put(partitionByRecord, partitionBySink);
+            MapValue value = key.findValue();
+            if (value != null && value.getByte(tombstoneValueIndex) == 1) {
+                value.putByte(tombstoneValueIndex, (byte) 0);
+                tombstoneCount--;
+            }
+        }
+
+        @Override
         public void resetPartition(Record record) {
             partitionByRecord.of(record);
             MapKey key = map.withKey();
@@ -527,7 +538,7 @@ public class RankFunctionFactory extends AbstractWindowFunctionFactory {
             // Rank itself doesn't need an explicit clear; the next computeNext writes
             // both slots before they're read.
             mapValue.putLong(chainTypeIndex + 1, 0);
-            if (tombstoneValueIndex >= 0 && mapValue.getByte(tombstoneValueIndex) == 0) {
+            if (!mapValue.isNew() && tombstoneValueIndex >= 0 && mapValue.getByte(tombstoneValueIndex) != 1) {
                 mapValue.putByte(tombstoneValueIndex, (byte) 1);
                 tombstoneCount++;
             }
@@ -692,7 +703,7 @@ public class RankFunctionFactory extends AbstractWindowFunctionFactory {
             MapRecord record = map.getRecord();
             long liveCount = 0;
             while (cursor.hasNext()) {
-                if (tombstoneValueIndex < 0 || record.getValue().getByte(tombstoneValueIndex) == 0) {
+                if (tombstoneValueIndex < 0 || record.getValue().getByte(tombstoneValueIndex) != 1) {
                     liveCount++;
                 }
             }
@@ -704,7 +715,7 @@ public class RankFunctionFactory extends AbstractWindowFunctionFactory {
                     : chainTypeIndex + 2;
             while (cursor.hasNext()) {
                 final MapValue value = record.getValue();
-                if (tombstoneValueIndex >= 0 && value.getByte(tombstoneValueIndex) != 0) {
+                if (tombstoneValueIndex >= 0 && value.getByte(tombstoneValueIndex) == 1) {
                     continue;
                 }
                 LiveViewSnapshotKeyCodec.writeKey(sink, record, keyColumnTypes, keyStartIndex);

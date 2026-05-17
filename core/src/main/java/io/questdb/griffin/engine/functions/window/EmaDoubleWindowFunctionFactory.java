@@ -261,9 +261,7 @@ public class EmaDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         private final boolean liveView;
         private final ArrayColumnTypes mapValueTypes;
         private final double paramValue;
-        private final int tombstoneValueIndex;
         private double ema;
-        private long tombstoneCount;
 
         EmaOverPartitionFunction(
                 Map map,
@@ -379,10 +377,6 @@ public class EmaDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                     this.ema = hasValue == 1 ? prevEma : Double.NaN;
                 }
             }
-            if (tombstoneValueIndex >= 0 && value.getByte(tombstoneValueIndex) != 0) {
-                value.putByte(tombstoneValueIndex, (byte) 0);
-                tombstoneCount--;
-            }
         }
 
         @Override
@@ -433,7 +427,7 @@ public class EmaDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                 value.putDouble(0, 0.0);
                 value.putLong(1, 0L);
                 value.putLong(2, 0L);
-                if (tombstoneValueIndex >= 0 && value.getByte(tombstoneValueIndex) == 0) {
+                if (!value.isNew() && tombstoneValueIndex >= 0 && value.getByte(tombstoneValueIndex) != 1) {
                     value.putByte(tombstoneValueIndex, (byte) 1);
                     tombstoneCount++;
                 }
@@ -469,7 +463,7 @@ public class EmaDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
             MapRecord record = map.getRecord();
             long liveCount = 0;
             while (cursor.hasNext()) {
-                if (tombstoneValueIndex < 0 || record.getValue().getByte(tombstoneValueIndex) == 0) {
+                if (tombstoneValueIndex < 0 || record.getValue().getByte(tombstoneValueIndex) != 1) {
                     liveCount++;
                 }
             }
@@ -481,7 +475,7 @@ public class EmaDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                     : EMA_COLUMN_TYPES.getColumnCount();
             while (cursor.hasNext()) {
                 final MapValue value = record.getValue();
-                if (tombstoneValueIndex >= 0 && value.getByte(tombstoneValueIndex) != 0) {
+                if (tombstoneValueIndex >= 0 && value.getByte(tombstoneValueIndex) == 1) {
                     continue;
                 }
                 LiveViewSnapshotKeyCodec.writeKey(sink, record, keyColumnTypes, keyStartIndex);
@@ -536,9 +530,7 @@ public class EmaDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         private final double paramValue;
         private final long tau;
         private final int timestampIndex;
-        private final int tombstoneValueIndex;
         private double ema;
-        private long tombstoneCount;
 
         EmaTimeWeightedOverPartitionFunction(
                 Map map,
@@ -669,10 +661,6 @@ public class EmaDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                     this.ema = hasValue == 1 ? prevEma : Double.NaN;
                 }
             }
-            if (tombstoneValueIndex >= 0 && value.getByte(tombstoneValueIndex) != 0) {
-                value.putByte(tombstoneValueIndex, (byte) 0);
-                tombstoneCount--;
-            }
         }
 
         @Override
@@ -723,7 +711,7 @@ public class EmaDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                 value.putDouble(0, 0.0);
                 value.putLong(1, 0L);
                 value.putLong(2, 0L);
-                if (tombstoneValueIndex >= 0 && value.getByte(tombstoneValueIndex) == 0) {
+                if (!value.isNew() && tombstoneValueIndex >= 0 && value.getByte(tombstoneValueIndex) != 1) {
                     value.putByte(tombstoneValueIndex, (byte) 1);
                     tombstoneCount++;
                 }
@@ -759,7 +747,7 @@ public class EmaDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
             MapRecord record = map.getRecord();
             long liveCount = 0;
             while (cursor.hasNext()) {
-                if (tombstoneValueIndex < 0 || record.getValue().getByte(tombstoneValueIndex) == 0) {
+                if (tombstoneValueIndex < 0 || record.getValue().getByte(tombstoneValueIndex) != 1) {
                     liveCount++;
                 }
             }
@@ -771,7 +759,7 @@ public class EmaDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                     : EMA_COLUMN_TYPES.getColumnCount();
             while (cursor.hasNext()) {
                 final MapValue value = record.getValue();
-                if (tombstoneValueIndex >= 0 && value.getByte(tombstoneValueIndex) != 0) {
+                if (tombstoneValueIndex >= 0 && value.getByte(tombstoneValueIndex) == 1) {
                     continue;
                 }
                 LiveViewSnapshotKeyCodec.writeKey(sink, record, keyColumnTypes, keyStartIndex);

@@ -501,10 +501,8 @@ public class SumDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         // compactPartitionMap scratch Map. Null outside live-view mode.
         private final ArrayColumnTypes mapValueTypes;
         // Value-slot index of the per-partition tombstone byte; -1 outside LV.
-        private final int tombstoneValueIndex;
         private double sum;
         // Single-writer (refresh worker), not volatile.
-        private long tombstoneCount;
 
         public SumOverUnboundedPartitionRowsFrameFunction(
                 Map map,
@@ -591,10 +589,6 @@ public class SumDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
             value.putDouble(0, sum);
             value.putLong(1, count);
             this.sum = count != 0 ? sum : Double.NaN;
-            if (tombstoneValueIndex >= 0 && value.getByte(tombstoneValueIndex) != 0) {
-                value.putByte(tombstoneValueIndex, (byte) 0);
-                tombstoneCount--;
-            }
         }
 
         @Override
@@ -615,6 +609,21 @@ public class SumDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         @Override
         public Map getPartitionMap() {
             return map;
+        }
+
+        @Override
+        public void markPartitionAlive(Record record) {
+            if (tombstoneValueIndex < 0 || tombstoneCount == 0) {
+                return;
+            }
+            partitionByRecord.of(record);
+            MapKey key = map.withKey();
+            key.put(partitionByRecord, partitionBySink);
+            MapValue value = key.findValue();
+            if (value != null && value.getByte(tombstoneValueIndex) == 1) {
+                value.putByte(tombstoneValueIndex, (byte) 0);
+                tombstoneCount--;
+            }
         }
 
         @Override
@@ -646,7 +655,7 @@ public class SumDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
             if (value != null) {
                 value.putDouble(0, 0.0);
                 value.putLong(1, 0L);
-                if (tombstoneValueIndex >= 0 && value.getByte(tombstoneValueIndex) == 0) {
+                if (!value.isNew() && tombstoneValueIndex >= 0 && value.getByte(tombstoneValueIndex) != 1) {
                     value.putByte(tombstoneValueIndex, (byte) 1);
                     tombstoneCount++;
                 }
@@ -681,7 +690,7 @@ public class SumDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
             MapRecord record = map.getRecord();
             long liveCount = 0;
             while (cursor.hasNext()) {
-                if (tombstoneValueIndex < 0 || record.getValue().getByte(tombstoneValueIndex) == 0) {
+                if (tombstoneValueIndex < 0 || record.getValue().getByte(tombstoneValueIndex) != 1) {
                     liveCount++;
                 }
             }
@@ -693,7 +702,7 @@ public class SumDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                     : SUM_COLUMN_TYPES.getColumnCount();
             while (cursor.hasNext()) {
                 final MapValue value = record.getValue();
-                if (tombstoneValueIndex >= 0 && value.getByte(tombstoneValueIndex) != 0) {
+                if (tombstoneValueIndex >= 0 && value.getByte(tombstoneValueIndex) == 1) {
                     continue;
                 }
                 LiveViewSnapshotKeyCodec.writeKey(sink, record, keyColumnTypes, keyStartIndex);

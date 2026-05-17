@@ -464,11 +464,9 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         private final long minDiff;
         private final int timestampIndex;
         // Value-slot index of the per-partition tombstone byte; -1 outside LV.
-        private final int tombstoneValueIndex;
         protected double sum;
         private double avg;
         // Single-writer (refresh worker), not volatile.
-        private long tombstoneCount;
 
         public AvgOverPartitionRangeFrameFunction(
                 Map map,
@@ -677,10 +675,6 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
             mapValue.putLong(3, size);
             mapValue.putLong(4, capacity);
             mapValue.putLong(5, firstIdx);
-            if (tombstoneValueIndex >= 0 && mapValue.getByte(tombstoneValueIndex) != 0) {
-                mapValue.putByte(tombstoneValueIndex, (byte) 0);
-                tombstoneCount--;
-            }
         }
 
         @Override
@@ -732,6 +726,20 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
             return map;
         }
 
+        @Override
+        public void markPartitionAlive(Record record) {
+            if (tombstoneValueIndex < 0 || tombstoneCount == 0) {
+                return;
+            }
+            partitionByRecord.of(record);
+            MapKey key = map.withKey();
+            key.put(partitionByRecord, partitionBySink);
+            MapValue value = key.findValue();
+            if (value != null && value.getByte(tombstoneValueIndex) == 1) {
+                value.putByte(tombstoneValueIndex, (byte) 0);
+                tombstoneCount--;
+            }
+        }
 
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
@@ -775,7 +783,7 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                 value.putLong(3, 0L);
                 // slot 4 (capacity) stays.
                 value.putLong(5, 0L);
-                if (tombstoneValueIndex >= 0 && value.getByte(tombstoneValueIndex) == 0) {
+                if (!value.isNew() && tombstoneValueIndex >= 0 && value.getByte(tombstoneValueIndex) != 1) {
                     value.putByte(tombstoneValueIndex, (byte) 1);
                     tombstoneCount++;
                 }
@@ -831,7 +839,7 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
             MapRecord record = map.getRecord();
             long liveCount = 0;
             while (cursor.hasNext()) {
-                if (tombstoneValueIndex < 0 || record.getValue().getByte(tombstoneValueIndex) == 0) {
+                if (tombstoneValueIndex < 0 || record.getValue().getByte(tombstoneValueIndex) != 1) {
                     liveCount++;
                 }
             }
@@ -843,7 +851,7 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                     : AVG_OVER_PARTITION_RANGE_COLUMN_TYPES.getColumnCount();
             while (cursor.hasNext()) {
                 final MapValue value = record.getValue();
-                if (tombstoneValueIndex >= 0 && value.getByte(tombstoneValueIndex) != 0) {
+                if (tombstoneValueIndex >= 0 && value.getByte(tombstoneValueIndex) == 1) {
                     continue;
                 }
                 LiveViewSnapshotKeyCodec.writeKey(sink, record, keyColumnTypes, keyStartIndex);
@@ -934,11 +942,9 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         // scratch Map. Null for non-live-view compiles.
         private final ArrayColumnTypes mapValueTypes;
         // Value-slot index of the per-partition tombstone byte; -1 outside LV.
-        private final int tombstoneValueIndex;
         protected double sum;
         private double avg;
         // Single-writer (refresh worker), not volatile.
-        private long tombstoneCount;
 
         public AvgOverPartitionRowsFrameFunction(
                 Map map,
@@ -1098,10 +1104,6 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
             value.putLong(2, (loIdx + 1) % bufferSize);
             value.putLong(3, startOffset);//not necessary because it doesn't change
             memory.putDouble(startOffset + loIdx * Double.BYTES, d);
-            if (tombstoneValueIndex >= 0 && value.getByte(tombstoneValueIndex) != 0) {
-                value.putByte(tombstoneValueIndex, (byte) 0);
-                tombstoneCount--;
-            }
         }
 
         @Override
@@ -1124,6 +1126,20 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
             return map;
         }
 
+        @Override
+        public void markPartitionAlive(Record record) {
+            if (tombstoneValueIndex < 0 || tombstoneCount == 0) {
+                return;
+            }
+            partitionByRecord.of(record);
+            MapKey key = map.withKey();
+            key.put(partitionByRecord, partitionBySink);
+            MapValue value = key.findValue();
+            if (value != null && value.getByte(tombstoneValueIndex) == 1) {
+                value.putByte(tombstoneValueIndex, (byte) 0);
+                tombstoneCount--;
+            }
+        }
 
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
@@ -1164,7 +1180,7 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                 for (int i = 0; i < bufferSize; i++) {
                     memory.putDouble(startOffset + (long) i * Double.BYTES, Double.NaN);
                 }
-                if (tombstoneValueIndex >= 0 && value.getByte(tombstoneValueIndex) == 0) {
+                if (!value.isNew() && tombstoneValueIndex >= 0 && value.getByte(tombstoneValueIndex) != 1) {
                     value.putByte(tombstoneValueIndex, (byte) 1);
                     tombstoneCount++;
                 }
@@ -1215,7 +1231,7 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
             MapRecord record = map.getRecord();
             long liveCount = 0;
             while (cursor.hasNext()) {
-                if (tombstoneValueIndex < 0 || record.getValue().getByte(tombstoneValueIndex) == 0) {
+                if (tombstoneValueIndex < 0 || record.getValue().getByte(tombstoneValueIndex) != 1) {
                     liveCount++;
                 }
             }
@@ -1227,7 +1243,7 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                     : AVG_OVER_PARTITION_ROWS_COLUMN_TYPES.getColumnCount();
             while (cursor.hasNext()) {
                 final MapValue value = record.getValue();
-                if (tombstoneValueIndex >= 0 && value.getByte(tombstoneValueIndex) != 0) {
+                if (tombstoneValueIndex >= 0 && value.getByte(tombstoneValueIndex) == 1) {
                     continue;
                 }
                 LiveViewSnapshotKeyCodec.writeKey(sink, record, keyColumnTypes, keyStartIndex);
@@ -1712,10 +1728,8 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         // compactPartitionMap scratch Map. Null outside live-view mode.
         private final ArrayColumnTypes mapValueTypes;
         // Value-slot index of the per-partition tombstone byte; -1 outside LV.
-        private final int tombstoneValueIndex;
         private double avg;
         // Single-writer (refresh worker), not volatile.
-        private long tombstoneCount;
 
         public AvgOverUnboundedPartitionRowsFrameFunction(
                 Map map,
@@ -1802,10 +1816,6 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
             value.putDouble(0, sum);
             value.putLong(1, count);
             avg = count != 0 ? sum / count : Double.NaN;
-            if (tombstoneValueIndex >= 0 && value.getByte(tombstoneValueIndex) != 0) {
-                value.putByte(tombstoneValueIndex, (byte) 0);
-                tombstoneCount--;
-            }
         }
 
         @Override
@@ -1826,6 +1836,21 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         @Override
         public Map getPartitionMap() {
             return map;
+        }
+
+        @Override
+        public void markPartitionAlive(Record record) {
+            if (tombstoneValueIndex < 0 || tombstoneCount == 0) {
+                return;
+            }
+            partitionByRecord.of(record);
+            MapKey key = map.withKey();
+            key.put(partitionByRecord, partitionBySink);
+            MapValue value = key.findValue();
+            if (value != null && value.getByte(tombstoneValueIndex) == 1) {
+                value.putByte(tombstoneValueIndex, (byte) 0);
+                tombstoneCount--;
+            }
         }
 
         @Override
@@ -1857,7 +1882,7 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
             if (value != null) {
                 value.putDouble(0, 0.0);
                 value.putLong(1, 0L);
-                if (tombstoneValueIndex >= 0 && value.getByte(tombstoneValueIndex) == 0) {
+                if (!value.isNew() && tombstoneValueIndex >= 0 && value.getByte(tombstoneValueIndex) != 1) {
                     value.putByte(tombstoneValueIndex, (byte) 1);
                     tombstoneCount++;
                 }
@@ -1894,7 +1919,7 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
             MapRecord record = map.getRecord();
             long liveCount = 0;
             while (cursor.hasNext()) {
-                if (tombstoneValueIndex < 0 || record.getValue().getByte(tombstoneValueIndex) == 0) {
+                if (tombstoneValueIndex < 0 || record.getValue().getByte(tombstoneValueIndex) != 1) {
                     liveCount++;
                 }
             }
@@ -1906,7 +1931,7 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                     : AVG_COLUMN_TYPES.getColumnCount();
             while (cursor.hasNext()) {
                 final MapValue value = record.getValue();
-                if (tombstoneValueIndex >= 0 && value.getByte(tombstoneValueIndex) != 0) {
+                if (tombstoneValueIndex >= 0 && value.getByte(tombstoneValueIndex) == 1) {
                     continue;
                 }
                 LiveViewSnapshotKeyCodec.writeKey(sink, record, keyColumnTypes, keyStartIndex);

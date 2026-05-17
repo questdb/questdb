@@ -1040,10 +1040,6 @@ public class LastValueLongWindowFunctionFactory extends AbstractWindowFunctionFa
             mapValue.putLong(1, size);
             mapValue.putLong(2, capacity);
             mapValue.putLong(3, firstIdx);
-            if (tombstoneValueIndex >= 0 && mapValue.getByte(tombstoneValueIndex) != 0) {
-                mapValue.putByte(tombstoneValueIndex, (byte) 0);
-                tombstoneCount--;
-            }
         }
 
         @Override
@@ -1067,9 +1063,7 @@ public class LastValueLongWindowFunctionFactory extends AbstractWindowFunctionFa
         private final ArrayColumnTypes mapValueTypes;
         // holds fixed-size ring buffers of long values
         private final MemoryARW memory;
-        private final int tombstoneValueIndex;
         private long lastValue = Numbers.LONG_NULL;
-        private long tombstoneCount;
 
         public LastNotNullValueOverPartitionRowsFrameFunction(
                 Map map,
@@ -1210,10 +1204,6 @@ public class LastValueLongWindowFunctionFactory extends AbstractWindowFunctionFa
             value.putLong(1, (loIdx + 1) % bufferSize);
             value.putLong(2, startOffset);//not necessary because it doesn't change
             memory.putLong(startOffset + loIdx * Long.BYTES, d);
-            if (tombstoneValueIndex >= 0 && value.getByte(tombstoneValueIndex) != 0) {
-                value.putByte(tombstoneValueIndex, (byte) 0);
-                tombstoneCount--;
-            }
         }
 
         @Override
@@ -1314,7 +1304,7 @@ public class LastValueLongWindowFunctionFactory extends AbstractWindowFunctionFa
                 for (int i = 0; i < bufferSize; i++) {
                     memory.putLong(startOffset + (long) i * Long.BYTES, Numbers.LONG_NULL);
                 }
-                if (tombstoneValueIndex >= 0 && value.getByte(tombstoneValueIndex) == 0) {
+                if (!value.isNew() && tombstoneValueIndex >= 0 && value.getByte(tombstoneValueIndex) != 1) {
                     value.putByte(tombstoneValueIndex, (byte) 1);
                     tombstoneCount++;
                 }
@@ -1358,7 +1348,7 @@ public class LastValueLongWindowFunctionFactory extends AbstractWindowFunctionFa
             MapRecord record = map.getRecord();
             long liveCount = 0;
             while (cursor.hasNext()) {
-                if (tombstoneValueIndex < 0 || record.getValue().getByte(tombstoneValueIndex) == 0) {
+                if (tombstoneValueIndex < 0 || record.getValue().getByte(tombstoneValueIndex) != 1) {
                     liveCount++;
                 }
             }
@@ -1370,7 +1360,7 @@ public class LastValueLongWindowFunctionFactory extends AbstractWindowFunctionFa
                     : LAST_NOT_NULL_VALUE_PARTITION_ROWS_COLUMN_TYPES.getColumnCount();
             while (cursor.hasNext()) {
                 final MapValue value = record.getValue();
-                if (tombstoneValueIndex >= 0 && value.getByte(tombstoneValueIndex) != 0) {
+                if (tombstoneValueIndex >= 0 && value.getByte(tombstoneValueIndex) == 1) {
                     continue;
                 }
                 LiveViewSnapshotKeyCodec.writeKey(sink, record, keyColumnTypes, keyStartIndex);
@@ -2396,9 +2386,7 @@ public class LastValueLongWindowFunctionFactory extends AbstractWindowFunctionFa
         protected final RingBufferDesc memoryDesc = new RingBufferDesc();
         protected final long minDiff;
         protected final int timestampIndex;
-        protected final int tombstoneValueIndex;
         protected long lastValue = Numbers.LONG_NULL;
-        protected long tombstoneCount;
 
         public LastValueOverPartitionRangeFrameFunction(
                 Map map,
@@ -2562,10 +2550,6 @@ public class LastValueLongWindowFunctionFactory extends AbstractWindowFunctionFa
             mapValue.putLong(1, size);
             mapValue.putLong(2, capacity);
             mapValue.putLong(3, firstIdx);
-            if (tombstoneValueIndex >= 0 && mapValue.getByte(tombstoneValueIndex) != 0) {
-                mapValue.putByte(tombstoneValueIndex, (byte) 0);
-                tombstoneCount--;
-            }
         }
 
         @Override
@@ -2647,7 +2631,7 @@ public class LastValueLongWindowFunctionFactory extends AbstractWindowFunctionFa
             if (value != null) {
                 value.putLong(1, 0L);
                 value.putLong(3, 0L);
-                if (tombstoneValueIndex >= 0 && value.getByte(tombstoneValueIndex) == 0) {
+                if (!value.isNew() && tombstoneValueIndex >= 0 && value.getByte(tombstoneValueIndex) != 1) {
                     value.putByte(tombstoneValueIndex, (byte) 1);
                     tombstoneCount++;
                 }
@@ -2693,7 +2677,7 @@ public class LastValueLongWindowFunctionFactory extends AbstractWindowFunctionFa
             MapRecord record = map.getRecord();
             long liveCount = 0;
             while (cursor.hasNext()) {
-                if (tombstoneValueIndex < 0 || record.getValue().getByte(tombstoneValueIndex) == 0) {
+                if (tombstoneValueIndex < 0 || record.getValue().getByte(tombstoneValueIndex) != 1) {
                     liveCount++;
                 }
             }
@@ -2705,7 +2689,7 @@ public class LastValueLongWindowFunctionFactory extends AbstractWindowFunctionFa
                     : LAST_VALUE_PARTITION_RANGE_COLUMN_TYPES.getColumnCount();
             while (cursor.hasNext()) {
                 final MapValue value = record.getValue();
-                if (tombstoneValueIndex >= 0 && value.getByte(tombstoneValueIndex) != 0) {
+                if (tombstoneValueIndex >= 0 && value.getByte(tombstoneValueIndex) == 1) {
                     continue;
                 }
                 LiveViewSnapshotKeyCodec.writeKey(sink, record, keyColumnTypes, keyStartIndex);
@@ -2784,9 +2768,7 @@ public class LastValueLongWindowFunctionFactory extends AbstractWindowFunctionFa
         // holds fixed-size ring buffers of long values
         private final MemoryARW memory;
         private final long rowLo;
-        private final int tombstoneValueIndex;
         private long lastValue = Numbers.LONG_NULL;
-        private long tombstoneCount;
 
         public LastValueOverPartitionRowsFrameFunction(
                 Map map,
@@ -2888,10 +2870,6 @@ public class LastValueLongWindowFunctionFactory extends AbstractWindowFunctionFa
             lastValue = memory.getLong(startOffset + loIdx % bufferSize * Long.BYTES);
             value.putLong(0, (loIdx + 1) % bufferSize);
             memory.putLong(startOffset + loIdx % bufferSize * Long.BYTES, d);
-            if (tombstoneValueIndex >= 0 && value.getByte(tombstoneValueIndex) != 0) {
-                value.putByte(tombstoneValueIndex, (byte) 0);
-                tombstoneCount--;
-            }
         }
 
         @Override
@@ -2947,7 +2925,7 @@ public class LastValueLongWindowFunctionFactory extends AbstractWindowFunctionFa
                 for (int i = 0; i < bufferSize; i++) {
                     memory.putLong(startOffset + (long) i * Long.BYTES, Numbers.LONG_NULL);
                 }
-                if (tombstoneValueIndex >= 0 && value.getByte(tombstoneValueIndex) == 0) {
+                if (!value.isNew() && tombstoneValueIndex >= 0 && value.getByte(tombstoneValueIndex) != 1) {
                     value.putByte(tombstoneValueIndex, (byte) 1);
                     tombstoneCount++;
                 }
@@ -2988,7 +2966,7 @@ public class LastValueLongWindowFunctionFactory extends AbstractWindowFunctionFa
             MapRecord record = map.getRecord();
             long liveCount = 0;
             while (cursor.hasNext()) {
-                if (tombstoneValueIndex < 0 || record.getValue().getByte(tombstoneValueIndex) == 0) {
+                if (tombstoneValueIndex < 0 || record.getValue().getByte(tombstoneValueIndex) != 1) {
                     liveCount++;
                 }
             }
@@ -3000,7 +2978,7 @@ public class LastValueLongWindowFunctionFactory extends AbstractWindowFunctionFa
                     : LAST_VALUE_PARTITION_ROWS_COLUMN_TYPES.getColumnCount();
             while (cursor.hasNext()) {
                 final MapValue value = record.getValue();
-                if (tombstoneValueIndex >= 0 && value.getByte(tombstoneValueIndex) != 0) {
+                if (tombstoneValueIndex >= 0 && value.getByte(tombstoneValueIndex) == 1) {
                     continue;
                 }
                 LiveViewSnapshotKeyCodec.writeKey(sink, record, keyColumnTypes, keyStartIndex);

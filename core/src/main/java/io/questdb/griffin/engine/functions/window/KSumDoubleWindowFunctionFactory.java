@@ -721,9 +721,7 @@ public class KSumDoubleWindowFunctionFactory extends AbstractWindowFunctionFacto
         private final ArrayColumnTypes keyColumnTypes;
         private final boolean liveView;
         private final ArrayColumnTypes mapValueTypes;
-        private final int tombstoneValueIndex;
         private double sum;
-        private long tombstoneCount;
 
         public KSumOverPartitionRowsFrameFunction(
                 Map map,
@@ -861,10 +859,6 @@ public class KSumDoubleWindowFunctionFactory extends AbstractWindowFunctionFacto
             value.putLong(3, (loIdx + 1) % bufferSize);
             value.putLong(4, startOffset);
             memory.putDouble(startOffset + loIdx * Double.BYTES, d);
-            if (tombstoneValueIndex >= 0 && value.getByte(tombstoneValueIndex) != 0) {
-                value.putByte(tombstoneValueIndex, (byte) 0);
-                tombstoneCount--;
-            }
         }
 
         @Override
@@ -952,7 +946,7 @@ public class KSumDoubleWindowFunctionFactory extends AbstractWindowFunctionFacto
                 for (int i = 0; i < bufferSize; i++) {
                     memory.putDouble(startOffset + (long) i * Double.BYTES, Double.NaN);
                 }
-                if (tombstoneValueIndex >= 0 && value.getByte(tombstoneValueIndex) == 0) {
+                if (!value.isNew() && tombstoneValueIndex >= 0 && value.getByte(tombstoneValueIndex) != 1) {
                     value.putByte(tombstoneValueIndex, (byte) 1);
                     tombstoneCount++;
                 }
@@ -1002,7 +996,7 @@ public class KSumDoubleWindowFunctionFactory extends AbstractWindowFunctionFacto
             MapRecord record = map.getRecord();
             long liveCount = 0;
             while (cursor.hasNext()) {
-                if (tombstoneValueIndex < 0 || record.getValue().getByte(tombstoneValueIndex) == 0) {
+                if (tombstoneValueIndex < 0 || record.getValue().getByte(tombstoneValueIndex) != 1) {
                     liveCount++;
                 }
             }
@@ -1014,7 +1008,7 @@ public class KSumDoubleWindowFunctionFactory extends AbstractWindowFunctionFacto
                     : KSUM_OVER_PARTITION_ROWS_COLUMN_TYPES.getColumnCount();
             while (cursor.hasNext()) {
                 final MapValue value = record.getValue();
-                if (tombstoneValueIndex >= 0 && value.getByte(tombstoneValueIndex) != 0) {
+                if (tombstoneValueIndex >= 0 && value.getByte(tombstoneValueIndex) == 1) {
                     continue;
                 }
                 LiveViewSnapshotKeyCodec.writeKey(sink, record, keyColumnTypes, keyStartIndex);
@@ -1467,10 +1461,8 @@ public class KSumDoubleWindowFunctionFactory extends AbstractWindowFunctionFacto
         // compactPartitionMap scratch Map. Null outside live-view mode.
         private final ArrayColumnTypes mapValueTypes;
         // Value-slot index of the per-partition tombstone byte; -1 outside LV.
-        private final int tombstoneValueIndex;
         private double sum;
         // Single-writer (refresh worker), not volatile.
-        private long tombstoneCount;
 
         public KSumOverUnboundedPartitionRowsFrameFunction(
                 Map map,
@@ -1565,10 +1557,6 @@ public class KSumDoubleWindowFunctionFactory extends AbstractWindowFunctionFacto
             value.putDouble(1, c);
             value.putLong(2, count);
             this.sum = count != 0 ? sum : Double.NaN;
-            if (tombstoneValueIndex >= 0 && value.getByte(tombstoneValueIndex) != 0) {
-                value.putByte(tombstoneValueIndex, (byte) 0);
-                tombstoneCount--;
-            }
         }
 
         @Override
@@ -1589,6 +1577,21 @@ public class KSumDoubleWindowFunctionFactory extends AbstractWindowFunctionFacto
         @Override
         public Map getPartitionMap() {
             return map;
+        }
+
+        @Override
+        public void markPartitionAlive(Record record) {
+            if (tombstoneValueIndex < 0 || tombstoneCount == 0) {
+                return;
+            }
+            partitionByRecord.of(record);
+            MapKey key = map.withKey();
+            key.put(partitionByRecord, partitionBySink);
+            MapValue value = key.findValue();
+            if (value != null && value.getByte(tombstoneValueIndex) == 1) {
+                value.putByte(tombstoneValueIndex, (byte) 0);
+                tombstoneCount--;
+            }
         }
 
         @Override
@@ -1621,7 +1624,7 @@ public class KSumDoubleWindowFunctionFactory extends AbstractWindowFunctionFacto
                 value.putDouble(0, 0.0);
                 value.putDouble(1, 0.0);
                 value.putLong(2, 0L);
-                if (tombstoneValueIndex >= 0 && value.getByte(tombstoneValueIndex) == 0) {
+                if (!value.isNew() && tombstoneValueIndex >= 0 && value.getByte(tombstoneValueIndex) != 1) {
                     value.putByte(tombstoneValueIndex, (byte) 1);
                     tombstoneCount++;
                 }
@@ -1658,7 +1661,7 @@ public class KSumDoubleWindowFunctionFactory extends AbstractWindowFunctionFacto
             MapRecord record = map.getRecord();
             long liveCount = 0;
             while (cursor.hasNext()) {
-                if (tombstoneValueIndex < 0 || record.getValue().getByte(tombstoneValueIndex) == 0) {
+                if (tombstoneValueIndex < 0 || record.getValue().getByte(tombstoneValueIndex) != 1) {
                     liveCount++;
                 }
             }
@@ -1670,7 +1673,7 @@ public class KSumDoubleWindowFunctionFactory extends AbstractWindowFunctionFacto
                     : KSUM_COLUMN_TYPES.getColumnCount();
             while (cursor.hasNext()) {
                 final MapValue value = record.getValue();
-                if (tombstoneValueIndex >= 0 && value.getByte(tombstoneValueIndex) != 0) {
+                if (tombstoneValueIndex >= 0 && value.getByte(tombstoneValueIndex) == 1) {
                     continue;
                 }
                 LiveViewSnapshotKeyCodec.writeKey(sink, record, keyColumnTypes, keyStartIndex);

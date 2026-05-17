@@ -294,9 +294,7 @@ public class CountConstWindowFunctionFactory extends AbstractWindowFunctionFacto
         private final ArrayColumnTypes keyColumnTypes;
         private final boolean liveView;
         private final ArrayColumnTypes mapValueTypes;
-        private final int tombstoneValueIndex;
         private long count;
-        private long tombstoneCount;
 
         public CountOverPartitionRowsFrameFunction(
                 Map map,
@@ -394,10 +392,6 @@ public class CountConstWindowFunctionFactory extends AbstractWindowFunctionFacto
             }
 
             value.putLong(0, currentSize);
-            if (tombstoneValueIndex >= 0 && value.getByte(tombstoneValueIndex) != 0) {
-                value.putByte(tombstoneValueIndex, (byte) 0);
-                tombstoneCount--;
-            }
         }
 
         @Override
@@ -450,7 +444,7 @@ public class CountConstWindowFunctionFactory extends AbstractWindowFunctionFacto
             MapValue value = key.findValue();
             if (value != null) {
                 value.putLong(0, 0L);
-                if (tombstoneValueIndex >= 0 && value.getByte(tombstoneValueIndex) == 0) {
+                if (!value.isNew() && tombstoneValueIndex >= 0 && value.getByte(tombstoneValueIndex) != 1) {
                     value.putByte(tombstoneValueIndex, (byte) 1);
                     tombstoneCount++;
                 }
@@ -482,7 +476,7 @@ public class CountConstWindowFunctionFactory extends AbstractWindowFunctionFacto
             MapRecord record = map.getRecord();
             long liveCount = 0;
             while (cursor.hasNext()) {
-                if (tombstoneValueIndex < 0 || record.getValue().getByte(tombstoneValueIndex) == 0) {
+                if (tombstoneValueIndex < 0 || record.getValue().getByte(tombstoneValueIndex) != 1) {
                     liveCount++;
                 }
             }
@@ -494,7 +488,7 @@ public class CountConstWindowFunctionFactory extends AbstractWindowFunctionFacto
                     : CountFunctionFactoryHelper.COUNT_COLUMN_TYPES.getColumnCount();
             while (cursor.hasNext()) {
                 final MapValue value = record.getValue();
-                if (tombstoneValueIndex >= 0 && value.getByte(tombstoneValueIndex) != 0) {
+                if (tombstoneValueIndex >= 0 && value.getByte(tombstoneValueIndex) == 1) {
                     continue;
                 }
                 LiveViewSnapshotKeyCodec.writeKey(sink, record, keyColumnTypes, keyStartIndex);

@@ -303,6 +303,16 @@ public class LiveViewWindow implements QuietCloseable {
             shouldReset = initialized == 0 || lastAnchor != currentAnchor;
         }
 
+        // Dispatch markPartitionAlive on every function BEFORE resetPartition so the
+        // anchor-cross row clears any prior tombstone bit first, then resetPartition
+        // (re-)sets it. Without this ordering, resetPartition's tombstone-set would
+        // be cancelled by computeNext's clear on the same row and the function-side
+        // tombstoneCount would never grow. Functions without tombstone tracking get
+        // the default no-op and pay only the dispatch cost.
+        for (int i = 0, n = functions.size(); i < n; i++) {
+            functions.getQuick(i).markPartitionAlive(record);
+        }
+
         if (shouldReset) {
             for (int i = 0, n = functions.size(); i < n; i++) {
                 functions.getQuick(i).resetPartition(record);

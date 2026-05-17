@@ -27,7 +27,10 @@ package io.questdb.griffin.engine.functions.window;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.Reopenable;
 import io.questdb.cairo.map.Map;
+import io.questdb.cairo.map.MapKey;
+import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.cairo.sql.VirtualRecord;
 import io.questdb.griffin.PlanSink;
@@ -41,6 +44,15 @@ public abstract class BasePartitionedWindowFunction extends BaseWindowFunction i
     // Non-final so subclasses can swap the partition state Map during
     // anchor-driven compaction (see compactPartitionMap on WindowFunction).
     protected Map map;
+    // Live-view tombstone bookkeeping. Subclasses set tombstoneValueIndex in
+    // their constructor (= the BYTE slot index in the partition state map's
+    // value layout); -1 means "no tombstone tracking" (non-LV mode or
+    // function not yet migrated). tombstoneCount tracks the number of
+    // tombstoned entries in this function's map and is consumed by
+    // compactPartitionMap to skip the rebuild when no entries need dropping.
+    // Single-writer (refresh worker), not volatile.
+    protected int tombstoneValueIndex = -1;
+    protected long tombstoneCount;
 
     public BasePartitionedWindowFunction(Map map, VirtualRecord partitionByRecord, RecordSink partitionBySink, Function arg) {
         super(arg);
@@ -62,16 +74,44 @@ public abstract class BasePartitionedWindowFunction extends BaseWindowFunction i
         Function.init(partitionByRecord.getFunctions(), symbolTableSource, executionContext, null);
     }
 
+    /**
+     * Generic markPartitionAlive impl shared across every partitioned window
+     * function that carries a tombstone bit. The hot-path early-exit
+     * (tombstoneCount == 0) keeps the per-row overhead to a single field load
+     * plus a predicted-not-taken branch in steady state. The Map lookup only
+     * fires when at least one tombstoned entry exists, which means
+     * processRow saw an anchor cross on some partition in the recent past.
+     * <p>
+     * Subclasses that need to clear additional per-partition scratch state
+     * may override; most do not.
+     */
+    @Override
+    public void markPartitionAlive(Record record) {
+        if (tombstoneValueIndex < 0 || tombstoneCount == 0) {
+            return;
+        }
+        partitionByRecord.of(record);
+        MapKey key = map.withKey();
+        key.put(partitionByRecord, partitionBySink);
+        MapValue value = key.findValue();
+        if (value != null && value.getByte(tombstoneValueIndex) == 1) {
+            value.putByte(tombstoneValueIndex, (byte) 0);
+            tombstoneCount--;
+        }
+    }
+
     @Override
     public void reopen() {
         if (map != null) {
             map.reopen();
         }
+        tombstoneCount = 0;
     }
 
     @Override
     public void reset() {
         Misc.free(map);
+        tombstoneCount = 0;
     }
 
     @Override
@@ -95,5 +135,6 @@ public abstract class BasePartitionedWindowFunction extends BaseWindowFunction i
     public void toTop() {
         super.toTop();
         Misc.clear(map);
+        tombstoneCount = 0;
     }
 }

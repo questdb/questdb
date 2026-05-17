@@ -1357,9 +1357,7 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
         private final boolean liveView;
         private final ArrayColumnTypes mapValueTypes;
         private final String name;
-        private final int tombstoneValueIndex;
         private double stddev = Double.NaN;
-        private long tombstoneCount;
 
         StdDevOverUnboundedPartitionRowsFrameFunction(
                 Map map,
@@ -1460,10 +1458,6 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
             value.putDouble(0, mean);
             value.putDouble(1, m2);
             value.putLong(2, count);
-            if (tombstoneValueIndex >= 0 && value.getByte(tombstoneValueIndex) != 0) {
-                value.putByte(tombstoneValueIndex, (byte) 0);
-                tombstoneCount--;
-            }
             stddev = computeResultWelford(m2, count, isSample, isSqrt);
         }
 
@@ -1518,7 +1512,7 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
                 value.putDouble(0, 0.0);
                 value.putDouble(1, 0.0);
                 value.putLong(2, 0L);
-                if (tombstoneValueIndex >= 0 && value.getByte(tombstoneValueIndex) == 0) {
+                if (!value.isNew() && tombstoneValueIndex >= 0 && value.getByte(tombstoneValueIndex) != 1) {
                     value.putByte(tombstoneValueIndex, (byte) 1);
                     tombstoneCount++;
                 }
@@ -1554,7 +1548,7 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
             MapRecord record = map.getRecord();
             long liveCount = 0;
             while (cursor.hasNext()) {
-                if (tombstoneValueIndex < 0 || record.getValue().getByte(tombstoneValueIndex) == 0) {
+                if (tombstoneValueIndex < 0 || record.getValue().getByte(tombstoneValueIndex) != 1) {
                     liveCount++;
                 }
             }
@@ -1566,7 +1560,7 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
                     : STDDEV_COLUMN_TYPES.getColumnCount();
             while (cursor.hasNext()) {
                 final MapValue value = record.getValue();
-                if (tombstoneValueIndex >= 0 && value.getByte(tombstoneValueIndex) != 0) {
+                if (tombstoneValueIndex >= 0 && value.getByte(tombstoneValueIndex) == 1) {
                     continue;
                 }
                 LiveViewSnapshotKeyCodec.writeKey(sink, record, keyColumnTypes, keyStartIndex);

@@ -289,10 +289,8 @@ public class LeadLagWindowFunctionFactoryHelper {
         private final ArrayColumnTypes mapValueTypes;
         // Value-slot index of the per-partition tombstone byte. -1 for non-LV
         // compiles where the slot is omitted.
-        private final int tombstoneValueIndex;
         // Count of partitions with the tombstone bit set. Single-writer
         // (refresh worker), not volatile.
-        private long tombstoneCount;
 
         public BaseLagOverPartitionFunction(Map map,
                                             VirtualRecord partitionByRecord,
@@ -393,10 +391,6 @@ public class LeadLagWindowFunctionFactoryHelper {
             mapValue.putLong(0, startOffset);
             mapValue.putLong(1, firstIdx % offset);
             mapValue.putLong(2, count);
-            if (tombstoneValueIndex >= 0 && mapValue.getByte(tombstoneValueIndex) != 0) {
-                mapValue.putByte(tombstoneValueIndex, (byte) 0);
-                tombstoneCount--;
-            }
         }
 
         @Override
@@ -448,7 +442,7 @@ public class LeadLagWindowFunctionFactoryHelper {
             if (value != null) {
                 value.putLong(1, 0L); // firstIdx
                 value.putLong(2, 0L); // count
-                if (tombstoneValueIndex >= 0 && value.getByte(tombstoneValueIndex) == 0) {
+                if (!value.isNew() && tombstoneValueIndex >= 0 && value.getByte(tombstoneValueIndex) != 1) {
                     value.putByte(tombstoneValueIndex, (byte) 1);
                     tombstoneCount++;
                 }
@@ -499,7 +493,7 @@ public class LeadLagWindowFunctionFactoryHelper {
             MapRecord record = map.getRecord();
             long liveCount = 0;
             while (cursor.hasNext()) {
-                if (tombstoneValueIndex < 0 || record.getValue().getByte(tombstoneValueIndex) == 0) {
+                if (tombstoneValueIndex < 0 || record.getValue().getByte(tombstoneValueIndex) != 1) {
                     liveCount++;
                 }
             }
@@ -511,7 +505,7 @@ public class LeadLagWindowFunctionFactoryHelper {
                     : LAG_COLUMN_TYPES.getColumnCount();
             while (cursor.hasNext()) {
                 final MapValue value = record.getValue();
-                if (tombstoneValueIndex >= 0 && value.getByte(tombstoneValueIndex) != 0) {
+                if (tombstoneValueIndex >= 0 && value.getByte(tombstoneValueIndex) == 1) {
                     continue;
                 }
                 LiveViewSnapshotKeyCodec.writeKey(sink, record, keyColumnTypes, keyStartIndex);
