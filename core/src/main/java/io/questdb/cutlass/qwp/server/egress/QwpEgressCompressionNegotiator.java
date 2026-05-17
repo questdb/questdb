@@ -34,7 +34,7 @@ import java.nio.charset.StandardCharsets;
  * first codec the server supports. The header follows HTTP's
  * {@code Accept-Encoding} grammar loosely:
  * <pre>
- *     X-QWP-Accept-Encoding: zstd;level=3, raw
+ *     X-QWP-Accept-Encoding: zstd;level=1, raw
  * </pre>
  * Tokens are matched case-insensitively and separated by commas. Parameters
  * (the {@code ;level=N} segment) are recognised only for {@code zstd}. The
@@ -126,6 +126,38 @@ public final class QwpEgressCompressionNegotiator {
     }
 
     /**
+     * Applies the operator-side forced-level override, if any, on top of the
+     * client-negotiated zstd level. Returns the level the server should
+     * actually use for the connection's encoder and echo back in the
+     * {@code X-QWP-Content-Encoding} response header.
+     * <ul>
+     *   <li>{@code forcedLevel == 0} -- no override; honor the client's
+     *       choice verbatim.</li>
+     *   <li>{@code negotiatedCodec != COMPRESSION_ZSTD} -- override is a
+     *       no-op; raw transport stays raw.</li>
+     *   <li>Otherwise the forced level wins, clamped into
+     *       {@code [COMPRESSION_ZSTD_MIN_LEVEL, COMPRESSION_ZSTD_MAX_LEVEL]}
+     *       as defense-in-depth so a misconfigured property can't escape the
+     *       wire-allowed range.</li>
+     * </ul>
+     * The operator override deliberately ignores the client's request: an
+     * operator capping a misbehaving client at level 1 must beat a client
+     * that asks for level 9.
+     */
+    public static byte resolveEffectiveZstdLevel(byte negotiatedCodec, byte negotiatedLevel, int forcedLevel) {
+        if (forcedLevel == 0 || negotiatedCodec != QwpConstants.COMPRESSION_ZSTD) {
+            return negotiatedLevel;
+        }
+        if (forcedLevel < QwpConstants.COMPRESSION_ZSTD_MIN_LEVEL) {
+            return (byte) QwpConstants.COMPRESSION_ZSTD_MIN_LEVEL;
+        }
+        if (forcedLevel > QwpConstants.COMPRESSION_ZSTD_MAX_LEVEL) {
+            return (byte) QwpConstants.COMPRESSION_ZSTD_MAX_LEVEL;
+        }
+        return (byte) forcedLevel;
+    }
+
+    /**
      * Returns the precomputed {@code X-QWP-Content-Encoding} response header
      * bytes for the negotiated codec, or {@code null} when the server chose
      * raw transport (the header is then omitted entirely). The returned array
@@ -170,13 +202,14 @@ public final class QwpEgressCompressionNegotiator {
     }
 
     /**
-     * Accepts either {@code level=N} or {@code N} (bare integer). Returns 3 as
-     * the default when the parameter is missing or unparseable so behaviour
-     * stays well-defined on malformed input.
+     * Accepts either {@code level=N} or {@code N} (bare integer). Returns 1 as
+     * the default when the parameter is missing or unparseable -- the cheapest
+     * zstd level, picked so a client that opts in to compression without
+     * naming a level doesn't pay surprise server-side CPU.
      */
     private static int parseLevel(Utf8Sequence seq, int start, int end) {
         if (start < 0 || end <= start) {
-            return 3;
+            return 1;
         }
         while (start < end && isAsciiWhitespace(seq.byteAt(start))) {
             start++;
@@ -215,7 +248,7 @@ public final class QwpEgressCompressionNegotiator {
             }
             start++;
         }
-        return anyDigit ? value : 3;
+        return anyDigit ? value : 1;
     }
 
     private static byte toLowerAscii(byte b) {

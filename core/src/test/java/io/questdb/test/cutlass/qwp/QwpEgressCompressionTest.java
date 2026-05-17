@@ -46,7 +46,7 @@ import org.junit.Test;
  * <p>
  * Coverage:
  * <ul>
- *   <li>{@code compression=zstd} at default level 3 round-trips correctly
+ *   <li>{@code compression=zstd} at default level 1 round-trips correctly
  *       across a highly compressible column (rotating symbols).</li>
  *   <li>Explicit {@code compression_level} values at the ends of the clamp
  *       range ({@code 1} and {@code 22}) still decode correctly. The server
@@ -204,6 +204,44 @@ public class QwpEgressCompressionTest extends AbstractBootstrapTest {
         // The client must decode correctly regardless of the level the
         // server actually used.
         runLevelSmoke(22);
+    }
+
+    @Test
+    public void testForceLevelPropertyIsExposedAndConnectionsWorkWithOverrideActive() throws Exception {
+        // Pins the end-to-end wiring of qwp.egress.compression.force.level:
+        //   PropertyKey -> PropServerConfiguration parser -> PropCairoConfiguration
+        //   -> CairoConfigurationWrapper -> engine.getConfiguration().
+        // Reading via the engine's configuration (the wrapper) is what makes
+        // the value reload-safe -- every handshake re-reads through this path.
+        // The runtime override behavior itself is unit-tested on
+        // QwpEgressCompressionNegotiator.resolveEffectiveZstdLevel; this test
+        // only proves the property reaches the resolver call site and that a
+        // ZSTD-negotiated connection round-trips data while the override is
+        // active.
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.QWP_EGRESS_COMPRESSION_FORCE_LEVEL.getEnvVarName(), "7"
+            )) {
+                Assert.assertEquals(
+                        "force-level property must surface on the engine's configuration",
+                        7, serverMain.getEngine().getConfiguration().getQwpEgressForcedZstdLevel());
+                serverMain.execute("CREATE TABLE fl(id LONG, ts TIMESTAMP) "
+                        + "TIMESTAMP(ts) PARTITION BY DAY WAL");
+                serverMain.execute(
+                        "INSERT INTO fl SELECT x, x::TIMESTAMP FROM long_sequence(2000)");
+                serverMain.awaitTable("fl");
+                // Client asks for level 1; server's force=7 must win on the
+                // wire. The connection still establishes and decodes -- if
+                // the override broke the encoder selection or the response
+                // header, the upgrade would fail or the decoder would barf.
+                try (QwpQueryClient client = QwpQueryClient.fromConfig(
+                        "ws::addr=127.0.0.1:" + HTTP_PORT
+                                + ";compression=zstd;compression_level=1;")) {
+                    client.connect();
+                    assertLongSum(client, "SELECT * FROM fl", 2000, 2000L * 2001L / 2L);
+                }
+            }
+        });
     }
 
     @Test

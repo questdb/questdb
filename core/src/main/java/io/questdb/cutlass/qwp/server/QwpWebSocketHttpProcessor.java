@@ -414,7 +414,7 @@ public class QwpWebSocketHttpProcessor implements HttpRequestHandler {
     /**
      * Same as {@link #writeResponse(long, String, int)} but appends an optional
      * {@code X-QWP-Content-Encoding} header echoing the negotiated compression
-     * codec (e.g. {@code zstd;level=3}), an optional
+     * codec (e.g. {@code zstd;level=1}), an optional
      * {@code X-QWP-Durable-Ack: enabled} confirmation that this connection
      * will receive {@code STATUS_DURABLE_ACK} frames, an optional
      * {@code X-QuestDB-Role} header advertising the server role, and an
