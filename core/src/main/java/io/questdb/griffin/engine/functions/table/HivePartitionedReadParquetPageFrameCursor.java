@@ -593,7 +593,7 @@ public class HivePartitionedReadParquetPageFrameCursor implements PageFrameCurso
         // perFile is non-null only if a prior no-filter call (or earlier prune-
         // aware call that filled it) already populated the cache. Don't force
         // the fill here - that's the optimization.
-        final io.questdb.std.LongList perFile = factory.getCachedPerFileRowCountsIfPopulated();
+        final LongList perFile = factory.getCachedPerFileRowCountsIfPopulated();
         long sum = 0;
         for (int i = 0, n = matchedFiles.size(); i < n; i++) {
             Utf8Sequence filePath = matchedFiles.getQuick(i);
