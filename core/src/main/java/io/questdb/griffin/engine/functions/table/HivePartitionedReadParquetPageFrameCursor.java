@@ -106,6 +106,11 @@ public class HivePartitionedReadParquetPageFrameCursor implements PageFrameCurso
     //   bytes 4-7: reserved (zero)
     //   bytes 8-15: absolute pointer to value bytes
     private static final int PREFETCH_AHEAD = 3;
+    // Upper bound on the look-ahead walk used to discover prefetch candidates when a
+    // partition filter prunes most matched files. Stops the walk from scanning thousands
+    // of paths per openNextFile when the surviving set is very sparse - the cursor's own
+    // do-while will continue to drain the pruned tail on demand.
+    private static final int PREFETCH_LOOKAHEAD_MAX = PREFETCH_AHEAD * 16;
     private static final int VARCHAR_AUX_ENTRY_BYTES = 16;
     private static final int VARCHAR_HEADER_FLAG_ASCII = 2;
     private final ColumnMapping columnMapping = new ColumnMapping();
@@ -1016,12 +1021,35 @@ public class HivePartitionedReadParquetPageFrameCursor implements PageFrameCurso
 
         // Async-prefetch the next few files into the factory cache so their
         // open+mmap+parse-footer cost is paid in parallel with this file's frame
-        // consumption. Skipped when partition-level pruning is in play - the
-        // prefetcher doesn't apply the prune predicate and would otherwise waste
-        // work + cache slots on files the cursor will skip. FdCache + MmapCache
-        // dedupe the OS resources so concurrent open vs cursor's later sync open
-        // converge on a single entry.
-        if (pushdownFilterConditions == null || pushdownFilterConditions.size() == 0) {
+        // consumption. FdCache + MmapCache dedupe the OS resources so concurrent
+        // open vs cursor's later sync open converge on a single entry.
+        //
+        // Three paths:
+        //  1. No partition columns: prefetch the next PREFETCH_AHEAD raw. A
+        //     row-group-only pushdown still opens every file, so prefetching them
+        //     is pure win.
+        //  2. Partition columns + no pushdown filter: same raw prefetch.
+        //  3. Partition columns + pushdown filter: walk ahead applying the cheap
+        //     partition-prune pre-screen and prefetch the first PREFETCH_AHEAD
+        //     survivors. This re-clobbers the prunePartition* scratch, which is
+        //     safe because allocatePartitionBuffersForFile above already consumed
+        //     it for this file; the next openNextFile re-primes the scratch
+        //     before any consumer reads it. Bounded by PREFETCH_LOOKAHEAD_MAX
+        //     so very sparse partition filters don't pay O(matchedFiles) per
+        //     opened file.
+        if (partitionColumnCount > 0 && pushdownFilterConditions != null && pushdownFilterConditions.size() > 0) {
+            int scheduled = 0;
+            final int scanLimit = Math.min(matchedFiles.size(), globIndex + PREFETCH_LOOKAHEAD_MAX);
+            for (int i = globIndex; i < scanLimit && scheduled < PREFETCH_AHEAD; i++) {
+                Utf8Sequence ahead = matchedFiles.getQuick(i);
+                parsePartitionValues(ahead, prunePartitionValues, prunePartitionPresent);
+                if (isPrunedByParsedPartition()) {
+                    continue;
+                }
+                factory.schedulePrefetch(ahead, ff);
+                scheduled++;
+            }
+        } else {
             final int prefetchLimit = Math.min(matchedFiles.size(), globIndex + PREFETCH_AHEAD);
             for (int i = globIndex; i < prefetchLimit; i++) {
                 factory.schedulePrefetch(matchedFiles.getQuick(i), ff);
