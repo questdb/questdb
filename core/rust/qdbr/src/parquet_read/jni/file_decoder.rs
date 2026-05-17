@@ -505,6 +505,64 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_ParquetFileD
     }
 }
 
+#[no_mangle]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_ParquetFileDecoder_rowGroupMinValueLong(
+    mut env: JNIEnv,
+    _class: JClass,
+    decoder: *const ParquetDecoder,
+    row_group_index: u32,
+    column_index: u32,
+) -> i64 {
+    let env = &mut env;
+    let res = (|| -> ParquetResult<i64> {
+        if decoder.is_null() {
+            return Err(fmt_err!(InvalidLayout, "decoder pointer is null"));
+        }
+        let decoder = unsafe { &*decoder };
+        decoder.row_group_min_value(row_group_index, column_index)
+    })();
+    match res {
+        Ok(v) => v,
+        Err(mut err) => {
+            err.add_context(format!(
+                "could not get min value for row group {row_group_index} column {column_index}"
+            ));
+            err.add_context("error in PartitionDecoder.rowGroupMinValueLong");
+            err.into_cairo_exception().throw(env)
+        }
+    }
+}
+
+#[no_mangle]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_ParquetFileDecoder_rowGroupMaxValueLong(
+    mut env: JNIEnv,
+    _class: JClass,
+    decoder: *const ParquetDecoder,
+    row_group_index: u32,
+    column_index: u32,
+) -> i64 {
+    let env = &mut env;
+    let res = (|| -> ParquetResult<i64> {
+        if decoder.is_null() {
+            return Err(fmt_err!(InvalidLayout, "decoder pointer is null"));
+        }
+        let decoder = unsafe { &*decoder };
+        decoder.row_group_max_value(row_group_index, column_index)
+    })();
+    match res {
+        Ok(v) => v,
+        Err(mut err) => {
+            err.add_context(format!(
+                "could not get max value for row group {row_group_index} column {column_index}"
+            ));
+            err.add_context("error in PartitionDecoder.rowGroupMaxValueLong");
+            err.into_cairo_exception().throw(env)
+        }
+    }
+}
+
 // See PartitionDecoder for more info on the returned value format.
 #[no_mangle]
 #[allow(clippy::not_unsafe_ptr_arg_deref)]

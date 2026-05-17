@@ -55,14 +55,18 @@ import io.questdb.std.str.DirectUtf8StringList;
  */
 class HivePartitionedFooterAggregateRecordCursor implements NoRandomAccessRecordCursor {
     private final boolean[] aggregateKinds;
+    // Null = legacy designated-timestamp path; non-null = generic typed
+    // path resolved per-file by name against the parquet schema.
+    private final String aggregateColumnName;
     // Single-row payload: same length as aggregateKinds. Indexed by output
     // column index; aggregateKinds[i] selects min vs max.
     private final long[] payload;
     private final FooterRecord record;
     private boolean delivered;
 
-    HivePartitionedFooterAggregateRecordCursor(boolean[] aggregateKinds) {
+    HivePartitionedFooterAggregateRecordCursor(boolean[] aggregateKinds, String aggregateColumnName) {
         this.aggregateKinds = aggregateKinds;
+        this.aggregateColumnName = aggregateColumnName;
         this.payload = new long[aggregateKinds.length];
         this.record = new FooterRecord();
     }
@@ -97,22 +101,32 @@ class HivePartitionedFooterAggregateRecordCursor implements NoRandomAccessRecord
         long globalMax = Long.MIN_VALUE;
         boolean anyFileContributed = false;
 
+        final boolean useGenericNative = aggregateColumnName != null;
         for (int i = 0, n = matchedFiles.size(); i < n; i++) {
             final DirectUtf8Sequence filePath = matchedFiles.getQuick(i);
             final HivePartitionedReadParquetRecordCursorFactory.CachedFile cached =
                     base.openCachedFile(filePath, ff);
             final ParquetFileDecoder decoder = cached.decoder;
-            final int parquetTimestampIndex = decoder.metadata().getTimestampIndex();
-            if (parquetTimestampIndex < 0) {
-                // Defensive: planner gate requires the file to declare ts
-                // sorted, which implies a designated timestamp. Skip files
-                // missing one rather than dereferencing column index -1.
+            final int parquetColumnIndex = useGenericNative
+                    ? decoder.metadata().getColumnIndex(aggregateColumnName)
+                    : decoder.metadata().getTimestampIndex();
+            if (parquetColumnIndex < 0) {
+                // Defensive: planner gate requires the column to exist and be
+                // declared sorted. Skip files lacking it rather than passing
+                // -1 to the native and surfacing a confusing decoder error.
                 continue;
             }
             final int rowGroupCount = decoder.metadata().getRowGroupCount();
             for (int rg = 0; rg < rowGroupCount; rg++) {
-                final long rgMin = decoder.rowGroupMinTimestamp(rg, parquetTimestampIndex);
-                final long rgMax = decoder.rowGroupMaxTimestamp(rg, parquetTimestampIndex);
+                final long rgMin;
+                final long rgMax;
+                if (useGenericNative) {
+                    rgMin = decoder.rowGroupMinValueLong(rg, parquetColumnIndex);
+                    rgMax = decoder.rowGroupMaxValueLong(rg, parquetColumnIndex);
+                } else {
+                    rgMin = decoder.rowGroupMinTimestamp(rg, parquetColumnIndex);
+                    rgMax = decoder.rowGroupMaxTimestamp(rg, parquetColumnIndex);
+                }
                 if (rgMin < globalMin) {
                     globalMin = rgMin;
                 }

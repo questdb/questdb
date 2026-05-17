@@ -192,6 +192,175 @@ public class ParquetFooterAggregateRecordCursorFactoryTest extends AbstractCairo
     }
 
     @Test
+    public void testNonTsLongMinMaxAscSortedColumn() throws Exception {
+        // Direct factory test for the generic non-ts MIN/MAX shortcut. Writes
+        // a parquet file with `id` (LONG) marked as the sorted column via
+        // encodeWithOptions(nonTsSortColumnIndex, nonTsSortDescending=false).
+        // The cursor must resolve "id" by name in the parquet schema, hit
+        // the new rowGroupMinValueLong/MaxValueLong natives that read typed
+        // column-chunk statistics, and produce the correct global min/max.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE a AS (" +
+                    "  SELECT timestamp_sequence(1_000_000L, 100L) AS ts, x AS id" +
+                    "  FROM long_sequence(10_000)" +
+                    ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+            drainWalQueue();
+
+            try (
+                    Path path = new Path();
+                    PartitionDescriptor pd = new PartitionDescriptor();
+                    TableReader reader = engine.getReader("a")
+            ) {
+                path.of(root).concat("a.parquet");
+                PartitionEncoder.populateFromTableReader(reader, pd, 0);
+                final int idColumnIndex = reader.getMetadata().getColumnIndex("id");
+                PartitionEncoder.encodeWithOptions(
+                        pd,
+                        path,
+                        io.questdb.griffin.engine.table.parquet.ParquetCompression.COMPRESSION_UNCOMPRESSED,
+                        true,
+                        false,
+                        0,
+                        0,
+                        io.questdb.griffin.engine.table.parquet.ParquetVersion.PARQUET_VERSION_V1,
+                        0,
+                        0,
+                        0.01,
+                        0.0,
+                        -1,
+                        -1L,
+                        idColumnIndex,
+                        false
+                );
+                Assert.assertTrue(Files.exists(path.$()));
+
+                final GenericRecordMetadata out = new GenericRecordMetadata();
+                out.add(new TableColumnMetadata("min_id", ColumnType.LONG));
+                out.add(new TableColumnMetadata("max_id", ColumnType.LONG));
+
+                try (
+                        RecordCursorFactory factory = new ParquetFooterAggregateRecordCursorFactory(
+                                path, out, new boolean[]{false, true}, "id"
+                        );
+                        RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+                ) {
+                    Assert.assertTrue("cursor must emit exactly one row", cursor.hasNext());
+                    final Record rec = cursor.getRecord();
+                    // long_sequence(10_000) emits ids 1..10000 inclusive.
+                    Assert.assertEquals("min(id) must be 1", 1L, rec.getLong(0));
+                    Assert.assertEquals("max(id) must be 10000", 10_000L, rec.getLong(1));
+                    Assert.assertFalse("cursor must not emit a second row", cursor.hasNext());
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testNonTsLongMinMaxDescSortedColumnStillCorrect() throws Exception {
+        // DESC-sorted variant. The shortcut walks every row group so the
+        // ordering of files / row groups does not affect correctness - the
+        // stats themselves carry per-row-group min and max regardless of
+        // physical row order. Pins that the cursor does not assume ASC
+        // when calling the generic native.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE d AS (" +
+                    "  SELECT timestamp_sequence(1_000_000L, 100L) AS ts, (1_000_000 - x) AS id" +
+                    "  FROM long_sequence(5_000)" +
+                    ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+            drainWalQueue();
+
+            try (
+                    Path path = new Path();
+                    PartitionDescriptor pd = new PartitionDescriptor();
+                    TableReader reader = engine.getReader("d")
+            ) {
+                path.of(root).concat("d.parquet");
+                PartitionEncoder.populateFromTableReader(reader, pd, 0);
+                final int idColumnIndex = reader.getMetadata().getColumnIndex("id");
+                PartitionEncoder.encodeWithOptions(
+                        pd,
+                        path,
+                        io.questdb.griffin.engine.table.parquet.ParquetCompression.COMPRESSION_UNCOMPRESSED,
+                        true,
+                        false,
+                        0,
+                        0,
+                        io.questdb.griffin.engine.table.parquet.ParquetVersion.PARQUET_VERSION_V1,
+                        0,
+                        0,
+                        0.01,
+                        0.0,
+                        -1,
+                        -1L,
+                        idColumnIndex,
+                        true  // DESC claim
+                );
+
+                final GenericRecordMetadata out = new GenericRecordMetadata();
+                out.add(new TableColumnMetadata("min_id", ColumnType.LONG));
+                out.add(new TableColumnMetadata("max_id", ColumnType.LONG));
+
+                try (
+                        RecordCursorFactory factory = new ParquetFooterAggregateRecordCursorFactory(
+                                path, out, new boolean[]{false, true}, "id"
+                        );
+                        RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+                ) {
+                    Assert.assertTrue(cursor.hasNext());
+                    final Record rec = cursor.getRecord();
+                    // (1_000_000 - x) for x in [1, 5_000] yields ids in
+                    // [995_000, 999_999]. The cursor reads per-rg stats so
+                    // the ordering does not influence the result.
+                    Assert.assertEquals("min(id)", 995_000L, rec.getLong(0));
+                    Assert.assertEquals("max(id)", 999_999L, rec.getLong(1));
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testTimestampMinMaxAscPathUnchanged() throws Exception {
+        // Legacy designated-timestamp path: constructing the factory with
+        // null aggregateColumnName must continue to use rowGroupMin/MaxTimestamp
+        // and produce identical results to the original 3-arg constructor.
+        // Regression guard for the legacy callers that pre-date the generic
+        // path - the existing 4-method test suite uses the 3-arg constructor,
+        // this one explicitly threads null through the new 4-arg constructor.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t AS (" +
+                    "  SELECT timestamp_sequence(2_000_000_000L, 500L) AS ts FROM long_sequence(1_000)" +
+                    ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+            drainWalQueue();
+
+            try (
+                    Path path = new Path();
+                    PartitionDescriptor pd = new PartitionDescriptor();
+                    TableReader reader = engine.getReader("t")
+            ) {
+                path.of(root).concat("t.parquet");
+                PartitionEncoder.populateFromTableReader(reader, pd, 0);
+                PartitionEncoder.encode(pd, path);
+
+                final GenericRecordMetadata out = new GenericRecordMetadata();
+                out.add(new TableColumnMetadata("min_ts", ColumnType.TIMESTAMP_MICRO));
+                out.add(new TableColumnMetadata("max_ts", ColumnType.TIMESTAMP_MICRO));
+
+                try (
+                        RecordCursorFactory factory = new ParquetFooterAggregateRecordCursorFactory(
+                                path, out, new boolean[]{false, true}, null
+                        );
+                        RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+                ) {
+                    Assert.assertTrue(cursor.hasNext());
+                    final Record rec = cursor.getRecord();
+                    Assert.assertEquals(2_000_000_000L, rec.getTimestamp(0));
+                    Assert.assertEquals(2_000_000_000L + 500L * (1_000 - 1), rec.getTimestamp(1));
+                }
+            }
+        });
+    }
+
+    @Test
     public void testSizeReportsExactlyOne() throws Exception {
         // Pins the size() contract: this is a 1-row factory; the outer
         // executor must be able to use that for buffer sizing without

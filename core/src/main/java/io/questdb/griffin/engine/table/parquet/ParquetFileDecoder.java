@@ -275,9 +275,30 @@ public class ParquetFileDecoder implements ParquetDecoder, ParquetRowGroupSkippe
         return rowGroupMaxTimestamp(ptr, fileAddr, fileSize, rowGroupIndex, timestampColumnIndex);
     }
 
+    /**
+     * Generic counterpart to {@link #rowGroupMaxTimestamp} for any column
+     * whose storage tag is INT, LONG, DATE, or TIMESTAMP. Reads the max
+     * value from the column-chunk statistics in the parquet footer. INT
+     * stats (4-byte) are sign-extended to long. Throws if statistics are
+     * absent or the column tag is unsupported - the caller is expected
+     * to fall back to the standard aggregate path in that case.
+     */
+    public long rowGroupMaxValueLong(int rowGroupIndex, int columnIndex) {
+        assert ptr != 0;
+        return rowGroupMaxValueLong(ptr, rowGroupIndex, columnIndex);
+    }
+
     public long rowGroupMinTimestamp(int rowGroupIndex, int timestampColumnIndex) {
         assert ptr != 0;
         return rowGroupMinTimestamp(ptr, fileAddr, fileSize, rowGroupIndex, timestampColumnIndex);
+    }
+
+    /**
+     * Min-side counterpart to {@link #rowGroupMaxValueLong}.
+     */
+    public long rowGroupMinValueLong(int rowGroupIndex, int columnIndex) {
+        assert ptr != 0;
+        return rowGroupMinValueLong(ptr, rowGroupIndex, columnIndex);
     }
 
     private static native boolean canSkipRowGroup(
@@ -376,12 +397,24 @@ public class ParquetFileDecoder implements ParquetDecoder, ParquetRowGroupSkippe
             int timestampColumnIndex
     ) throws CairoException;
 
+    private static native long rowGroupMaxValueLong(
+            long decoderPtr,
+            int rowGroupIndex,
+            int columnIndex
+    ) throws CairoException;
+
     private static native long rowGroupMinTimestamp(
             long decoderPtr,
             long fileAddr,
             long fileSize,
             int rowGroupIndex,
             int timestampColumnIndex
+    ) throws CairoException;
+
+    private static native long rowGroupMinValueLong(
+            long decoderPtr,
+            int rowGroupIndex,
+            int columnIndex
     ) throws CairoException;
 
     private static native long rowGroupSizesPtrOffset();

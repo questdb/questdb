@@ -59,6 +59,19 @@ public class HivePartitionedFooterAggregateRecordCursorFactory extends AbstractR
     private final HivePartitionedFooterAggregateRecordCursor cursor;
 
     /**
+     * Legacy 3-arg constructor: defaults the aggregate column to each file's
+     * designated timestamp. Retained for callers that pre-date the generic
+     * non-ts MIN/MAX path.
+     */
+    public HivePartitionedFooterAggregateRecordCursorFactory(
+            @NotNull HivePartitionedReadParquetRecordCursorFactory base,
+            RecordMetadata outputMetadata,
+            boolean[] aggregateKinds
+    ) {
+        this(base, outputMetadata, aggregateKinds, null);
+    }
+
+    /**
      * @param base wrapped hive factory whose matchedFiles + openCachedFile cache
      *             this factory consumes. Ownership transfers - this factory's
      *             _close cascades to base._close.
@@ -69,15 +82,24 @@ public class HivePartitionedFooterAggregateRecordCursorFactory extends AbstractR
      * @param aggregateKinds per-output-column aggregate flag, parallel to
      *                       {@code outputMetadata}: {@code true} for max,
      *                       {@code false} for min.
+     * @param aggregateColumnName the parquet column whose min/max the cursor
+     *                            reads from each file's footer. When
+     *                            {@code null} the cursor defaults to the
+     *                            file's designated timestamp; otherwise it
+     *                            resolves the column by name per-file and
+     *                            uses the generic
+     *                            {@code rowGroupMinValueLong/MaxValueLong}
+     *                            native that reads typed stats.
      */
     public HivePartitionedFooterAggregateRecordCursorFactory(
             @NotNull HivePartitionedReadParquetRecordCursorFactory base,
             RecordMetadata outputMetadata,
-            boolean[] aggregateKinds
+            boolean[] aggregateKinds,
+            String aggregateColumnName
     ) {
         super(outputMetadata);
         this.base = base;
-        this.cursor = new HivePartitionedFooterAggregateRecordCursor(aggregateKinds);
+        this.cursor = new HivePartitionedFooterAggregateRecordCursor(aggregateKinds, aggregateColumnName);
     }
 
     @Override

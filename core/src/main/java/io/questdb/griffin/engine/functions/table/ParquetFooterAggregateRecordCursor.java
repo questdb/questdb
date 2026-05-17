@@ -59,6 +59,9 @@ import io.questdb.std.str.LPSZ;
 class ParquetFooterAggregateRecordCursor implements NoRandomAccessRecordCursor {
     private static final Log LOG = LogFactory.getLog(ParquetFooterAggregateRecordCursor.class);
     private final boolean[] aggregateKinds;
+    // Null = legacy designated-timestamp path; non-null = generic typed
+    // path resolved by name against the parquet schema at of() time.
+    private final String aggregateColumnName;
     private final ParquetFileDecoder decoder = new ParquetFileDecoder();
     // Single-row payload: same length as aggregateKinds. Indexed by output
     // column index; aggregateKinds[i] selects min vs max.
@@ -70,8 +73,9 @@ class ParquetFooterAggregateRecordCursor implements NoRandomAccessRecordCursor {
     private FilesFacade ff;
     private long fileSize = 0;
 
-    ParquetFooterAggregateRecordCursor(boolean[] aggregateKinds) {
+    ParquetFooterAggregateRecordCursor(boolean[] aggregateKinds, String aggregateColumnName) {
         this.aggregateKinds = aggregateKinds;
+        this.aggregateColumnName = aggregateColumnName;
         this.payload = new long[aggregateKinds.length];
         this.record = new FooterRecord();
     }
@@ -109,13 +113,25 @@ class ParquetFooterAggregateRecordCursor implements NoRandomAccessRecordCursor {
         this.addr = TableUtils.mapRO(ff, fd, fileSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
         decoder.of(addr, fileSize, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
 
-        // The optimiser only routes us here when the file declares a sort
-        // claim on the designated timestamp via `sorting_columns`. Resolve
-        // the parquet-side timestamp index from the decoder so callers
-        // never need to know it - and so the index translation handles
-        // any unsupported columns that get skipped during projection.
-        final int parquetTimestampIndex = decoder.metadata().getTimestampIndex();
-        if (parquetTimestampIndex < 0) {
+        // Resolve the parquet-side column index. Two paths:
+        //   - aggregateColumnName == null: legacy designated-timestamp
+        //     shortcut. Walk rowGroupMin/MaxTimestamp on the parquet file's
+        //     declared timestamp column. Falls back to single-row decode
+        //     if stats are absent.
+        //   - aggregateColumnName != null: generic typed shortcut. Resolve
+        //     the column by name in the parquet metadata and use the
+        //     stats-only rowGroupMin/MaxValueLong native. Supports any
+        //     INT/LONG/DATE/TIMESTAMP column the planner gated as sorted.
+        final int parquetColumnIndex;
+        final boolean useGenericNative;
+        if (aggregateColumnName == null) {
+            parquetColumnIndex = decoder.metadata().getTimestampIndex();
+            useGenericNative = false;
+        } else {
+            parquetColumnIndex = decoder.metadata().getColumnIndex(aggregateColumnName);
+            useGenericNative = true;
+        }
+        if (parquetColumnIndex < 0) {
             // Defensive: planner gate should rule this out, but never trust
             // metadata from arbitrary files - degrade to "no rows" instead
             // of producing wrong min/max from an undefined column.
@@ -132,8 +148,15 @@ class ParquetFooterAggregateRecordCursor implements NoRandomAccessRecordCursor {
         long globalMin = Long.MAX_VALUE;
         long globalMax = Long.MIN_VALUE;
         for (int rg = 0; rg < rowGroupCount; rg++) {
-            final long rgMin = decoder.rowGroupMinTimestamp(rg, parquetTimestampIndex);
-            final long rgMax = decoder.rowGroupMaxTimestamp(rg, parquetTimestampIndex);
+            final long rgMin;
+            final long rgMax;
+            if (useGenericNative) {
+                rgMin = decoder.rowGroupMinValueLong(rg, parquetColumnIndex);
+                rgMax = decoder.rowGroupMaxValueLong(rg, parquetColumnIndex);
+            } else {
+                rgMin = decoder.rowGroupMinTimestamp(rg, parquetColumnIndex);
+                rgMax = decoder.rowGroupMaxTimestamp(rg, parquetColumnIndex);
+            }
             if (rgMin < globalMin) {
                 globalMin = rgMin;
             }

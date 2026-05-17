@@ -2163,6 +2163,131 @@ impl ParquetDecoder {
         self.decode_single_timestamp(file_ptr, file_size, rg, ts, 0, 1)
     }
 
+    /// Read the min value of a typed column at a given row group, sourced
+    /// from the parquet column-chunk statistics. Supports columns stored
+    /// as i32 (Int) or i64 (Long, Date, Timestamp); 4-byte stats are
+    /// sign-extended to i64. Returns an error when statistics are absent
+    /// or the column type is not supported - the cursor is then expected
+    /// to fall back to the normal aggregate path. No row decode happens
+    /// here, which is the whole point of the shortcut: a single i64 read
+    /// per row group per file, vs the per-row scalar accumulation that
+    /// the standard aggregate cursor pays.
+    pub fn row_group_min_value(
+        &self,
+        row_group_index: u32,
+        column_index: u32,
+    ) -> ParquetResult<i64> {
+        self.row_group_typed_stat::<false>(row_group_index, column_index)
+    }
+
+    /// Max-side counterpart to {@link #row_group_min_value}.
+    pub fn row_group_max_value(
+        &self,
+        row_group_index: u32,
+        column_index: u32,
+    ) -> ParquetResult<i64> {
+        self.row_group_typed_stat::<true>(row_group_index, column_index)
+    }
+
+    fn row_group_typed_stat<const IS_MAX: bool>(
+        &self,
+        row_group_index: u32,
+        column_index: u32,
+    ) -> ParquetResult<i64> {
+        if row_group_index >= self.row_group_count {
+            return Err(fmt_err!(
+                InvalidLayout,
+                "row group index {} out of range [0,{})",
+                row_group_index,
+                self.row_group_count
+            ));
+        }
+        if column_index >= self.col_count {
+            return Err(fmt_err!(
+                InvalidLayout,
+                "column index {} out of range [0,{})",
+                column_index,
+                self.col_count
+            ));
+        }
+        let rg = row_group_index as usize;
+        let col = column_index as usize;
+        // Validate the column type tag is one we know how to interpret
+        // from a flat byte buffer. Int/Long/Date/Timestamp all map to
+        // i64 storage on the Java side; other tags would need their own
+        // accessor and bit-pattern handling.
+        let column_type = self.columns[col].column_type.ok_or_else(|| {
+            fmt_err!(InvalidType, "unknown column type, column index: {}", col)
+        })?;
+        match column_type.tag() {
+            ColumnTypeTag::Int
+            | ColumnTypeTag::Long
+            | ColumnTypeTag::Date
+            | ColumnTypeTag::Timestamp => {}
+            other => {
+                return Err(fmt_err!(
+                    InvalidType,
+                    "row_group_value stat shortcut only supports Int/Long/Date/Timestamp, \
+                     got {:?} at column index {}",
+                    other,
+                    col
+                ));
+            }
+        }
+        // Walk straight to the column-chunk's statistics block. Missing
+        // metadata or missing stats both surface as an error so the
+        // planner-side gate sees a hard failure rather than silently
+        // producing zeros for one row group and stale values for the
+        // rest.
+        let columns_meta = self.metadata.row_groups[rg].columns();
+        let chunk_meta = &columns_meta[col];
+        let meta_data = chunk_meta.column_chunk().meta_data.as_ref().ok_or_else(|| {
+            fmt_err!(
+                InvalidLayout,
+                "no column chunk metadata for column {} in row group {}",
+                col,
+                rg
+            )
+        })?;
+        let statistics = meta_data.statistics.as_ref().ok_or_else(|| {
+            fmt_err!(
+                InvalidLayout,
+                "no statistics for column {} in row group {}",
+                col,
+                rg
+            )
+        })?;
+        let value = if IS_MAX {
+            &statistics.max_value
+        } else {
+            &statistics.min_value
+        };
+        let bytes = value.as_ref().ok_or_else(|| {
+            fmt_err!(
+                InvalidLayout,
+                "no {} stat for column {} in row group {}",
+                if IS_MAX { "max" } else { "min" },
+                col,
+                rg
+            )
+        })?;
+        match bytes.len() {
+            // INT32 parquet physical type: 4-byte little-endian. Sign-extend
+            // to i64 so the Java side can read it as a long without
+            // additional casts.
+            4 => Ok(i32::from_le_bytes(bytes[..4].try_into().expect("len 4")) as i64),
+            // INT64 parquet physical type: 8-byte little-endian.
+            8 => Ok(i64::from_le_bytes(bytes[..8].try_into().expect("len 8"))),
+            other => Err(fmt_err!(
+                InvalidLayout,
+                "unexpected stat byte length {} for column {} in row group {}",
+                other,
+                col,
+                rg
+            )),
+        }
+    }
+
     pub fn row_group_max_timestamp(
         &self,
         file_ptr: *const u8,

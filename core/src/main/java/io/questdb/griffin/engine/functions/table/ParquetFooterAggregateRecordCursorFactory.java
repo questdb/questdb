@@ -72,6 +72,21 @@ public class ParquetFooterAggregateRecordCursorFactory extends AbstractRecordCur
     private Path path;
 
     /**
+     * Legacy 3-arg constructor: defaults the aggregate column to the parquet
+     * file's designated timestamp. Retained for callers that pre-date the
+     * generic non-ts MIN/MAX path - they want the original behaviour where
+     * the cursor walks {@code rowGroupMinTimestamp/MaxTimestamp} on the
+     * file's declared timestamp column.
+     */
+    public ParquetFooterAggregateRecordCursorFactory(
+            @Transient Path path,
+            RecordMetadata outputMetadata,
+            boolean[] aggregateKinds
+    ) {
+        this(path, outputMetadata, aggregateKinds, null);
+    }
+
+    /**
      * @param outputMetadata metadata of the SINGLE output row - column types,
      *                       names and ordering must match the aggregates the
      *                       planner detected (e.g. {@code min_ts TIMESTAMP,
@@ -80,15 +95,27 @@ public class ParquetFooterAggregateRecordCursorFactory extends AbstractRecordCur
      *                       {@code outputMetadata}: {@code true} for max,
      *                       {@code false} for min. Sized to match
      *                       {@code outputMetadata.getColumnCount()}.
+     * @param aggregateColumnName the parquet column whose min/max we are
+     *                            reading from the footer. When {@code null}
+     *                            the cursor defaults to the designated
+     *                            timestamp (legacy behaviour); otherwise it
+     *                            resolves the column by name in the parquet
+     *                            metadata and uses the generic
+     *                            {@code rowGroupMinValueLong/MaxValueLong}
+     *                            native that reads typed statistics. The
+     *                            planner gates non-null callers to columns
+     *                            with {@code getColumnOrderBy != 0} and a
+     *                            supported storage tag (INT/LONG/DATE/TIMESTAMP).
      */
     public ParquetFooterAggregateRecordCursorFactory(
             @Transient Path path,
             RecordMetadata outputMetadata,
-            boolean[] aggregateKinds
+            boolean[] aggregateKinds,
+            String aggregateColumnName
     ) {
         super(outputMetadata);
         this.path = new Path().of(path);
-        this.cursor = new ParquetFooterAggregateRecordCursor(aggregateKinds);
+        this.cursor = new ParquetFooterAggregateRecordCursor(aggregateKinds, aggregateColumnName);
     }
 
     @Override

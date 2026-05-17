@@ -8521,6 +8521,26 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return outMeta;
     }
 
+    /**
+     * Storage tags whose min/max can be read from parquet column-chunk
+     * statistics via the {@code rowGroupMin/MaxValueLong} natives. INT/LONG
+     * serialise as i32/i64 in parquet stats; DATE/TIMESTAMP are stored as
+     * i64 with a logical type wrapper. Other types (DOUBLE, STRING, VARCHAR,
+     * decimal, etc.) would need their own native accessor and bit-pattern
+     * decode and are excluded here.
+     */
+    private static boolean isStatShortcutTypeSupported(int columnType) {
+        switch (ColumnType.tagOf(columnType)) {
+            case ColumnType.INT:
+            case ColumnType.LONG:
+            case ColumnType.DATE:
+            case ColumnType.TIMESTAMP:
+                return true;
+            default:
+                return false;
+        }
+    }
+
     public static @Nullable CharSequence tryGetMinMaxAggregateColumn(@Nullable ObjList<QueryColumn> columns) {
         if (columns == null || columns.size() == 0) {
             return null;
@@ -8615,17 +8635,39 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         final RecordMetadata probeMeta = probe.getMetadata();
                         final int colIdx = probeMeta.getColumnIndexQuiet(footerShortcutColumn);
                         final int tsIdx = probeMeta.getTimestampIndex();
-                        final boolean gatesPass = colIdx >= 0
-                                && colIdx == tsIdx
+                        // The shortcut applies to any sorted column with a
+                        // typed-stat-readable storage tag. TIMESTAMP, LONG,
+                        // INT and DATE all serialise as i64/i32 stat bytes;
+                        // other tags (DOUBLE, STRING, etc.) need their own
+                        // native accessor and are intentionally excluded here.
+                        // The column-name path resolves the column per-file
+                        // at cursor-open time, so it works for both single
+                        // and multi-file globs.
+                        final int colType = colIdx >= 0
+                                ? probeMeta.getColumnType(colIdx)
+                                : 0;
+                        final boolean typedStatSupported = colIdx >= 0
+                                && isStatShortcutTypeSupported(colType);
+                        final boolean gatesPass = typedStatSupported
                                 && probeMeta.getColumnOrderBy(colIdx) != 0;
+                        // For the legacy designated-timestamp path, the cursor
+                        // uses rowGroupMin/MaxTimestamp natives that include
+                        // a single-row decode fallback when stats are absent.
+                        // For non-ts columns, we use the stats-only generic
+                        // path - so files lacking statistics will fail at
+                        // cursor open. Passing the column name explicitly
+                        // tells the cursor which native to use.
+                        final String aggregateColumnName = colIdx == tsIdx
+                                ? null
+                                : footerShortcutColumn.toString();
                         if (gatesPass && probe instanceof ReadParquetRecordCursorFactory) {
                             final ReadParquetRecordCursorFactory parquetBase = (ReadParquetRecordCursorFactory) probe;
                             final GenericRecordMetadata outMeta = buildFooterAggregateOutMeta(
-                                    columns, probeMeta.getColumnType(colIdx));
+                                    columns, colType);
                             final boolean[] kinds = buildFooterAggregateKinds(columns);
                             final ParquetFooterAggregateRecordCursorFactory result =
                                     new ParquetFooterAggregateRecordCursorFactory(
-                                            parquetBase.getPath(), outMeta, kinds
+                                            parquetBase.getPath(), outMeta, kinds, aggregateColumnName
                                     );
                             Misc.free(probe);
                             return result;
@@ -8634,13 +8676,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             final HivePartitionedReadParquetRecordCursorFactory hiveBase =
                                     (HivePartitionedReadParquetRecordCursorFactory) probe;
                             final GenericRecordMetadata outMeta = buildFooterAggregateOutMeta(
-                                    columns, probeMeta.getColumnType(colIdx));
+                                    columns, colType);
                             final boolean[] kinds = buildFooterAggregateKinds(columns);
                             // The hive variant wraps the probe; its _close
                             // cascades. Skip the explicit free below.
                             probeOwnedByResult = true;
                             return new HivePartitionedFooterAggregateRecordCursorFactory(
-                                    hiveBase, outMeta, kinds);
+                                    hiveBase, outMeta, kinds, aggregateColumnName);
                         }
                     } catch (Throwable th) {
                         if (!probeOwnedByResult) {
