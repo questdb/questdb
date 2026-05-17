@@ -1774,6 +1774,191 @@ public class ReadParquetFunctionTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testSortMetadataRoundTripsForDesignatedTimestamp() throws Exception {
+        // Writer side sets sorting_columns = [timestamp] for any QuestDB table that
+        // declares a designated timestamp. The new metadata pipeline must surface
+        // that claim through to GenericRecordMetadata.getColumnOrderBy() so the
+        // optimiser can consult it without re-reading the parquet footer.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x AS (" +
+                    "  SELECT" +
+                    "    timestamp_sequence(0, 1000) AS ts," +
+                    "    x AS id," +
+                    "    rnd_double() AS price" +
+                    "  FROM long_sequence(100)" +
+                    ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+            drainWalQueue();
+
+            try (
+                    Path path = new Path();
+                    PartitionDescriptor partitionDescriptor = new PartitionDescriptor();
+                    TableReader reader = engine.getReader("x")
+            ) {
+                path.of(root).concat("ts_sorted.parquet");
+                PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, 0);
+                PartitionEncoder.encode(partitionDescriptor, path);
+                Assert.assertTrue(Files.exists(path.$()));
+
+                // Open the file via the same machinery the cursor uses; the metadata
+                // should report ts as ASC-sorted with no claim on id or price.
+                try (
+                        io.questdb.griffin.engine.table.parquet.ParquetFileDecoder decoder =
+                                new io.questdb.griffin.engine.table.parquet.ParquetFileDecoder()
+                ) {
+                    long fd = io.questdb.cairo.TableUtils.openRO(configuration.getFilesFacade(), path.$(), LOG);
+                    long size = configuration.getFilesFacade().length(fd);
+                    long addr = 0;
+                    try {
+                        addr = io.questdb.cairo.TableUtils.mapRO(
+                                configuration.getFilesFacade(), fd, size,
+                                MemoryTag.MMAP_PARQUET_PARTITION_DECODER
+                        );
+                        decoder.of(addr, size, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
+                        final io.questdb.griffin.engine.table.parquet.ParquetFileDecoder.Metadata meta = decoder.metadata();
+
+                        Assert.assertEquals(
+                                "sorting_columns must surface ts as sorted",
+                                1, meta.getSortedColumnsCount()
+                        );
+                        final int tsParquetIdx = meta.getSortedColumnParquetIndex(0);
+                        Assert.assertEquals(
+                                "the single sort entry must point at ts",
+                                meta.getTimestampIndex(), tsParquetIdx
+                        );
+                        Assert.assertFalse(
+                                "the writer declares ASC, not DESC",
+                                meta.isSortedColumnDescending(0)
+                        );
+                        Assert.assertEquals(
+                                "getColumnOrderBy(ts) reports +1 (ASC)",
+                                1, meta.getColumnOrderBy(tsParquetIdx)
+                        );
+
+                        // And the surface still says nothing about unrelated columns.
+                        int nonSortIdx = (tsParquetIdx == 0) ? 1 : 0;
+                        Assert.assertEquals(
+                                "non-sort column must report 0 (no claim)",
+                                0, meta.getColumnOrderBy(nonSortIdx)
+                        );
+
+                        // Finally, the higher-level copy-to that the function factory
+                        // uses must thread the claim through to GenericRecordMetadata.
+                        final io.questdb.cairo.GenericRecordMetadata copy =
+                                new io.questdb.cairo.GenericRecordMetadata();
+                        meta.copyToSansUnsupported(copy, true);
+                        // copyToSansUnsupported preserves column order, so the ts
+                        // index in the copy equals the ts index in the source.
+                        Assert.assertEquals(
+                                "copied metadata must carry the ASC claim on ts",
+                                1, copy.getColumnOrderBy(copy.getTimestampIndex())
+                        );
+                    } finally {
+                        if (addr != 0) {
+                            configuration.getFilesFacade().munmap(
+                                    addr, size, MemoryTag.MMAP_PARQUET_PARTITION_DECODER
+                            );
+                        }
+                        configuration.getFilesFacade().close(fd);
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testSortMetadataAbsentForNonTsTableThatHasNoTs() throws Exception {
+        // A QuestDB table without a designated timestamp triggers the
+        // sorting_columns=None branch on the writer side. The decoder must
+        // report sortedColumnsCount=0 and copyToSansUnsupported must leave
+        // every column's getColumnOrderBy at the default 0.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE n AS (" +
+                    "  SELECT x AS id, rnd_double() AS price FROM long_sequence(50)" +
+                    ")");
+
+            try (
+                    Path path = new Path();
+                    PartitionDescriptor partitionDescriptor = new PartitionDescriptor();
+                    TableReader reader = engine.getReader("n")
+            ) {
+                path.of(root).concat("no_ts.parquet");
+                PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, 0);
+                PartitionEncoder.encode(partitionDescriptor, path);
+
+                try (
+                        io.questdb.griffin.engine.table.parquet.ParquetFileDecoder decoder =
+                                new io.questdb.griffin.engine.table.parquet.ParquetFileDecoder()
+                ) {
+                    long fd = io.questdb.cairo.TableUtils.openRO(configuration.getFilesFacade(), path.$(), LOG);
+                    long size = configuration.getFilesFacade().length(fd);
+                    long addr = 0;
+                    try {
+                        addr = io.questdb.cairo.TableUtils.mapRO(
+                                configuration.getFilesFacade(), fd, size,
+                                MemoryTag.MMAP_PARQUET_PARTITION_DECODER
+                        );
+                        decoder.of(addr, size, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
+                        final io.questdb.griffin.engine.table.parquet.ParquetFileDecoder.Metadata meta = decoder.metadata();
+
+                        Assert.assertEquals(
+                                "no designated ts -> no sort claim",
+                                0, meta.getSortedColumnsCount()
+                        );
+                        for (int i = 0, n = meta.getColumnCount(); i < n; i++) {
+                            Assert.assertEquals(
+                                    "getColumnOrderBy must default to 0 for every column",
+                                    0, meta.getColumnOrderBy(i)
+                            );
+                        }
+                    } finally {
+                        if (addr != 0) {
+                            configuration.getFilesFacade().munmap(
+                                    addr, size, MemoryTag.MMAP_PARQUET_PARTITION_DECODER
+                            );
+                        }
+                        configuration.getFilesFacade().close(fd);
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testGenericRecordMetadataColumnOrderByRoundTrip() throws Exception {
+        // Unit-level pin on the new setColumnOrderBy / getColumnOrderBy contract.
+        // Sparse: only indices explicitly set carry a non-zero value; absent
+        // indices return 0 via the bounds check; clear() resets everything.
+        assertMemoryLeak(() -> {
+            final io.questdb.cairo.GenericRecordMetadata m = new io.questdb.cairo.GenericRecordMetadata();
+            m.add(new io.questdb.cairo.TableColumnMetadata("a", io.questdb.cairo.ColumnType.LONG));
+            m.add(new io.questdb.cairo.TableColumnMetadata("b", io.questdb.cairo.ColumnType.LONG));
+            m.add(new io.questdb.cairo.TableColumnMetadata("c", io.questdb.cairo.ColumnType.VARCHAR));
+
+            // Defaults: everything 0.
+            Assert.assertEquals(0, m.getColumnOrderBy(0));
+            Assert.assertEquals(0, m.getColumnOrderBy(1));
+            Assert.assertEquals(0, m.getColumnOrderBy(2));
+
+            // Out-of-range still returns 0 (the optimiser tolerates this).
+            Assert.assertEquals(0, m.getColumnOrderBy(-1));
+            Assert.assertEquals(0, m.getColumnOrderBy(99));
+
+            m.setColumnOrderBy(0, 1);  // ASC
+            m.setColumnOrderBy(2, -1); // DESC
+            Assert.assertEquals(1, m.getColumnOrderBy(0));
+            Assert.assertEquals(0, m.getColumnOrderBy(1));  // still default
+            Assert.assertEquals(-1, m.getColumnOrderBy(2));
+
+            // Out-of-range after the explicit set is still 0.
+            Assert.assertEquals(0, m.getColumnOrderBy(99));
+
+            m.clear();
+            Assert.assertEquals(0, m.getColumnOrderBy(0));
+            Assert.assertEquals(0, m.getColumnOrderBy(2));
+        });
+    }
+
     private static void assertSqlCursors0(CharSequence expectedSql) throws SqlException {
         try (SqlCompiler sqlCompiler = engine.getSqlCompiler()) {
             TestUtils.assertSqlCursors(
