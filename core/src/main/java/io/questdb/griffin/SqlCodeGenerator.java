@@ -1609,6 +1609,17 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     );
                     queryMeta.add(columnMetadata);
 
+                    // Propagate any sort-order claim the source carried for this
+                    // column. The optimiser's ORDER BY elision branch in
+                    // generateOrderBy reads getColumnOrderBy on the wrapping
+                    // factory's metadata, so the claim has to ride through the
+                    // projection rebuild here or it is lost on every projection
+                    // pushdown.
+                    final int orderBy = metadata.getColumnOrderBy(columnIndex);
+                    if (orderBy != 0) {
+                        queryMeta.setColumnOrderBy(queryMeta.getColumnCount() - 1, orderBy);
+                    }
+
                     if (columnIndex == readerTimestampIndex) {
                         queryMeta.setTimestampIndex(queryMeta.getColumnCount() - 1);
                     }
@@ -1627,6 +1638,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     );
                     queryMeta.add(timestampColumnMetadata);
                     queryMeta.setTimestampIndex(queryMeta.getColumnCount() - 1);
+                    final int tsOrderBy = metadata.getColumnOrderBy(readerTimestampIndex);
+                    if (tsOrderBy != 0) {
+                        queryMeta.setColumnOrderBy(queryMeta.getColumnCount() - 1, tsOrderBy);
+                    }
 
                     if (columnIndexes != null) {
                         columnIndexes.add(readerTimestampIndex);

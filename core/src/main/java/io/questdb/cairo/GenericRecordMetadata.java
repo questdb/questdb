@@ -36,12 +36,20 @@ public class GenericRecordMetadata extends AbstractRecordMetadata {
     public static void copyColumns(RecordMetadata from, GenericRecordMetadata to) {
         for (int i = 0, n = from.getColumnCount(); i < n; i++) {
             to.add(from.getColumnMetadata(i));
+            final int orderBy = from.getColumnOrderBy(i);
+            if (orderBy != 0) {
+                to.setColumnOrderBy(i, orderBy);
+            }
         }
     }
 
     public static void copyColumns(RecordMetadata from, GenericRecordMetadata to, int columnCount) {
         for (int i = 0, n = Math.min(from.getColumnCount(), columnCount); i < n; i++) {
             to.add(from.getColumnMetadata(i));
+            final int orderBy = from.getColumnOrderBy(i);
+            if (orderBy != 0) {
+                to.setColumnOrderBy(i, orderBy);
+            }
         }
     }
 

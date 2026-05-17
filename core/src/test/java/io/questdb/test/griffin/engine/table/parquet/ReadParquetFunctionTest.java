@@ -43,6 +43,7 @@ import io.questdb.std.MemoryTag;
 import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.datetime.nanotime.Nanos;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -1920,6 +1921,124 @@ public class ReadParquetFunctionTest extends AbstractCairoTest {
                         configuration.getFilesFacade().close(fd);
                     }
                 }
+            }
+        });
+    }
+
+    @Test
+    public void testOrderByElidedForNonTsSortedParquet() throws Exception {
+        // End-to-end pin on the non-ts ORDER BY elision branch in
+        // SqlCodeGenerator.generateOrderBy. Writes a parquet whose
+        // `sorting_columns` claim points at the `id` column (not the
+        // designated timestamp), then asserts that ORDER BY id ASC LIMIT N
+        // returns the cursor unchanged - no `Sort` factory wrap.
+        assertMemoryLeak(() -> {
+            // Table has a designated ts but the rows are ordered by id ASC
+            // because we generate them in id-ascending sequence and ts uniform.
+            execute("CREATE TABLE x AS (" +
+                    "  SELECT" +
+                    "    timestamp_sequence(0, 1000) AS ts," +
+                    "    x AS id," +
+                    "    rnd_double() AS price" +
+                    "  FROM long_sequence(100)" +
+                    ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+            drainWalQueue();
+
+            try (
+                    Path path = new Path();
+                    PartitionDescriptor partitionDescriptor = new PartitionDescriptor();
+                    TableReader reader = engine.getReader("x")
+            ) {
+                path.of(root).concat("id_sorted.parquet");
+                PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, 0);
+
+                // Claim `id` (column index 1: ts=0, id=1, price=2) as the
+                // sort key on the parquet side. The writer does not verify;
+                // we know id is monotonic because of the long_sequence().
+                final int idColumnIndex = 1;
+                PartitionEncoder.encodeWithOptions(
+                        partitionDescriptor,
+                        path,
+                        io.questdb.griffin.engine.table.parquet.ParquetCompression.COMPRESSION_UNCOMPRESSED,
+                        true,                          // statisticsEnabled
+                        false,                         // rawArrayEncoding
+                        0,                             // rowGroupSize (default)
+                        0,                             // dataPageSize (default)
+                        ParquetVersion.PARQUET_VERSION_V1,
+                        0L,                            // bloomFilterColumnIndexesPtr
+                        0,                             // bloomFilterColumnCount
+                        PartitionEncoder.DEFAULT_BLOOM_FILTER_FPP,
+                        0.0,                           // minCompressionRatio
+                        -1,                            // parquetMetaFd (no _pm)
+                        -1L,                           // squashTracker
+                        idColumnIndex,                 // nonTsSortColumnIndex
+                        false                          // nonTsSortDescending - ASC
+                );
+                Assert.assertTrue(Files.exists(path.$()));
+
+                // Sanity: decoder must surface the override.
+                try (
+                        io.questdb.griffin.engine.table.parquet.ParquetFileDecoder decoder =
+                                new io.questdb.griffin.engine.table.parquet.ParquetFileDecoder()
+                ) {
+                    long fd = io.questdb.cairo.TableUtils.openRO(configuration.getFilesFacade(), path.$(), LOG);
+                    long size = configuration.getFilesFacade().length(fd);
+                    long addr = 0;
+                    try {
+                        addr = io.questdb.cairo.TableUtils.mapRO(
+                                configuration.getFilesFacade(), fd, size,
+                                MemoryTag.MMAP_PARQUET_PARTITION_DECODER
+                        );
+                        decoder.of(addr, size, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
+                        final io.questdb.griffin.engine.table.parquet.ParquetFileDecoder.Metadata meta = decoder.metadata();
+                        Assert.assertEquals(1, meta.getSortedColumnsCount());
+                        Assert.assertEquals(idColumnIndex, meta.getSortedColumnParquetIndex(0));
+                        Assert.assertFalse(meta.isSortedColumnDescending(0));
+                    } finally {
+                        if (addr != 0) {
+                            configuration.getFilesFacade().munmap(
+                                    addr, size, MemoryTag.MMAP_PARQUET_PARTITION_DECODER
+                            );
+                        }
+                        configuration.getFilesFacade().close(fd);
+                    }
+                }
+
+                // EXPLAIN must NOT contain a `Sort` factory. The exact plan
+                // shape depends on the cursor mode; assert via substring.
+                sink.clear();
+                sink.put("EXPLAIN SELECT id FROM read_parquet('id_sorted.parquet') ORDER BY id ASC LIMIT 5");
+                final StringSink planSink = new StringSink();
+                try (RecordCursorFactory factory = engine.select(sink, sqlExecutionContext);
+                     RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    final io.questdb.cairo.sql.Record rec = cursor.getRecord();
+                    while (cursor.hasNext()) {
+                        planSink.put(rec.getStrA(0)).put('\n');
+                    }
+                }
+                final String plan = planSink.toString();
+                Assert.assertFalse(
+                        "Sort factory must be elided for ASC ORDER BY on a non-ts sort key, got plan:\n" + plan,
+                        plan.toLowerCase().contains("sort")
+                );
+
+                // Negative case: ORDER BY id DESC must NOT elide, because we
+                // don't have a reverse-iteration parquet cursor.
+                sink.clear();
+                sink.put("EXPLAIN SELECT id FROM read_parquet('id_sorted.parquet') ORDER BY id DESC LIMIT 5");
+                planSink.clear();
+                try (RecordCursorFactory factory = engine.select(sink, sqlExecutionContext);
+                     RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    final io.questdb.cairo.sql.Record rec = cursor.getRecord();
+                    while (cursor.hasNext()) {
+                        planSink.put(rec.getStrA(0)).put('\n');
+                    }
+                }
+                final String planDesc = planSink.toString();
+                Assert.assertTrue(
+                        "DESC against an ASC-sorted file must keep the sort, got plan:\n" + planDesc,
+                        planDesc.toLowerCase().contains("sort") || planDesc.toLowerCase().contains("top")
+                );
             }
         });
     }
