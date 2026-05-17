@@ -9,8 +9,8 @@ use crate::parquet_read::decode::{
 use crate::parquet_read::page::{DataPage, DictPage};
 use crate::parquet_read::{
     ColumnChunkBuffers, ColumnFilterPacked, ColumnFilterValues, ColumnMeta, DecodeContext,
-    FILTER_OP_BETWEEN, FILTER_OP_EQ, FILTER_OP_GE, FILTER_OP_GT, FILTER_OP_IS_NOT_NULL,
-    FILTER_OP_IS_NULL, FILTER_OP_LE, FILTER_OP_LT, MILLIS_PER_DAY,
+    SortingColumnMeta, FILTER_OP_BETWEEN, FILTER_OP_EQ, FILTER_OP_GE, FILTER_OP_GT,
+    FILTER_OP_IS_NOT_NULL, FILTER_OP_IS_NULL, FILTER_OP_LE, FILTER_OP_LT, MILLIS_PER_DAY,
 };
 use nonmax::NonMaxU32;
 use parquet2::encoding::Encoding;
@@ -35,6 +35,14 @@ pub struct ParquetDecoder {
     pub timestamp_index: Option<NonMaxU32>,
     pub columns_ptr: *const ColumnMeta,
     pub columns: AcVec<ColumnMeta>,
+    // Per-column sort metadata derived from row group `sorting_columns`.
+    // Holds only those columns that the file claims as sorted CONSISTENTLY
+    // across every row group; see `extract_sorted_columns` in `meta.rs`.
+    // Empty when the file has no `sorting_columns` metadata or when sort is
+    // inconsistent across row groups.
+    pub sorted_columns_count: u32,
+    pub sorted_columns_ptr: *const SortingColumnMeta,
+    pub sorted_columns: AcVec<SortingColumnMeta>,
     pub metadata: FileMetaData,
     pub qdb_meta: Option<QdbMeta>,
     pub row_group_sizes_acc: AcVec<usize>,

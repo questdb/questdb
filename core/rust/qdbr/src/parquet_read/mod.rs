@@ -106,6 +106,28 @@ pub struct ColumnMeta {
     pub name_vec: AcVec<u16>,
 }
 
+/// Sort metadata for a single column, derived from parquet row group
+/// `sorting_columns` entries. Read from Java via base pointer + field offset.
+///
+/// `column_index` is the parquet-side column index (matches the cursor's
+/// projection mapping). `descending` is 1 for DESC, 0 for ASC. `nulls_first`
+/// is 1 if nulls sort before non-nulls; the optimiser doesn't consume this
+/// today but it's part of the parquet 2.0 `SortingColumn` envelope so we
+/// surface it for future use.
+///
+/// A column appears in `ParquetDecoder.sorted_columns` only if the file's
+/// metadata claims the same `(column_index, descending, nulls_first)`
+/// consistently across every row group. The extraction logic mirrors the
+/// timestamp-inference loop already present in `meta.rs`.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct SortingColumnMeta {
+    pub column_index: i32,
+    pub descending: u8,
+    pub nulls_first: u8,
+    pub _padding: u16,
+}
+
 /// QuestDB-format Column Data
 ///
 /// The memory is owned by the Rust code, read by Java.

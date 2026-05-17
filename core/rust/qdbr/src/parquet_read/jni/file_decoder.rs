@@ -7,6 +7,7 @@ use crate::parquet_read::jni::{validate_jni_column_types, DecodeMode};
 use crate::parquet_read::row_groups::ParquetColumnIndex;
 use crate::parquet_read::{
     ColumnFilterPacked, ColumnMeta, DecodeContext, ParquetDecoder, RowGroupBuffers,
+    SortingColumnMeta,
 };
 use jni::objects::JClass;
 use jni::JNIEnv;
@@ -586,6 +587,46 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_ParquetFileD
     _class: JClass,
 ) -> usize {
     offset_of!(ParquetDecoder, timestamp_index)
+}
+
+#[no_mangle]
+pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_ParquetFileDecoder_sortedColumnsCountOffset(
+    _env: JNIEnv,
+    _class: JClass,
+) -> usize {
+    offset_of!(ParquetDecoder, sorted_columns_count)
+}
+
+#[no_mangle]
+pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_ParquetFileDecoder_sortedColumnsPtrOffset(
+    _env: JNIEnv,
+    _class: JClass,
+) -> usize {
+    offset_of!(ParquetDecoder, sorted_columns_ptr)
+}
+
+#[no_mangle]
+pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_ParquetFileDecoder_sortedColumnRecordSize(
+    _env: JNIEnv,
+    _class: JClass,
+) -> usize {
+    size_of::<SortingColumnMeta>()
+}
+
+#[no_mangle]
+pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_ParquetFileDecoder_sortedColumnIndexOffset(
+    _env: JNIEnv,
+    _class: JClass,
+) -> usize {
+    offset_of!(SortingColumnMeta, column_index)
+}
+
+#[no_mangle]
+pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_ParquetFileDecoder_sortedColumnDescendingOffset(
+    _env: JNIEnv,
+    _class: JClass,
+) -> usize {
+    offset_of!(SortingColumnMeta, descending)
 }
 
 #[no_mangle]
