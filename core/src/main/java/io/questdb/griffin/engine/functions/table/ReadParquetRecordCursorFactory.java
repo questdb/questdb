@@ -66,6 +66,20 @@ public class ReadParquetRecordCursorFactory extends ProjectableRecordCursorFacto
         }
     }
 
+    /**
+     * Returns the resolved local parquet file path this factory wraps. The
+     * footer-only MIN/MAX aggregate shortcut in {@code SqlCodeGenerator}
+     * uses this to construct a {@link ParquetFooterAggregateRecordCursorFactory}
+     * against the same file when the planner detects a min/max-on-sorted-ts
+     * aggregate shape. Callers MUST treat the returned reference as borrowed
+     * for the call duration only - this factory still owns the underlying
+     * {@link Path}, which is freed in {@code _close()}.
+     */
+    public @org.jetbrains.annotations.NotNull Path getPath() {
+        assert path != null : "getPath() called after _close()";
+        return path;
+    }
+
     @Override
     public boolean mayHaveParquetPartitions(SqlExecutionContext executionContext) {
         return true;
