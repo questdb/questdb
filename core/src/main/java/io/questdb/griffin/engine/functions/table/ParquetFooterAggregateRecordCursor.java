@@ -96,7 +96,7 @@ class ParquetFooterAggregateRecordCursor implements NoRandomAccessRecordCursor {
         return true;
     }
 
-    public void of(LPSZ path, int parquetTimestampIndex, SqlExecutionContext executionContext) throws SqlException {
+    public void of(LPSZ path, SqlExecutionContext executionContext) throws SqlException {
         delivered = false;
         // Pick up FilesFacade from the execution context every of() so cursor
         // reuse across configurations (e.g. test harnesses) sees the right
@@ -109,11 +109,25 @@ class ParquetFooterAggregateRecordCursor implements NoRandomAccessRecordCursor {
         this.addr = TableUtils.mapRO(ff, fd, fileSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
         decoder.of(addr, fileSize, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
 
-        // The optimiser only routes us here when the file's sorting_columns
-        // claim names this column. Min lives in the first row group, max in
-        // the last. We still walk every row group so a file with bad sort
-        // metadata is forgiving (the global min/max is correct regardless
-        // of whether the file is actually sorted).
+        // The optimiser only routes us here when the file declares a sort
+        // claim on the designated timestamp via `sorting_columns`. Resolve
+        // the parquet-side timestamp index from the decoder so callers
+        // never need to know it - and so the index translation handles
+        // any unsupported columns that get skipped during projection.
+        final int parquetTimestampIndex = decoder.metadata().getTimestampIndex();
+        if (parquetTimestampIndex < 0) {
+            // Defensive: planner gate should rule this out, but never trust
+            // metadata from arbitrary files - degrade to "no rows" instead
+            // of producing wrong min/max from an undefined column.
+            for (int i = 0; i < aggregateKinds.length; i++) {
+                payload[i] = Long.MIN_VALUE;
+            }
+            return;
+        }
+        // Min lives in the first row group, max in the last. We still walk
+        // every row group so a file with stale or inaccurate sort metadata
+        // is forgiving (the global min/max is correct regardless of
+        // whether the file is actually sorted).
         final int rowGroupCount = decoder.metadata().getRowGroupCount();
         long globalMin = Long.MAX_VALUE;
         long globalMax = Long.MIN_VALUE;

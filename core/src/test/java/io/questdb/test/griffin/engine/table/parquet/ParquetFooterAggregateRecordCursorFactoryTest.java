@@ -69,7 +69,7 @@ public class ParquetFooterAggregateRecordCursorFactoryTest extends AbstractCairo
 
                 try (
                         RecordCursorFactory factory = new ParquetFooterAggregateRecordCursorFactory(
-                                path, out, 0, new boolean[]{false, true}
+                                path, out, new boolean[]{false, true}
                         );
                         RecordCursor cursor = factory.getCursor(sqlExecutionContext)
                 ) {
@@ -114,7 +114,7 @@ public class ParquetFooterAggregateRecordCursorFactoryTest extends AbstractCairo
                     out.add(new TableColumnMetadata("min_ts", ColumnType.TIMESTAMP_MICRO));
                     try (
                             RecordCursorFactory f = new ParquetFooterAggregateRecordCursorFactory(
-                                    path, out, 0, new boolean[]{false}
+                                    path, out, new boolean[]{false}
                             );
                             RecordCursor c = f.getCursor(sqlExecutionContext)
                     ) {
@@ -130,7 +130,7 @@ public class ParquetFooterAggregateRecordCursorFactoryTest extends AbstractCairo
                     out.add(new TableColumnMetadata("max_ts", ColumnType.TIMESTAMP_MICRO));
                     try (
                             RecordCursorFactory f = new ParquetFooterAggregateRecordCursorFactory(
-                                    path, out, 0, new boolean[]{true}
+                                    path, out, new boolean[]{true}
                             );
                             RecordCursor c = f.getCursor(sqlExecutionContext)
                     ) {
@@ -172,7 +172,7 @@ public class ParquetFooterAggregateRecordCursorFactoryTest extends AbstractCairo
 
                 try (
                         RecordCursorFactory f = new ParquetFooterAggregateRecordCursorFactory(
-                                path, out, 0, new boolean[]{false, true}
+                                path, out, new boolean[]{false, true}
                         );
                         RecordCursor c = f.getCursor(sqlExecutionContext)
                 ) {
@@ -216,7 +216,7 @@ public class ParquetFooterAggregateRecordCursorFactoryTest extends AbstractCairo
 
                 try (
                         RecordCursorFactory f = new ParquetFooterAggregateRecordCursorFactory(
-                                path, out, 0, new boolean[]{false}
+                                path, out, new boolean[]{false}
                         );
                         RecordCursor c = f.getCursor(sqlExecutionContext)
                 ) {

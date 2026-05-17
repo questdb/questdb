@@ -69,7 +69,6 @@ import io.questdb.std.str.Path;
  */
 public class ParquetFooterAggregateRecordCursorFactory extends AbstractRecordCursorFactory {
     private final ParquetFooterAggregateRecordCursor cursor;
-    private final int parquetTimestampIndex;
     private Path path;
 
     /**
@@ -77,10 +76,6 @@ public class ParquetFooterAggregateRecordCursorFactory extends AbstractRecordCur
      *                       names and ordering must match the aggregates the
      *                       planner detected (e.g. {@code min_ts TIMESTAMP,
      *                       max_ts TIMESTAMP})
-     * @param parquetTimestampIndex parquet-side column index of the designated
-     *                              timestamp, used to call
-     *                              {@code rowGroupMin/MaxTimestamp} on the
-     *                              decoder
      * @param aggregateKinds per-output-column aggregate flag, parallel to
      *                       {@code outputMetadata}: {@code true} for max,
      *                       {@code false} for min. Sized to match
@@ -89,18 +84,16 @@ public class ParquetFooterAggregateRecordCursorFactory extends AbstractRecordCur
     public ParquetFooterAggregateRecordCursorFactory(
             @Transient Path path,
             RecordMetadata outputMetadata,
-            int parquetTimestampIndex,
             boolean[] aggregateKinds
     ) {
         super(outputMetadata);
         this.path = new Path().of(path);
-        this.parquetTimestampIndex = parquetTimestampIndex;
         this.cursor = new ParquetFooterAggregateRecordCursor(aggregateKinds);
     }
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
-        cursor.of(path.$(), parquetTimestampIndex, executionContext);
+        cursor.of(path.$(), executionContext);
         return cursor;
     }
 
