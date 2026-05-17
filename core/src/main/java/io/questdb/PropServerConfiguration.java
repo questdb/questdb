@@ -775,7 +775,7 @@ public class PropServerConfiguration implements ServerConfiguration {
                 buildInformation,
                 FilesFacadeImpl.INSTANCE,
                 MicrosecondClockImpl.INSTANCE,
-                (configuration, engine, freeOnExitList) -> DefaultFactoryProvider.INSTANCE,
+                (_, _, _) -> DefaultFactoryProvider.INSTANCE,
                 true
         );
     }

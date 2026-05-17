@@ -24,6 +24,7 @@
 
 package io.questdb.cutlass.qwp.protocol;
 
+import io.questdb.std.Numbers;
 import io.questdb.std.Unsafe;
 
 import static io.questdb.cutlass.qwp.protocol.QwpConstants.*;
@@ -79,7 +80,11 @@ public final class QwpFixedWidthColumnCursor implements QwpColumnCursor {
         long valueAddress = valuesAddress + (long) currentValueIndex * valueSize;
         readCurrentValue(valueAddress);
         currentValueIndex++;
-        return false;
+
+        if (nullBitmapAddress == 0) {
+            currentIsNull = isCurrentValueSentinelNull();
+        }
+        return currentIsNull;
     }
 
     @Override
@@ -291,6 +296,15 @@ public final class QwpFixedWidthColumnCursor implements QwpColumnCursor {
         currentRow = -1;
         currentValueIndex = 0;
         currentIsNull = false;
+    }
+
+    private boolean isCurrentValueSentinelNull() {
+        return switch (typeCode) {
+            case TYPE_INT -> (int) currentLong == Numbers.INT_NULL;
+            case TYPE_LONG, TYPE_DATE, TYPE_TIMESTAMP, TYPE_TIMESTAMP_NANOS -> currentLong == Numbers.LONG_NULL;
+            case TYPE_FLOAT, TYPE_DOUBLE -> Double.isNaN(currentDouble);
+            default -> false;
+        };
     }
 
     private void readCurrentValue(long address) {

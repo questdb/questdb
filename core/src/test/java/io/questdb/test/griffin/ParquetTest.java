@@ -28,8 +28,12 @@ import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.idx.IndexReader;
+import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.std.Rnd;
 import io.questdb.std.Unsafe;
+import io.questdb.std.str.Utf8Sequence;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -1617,6 +1621,131 @@ public class ParquetTest extends AbstractCairoTest {
     @Test
     public void testTimeFilterSingleRowGroupPerPartition() throws Exception {
         testTimeFilter(100);
+    }
+
+    @Test
+    public void testVarcharAsciiFlagAfterRewriteWithNonAsciiAppend() throws Exception {
+        // Regression test: VARCHAR column-level ascii flag must not stay stale
+        // across a parquet rewrite that adds non-ASCII bytes.
+        //
+        // When the partition is converted to parquet while the column is
+        // all-ASCII, to_parquet_schema records ascii=Some(true) in the
+        // parquet file's QDB metadata. A later O3 insert with non-ASCII data
+        // triggers processParquetPartition, which goes through
+        // ParquetUpdater::end. Without the fix, end() reuses the old
+        // qdb_meta and preserves the stale ascii=Some(true). The new parquet
+        // file then claims the column is ASCII, and on read every aux header
+        // gets HEADER_FLAG_ASCII set, so isAscii() returns true for bytes
+        // that are not ASCII. TestUtils.println calls assertAsciiCompliance
+        // per VARCHAR row, so the assertSql below fails on the non-ASCII row
+        // without the fix.
+        assertMemoryLeak(() -> {
+            execute("create table x (s varchar, ts timestamp) timestamp(ts) partition by day wal;");
+            execute("insert into x values ('hello', '2020-01-01T00:00:00.000Z');");
+            execute("insert into x values ('world', '2020-01-01T12:00:00.000Z');");
+            drainWalQueue();
+
+            execute("alter table x convert partition to parquet list '2020-01-01';");
+            drainWalQueue();
+
+            // Backdated insert forces an O3 rewrite through ParquetUpdater::end.
+            // 'héllo' has a non-ASCII codepoint (e-acute, U+00E9).
+            execute("insert into x values ('héllo', '2020-01-01T06:00:00.000Z');");
+            drainWalQueue();
+
+            assertSql(
+                    "s\tts\n" +
+                            "hello\t2020-01-01T00:00:00.000000Z\n" +
+                            "héllo\t2020-01-01T06:00:00.000000Z\n" +
+                            "world\t2020-01-01T12:00:00.000000Z\n",
+                    "x order by ts"
+            );
+        });
+    }
+
+    @Test
+    public void testVarcharAsciiFlagOnAddColumnDowngrade() throws Exception {
+        // ADD COLUMN seeds the new VARCHAR column as `true` in the all-ASCII
+        // tracker (existing rows backfill with nulls, which is_column_ascii
+        // skips). track_new_data_ascii must still observe a non-ASCII byte
+        // in a later write and flip the tracker to `false`, so end() emits
+        // Some(false) and the read path does not falsely claim ASCII-ness.
+        // assertSql -> assertAsciiCompliance per VARCHAR row fails if the
+        // column-level flag wrongly forces isAscii() = true on non-ASCII bytes.
+        assertMemoryLeak(() -> {
+            execute("create table x (s varchar, ts timestamp) timestamp(ts) partition by day wal;");
+            execute("insert into x values ('hello', '2020-01-01T00:00:00.000Z');");
+            drainWalQueue();
+
+            execute("alter table x convert partition to parquet list '2020-01-01';");
+            drainWalQueue();
+
+            execute("alter table x add column s2 varchar;");
+            drainWalQueue();
+
+            // Backdated insert with non-ASCII in the new column forces an
+            // O3 rewrite through ParquetUpdater::end and must downgrade
+            // the seeded `true` to `false`. 'héllo' has U+00E9.
+            execute("insert into x (s, ts, s2) values ('aa', '2020-01-01T06:00:00.000Z', 'héllo');");
+            drainWalQueue();
+
+            assertSql(
+                    "s\tts\ts2\n" +
+                            "hello\t2020-01-01T00:00:00.000000Z\t\n" +
+                            "aa\t2020-01-01T06:00:00.000000Z\théllo\n",
+                    "x order by ts"
+            );
+        });
+    }
+
+    @Test
+    public void testVarcharAsciiFlagOnAddColumnFastPath() throws Exception {
+        // ADD COLUMN VARCHAR with only ASCII data written into the new
+        // column must keep the column-level ascii flag set to `true` so
+        // the read fast path stays active. Existing rows backfill with
+        // nulls (skipped by is_column_ascii), so the seed in
+        // ParquetUpdater::set_target_schema starts the tracker at `true`
+        // and no scan flips it. end() emits Some(true), and the parquet
+        // reader sets HEADER_FLAG_ASCII on every non-null aux header.
+        //
+        // Without the seed, the new column has no tracker entry, end()
+        // falls back to Some(false) via unwrap_or(false), and isAscii()
+        // returns false on every value.
+        assertMemoryLeak(() -> {
+            execute("create table x (s varchar, ts timestamp) timestamp(ts) partition by day wal;");
+            execute("insert into x values ('hello', '2020-01-01T00:00:00.000Z');");
+            drainWalQueue();
+
+            execute("alter table x convert partition to parquet list '2020-01-01';");
+            drainWalQueue();
+
+            execute("alter table x add column s2 varchar;");
+            drainWalQueue();
+
+            // Backdated inserts route through ParquetUpdater::end. All s2
+            // values are ASCII so the column-level flag should stay true.
+            execute("insert into x (s, ts, s2) values ('aa', '2020-01-01T03:00:00.000Z', 'first');");
+            execute("insert into x (s, ts, s2) values ('bb', '2020-01-01T06:00:00.000Z', 'second');");
+            drainWalQueue();
+
+            try (RecordCursorFactory factory = select("select s2 from x where s2 is not null order by ts")) {
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    Record record = cursor.getRecord();
+                    int nonNullCount = 0;
+                    while (cursor.hasNext()) {
+                        Utf8Sequence v = record.getVarcharA(0);
+                        Assert.assertNotNull(v);
+                        Assert.assertTrue(
+                                "expected isAscii() = true on ASCII value '" + v
+                                        + "'; ADD COLUMN VARCHAR lost the column-level ascii fast path",
+                                v.isAscii()
+                        );
+                        nonNullCount++;
+                    }
+                    Assert.assertEquals(2, nonNullCount);
+                }
+            }
+        });
     }
 
     @Test

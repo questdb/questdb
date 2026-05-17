@@ -1,7 +1,7 @@
 # QWP Egress — Phase 2 Backlog
 
 Open work items for the QWP egress feature. Phase 1 is feature-complete and
-tested (see `docs/QWP_EGRESS_EXTENSION.md` for the spec and the
+tested (see `../wire-egress.md` for the spec and the
 `QwpEgress*Test` suites for the covered scenarios).
 
 ## Carried over from Phase 1
@@ -51,7 +51,7 @@ requires dispatcher-level dual-registration (READ + WRITE during streaming).
 All items in this list are net-new work; everything below is already landed on
 `vi_egress`:
 
-- Wire protocol spec: `docs/QWP_EGRESS_EXTENSION.md`.
+- Wire protocol spec: `../wire-egress.md`.
 - Server: `/read/v1` endpoint, handshake, `QUERY_REQUEST` decoder with binds
   for all scalar types, cursor -> `RESULT_BATCH` -> `RESULT_END` loop,
   per-connection schema registry, native column scratches + reusable Decimal

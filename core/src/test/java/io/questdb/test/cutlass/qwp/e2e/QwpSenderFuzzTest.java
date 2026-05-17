@@ -41,7 +41,9 @@ import io.questdb.std.LowerCaseCharSequenceObjHashMap;
 import io.questdb.std.Numbers;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
+import io.questdb.std.datetime.nanotime.NanosFormatUtils;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
 import io.questdb.test.cairo.TestTableReaderRecordCursor;
 import io.questdb.test.cutlass.line.tcp.load.LineData;
 import io.questdb.test.cutlass.line.tcp.load.TableData;
@@ -63,6 +65,16 @@ import static io.questdb.cairo.ColumnType.*;
 
 public class QwpSenderFuzzTest extends AbstractQwpWebSocketTest {
 
+    // colNameBases / colTypes / colValueBases are partitioned: the first
+    // LEGACY_COLUMN_COUNT entries are STRING/DOUBLE columns and participate
+    // in the full skip / new-column-injection fuzz; the rest are typed
+    // columns (BYTE, SHORT, INT, FLOAT, CHAR, UUID, LONG256, TIMESTAMP_NANO)
+    // that are always set on every row and never auto-injected as extras.
+    // Reason: typed columns whose unset cells render differently from their
+    // type-default (e.g. BYTE 0 vs INT NULL) would clash with the oracle's
+    // single-default-per-column model once startAlterTableThread converts
+    // them across the integer family.
+    private static final int LEGACY_COLUMN_COUNT = 6;
     private static final Log LOG = LogFactory.getLog(QwpSenderFuzzTest.class);
     private static final int MAX_NUM_OF_SKIPPED_COLS = 2;
     private static final int NEW_COLUMN_RANDOMIZE_FACTOR = 2;
@@ -76,10 +88,31 @@ public class QwpSenderFuzzTest extends AbstractQwpWebSocketTest {
             {"humidity", "HUMIdity", "HumiditY", "HUmiDIty", "HUMIDITY", "Humidity"},
             {"hőmérséklet", "HŐMÉRSÉKLET", "HŐmérséKLEt", "hőMÉRséKlET"},
             {"notes", "NOTES", "NotEs", "noTeS"},
-            {"ветер", "Ветер", "ВЕТЕР", "вЕТЕр", "ВетЕР"}
+            {"ветер", "Ветер", "ВЕТЕР", "вЕТЕр", "ВетЕР"},
+            {"pressure_b", "PRESSURE_B", "Pressure_B"},
+            {"pressure_s", "PRESSURE_S", "Pressure_S"},
+            {"pressure_i", "PRESSURE_I", "Pressure_I"},
+            {"pressure_f", "PRESSURE_F", "Pressure_F"},
+            {"flag_c", "FLAG_C", "Flag_C"},
+            {"sensor_id_u", "SENSOR_ID_U", "Sensor_Id_U"},
+            {"token_l256", "TOKEN_L256", "Token_L256"},
+            {"event_at_ns", "EVENT_AT_NS", "Event_At_Ns"}
     };
-    private final short[] colTypes = new short[]{STRING, DOUBLE, DOUBLE, DOUBLE, STRING, DOUBLE};
-    private final String[] colValueBases = new String[]{"europe", "8", "2", "1", "note", "6"};
+    // New non-string/non-double types added to fuzz native wire-type emission
+    // through the QWP sender. Their addColumnValue cases yield exactly the
+    // text representation that CursorPrinter writes for each type so the
+    // TableData oracle's two-pass assertion matches.
+    // int[] (not short[]) because TIMESTAMP_NANO is an int sentinel
+    // (1 << 18 | TIMESTAMP) outside the short range.
+    private final int[] colTypes = new int[]{STRING, DOUBLE, DOUBLE, DOUBLE, STRING, DOUBLE,
+            BYTE, SHORT, INT, FLOAT, CHAR, UUID, LONG256, TIMESTAMP_NANO};
+    // Integer-family value bases (indices 6..9, for BYTE/SHORT/INT/FLOAT) are
+    // capped so the *10 + d arithmetic stays within byte range. When the
+    // alter-table thread narrows a column across the integer family (e.g.
+    // INT -> BYTE), each previously-written value casts losslessly and the
+    // oracle's stored yield still matches what the cursor renders.
+    private final String[] colValueBases = new String[]{"europe", "8", "2", "1", "note", "6",
+            "5", "9", "11", "7", "M", "u", "l", "1700000000000000000"};
     private final char[] nonAsciiChars = {'ó', 'í', 'Á', 'ч', 'Ъ', 'Ж', 'ю', 0x3000, 0x3080, 0x3a55};
     private final String[][] symbolNameBases = new String[][]{
             {"location", "Location", "LOCATION", "loCATion", "LocATioN"},
@@ -87,6 +120,16 @@ public class QwpSenderFuzzTest extends AbstractQwpWebSocketTest {
     };
     private final String[] symbolValueBases = new String[]{"us-midwest", "London"};
     private final AtomicLong timestampMicros = new AtomicLong(1_465_839_830_102_300L);
+    // Cap the client's outgoing WS frame size, by row count. The client
+    // never fragments outgoing WS messages, so the per-batch wire payload
+    // plus WS header must stay strictly under the server's recvBufferSize
+    // or the server tears the connection down with MESSAGE_TOO_BIG. We
+    // bound by rows rather than bytes because the auto_flush_bytes
+    // threshold compares against the per-row column-buffer encoding and
+    // significantly underestimates the final wire frame size in
+    // multi-table batches (full schema headers and a global symbol-dict
+    // delta are added at flush time). 0 means use sender defaults.
+    private int clientAutoFlushRows = 0;
     private double columnConvertProb;
     private int columnReorderingFactor = -1;
     private int columnSkipFactor = -1;
@@ -102,7 +145,12 @@ public class QwpSenderFuzzTest extends AbstractQwpWebSocketTest {
     private int numOfTables;
     private int numOfThreads;
     private Rnd random;
-    private int recvBufferSize = 8192;
+    // 32 KiB default. With 14 column types and frequent auto-create of "ex_..."
+    // extras, full schema headers plus a global symbol-dict delta inflate
+    // each flushed frame well past the legacy 8 KiB default. Tests that need
+    // to assert behaviour around the recv-buffer limit override this
+    // explicitly (see testLoadSmallBuffer).
+    private int recvBufferSize = 32_768;
     private boolean sendSymbolsWithSpace = false;
     private LowerCaseCharSequenceObjHashMap<TableData> tables;
     private SOCountDownLatch threadPushFinished;
@@ -187,6 +235,8 @@ public class QwpSenderFuzzTest extends AbstractQwpWebSocketTest {
     public void testCaseVariationReorderingColumnsSendSymbolsWithSpace() throws Exception {
         initLoadParameters(100, Os.isWindows() ? 3 : 5, 5, 5, 50);
         initFuzzParameters(4, -1, 3, -1, true, true, true);
+        // Same wide-batch-vs-default-recv-buffer issue as testLoadSendSymbolsWithSpace.
+        clientAutoFlushRows = 5;
         runTest();
     }
 
@@ -234,12 +284,23 @@ public class QwpSenderFuzzTest extends AbstractQwpWebSocketTest {
     public void testLoadSendSymbolsWithSpace() throws Exception {
         initLoadParameters(100, Os.isWindows() ? 3 : 5, 4, 8, 20);
         initFuzzParameters(-1, -1, 2, -1, false, true, true);
+        // Frequent new-column injection (newColumnFactor=2) plus 8
+        // interleaved tables and symbols with embedded spaces inflates
+        // batch size enough that a 10-row frame exceeds the default
+        // 8192-byte server recv buffer. Cap rows-per-frame to keep the
+        // wire payload safely under it.
+        clientAutoFlushRows = 5;
         runTest();
     }
 
     @Test
     public void testLoadSmallBuffer() throws Exception {
         recvBufferSize = 2048;
+        // Cap rows-per-frame so the wire payload stays under recvBufferSize.
+        // This schema is ~9 columns of mixed string/double; with 5 tables
+        // interleaved per batch and full schema headers, ~3 rows yields
+        // a wire frame around 1KB, comfortably under 2048.
+        clientAutoFlushRows = 3;
         initLoadParameters(100, Os.isWindows() ? 3 : 5, 5, 5, 20);
         runTest();
     }
@@ -342,7 +403,7 @@ public class QwpSenderFuzzTest extends AbstractQwpWebSocketTest {
         return colName;
     }
 
-    private String addColumnValue(short type, String valueBase, CharSequence colName, QwpWebSocketSender sender, Rnd rnd) {
+    private String addColumnValue(int type, String valueBase, CharSequence colName, QwpWebSocketSender sender, Rnd rnd) {
         return switch (type) {
             case DOUBLE -> {
                 int d = rnd.nextInt(9);
@@ -364,6 +425,78 @@ public class QwpSenderFuzzTest extends AbstractQwpWebSocketTest {
                 String postfix = Character.toString(shouldFuzz(nonAsciiValueFactor, rnd) ? nonAsciiChars[rnd.nextInt(nonAsciiChars.length)] : rnd.nextChar());
                 sender.stringColumn(colName, valueBase + postfix);
                 yield "\"" + valueBase + postfix + "\"";
+            }
+            case BYTE -> {
+                // valueBase may belong to a column whose type was changed via DDL
+                // (e.g. an INT column with base "100" coerced to BYTE), so the
+                // raw int can exceed the byte range. Yield the truncated byte
+                // so the oracle matches what the cursor renders.
+                int d = rnd.nextInt(9);
+                byte v = (byte) (Numbers.parseInt(valueBase) * 10 + d);
+                sender.byteColumn(colName, v);
+                yield Integer.toString(v);
+            }
+            case SHORT -> {
+                int d = rnd.nextInt(9);
+                short v = (short) (Numbers.parseInt(valueBase) * 10 + d);
+                sender.shortColumn(colName, v);
+                yield Integer.toString(v);
+            }
+            case INT -> {
+                int d = rnd.nextInt(9);
+                int v = Numbers.parseInt(valueBase) * 10 + d;
+                sender.intColumn(colName, v);
+                yield Integer.toString(v);
+            }
+            case FLOAT -> {
+                // Integer-valued floats render identically via CursorPrinter and
+                // Float.toString, so the yielded "70.0".."79.0" matches.
+                int d = rnd.nextInt(9);
+                float v = (float) (Numbers.parseInt(valueBase) * 10 + d);
+                sender.floatColumn(colName, v);
+                yield ((int) v) + ".0";
+            }
+            case CHAR -> {
+                // CursorPrinter writes a CHAR via sink.put(char), no decoration.
+                // Offset random letter from the valueBase letter to vary per row.
+                char c = (char) (valueBase.charAt(0) + rnd.nextInt(10));
+                sender.charColumn(colName, c);
+                yield Character.toString(c);
+            }
+            case UUID -> {
+                // hi/lo crafted so neither limb hits LONG_NULL (which would render
+                // as empty per Uuid.isNull). Use Numbers.appendUuid to match the
+                // exact text format the cursor produces.
+                long hi = (long) (rnd.nextInt(0x7FFF_FFFF) + 1) << 32 | (rnd.nextInt() & 0xFFFFFFFFL);
+                long lo = (long) (rnd.nextInt(0x7FFF_FFFF) + 1) << 32 | (rnd.nextInt() & 0xFFFFFFFFL);
+                sender.uuidColumn(colName, lo, hi);
+                StringSink sink = new StringSink();
+                Numbers.appendUuid(lo, hi, sink);
+                yield sink.toString();
+            }
+            case LONG256 -> {
+                // Force the top limb non-zero so the four-limb hex render path
+                // fires deterministically; values stay positive to keep things
+                // simple.
+                long l0 = (rnd.nextLong() & 0x7FFF_FFFF_FFFF_FFFFL) | 1L;
+                long l1 = (rnd.nextLong() & 0x7FFF_FFFF_FFFF_FFFFL) | 1L;
+                long l2 = (rnd.nextLong() & 0x7FFF_FFFF_FFFF_FFFFL) | 1L;
+                long l3 = (rnd.nextLong() & 0x7FFF_FFFF_FFFF_FFFFL) | 1L;
+                sender.long256Column(colName, l0, l1, l2, l3);
+                StringSink sink = new StringSink();
+                Numbers.appendLong256(l0, l1, l2, l3, sink);
+                yield sink.toString();
+            }
+            case TIMESTAMP_NANO -> {
+                // Step in 1-microsecond units (1_000 nanos) off the base so nanos
+                // values stay distinct per row but always end in 000 — that keeps
+                // the rendered string stable to read.
+                long base = Numbers.parseLong(valueBase);
+                long nanos = base + (long) rnd.nextInt(1_000_000) * 1_000L;
+                sender.timestampColumn(colName, nanos, ChronoUnit.NANOS);
+                StringSink sink = new StringSink();
+                NanosFormatUtils.appendDateTimeNSec(sink, nanos);
+                yield sink.toString();
             }
             default -> {
                 sender.stringColumn(colName, valueBase);
@@ -388,7 +521,9 @@ public class QwpSenderFuzzTest extends AbstractQwpWebSocketTest {
 
     private void addNewColumn(LineData line, QwpWebSocketSender sender, Rnd rnd) {
         if (shouldFuzz(newColumnFactor, rnd)) {
-            int extraColIndex = rnd.nextInt(colNameBases.length);
+            // Pick only from the legacy STRING/DOUBLE pool; typed columns are
+            // always set on every row, so they have no auto-create-only mode.
+            int extraColIndex = rnd.nextInt(LEGACY_COLUMN_COUNT);
             CharSequence colName = generateColumnName(extraColIndex, true, rnd);
             CharSequence colValue = addColumnValue(colTypes[extraColIndex], colValueBases[extraColIndex], colName, sender, rnd);
             line.addColumn(colName, colValue);
@@ -427,7 +562,6 @@ public class QwpSenderFuzzTest extends AbstractQwpWebSocketTest {
                     .$(", table.size(): ").$(table.size()).$(", reader.size(): ").$(reader.size()).$();
             TableReaderMetadata metadata = reader.getMetadata();
             CharSequence expected = table.generateRows(metadata);
-            LOG.info().$safe(table.getName()).$(" expected:\n").$safe(expected).$();
 
             long txnMinTs = reader.getMinTimestamp();
             int timestampIndex = reader.getMetadata().getTimestampIndex();
@@ -637,8 +771,30 @@ public class QwpSenderFuzzTest extends AbstractQwpWebSocketTest {
             }
             int numOfSkippedCols = rnd.nextInt(MAX_NUM_OF_SKIPPED_COLS) + 1;
             for (int i = 0; i < numOfSkippedCols; i++) {
-                int skipIndex = rnd.nextInt(indexes.size());
-                indexes.remove(skipIndex);
+                // Only legacy STRING/DOUBLE columns are eligible to be skipped.
+                // Typed columns (BYTE/SHORT/INT/FLOAT/CHAR/UUID/LONG256/TIMESTAMP_NANO)
+                // must remain in every row so the oracle never falls back to a
+                // type default whose cursor rendering can drift after a DDL
+                // type conversion.
+                int legacyEligible = 0;
+                for (Integer idx : indexes) {
+                    if (idx < LEGACY_COLUMN_COUNT) {
+                        legacyEligible++;
+                    }
+                }
+                if (legacyEligible == 0) {
+                    break;
+                }
+                int target = rnd.nextInt(legacyEligible);
+                for (int j = 0; j < indexes.size(); j++) {
+                    if (indexes.get(j) < LEGACY_COLUMN_COUNT) {
+                        if (target == 0) {
+                            indexes.remove(j);
+                            break;
+                        }
+                        target--;
+                    }
+                }
             }
             int[] columnIndexes = new int[indexes.size()];
             for (int i = 0; i < columnIndexes.length; i++) {
@@ -697,7 +853,10 @@ public class QwpSenderFuzzTest extends AbstractQwpWebSocketTest {
 
     private void startThread(int port, SOCountDownLatch threadPushFinished, AtomicInteger failureCounter, Rnd rnd) {
         new Thread(() -> {
-            try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", port, null)) {
+            try (QwpWebSocketSender sender = clientAutoFlushRows > 0
+                    ? connectWs(port, clientAutoFlushRows, QwpWebSocketSender.DEFAULT_AUTO_FLUSH_BYTES,
+                    QwpWebSocketSender.DEFAULT_AUTO_FLUSH_INTERVAL_NANOS)
+                    : connectWs(port)) {
                 long points = 0;
                 for (int n = 0; n < numOfIterations; n++) {
                     for (int j = 0; j < numOfLines; j++) {

@@ -5702,7 +5702,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                         final boolean rightIsMaster = rightColumnIndex < columnSplit;
                                                         isLeft = parent != null && parent.lhs == nn;
 
-                                                        if (leftIsSymbol && rightIsSymbol && leftIsMaster != rightIsMaster) {
+                                                        // Both sides must expose a static symbol table; the fast path
+                                                        // enumerates master symbols up front to build the slave lookup map.
+                                                        if (leftIsSymbol && rightIsSymbol && leftIsMaster != rightIsMaster
+                                                                && joinMetadata.isSymbolTableStatic(leftColumnIndex)
+                                                                && joinMetadata.isSymbolTableStatic(rightColumnIndex)) {
                                                             leftSymbolIndex = leftIsMaster ? leftColumnIndex : rightColumnIndex;
                                                             rightSymbolIndex = leftIsMaster ? rightColumnIndex : leftColumnIndex;
                                                             rightSymbolIndex = rightSymbolIndex - columnSplit;
