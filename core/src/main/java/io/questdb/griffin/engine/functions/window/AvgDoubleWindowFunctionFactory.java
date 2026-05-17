@@ -929,6 +929,13 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         private final boolean frameIncludesCurrentValue;
         private final boolean frameLoBounded;
         private final int frameSize;
+        // (capacity, startOffset) pairs marking free space within memory. Each
+        // entry is a ring slab evicted from a tombstoned partition by
+        // compactPartitionMap. computeNext's isNew branch pops the last pair
+        // before falling back to memory.appendAddressFor. The capacity slot
+        // mirrors the bounded-RANGE freeList convention; bounded ROWS slabs
+        // are always bufferSize doubles long.
+        private final LongList freeList = new LongList();
         // holds fixed-size ring buffers of double values
         private final MemoryARW memory;
         private final CairoConfiguration configuration;
@@ -997,6 +1004,7 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         public void close() {
             super.close();
             memory.close();
+            freeList.clear();
         }
 
         @Override
@@ -1011,6 +1019,10 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                 while (cursor.hasNext()) {
                     MapValue srcValue = record.getValue();
                     if (srcValue.getByte(tombstoneValueIndex) == 1) {
+                        // Reclaim the tombstoned partition's ring slab so a
+                        // future isNew partition can reuse it instead of
+                        // growing memory.
+                        freeList.add((long) bufferSize, srcValue.getLong(3));
                         continue;
                     }
                     long srcKeyHash = record.keyHashCode();
@@ -1050,7 +1062,16 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
 
             if (value.isNew()) {
                 loIdx = 0;
-                startOffset = memory.appendAddressFor((long) bufferSize * Double.BYTES) - memory.getPageAddress(0);
+                final int freeN = freeList.size();
+                if (freeN > 0) {
+                    // Reuse a slab reclaimed from a tombstoned partition. The
+                    // capacity slot is always bufferSize here, so only the
+                    // startOffset matters.
+                    startOffset = freeList.getQuick(freeN - 1);
+                    freeList.setPos(freeN - 2);
+                } else {
+                    startOffset = memory.appendAddressFor((long) bufferSize * Double.BYTES) - memory.getPageAddress(0);
+                }
                 if (frameIncludesCurrentValue && Numbers.isFinite(d)) {
                     sum = d;
                     count = 1;
@@ -1150,6 +1171,7 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         @Override
         public void reopen() {
             super.reopen();
+            freeList.clear();
             tombstoneCount = 0;
             // memory will allocate on first use
         }
@@ -1158,6 +1180,7 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         public void reset() {
             super.reset();
             memory.close();
+            freeList.clear();
             tombstoneCount = 0;
         }
 
@@ -1191,6 +1214,7 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         public void restore(MemoryR source, int formatVersion) {
             map.clear();
             memory.truncate();
+            freeList.clear();
             tombstoneCount = 0;
             long srcOffset = 0;
             final long partitionCount = source.getLong(srcOffset);
@@ -1301,6 +1325,7 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         public void toTop() {
             super.toTop();
             memory.truncate();
+            freeList.clear();
             tombstoneCount = 0;
         }
     }
