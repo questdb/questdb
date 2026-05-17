@@ -27,6 +27,8 @@ package io.questdb.cutlass.qwp.server.egress;
 import io.questdb.cutlass.qwp.protocol.QwpConstants;
 import io.questdb.std.str.Utf8Sequence;
 
+import java.nio.charset.StandardCharsets;
+
 /**
  * Parses the {@code X-QWP-Accept-Encoding} handshake header and picks the
  * first codec the server supports. The header follows HTTP's
@@ -50,6 +52,13 @@ public final class QwpEgressCompressionNegotiator {
      * Sentinel returned when the header is absent or no supported codec is listed.
      */
     public static final long RESULT_NONE = 0L;
+    // Precomputed X-QWP-Content-Encoding header bytes per zstd level so the
+    // handshake response writer avoids a per-call String concatenation +
+    // getBytes allocation. Levels outside [COMPRESSION_ZSTD_MIN_LEVEL,
+    // COMPRESSION_ZSTD_MAX_LEVEL] are never produced by negotiate() and any
+    // out-of-band lookup will trip ArrayIndexOutOfBoundsException -- a loud
+    // failure is preferred over silently returning a wrong/raw header value.
+    private static final byte[][] ZSTD_LEVEL_BYTES = buildZstdLevelBytes();
 
     private QwpEgressCompressionNegotiator() {
     }
@@ -117,15 +126,24 @@ public final class QwpEgressCompressionNegotiator {
     }
 
     /**
-     * Renders the negotiated codec as a value for the
-     * {@code X-QWP-Content-Encoding} response header, or {@code null} when the
-     * server chose raw transport (the header is then omitted entirely).
+     * Returns the precomputed {@code X-QWP-Content-Encoding} response header
+     * bytes for the negotiated codec, or {@code null} when the server chose
+     * raw transport (the header is then omitted entirely). The returned array
+     * is interned in a static table -- callers must not mutate it.
      */
-    public static String responseHeaderValue(byte codec, byte level) {
+    public static byte[] responseHeaderValue(byte codec, byte level) {
         if (codec == QwpConstants.COMPRESSION_ZSTD) {
-            return "zstd;level=" + (level & 0xFF);
+            return ZSTD_LEVEL_BYTES[level & 0xFF];
         }
         return null;
+    }
+
+    private static byte[][] buildZstdLevelBytes() {
+        byte[][] table = new byte[QwpConstants.COMPRESSION_ZSTD_MAX_LEVEL + 1][];
+        for (int level = QwpConstants.COMPRESSION_ZSTD_MIN_LEVEL; level <= QwpConstants.COMPRESSION_ZSTD_MAX_LEVEL; level++) {
+            table[level] = ("zstd;level=" + level).getBytes(StandardCharsets.US_ASCII);
+        }
+        return table;
     }
 
     private static boolean isAsciiWhitespace(byte b) {

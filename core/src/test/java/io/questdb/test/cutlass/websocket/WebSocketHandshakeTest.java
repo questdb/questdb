@@ -226,13 +226,14 @@ public class WebSocketHandshakeTest extends AbstractWebSocketTest {
         assertMemoryLeak(() -> {
             String acceptKey = "s3pPLMBiTxaQ9kYGzzhZRbK+xOo=";
             int maxBatchSize = 16 * 1024 * 1024;
+            byte[] maxBatchSizeBytes = Integer.toString(maxBatchSize).getBytes(StandardCharsets.US_ASCII);
             int expectedSize = QwpWebSocketHttpProcessor.responseSize(
-                    acceptKey, 1, null, false, null, maxBatchSize);
+                    acceptKey, 1, null, false, null, maxBatchSizeBytes);
 
             long buf = allocateBuffer(512);
             try {
                 int written = QwpWebSocketHttpProcessor.writeResponse(
-                        buf, acceptKey, 1, null, false, null, maxBatchSize);
+                        buf, acceptKey, 1, null, false, null, maxBatchSizeBytes);
                 Assert.assertEquals(expectedSize, written);
 
                 String response = new String(readBytes(buf, written), StandardCharsets.US_ASCII);
@@ -246,14 +247,14 @@ public class WebSocketHandshakeTest extends AbstractWebSocketTest {
     }
 
     @Test
-    public void testWriteResponseOmitsMaxBatchSizeWhenZero() throws Exception {
+    public void testWriteResponseOmitsMaxBatchSizeWhenAbsent() throws Exception {
         assertMemoryLeak(() -> {
             String acceptKey = "s3pPLMBiTxaQ9kYGzzhZRbK+xOo=";
 
             long buf = allocateBuffer(256);
             try {
                 int written = QwpWebSocketHttpProcessor.writeResponse(
-                        buf, acceptKey, 1, null, false, null, 0);
+                        buf, acceptKey, 1, null, false, null, null);
 
                 String response = new String(readBytes(buf, written), StandardCharsets.US_ASCII);
                 Assert.assertFalse("did not expect X-QWP-Max-Batch-Size header, got: " + response,
