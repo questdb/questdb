@@ -7338,6 +7338,31 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     }
                 }
 
+                // Non-timestamp sort key elision. Mirrors the designated-timestamp
+                // shortcut above for sources whose metadata declares a sort on a
+                // non-ts column (e.g. parquet files carrying `sorting_columns`).
+                // Only applies to single-column ORDER BY: a multi-column
+                // ORDER BY would need the entire prefix to match, which we don't
+                // currently track end-to-end.
+                //
+                // The forward-scan guard pairs with the metadata claim: a file
+                // sorted DESC on a non-ts column iterated FORWARD already emits
+                // DESC rows. We do not yet have a reverse-iteration parquet
+                // cursor, so we do not consider scan-direction inversion here.
+                if (orderByColumnCount == 1
+                        && recordCursorFactory.getScanDirection() == RecordCursorFactory.SCAN_DIRECTION_FORWARD) {
+                    CharSequence column = orderByColumnNames.getQuick(0);
+                    int index = metadata.getColumnIndexQuiet(column);
+                    if (index >= 0 && index != timestampIndex) {
+                        int fileSort = metadata.getColumnOrderBy(index);
+                        int requestedDir = orderByColumnNameToIndexMap.get(column);
+                        if ((fileSort == 1 && requestedDir == IQueryModel.ORDER_DIRECTION_ASCENDING)
+                                || (fileSort == -1 && requestedDir == IQueryModel.ORDER_DIRECTION_DESCENDING)) {
+                            return recordCursorFactory;
+                        }
+                    }
+                }
+
                 GenericRecordMetadata orderedMetadata;
                 int firstOrderByColumnIndex = metadata.getColumnIndexQuiet(orderByColumnNames.getQuick(0));
                 if (firstOrderByColumnIndex == timestampIndex) {
