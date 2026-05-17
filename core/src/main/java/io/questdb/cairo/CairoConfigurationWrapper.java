@@ -1678,6 +1678,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public boolean isSqlParquetVerifySortClaimEnabled() {
+        return getDelegate().isSqlParquetVerifySortClaimEnabled();
+    }
+
+    @Override
     public boolean isTableTypeConversionEnabled() {
         return getDelegate().isTableTypeConversionEnabled();
     }

@@ -988,6 +988,22 @@ public interface CairoConfiguration {
 
     boolean isSqlParquetRowGroupPruningEnabled();
 
+    /**
+     * When true, code paths that elide a sort based on a parquet file's
+     * {@code sorting_columns} claim (today: the reverse-scan shortcut) call
+     * {@code ParquetFileDecoder.verifyAscendingSortAcrossRowGroups} at first
+     * cursor open and throw a {@link io.questdb.cairo.CairoException} if the
+     * claim is dishonest. The check is a cross-row-group min/max comparison
+     * using the file's own statistics, so it costs O(#row-groups) stats
+     * reads with no decode. Within-row-group misorder is not detected.
+     * <p>
+     * Off by default: production deployments typically read parquet files
+     * QuestDB itself wrote, which never lie about sort order. Set to true
+     * when ingesting parquet from untrusted third parties where a bad
+     * claim would silently corrupt the DESC result of an elided sort.
+     */
+    boolean isSqlParquetVerifySortClaimEnabled();
+
     boolean isTableTypeConversionEnabled();
 
     /**

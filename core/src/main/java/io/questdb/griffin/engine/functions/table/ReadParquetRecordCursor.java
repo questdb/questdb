@@ -239,6 +239,19 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
         closeFile();
     }
 
+    /**
+     * Borrowed reference to the opened parquet decoder. Valid only after
+     * {@link #of} has succeeded and before {@link #close}; calls outside
+     * that window dereference an uninitialised or freed handle. Exposed
+     * for the factory layer's sort-claim verification hook -
+     * {@code ParquetFileDecoder.verifyAscendingSortAcrossRowGroups} runs
+     * over the decoder's metadata snapshot, so the caller does not need
+     * to manage file lifecycle.
+     */
+    public ParquetFileDecoder getDecoder() {
+        return decoder;
+    }
+
     @Override
     public Record getRecord() {
         return record;

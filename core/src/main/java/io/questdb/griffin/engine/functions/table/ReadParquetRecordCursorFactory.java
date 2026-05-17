@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions.table;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ProjectableRecordCursorFactory;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
@@ -32,6 +33,7 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.table.PushdownFilterExtractor;
+import io.questdb.griffin.engine.table.parquet.ParquetFileDecoder;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
@@ -61,8 +63,8 @@ public class ReadParquetRecordCursorFactory extends ProjectableRecordCursorFacto
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
+        final CairoConfiguration configuration = executionContext.getCairoEngine().getConfiguration();
         if (cursor == null) {
-            final CairoConfiguration configuration = executionContext.getCairoEngine().getConfiguration();
             cursor = new ReadParquetRecordCursor(configuration.getFilesFacade(), getMetadata(), pushdownFilterConditions);
         }
         // Sync the cursor's iteration direction with the factory's flag
@@ -72,6 +74,23 @@ public class ReadParquetRecordCursorFactory extends ProjectableRecordCursorFacto
         cursor.setReverse(reverseScan);
         try {
             cursor.of(path.$(), executionContext);
+            // Sort-claim hardening: when reverseScan is set and the operator
+            // has opted in via cairo.sql.parquet.verify.sort.claim.enabled,
+            // verify the file's sorting_columns claim against the per-row-
+            // group min/max statistics. A dishonest claim would silently
+            // corrupt the DESC result of the elided sort; failing here
+            // surfaces the bad file with a clear message. The check is a
+            // single O(#row-groups) stats walk with no decode.
+            if (reverseScan && configuration.isSqlParquetVerifySortClaimEnabled()) {
+                final ParquetFileDecoder decoder = cursor.getDecoder();
+                final int tsIdx = decoder.metadata().getTimestampIndex();
+                if (tsIdx >= 0 && !decoder.verifyAscendingSortAcrossRowGroups(tsIdx)) {
+                    throw CairoException.nonCritical()
+                            .put("parquet file's sorting_columns claim is dishonest: ts not ASC across row groups [path=")
+                            .put(path)
+                            .put(']');
+                }
+            }
             return cursor;
         } catch (Throwable th) {
             cursor.close();

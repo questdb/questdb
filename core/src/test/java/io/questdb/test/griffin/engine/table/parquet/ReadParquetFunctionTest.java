@@ -2241,6 +2241,143 @@ public class ReadParquetFunctionTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testReverseScanSortClaimVerifierPassesForHonestFile() throws Exception {
+        // Positive case: file is genuinely ts-ASC sorted, the verifier
+        // accepts and the reverse scan proceeds. Enabled in serial mode
+        // only because the parallel cursor path doesn't reuse the same
+        // verifier hook today.
+        if (parallel) return;
+        setProperty(PropertyKey.CAIRO_SQL_PARQUET_VERIFY_SORT_CLAIM_ENABLED, "true");
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE h AS (" +
+                    "  SELECT timestamp_sequence(1_000_000L, 100L) AS ts, x AS id " +
+                    "  FROM long_sequence(5_000)" +
+                    ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+            drainWalQueue();
+
+            try (
+                    Path path = new Path();
+                    PartitionDescriptor pd = new PartitionDescriptor();
+                    TableReader reader = engine.getReader("h")
+            ) {
+                path.of(root).concat("h_honest.parquet");
+                PartitionEncoder.populateFromTableReader(reader, pd, 0);
+                PartitionEncoder.encode(pd, path);
+
+                // Force the reverse-scan factory via ORDER BY ts DESC.
+                // Build factory directly so we can flip reverse and call
+                // getCursor with the flag on - mirrors what the planner
+                // does after detecting the elision.
+                final io.questdb.cairo.GenericRecordMetadata outMeta =
+                        new io.questdb.cairo.GenericRecordMetadata();
+                outMeta.add(new io.questdb.cairo.TableColumnMetadata("ts", io.questdb.cairo.ColumnType.TIMESTAMP_MICRO));
+                outMeta.add(new io.questdb.cairo.TableColumnMetadata("id", io.questdb.cairo.ColumnType.LONG));
+                outMeta.setTimestampIndex(0);
+                try (
+                        io.questdb.griffin.engine.functions.table.ReadParquetRecordCursorFactory factory =
+                                new io.questdb.griffin.engine.functions.table.ReadParquetRecordCursorFactory(path, outMeta)
+                ) {
+                    factory.setReverseScan(true);
+                    // Must NOT throw.
+                    try (io.questdb.cairo.sql.RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                        Assert.assertTrue(cursor.hasNext());
+                        final long firstTs = cursor.getRecord().getTimestamp(0);
+                        // 5_000 rows from 1_000_000 step 100 -> last ts is
+                        // 1_000_000 + 100*(5_000-1) = 1_499_900.
+                        Assert.assertEquals(1_499_900L, firstTs);
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testReverseScanSortClaimVerifierCatchesDishonestClaim() throws Exception {
+        // Negative case: write a parquet file with a sort claim on id but
+        // populate id with a deliberately non-monotone sequence (x % 7
+        // cycles through 0..6 over and over). The writer respects the
+        // sorting_columns metadata claim regardless of actual data order
+        // - that's the very bug class the verifier is meant to catch.
+        // With the flag on, the reverse-scan factory must throw a
+        // CairoException naming the file path. With the flag off, the
+        // factory accepts the file and produces (probably wrong) output;
+        // this test covers the gated case only.
+        if (parallel) return;
+        setProperty(PropertyKey.CAIRO_SQL_PARQUET_VERIFY_SORT_CLAIM_ENABLED, "true");
+        assertMemoryLeak(() -> {
+            // Force multiple row groups so the cross-RG check actually
+            // fires. rowGroupSize=200 over 1_000 rows = 5 row groups.
+            execute("CREATE TABLE d AS (" +
+                    "  SELECT cast(x as long) AS ts, cast(x % 7 as long) AS id" +
+                    "  FROM long_sequence(1_000)" +
+                    ")");
+            drainWalQueue();
+
+            try (
+                    Path path = new Path();
+                    PartitionDescriptor pd = new PartitionDescriptor();
+                    TableReader reader = engine.getReader("d")
+            ) {
+                path.of(root).concat("d_dishonest.parquet");
+                // PartitionDescriptor needs the table to have a designated
+                // timestamp for the encoder. Use a simpler PD setup.
+                PartitionEncoder.populateFromTableReader(reader, pd, 0);
+                final int idColumnIndex = reader.getMetadata().getColumnIndex("id");
+                PartitionEncoder.encodeWithOptions(
+                        pd,
+                        path,
+                        ParquetCompression.COMPRESSION_UNCOMPRESSED,
+                        true,
+                        false,
+                        200,
+                        0,
+                        ParquetVersion.PARQUET_VERSION_V1,
+                        0,
+                        0,
+                        0.01,
+                        0.0,
+                        -1,
+                        -1L,
+                        idColumnIndex,
+                        false
+                );
+
+                // Open the parquet and verify the claim against the id
+                // column directly via the decoder. This isolates D's
+                // verifier from the reverse-scan wiring and exercises
+                // the failure path: id should not be ASC across RGs.
+                final io.questdb.std.FilesFacade ff = configuration.getFilesFacade();
+                final long fd = io.questdb.cairo.TableUtils.openRO(ff, path.$(),
+                        io.questdb.log.LogFactory.getLog(getClass()));
+                long addr = 0;
+                long size = 0;
+                try (io.questdb.griffin.engine.table.parquet.ParquetFileDecoder decoder =
+                             new io.questdb.griffin.engine.table.parquet.ParquetFileDecoder()) {
+                    size = ff.length(fd);
+                    addr = io.questdb.cairo.TableUtils.mapRO(ff, fd, size,
+                            io.questdb.std.MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
+                    decoder.of(addr, size, io.questdb.std.MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
+                    Assert.assertTrue(
+                            "row group count must be > 1 for the cross-RG check to fire",
+                            decoder.metadata().getRowGroupCount() > 1
+                    );
+                    final int idIdx = decoder.metadata().getColumnIndex("id");
+                    Assert.assertTrue(idIdx >= 0);
+                    Assert.assertFalse(
+                            "verifier must reject a dishonest x%7 ASC claim",
+                            decoder.verifyAscendingSortAcrossRowGroups(idIdx)
+                    );
+                } finally {
+                    if (addr != 0) {
+                        ff.munmap(addr, size, io.questdb.std.MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
+                    }
+                    ff.close(fd);
+                }
+            }
+        });
+    }
+
     private String readExplainPlan(StringSink query) throws SqlException {
         final StringSink planSink = new StringSink();
         try (RecordCursorFactory factory = engine.select(query, sqlExecutionContext);

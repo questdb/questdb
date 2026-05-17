@@ -1678,6 +1678,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public boolean isSqlParquetVerifySortClaimEnabled() {
+        return false;
+    }
+
+    @Override
     public boolean isTableTypeConversionEnabled() {
         return true;
     }
