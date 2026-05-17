@@ -1573,6 +1573,99 @@ public class HivePartitionedReadParquetFunctionTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testFooterMinMaxShortcutHive() throws Exception {
+        // End-to-end pin on the hive variant of the parquet footer MIN/MAX
+        // shortcut. A hive glob over QuestDB-written parquets (each file
+        // carries sorting_columns claiming designated ts ASC) routes
+        // through HivePartitionedFooterAggregateRecordCursorFactory. The
+        // cursor walks every matched file's row-group min/max via the
+        // openCachedFile cache and emits a global aggregate.
+        assertMemoryLeak(() -> {
+            execute("create table src as (" +
+                    "  select timestamp_sequence(1_000_000L, 100L) as ts, x as id" +
+                    "  from long_sequence(1_000)" +
+                    ") timestamp(ts) partition by day");
+            writeParquet("min_max_hive/day=2026-01-01/data.parquet", "src");
+            writeParquet("min_max_hive/day=2026-01-02/data.parquet", "src");
+            writeParquet("min_max_hive/day=2026-01-03/data.parquet", "src");
+
+            // EXPLAIN shows the hive footer factory.
+            final io.questdb.std.str.StringSink planSink = new io.questdb.std.str.StringSink();
+            try (
+                    io.questdb.griffin.SqlCompiler compiler = engine.getSqlCompiler();
+                    RecordCursorFactory factory = compiler.compile(
+                            "EXPLAIN SELECT min(ts), max(ts) FROM read_parquet('min_max_hive/day=*/data.parquet')",
+                            sqlExecutionContext
+                    ).getRecordCursorFactory();
+                    io.questdb.cairo.sql.RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+            ) {
+                io.questdb.cairo.sql.Record rec = cursor.getRecord();
+                while (cursor.hasNext()) {
+                    planSink.put(rec.getStrA(0)).put('\n');
+                }
+            }
+            final String plan = planSink.toString();
+            Assert.assertTrue(
+                    "Hive footer factory must appear in EXPLAIN, got:\n" + plan,
+                    plan.toLowerCase().contains("parquet hive footer aggregate")
+            );
+            Assert.assertFalse(
+                    "Normal aggregate path must not wrap the footer factory, got:\n" + plan,
+                    plan.toLowerCase().contains("groupby") || plan.toLowerCase().contains("group by")
+            );
+
+            // Result-correctness: min/max across three identical files all
+            // sourced from `src` so the global aggregate matches src's own.
+            assertQueryNoLeakCheck(
+                    "min\tmax\n" +
+                            "1970-01-01T00:00:01.000000Z\t1970-01-01T00:00:01.099900Z\n",
+                    "SELECT min(ts), max(ts) FROM read_parquet('min_max_hive/day=*/data.parquet')",
+                    null,
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testFooterMinMaxShortcutHiveSkippedWithWhereClause() throws Exception {
+        // Negative case: WHERE on a partition column would change which
+        // files contribute. The detection branch's pre-check rejects on
+        // nestedModel.getWhereClause() != null, so EXPLAIN must not show
+        // the footer factory.
+        assertMemoryLeak(() -> {
+            execute("create table src as (" +
+                    "  select timestamp_sequence(1_000_000L, 100L) as ts, x as id" +
+                    "  from long_sequence(100)" +
+                    ") timestamp(ts) partition by day");
+            writeParquet("min_max_hive_filtered/day=2026-01-01/data.parquet", "src");
+            writeParquet("min_max_hive_filtered/day=2026-01-02/data.parquet", "src");
+
+            final io.questdb.std.str.StringSink planSink = new io.questdb.std.str.StringSink();
+            try (
+                    io.questdb.griffin.SqlCompiler compiler = engine.getSqlCompiler();
+                    RecordCursorFactory factory = compiler.compile(
+                            "EXPLAIN SELECT min(ts), max(ts) FROM " +
+                                    "read_parquet('min_max_hive_filtered/day=*/data.parquet') " +
+                                    "WHERE day = '2026-01-01'",
+                            sqlExecutionContext
+                    ).getRecordCursorFactory();
+                    io.questdb.cairo.sql.RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+            ) {
+                io.questdb.cairo.sql.Record rec = cursor.getRecord();
+                while (cursor.hasNext()) {
+                    planSink.put(rec.getStrA(0)).put('\n');
+                }
+            }
+            final String plan = planSink.toString();
+            Assert.assertFalse(
+                    "WHERE clause must disable the hive footer shortcut, got plan:\n" + plan,
+                    plan.toLowerCase().contains("parquet hive footer aggregate")
+            );
+        });
+    }
+
     private void writeParquet(String relativePath, String tableName) {
         FilesFacade ff = configuration.getFilesFacade();
         try (

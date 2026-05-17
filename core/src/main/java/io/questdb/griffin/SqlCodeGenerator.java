@@ -321,6 +321,8 @@ import io.questdb.griffin.engine.table.SortedSymbolIndexRecordCursorFactory;
 import io.questdb.griffin.engine.table.SymbolIndexFilteredRowCursorFactory;
 import io.questdb.griffin.engine.table.SymbolIndexRowCursorFactory;
 import io.questdb.griffin.engine.table.VirtualRecordCursorFactory;
+import io.questdb.griffin.engine.functions.table.HivePartitionedFooterAggregateRecordCursorFactory;
+import io.questdb.griffin.engine.functions.table.HivePartitionedReadParquetRecordCursorFactory;
 import io.questdb.griffin.engine.functions.table.ParquetFooterAggregateRecordCursorFactory;
 import io.questdb.griffin.engine.functions.table.ReadParquetRecordCursorFactory;
 import io.questdb.griffin.engine.union.ExceptAllRecordCursorFactory;
@@ -8477,6 +8479,38 @@ public class SqlCodeGenerator implements Mutable, Closeable {
      * additional cost. Callers that want per-column min/max kinds re-walk
      * {@code columns} once the shared column is known.
      */
+    /**
+     * Builds the per-output-column aggregate-kind array for the footer
+     * shortcut. Parallel to the columns list passed to
+     * {@link #tryGetMinMaxAggregateColumn}: {@code true} where the AST
+     * token is "max" (case-insensitive ASCII), {@code false} otherwise.
+     * Assumes the caller has already established every column matches the
+     * min/max shape via the predicate.
+     */
+    private static boolean[] buildFooterAggregateKinds(@NotNull ObjList<QueryColumn> columns) {
+        final boolean[] kinds = new boolean[columns.size()];
+        for (int i = 0, n = columns.size(); i < n; i++) {
+            kinds[i] = Chars.equalsLowerCaseAscii("max", columns.getQuick(i).getAst().token);
+        }
+        return kinds;
+    }
+
+    /**
+     * Builds the projected output metadata for the footer shortcut - one
+     * column per aggregate, each typed to match the aggregate column from
+     * the source. Column names preserve the user's aliases (e.g.
+     * {@code min(ts) AS min_ts}).
+     */
+    private static GenericRecordMetadata buildFooterAggregateOutMeta(
+            @NotNull ObjList<QueryColumn> columns, int columnType
+    ) {
+        final GenericRecordMetadata outMeta = new GenericRecordMetadata();
+        for (int i = 0, n = columns.size(); i < n; i++) {
+            outMeta.add(new TableColumnMetadata(Chars.toString(columns.getQuick(i).getName()), columnType));
+        }
+        return outMeta;
+    }
+
     public static @Nullable CharSequence tryGetMinMaxAggregateColumn(@Nullable ObjList<QueryColumn> columns) {
         if (columns == null || columns.size() == 0) {
             return null;
@@ -8528,12 +8562,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 }
             }
 
-            // Footer-only MIN/MAX shortcut for read_parquet(<file>) where the
-            // file declares a sort claim on the designated timestamp via
-            // `sorting_columns`. Replaces what would normally be a full row
-            // decode + per-row scalar accumulation with two JNI calls per row
-            // group (rowGroupMinTimestamp / rowGroupMaxTimestamp), bypassing
-            // the cursor pipeline entirely.
+            // Footer-only MIN/MAX shortcut for read_parquet(<file>) and
+            // read_parquet('hive/day=*/file.parquet') where the file declares
+            // a sort claim on the designated timestamp via `sorting_columns`.
+            // Replaces what would normally be a full row decode + per-row
+            // scalar accumulation with two JNI calls per row group
+            // (rowGroupMinTimestamp / rowGroupMaxTimestamp), bypassing the
+            // cursor pipeline entirely.
             //
             // Pre-checks (cheap, no I/O):
             //   1. AST shape matches min/max-on-same-column (the predicate)
@@ -8544,9 +8579,17 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             // Late check (after subquery generation; the only path where we
             // actually open a cursor factory):
             //   3. The base is a ReadParquetRecordCursorFactory (single-file
-            //      read_parquet, not hive yet)
+            //      read_parquet) OR a HivePartitionedReadParquetRecordCursorFactory
+            //      (hive glob)
             //   4. The aggregate column is the designated timestamp AND the
-            //      parquet file's sorting_columns metadata claims it sorted
+            //      file's sorting_columns metadata claims it sorted
+            //
+            // Ownership differs between the two paths:
+            //   - Single-file: result factory copies the path into its own
+            //     Path instance; the probe is freed.
+            //   - Hive: result factory WRAPS the probe and assumes ownership
+            //     (its _close cascades to the hive factory's _close so the
+            //     matched-files list and file cache tear down together).
             //
             // If the late check fails the probe factory is freed and the
             // normal aggregation path runs (which re-generates the subquery -
@@ -8557,34 +8600,47 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 final IQueryModel nestedModel = model.getNestedModel();
                 if (nestedModel != null && nestedModel.getWhereClause() == null) {
                     RecordCursorFactory probe = generateSubQuery(model, executionContext);
+                    boolean probeOwnedByResult = false;
                     try {
-                        if (probe instanceof ReadParquetRecordCursorFactory) {
+                        final RecordMetadata probeMeta = probe.getMetadata();
+                        final int colIdx = probeMeta.getColumnIndexQuiet(footerShortcutColumn);
+                        final int tsIdx = probeMeta.getTimestampIndex();
+                        final boolean gatesPass = colIdx >= 0
+                                && colIdx == tsIdx
+                                && probeMeta.getColumnOrderBy(colIdx) != 0;
+                        if (gatesPass && probe instanceof ReadParquetRecordCursorFactory) {
                             final ReadParquetRecordCursorFactory parquetBase = (ReadParquetRecordCursorFactory) probe;
-                            final RecordMetadata probeMeta = probe.getMetadata();
-                            final int colIdx = probeMeta.getColumnIndexQuiet(footerShortcutColumn);
-                            final int tsIdx = probeMeta.getTimestampIndex();
-                            if (colIdx >= 0 && colIdx == tsIdx && probeMeta.getColumnOrderBy(colIdx) != 0) {
-                                final GenericRecordMetadata outMeta = new GenericRecordMetadata();
-                                final boolean[] kinds = new boolean[columns.size()];
-                                final int colType = probeMeta.getColumnType(colIdx);
-                                for (int i = 0, n = columns.size(); i < n; i++) {
-                                    QueryColumn qc = columns.getQuick(i);
-                                    outMeta.add(new TableColumnMetadata(Chars.toString(qc.getName()), colType));
-                                    kinds[i] = Chars.equalsLowerCaseAscii("max", qc.getAst().token);
-                                }
-                                final ParquetFooterAggregateRecordCursorFactory result =
-                                        new ParquetFooterAggregateRecordCursorFactory(
-                                                parquetBase.getPath(), outMeta, kinds
-                                        );
-                                Misc.free(probe);
-                                return result;
-                            }
+                            final GenericRecordMetadata outMeta = buildFooterAggregateOutMeta(
+                                    columns, probeMeta.getColumnType(colIdx));
+                            final boolean[] kinds = buildFooterAggregateKinds(columns);
+                            final ParquetFooterAggregateRecordCursorFactory result =
+                                    new ParquetFooterAggregateRecordCursorFactory(
+                                            parquetBase.getPath(), outMeta, kinds
+                                    );
+                            Misc.free(probe);
+                            return result;
+                        }
+                        if (gatesPass && probe instanceof HivePartitionedReadParquetRecordCursorFactory) {
+                            final HivePartitionedReadParquetRecordCursorFactory hiveBase =
+                                    (HivePartitionedReadParquetRecordCursorFactory) probe;
+                            final GenericRecordMetadata outMeta = buildFooterAggregateOutMeta(
+                                    columns, probeMeta.getColumnType(colIdx));
+                            final boolean[] kinds = buildFooterAggregateKinds(columns);
+                            // The hive variant wraps the probe; its _close
+                            // cascades. Skip the explicit free below.
+                            probeOwnedByResult = true;
+                            return new HivePartitionedFooterAggregateRecordCursorFactory(
+                                    hiveBase, outMeta, kinds);
                         }
                     } catch (Throwable th) {
-                        Misc.free(probe);
+                        if (!probeOwnedByResult) {
+                            Misc.free(probe);
+                        }
                         throw th;
                     }
-                    Misc.free(probe);
+                    if (!probeOwnedByResult) {
+                        Misc.free(probe);
+                    }
                     // Fall through; the normal aggregation path below regenerates
                     // the subquery and produces the standard plan.
                 }

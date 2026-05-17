@@ -99,9 +99,12 @@ public class ParquetFooterAggregateRecordCursorFactory extends AbstractRecordCur
 
     @Override
     public boolean recordCursorSupportsRandomAccess() {
-        // A single row trivially supports random access; the cursor's
-        // recordAt is a no-op since there's nothing to seek to.
-        return true;
+        // The cursor implements NoRandomAccessRecordCursor - it has no
+        // recordAt(at, rowId) implementation. The cursor is single-row so
+        // random access has no practical meaning, but the factory's
+        // contract must match the cursor's actual capability or
+        // assertQueryNoLeakCheck downstream fails.
+        return false;
     }
 
     @Override

@@ -311,10 +311,19 @@ public class ReadParquetFunctionFactory implements FunctionFactory {
                     partitionColumnTypes
             );
         }
+        // Build the hive-visible metadata: parquet columns first, then the
+        // inferred partition columns. Use GenericRecordMetadata.copyColumns
+        // for the parquet half so the columnOrderBy claims (the
+        // sorting_columns metadata from the first matched file's footer)
+        // propagate through - the planner's footer/reverse shortcuts gate
+        // on getColumnOrderBy(tsIdx) and would otherwise see 0 here.
         final GenericRecordMetadata wrappingMetadata = new GenericRecordMetadata();
-        for (int i = 0, n = parquetMetadata.getColumnCount(); i < n; i++) {
-            wrappingMetadata.add(parquetMetadata.getColumnMetadata(i));
-        }
+        GenericRecordMetadata.copyColumns(parquetMetadata, wrappingMetadata);
+        // Carry the designated-timestamp index through to the hive metadata.
+        // Without this, downstream optimisers see tsIdx == -1 and the
+        // designated-ts ORDER BY / footer MIN/MAX shortcuts skip even when
+        // every matched file shares the same ts column.
+        wrappingMetadata.setTimestampIndex(parquetMetadata.getTimestampIndex());
         for (int i = 0, n = partitionColumnNames.size(); i < n; i++) {
             wrappingMetadata.add(new TableColumnMetadata(
                     partitionColumnNames.getQuick(i),

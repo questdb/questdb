@@ -88,7 +88,8 @@ public class HivePartitionedFooterAggregateRecordCursorFactory extends AbstractR
 
     @Override
     public boolean recordCursorSupportsRandomAccess() {
-        return true;
+        // The cursor implements NoRandomAccessRecordCursor; match.
+        return false;
     }
 
     @Override
