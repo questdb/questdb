@@ -391,7 +391,7 @@ public interface ColumnarRowAppender {
      * INT and IPv4 share the 4-byte wire encoding but disagree on the NULL bit pattern
      * ({@code Integer.MIN_VALUE} vs {@code 0}). The IPv4 ingress arm accepts TYPE_INT
      * as a legacy-client migration path; this method walks the cursor per row and
-     * writes {@link Numbers#IPv4_NULL} (0) for {@code cursor.isNull()} rows, the int
+     * writes {@link io.questdb.std.Numbers#IPv4_NULL} (0) for {@code cursor.isNull()} rows, the int
      * verbatim otherwise. Without this translation the no-bitmap memcpy fast path in
      * {@code putFixedColumn} would land the INT_NULL bit pattern verbatim and the
      * value would read back as the address {@code 128.0.0.0}.
