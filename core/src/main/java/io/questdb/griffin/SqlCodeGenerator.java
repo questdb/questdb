@@ -7345,6 +7345,16 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 // the timestamp index, requested DESC, current scan direction
                 // FORWARD (so we don't double-flip if some upstream already
                 // arranged BACKWARD), and the file metadata claims ts ASC.
+                //
+                // Hive globs are intentionally NOT flipped here. The cursor's
+                // reverse capability iterates each file in DESC ts order, but
+                // the file walk only produces a globally DESC stream when
+                // files have disjoint, sorted ts ranges - a property that no
+                // standard parquet metadata expresses and that the planner
+                // cannot verify without walking every footer. Leaving the
+                // SORT operator in place is the safe default; a stricter
+                // gate (per-footer ts-range disjointness check) can be added
+                // once there is a clear use case.
                 if (orderByColumnCount == 1
                         && timestampIndex != -1
                         && recordCursorFactory instanceof ReadParquetRecordCursorFactory) {

@@ -1629,6 +1629,220 @@ public class HivePartitionedReadParquetFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testReverseScanHiveOrderByTsDescUsesSort() throws Exception {
+        // Hive globs deliberately do NOT auto-elide ORDER BY ts DESC even
+        // when every file declares ts ASC sorted. The cursor's reverse mode
+        // iterates each file in DESC ts order but only produces a globally
+        // DESC stream when files have disjoint, sorted ts ranges - a
+        // property no standard parquet metadata expresses and the planner
+        // cannot verify without walking every footer. SORT in the plan
+        // pins the safe default; flipping this assertion is the signal
+        // that an elision was added without the disjointness check.
+        assertMemoryLeak(() -> {
+            execute("create table src as (" +
+                    "  select timestamp_sequence(1_000_000L, 1_000_000L) as ts, x as id" +
+                    "  from long_sequence(10)" +
+                    ") timestamp(ts) partition by day");
+            writeParquet("rev_hive_safe/day=2026-01-01/data.parquet", "src");
+            writeParquet("rev_hive_safe/day=2026-01-02/data.parquet", "src");
+            writeParquet("rev_hive_safe/day=2026-01-03/data.parquet", "src");
+
+            final io.questdb.std.str.StringSink planSink = new io.questdb.std.str.StringSink();
+            try (
+                    io.questdb.griffin.SqlCompiler compiler = engine.getSqlCompiler();
+                    RecordCursorFactory factory = compiler.compile(
+                            "EXPLAIN SELECT ts FROM read_parquet('rev_hive_safe/day=*/data.parquet') ORDER BY ts DESC LIMIT 3",
+                            sqlExecutionContext
+                    ).getRecordCursorFactory();
+                    io.questdb.cairo.sql.RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+            ) {
+                io.questdb.cairo.sql.Record rec = cursor.getRecord();
+                while (cursor.hasNext()) {
+                    planSink.put(rec.getStrA(0)).put('\n');
+                }
+            }
+            final String plan = planSink.toString();
+            Assert.assertFalse(
+                    "Hive reverse elision must stay disabled, got plan:\n" + plan,
+                    plan.toLowerCase().contains("parquet glob scan (reverse)")
+            );
+
+            // Top 3 in DESC ts order. timestamp_sequence(1_000_000us,
+            // 1_000_000us) over 10 rows yields ts 1..10s; three identical
+            // files mean the DESC top 3 are 10s x 3.
+            assertQueryNoLeakCheck(
+                    "ts\n" +
+                            "1970-01-01T00:00:10.000000Z\n" +
+                            "1970-01-01T00:00:10.000000Z\n" +
+                            "1970-01-01T00:00:10.000000Z\n",
+                    "SELECT ts FROM read_parquet('rev_hive_safe/day=*/data.parquet') ORDER BY ts DESC LIMIT 3",
+                    "ts###DESC",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testHiveFactoryReverseScanCapability() throws Exception {
+        // Direct capability test for the hive factory's reverse-scan
+        // machinery. The planner does not auto-elide hive ORDER BY ts DESC
+        // (see testReverseScanHiveOrderByTsDescUsesSort) so flipping the
+        // factory has to happen programmatically to exercise the cursor
+        // path. Asserts:
+        //   - canScanInReverse() is true under the serial backend, false
+        //     under the parallel one;
+        //   - setReverseScan(true) flips getScanDirection() to BACKWARD
+        //     under the serial backend only;
+        //   - the cursor returned by getCursor() walks matchedFiles end-to-
+        //     start and emits each file's rows in DESC ts order. With three
+        //     files of identical ts ranges, the resulting stream is
+        //     segment-DESC not globally-DESC; this is the correctness
+        //     property the planner relies on when deciding NOT to elide.
+        setProperty(PropertyKey.CAIRO_SQL_PARQUET_HIVE_PARALLEL_ENABLED, "false");
+        assertMemoryLeak(() -> {
+            execute("create table src as (" +
+                    "  select timestamp_sequence(1_000_000L, 1_000_000L) as ts, x as id" +
+                    "  from long_sequence(3)" +
+                    ") timestamp(ts) partition by day");
+            writeParquet("rev_hive_cap/day=2026-02-01/data.parquet", "src");
+            writeParquet("rev_hive_cap/day=2026-02-02/data.parquet", "src");
+            writeParquet("rev_hive_cap/day=2026-02-03/data.parquet", "src");
+
+            try (
+                    io.questdb.griffin.SqlCompiler compiler = engine.getSqlCompiler();
+                    RecordCursorFactory factory = compiler.compile(
+                            "SELECT ts FROM read_parquet('rev_hive_cap/day=*/data.parquet')",
+                            sqlExecutionContext
+                    ).getRecordCursorFactory()
+            ) {
+                final RecordCursorFactory inner = unwrapToHiveFactory(factory);
+                Assert.assertTrue(
+                        "expected HivePartitionedReadParquetRecordCursorFactory under unwrap, got " + inner.getClass(),
+                        inner instanceof io.questdb.griffin.engine.functions.table.HivePartitionedReadParquetRecordCursorFactory
+                );
+                io.questdb.griffin.engine.functions.table.HivePartitionedReadParquetRecordCursorFactory hive =
+                        (io.questdb.griffin.engine.functions.table.HivePartitionedReadParquetRecordCursorFactory) inner;
+
+                Assert.assertTrue("serial backend must report canScanInReverse=true", hive.canScanInReverse());
+                Assert.assertEquals(
+                        "default scan direction is FORWARD",
+                        RecordCursorFactory.SCAN_DIRECTION_FORWARD,
+                        hive.getScanDirection()
+                );
+
+                hive.setReverseScan(true);
+                Assert.assertEquals(
+                        "setReverseScan(true) flips serial backend to BACKWARD",
+                        RecordCursorFactory.SCAN_DIRECTION_BACKWARD,
+                        hive.getScanDirection()
+                );
+
+                // Materialise the cursor and capture the stream. Each file
+                // independently yields rows in DESC ts order; files are
+                // walked end-to-start. Expected stream (file 3 reverse, file
+                // 2 reverse, file 1 reverse):
+                //   3s, 2s, 1s, 3s, 2s, 1s, 3s, 2s, 1s
+                final io.questdb.std.str.StringSink sink = new io.questdb.std.str.StringSink();
+                try (io.questdb.cairo.sql.RecordCursor cursor = hive.getCursor(sqlExecutionContext)) {
+                    io.questdb.cairo.sql.Record rec = cursor.getRecord();
+                    while (cursor.hasNext()) {
+                        if (sink.length() > 0) {
+                            sink.put(',');
+                        }
+                        sink.put(rec.getTimestamp(0));
+                    }
+                }
+                Assert.assertEquals(
+                        "reverse cursor emits segment-DESC: file3 rev, file2 rev, file1 rev",
+                        "3000000,2000000,1000000,3000000,2000000,1000000,3000000,2000000,1000000",
+                        sink.toString()
+                );
+
+                // Reset to forward and re-iterate to confirm setReverse can
+                // be flipped between cursor opens. of() is idempotent.
+                hive.setReverseScan(false);
+                Assert.assertEquals(
+                        RecordCursorFactory.SCAN_DIRECTION_FORWARD,
+                        hive.getScanDirection()
+                );
+                final io.questdb.std.str.StringSink fwd = new io.questdb.std.str.StringSink();
+                try (io.questdb.cairo.sql.RecordCursor cursor = hive.getCursor(sqlExecutionContext)) {
+                    io.questdb.cairo.sql.Record rec = cursor.getRecord();
+                    while (cursor.hasNext()) {
+                        if (fwd.length() > 0) {
+                            fwd.put(',');
+                        }
+                        fwd.put(rec.getTimestamp(0));
+                    }
+                }
+                Assert.assertEquals(
+                        "forward cursor emits segment-ASC: file1 fwd, file2 fwd, file3 fwd",
+                        "1000000,2000000,3000000,1000000,2000000,3000000,1000000,2000000,3000000",
+                        fwd.toString()
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testHiveFactoryReverseScanCapabilityParallelBackendIgnoresFlag() throws Exception {
+        // Counterpart to the capability test for the default parallel
+        // backend. setReverseScan stores the flag but getScanDirection
+        // stays FORWARD - the page-frame backend has no per-row reverse
+        // hook so canScanInReverse() returns false. This is the contract
+        // the planner relies on to skip the flip for the parallel path.
+        setProperty(PropertyKey.CAIRO_SQL_PARQUET_HIVE_PARALLEL_ENABLED, "true");
+        assertMemoryLeak(() -> {
+            execute("create table src as (" +
+                    "  select timestamp_sequence(1_000_000L, 1_000_000L) as ts, x as id" +
+                    "  from long_sequence(3)" +
+                    ") timestamp(ts) partition by day");
+            writeParquet("rev_hive_cap_par/day=2026-02-01/data.parquet", "src");
+            writeParquet("rev_hive_cap_par/day=2026-02-02/data.parquet", "src");
+
+            try (
+                    io.questdb.griffin.SqlCompiler compiler = engine.getSqlCompiler();
+                    RecordCursorFactory factory = compiler.compile(
+                            "SELECT ts FROM read_parquet('rev_hive_cap_par/day=*/data.parquet')",
+                            sqlExecutionContext
+                    ).getRecordCursorFactory()
+            ) {
+                final RecordCursorFactory inner = unwrapToHiveFactory(factory);
+                io.questdb.griffin.engine.functions.table.HivePartitionedReadParquetRecordCursorFactory hive =
+                        (io.questdb.griffin.engine.functions.table.HivePartitionedReadParquetRecordCursorFactory) inner;
+                Assert.assertFalse("parallel backend must report canScanInReverse=false", hive.canScanInReverse());
+                hive.setReverseScan(true);
+                Assert.assertEquals(
+                        "parallel backend must clamp to FORWARD regardless of flag",
+                        RecordCursorFactory.SCAN_DIRECTION_FORWARD,
+                        hive.getScanDirection()
+                );
+            }
+        });
+    }
+
+    /**
+     * The factory under test sits inside CursorFunction's wrapper - drill
+     * through any wrapping layer until we hit the hive factory or run out
+     * of options.
+     */
+    private static RecordCursorFactory unwrapToHiveFactory(RecordCursorFactory factory) {
+        RecordCursorFactory candidate = factory;
+        for (int i = 0; i < 8; i++) {
+            if (candidate instanceof io.questdb.griffin.engine.functions.table.HivePartitionedReadParquetRecordCursorFactory) {
+                return candidate;
+            }
+            RecordCursorFactory next = candidate.getBaseFactory();
+            if (next == null || next == candidate) {
+                break;
+            }
+            candidate = next;
+        }
+        return candidate;
+    }
+
+    @Test
     public void testFooterMinMaxShortcutHiveSkippedWithWhereClause() throws Exception {
         // Negative case: WHERE on a partition column would change which
         // files contribute. The detection branch's pre-check rejects on

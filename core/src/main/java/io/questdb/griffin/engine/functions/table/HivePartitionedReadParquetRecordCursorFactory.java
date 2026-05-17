@@ -131,6 +131,18 @@ public class HivePartitionedReadParquetRecordCursorFactory extends ProjectableRe
     private int[] projectedToParquetWriterIdx;
     private int[] projectedToPartitionIdx;
     private @Nullable ObjList<PushdownFilterExtractor.PushdownFilterCondition> pushdownFilterConditions;
+    // When true, the legacy serial cursor walks matchedFiles end-to-start AND
+    // each file's underlying single-file cursor iterates rows in reverse order.
+    // The parallel page-frame backend cannot honour reverse iteration because
+    // each emitted PageFrame is consumed in row-group storage order downstream
+    // and there is no row-reverse hook on the frame contract; in that mode
+    // {@link #getScanDirection()} stays {@code FORWARD} and the planner gives
+    // up the elision. Set by {@link #setReverseScan}; effective only when the
+    // configuration disables hive parallel page frames or a subclass disables
+    // it via {@link #canPageFrame}. Must be set BEFORE the first
+    // {@code getCursor()} call - the cursor's reverse flag is synced once at
+    // construction.
+    private boolean reverseScan;
     // Total row count summed across every matched file, computed once and cached
     // for the factory's lifetime. -1 = not yet computed. Lazy because the planning
     // walk doesn't open parquet files (it parses partition keys from paths only),
@@ -230,6 +242,28 @@ public class HivePartitionedReadParquetRecordCursorFactory extends ProjectableRe
         return pageFrameCursor;
     }
 
+    /**
+     * Reports whether the planner can flip this factory's iteration order via
+     * {@link #setReverseScan}. The parallel page-frame backend cannot - its
+     * frames are consumed in row-group storage order downstream and there is
+     * no row-reverse hook on the frame contract. Only the legacy serial
+     * backend (gated by {@code cairo.sql.parquet.hive.parallel.enabled=false})
+     * supports reverse iteration today.
+     */
+    public boolean canScanInReverse() {
+        return !canPageFrame;
+    }
+
+    @Override
+    public int getScanDirection() {
+        // Reverse only takes effect when the cursor backend actually walks rows
+        // in reverse. With the parallel page-frame backend active, ignore the
+        // flag and report FORWARD so the planner's elision check declines and
+        // a downstream SORT operator gets inserted - same behaviour as before
+        // reverseScan existed.
+        return (reverseScan && canScanInReverse()) ? SCAN_DIRECTION_BACKWARD : SCAN_DIRECTION_FORWARD;
+    }
+
     @Override
     public boolean mayHaveParquetPartitions(SqlExecutionContext executionContext) {
         return true;
@@ -257,6 +291,18 @@ public class HivePartitionedReadParquetRecordCursorFactory extends ProjectableRe
     @Override
     public void setPushdownFilterCondition(ObjList<PushdownFilterExtractor.PushdownFilterCondition> pushdownFilterConditions) {
         this.pushdownFilterConditions = pushdownFilterConditions;
+    }
+
+    /**
+     * Flips the planner-requested iteration direction. Only honoured when the
+     * cursor backend can walk rows in reverse - see {@link #canScanInReverse()}.
+     * Must be called BEFORE the first {@code getCursor()} call; the legacy
+     * cursor's reverse flag is synced once at construction time, and flipping
+     * afterwards would leave the file walk and the wrapped single-file cursor
+     * out of sync with their already-seeded indices.
+     */
+    public void setReverseScan(boolean reverseScan) {
+        this.reverseScan = reverseScan;
     }
 
     @Override
@@ -533,7 +579,8 @@ public class HivePartitionedReadParquetRecordCursorFactory extends ProjectableRe
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.type("Parquet glob scan").attr("glob").val(globPattern);
+        final boolean reverseEffective = reverseScan && canScanInReverse();
+        sink.type(reverseEffective ? "Parquet glob scan (reverse)" : "Parquet glob scan").attr("glob").val(globPattern);
         // Surface the URI scheme so an operator running EXPLAIN can tell at a
         // glance whether this read is local or remote. Useful in incident
         // response - "is this query slow because we're hitting S3?" answered
@@ -784,6 +831,13 @@ public class HivePartitionedReadParquetRecordCursorFactory extends ProjectableRe
                     partitionColumnNames,
                     partitionColumnTypes
             );
+            // Sync the iteration direction with the factory's reverseScan flag
+            // BEFORE of(): the cursor's of() seeds globIndex and propagates the
+            // flag onto the wrapped single-file cursor, so a stale value would
+            // leave the first hasNext misaligned with the file-walk direction.
+            // canScanInReverse() rules out the parallel-page-frame path; we
+            // only land here when the serial backend is active.
+            cursor.setReverse(reverseScan);
             cursor.of(executionContext);
             return cursor;
         } catch (Throwable th) {

@@ -88,6 +88,13 @@ public class HivePartitionedReadParquetRecordCursor implements NoRandomAccessRec
     private int globIndex = 0;
     private boolean isOpen = true;
     private boolean parquetCursorPositioned;
+    // When true, walks matchedFiles end-to-start and the underlying single-file
+    // cursor is flipped to reverse via {@link ReadParquetRecordCursor#setReverse}.
+    // The planner only sets this when ORDER BY ts DESC over the hive glob is
+    // detected and every file declares ts ASC sorted - the same trust model
+    // as the single-file shortcut. {@link #setReverse} must be called BEFORE
+    // {@link #of} on any given iteration so toTop seeds globIndex correctly.
+    private boolean reverse;
 
     public HivePartitionedReadParquetRecordCursor(
             DirectUtf8StringList matchedFiles,
@@ -150,22 +157,52 @@ public class HivePartitionedReadParquetRecordCursor implements NoRandomAccessRec
             if (parquetCursorPositioned && parquetCursor.hasNext()) {
                 return true;
             }
-            if (globIndex >= matchedFiles.size()) {
-                return false;
+            if (reverse) {
+                if (globIndex < 0) {
+                    return false;
+                }
+                switchToNextParquetFile(matchedFiles.getQuick(globIndex--));
+            } else {
+                if (globIndex >= matchedFiles.size()) {
+                    return false;
+                }
+                switchToNextParquetFile(matchedFiles.getQuick(globIndex++));
             }
-            switchToNextParquetFile(matchedFiles.getQuick(globIndex++));
         }
     }
 
     public void of(SqlExecutionContext executionContext) {
         this.executionContext = executionContext;
         parquetCursorPositioned = false;
-        globIndex = 0;
+        // In reverse mode, walk files from the last matched path down to the
+        // first. Forward mode keeps the original 0..size-1 ascent.
+        globIndex = reverse ? matchedFiles.size() - 1 : 0;
+        // Propagate the iteration direction to the wrapped single-file cursor
+        // BEFORE switchToNextParquetFile triggers its first of() - the single
+        // file cursor's toTop seeds row group index based on the reverse flag.
+        parquetCursor.setReverse(reverse);
     }
 
     @Override
     public long preComputedStateSize() {
         return 0;
+    }
+
+    /**
+     * Flips this cursor between forward (ASC) and reverse (DESC) iteration over
+     * the matched file list. Reverse iteration walks {@code matchedFiles} from
+     * the last index down and delegates to the underlying single-file cursor's
+     * own reverse mode for per-row-group, per-row reversal.
+     * <p>
+     * The planner sets this BEFORE {@link #of} on the very first cursor open,
+     * relying on the file-level metadata claim that ts is sorted ASC within
+     * each file. Flipping mid-iteration is not supported: {@link #toTop} and
+     * {@link #of} seed {@code globIndex} based on the current value, and a
+     * flip after the cursor has been positioned would leave indices
+     * inconsistent.
+     */
+    public void setReverse(boolean reverse) {
+        this.reverse = reverse;
     }
 
     @Override
@@ -194,7 +231,7 @@ public class HivePartitionedReadParquetRecordCursor implements NoRandomAccessRec
     @Override
     public void toTop() {
         parquetCursorPositioned = false;
-        globIndex = 0;
+        globIndex = reverse ? matchedFiles.size() - 1 : 0;
     }
 
     private void parsePartitionValues(Utf8Sequence filePath) {
