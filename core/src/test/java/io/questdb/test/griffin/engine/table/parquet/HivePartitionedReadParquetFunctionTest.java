@@ -1843,6 +1843,99 @@ public class HivePartitionedReadParquetFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFooterMinMaxShortcutHiveNonTsLongAsc() throws Exception {
+        // Generic non-ts MIN/MAX over a hive glob. Each matched file is
+        // written with encodeWithOptions(nonTsSortColumnIndex=id) so the
+        // sorting_columns metadata claims id sorted ASC. The hive footer
+        // shortcut must route through HivePartitionedFooterAggregateRecordCursorFactory
+        // with the column-name path - the cursor resolves id per-file and
+        // reads typed column-chunk stats via the new rowGroupMin/MaxValueLong
+        // natives. Result must match the source table's known min/max.
+        assertMemoryLeak(() -> {
+            execute("create table src as (" +
+                    "  select timestamp_sequence(1_000_000L, 100L) as ts, x as id" +
+                    "  from long_sequence(1_000)" +
+                    ") timestamp(ts) partition by day");
+            writeParquetWithIdSortClaim("min_max_hive_id/day=2026-04-01/data.parquet", "src", false);
+            writeParquetWithIdSortClaim("min_max_hive_id/day=2026-04-02/data.parquet", "src", false);
+            writeParquetWithIdSortClaim("min_max_hive_id/day=2026-04-03/data.parquet", "src", false);
+
+            final io.questdb.std.str.StringSink planSink = new io.questdb.std.str.StringSink();
+            try (
+                    io.questdb.griffin.SqlCompiler compiler = engine.getSqlCompiler();
+                    RecordCursorFactory factory = compiler.compile(
+                            "EXPLAIN SELECT min(id), max(id) FROM read_parquet('min_max_hive_id/day=*/data.parquet')",
+                            sqlExecutionContext
+                    ).getRecordCursorFactory();
+                    io.questdb.cairo.sql.RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+            ) {
+                io.questdb.cairo.sql.Record rec = cursor.getRecord();
+                while (cursor.hasNext()) {
+                    planSink.put(rec.getStrA(0)).put('\n');
+                }
+            }
+            final String plan = planSink.toString();
+            Assert.assertTrue(
+                    "Hive footer factory must appear in EXPLAIN for non-ts MIN/MAX over a sorted-id glob, got:\n" + plan,
+                    plan.toLowerCase().contains("parquet hive footer aggregate")
+            );
+
+            // Three files each holding ids 1..1000 -> global min 1, max 1000.
+            assertQueryNoLeakCheck(
+                    "min\tmax\n1\t1000\n",
+                    "SELECT min(id), max(id) FROM read_parquet('min_max_hive_id/day=*/data.parquet')",
+                    null,
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testFooterMinMaxShortcutHiveNonTsLongDescStillRoutes() throws Exception {
+        // DESC sort claim - the cursor reads per-row-group stats so the
+        // result is correct regardless of the declared sort direction. The
+        // planner gate only requires getColumnOrderBy != 0; both ASC (+1)
+        // and DESC (-1) satisfy it.
+        assertMemoryLeak(() -> {
+            execute("create table src as (" +
+                    "  select timestamp_sequence(1_000_000L, 100L) as ts, (10_000 - x) as id" +
+                    "  from long_sequence(500)" +
+                    ") timestamp(ts) partition by day");
+            writeParquetWithIdSortClaim("min_max_hive_id_desc/day=2026-04-01/data.parquet", "src", true);
+            writeParquetWithIdSortClaim("min_max_hive_id_desc/day=2026-04-02/data.parquet", "src", true);
+
+            final io.questdb.std.str.StringSink planSink = new io.questdb.std.str.StringSink();
+            try (
+                    io.questdb.griffin.SqlCompiler compiler = engine.getSqlCompiler();
+                    RecordCursorFactory factory = compiler.compile(
+                            "EXPLAIN SELECT min(id), max(id) FROM read_parquet('min_max_hive_id_desc/day=*/data.parquet')",
+                            sqlExecutionContext
+                    ).getRecordCursorFactory();
+                    io.questdb.cairo.sql.RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+            ) {
+                io.questdb.cairo.sql.Record rec = cursor.getRecord();
+                while (cursor.hasNext()) {
+                    planSink.put(rec.getStrA(0)).put('\n');
+                }
+            }
+            Assert.assertTrue(
+                    "DESC-claimed sort must still route through the hive footer factory, got plan:\n" + planSink,
+                    planSink.toString().toLowerCase().contains("parquet hive footer aggregate")
+            );
+
+            // (10_000 - x) for x in [1, 500] yields ids in [9_500, 9_999].
+            assertQueryNoLeakCheck(
+                    "min\tmax\n9500\t9999\n",
+                    "SELECT min(id), max(id) FROM read_parquet('min_max_hive_id_desc/day=*/data.parquet')",
+                    null,
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
     public void testFooterMinMaxShortcutHiveSkippedWithWhereClause() throws Exception {
         // Negative case: WHERE on a partition column would change which
         // files contribute. The detection branch's pre-check rejects on
@@ -1904,6 +1997,58 @@ public class HivePartitionedReadParquetFunctionTest extends AbstractCairoTest {
             path.trimTo(start).concat(relativePath);
             PartitionEncoder.populateFromTableReader(reader, desc, 0);
             PartitionEncoder.encode(desc, path);
+            Assert.assertTrue(Files.exists(path.$()));
+        }
+    }
+
+    /**
+     * Like {@link #writeParquet} but stamps the parquet's sorting_columns
+     * metadata as {@code id} sorted in the requested direction. Used by the
+     * non-ts MIN/MAX shortcut tests where the planner gate needs
+     * {@code getColumnOrderBy(idIdx) != 0} on a non-timestamp column.
+     */
+    private void writeParquetWithIdSortClaim(String relativePath, String tableName, boolean descending) {
+        FilesFacade ff = configuration.getFilesFacade();
+        try (
+                Path path = new Path();
+                Path dir = new Path();
+                PartitionDescriptor desc = new PartitionDescriptor();
+                TableReader reader = engine.getReader(tableName)
+        ) {
+            path.of(root);
+            int start = path.size();
+            int slash = -1;
+            for (int i = 0; i < relativePath.length(); i++) {
+                char c = relativePath.charAt(i);
+                if (c == '/' || c == java.io.File.separatorChar) {
+                    slash = i;
+                }
+            }
+            if (slash >= 0) {
+                dir.of(root).concat(relativePath.substring(0, slash));
+                Assert.assertEquals(0, ff.mkdirs(dir.slash(), 493));
+            }
+            path.trimTo(start).concat(relativePath);
+            PartitionEncoder.populateFromTableReader(reader, desc, 0);
+            final int idColumnIndex = reader.getMetadata().getColumnIndex("id");
+            PartitionEncoder.encodeWithOptions(
+                    desc,
+                    path,
+                    ParquetCompression.COMPRESSION_UNCOMPRESSED,
+                    true,
+                    false,
+                    0,
+                    0,
+                    ParquetVersion.PARQUET_VERSION_V1,
+                    0,
+                    0,
+                    0.01,
+                    0.0,
+                    -1,
+                    -1L,
+                    idColumnIndex,
+                    descending
+            );
             Assert.assertTrue(Files.exists(path.$()));
         }
     }
