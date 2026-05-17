@@ -2044,6 +2044,143 @@ public class ReadParquetFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFooterMinMaxShortcutPlanAndResult() throws Exception {
+        // End-to-end pin on the parquet footer-only MIN/MAX shortcut in
+        // SqlCodeGenerator.generateSelectGroupBy. A QuestDB-written parquet
+        // file carries sorting_columns claiming the designated timestamp as
+        // ASC, so SELECT min(ts), max(ts) FROM read_parquet(<file>) must
+        // route to ParquetFooterAggregateRecordCursorFactory rather than the
+        // normal Async / scalar group-by pipeline.
+        // <p>
+        // Plan-shape assertion only applies in serial mode: in parallel mode
+        // the existing GroupBy vectorized path already has a designated-ts
+        // shortcut (`min_designated(ts)`) that intercepts before our branch.
+        // That shortcut runs ~0.6 ms which is "good enough"; the footer-only
+        // factory would still be ~10x faster (~0.06 ms) but the design tradeoff
+        // for now is to keep the parallel path untouched. Result-correctness
+        // is asserted in both modes.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE m AS (" +
+                    "  SELECT timestamp_sequence(1_000_000_000L, 1_000L) AS ts, x AS id " +
+                    "  FROM long_sequence(10_000)" +
+                    ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+            drainWalQueue();
+
+            try (
+                    Path path = new Path();
+                    PartitionDescriptor pd = new PartitionDescriptor();
+                    TableReader reader = engine.getReader("m")
+            ) {
+                path.of(root).concat("m_min_max.parquet");
+                PartitionEncoder.populateFromTableReader(reader, pd, 0);
+                PartitionEncoder.encode(pd, path);
+                Assert.assertTrue(Files.exists(path.$()));
+
+                if (!parallel) {
+                    // Serial mode: footer factory must appear in EXPLAIN.
+                    sink.clear();
+                    sink.put("EXPLAIN SELECT min(ts), max(ts) FROM read_parquet('m_min_max.parquet')");
+                    final String plan = readExplainPlan(sink);
+                    Assert.assertTrue(
+                            "min/max(ts) over a ts-sorted parquet must route to the footer factory in serial mode, got plan:\n" + plan,
+                            plan.toLowerCase().contains("parquet footer aggregate")
+                    );
+                    Assert.assertFalse(
+                            "footer shortcut must not be wrapped in a normal aggregate factory, got plan:\n" + plan,
+                            plan.toLowerCase().contains("groupby") || plan.toLowerCase().contains("group by")
+                    );
+                }
+
+                // Result matches the known min/max from the source table.
+                // Holds in both modes; parallel path uses min_designated(ts)
+                // shortcut, serial uses our footer factory.
+                sink.clear();
+                sink.put("SELECT min(ts), max(ts) FROM read_parquet('m_min_max.parquet')");
+                assertSqlCursors0("SELECT min(ts), max(ts) FROM m");
+            }
+        });
+    }
+
+    @Test
+    public void testFooterMinMaxShortcutKeepsNormalPlanForFilteredQuery() throws Exception {
+        // Negative case: a WHERE clause changes which rows contribute to
+        // min/max so the footer-only shortcut is unsafe. The detection
+        // branch's pre-check rejects when nestedModel.getWhereClause() != null;
+        // EXPLAIN must NOT contain "parquet footer aggregate".
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE f AS (" +
+                    "  SELECT timestamp_sequence(0L, 1_000L) AS ts, x AS id " +
+                    "  FROM long_sequence(1_000)" +
+                    ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+            drainWalQueue();
+
+            try (
+                    Path path = new Path();
+                    PartitionDescriptor pd = new PartitionDescriptor();
+                    TableReader reader = engine.getReader("f")
+            ) {
+                path.of(root).concat("f_filter.parquet");
+                PartitionEncoder.populateFromTableReader(reader, pd, 0);
+                PartitionEncoder.encode(pd, path);
+
+                sink.clear();
+                sink.put("EXPLAIN SELECT min(ts), max(ts) FROM read_parquet('f_filter.parquet') WHERE id > 100");
+                final String plan = readExplainPlan(sink);
+                Assert.assertFalse(
+                        "WHERE clause must disable the footer shortcut, got plan:\n" + plan,
+                        plan.toLowerCase().contains("parquet footer aggregate")
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testFooterMinMaxShortcutKeepsNormalPlanForNonTsColumn() throws Exception {
+        // Negative case: min/max on a column that is not the designated
+        // timestamp must fall back to the normal aggregation pipeline.
+        // The file carries sorting_columns for ts ASC, not for id, so
+        // metadata.getColumnOrderBy(idColumn) returns 0 and the late
+        // check rejects.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE n AS (" +
+                    "  SELECT timestamp_sequence(0L, 1_000L) AS ts, x AS id " +
+                    "  FROM long_sequence(1_000)" +
+                    ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+            drainWalQueue();
+
+            try (
+                    Path path = new Path();
+                    PartitionDescriptor pd = new PartitionDescriptor();
+                    TableReader reader = engine.getReader("n")
+            ) {
+                path.of(root).concat("n_non_ts.parquet");
+                PartitionEncoder.populateFromTableReader(reader, pd, 0);
+                PartitionEncoder.encode(pd, path);
+
+                sink.clear();
+                sink.put("EXPLAIN SELECT min(id), max(id) FROM read_parquet('n_non_ts.parquet')");
+                final String plan = readExplainPlan(sink);
+                Assert.assertFalse(
+                        "min(id)/max(id) on a non-sorted column must not use the footer shortcut, got plan:\n" + plan,
+                        plan.toLowerCase().contains("parquet footer aggregate")
+                );
+            }
+        });
+    }
+
+    private String readExplainPlan(StringSink query) throws SqlException {
+        final StringSink planSink = new StringSink();
+        try (RecordCursorFactory factory = engine.select(query, sqlExecutionContext);
+             RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+            final io.questdb.cairo.sql.Record rec = cursor.getRecord();
+            while (cursor.hasNext()) {
+                planSink.put(rec.getStrA(0)).put('\n');
+            }
+        }
+        return planSink.toString();
+    }
+
+    @Test
     public void testGenericRecordMetadataColumnOrderByRoundTrip() throws Exception {
         // Unit-level pin on the new setColumnOrderBy / getColumnOrderBy contract.
         // Sparse: only indices explicitly set carry a non-zero value; absent
