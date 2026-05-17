@@ -7330,6 +7330,32 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     }
                 }
 
+                // Parquet reverse-scan flip. Detect ORDER BY ts DESC on a
+                // ReadParquetRecordCursorFactory whose file claims the
+                // designated timestamp ASC-sorted via sorting_columns. Flip
+                // the factory's reverseScan flag BEFORE the existing
+                // designated-ts elision check below - that check returns the
+                // factory unchanged when getScanDirection() == BACKWARD
+                // matches the requested DESC, which is exactly what
+                // setReverseScan(true) achieves here.
+                //
+                // The same gates as the elision: single-column ORDER BY on
+                // the timestamp index, requested DESC, current scan direction
+                // FORWARD (so we don't double-flip if some upstream already
+                // arranged BACKWARD), and the file metadata claims ts ASC.
+                if (orderByColumnCount == 1
+                        && timestampIndex != -1
+                        && recordCursorFactory instanceof ReadParquetRecordCursorFactory) {
+                    CharSequence orderColumn = orderByColumnNames.getQuick(0);
+                    int orderColumnIndex = metadata.getColumnIndexQuiet(orderColumn);
+                    if (orderColumnIndex == timestampIndex
+                            && orderByColumnNameToIndexMap.get(orderColumn) == IQueryModel.ORDER_DIRECTION_DESCENDING
+                            && recordCursorFactory.getScanDirection() == RecordCursorFactory.SCAN_DIRECTION_FORWARD
+                            && metadata.getColumnOrderBy(orderColumnIndex) == 1) {
+                        ((ReadParquetRecordCursorFactory) recordCursorFactory).setReverseScan(true);
+                    }
+                }
+
                 boolean preSortedByTs = false;
                 // if first column index is the same as timestamp of underlying record cursor factory
                 // we could have two possibilities:

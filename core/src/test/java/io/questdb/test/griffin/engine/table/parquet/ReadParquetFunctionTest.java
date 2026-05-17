@@ -2253,6 +2253,99 @@ public class ReadParquetFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testOrderByTsDescElidesSortAgainstSortedParquet() throws Exception {
+        // End-to-end planner pin on the parquet reverse-scan flip in
+        // SqlCodeGenerator.generateOrderBy. ORDER BY ts DESC LIMIT N against
+        // a QuestDB-written parquet (sorting_columns claims ts ASC) must
+        // route through the cursor's reverse-iteration path with no Sort
+        // factory wrap. EXPLAIN must show "parquet file sequential scan
+        // (reverse)" and zero Sort nodes; result must match the same query
+        // on the source table.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE rs AS (" +
+                    "  SELECT timestamp_sequence(1_000_000L, 100L) AS ts, x AS id " +
+                    "  FROM long_sequence(10_000)" +
+                    ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+            drainWalQueue();
+
+            try (
+                    Path path = new Path();
+                    PartitionDescriptor pd = new PartitionDescriptor();
+                    TableReader reader = engine.getReader("rs")
+            ) {
+                path.of(root).concat("rs.parquet");
+                PartitionEncoder.populateFromTableReader(reader, pd, 0);
+                PartitionEncoder.encode(pd, path);
+                Assert.assertTrue(Files.exists(path.$()));
+
+                if (!parallel) {
+                    // Serial mode: detection branch fires on the serial
+                    // ReadParquetRecordCursorFactory. Parallel mode is the
+                    // page-frame variant which doesn't implement the
+                    // reverse flag yet - the planner takes a different
+                    // path there. Result-correctness is asserted in both
+                    // modes below.
+                    sink.clear();
+                    sink.put("EXPLAIN SELECT ts FROM read_parquet('rs.parquet') ORDER BY ts DESC LIMIT 5");
+                    final String plan = readExplainPlan(sink);
+                    final String lower = plan.toLowerCase();
+                    Assert.assertTrue(
+                            "EXPLAIN must show the reverse-scan parquet factory, got plan:\n" + plan,
+                            lower.contains("parquet file sequential scan (reverse)")
+                    );
+                    Assert.assertFalse(
+                            "Sort wrap must be elided when the parquet flips to reverse, got plan:\n" + plan,
+                            lower.contains("encode sort") || lower.contains("sortedrecord")
+                    );
+                }
+
+                // Result-correctness: rows must arrive in DESC ts order.
+                sink.clear();
+                sink.put("SELECT ts FROM read_parquet('rs.parquet') ORDER BY ts DESC LIMIT 5");
+                assertSqlCursors0("SELECT ts FROM rs ORDER BY ts DESC LIMIT 5");
+            }
+        });
+    }
+
+    @Test
+    public void testOrderByTsAscOverParquetStillUsesForwardScan() throws Exception {
+        // Negative case: ORDER BY ts ASC (the natural forward order) must
+        // NOT flip the reverse-scan flag; the existing forward-elision
+        // path at line 7339 already handles ASC + FORWARD without
+        // intervention. EXPLAIN must show the unadorned forward factory.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE rsa AS (" +
+                    "  SELECT timestamp_sequence(1_000_000L, 100L) AS ts FROM long_sequence(1_000)" +
+                    ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+            drainWalQueue();
+
+            try (
+                    Path path = new Path();
+                    PartitionDescriptor pd = new PartitionDescriptor();
+                    TableReader reader = engine.getReader("rsa")
+            ) {
+                path.of(root).concat("rsa.parquet");
+                PartitionEncoder.populateFromTableReader(reader, pd, 0);
+                PartitionEncoder.encode(pd, path);
+
+                if (!parallel) {
+                    sink.clear();
+                    sink.put("EXPLAIN SELECT ts FROM read_parquet('rsa.parquet') ORDER BY ts ASC LIMIT 5");
+                    final String plan = readExplainPlan(sink);
+                    Assert.assertFalse(
+                            "ASC must keep the forward factory, not flip to reverse, got plan:\n" + plan,
+                            plan.toLowerCase().contains("parquet file sequential scan (reverse)")
+                    );
+                    Assert.assertTrue(
+                            "ASC must still use the forward parquet factory, got plan:\n" + plan,
+                            plan.toLowerCase().contains("parquet file sequential scan")
+                    );
+                }
+            }
+        });
+    }
+
+    @Test
     public void testReverseScanReportsForwardWhenFlagOff() throws Exception {
         // Default (reverse=false) must still report SCAN_DIRECTION_FORWARD.
         assertMemoryLeak(() -> {
