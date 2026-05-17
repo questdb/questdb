@@ -8425,6 +8425,56 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         }
     }
 
+    /**
+     * Recognises the {@code SELECT min(<col>), max(<col>) [, ...]} aggregate
+     * shape that the parquet footer-only shortcut can short-circuit. Returns
+     * the shared LITERAL column token across every aggregate in
+     * {@code columns}, or {@code null} when {@code columns} does not match
+     * the shape.
+     * <p>
+     * Match requires for every entry independently:
+     * <ul>
+     *   <li>{@code ast.type == FUNCTION}</li>
+     *   <li>{@code ast.paramCount == 1}</li>
+     *   <li>{@code ast.token} is {@code "min"} or {@code "max"}
+     *       (case-insensitive ASCII)</li>
+     *   <li>{@code ast.rhs.type == LITERAL} with a non-null token</li>
+     * </ul>
+     * Plus the cross-entry constraint that every entry's literal token
+     * references the same column. Empty input returns null; a single-column
+     * input is permitted (e.g. {@code SELECT min(ts)}).
+     * <p>
+     * Pure predicate, no side effects - the planner can call this before
+     * generating the subquery so non-matching shapes don't pay any
+     * additional cost. Callers that want per-column min/max kinds re-walk
+     * {@code columns} once the shared column is known.
+     */
+    public static @Nullable CharSequence tryGetMinMaxAggregateColumn(@Nullable ObjList<QueryColumn> columns) {
+        if (columns == null || columns.size() == 0) {
+            return null;
+        }
+        CharSequence sharedColumn = null;
+        for (int i = 0, n = columns.size(); i < n; i++) {
+            final ExpressionNode ast = columns.getQuick(i).getAst();
+            if (ast == null || ast.type != FUNCTION || ast.paramCount != 1 || ast.token == null) {
+                return null;
+            }
+            if (!Chars.equalsLowerCaseAscii("min", ast.token) && !Chars.equalsLowerCaseAscii("max", ast.token)) {
+                return null;
+            }
+            final ExpressionNode arg = ast.rhs;
+            if (arg == null || arg.type != LITERAL || arg.token == null) {
+                return null;
+            }
+            if (sharedColumn == null) {
+                sharedColumn = arg.token;
+            } else if (!Chars.equals(sharedColumn, arg.token)) {
+                return null;
+            }
+        }
+        return sharedColumn;
+    }
+
     private RecordCursorFactory generateSelectGroupBy(IQueryModel model, SqlExecutionContext executionContext) throws SqlException {
         final ExpressionNode sampleByNode = model.getSampleBy();
         if (sampleByNode != null) {
