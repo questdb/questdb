@@ -2242,6 +2242,61 @@ public class ReadParquetFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testReverseScanSortClaimVerifierPassesViaPlannerOrderByDesc() throws Exception {
+        // Planner-driven path: a real SELECT ... ORDER BY ts DESC LIMIT N
+        // goes through generateOrderBy -> setReverseScan(true) -> getCursor,
+        // and the verifier hook fires inside getCursor. With the config
+        // flag on and an honestly-sorted file, the query must succeed and
+        // EXPLAIN must show the reverse-scan factory (elision wins).
+        // Negative-path counterpart isn't possible via real SQL: the
+        // QuestDB writer refuses to stamp a sort claim on a designated
+        // ts column unless the data is actually sorted, so a dishonest
+        // ts claim cannot be produced from the test harness. The direct-
+        // factory negative test in testReverseScanSortClaimVerifierCatchesDishonestClaim
+        // covers the verifier rejection path against a fabricated id-column
+        // dishonest claim.
+        if (parallel) return;
+        setProperty(PropertyKey.CAIRO_SQL_PARQUET_VERIFY_SORT_CLAIM_ENABLED, "true");
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE p AS (" +
+                    "  SELECT timestamp_sequence(1_000_000L, 100L) AS ts, x AS id " +
+                    "  FROM long_sequence(2_000)" +
+                    ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+            drainWalQueue();
+
+            try (
+                    Path path = new Path();
+                    PartitionDescriptor pd = new PartitionDescriptor();
+                    TableReader reader = engine.getReader("p")
+            ) {
+                path.of(root).concat("p_planner.parquet");
+                PartitionEncoder.populateFromTableReader(reader, pd, 0);
+                PartitionEncoder.encode(pd, path);
+
+                sink.clear();
+                sink.put("EXPLAIN SELECT ts FROM read_parquet('p_planner.parquet') ORDER BY ts DESC LIMIT 3");
+                final String plan = readExplainPlan(sink);
+                Assert.assertTrue(
+                        "reverse-scan plan must elide the SORT with the verifier on for an honest file, got:\n" + plan,
+                        plan.toLowerCase().contains("parquet file sequential scan (reverse)")
+                );
+
+                // Verifier must accept the honest claim - the query proceeds
+                // and returns the last 3 ts in DESC order.
+                // ts_sequence(1_000_000us, 100us) over 2_000 rows -> ts in
+                // [1_000_000, 1_199_900]. Last 3 DESC: 1_199_900, 1_199_800, 1_199_700.
+                assertSql(
+                        "ts\n" +
+                                "1970-01-01T00:00:01.199900Z\n" +
+                                "1970-01-01T00:00:01.199800Z\n" +
+                                "1970-01-01T00:00:01.199700Z\n",
+                        "SELECT ts FROM read_parquet('p_planner.parquet') ORDER BY ts DESC LIMIT 3"
+                );
+            }
+        });
+    }
+
+    @Test
     public void testReverseScanSortClaimVerifierPassesForHonestFile() throws Exception {
         // Positive case: file is genuinely ts-ASC sorted, the verifier
         // accepts and the reverse scan proceeds. Enabled in serial mode

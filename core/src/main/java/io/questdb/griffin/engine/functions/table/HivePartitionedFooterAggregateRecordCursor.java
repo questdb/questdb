@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions.table;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.SqlException;
@@ -97,11 +98,75 @@ class HivePartitionedFooterAggregateRecordCursor implements NoRandomAccessRecord
         final FilesFacade ff = configuration.getFilesFacade();
         final DirectUtf8StringList matchedFiles = base.getMatchedFiles();
 
+        final boolean useGenericNative = aggregateColumnName != null;
+        // Pre-walk first file to discover the column type tag so we pick
+        // the right native and global accumulator. Skipped if matchedFiles
+        // is empty - the empty-glob branch below already handles that.
+        int columnTypeTag = ColumnType.UNDEFINED;
+        for (int i = 0, n = matchedFiles.size(); i < n && columnTypeTag == ColumnType.UNDEFINED; i++) {
+            final DirectUtf8Sequence filePath = matchedFiles.getQuick(i);
+            final HivePartitionedReadParquetRecordCursorFactory.CachedFile cached =
+                    base.openCachedFile(filePath, ff);
+            final ParquetFileDecoder decoder = cached.decoder;
+            final int parquetColumnIndex = useGenericNative
+                    ? decoder.metadata().getColumnIndex(aggregateColumnName)
+                    : decoder.metadata().getTimestampIndex();
+            if (parquetColumnIndex >= 0) {
+                columnTypeTag = useGenericNative
+                        ? ColumnType.tagOf(decoder.metadata().getColumnType(parquetColumnIndex))
+                        : ColumnType.TIMESTAMP;
+            }
+        }
+
+        if (columnTypeTag == ColumnType.DOUBLE) {
+            double globalMinD = Double.POSITIVE_INFINITY;
+            double globalMaxD = Double.NEGATIVE_INFINITY;
+            boolean anyFileContributed = false;
+            outer:
+            for (int i = 0, n = matchedFiles.size(); i < n; i++) {
+                final DirectUtf8Sequence filePath = matchedFiles.getQuick(i);
+                final HivePartitionedReadParquetRecordCursorFactory.CachedFile cached =
+                        base.openCachedFile(filePath, ff);
+                final ParquetFileDecoder decoder = cached.decoder;
+                final int parquetColumnIndex = decoder.metadata().getColumnIndex(aggregateColumnName);
+                if (parquetColumnIndex < 0) {
+                    continue;
+                }
+                final int rowGroupCount = decoder.metadata().getRowGroupCount();
+                for (int rg = 0; rg < rowGroupCount; rg++) {
+                    final double rgMin = decoder.rowGroupMinValueDouble(rg, parquetColumnIndex);
+                    final double rgMax = decoder.rowGroupMaxValueDouble(rg, parquetColumnIndex);
+                    if (Double.isNaN(rgMin) || Double.isNaN(rgMax)) {
+                        globalMinD = Double.NaN;
+                        globalMaxD = Double.NaN;
+                        anyFileContributed = true;
+                        break outer;
+                    }
+                    if (rgMin < globalMinD) {
+                        globalMinD = rgMin;
+                    }
+                    if (rgMax > globalMaxD) {
+                        globalMaxD = rgMax;
+                    }
+                    anyFileContributed = true;
+                }
+            }
+            if (!anyFileContributed) {
+                for (int i = 0; i < aggregateKinds.length; i++) {
+                    payload[i] = Long.MIN_VALUE;
+                }
+                return;
+            }
+            for (int i = 0; i < aggregateKinds.length; i++) {
+                payload[i] = Double.doubleToRawLongBits(aggregateKinds[i] ? globalMaxD : globalMinD);
+            }
+            return;
+        }
+
         long globalMin = Long.MAX_VALUE;
         long globalMax = Long.MIN_VALUE;
         boolean anyFileContributed = false;
 
-        final boolean useGenericNative = aggregateColumnName != null;
         for (int i = 0, n = matchedFiles.size(); i < n; i++) {
             final DirectUtf8Sequence filePath = matchedFiles.getQuick(i);
             final HivePartitionedReadParquetRecordCursorFactory.CachedFile cached =
@@ -169,6 +234,16 @@ class HivePartitionedFooterAggregateRecordCursor implements NoRandomAccessRecord
     }
 
     private class FooterRecord implements Record {
+        @Override
+        public double getDouble(int col) {
+            return Double.longBitsToDouble(payload[col]);
+        }
+
+        @Override
+        public int getInt(int col) {
+            return (int) payload[col];
+        }
+
         @Override
         public long getLong(int col) {
             return payload[col];

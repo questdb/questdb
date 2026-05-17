@@ -363,6 +363,66 @@ public class ParquetFooterAggregateRecordCursorFactoryTest extends AbstractCairo
     }
 
     @Test
+    public void testNonTsDoubleMinMaxAscSortedColumn() throws Exception {
+        // DOUBLE extension to the generic non-ts MIN/MAX path. Writes a
+        // parquet with `d` (DOUBLE) sorted ASC; the cursor must dispatch
+        // to the rowGroupMin/MaxValueDouble natives and surface the
+        // result via FooterRecord.getDouble.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE dbl AS (" +
+                    "  SELECT timestamp_sequence(1_000_000L, 100L) AS ts, x * 1.5 AS d" +
+                    "  FROM long_sequence(5_000)" +
+                    ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+            drainWalQueue();
+
+            try (
+                    Path path = new Path();
+                    PartitionDescriptor pd = new PartitionDescriptor();
+                    TableReader reader = engine.getReader("dbl")
+            ) {
+                path.of(root).concat("dbl.parquet");
+                PartitionEncoder.populateFromTableReader(reader, pd, 0);
+                final int dColumnIndex = reader.getMetadata().getColumnIndex("d");
+                PartitionEncoder.encodeWithOptions(
+                        pd,
+                        path,
+                        io.questdb.griffin.engine.table.parquet.ParquetCompression.COMPRESSION_UNCOMPRESSED,
+                        true,
+                        false,
+                        0,
+                        0,
+                        io.questdb.griffin.engine.table.parquet.ParquetVersion.PARQUET_VERSION_V1,
+                        0,
+                        0,
+                        0.01,
+                        0.0,
+                        -1,
+                        -1L,
+                        dColumnIndex,
+                        false
+                );
+
+                final GenericRecordMetadata out = new GenericRecordMetadata();
+                out.add(new TableColumnMetadata("min_d", ColumnType.DOUBLE));
+                out.add(new TableColumnMetadata("max_d", ColumnType.DOUBLE));
+
+                try (
+                        RecordCursorFactory factory = new ParquetFooterAggregateRecordCursorFactory(
+                                path, out, new boolean[]{false, true}, "d"
+                        );
+                        RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+                ) {
+                    Assert.assertTrue(cursor.hasNext());
+                    final Record rec = cursor.getRecord();
+                    // x*1.5 for x in [1, 5_000]: min 1.5, max 7_500.0
+                    Assert.assertEquals(1.5, rec.getDouble(0), 1e-9);
+                    Assert.assertEquals(7_500.0, rec.getDouble(1), 1e-9);
+                }
+            }
+        });
+    }
+
+    @Test
     public void testVerifyAscendingSortAcrossRowGroupsHoldsForQuestDbWriter() throws Exception {
         // QuestDB's PartitionEncoder writes rows in ts-sorted order across
         // every row group. The cross-row-group sort-claim verifier must

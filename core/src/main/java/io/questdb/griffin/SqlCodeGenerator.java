@@ -8523,11 +8523,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
     /**
      * Storage tags whose min/max can be read from parquet column-chunk
-     * statistics via the {@code rowGroupMin/MaxValueLong} natives. INT/LONG
-     * serialise as i32/i64 in parquet stats; DATE/TIMESTAMP are stored as
-     * i64 with a logical type wrapper. Other types (DOUBLE, STRING, VARCHAR,
-     * decimal, etc.) would need their own native accessor and bit-pattern
-     * decode and are excluded here.
+     * statistics via either the {@code rowGroupMin/MaxValueLong} natives
+     * (INT/LONG/DATE/TIMESTAMP, i32/i64 stat bytes) or the
+     * {@code rowGroupMin/MaxValueDouble} natives (DOUBLE, IEEE-754 f64
+     * stat bytes). Other types (STRING, VARCHAR, decimal, etc.) need
+     * their own native accessor and bit-pattern decode and are
+     * excluded here.
      */
     private static boolean isStatShortcutTypeSupported(int columnType) {
         switch (ColumnType.tagOf(columnType)) {
@@ -8535,6 +8536,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             case ColumnType.LONG:
             case ColumnType.DATE:
             case ColumnType.TIMESTAMP:
+            case ColumnType.DOUBLE:
                 return true;
             default:
                 return false;

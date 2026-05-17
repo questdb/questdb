@@ -563,6 +563,64 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_ParquetFileD
     }
 }
 
+#[no_mangle]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_ParquetFileDecoder_rowGroupMinValueDouble(
+    mut env: JNIEnv,
+    _class: JClass,
+    decoder: *const ParquetDecoder,
+    row_group_index: u32,
+    column_index: u32,
+) -> f64 {
+    let env = &mut env;
+    let res = (|| -> ParquetResult<f64> {
+        if decoder.is_null() {
+            return Err(fmt_err!(InvalidLayout, "decoder pointer is null"));
+        }
+        let decoder = unsafe { &*decoder };
+        decoder.row_group_min_value_double(row_group_index, column_index)
+    })();
+    match res {
+        Ok(v) => v,
+        Err(mut err) => {
+            err.add_context(format!(
+                "could not get min double value for row group {row_group_index} column {column_index}"
+            ));
+            err.add_context("error in PartitionDecoder.rowGroupMinValueDouble");
+            err.into_cairo_exception().throw(env)
+        }
+    }
+}
+
+#[no_mangle]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_ParquetFileDecoder_rowGroupMaxValueDouble(
+    mut env: JNIEnv,
+    _class: JClass,
+    decoder: *const ParquetDecoder,
+    row_group_index: u32,
+    column_index: u32,
+) -> f64 {
+    let env = &mut env;
+    let res = (|| -> ParquetResult<f64> {
+        if decoder.is_null() {
+            return Err(fmt_err!(InvalidLayout, "decoder pointer is null"));
+        }
+        let decoder = unsafe { &*decoder };
+        decoder.row_group_max_value_double(row_group_index, column_index)
+    })();
+    match res {
+        Ok(v) => v,
+        Err(mut err) => {
+            err.add_context(format!(
+                "could not get max double value for row group {row_group_index} column {column_index}"
+            ));
+            err.add_context("error in PartitionDecoder.rowGroupMaxValueDouble");
+            err.into_cairo_exception().throw(env)
+        }
+    }
+}
+
 // See PartitionDecoder for more info on the returned value format.
 #[no_mangle]
 #[allow(clippy::not_unsafe_ptr_arg_deref)]

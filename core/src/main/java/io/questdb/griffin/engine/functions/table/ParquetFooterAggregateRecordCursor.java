@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions.table;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
@@ -113,23 +114,27 @@ class ParquetFooterAggregateRecordCursor implements NoRandomAccessRecordCursor {
         this.addr = TableUtils.mapRO(ff, fd, fileSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
         decoder.of(addr, fileSize, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
 
-        // Resolve the parquet-side column index. Two paths:
+        // Resolve the parquet-side column index. Three paths:
         //   - aggregateColumnName == null: legacy designated-timestamp
         //     shortcut. Walk rowGroupMin/MaxTimestamp on the parquet file's
         //     declared timestamp column. Falls back to single-row decode
         //     if stats are absent.
-        //   - aggregateColumnName != null: generic typed shortcut. Resolve
-        //     the column by name in the parquet metadata and use the
-        //     stats-only rowGroupMin/MaxValueLong native. Supports any
-        //     INT/LONG/DATE/TIMESTAMP column the planner gated as sorted.
+        //   - aggregateColumnName != null && column type is DOUBLE: walk
+        //     rowGroupMin/MaxValueDouble, store the bit pattern in payload[i]
+        //     via Double.doubleToRawLongBits so the FooterRecord.getDouble
+        //     path can decode without an auxiliary array.
+        //   - aggregateColumnName != null && column type is integral: walk
+        //     rowGroupMin/MaxValueLong as the i64 generic path.
         final int parquetColumnIndex;
-        final boolean useGenericNative;
+        final int columnTypeTag;
         if (aggregateColumnName == null) {
             parquetColumnIndex = decoder.metadata().getTimestampIndex();
-            useGenericNative = false;
+            columnTypeTag = ColumnType.TIMESTAMP;
         } else {
             parquetColumnIndex = decoder.metadata().getColumnIndex(aggregateColumnName);
-            useGenericNative = true;
+            columnTypeTag = parquetColumnIndex >= 0
+                    ? ColumnType.tagOf(decoder.metadata().getColumnType(parquetColumnIndex))
+                    : ColumnType.UNDEFINED;
         }
         if (parquetColumnIndex < 0) {
             // Defensive: planner gate should rule this out, but never trust
@@ -145,8 +150,35 @@ class ParquetFooterAggregateRecordCursor implements NoRandomAccessRecordCursor {
         // is forgiving (the global min/max is correct regardless of
         // whether the file is actually sorted).
         final int rowGroupCount = decoder.metadata().getRowGroupCount();
+        if (columnTypeTag == ColumnType.DOUBLE) {
+            double globalMinD = Double.POSITIVE_INFINITY;
+            double globalMaxD = Double.NEGATIVE_INFINITY;
+            for (int rg = 0; rg < rowGroupCount; rg++) {
+                final double rgMin = decoder.rowGroupMinValueDouble(rg, parquetColumnIndex);
+                final double rgMax = decoder.rowGroupMaxValueDouble(rg, parquetColumnIndex);
+                // NaN-safe propagation: any NaN seen short-circuits both
+                // aggregates to NaN, mirroring the standard MIN/MAX cursor's
+                // behaviour where NaN bubbles through aggregate reduction.
+                if (Double.isNaN(rgMin) || Double.isNaN(rgMax)) {
+                    globalMinD = Double.NaN;
+                    globalMaxD = Double.NaN;
+                    break;
+                }
+                if (rgMin < globalMinD) {
+                    globalMinD = rgMin;
+                }
+                if (rgMax > globalMaxD) {
+                    globalMaxD = rgMax;
+                }
+            }
+            for (int i = 0; i < aggregateKinds.length; i++) {
+                payload[i] = Double.doubleToRawLongBits(aggregateKinds[i] ? globalMaxD : globalMinD);
+            }
+            return;
+        }
         long globalMin = Long.MAX_VALUE;
         long globalMax = Long.MIN_VALUE;
+        final boolean useGenericNative = aggregateColumnName != null;
         for (int rg = 0; rg < rowGroupCount; rg++) {
             final long rgMin;
             final long rgMax;
@@ -197,6 +229,18 @@ class ParquetFooterAggregateRecordCursor implements NoRandomAccessRecordCursor {
     }
 
     private class FooterRecord implements Record {
+        @Override
+        public double getDouble(int col) {
+            // For DOUBLE columns the cursor stores the bit pattern in
+            // payload via Double.doubleToRawLongBits; reverse here.
+            return Double.longBitsToDouble(payload[col]);
+        }
+
+        @Override
+        public int getInt(int col) {
+            return (int) payload[col];
+        }
+
         @Override
         public long getLong(int col) {
             return payload[col];

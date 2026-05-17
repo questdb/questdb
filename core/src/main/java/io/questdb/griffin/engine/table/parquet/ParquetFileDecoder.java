@@ -288,6 +288,16 @@ public class ParquetFileDecoder implements ParquetDecoder, ParquetRowGroupSkippe
         return rowGroupMaxValueLong(ptr, rowGroupIndex, columnIndex);
     }
 
+    /**
+     * DOUBLE-typed counterpart to {@link #rowGroupMaxValueLong}. Reads
+     * the f64 max value from the column-chunk statistics. The column's
+     * storage tag must be DOUBLE; other tags throw an error.
+     */
+    public double rowGroupMaxValueDouble(int rowGroupIndex, int columnIndex) {
+        assert ptr != 0;
+        return rowGroupMaxValueDouble(ptr, rowGroupIndex, columnIndex);
+    }
+
     public long rowGroupMinTimestamp(int rowGroupIndex, int timestampColumnIndex) {
         assert ptr != 0;
         return rowGroupMinTimestamp(ptr, fileAddr, fileSize, rowGroupIndex, timestampColumnIndex);
@@ -299,6 +309,14 @@ public class ParquetFileDecoder implements ParquetDecoder, ParquetRowGroupSkippe
     public long rowGroupMinValueLong(int rowGroupIndex, int columnIndex) {
         assert ptr != 0;
         return rowGroupMinValueLong(ptr, rowGroupIndex, columnIndex);
+    }
+
+    /**
+     * Min-side counterpart to {@link #rowGroupMaxValueDouble}.
+     */
+    public double rowGroupMinValueDouble(int rowGroupIndex, int columnIndex) {
+        assert ptr != 0;
+        return rowGroupMinValueDouble(ptr, rowGroupIndex, columnIndex);
     }
 
     /**
@@ -460,6 +478,12 @@ public class ParquetFileDecoder implements ParquetDecoder, ParquetRowGroupSkippe
             int columnIndex
     ) throws CairoException;
 
+    private static native double rowGroupMaxValueDouble(
+            long decoderPtr,
+            int rowGroupIndex,
+            int columnIndex
+    ) throws CairoException;
+
     private static native long rowGroupMinTimestamp(
             long decoderPtr,
             long fileAddr,
@@ -469,6 +493,12 @@ public class ParquetFileDecoder implements ParquetDecoder, ParquetRowGroupSkippe
     ) throws CairoException;
 
     private static native long rowGroupMinValueLong(
+            long decoderPtr,
+            int rowGroupIndex,
+            int columnIndex
+    ) throws CairoException;
+
+    private static native double rowGroupMinValueDouble(
             long decoderPtr,
             int rowGroupIndex,
             int columnIndex
