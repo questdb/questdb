@@ -45,6 +45,14 @@ public class ReadParquetRecordCursorFactory extends ProjectableRecordCursorFacto
     private ReadParquetRecordCursor cursor;
     private Path path;
     private @Nullable ObjList<PushdownFilterExtractor.PushdownFilterCondition> pushdownFilterConditions;
+    // When true, the cursor walks the file in DESC ts order. The planner
+    // flips this flag (via {@link #setReverseScan}) when it detects
+    // ORDER BY ts DESC on a file whose sorting_columns metadata claims
+    // the designated timestamp sorted; the existing reverse-elision check
+    // in SqlCodeGenerator.generateOrderBy then returns this factory
+    // unchanged because getScanDirection() == SCAN_DIRECTION_BACKWARD
+    // matches the requested DESC.
+    private boolean reverseScan;
 
     public ReadParquetRecordCursorFactory(@Transient Path path, RecordMetadata metadata) {
         super(metadata);
@@ -57,6 +65,11 @@ public class ReadParquetRecordCursorFactory extends ProjectableRecordCursorFacto
             final CairoConfiguration configuration = executionContext.getCairoEngine().getConfiguration();
             cursor = new ReadParquetRecordCursor(configuration.getFilesFacade(), getMetadata(), pushdownFilterConditions);
         }
+        // Sync the cursor's iteration direction with the factory's flag
+        // BEFORE of() - the cursor's toTop (called from of()) seeds its row
+        // group index based on reverse, so a stale value would leave the
+        // first hasNext misaligned.
+        cursor.setReverse(reverseScan);
         try {
             cursor.of(path.$(), executionContext);
             return cursor;
@@ -64,6 +77,11 @@ public class ReadParquetRecordCursorFactory extends ProjectableRecordCursorFacto
             cursor.close();
             throw th;
         }
+    }
+
+    @Override
+    public int getScanDirection() {
+        return reverseScan ? SCAN_DIRECTION_BACKWARD : SCAN_DIRECTION_FORWARD;
     }
 
     /**
@@ -95,9 +113,28 @@ public class ReadParquetRecordCursorFactory extends ProjectableRecordCursorFacto
         this.pushdownFilterConditions = pushdownFilterConditions;
     }
 
+    /**
+     * Flips this factory between forward (ASC) and reverse (DESC) iteration.
+     * The planner calls this when {@code ORDER BY ts DESC} is detected on
+     * a file whose {@code sorting_columns} metadata claims the designated
+     * timestamp sorted. The existing reverse-elision check in
+     * {@code SqlCodeGenerator.generateOrderBy} then returns this factory
+     * unchanged because {@link #getScanDirection} reports
+     * {@code SCAN_DIRECTION_BACKWARD} and matches the requested direction.
+     * <p>
+     * Safe to call before any {@code getCursor()} - the flag is synced into
+     * the cursor on every getCursor. NOT safe to flip mid-iteration (the
+     * cursor's toTop seeds its row group index based on the flag and a
+     * stale value would misalign the next hasNext); call this once at
+     * factory construction time and don't change it afterwards.
+     */
+    public void setReverseScan(boolean reverseScan) {
+        this.reverseScan = reverseScan;
+    }
+
     @Override
     public void toPlan(PlanSink sink) {
-        sink.type("parquet file sequential scan");
+        sink.type(reverseScan ? "parquet file sequential scan (reverse)" : "parquet file sequential scan");
         sink.attr("columns").val(getMetadata());
     }
 

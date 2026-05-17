@@ -2181,6 +2181,113 @@ public class ReadParquetFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testReverseScanEmitsRowsInDescTimestampOrder() throws Exception {
+        // Direct pin on ReadParquetRecordCursorFactory.setReverseScan(true) +
+        // ReadParquetRecordCursor.setReverse(true). Constructs the factory
+        // explicitly (no planner involvement), opens a parquet whose data
+        // is ASC ts-sorted by construction (TableReader feeds partition-
+        // ordered rows into PartitionEncoder), and asserts the emitted ts
+        // sequence is strictly monotonically decreasing across row group
+        // boundaries.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE r AS (" +
+                    "  SELECT timestamp_sequence(1_000_000L, 100L) AS ts, x AS id " +
+                    "  FROM long_sequence(50_000)" +
+                    ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+            drainWalQueue();
+
+            try (
+                    Path path = new Path();
+                    PartitionDescriptor pd = new PartitionDescriptor();
+                    TableReader reader = engine.getReader("r")
+            ) {
+                path.of(root).concat("r_reverse.parquet");
+                PartitionEncoder.populateFromTableReader(reader, pd, 0);
+                PartitionEncoder.encode(pd, path);
+                Assert.assertTrue(Files.exists(path.$()));
+
+                // Build the factory's output metadata to match the file
+                // shape: ts (TIMESTAMP_MICRO), id (LONG).
+                final io.questdb.cairo.GenericRecordMetadata outMeta =
+                        new io.questdb.cairo.GenericRecordMetadata();
+                outMeta.add(new io.questdb.cairo.TableColumnMetadata("ts", io.questdb.cairo.ColumnType.TIMESTAMP_MICRO));
+                outMeta.add(new io.questdb.cairo.TableColumnMetadata("id", io.questdb.cairo.ColumnType.LONG));
+                outMeta.setTimestampIndex(0);
+
+                try (
+                        io.questdb.griffin.engine.functions.table.ReadParquetRecordCursorFactory factory =
+                                new io.questdb.griffin.engine.functions.table.ReadParquetRecordCursorFactory(path, outMeta)
+                ) {
+                    factory.setReverseScan(true);
+                    Assert.assertEquals(
+                            "factory must report BACKWARD when reverse scan is enabled",
+                            io.questdb.cairo.sql.RecordCursorFactory.SCAN_DIRECTION_BACKWARD,
+                            factory.getScanDirection()
+                    );
+
+                    try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                        final io.questdb.cairo.sql.Record rec = cursor.getRecord();
+                        long previousTs = Long.MAX_VALUE;
+                        long emitted = 0;
+                        while (cursor.hasNext()) {
+                            final long ts = rec.getTimestamp(0);
+                            Assert.assertTrue(
+                                    "rows must arrive in strictly decreasing ts order; got "
+                                            + ts + " after " + previousTs + " at row " + emitted,
+                                    ts < previousTs
+                            );
+                            previousTs = ts;
+                            emitted++;
+                        }
+                        // 100 us spacing * 50_000 rows = full file.
+                        Assert.assertEquals("must emit every row from the file", 50_000L, emitted);
+                        // Last emitted should be the smallest ts (the first row written).
+                        Assert.assertEquals(
+                                "last emitted ts must equal the file's minimum",
+                                1_000_000L, previousTs
+                        );
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testReverseScanReportsForwardWhenFlagOff() throws Exception {
+        // Default (reverse=false) must still report SCAN_DIRECTION_FORWARD.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE f AS (" +
+                    "  SELECT timestamp_sequence(0L, 100L) AS ts FROM long_sequence(10)" +
+                    ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+            drainWalQueue();
+
+            try (
+                    Path path = new Path();
+                    PartitionDescriptor pd = new PartitionDescriptor();
+                    TableReader reader = engine.getReader("f")
+            ) {
+                path.of(root).concat("f_fwd.parquet");
+                PartitionEncoder.populateFromTableReader(reader, pd, 0);
+                PartitionEncoder.encode(pd, path);
+
+                final io.questdb.cairo.GenericRecordMetadata outMeta =
+                        new io.questdb.cairo.GenericRecordMetadata();
+                outMeta.add(new io.questdb.cairo.TableColumnMetadata("ts", io.questdb.cairo.ColumnType.TIMESTAMP_MICRO));
+
+                try (
+                        io.questdb.griffin.engine.functions.table.ReadParquetRecordCursorFactory factory =
+                                new io.questdb.griffin.engine.functions.table.ReadParquetRecordCursorFactory(path, outMeta)
+                ) {
+                    Assert.assertEquals(
+                            io.questdb.cairo.sql.RecordCursorFactory.SCAN_DIRECTION_FORWARD,
+                            factory.getScanDirection()
+                    );
+                }
+            }
+        });
+    }
+
+    @Test
     public void testGenericRecordMetadataColumnOrderByRoundTrip() throws Exception {
         // Unit-level pin on the new setColumnOrderBy / getColumnOrderBy contract.
         // Sparse: only indices explicitly set carry a non-zero value; absent

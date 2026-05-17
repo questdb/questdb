@@ -473,9 +473,14 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
                 dataPtrs.add(rowGroupBuffers.getChunkDataPtr(i));
                 auxPtrs.add(rowGroupBuffers.getChunkAuxPtr(i));
             }
-            // Seed at "one past the last row" so the next --currentRowInRowGroup
-            // in hasNext yields rowGroupRowCount-1.
-            currentRowInRowGroup = (int) rowGroupRowCount;
+            // Mirror the forward path: switchToNextRowGroup sets
+            // currentRowInRowGroup = 0 (first valid index) and returns true,
+            // so the caller reads at 0 immediately. Reverse symmetry: seed
+            // at rowGroupRowCount - 1 (last valid index) so the caller reads
+            // the largest ts of this row group on the same return.
+            // Subsequent hasNext calls then do --currentRowInRowGroup to
+            // walk back through the buffer.
+            currentRowInRowGroup = (int) rowGroupRowCount - 1;
             return true;
         }
         return false;
