@@ -1936,6 +1936,52 @@ public class HivePartitionedReadParquetFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFooterMinMaxShortcutHiveNonTsDoubleAsc() throws Exception {
+        // DOUBLE flavour of the hive non-ts MIN/MAX shortcut. Each matched
+        // file has d sorted ASC via the writer's nonTsSortColumnIndex knob.
+        // The cursor must dispatch to rowGroupMin/MaxValueDouble per file
+        // and aggregate across files with NaN-safe propagation.
+        assertMemoryLeak(() -> {
+            execute("create table srcd as (" +
+                    "  select timestamp_sequence(1_000_000L, 100L) as ts, x * 0.25 as d" +
+                    "  from long_sequence(500)" +
+                    ") timestamp(ts) partition by day");
+            writeParquetWithSortClaim("min_max_hive_d/day=2026-05-01/data.parquet", "srcd", "d", false);
+            writeParquetWithSortClaim("min_max_hive_d/day=2026-05-02/data.parquet", "srcd", "d", false);
+            writeParquetWithSortClaim("min_max_hive_d/day=2026-05-03/data.parquet", "srcd", "d", false);
+
+            final io.questdb.std.str.StringSink planSink = new io.questdb.std.str.StringSink();
+            try (
+                    io.questdb.griffin.SqlCompiler compiler = engine.getSqlCompiler();
+                    RecordCursorFactory factory = compiler.compile(
+                            "EXPLAIN SELECT min(d), max(d) FROM read_parquet('min_max_hive_d/day=*/data.parquet')",
+                            sqlExecutionContext
+                    ).getRecordCursorFactory();
+                    io.questdb.cairo.sql.RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+            ) {
+                io.questdb.cairo.sql.Record rec = cursor.getRecord();
+                while (cursor.hasNext()) {
+                    planSink.put(rec.getStrA(0)).put('\n');
+                }
+            }
+            Assert.assertTrue(
+                    "Hive footer factory must appear in EXPLAIN for DOUBLE non-ts MIN/MAX, got:\n" + planSink,
+                    planSink.toString().toLowerCase().contains("parquet hive footer aggregate")
+            );
+
+            // x*0.25 for x in [1, 500]: min 0.25, max 125.0. Three
+            // identical files don't change the global aggregate.
+            assertQueryNoLeakCheck(
+                    "min\tmax\n0.25\t125.0\n",
+                    "SELECT min(d), max(d) FROM read_parquet('min_max_hive_d/day=*/data.parquet')",
+                    null,
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
     public void testFooterMinMaxShortcutHiveSkippedWithWhereClause() throws Exception {
         // Negative case: WHERE on a partition column would change which
         // files contribute. The detection branch's pre-check rejects on
@@ -1997,6 +2043,57 @@ public class HivePartitionedReadParquetFunctionTest extends AbstractCairoTest {
             path.trimTo(start).concat(relativePath);
             PartitionEncoder.populateFromTableReader(reader, desc, 0);
             PartitionEncoder.encode(desc, path);
+            Assert.assertTrue(Files.exists(path.$()));
+        }
+    }
+
+    /**
+     * Generalised variant of {@link #writeParquetWithIdSortClaim} for any
+     * named column. Stamps {@code sorting_columns} on the chosen column
+     * in the requested direction.
+     */
+    private void writeParquetWithSortClaim(String relativePath, String tableName, String columnName, boolean descending) {
+        FilesFacade ff = configuration.getFilesFacade();
+        try (
+                Path path = new Path();
+                Path dir = new Path();
+                PartitionDescriptor desc = new PartitionDescriptor();
+                TableReader reader = engine.getReader(tableName)
+        ) {
+            path.of(root);
+            int start = path.size();
+            int slash = -1;
+            for (int i = 0; i < relativePath.length(); i++) {
+                char c = relativePath.charAt(i);
+                if (c == '/' || c == java.io.File.separatorChar) {
+                    slash = i;
+                }
+            }
+            if (slash >= 0) {
+                dir.of(root).concat(relativePath.substring(0, slash));
+                Assert.assertEquals(0, ff.mkdirs(dir.slash(), 493));
+            }
+            path.trimTo(start).concat(relativePath);
+            PartitionEncoder.populateFromTableReader(reader, desc, 0);
+            final int columnIndex = reader.getMetadata().getColumnIndex(columnName);
+            PartitionEncoder.encodeWithOptions(
+                    desc,
+                    path,
+                    ParquetCompression.COMPRESSION_UNCOMPRESSED,
+                    true,
+                    false,
+                    0,
+                    0,
+                    ParquetVersion.PARQUET_VERSION_V1,
+                    0,
+                    0,
+                    0.01,
+                    0.0,
+                    -1,
+                    -1L,
+                    columnIndex,
+                    descending
+            );
             Assert.assertTrue(Files.exists(path.$()));
         }
     }
