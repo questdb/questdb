@@ -170,6 +170,14 @@ public class HivePartitionedReadParquetPageFrameCursor implements PageFrameCurso
     // factory-level cached row count instead of re-walking matchedFiles on every
     // cursor open. The factory outlives the cursor and survives close/reopen.
     private final HivePartitionedReadParquetRecordCursorFactory factory;
+    // Memoised result of computePrunedTotal. The pruned total is a pure function of
+    // matchedFiles + the (already-initialised) pushdown filter conditions, both of
+    // which are stable for the cursor's lifetime, so we can serve repeat size() and
+    // calculateSize() calls from the cache instead of re-walking every matched path
+    // and re-evaluating the prune predicate each time. -1 means "not yet computed";
+    // reset by of() and the full-reset branch of toTop alongside the other per-open
+    // state.
+    private long cachedPrunedTotal = -1;
     private int currentFileIndex = -1;
     private long cumulativePartitionLo = 0;
     private SqlExecutionContext executionContext;
@@ -283,6 +291,7 @@ public class HivePartitionedReadParquetPageFrameCursor implements PageFrameCurso
         isTotalRowCountFinalised = false;
         runningRowCount = 0;
         totalRowCount = -1;
+        cachedPrunedTotal = -1;
         isFilterConditionsInitialised = false;
         isAnyFileReleased = false;
         currentFileIndex = -1;
@@ -441,6 +450,8 @@ public class HivePartitionedReadParquetPageFrameCursor implements PageFrameCurso
         isAnyFileReleased = false;
         // Preserve the finalised row count across toTop calls: file row counts are
         // immutable, so once we've seen them once we can keep reusing the total.
+        // cachedPrunedTotal stays valid for the same reason - filter conditions are
+        // unchanged across a toTop and the prune predicate is deterministic.
         if (!isTotalRowCountFinalised) {
             totalRowCount = -1;
             runningRowCount = 0;
@@ -575,6 +586,9 @@ public class HivePartitionedReadParquetPageFrameCursor implements PageFrameCurso
             // across future queries via the cache.
             return factory.getCachedTotalRowCount(ff);
         }
+        if (cachedPrunedTotal >= 0) {
+            return cachedPrunedTotal;
+        }
         ensureFilterConditionsInitialised();
         // perFile is non-null only if a prior no-filter call (or earlier prune-
         // aware call that filled it) already populated the cache. Don't force
@@ -600,6 +614,7 @@ public class HivePartitionedReadParquetPageFrameCursor implements PageFrameCurso
                 sum += cf.decoder.metadata().getRowCount();
             }
         }
+        cachedPrunedTotal = sum;
         return sum;
     }
 
