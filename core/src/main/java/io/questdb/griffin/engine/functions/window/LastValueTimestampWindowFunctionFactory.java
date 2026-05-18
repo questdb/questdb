@@ -1396,11 +1396,17 @@ public class LastValueTimestampWindowFunctionFactory extends AbstractWindowFunct
         public void snapshot(MemoryA sink) {
             MapRecordCursor cursor = map.getCursor();
             MapRecord record = map.getRecord();
-            long liveCount = 0;
-            while (cursor.hasNext()) {
-                if (tombstoneValueIndex < 0 || record.getValue().getByte(tombstoneValueIndex) != 1) {
-                    liveCount++;
+            final long liveCount;
+            if (tombstoneValueIndex < 0 || tombstoneCount == 0) {
+                liveCount = map.size();
+            } else {
+                long count = 0;
+                while (cursor.hasNext()) {
+                    if (record.getValue().getByte(tombstoneValueIndex) != 1) {
+                        count++;
+                    }
                 }
+                liveCount = count;
             }
             sink.putLong(liveCount);
 
@@ -2785,11 +2791,17 @@ public class LastValueTimestampWindowFunctionFactory extends AbstractWindowFunct
         public void snapshot(MemoryA sink) {
             MapRecordCursor cursor = map.getCursor();
             MapRecord record = map.getRecord();
-            long liveCount = 0;
-            while (cursor.hasNext()) {
-                if (tombstoneValueIndex < 0 || record.getValue().getByte(tombstoneValueIndex) != 1) {
-                    liveCount++;
+            final long liveCount;
+            if (tombstoneValueIndex < 0 || tombstoneCount == 0) {
+                liveCount = map.size();
+            } else {
+                long count = 0;
+                while (cursor.hasNext()) {
+                    if (record.getValue().getByte(tombstoneValueIndex) != 1) {
+                        count++;
+                    }
                 }
+                liveCount = count;
             }
             sink.putLong(liveCount);
 
@@ -3130,11 +3142,17 @@ public class LastValueTimestampWindowFunctionFactory extends AbstractWindowFunct
         public void snapshot(MemoryA sink) {
             MapRecordCursor cursor = map.getCursor();
             MapRecord record = map.getRecord();
-            long liveCount = 0;
-            while (cursor.hasNext()) {
-                if (tombstoneValueIndex < 0 || record.getValue().getByte(tombstoneValueIndex) != 1) {
-                    liveCount++;
+            final long liveCount;
+            if (tombstoneValueIndex < 0 || tombstoneCount == 0) {
+                liveCount = map.size();
+            } else {
+                long count = 0;
+                while (cursor.hasNext()) {
+                    if (record.getValue().getByte(tombstoneValueIndex) != 1) {
+                        count++;
+                    }
                 }
+                liveCount = count;
             }
             sink.putLong(liveCount);
 
