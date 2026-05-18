@@ -454,9 +454,22 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         char c = rec.getChar(col);
         if (c == 0) {
             response.putAscii("\"\"");
-        } else {
-            response.putAscii('"').put(c).putAscii('"');
+            return;
         }
+        // Emit the char as a JSON string literal. Mirrors Utf8Sink.escapeJsonStr
+        // for a single char: control chars (< 0x20) get a backslash-u escape
+        // (or short \b/\f/\n/\r/\t form); double quote and backslash get a
+        // backslash prefix; everything else is forwarded verbatim through
+        // put(char), which handles UTF-8 for the non-ASCII range.
+        response.putAscii('"');
+        if (c < 0x20) {
+            response.escapeJsonStrChar(c);
+        } else if (c == '"' || c == '\\') {
+            response.putAscii('\\').putAscii(c);
+        } else {
+            response.put(c);
+        }
+        response.putAscii('"');
     }
 
     private static void putDateValue(HttpChunkedResponse response, Record rec, int col) {
