@@ -8796,9 +8796,20 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 long totalUncommitted = walLagRowCount + commitRowCount;
                 long newMaxLagTimestamp = Math.max(o3TimestampMax, txWriter.getLagMaxTimestamp());
                 boolean lastPartitionIsParquet = isLastPartitionParquet();
+                // On a FORMAT PARQUET table with no committed rows yet, the only
+                // partition is the native placeholder that openPartition above
+                // creates for empty tables. processWalCommitFinishApply deletes
+                // it on full commit and writeFreshParquetFromO3 rebuilds the
+                // partition as parquet. Stashing data into its LAG would write
+                // into native files that get rmdir'd before the data is flushed.
+                // FORMAT PARQUET tables with existing native partitions are
+                // unaffected: those partitions accept LAG normally.
+                boolean isParquetTableEmptyPlaceholder = txWriter.getRowCount() == 0
+                        && metadata.getTableFormat() == TableUtils.TABLE_FORMAT_PARQUET;
+                boolean noLag = lastPartitionIsParquet || isParquetTableEmptyPlaceholder;
                 boolean needFullCommit = forceFullCommit
-                        // Last partition is parquet, cannot store LAG in native column files
-                        || lastPartitionIsParquet
+                        // No LAG available (parquet partition or parquet table)
+                        || noLag
                         // Too many rows in LAG
                         || totalUncommitted > maxLagRows
                         // Can commit without O3 and LAG has just enough rows
@@ -8809,9 +8820,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         // this is to bring the latency of data visibility inline with user expectations
                         || (wallClockMicros - lastWalCommitTimestampMicros > configuration.getCommitLatency());
 
-                boolean canFastCommit = !lastPartitionIsParquet && indexers.size() == 0 && applyFromWalLagToLastPartitionPossible(commitToTimestamp, txWriter.getLagRowCount(), txWriter.isLagOrdered(), txWriter.getMaxTimestamp(), txWriter.getLagMinTimestamp(), txWriter.getLagMaxTimestamp());
+                boolean canFastCommit = !noLag && indexers.size() == 0 && applyFromWalLagToLastPartitionPossible(commitToTimestamp, txWriter.getLagRowCount(), txWriter.isLagOrdered(), txWriter.getMaxTimestamp(), txWriter.getLagMinTimestamp(), txWriter.getLagMaxTimestamp());
                 boolean lagOrderedNew = !isCommitDedupMode() && txWriter.isLagOrdered() && ordered && walLagMaxTimestampBefore <= o3TimestampMin;
-                boolean canFastCommitNew = !lastPartitionIsParquet && applyFromWalLagToLastPartitionPossible(commitToTimestamp, totalUncommitted, lagOrderedNew, txWriter.getMaxTimestamp(), newMinLagTimestamp, newMaxLagTimestamp);
+                boolean canFastCommitNew = !noLag && applyFromWalLagToLastPartitionPossible(commitToTimestamp, totalUncommitted, lagOrderedNew, txWriter.getMaxTimestamp(), newMinLagTimestamp, newMaxLagTimestamp);
 
                 // Fast commit of existing LAG data is possible but will not be possible after current transaction is added to the lag.
                 // Also fast LAG commit will not cause O3 with the current transaction.
@@ -8991,14 +9002,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         long rowLo = walTxnDetails.getSegmentRowLo(seqTxn);
         long rowHi = walTxnDetails.getSegmentRowHi(seqTxn);
         boolean inOrder = walTxnDetails.getTxnInOrder(seqTxn);
-        // FORMAT PARQUET tables cannot use the in-order LAG fast path: that
-        // path appends into native column files of the active partition, but
-        // parquet partitions have no append-friendly column files. Force the
-        // commit through the O3 path so every partition (existing parquet,
-        // brand-new parquet) is handled uniformly via O3PartitionJob.
-        if (inOrder && metadata.getTableFormat() == TableUtils.TABLE_FORMAT_PARQUET) {
-            inOrder = false;
-        }
         byte dedupMode = walTxnDetails.getDedupMode(seqTxn);
         long replaceRangeTsLo = walTxnDetails.getReplaceRangeTsLow(seqTxn);
         long replaceRangeTsHi = walTxnDetails.getReplaceRangeTsHi(seqTxn);

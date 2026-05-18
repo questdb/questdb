@@ -31,9 +31,9 @@ import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.vm.api.MemoryCR;
 import io.questdb.cairo.vm.api.MemoryMA;
 import io.questdb.cairo.vm.api.MemoryR;
+import io.questdb.griffin.engine.table.parquet.OwnedMemoryPartitionDescriptor;
 import io.questdb.griffin.engine.table.parquet.ParquetCompression;
 import io.questdb.griffin.engine.table.parquet.ParquetPartitionDecoder;
-import io.questdb.griffin.engine.table.parquet.MappedMemoryPartitionDescriptor;
 import io.questdb.griffin.engine.table.parquet.PartitionDescriptor;
 import io.questdb.griffin.engine.table.parquet.PartitionEncoder;
 import io.questdb.griffin.engine.table.parquet.PartitionUpdater;
@@ -3499,9 +3499,14 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         final int pathSize = path.size();
         final Path parquetPath = Path.getThreadLocal2(pathToTable);
 
-        // Track buffers we malloc so we can free them on success/error.
-        // Layout: pairs of (addr, size) per column.
-        final LongList allocatedBuffers = new LongList();
+        // Reuse the thread-local context: its OwnedMemoryPartitionDescriptor
+        // takes ownership of malloc'd column buffers on successful addColumn
+        // and frees them in clear(). PartitionEncoder.encodeWithOptions calls
+        // clear() in its finally; the outer finally below clears again to
+        // catch buffers added before an exception is thrown.
+        final O3ParquetMergeContext ctx = PARQUET_MERGE_CONTEXT.get();
+        final OwnedMemoryPartitionDescriptor descriptor = ctx.getPartitionDescriptor();
+        descriptor.clear();
 
         long parquetFileSize = 0;
         long parquetMetaFd = -1;
@@ -3511,50 +3516,49 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             createDirsOrFail(ff, path.slash(), configuration.getMkDirMode());
             partitionDirCreated = true;
 
-            // Plain PartitionDescriptor (not MappedMemoryPartitionDescriptor):
-            // our column buffers are malloc'd via Unsafe and freed in finally,
-            // not mmap'd, so the descriptor must not call munmap on close.
-            try (PartitionDescriptor descriptor = new PartitionDescriptor()) {
-                final int readerTimestampIndex = metadata.getTimestampIndex();
-                final int writerTimestampIndex = readerTimestampIndex >= 0
-                        ? metadata.getColumnMetadata(readerTimestampIndex).getWriterIndex()
-                        : -1;
-                descriptor.of(tableWriter.getTableToken().getTableName(), partitionRowCount, writerTimestampIndex);
+            final int readerTimestampIndex = metadata.getTimestampIndex();
+            final int writerTimestampIndex = readerTimestampIndex >= 0
+                    ? metadata.getColumnMetadata(readerTimestampIndex).getWriterIndex()
+                    : -1;
+            descriptor.of(tableWriter.getTableToken().getTableName(), partitionRowCount, writerTimestampIndex);
 
-                final int columnCount = metadata.getColumnCount();
-                for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
-                    final int columnType = metadata.getColumnType(columnIndex);
-                    if (columnType <= 0) {
-                        continue;
+            final int columnCount = metadata.getColumnCount();
+            for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
+                final int columnType = metadata.getColumnType(columnIndex);
+                if (columnType <= 0) {
+                    continue;
+                }
+                final String columnName = metadata.getColumnName(columnIndex);
+                final int columnId = metadata.getColumnMetadata(columnIndex).getWriterIndex();
+                final int parquetEncodingConfig = metadata.getColumnMetadata(columnIndex).getParquetEncodingConfig();
+                final boolean notTheTimestamp = columnIndex != readerTimestampIndex;
+
+                if (ColumnType.isVarSize(columnType)) {
+                    // Variable-length columns: primary holds raw payload,
+                    // auxiliary holds offsets/lengths. Allocate both, run
+                    // mergeCopy to assemble a sorted contiguous pair, hand
+                    // both to the descriptor.
+                    final MemoryCR oooDataMem = oooColumns.getQuick(TableWriter.getPrimaryColumnIndex(columnIndex));
+                    final MemoryCR oooAuxMem = oooColumns.getQuick(TableWriter.getSecondaryColumnIndex(columnIndex));
+                    final long srcOooDataAddr = oooDataMem.addressOf(0);
+                    final long srcOooAuxAddr = oooAuxMem.addressOf(0);
+
+                    final ColumnTypeDriver ctd = ColumnType.getDriver(columnType);
+                    final long dstAuxSize = ctd.getAuxVectorSize(partitionRowCount);
+                    // Source aux holds entries for srcOooLo..srcOooHi; data
+                    // size is bounded by the offsets at those entries.
+                    final long dstDataSize = ctd.getDataVectorSize(srcOooAuxAddr, srcOooLo, srcOooHi);
+
+                    final long dstAuxAddr = Unsafe.malloc(dstAuxSize, MemoryTag.NATIVE_O3);
+                    final long dstDataAddr;
+                    try {
+                        dstDataAddr = Unsafe.malloc(dstDataSize, MemoryTag.NATIVE_O3);
+                    } catch (Throwable th) {
+                        Unsafe.free(dstAuxAddr, dstAuxSize, MemoryTag.NATIVE_O3);
+                        throw th;
                     }
-                    final String columnName = metadata.getColumnName(columnIndex);
-                    final int columnId = metadata.getColumnMetadata(columnIndex).getWriterIndex();
-                    final int parquetEncodingConfig = metadata.getColumnMetadata(columnIndex).getParquetEncodingConfig();
-                    final boolean notTheTimestamp = columnIndex != readerTimestampIndex;
 
-                    if (ColumnType.isVarSize(columnType)) {
-                        // Variable-length columns: primary holds raw payload,
-                        // auxiliary holds offsets/lengths. Allocate both, run
-                        // mergeCopy to assemble a sorted contiguous pair, hand
-                        // both to the descriptor.
-                        final MemoryCR oooDataMem = oooColumns.getQuick(TableWriter.getPrimaryColumnIndex(columnIndex));
-                        final MemoryCR oooAuxMem = oooColumns.getQuick(TableWriter.getSecondaryColumnIndex(columnIndex));
-                        final long srcOooDataAddr = oooDataMem.addressOf(0);
-                        final long srcOooAuxAddr = oooAuxMem.addressOf(0);
-
-                        final ColumnTypeDriver ctd = ColumnType.getDriver(columnType);
-                        final long dstAuxSize = ctd.getAuxVectorSize(partitionRowCount);
-                        // Source aux holds entries for srcOooLo..srcOooHi; data
-                        // size is bounded by the offsets at those entries.
-                        final long dstDataSize = ctd.getDataVectorSize(srcOooAuxAddr, srcOooLo, srcOooHi);
-
-                        final long dstAuxAddr = Unsafe.malloc(dstAuxSize, MemoryTag.NATIVE_O3);
-                        allocatedBuffers.add(dstAuxAddr);
-                        allocatedBuffers.add(dstAuxSize);
-                        final long dstDataAddr = Unsafe.malloc(dstDataSize, MemoryTag.NATIVE_O3);
-                        allocatedBuffers.add(dstDataAddr);
-                        allocatedBuffers.add(dstDataSize);
-
+                    try {
                         O3CopyJob.mergeCopy(
                                 columnType,
                                 mergeIndexAddr,
@@ -3567,34 +3571,39 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                 dstDataAddr,
                                 0
                         );
-
-                        descriptor.addColumn(
-                                columnName,
-                                columnType,
-                                columnId,
-                                0,
-                                dstDataAddr,
-                                dstDataSize,
-                                dstAuxAddr,
-                                dstAuxSize,
-                                0,
-                                0,
-                                parquetEncodingConfig
-                        );
-                        continue;
+                    } catch (Throwable th) {
+                        Unsafe.free(dstAuxAddr, dstAuxSize, MemoryTag.NATIVE_O3);
+                        Unsafe.free(dstDataAddr, dstDataSize, MemoryTag.NATIVE_O3);
+                        throw th;
                     }
 
-                    // mergeCopy reorders rows according to the merge index.
-                    // Even for in-order in-WAL data, this gives us a clean
-                    // contiguous column buffer to hand to PartitionEncoder
-                    // and uniformly handles backdated/O3 input.
-                    final MemoryCR oooMem1 = oooColumns.getQuick(TableWriter.getPrimaryColumnIndex(columnIndex));
-                    final long srcOooFixAddr = oooMem1.addressOf(0);
-                    final long dstFixSize = (long) partitionRowCount * ColumnType.sizeOf(columnType);
-                    final long dstFixAddr = Unsafe.malloc(dstFixSize, MemoryTag.NATIVE_O3);
-                    allocatedBuffers.add(dstFixAddr);
-                    allocatedBuffers.add(dstFixSize);
+                    descriptor.addColumn(
+                            columnName,
+                            columnType,
+                            columnId,
+                            0,
+                            dstDataAddr,
+                            dstDataSize,
+                            dstAuxAddr,
+                            dstAuxSize,
+                            0,
+                            0,
+                            parquetEncodingConfig
+                    );
+                    // Ownership transferred to descriptor; clear() frees both buffers.
+                    continue;
+                }
 
+                // mergeCopy reorders rows according to the merge index.
+                // Even for in-order in-WAL data, this gives us a clean
+                // contiguous column buffer to hand to PartitionEncoder
+                // and uniformly handles backdated/O3 input.
+                final MemoryCR oooMem1 = oooColumns.getQuick(TableWriter.getPrimaryColumnIndex(columnIndex));
+                final long srcOooFixAddr = oooMem1.addressOf(0);
+                final long dstFixSize = (long) partitionRowCount * ColumnType.sizeOf(columnType);
+                final long dstFixAddr = Unsafe.malloc(dstFixSize, MemoryTag.NATIVE_O3);
+
+                try {
                     O3CopyJob.mergeCopy(
                             notTheTimestamp ? columnType : ColumnType.setDesignatedTimestampBit(columnType, true),
                             mergeIndexAddr,
@@ -3607,94 +3616,110 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                             0,
                             0
                     );
+                } catch (Throwable th) {
+                    Unsafe.free(dstFixAddr, dstFixSize, MemoryTag.NATIVE_O3);
+                    throw th;
+                }
 
-                    if (ColumnType.isSymbol(columnType)) {
-                        // Symbol columns store int keys in dstFixAddr; the symbol
-                        // dictionary (offsets + values) comes from the table-wide
-                        // SymbolMapWriter, which the WAL apply driver has already
-                        // updated for this transaction's new symbols via SymbolMapDiff.
-                        final MapWriter symbolMapWriter = tableWriter.getSymbolMapWriter(columnIndex);
-                        final MemoryR offsetsMem = symbolMapWriter.getSymbolOffsetsMemory();
-                        final MemoryR valuesMem = symbolMapWriter.getSymbolValuesMemory();
-                        final int symbolCount = symbolMapWriter.getSymbolCount();
+                if (ColumnType.isSymbol(columnType)) {
+                    // Symbol columns store int keys in dstFixAddr; the symbol
+                    // dictionary (offsets + values) comes from the table-wide
+                    // SymbolMapWriter, which the WAL apply driver has already
+                    // updated for this transaction's new symbols via SymbolMapDiff.
+                    final MapWriter symbolMapWriter;
+                    final MemoryR offsetsMem;
+                    final MemoryR valuesMem;
+                    final int symbolCount;
+                    final long valuesMemSize;
+                    final int encodeColumnType;
+                    try {
+                        symbolMapWriter = tableWriter.getSymbolMapWriter(columnIndex);
+                        offsetsMem = symbolMapWriter.getSymbolOffsetsMemory();
+                        valuesMem = symbolMapWriter.getSymbolValuesMemory();
+                        symbolCount = symbolMapWriter.getSymbolCount();
                         final long offset = SymbolMapWriter.keyToOffset(symbolCount);
                         assert offset - SymbolMapWriter.HEADER_SIZE <= offsetsMem.size();
-                        final long valuesMemSize = offsetsMem.getLong(offset);
+                        valuesMemSize = offsetsMem.getLong(offset);
                         assert valuesMemSize <= valuesMem.size();
 
-                        int encodeColumnType = columnType;
+                        int t = columnType;
                         if (!symbolMapWriter.getNullFlag()) {
-                            encodeColumnType |= PARQUET_SYMBOL_NOT_NULL_HINT;
+                            t |= PARQUET_SYMBOL_NOT_NULL_HINT;
                         }
-                        descriptor.addColumn(
-                                columnName,
-                                encodeColumnType,
-                                columnId,
-                                0,
-                                dstFixAddr,
-                                dstFixSize,
-                                valuesMem.addressOf(0),
-                                valuesMemSize,
-                                // Skip 8-byte header. Pass element count, not byte size.
-                                offsetsMem.addressOf(SymbolMapWriter.HEADER_SIZE),
-                                symbolCount,
-                                parquetEncodingConfig
-                        );
-                    } else {
-                        descriptor.addColumn(
-                                columnName,
-                                columnType,
-                                columnId,
-                                0,
-                                dstFixAddr,
-                                dstFixSize,
-                                0,
-                                0,
-                                0,
-                                0,
-                                parquetEncodingConfig
-                        );
+                        encodeColumnType = t;
+                    } catch (Throwable th) {
+                        Unsafe.free(dstFixAddr, dstFixSize, MemoryTag.NATIVE_O3);
+                        throw th;
                     }
+                    descriptor.addColumn(
+                            columnName,
+                            encodeColumnType,
+                            columnId,
+                            0,
+                            dstFixAddr,
+                            dstFixSize,
+                            valuesMem.addressOf(0),
+                            valuesMemSize,
+                            // Skip 8-byte header. Pass element count, not byte size.
+                            offsetsMem.addressOf(SymbolMapWriter.HEADER_SIZE),
+                            symbolCount,
+                            parquetEncodingConfig
+                    );
+                } else {
+                    descriptor.addColumn(
+                            columnName,
+                            columnType,
+                            columnId,
+                            0,
+                            dstFixAddr,
+                            dstFixSize,
+                            0,
+                            0,
+                            0,
+                            0,
+                            parquetEncodingConfig
+                    );
                 }
+                // Ownership transferred to descriptor; clear() frees dstFixAddr.
+            }
 
-                // Open _pm so the Rust encoder writes parquet metadata alongside
-                // the data file.
-                setPathForParquetPartitionMetadata(parquetPath.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
-                parquetMetaFd = TableUtils.openRW(ff, parquetPath.$(), LOG, configuration.getWriterFileOpenOpts());
+            // Open _pm so the Rust encoder writes parquet metadata alongside
+            // the data file.
+            setPathForParquetPartitionMetadata(parquetPath.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
+            parquetMetaFd = TableUtils.openRW(ff, parquetPath.$(), LOG, configuration.getWriterFileOpenOpts());
 
-                setPathForParquetPartition(parquetPath.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
+            setPathForParquetPartition(parquetPath.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
 
-                final int compressionCodec = configuration.getPartitionEncoderParquetCompressionCodec();
-                final int compressionLevel = configuration.getPartitionEncoderParquetCompressionLevel();
-                final int rowGroupSize = configuration.getPartitionEncoderParquetRowGroupSize();
-                final int dataPageSize = configuration.getPartitionEncoderParquetDataPageSize();
-                final boolean statisticsEnabled = configuration.isPartitionEncoderParquetStatisticsEnabled();
-                final boolean rawArrayEncoding = configuration.isPartitionEncoderParquetRawArrayEncoding();
-                final int parquetVersion = configuration.getPartitionEncoderParquetVersion();
-                final double minCompressionRatio = configuration.getPartitionEncoderParquetMinCompressionRatio();
+            final int compressionCodec = configuration.getPartitionEncoderParquetCompressionCodec();
+            final int compressionLevel = configuration.getPartitionEncoderParquetCompressionLevel();
+            final int rowGroupSize = configuration.getPartitionEncoderParquetRowGroupSize();
+            final int dataPageSize = configuration.getPartitionEncoderParquetDataPageSize();
+            final boolean statisticsEnabled = configuration.isPartitionEncoderParquetStatisticsEnabled();
+            final boolean rawArrayEncoding = configuration.isPartitionEncoderParquetRawArrayEncoding();
+            final int parquetVersion = configuration.getPartitionEncoderParquetVersion();
+            final double minCompressionRatio = configuration.getPartitionEncoderParquetMinCompressionRatio();
 
-                PartitionEncoder.encodeWithOptions(
-                        descriptor,
-                        parquetPath,
-                        ParquetCompression.packCompressionCodecLevel(compressionCodec, compressionLevel),
-                        statisticsEnabled,
-                        rawArrayEncoding,
-                        rowGroupSize,
-                        dataPageSize,
-                        parquetVersion,
-                        0,
-                        0,
-                        configuration.getPartitionEncoderParquetBloomFilterFpp(),
-                        minCompressionRatio,
-                        Files.toOsFd(parquetMetaFd),
-                        -1L
-                );
+            PartitionEncoder.encodeWithOptions(
+                    descriptor,
+                    parquetPath,
+                    ParquetCompression.packCompressionCodecLevel(compressionCodec, compressionLevel),
+                    statisticsEnabled,
+                    rawArrayEncoding,
+                    rowGroupSize,
+                    dataPageSize,
+                    parquetVersion,
+                    0,
+                    0,
+                    configuration.getPartitionEncoderParquetBloomFilterFpp(),
+                    minCompressionRatio,
+                    Files.toOsFd(parquetMetaFd),
+                    -1L
+            );
 
-                parquetFileSize = ff.length(parquetPath.$());
+            parquetFileSize = ff.length(parquetPath.$());
 
-                if (configuration.getCommitMode() != CommitMode.NOSYNC) {
-                    ff.fsync(parquetMetaFd);
-                }
+            if (configuration.getCommitMode() != CommitMode.NOSYNC) {
+                ff.fsync(parquetMetaFd);
             }
 
             // Stat _pm size and release the writer fd before mmap RO for indexing.
@@ -3709,8 +3734,9 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             // path must do the same or readers will SIGABRT trying to open
             // missing index files on the first query against this partition.
             setPathForParquetPartition(parquetPath.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
-            final O3ParquetMergeContext idxCtx = PARQUET_MERGE_CONTEXT.get();
-            idxCtx.clear();
+            // Encoder already cleared the descriptor; clearing the rest of the
+            // context resets transient scratch lists before indexing.
+            ctx.clear();
             updateParquetIndexes(
                     partitionBy,
                     partitionTimestamp,
@@ -3723,10 +3749,10 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     pathToTable,
                     parquetPath,
                     ff,
-                    idxCtx.getPartitionDecoder(),
+                    ctx.getPartitionDecoder(),
                     metadata,
-                    idxCtx.getParquetColumns(),
-                    idxCtx.getRowGroupBuffers(),
+                    ctx.getParquetColumns(),
+                    ctx.getRowGroupBuffers(),
                     true
             );
 
@@ -3755,9 +3781,9 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             tableWriter.o3BumpErrorCount(CairoException.isCairoOomError(th));
             throw th;
         } finally {
-            for (int i = 0, n = allocatedBuffers.size(); i < n; i += 2) {
-                Unsafe.free(allocatedBuffers.getQuick(i), allocatedBuffers.getQuick(i + 1), MemoryTag.NATIVE_O3);
-            }
+            // No-op on success (encoder already cleared); frees any buffers
+            // added to the descriptor before an exception was thrown.
+            descriptor.clear();
             if (parquetMetaFd != -1) {
                 ff.close(parquetMetaFd);
             }
