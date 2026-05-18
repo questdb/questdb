@@ -1560,6 +1560,19 @@ public class SqlParser {
         };
     }
 
+    private static int positionOfWindow(WindowExpression w, ExpressionNode fallback) {
+        if (w.getAnchorPosition() > 0) {
+            return w.getAnchorPosition();
+        }
+        if (w.getPartitionBy().size() > 0) {
+            return w.getPartitionBy().getQuick(0).position;
+        }
+        if (w.getOrderBy().size() > 0) {
+            return w.getOrderBy().getQuick(0).position;
+        }
+        return fallback != null ? fallback.position : 0;
+    }
+
     private static void putHHMM(StringSink sink, long timeUs) {
         long totalSeconds = timeUs / 1_000_000;
         long hours = totalSeconds / 3600;
@@ -1668,7 +1681,19 @@ public class SqlParser {
         int anchoredCount = 0;
         for (int i = 0, n = keys.size(); i < n; i++) {
             WindowExpression w = named.get(keys.getQuick(i));
-            if (w == null || w.getAnchorKind() == WindowExpression.ANCHOR_KIND_NONE) {
+            if (w == null) {
+                continue;
+            }
+            if (w.getAnchorKind() == WindowExpression.ANCHOR_KIND_NONE) {
+                // RFC 123 CREATE-time validation: a bare unbounded window
+                // (default RANGE UNBOUNDED PRECEDING ... CURRENT ROW frame
+                // with PARTITION BY) without ANCHOR grows the partition count
+                // without bound. Bounded frames remain allowed without
+                // ANCHOR; so does a single-partition window (OVER ()).
+                if (!w.isNonDefaultFrame() && w.getPartitionBy().size() > 0) {
+                    throw SqlException.$(positionOfWindow(w, null),
+                            "live view unbounded window must have an ANCHOR clause; bare unbounded windows are not supported");
+                }
                 continue;
             }
             anchoredCount++;
@@ -1693,6 +1718,41 @@ public class SqlParser {
                 walkAnchorExpressionForPurity(expr);
             }
         }
+
+        // Inline OVER (...) clauses attached to SELECT-column function calls.
+        // A column may either be an inline WindowExpression itself (e.g. SELECT
+        // sum(price) OVER (...) FROM t) or carry a nested inline OVER inside an
+        // arithmetic / function tree (e.g. sum(price) OVER (...) + 1). Walk both.
+        ObjList<QueryColumn> columns = queryModel.getBottomUpColumns();
+        for (int i = 0, n = columns.size(); i < n; i++) {
+            QueryColumn qc = columns.getQuick(i);
+            if (qc.isWindowExpression()) {
+                rejectIfBareUnbounded((WindowExpression) qc, qc.getAst());
+            }
+            walkInlineWindowsForBareUnbounded(qc.getAst());
+        }
+    }
+
+    private static void rejectIfBareUnbounded(WindowExpression w, ExpressionNode fallback) throws SqlException {
+        // An OVER <named-window> reference inherits the bound check from the
+        // named definition (already validated upstream in this method).
+        if (w.isNamedWindowReference()) {
+            return;
+        }
+        if (w.getAnchorKind() != WindowExpression.ANCHOR_KIND_NONE) {
+            return;
+        }
+        if (w.isNonDefaultFrame()) {
+            return;
+        }
+        // OVER () with no PARTITION BY has a single partition with O(1) state.
+        // Only PARTITION-BY-keyed bare unbounded windows have unbounded partition
+        // count growth and require an ANCHOR clause.
+        if (w.getPartitionBy().size() == 0) {
+            return;
+        }
+        throw SqlException.$(positionOfWindow(w, fallback),
+                "live view unbounded window must have an ANCHOR clause; bare unbounded windows are not supported");
     }
 
     /**
@@ -1739,6 +1799,23 @@ public class SqlParser {
         if (node.args != null) {
             for (int i = 0, n = node.args.size(); i < n; i++) {
                 walkAnchorExpressionForPurity(node.args.getQuick(i));
+            }
+        }
+    }
+
+    private static void walkInlineWindowsForBareUnbounded(ExpressionNode node) throws SqlException {
+        if (node == null) {
+            return;
+        }
+        if (node.windowExpression != null) {
+            rejectIfBareUnbounded(node.windowExpression, node);
+        }
+        if (node.paramCount < 3) {
+            walkInlineWindowsForBareUnbounded(node.lhs);
+            walkInlineWindowsForBareUnbounded(node.rhs);
+        } else if (node.args != null) {
+            for (int i = 0, n = node.paramCount; i < n; i++) {
+                walkInlineWindowsForBareUnbounded(node.args.getQuick(i));
             }
         }
     }

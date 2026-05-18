@@ -179,6 +179,60 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRejectBareUnboundedWindow() throws Exception {
+        // RFC 123 CREATE-time validation: a window with PARTITION BY and the
+        // default (UNBOUNDED PRECEDING ... CURRENT ROW) frame must have an
+        // ANCHOR clause, otherwise partition count grows without bound.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, symbol SYMBOL, price DOUBLE) " +
+                    "TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            // (a) named WINDOW shape.
+            try {
+                execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                        "SELECT ts, symbol, sum(price) OVER w AS s FROM base " +
+                        "WINDOW w AS (PARTITION BY symbol ORDER BY ts)");
+                Assert.fail("expected bare unbounded named WINDOW reject");
+            } catch (SqlException e) {
+                Assert.assertTrue(e.getMessage(), e.getMessage().contains(
+                        "live view unbounded window must have an ANCHOR clause; bare unbounded windows are not supported"));
+            }
+
+            // (b) inline OVER (...) shape.
+            try {
+                execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                        "SELECT ts, symbol, sum(price) OVER (PARTITION BY symbol ORDER BY ts) AS s FROM base");
+                Assert.fail("expected bare unbounded inline OVER reject");
+            } catch (SqlException e) {
+                Assert.assertTrue(e.getMessage(), e.getMessage().contains(
+                        "live view unbounded window must have an ANCHOR clause; bare unbounded windows are not supported"));
+            }
+
+            // (c) inline OVER nested inside an arithmetic expression must still be caught.
+            try {
+                execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                        "SELECT ts, symbol, sum(price) OVER (PARTITION BY symbol ORDER BY ts) + 1 AS s FROM base");
+                Assert.fail("expected bare unbounded nested OVER reject");
+            } catch (SqlException e) {
+                Assert.assertTrue(e.getMessage(), e.getMessage().contains(
+                        "live view unbounded window must have an ANCHOR clause; bare unbounded windows are not supported"));
+            }
+
+            // (d) bounded ROWS frame without ANCHOR is accepted.
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                    "SELECT ts, symbol, sum(price) OVER (PARTITION BY symbol ORDER BY ts " +
+                    "ROWS BETWEEN 4 PRECEDING AND CURRENT ROW) AS s FROM base");
+            execute("DROP LIVE VIEW lv");
+
+            // (e) ANCHOR DAILY satisfies the rule for the same window shape.
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                    "SELECT ts, symbol, sum(price) OVER w AS s FROM base " +
+                    "WINDOW w AS (PARTITION BY symbol ORDER BY ts ANCHOR DAILY '00:00')");
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
     public void testRejectFlushEveryBelow100Ms() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
@@ -722,7 +776,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
             execute("CREATE TABLE base (ts TIMESTAMP, sym VARCHAR, x INT) " +
                     "TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
-                    "SELECT ts, sym, x, row_number() OVER (PARTITION BY sym ORDER BY ts) AS rn FROM base");
+                    "SELECT ts, sym, x, row_number() OVER (PARTITION BY sym ORDER BY ts ANCHOR DAILY '00:00') AS rn FROM base");
             execute("INSERT INTO base (ts, sym, x) VALUES " +
                     "('2026-05-12T00:00:00.000001Z', 'a', 10), " +
                     "('2026-05-12T00:00:00.000002Z', 'b', 20), " +
@@ -3943,13 +3997,14 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                     "TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
                     "SELECT ts, sym, " +
-                    "  stddev_samp(x) OVER (PARTITION BY sym ORDER BY ts) AS sd, " +
-                    "  corr(x, y) OVER (PARTITION BY sym ORDER BY ts) AS cr, " +
-                    "  avg(x, 'period', 5) OVER (PARTITION BY sym ORDER BY ts) AS ep, " +
-                    "  avg(x, 'minute', 5) OVER (PARTITION BY sym ORDER BY ts) AS et, " +
-                    "  avg(x, 'period', 5, vol) OVER (PARTITION BY sym ORDER BY ts) AS vp, " +
-                    "  avg(x, 'minute', 5, vol) OVER (PARTITION BY sym ORDER BY ts) AS vt " +
-                    "FROM base");
+                    "  stddev_samp(x) OVER w AS sd, " +
+                    "  corr(x, y) OVER w AS cr, " +
+                    "  avg(x, 'period', 5) OVER w AS ep, " +
+                    "  avg(x, 'minute', 5) OVER w AS et, " +
+                    "  avg(x, 'period', 5, vol) OVER w AS vp, " +
+                    "  avg(x, 'minute', 5, vol) OVER w AS vt " +
+                    "FROM base " +
+                    "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR DAILY '00:00')");
 
             final long preHeadLvSeqTxn;
             final long preLastProcessed;

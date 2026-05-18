@@ -276,7 +276,7 @@ public class LiveViewTest extends AbstractCairoTest {
             execute("CREATE TABLE base (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR WAL");
             try {
                 execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
-                        "SELECT val, ts, ntile(4) OVER (PARTITION BY val ORDER BY ts) AS bucket FROM base");
+                        "SELECT val, ts, ntile(4) OVER (PARTITION BY val ORDER BY ts ANCHOR DAILY '00:00') AS bucket FROM base");
                 Assert.fail("expected SqlException for TWO_PASS window function");
             } catch (SqlException e) {
                 Assert.assertTrue(
@@ -403,7 +403,7 @@ public class LiveViewTest extends AbstractCairoTest {
             execute("CREATE TABLE base (sym SYMBOL, price DOUBLE, ts TIMESTAMP) " +
                     "TIMESTAMP(ts) PARTITION BY HOUR WAL");
             execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
-                    "SELECT sym, price, ts, row_number() OVER (PARTITION BY sym ORDER BY ts) AS rn FROM base");
+                    "SELECT sym, price, ts, row_number() OVER (PARTITION BY sym ORDER BY ts ANCHOR DAILY '00:00') AS rn FROM base");
             assertSql(
                     "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude\n" +
                             "sym\tSYMBOL\tfalse\t0\ttrue\t128\t0\tfalse\tfalse\t\t\n" +
