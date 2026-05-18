@@ -57,6 +57,11 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
     public static final int VIEW_DOES_NOT_EXIST = TABLE_DOES_NOT_EXIST - 1;
     public static final int MAT_VIEW_DOES_NOT_EXIST = VIEW_DOES_NOT_EXIST - 1;
     public static final int TXN_BLOCK_APPLY_FAILED = MAT_VIEW_DOES_NOT_EXIST - 1;
+    // Live-view head .cp restore observed a function snapshot block whose
+    // formatVersion is below the function's current snapshotMinSupportedVersion.
+    // Signals a real compatibility break (not a structural corruption); the
+    // caller invalidates the LV instead of falling into head-miss replay.
+    public static final int LV_FUNCTION_SNAPSHOT_VERSION_TOO_OLD = TXN_BLOCK_APPLY_FAILED - 1;
     public static final int NON_CRITICAL = -1;
     private static final StackTraceElement[] EMPTY_STACK_TRACE = {};
     private static final ThreadLocal<CairoException> tlException = new ThreadLocal<>(CairoException::new);

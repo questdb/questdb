@@ -1395,29 +1395,55 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 }
             }
             return true;
-        } catch (Throwable t) {
-            LOG.critical().$("could not restore live view from head checkpoint [view=")
-                    .$(instance.getDefinition().getViewName())
-                    .$(", lvSeqTxn=").$(headLvSeqTxn)
-                    .$(", error=").$(t).I$();
-            // Best-effort: unlink the corrupt .cp and clear head metadata.
-            // The next refresh cycle falls through to the head-miss replay
-            // path (which restarts from viewLowerBoundTimestamp).
-            try {
-                engine.getConfiguration().getFilesFacade().removeQuiet(path.$());
-            } catch (Throwable rmErr) {
-                LOG.error().$("could not unlink corrupt head checkpoint [view=")
+        } catch (CairoException ce) {
+            if (ce.getErrno() == CairoException.LV_FUNCTION_SNAPSHOT_VERSION_TOO_OLD) {
+                // RFC 123 ".cp file framing": version mismatch is a real
+                // compatibility break, not corruption. Stash the reason on
+                // the instance so the caller drives invalidation outside
+                // the refresh latch (engine.invalidateLiveView parks on the
+                // instance monitor when a checkpoint freeze is active, and
+                // the agent's startCheckpoint cannot complete its latch
+                // handshake while the worker still holds the refresh latch).
+                LOG.critical().$("live view function snapshot version mismatch [view=")
                         .$(instance.getDefinition().getViewName())
-                        .$(", error=").$(rmErr).I$();
+                        .$(", lvSeqTxn=").$(headLvSeqTxn)
+                        .$(", error=").$safe(ce.getFlyweightMessage()).I$();
+                instance.setPendingInvalidationReason(Chars.toString(ce.getFlyweightMessage()));
+                return false;
             }
-            instance.setHeadCheckpoint(Numbers.LONG_NULL, Numbers.LONG_NULL, 0L, Numbers.LONG_NULL);
-            return false;
+            return handleCorruptHeadCheckpoint(instance, headLvSeqTxn, path, ce);
+        } catch (Throwable t) {
+            return handleCorruptHeadCheckpoint(instance, headLvSeqTxn, path, t);
         } finally {
             try {
                 checkpointReader.close();
             } catch (Throwable ignored) {
             }
         }
+    }
+
+    private boolean handleCorruptHeadCheckpoint(
+            LiveViewInstance instance,
+            long headLvSeqTxn,
+            Path path,
+            Throwable t
+    ) {
+        LOG.critical().$("could not restore live view from head checkpoint [view=")
+                .$(instance.getDefinition().getViewName())
+                .$(", lvSeqTxn=").$(headLvSeqTxn)
+                .$(", error=").$(t).I$();
+        // Best-effort: unlink the corrupt .cp and clear head metadata.
+        // The next refresh cycle falls through to the head-miss replay
+        // path (which restarts from viewLowerBoundTimestamp).
+        try {
+            engine.getConfiguration().getFilesFacade().removeQuiet(path.$());
+        } catch (Throwable rmErr) {
+            LOG.error().$("could not unlink corrupt head checkpoint [view=")
+                    .$(instance.getDefinition().getViewName())
+                    .$(", error=").$(rmErr).I$();
+        }
+        instance.setHeadCheckpoint(Numbers.LONG_NULL, Numbers.LONG_NULL, 0L, Numbers.LONG_NULL);
+        return false;
     }
 
     /**
@@ -1502,17 +1528,20 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     .put("function not found in compiled live view SELECT, name=")
                     .put(storedClassName);
         }
-        if (formatVersion < match.snapshotMinSupportedVersion()
-                || formatVersion > match.snapshotFormatVersion()) {
-            throw CairoException.critical(0)
-                    .put("function snapshot format version out of range, function=")
+        if (formatVersion < match.snapshotMinSupportedVersion()) {
+            // RFC 123 ".cp file framing / Corruption handling": below-min
+            // versions are a real compatibility break (operator DROP+CREATE
+            // is the recovery), not structural corruption. Tag the throw so
+            // the catch site invalidates the LV rather than unlinking and
+            // replaying from head-miss. Above-current versions are tolerated:
+            // future writers may emit blocks readers do not understand yet.
+            throw CairoException.critical(CairoException.LV_FUNCTION_SNAPSHOT_VERSION_TOO_OLD)
+                    .put("live view function snapshot version too old, function=")
                     .put(storedClassName)
-                    .put(", got=")
+                    .put(", read=")
                     .put(formatVersion)
                     .put(", minSupported=")
-                    .put(match.snapshotMinSupportedVersion())
-                    .put(", current=")
-                    .put(match.snapshotFormatVersion());
+                    .put(match.snapshotMinSupportedVersion());
         }
 
         final long payloadStart = offset;
@@ -1835,6 +1864,12 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         // complete its latch handshake while the worker still holds the
         // refresh latch. Running the invalidate after unlockAfterRefresh
         // avoids that deadlock.
+        if (invalidationReason == null) {
+            // The restore path may have stashed its own invalidate reason
+            // (e.g. version-too-old function snapshot in the head .cp). Drain
+            // and run it on the same out-of-latch path.
+            invalidationReason = instance.takePendingInvalidationReason();
+        }
         if (invalidationReason != null) {
             engine.invalidateLiveView(instance, invalidationReason);
         }

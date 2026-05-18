@@ -154,6 +154,15 @@ public class LiveViewInstance implements QuietCloseable {
     private volatile long latestSeenTs = Numbers.LONG_NULL;
     // Live-view's own table token. Populated at construction.
     private final TableToken liveViewToken;
+    // Reason string the refresh worker stashes here when a head-restore step
+    // surfaces a "version too old" function snapshot (RFC 123 .cp file framing).
+    // The worker holds the refresh latch when populating this field; the same
+    // worker drains it (consumes and clears) after releasing the latch and runs
+    // engine.invalidateLiveView. The two-step is to avoid a deadlock: the
+    // invalidate path parks on the instance monitor when a checkpoint freeze is
+    // active, and the agent's startCheckpoint cannot complete its latch
+    // handshake while the worker holds the refresh latch.
+    private String pendingInvalidationReason;
     // Cached RecordToRowCopier (compiled bytecode bridging the SELECT cursor's record
     // shape to the LV's WalWriter row). Invalidated when the WalWriter's metadata version
     // moves past recordRowCopierMetadataVersion. Accessed only while the refresh latch is held.
@@ -568,6 +577,17 @@ public class LiveViewInstance implements QuietCloseable {
         stateReader.setLvConsumedSeqTxn(lvConsumedSeqTxn);
     }
 
+    /**
+     * Refresh-worker stash for a deferred invalidate (currently used by the
+     * head-checkpoint restore path on a version-too-old function snapshot).
+     * Worker calls this while holding the refresh latch; the caller of
+     * {@code refreshInstance} drains via {@link #takePendingInvalidationReason}
+     * after the latch is released and runs the engine-side invalidate.
+     */
+    public void setPendingInvalidationReason(String reason) {
+        this.pendingInvalidationReason = reason;
+    }
+
     public void setRecordToRowCopier(RecordToRowCopier copier, long metadataVersion) {
         this.recordToRowCopier = copier;
         this.recordRowCopierMetadataVersion = metadataVersion;
@@ -623,6 +643,12 @@ public class LiveViewInstance implements QuietCloseable {
             Os.pause();
         }
         refreshLatch.set(false);
+    }
+
+    public String takePendingInvalidationReason() {
+        String reason = this.pendingInvalidationReason;
+        this.pendingInvalidationReason = null;
+        return reason;
     }
 
     public void tryCloseIfDropped() {

@@ -29,6 +29,8 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.file.BlockFileWriter;
+import io.questdb.cairo.lv.LiveViewCheckpointBlockType;
+import io.questdb.cairo.lv.LiveViewCheckpointManifest;
 import io.questdb.cairo.lv.LiveViewCheckpointWriter;
 import io.questdb.cairo.lv.LiveViewDefinition;
 import io.questdb.cairo.lv.LiveViewWindow;
@@ -37,6 +39,7 @@ import io.questdb.cairo.lv.LiveViewInMemoryTier;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
 import io.questdb.cairo.lv.LiveViewState;
+import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapRecord;
 import io.questdb.cairo.map.MapRecordCursor;
@@ -3766,6 +3769,99 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                     "function partition map rehydrated to its pre-restart size",
                     preFunctionMapSize,
                     reloaded.getAnchorWindow().getFunctions().getQuick(0).getPartitionMap().size()
+            );
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testRestoreVersionMismatchInvalidatesView() throws Exception {
+        // RFC 123 ".cp file framing / Corruption handling": a FUNCTION_SNAPSHOT
+        // block whose formatVersion is below the function's current
+        // snapshotMinSupportedVersion is a real compatibility break, not
+        // structural corruption. The restore path must mark the LV INVALID
+        // (operators recover with DROP+CREATE) instead of unlinking the .cp
+        // and falling into head-miss replay.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x INT) " +
+                    "TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+                    "SELECT ts, sym, x, row_number() OVER w AS rn FROM base " +
+                    "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR DAILY '00:00')");
+
+            // Drive a refresh so a real .cp is written and the compiled
+            // factory is cached on the instance. Capture the lvSeqTxn and the
+            // actual function class name; the hand-written replacement below
+            // must match the name so restoreFunctionBlock's dispatch finds it.
+            execute("INSERT INTO base (ts, sym, x) VALUES ('2026-06-01T00:00:00.000000Z', 'a', 1)");
+            drainWalQueue();
+            final String fnClassName;
+            final long headLvSeqTxn;
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+                drainWalQueue();
+                final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull(instance);
+                headLvSeqTxn = instance.getHeadCheckpointLvSeqTxn();
+                Assert.assertNotEquals(Numbers.LONG_NULL, headLvSeqTxn);
+                fnClassName = instance.getAnchorWindow().getFunctions().getQuick(0).getClass().getName();
+            }
+
+            // Replace the .cp with one that has the same lvSeqTxn but
+            // formatVersion = 0 in the function block. The writer auto-handles
+            // CRC. We omit the anchor block since the restore unwinds at the
+            // version check before getting to it.
+            try (Path lvDir = new Path()) {
+                final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                lvDir.of(engine.getConfiguration().getDbRoot()).concat(instance.getLiveViewToken()).slash();
+
+                try (Path cpPath = new Path()) {
+                    cpPath.of(lvDir).concat(LiveViewCheckpointWriter.CHECKPOINT_DIR_NAME).slash();
+                    LiveViewCheckpointWriter.appendCpFileName(cpPath, headLvSeqTxn);
+                    engine.getConfiguration().getFilesFacade().removeQuiet(cpPath.$());
+                }
+
+                try (LiveViewCheckpointWriter w = new LiveViewCheckpointWriter(engine.getConfiguration())) {
+                    w.of(lvDir.$(), headLvSeqTxn);
+                    w.writeManifestBlock(new LiveViewCheckpointManifest()
+                            .setLvSeqTxn(headLvSeqTxn)
+                            .setLvRowPosition(0)
+                            .setBaseSeqTxn(0)
+                            .setMaxTimestamp(0)
+                            .setKind(LiveViewCheckpointManifest.KIND_STEADY)
+                            .addWindowName("w"));
+                    final MemoryA fnSink = w.beginBlock(LiveViewCheckpointBlockType.BLOCK_FUNCTION_SNAPSHOT);
+                    fnSink.putStr("w");
+                    fnSink.putStr(fnClassName);
+                    fnSink.putInt(0); // intentionally below snapshotMinSupportedVersion
+                    w.endBlock();
+                    w.commit(Numbers.LONG_NULL);
+                }
+            }
+
+            // Restart: clear the registry and rebuild from on-disk. The
+            // startup sweep re-stamps the head lvSeqTxn from the filename.
+            engine.getLiveViewRegistry().clear();
+            engine.buildViewGraphs();
+            final LiveViewInstance reloaded = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(reloaded);
+            Assert.assertEquals(headLvSeqTxn, reloaded.getHeadCheckpointLvSeqTxn());
+            Assert.assertFalse("LV must still be valid pre-refresh", reloaded.isInvalid());
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+            }
+
+            Assert.assertTrue(
+                    "version-too-old in the head .cp must invalidate the LV",
+                    reloaded.isInvalid()
+            );
+            final CharSequence reason = reloaded.getStateReader().getInvalidationReason();
+            Assert.assertNotNull(reason);
+            Assert.assertTrue(
+                    "invalidation reason mentions version-too-old [reason=" + reason + ']',
+                    Chars.contains(reason, "version too old")
             );
 
             execute("DROP LIVE VIEW lv");
