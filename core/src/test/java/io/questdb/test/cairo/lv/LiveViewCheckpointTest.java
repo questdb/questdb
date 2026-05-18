@@ -100,7 +100,7 @@ public class LiveViewCheckpointTest extends AbstractCairoTest {
                             .setKind(LiveViewCheckpointManifest.KIND_STEADY)
                             .addWindowName("w"));
 
-                    final MemoryA anchor = writer.beginBlock(LiveViewCheckpointBlockType.BLOCK_ANCHOR);
+                    final MemoryA anchor = writer.beginBlock(LiveViewCheckpointBlockType.BLOCK_WINDOW_ANCHOR);
                     anchor.putLong(10);
                     anchor.putLong(20);
                     writer.endBlock();
@@ -125,7 +125,7 @@ public class LiveViewCheckpointTest extends AbstractCairoTest {
 
                     Assert.assertTrue(cursor.hasNext());
                     block = cursor.next();
-                    Assert.assertEquals(LiveViewCheckpointBlockType.BLOCK_ANCHOR, block.type());
+                    Assert.assertEquals(LiveViewCheckpointBlockType.BLOCK_WINDOW_ANCHOR, block.type());
                     Assert.assertEquals(Long.BYTES * 2L, block.size());
                     Assert.assertEquals(10L, block.getLong(0));
                     Assert.assertEquals(20L, block.getLong(Long.BYTES));

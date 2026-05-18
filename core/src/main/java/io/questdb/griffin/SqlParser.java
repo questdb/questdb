@@ -1540,14 +1540,14 @@ public class SqlParser {
     /**
      * Renders a duration in microseconds onto an asserted-wording error message,
      * picking the largest unit that divides cleanly. Mirrors the user-facing
-     * grammar units accepted by {@link LiveViewDefinition#parseDurationUnit}, so
-     * {@code 60min} round-trips back through the parser.
+     * grammar units accepted by {@link LiveViewDefinition#parseDurationUnit} so
+     * the rendered string can be copy-pasted back into a CREATE.
      */
     private static void appendDurationFromMicros(SqlException ex, long micros) {
         if (micros > 0 && micros % Micros.HOUR_MICROS == 0) {
             ex.put(micros / Micros.HOUR_MICROS).put('h');
         } else if (micros > 0 && micros % Micros.MINUTE_MICROS == 0) {
-            ex.put(micros / Micros.MINUTE_MICROS).put("min");
+            ex.put(micros / Micros.MINUTE_MICROS).put('m');
         } else if (micros > 0 && micros % Micros.SECOND_MICROS == 0) {
             ex.put(micros / Micros.SECOND_MICROS).put('s');
         } else if (micros > 0 && micros % Micros.MILLI_MICROS == 0) {
@@ -1565,7 +1565,7 @@ public class SqlParser {
     private static String displayDurationUnit(char unit) {
         return switch (unit) {
             case 's' -> "s";
-            case 'm' -> "min";
+            case 'm' -> "m";
             case 'h' -> "h";
             case 'd' -> "d";
             case 'T' -> "ms";
@@ -1602,30 +1602,11 @@ public class SqlParser {
     }
 
     /**
-     * Asserted-wording validation for ANCHOR clauses on named windows in a live-view
-     * SELECT — Pass 1 of the RFC 123 ANCHOR EXPRESSION validator. Enforces:
-     * <ul>
-     *     <li>{@code ANCHOR} on a window with a non-default frame is rejected — anchor-aware
-     *     incremental refresh applies only to UNBOUNDED frames.</li>
-     *     <li>Direct constant {@code ANCHOR EXPRESSION} (e.g. {@code ANCHOR EXPRESSION 1}) is
-     *     rejected at the AST level — a constant never changes, so the anchor would never
-     *     reset, which is equivalent to a bare unbounded window.</li>
-     *     <li>Subqueries, bind variables, and well-known runtime/random function calls
-     *     ({@code rnd_*}, {@code now}, {@code current_timestamp}, {@code systimestamp})
-     *     by token name.</li>
-     * </ul>
-     * Pass 2 (function-property checks on the post-constant-fold compiled tree —
-     * {@code isConstant} top-level, {@code isRandom}, {@code isRuntimeConstant},
-     * {@code isNonDeterministic}, aggregation) lives in
-     * {@code CairoEngine.validateAnchorPurity} and runs at CREATE time once the SELECT
-     * factory has been compiled.
-     */
-    /**
      * Validates the ORDER BY clause of every named WINDOW in a live-view SELECT
-     * against RFC 123's requirement that windows order rows by the base table's
+     * against the requirement that windows order rows by the base table's
      * designated timestamp ascending. The base table is resolved via
-     * {@link CairoEngine#getTableTokenIfExists(CharSequence)}; if the base can't be
-     * resolved (e.g. concurrent DROP, mistyped name) this validator skips the
+     * {@link CairoEngine#getTableTokenIfExists(CharSequence)}; if the base can't
+     * be resolved (e.g. concurrent DROP, mistyped name) this validator skips the
      * column-name match so the engine surfaces the primary "base does not exist"
      * error rather than a misleading ORDER-BY message.
      */

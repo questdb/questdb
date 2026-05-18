@@ -70,11 +70,10 @@ public interface WindowFunction extends Function {
      * {@link Map} and a tombstone-skipping cursor walk, mirroring
      * {@link io.questdb.griffin.engine.functions.window.PartitionStateEvictor#rebuildKeeping}.
      * <p>
-     * Auto-trigger from {@code processRow} stays off until every window
-     * function family ships its own tombstone bookkeeping (see Phase 2b
-     * function migration train); calling it before then on a partially-migrated
-     * LV would corrupt the unmigrated functions' state because their maps
-     * would still reference partitions the anchor map dropped.
+     * Auto-triggered from {@code LiveViewWindow.processRow} once
+     * {@code tombstoneCount} crosses {@code cairo.live.view.partition.compact.threshold}.
+     * Every migrated function family now ships tombstone bookkeeping, so the
+     * trigger fires uniformly across the LV's window functions.
      */
     default void compactPartitionMap() {
     }

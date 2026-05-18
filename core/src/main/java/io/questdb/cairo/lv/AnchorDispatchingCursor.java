@@ -103,6 +103,12 @@ final class AnchorDispatchingCursor implements RecordCursor {
 
     @Override
     public void recordAt(Record record, long atRowId) {
+        // Random access skips the per-row anchor dispatch on purpose: recordAt
+        // positions on an arbitrary row out of order, so re-running
+        // window.processRow against it would update anchor state on a row that
+        // the cursor's forward iteration may already have consumed. Forward
+        // iteration through hasNext() / getRecord() is the only path that
+        // drives anchor dispatch.
         base.recordAt(record, atRowId);
     }
 

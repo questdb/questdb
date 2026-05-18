@@ -41,7 +41,7 @@ public final class LiveViewCheckpointBlockType {
      * and per-partition {@code (keyValues..., lastAnchorValue)} tuples.
      * Non-anchored named windows do not produce a WINDOW_ANCHOR block.
      */
-    public static final int BLOCK_ANCHOR = 2;
+    public static final int BLOCK_WINDOW_ANCHOR = 2;
 
     /**
      * Present iff the checkpoint covers an in-progress backfill sweep
@@ -72,7 +72,7 @@ public final class LiveViewCheckpointBlockType {
     public static boolean isKnown(int blockType) {
         return blockType == BLOCK_MANIFEST
                 || blockType == BLOCK_BACKFILL_CURSOR
-                || blockType == BLOCK_ANCHOR
+                || blockType == BLOCK_WINDOW_ANCHOR
                 || blockType == BLOCK_FUNCTION_SNAPSHOT;
     }
 
@@ -82,7 +82,7 @@ public final class LiveViewCheckpointBlockType {
                 return "MANIFEST";
             case BLOCK_BACKFILL_CURSOR:
                 return "BACKFILL_CURSOR";
-            case BLOCK_ANCHOR:
+            case BLOCK_WINDOW_ANCHOR:
                 return "WINDOW_ANCHOR";
             case BLOCK_FUNCTION_SNAPSHOT:
                 return "FUNCTION_SNAPSHOT";

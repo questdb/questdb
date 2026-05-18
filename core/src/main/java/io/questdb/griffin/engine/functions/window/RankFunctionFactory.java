@@ -547,6 +547,13 @@ public class RankFunctionFactory extends AbstractWindowFunctionFactory {
             partitionByRecord.of(record);
             MapKey key = map.withKey();
             key.put(partitionByRecord, partitionBySink);
+            // Rank uses createValue intentionally: a partition may not exist yet
+            // when the anchor-driven reset fires (the anchor map fires
+            // resetPartition before the function map's first computeNext on a
+            // fresh partition). Other migrated functions only call findValue
+            // because their per-partition state is established by the row loop;
+            // rank's "uninitialized" signal is count=0, which must be written
+            // explicitly here.
             MapValue mapValue = key.createValue();
             // Set count to 0 — the implicit "uninitialized" signal for computeNext.
             // Rank itself doesn't need an explicit clear; the next computeNext writes

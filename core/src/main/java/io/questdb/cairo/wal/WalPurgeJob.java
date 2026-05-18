@@ -466,8 +466,15 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
         long safeToPurgeTxn = readerSeqTxn;
         childViewSink.clear();
         engine.getDependentViewGraph().getDependentViews(tableToken, childViewSink);
+        // The dependent-view graph carries both mat-view and live-view tokens.
+        // Live views are enumerated separately below via liveViewRegistry, so
+        // skip them here to avoid the matViewStateStore lookup that would
+        // never produce a state for an LV token.
         for (int v = 0, n = childViewSink.size(); v < n; v++) {
             final TableToken viewToken = childViewSink.get(v);
+            if (viewToken.isLiveView()) {
+                continue;
+            }
             final MatViewState state = engine.getMatViewStateStore().getViewState(viewToken);
 
             if (state != null && !state.isDropped()) {

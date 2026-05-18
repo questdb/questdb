@@ -1329,7 +1329,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             checkpointWriter.writeManifestBlock(checkpointManifest);
 
             if (anchorWindow != null) {
-                MemoryA anchorSink = checkpointWriter.beginBlock(LiveViewCheckpointBlockType.BLOCK_ANCHOR);
+                MemoryA anchorSink = checkpointWriter.beginBlock(LiveViewCheckpointBlockType.BLOCK_WINDOW_ANCHOR);
                 anchorWindow.snapshot(anchorSink);
                 checkpointWriter.endBlock();
             }
@@ -1430,7 +1430,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             while (cursor.hasNext()) {
                 final LiveViewCheckpointReader.ReadableBlock block = cursor.next();
                 switch (block.type()) {
-                    case LiveViewCheckpointBlockType.BLOCK_ANCHOR:
+                    case LiveViewCheckpointBlockType.BLOCK_WINDOW_ANCHOR:
                         if (anchorWindow == null) {
                             throw CairoException.critical(0)
                                     .put("checkpoint anchor block but LV has no anchored window");
@@ -1475,7 +1475,10 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         } finally {
             try {
                 checkpointReader.close();
-            } catch (Throwable ignored) {
+            } catch (Throwable closeErr) {
+                LOG.error().$("could not close live view checkpoint reader [view=")
+                        .$(instance.getLiveViewToken())
+                        .$(", error=").$(closeErr).I$();
             }
         }
     }
