@@ -663,6 +663,13 @@ public class QwpWalAppender implements QuietCloseable {
                         }
                     }
                     case ColumnType.CHAR -> {
+                        // Same reasoning as the VARCHAR arm below: TYPE_BINARY
+                        // bytes must not silently land in a text-typed column
+                        // (the QwpStringColumnCursor branch would treat the
+                        // first byte(s) as a CHAR otherwise).
+                        if (qwpType == TYPE_BINARY) {
+                            throw coercionNotSupportedException(qwpType, columnType, tableBlock, col);
+                        }
                         if (cursor instanceof QwpStringColumnCursor strCursor) {
                             appender.putCharColumn(columnIndex, strCursor, rowCount);
                         } else if (cursor instanceof QwpFixedWidthColumnCursor fixedCursor
@@ -727,6 +734,13 @@ public class QwpWalAppender implements QuietCloseable {
                         }
                     }
                     case ColumnType.STRING -> {
+                        // Symmetric to the VARCHAR guard above: TYPE_BINARY
+                        // bytes (possibly non-UTF-8) must not be reinterpreted
+                        // as text by putStringColumn, which feeds them through
+                        // Utf8s.directUtf8ToUtf16.
+                        if (qwpType == TYPE_BINARY) {
+                            throw coercionNotSupportedException(qwpType, columnType, tableBlock, col);
+                        }
                         switch (cursor) {
                             case QwpStringColumnCursor strCursor ->
                                     appender.putStringColumn(columnIndex, strCursor, rowCount);
@@ -753,6 +767,12 @@ public class QwpWalAppender implements QuietCloseable {
                         }
                     }
                     case ColumnType.SYMBOL -> {
+                        // Symmetric to the VARCHAR guard above: TYPE_BINARY
+                        // bytes (possibly non-UTF-8) must not be interned as a
+                        // symbol via putStringToSymbolColumn.
+                        if (qwpType == TYPE_BINARY) {
+                            throw coercionNotSupportedException(qwpType, columnType, tableBlock, col);
+                        }
                         switch (cursor) {
                             case QwpSymbolColumnCursor symCursor -> {
                                 if (symbolCache != null && symCursor.isDeltaMode()) {

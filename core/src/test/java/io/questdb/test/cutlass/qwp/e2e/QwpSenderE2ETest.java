@@ -602,6 +602,98 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
     }
 
     @Test
+    public void testBinarySourceRejectedByCharTarget() throws Exception {
+        runInContext((port) -> {
+            String table = "test_qwp_char_rejects_binary";
+            // Symmetric pin to testBinarySourceRejectedByVarcharTarget: a
+            // TYPE_BINARY wire payload must not be silently reinterpreted
+            // as text when the target column is CHAR. Without the guard
+            // QwpStringColumnCursor would route through putCharColumn and
+            // pick a CHAR from the leading byte(s).
+            execute("CREATE TABLE " + table + " (v CHAR, ts TIMESTAMP) "
+                    + "TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            byte[] payload = {(byte) 0x80, (byte) 0xFF, 0x00, 0x7F};
+
+            try (QwpWebSocketSender sender = connectWs(port)) {
+                sender.table(table)
+                        .binaryColumn("v", payload)
+                        .at(1_000_000, ChronoUnit.MICROS);
+                try {
+                    sender.flush();
+                } catch (LineSenderException ignored) {
+                }
+            }
+
+            drainWalQueue();
+            assertSql(
+                    "SELECT count() FROM " + table,
+                    "count\n0\n"
+            );
+        });
+    }
+
+    @Test
+    public void testBinarySourceRejectedByStringTarget() throws Exception {
+        runInContext((port) -> {
+            String table = "test_qwp_string_rejects_binary";
+            // Symmetric pin to testBinarySourceRejectedByVarcharTarget: raw
+            // binary bytes must not land in a STRING column where
+            // Utf8s.directUtf8ToUtf16 would reinterpret them as text.
+            execute("CREATE TABLE " + table + " (v STRING, ts TIMESTAMP) "
+                    + "TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            byte[] payload = {(byte) 0x80, (byte) 0xFF, 0x00, 0x7F};
+
+            try (QwpWebSocketSender sender = connectWs(port)) {
+                sender.table(table)
+                        .binaryColumn("v", payload)
+                        .at(1_000_000, ChronoUnit.MICROS);
+                try {
+                    sender.flush();
+                } catch (LineSenderException ignored) {
+                }
+            }
+
+            drainWalQueue();
+            assertSql(
+                    "SELECT count() FROM " + table,
+                    "count\n0\n"
+            );
+        });
+    }
+
+    @Test
+    public void testBinarySourceRejectedBySymbolTarget() throws Exception {
+        runInContext((port) -> {
+            String table = "test_qwp_symbol_rejects_binary";
+            // Symmetric pin to testBinarySourceRejectedByVarcharTarget: raw
+            // binary bytes must not be interned as a symbol via
+            // putStringToSymbolColumn.
+            execute("CREATE TABLE " + table + " (v SYMBOL, ts TIMESTAMP) "
+                    + "TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            byte[] payload = {(byte) 0x80, (byte) 0xFF, 0x00, 0x7F};
+
+            try (QwpWebSocketSender sender = connectWs(port)) {
+                sender.table(table)
+                        .binaryColumn("v", payload)
+                        .at(1_000_000, ChronoUnit.MICROS);
+                try {
+                    sender.flush();
+                } catch (LineSenderException ignored) {
+                }
+            }
+
+            drainWalQueue();
+            assertSql(
+                    "SELECT count() FROM " + table,
+                    "count\n0\n"
+            );
+        });
+    }
+
+    @Test
     public void testBinarySourceRejectedByVarcharTarget() throws Exception {
         runInContext((port) -> {
             String table = "test_qwp_varchar_rejects_binary";
