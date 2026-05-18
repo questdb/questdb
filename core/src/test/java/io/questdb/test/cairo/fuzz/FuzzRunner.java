@@ -96,6 +96,7 @@ public class FuzzRunner {
     private double colRemoveProb;
     private double colRenameProb;
     private double colTypeChangeProb;
+    private boolean createWalAsParquet;
     private double dataAddProb;
     private CairoEngine engine;
     private double equalTsRowsProb;
@@ -115,9 +116,8 @@ public class FuzzRunner {
     private double rollbackProb;
     private long s0;
     private long s1;
-    private boolean createWalAsParquet;
-    private double setDefaultPartitionFormatProb;
     private double setParquetEncodingProb;
+    private double setTableFormatProb;
     private double setTtlProb;
     private SqlExecutionContext sqlExecutionContext;
     private int strLen;
@@ -506,7 +506,7 @@ public class FuzzRunner {
                 generateSymbols(rnd, rnd.nextInt(Math.max(1, symbolCountMax - 5)) + 5, symbolStrLenMax, tableName),
                 (int) sequencerMetadata.getMetadataVersion(),
                 setParquetEncodingProb,
-                setDefaultPartitionFormatProb
+                setTableFormatProb
         );
     }
 
@@ -761,7 +761,7 @@ public class FuzzRunner {
             double symbolAccessValidationProb,
             double queryProb,
             double setParquetEncodingProb,
-            double setDefaultPartitionFormatProb
+            double setTableFormatProb
     ) {
         this.cancelRowsProb = cancelRowsProb;
         this.notSetProb = notSetProb;
@@ -783,7 +783,7 @@ public class FuzzRunner {
         this.symbolAccessValidationProb = symbolAccessValidationProb;
         this.queryProb = queryProb;
         this.setParquetEncodingProb = setParquetEncodingProb;
-        this.setDefaultPartitionFormatProb = setDefaultPartitionFormatProb;
+        this.setTableFormatProb = setTableFormatProb;
     }
 
     public void withDb(CairoEngine engine, SqlExecutionContext sqlExecutionContext) {
@@ -1028,30 +1028,6 @@ public class FuzzRunner {
         engine.verifyTableName(tableName);
     }
 
-    /**
-     * Picks an index type clause for fuzz table creation. Returns either
-     * an empty string (BITMAP — the default), or one of the POSTING
-     * variants. Uses {@link SharedRandom} so the choice tracks the existing
-     * fuzz seed.
-     */
-    private String randomIndexTypeClause() {
-        Rnd rnd = SharedRandom.RANDOM.get();
-        if (rnd == null) {
-            return "";
-        }
-        double pick = rnd.nextDouble();
-        if (pick < 0.5) {
-            return ""; // BITMAP (the default for the existing INDEX clause)
-        }
-        if (pick < 0.7) {
-            return "TYPE POSTING";
-        }
-        if (pick < 0.85) {
-            return "TYPE POSTING DELTA";
-        }
-        return "TYPE POSTING EF";
-    }
-
     @NotNull
     private ObjList<FuzzTransaction> createTransactions(Rnd rnd, String tableNameBase) throws SqlException, NumericException {
         createInitialTableWal(tableNameBase, initialRowCount);
@@ -1225,6 +1201,30 @@ public class FuzzRunner {
                 }
             }
         }
+    }
+
+    /**
+     * Picks an index type clause for fuzz table creation. Returns either
+     * an empty string (BITMAP — the default), or one of the POSTING
+     * variants. Uses {@link SharedRandom} so the choice tracks the existing
+     * fuzz seed.
+     */
+    private String randomIndexTypeClause() {
+        Rnd rnd = SharedRandom.RANDOM.get();
+        if (rnd == null) {
+            return "";
+        }
+        double pick = rnd.nextDouble();
+        if (pick < 0.5) {
+            return ""; // BITMAP (the default for the existing INDEX clause)
+        }
+        if (pick < 0.7) {
+            return "TYPE POSTING";
+        }
+        if (pick < 0.85) {
+            return "TYPE POSTING DELTA";
+        }
+        return "TYPE POSTING EF";
     }
 
     private void runApplyThread(AtomicInteger done, ConcurrentLinkedQueue<Throwable> errors, Rnd applyRnd) {

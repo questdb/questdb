@@ -1662,13 +1662,13 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         CharSequence tok = expectToken(lexer, "'parquet' or 'native'");
         final int format;
         if (isParquetKeyword(tok)) {
-            format = TableUtils.DEFAULT_PARTITION_FORMAT_PARQUET;
+            format = TableUtils.TABLE_FORMAT_PARQUET;
         } else if (isNativeKeyword(tok)) {
-            format = TableUtils.DEFAULT_PARTITION_FORMAT_NATIVE;
+            format = TableUtils.TABLE_FORMAT_NATIVE;
         } else {
             throw SqlException.$(lexer.lastTokenPosition(), "'parquet' or 'native' expected");
         }
-        if (format == TableUtils.DEFAULT_PARTITION_FORMAT_PARQUET) {
+        if (format == TableUtils.TABLE_FORMAT_PARQUET) {
             try (TableMetadata metadata = engine.getTableMetadata(tableToken)) {
                 if (!PartitionBy.isPartitioned(metadata.getPartitionBy())) {
                     throw SqlException.$(formatPos, "FORMAT PARQUET is only supported on partitioned tables");
@@ -1681,7 +1681,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 throw SqlException.$(formatPos, "FORMAT PARQUET is not supported on materialized views");
             }
         }
-        final AlterOperationBuilder setFormat = alterOperationBuilder.ofSetDefaultPartitionFormat(
+        final AlterOperationBuilder setFormat = alterOperationBuilder.ofSetTableFormat(
                 tableNamePosition,
                 tableToken,
                 tableMetadata.getTableId(),

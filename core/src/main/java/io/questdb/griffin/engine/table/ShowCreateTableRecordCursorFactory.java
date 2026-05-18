@@ -88,8 +88,8 @@ public class ShowCreateTableRecordCursorFactory extends AbstractRecordCursorFact
         }
     }
 
-    public static void defaultPartitionFormatToSink(int format, CharSink<?> sink) {
-        if (format == TableUtils.DEFAULT_PARTITION_FORMAT_PARQUET) {
+    public static void tableFormatToSink(int format, CharSink<?> sink) {
+        if (format == TableUtils.TABLE_FORMAT_PARQUET) {
             sink.putAscii(" FORMAT PARQUET");
         }
     }
@@ -226,7 +226,7 @@ public class ShowCreateTableRecordCursorFactory extends AbstractRecordCursorFact
                 // TTL n unit
                 ttlToSink(sink);
                 // FORMAT PARQUET (only emitted when not the default NATIVE)
-                defaultPartitionFormatToSink(table.getDefaultPartitionFormat(), sink);
+                tableFormatToSink(table.getTableFormat(), sink);
                 // (BYPASS) WAL
                 putWal();
             }

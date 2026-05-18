@@ -57,18 +57,18 @@ public interface TableStructure {
 
     int getSymbolCapacity(int columnIndex);
 
+    /**
+     * Returns the default storage format for new partitions.
+     * {@link TableUtils#TABLE_FORMAT_NATIVE} (default) or
+     * {@link TableUtils#TABLE_FORMAT_PARQUET}.
+     */
+    default int getTableFormat() {
+        return TableUtils.TABLE_FORMAT_NATIVE;
+    }
+
     CharSequence getTableName();
 
     int getTimestampIndex();
-
-    /**
-     * Returns the default storage format for new partitions.
-     * {@link TableUtils#DEFAULT_PARTITION_FORMAT_NATIVE} (default) or
-     * {@link TableUtils#DEFAULT_PARTITION_FORMAT_PARQUET}.
-     */
-    default int getDefaultPartitionFormat() {
-        return TableUtils.DEFAULT_PARTITION_FORMAT_NATIVE;
-    }
 
     /**
      * Returns the time-to-live (TTL) of the data in this table:

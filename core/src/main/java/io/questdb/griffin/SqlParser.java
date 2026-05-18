@@ -1720,14 +1720,14 @@ public class SqlParser {
                 tok = tok(lexer, "'parquet' or 'native'");
                 int format;
                 if (isParquetKeyword(tok)) {
-                    format = TableUtils.DEFAULT_PARTITION_FORMAT_PARQUET;
+                    format = TableUtils.TABLE_FORMAT_PARQUET;
                 } else if (isNativeKeyword(tok)) {
-                    format = TableUtils.DEFAULT_PARTITION_FORMAT_NATIVE;
+                    format = TableUtils.TABLE_FORMAT_NATIVE;
                 } else {
                     throw SqlException.$(lexer.lastTokenPosition(), "'parquet' or 'native' expected");
                 }
-                builder.setDefaultPartitionFormat(format);
-                builder.setDefaultPartitionFormatPosition(formatPos);
+                builder.setTableFormat(format);
+                builder.setTableFormatPosition(formatPos);
                 tok = optTok(lexer);
             }
 
@@ -1757,8 +1757,8 @@ public class SqlParser {
                 && ((walSetting == WAL_NOT_SET && configuration.getWalEnabledDefault()) || walSetting == WAL_ENABLED);
         builder.setWalEnabled(isWalEnabled);
 
-        if (builder.getDefaultPartitionFormat() == TableUtils.DEFAULT_PARTITION_FORMAT_PARQUET && !isWalEnabled) {
-            throw SqlException.$(builder.getDefaultPartitionFormatPosition(), "FORMAT PARQUET is only supported on WAL tables");
+        if (builder.getTableFormat() == TableUtils.TABLE_FORMAT_PARQUET && !isWalEnabled) {
+            throw SqlException.$(builder.getTableFormatPosition(), "FORMAT PARQUET is only supported on WAL tables");
         }
 
         int maxUncommittedRows = configuration.getMaxUncommittedRows();

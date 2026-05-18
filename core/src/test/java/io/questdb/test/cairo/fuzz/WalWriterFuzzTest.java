@@ -217,7 +217,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
                 0,
                 0.01,
                 0.1,
-                0.0 // setDefaultPartitionFormatProb — disabled
+                0.0 // setTableFormatProb — disabled
         );
         setFuzzCounts(rnd.nextBoolean(), 10_000, 300, 20, 10, 1000, 100, 3);
         runFuzz(rnd);

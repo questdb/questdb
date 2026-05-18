@@ -36,7 +36,6 @@ public class CairoTable implements Sinkable {
     public final IntList columnOrderList;
     public final ObjList<CairoColumn> columns;
     private boolean dedup;
-    private int defaultPartitionFormat;
     private boolean hasParquetPartitions;
     private int matViewRefreshLimitHoursOrMonths;
     private int matViewTimerInterval;
@@ -47,6 +46,7 @@ public class CairoTable implements Sinkable {
     private long o3MaxLag;
     private int partitionBy;
     private boolean softLink;
+    private int tableFormat;
     private int timestampIndex;
     private int timestampType;
     private TableToken token;
@@ -74,7 +74,7 @@ public class CairoTable implements Sinkable {
         o3MaxLag = fromTab.getO3MaxLag();
         timestampIndex = fromTab.getTimestampIndex();
         ttlHoursOrMonths = fromTab.getTtlHoursOrMonths();
-        defaultPartitionFormat = fromTab.getDefaultPartitionFormat();
+        tableFormat = fromTab.getTableFormat();
         softLink = fromTab.isSoftLink();
         dedup = fromTab.hasDedup();
         hasParquetPartitions = fromTab.hasParquetPartitions();
@@ -103,10 +103,6 @@ public class CairoTable implements Sinkable {
 
     public CairoColumn getColumnQuiet(int position) {
         return columns.getQuiet(position);
-    }
-
-    public int getDefaultPartitionFormat() {
-        return defaultPartitionFormat;
     }
 
     public String getDirectoryName() {
@@ -151,6 +147,10 @@ public class CairoTable implements Sinkable {
 
     public @NotNull String getPartitionByName() {
         return PartitionBy.toString(partitionBy);
+    }
+
+    public int getTableFormat() {
+        return tableFormat;
     }
 
     public @NotNull String getTableName() {
@@ -207,10 +207,6 @@ public class CairoTable implements Sinkable {
         this.dedup = dedup;
     }
 
-    public void setDefaultPartitionFormat(int defaultPartitionFormat) {
-        this.defaultPartitionFormat = defaultPartitionFormat;
-    }
-
     public void setHasParquetPartitions(boolean hasParquetPartitions) {
         this.hasParquetPartitions = hasParquetPartitions;
     }
@@ -233,6 +229,10 @@ public class CairoTable implements Sinkable {
 
     public void setSoftLinkFlag(boolean softLink) {
         this.softLink = softLink;
+    }
+
+    public void setTableFormat(int tableFormat) {
+        this.tableFormat = tableFormat;
     }
 
     public void setTableToken(TableToken token) {

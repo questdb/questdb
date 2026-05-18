@@ -2191,11 +2191,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return dataAppendPageSize;
     }
 
-    @Override
-    public int getDefaultPartitionFormat() {
-        return metadata.getDefaultPartitionFormat();
-    }
-
     public DedupColumnCommitAddresses getDedupCommitAddresses() {
         return dedupColumnCommitAddresses;
     }
@@ -2327,6 +2322,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     public MapWriter getSymbolMapWriter(int columnIndex) {
         return symbolMapWriters.getQuick(columnIndex);
+    }
+
+    @Override
+    public int getTableFormat() {
+        return metadata.getTableFormat();
     }
 
     @Override
@@ -3096,21 +3096,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     @Override
-    public void setMetaDefaultPartitionFormat(int defaultPartitionFormat) {
-        if (defaultPartitionFormat == TableUtils.DEFAULT_PARTITION_FORMAT_PARQUET) {
-            if (!metadata.isWalEnabled()) {
-                throw CairoException.nonCritical().put("FORMAT PARQUET is only supported on WAL tables");
-            }
-            if (tableToken.isMatView()) {
-                throw CairoException.nonCritical().put("FORMAT PARQUET is not supported on materialized views");
-            }
-        }
-        commit();
-        metadata.setDefaultPartitionFormat(defaultPartitionFormat);
-        writeMetadataToDisk();
-    }
-
-    @Override
     public void setMetaMaxUncommittedRows(int maxUncommittedRows) {
         commit();
         metadata.setMaxUncommittedRows(maxUncommittedRows);
@@ -3121,6 +3106,21 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     public void setMetaO3MaxLag(long o3MaxLagUs) {
         commit();
         metadata.setO3MaxLag(o3MaxLagUs);
+        writeMetadataToDisk();
+    }
+
+    @Override
+    public void setMetaTableFormat(int tableFormat) {
+        if (tableFormat == TableUtils.TABLE_FORMAT_PARQUET) {
+            if (!metadata.isWalEnabled()) {
+                throw CairoException.nonCritical().put("FORMAT PARQUET is only supported on WAL tables");
+            }
+            if (tableToken.isMatView()) {
+                throw CairoException.nonCritical().put("FORMAT PARQUET is not supported on materialized views");
+            }
+        }
+        commit();
+        metadata.setTableFormat(tableFormat);
         writeMetadataToDisk();
     }
 
@@ -7336,7 +7336,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 // partitions on a FORMAT PARQUET table are born parquet.
                 boolean isParquet = partitionIndexRaw > -1
                         ? txWriter.isPartitionParquet(partitionIndexRaw / LONGS_PER_TX_ATTACHED_PARTITION)
-                        : metadata.getDefaultPartitionFormat() == TableUtils.DEFAULT_PARTITION_FORMAT_PARQUET;
+                        : metadata.getTableFormat() == TableUtils.TABLE_FORMAT_PARQUET;
 
                 final long newPartitionTimestamp = partitionTimestamp;
                 final int newPartitionIndex = partitionIndexRaw;
@@ -8390,7 +8390,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     // partitions on a FORMAT PARQUET table are born parquet.
                     final boolean isParquet = partitionIndexRaw > -1
                             ? txWriter.isPartitionParquetByRawIndex(partitionIndexRaw)
-                            : metadata.getDefaultPartitionFormat() == TableUtils.DEFAULT_PARTITION_FORMAT_PARQUET;
+                            : metadata.getTableFormat() == TableUtils.TABLE_FORMAT_PARQUET;
 
                     // We're appending onto the last (active) partition.
                     // Cannot append to parquet partitions — they must go through the O3 merge path.
@@ -8996,7 +8996,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // parquet partitions have no append-friendly column files. Force the
         // commit through the O3 path so every partition (existing parquet,
         // brand-new parquet) is handled uniformly via O3PartitionJob.
-        if (inOrder && metadata.getDefaultPartitionFormat() == TableUtils.DEFAULT_PARTITION_FORMAT_PARQUET) {
+        if (inOrder && metadata.getTableFormat() == TableUtils.TABLE_FORMAT_PARQUET) {
             inOrder = false;
         }
         byte dedupMode = walTxnDetails.getDedupMode(seqTxn);
@@ -11186,7 +11186,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             ddlMem.putBool(metadata.isWalEnabled());
             ddlMem.putInt(TableUtils.calculateMetaFormatMinorVersionField(version, columnCount));
             ddlMem.putInt(metadata.getTtlHoursOrMonths());
-            ddlMem.putInt(metadata.getDefaultPartitionFormat());
+            ddlMem.putInt(metadata.getTableFormat());
 
             ddlMem.jumpTo(META_OFFSET_COLUMN_TYPES);
             for (int i = 0; i < columnCount; i++) {

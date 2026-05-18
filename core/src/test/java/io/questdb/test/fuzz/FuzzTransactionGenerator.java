@@ -123,7 +123,7 @@ public class FuzzTransactionGenerator {
             String[] symbols,
             int metaVersion,
             double probabilityOfSetParquetEncoding,
-            double probabilityOfSetDefaultPartitionFormat
+            double probabilityOfSetTableFormat
     ) {
         ObjList<FuzzTransaction> transactionList = new ObjList<>();
         int waitBarrierVersion = 0;
@@ -183,9 +183,9 @@ public class FuzzTransactionGenerator {
         }
 
         // Decide if SET FORMAT PARQUET|NATIVE will be generated
-        boolean generateSetDefaultPartitionFormat = rnd.nextDouble() < probabilityOfSetDefaultPartitionFormat;
-        int setDefaultPartitionFormatIteration = generateSetDefaultPartitionFormat ? rnd.nextInt(transactionCount) : -1;
-        if (generateSetDefaultPartitionFormat) {
+        boolean generateSetTableFormat = rnd.nextDouble() < probabilityOfSetTableFormat;
+        int setTableFormatIteration = generateSetTableFormat ? rnd.nextInt(transactionCount) : -1;
+        if (generateSetTableFormat) {
             transactionCount++;
         }
 
@@ -205,8 +205,8 @@ public class FuzzTransactionGenerator {
                 generateSetParquetEncoding(transactionList, metaVersion, waitBarrierVersion++, rnd, meta);
                 continue;
             }
-            if (i == setDefaultPartitionFormatIteration) {
-                generateSetDefaultPartitionFormat(transactionList, metaVersion, waitBarrierVersion++, rnd);
+            if (i == setTableFormatIteration) {
+                generateSetTableFormat(transactionList, metaVersion, waitBarrierVersion++, rnd);
                 continue;
             }
             final double rndDouble = rnd.nextDouble();
@@ -577,14 +577,14 @@ public class FuzzTransactionGenerator {
         }
     }
 
-    private static void generateSetDefaultPartitionFormat(ObjList<FuzzTransaction> transactionList, int metadataVersion, int waitBarrierVersion, Rnd rnd) {
+    private static void generateSetTableFormat(ObjList<FuzzTransaction> transactionList, int metadataVersion, int waitBarrierVersion, Rnd rnd) {
         boolean parquet = rnd.nextBoolean();
         FuzzTransaction transaction = new FuzzTransaction();
         transaction.waitBarrierVersion = waitBarrierVersion;
         transaction.structureVersion = metadataVersion;
         transaction.waitAllDone = true;
         transaction.reopenTable = true;
-        transaction.operationList.add(new FuzzSetDefaultPartitionFormatOperation(parquet));
+        transaction.operationList.add(new FuzzSetTableFormatOperation(parquet));
         transactionList.add(transaction);
     }
 

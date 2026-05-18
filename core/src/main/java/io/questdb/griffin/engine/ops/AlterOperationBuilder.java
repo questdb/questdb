@@ -282,15 +282,6 @@ public class AlterOperationBuilder implements Mutable {
         return this;
     }
 
-    public AlterOperationBuilder ofSetDefaultPartitionFormat(int tableNamePosition, TableToken tableToken, int tableId, int defaultPartitionFormat) {
-        this.command = SET_DEFAULT_PARTITION_FORMAT;
-        this.tableNamePosition = tableNamePosition;
-        this.tableToken = tableToken;
-        this.extraInfo.add(defaultPartitionFormat);
-        this.tableId = tableId;
-        return this;
-    }
-
     public AlterOperationBuilder ofSetMatViewRefreshLimit(int matViewNamePosition, TableToken matViewToken, int tableId, int limitHoursOrMonths) {
         this.command = SET_MAT_VIEW_REFRESH_LIMIT;
         this.tableNamePosition = matViewNamePosition;
@@ -325,6 +316,15 @@ public class AlterOperationBuilder implements Mutable {
         this.tableId = tableId;
         this.extraStrInfo.add(columnName);
         this.extraInfo.add(parquetEncodingConfig);
+        return this;
+    }
+
+    public AlterOperationBuilder ofSetTableFormat(int tableNamePosition, TableToken tableToken, int tableId, int tableFormat) {
+        this.command = SET_TABLE_FORMAT;
+        this.tableNamePosition = tableNamePosition;
+        this.tableToken = tableToken;
+        this.extraInfo.add(tableFormat);
+        this.tableId = tableId;
         return this;
     }
 

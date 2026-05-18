@@ -3468,10 +3468,6 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
      * table, sourcing data directly from the O3 in-memory column buffers. Unlike
      * {@link #processParquetPartition}, this path does not assume an existing
      * parquet file or _pm sidecar.
-     * <p>
-     * First-cut implementation: only fixed-width column types are supported.
-     * Tables containing SYMBOL or variable-length columns will throw — those
-     * code paths land in follow-up commits.
      */
     private static void writeFreshParquetFromO3(
             Path pathToTable,

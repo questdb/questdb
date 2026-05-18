@@ -353,13 +353,13 @@ public class AbstractFuzzTest extends AbstractCairoTest {
             double symbolAccessProb,
             double queryProb,
             double setParquetEncodingProb,
-            double setDefaultPartitionFormatProb
+            double setTableFormatProb
     ) {
         fuzzer.setFuzzProbabilities(
                 cancelRowsProb, notSetProb, nullSetProb, rollbackProb,
                 colAddProb, colRemoveProb, colRenameProb, colTypeChangeProb, dataAddProb,
                 equalTsRowsProb, partitionDropProb, partitionToParquetProb, partitionToNativeProb, truncateProb, tableDropProb, setTtlProb,
-                replaceProb, symbolAccessProb, queryProb, setParquetEncodingProb, setDefaultPartitionFormatProb
+                replaceProb, symbolAccessProb, queryProb, setParquetEncodingProb, setTableFormatProb
         );
     }
 

@@ -37,7 +37,7 @@ import org.junit.Test;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.fail;
 
-public class DefaultPartitionFormatTest extends AbstractCairoTest {
+public class TableFormatTest extends AbstractCairoTest {
 
     @Test
     public void testAlterTableSetFormatInvalidValue() throws Exception {
@@ -56,11 +56,11 @@ public class DefaultPartitionFormatTest extends AbstractCairoTest {
     public void testAlterTableSetFormatNativeRoundTrip() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY FORMAT PARQUET WAL");
-            assertDefaultPartitionFormat("tango", TableUtils.DEFAULT_PARTITION_FORMAT_PARQUET);
+            assertTableFormat("tango", TableUtils.TABLE_FORMAT_PARQUET);
 
             execute("ALTER TABLE tango SET FORMAT NATIVE");
             drainWalQueue();
-            assertDefaultPartitionFormat("tango", TableUtils.DEFAULT_PARTITION_FORMAT_NATIVE);
+            assertTableFormat("tango", TableUtils.TABLE_FORMAT_NATIVE);
         });
     }
 
@@ -68,11 +68,11 @@ public class DefaultPartitionFormatTest extends AbstractCairoTest {
     public void testAlterTableSetFormatParquet() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            assertDefaultPartitionFormat("tango", TableUtils.DEFAULT_PARTITION_FORMAT_NATIVE);
+            assertTableFormat("tango", TableUtils.TABLE_FORMAT_NATIVE);
 
             execute("ALTER TABLE tango SET FORMAT PARQUET");
             drainWalQueue();
-            assertDefaultPartitionFormat("tango", TableUtils.DEFAULT_PARTITION_FORMAT_PARQUET);
+            assertTableFormat("tango", TableUtils.TABLE_FORMAT_PARQUET);
         });
     }
 
@@ -106,7 +106,7 @@ public class DefaultPartitionFormatTest extends AbstractCairoTest {
     public void testCreateTableFormatNative() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY FORMAT NATIVE WAL");
-            assertDefaultPartitionFormat("tango", TableUtils.DEFAULT_PARTITION_FORMAT_NATIVE);
+            assertTableFormat("tango", TableUtils.TABLE_FORMAT_NATIVE);
         });
     }
 
@@ -114,7 +114,7 @@ public class DefaultPartitionFormatTest extends AbstractCairoTest {
     public void testCreateTableFormatParquet() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY FORMAT PARQUET WAL");
-            assertDefaultPartitionFormat("tango", TableUtils.DEFAULT_PARTITION_FORMAT_PARQUET);
+            assertTableFormat("tango", TableUtils.TABLE_FORMAT_PARQUET);
         });
     }
 
@@ -146,7 +146,7 @@ public class DefaultPartitionFormatTest extends AbstractCairoTest {
     public void testCreateTableNativeIsDefault() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            assertDefaultPartitionFormat("tango", TableUtils.DEFAULT_PARTITION_FORMAT_NATIVE);
+            assertTableFormat("tango", TableUtils.TABLE_FORMAT_NATIVE);
         });
     }
 
@@ -156,7 +156,7 @@ public class DefaultPartitionFormatTest extends AbstractCairoTest {
         // table never sees it. Confirm the table still creates and stays NATIVE.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts)");
-            assertDefaultPartitionFormat("tango", TableUtils.DEFAULT_PARTITION_FORMAT_NATIVE);
+            assertTableFormat("tango", TableUtils.TABLE_FORMAT_NATIVE);
         });
     }
 
@@ -337,10 +337,10 @@ public class DefaultPartitionFormatTest extends AbstractCairoTest {
         });
     }
 
-    private void assertDefaultPartitionFormat(String tableName, int expected) {
+    private void assertTableFormat(String tableName, int expected) {
         TableToken token = engine.verifyTableName(tableName);
         try (TableMetadata metadata = engine.getTableMetadata(token)) {
-            assertEquals(expected, metadata.getDefaultPartitionFormat());
+            assertEquals(expected, metadata.getTableFormat());
         }
     }
 }

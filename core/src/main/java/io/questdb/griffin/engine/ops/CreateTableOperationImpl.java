@@ -96,6 +96,7 @@ public class CreateTableOperationImpl implements CreateTableOperation {
     private CopyDataProgressReporter reporter = CopyDataProgressReporter.NOOP;
     private int selectSqlScanDirection;
     private int selectTextPosition;
+    private int tableFormat = TableUtils.TABLE_FORMAT_NATIVE;
     private int tableKind = TableUtils.TABLE_KIND_REGULAR_TABLE;
     private String tableName;
     private int tableNamePosition;
@@ -105,7 +106,6 @@ public class CreateTableOperationImpl implements CreateTableOperation {
     private int timestampType;
     private int ttlHoursOrMonths;
     private int ttlPosition;
-    private int defaultPartitionFormat = TableUtils.DEFAULT_PARTITION_FORMAT_NATIVE;
     private String volumeAlias;
     private int volumePosition;
     private boolean walEnabled;
@@ -176,7 +176,7 @@ public class CreateTableOperationImpl implements CreateTableOperation {
             int maxUncommittedRows,
             int ttlHoursOrMonths,
             int ttlPosition,
-            int defaultPartitionFormat,
+            int tableFormat,
             boolean walEnabled,
             boolean autoIncludeTimestamp
     ) throws SqlException {
@@ -189,7 +189,7 @@ public class CreateTableOperationImpl implements CreateTableOperation {
         this.volumePosition = volumePosition;
         this.ignoreIfExists = ignoreIfExists;
         this.partitionByPosition = partitionByPosition;
-        this.defaultPartitionFormat = defaultPartitionFormat;
+        this.tableFormat = tableFormat;
         for (int i = 0, n = columnNames.size(); i < n; i++) {
             CharSequence colName = columnNames.get(i);
             this.columnNames.add(Chars.toString(colName));
@@ -273,7 +273,7 @@ public class CreateTableOperationImpl implements CreateTableOperation {
             int volumePosition,
             int ttlHoursOrMonths,
             int ttlPosition,
-            int defaultPartitionFormat,
+            int tableFormat,
             boolean walEnabled,
             int defaultSymbolCapacity,
             int maxUncommittedRows,
@@ -299,7 +299,7 @@ public class CreateTableOperationImpl implements CreateTableOperation {
         this.timestampColumnNamePosition = timestampColumnNamePosition;
         this.ttlHoursOrMonths = ttlHoursOrMonths;
         this.ttlPosition = ttlPosition;
-        this.defaultPartitionFormat = defaultPartitionFormat;
+        this.tableFormat = tableFormat;
         this.defaultSymbolCapacity = defaultSymbolCapacity;
         this.batchSize = batchSize;
         this.batchO3MaxLag = batchO3MaxLag;
@@ -358,11 +358,6 @@ public class CreateTableOperationImpl implements CreateTableOperation {
     @Override
     public int getColumnType(int index) {
         return getLowAt(index * 2);
-    }
-
-    @Override
-    public int getDefaultPartitionFormat() {
-        return defaultPartitionFormat;
     }
 
     @Override
@@ -458,6 +453,11 @@ public class CreateTableOperationImpl implements CreateTableOperation {
         int capacity = getHighAt(index * 2);
         assert capacity != -1 : "Symbol capacity is not set";
         return capacity;
+    }
+
+    @Override
+    public int getTableFormat() {
+        return tableFormat;
     }
 
     @Override
@@ -614,7 +614,7 @@ public class CreateTableOperationImpl implements CreateTableOperation {
         this.timestampIndex = likeTableMetadata.getTimestampIndex();
         this.walEnabled = likeTableMetadata.isWalEnabled();
         this.ttlHoursOrMonths = likeTableMetadata.getTtlHoursOrMonths();
-        this.defaultPartitionFormat = likeTableMetadata.getDefaultPartitionFormat();
+        this.tableFormat = likeTableMetadata.getTableFormat();
         columnNames.clear();
         columnBits.clear();
         coveringColumnIndicesList.clear();

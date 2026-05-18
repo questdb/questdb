@@ -95,7 +95,7 @@ public interface MetadataServiceStub extends MetadataService {
     }
 
     @Override
-    default int getDefaultPartitionFormat() {
+    default int getTableFormat() {
         throw new UnsupportedOperationException();
     }
 
@@ -155,11 +155,6 @@ public interface MetadataServiceStub extends MetadataService {
     }
 
     @Override
-    default void setMetaDefaultPartitionFormat(int defaultPartitionFormat) {
-        throw CairoException.critical(0).put("change of default partition format does not update sequencer metadata");
-    }
-
-    @Override
     default void setMetaMaxUncommittedRows(int maxUncommittedRows) {
         throw CairoException.critical(0).put("change of max uncommitted does not update sequencer metadata");
     }
@@ -167,6 +162,11 @@ public interface MetadataServiceStub extends MetadataService {
     @Override
     default void setMetaO3MaxLag(long o3MaxLagUs) {
         throw CairoException.critical(0).put("change of o3MaxLag does not update sequencer metadata");
+    }
+
+    @Override
+    default void setMetaTableFormat(int tableFormat) {
+        throw CairoException.critical(0).put("change of table format does not update sequencer metadata");
     }
 
     @Override

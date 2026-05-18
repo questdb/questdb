@@ -161,7 +161,7 @@ public interface MetadataService {
 
     void forceRemovePartitions(LongList partitionTimestamps);
 
-    int getDefaultPartitionFormat();
+    int getTableFormat();
 
     int getMetaMaxUncommittedRows();
 
@@ -235,16 +235,16 @@ public interface MetadataService {
      */
     void setMatViewRefreshTimer(long startUs, int interval, char unit);
 
-    /**
-     * Sets the default storage format for new partitions of this table.
-     * See {@link io.questdb.cairo.TableUtils#DEFAULT_PARTITION_FORMAT_NATIVE} and
-     * {@link io.questdb.cairo.TableUtils#DEFAULT_PARTITION_FORMAT_PARQUET}.
-     */
-    void setMetaDefaultPartitionFormat(int defaultPartitionFormat);
-
     void setMetaMaxUncommittedRows(int maxUncommittedRows);
 
     void setMetaO3MaxLag(long o3MaxLagUs);
+
+    /**
+     * Sets the default storage format for new partitions of this table.
+     * See {@link io.questdb.cairo.TableUtils#TABLE_FORMAT_NATIVE} and
+     * {@link io.questdb.cairo.TableUtils#TABLE_FORMAT_PARQUET}.
+     */
+    void setMetaTableFormat(int tableFormat);
 
     /**
      * Sets the time-to-live (TTL) of the data in this table:

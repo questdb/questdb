@@ -56,24 +56,24 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
     private final ObjList<CharSequence> columnNames = new ObjList<>();
     private long batchO3MaxLag = -1;
     private long batchSize = -1;
-    private int defaultPartitionFormat = TableUtils.DEFAULT_PARTITION_FORMAT_NATIVE;
-    private int defaultPartitionFormatPosition;
     private int defaultSymbolCapacity;
     private boolean ignoreIfExists = false;
     private ExpressionNode likeTableNameExpr;
     private int maxUncommittedRows;
     private long o3MaxLag = -1;
     private ExpressionNode partitionByExpr;
-    private Sinkable ttlToSinkOverride;
     // transient field, unoptimized AS SELECT model, used in toSink()
     private IQueryModel selectModel;
     private CharSequence selectText;
     private int selectTextPosition;
+    private int tableFormat = TableUtils.TABLE_FORMAT_NATIVE;
+    private int tableFormatPosition;
     private int tableKind = TableUtils.TABLE_KIND_REGULAR_TABLE;
     private ExpressionNode tableNameExpr;
     private ExpressionNode timestampExpr;
     private int ttlHoursOrMonths;
     private int ttlPosition;
+    private Sinkable ttlToSinkOverride;
     private CharSequence volumeAlias;
     private int volumePosition;
     private boolean walEnabled;
@@ -110,7 +110,7 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
                     volumePosition,
                     ttlHoursOrMonths,
                     ttlPosition,
-                    defaultPartitionFormat,
+                    tableFormat,
                     walEnabled,
                     defaultSymbolCapacity,
                     maxUncommittedRows,
@@ -158,7 +158,7 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
                 maxUncommittedRows,
                 ttlHoursOrMonths,
                 ttlPosition,
-                defaultPartitionFormat,
+                tableFormat,
                 walEnabled,
                 autoIncludeTs
         );
@@ -171,8 +171,8 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
         columnModels.clear();
         batchO3MaxLag = -1;
         batchSize = -1;
-        defaultPartitionFormat = TableUtils.DEFAULT_PARTITION_FORMAT_NATIVE;
-        defaultPartitionFormatPosition = 0;
+        tableFormat = TableUtils.TABLE_FORMAT_NATIVE;
+        tableFormatPosition = 0;
         defaultSymbolCapacity = 0;
         ignoreIfExists = false;
         likeTableNameExpr = null;
@@ -195,14 +195,6 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
 
     public int getColumnCount() {
         return columnNames.size();
-    }
-
-    public int getDefaultPartitionFormat() {
-        return defaultPartitionFormat;
-    }
-
-    public int getDefaultPartitionFormatPosition() {
-        return defaultPartitionFormatPosition;
     }
 
     public int getColumnIndex(CharSequence columnName) {
@@ -228,6 +220,14 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
 
     public CharSequence getSelectText() {
         return selectText;
+    }
+
+    public int getTableFormat() {
+        return tableFormat;
+    }
+
+    public int getTableFormatPosition() {
+        return tableFormatPosition;
     }
 
     @Override
@@ -280,14 +280,6 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
         this.batchSize = batchSize;
     }
 
-    public void setDefaultPartitionFormat(int defaultPartitionFormat) {
-        this.defaultPartitionFormat = defaultPartitionFormat;
-    }
-
-    public void setDefaultPartitionFormatPosition(int defaultPartitionFormatPosition) {
-        this.defaultPartitionFormatPosition = defaultPartitionFormatPosition;
-    }
-
     public void setDefaultSymbolCapacity(int defaultSymbolCapacity) {
         this.defaultSymbolCapacity = defaultSymbolCapacity;
     }
@@ -312,10 +304,6 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
         this.partitionByExpr = partitionByExpr;
     }
 
-    public void setTtlToSinkOverride(Sinkable ttlToSinkOverride) {
-        this.ttlToSinkOverride = ttlToSinkOverride;
-    }
-
     @Override
     public void setSelectModel(IQueryModel selectModel) {
         this.selectModel = selectModel;
@@ -324,6 +312,14 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
     public void setSelectText(CharSequence selectText, int selectTextPosition) {
         this.selectText = selectText;
         this.selectTextPosition = selectTextPosition;
+    }
+
+    public void setTableFormat(int tableFormat) {
+        this.tableFormat = tableFormat;
+    }
+
+    public void setTableFormatPosition(int tableFormatPosition) {
+        this.tableFormatPosition = tableFormatPosition;
     }
 
     public void setTableNameExpr(ExpressionNode expr) {
@@ -340,6 +336,10 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
 
     public void setTtlPosition(int ttlPosition) {
         this.ttlPosition = ttlPosition;
+    }
+
+    public void setTtlToSinkOverride(Sinkable ttlToSinkOverride) {
+        this.ttlToSinkOverride = ttlToSinkOverride;
     }
 
     public void setVolumeAlias(CharSequence volumeAlias, int volumePosition) {
@@ -426,7 +426,7 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
         if (partitionByExpr != null) {
             sink.putAscii(" partition by ").put(partitionByExpr.token);
             ttlToSink(sink);
-            ShowCreateTableRecordCursorFactory.defaultPartitionFormatToSink(defaultPartitionFormat, sink);
+            ShowCreateTableRecordCursorFactory.tableFormatToSink(tableFormat, sink);
             if (walEnabled) {
                 sink.putAscii(" wal");
             }

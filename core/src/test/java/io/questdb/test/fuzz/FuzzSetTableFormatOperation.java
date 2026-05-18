@@ -37,11 +37,11 @@ import io.questdb.std.Chars;
 import io.questdb.std.LongList;
 import io.questdb.std.Rnd;
 
-public class FuzzSetDefaultPartitionFormatOperation implements FuzzTransactionOperation {
+public class FuzzSetTableFormatOperation implements FuzzTransactionOperation {
 
     private final boolean parquet;
 
-    public FuzzSetDefaultPartitionFormatOperation(boolean parquet) {
+    public FuzzSetTableFormatOperation(boolean parquet) {
         this.parquet = parquet;
     }
 
