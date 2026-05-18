@@ -201,7 +201,10 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
      * rolling commit and per-unit scan latencies the refresh job records on
      * every iteration. The unit is the base table's timestamp resolution
      * (microseconds for TIMESTAMP, nanoseconds for TIMESTAMP_NS) and is
-     * consistent with the cached interval values.
+     * consistent with the cached interval values. A threshold of 0 means
+     * gap-based merging is disabled (the cost model has determined that a
+     * fresh commit is cheaper than scanning a single ts unit of gap); only
+     * the {@code maxClusters} safety cap can still fold intervals together.
      * <p>
      * {@code src} must be sorted and disjoint on entry (as produced by
      * {@link IntervalUtils#unionInPlace}); on return {@code dst} is also sorted

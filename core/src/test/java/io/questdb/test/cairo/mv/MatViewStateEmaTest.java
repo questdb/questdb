@@ -89,6 +89,24 @@ public class MatViewStateEmaTest {
     }
 
     @Test
+    public void testFastScanOverWideRangeDoesNotDegradeThresholdBelowColdStart() {
+        // Sub-resolution sample: 100ns scan over a 1s (= 1_000_000us) range.
+        // True rate ~1e-4 ns/us. Integer floor in recordScanMetrics records it
+        // as perTsUnit=1, which is 10_000x the truth and locks the EMA into a
+        // regime where the derived threshold collapses below the cold-start
+        // default -- i.e. the auto-tune actively degrades clustering on the
+        // same workload the optimisation was designed to help.
+        state.recordScanMetrics(100L, 1_000_000L);
+        state.recordCommitNanos(1_000_000L);
+
+        final long threshold = state.getCommitGapThresholdTsUnits();
+        Assert.assertTrue(
+                "Sub-resolution scan sample must not pull threshold below cold-start default; got: " + threshold,
+                threshold >= MatViewState.COLD_START_GAP_THRESHOLD_TS_UNITS
+        );
+    }
+
+    @Test
     public void testOutlierCappedAtMultiplierOfPrev() {
         // Seed at 100. Feed a sample of 10_000 (= 100x prev). The cap is
         // 5x, so the folded value is computed against 500, not 10_000.
@@ -127,19 +145,39 @@ public class MatViewStateEmaTest {
     }
 
     @Test
+    public void testThresholdReportsDisabledWhenScanCostExceedsCommit() {
+        // commit (500us) < scanPerTsUnit (100ms / tsUnit): the cost model
+        // says scanning even one ts unit is more expensive than a full
+        // REPLACE_RANGE commit, so gap-based merging should be off. The
+        // previous implementation returned Math.max(1, 0) = 1, which looks
+        // like "merge any gap below 1 ts unit" in materialized_views() but
+        // is functionally indistinguishable from disabled -- unionInPlace
+        // guarantees adjacent intervals have gap >= 1, so the condition
+        // gap < 1 is unreachable. Surface 0 instead so operators reading
+        // the catalogue can tell clustering is dormant.
+        state.setRefreshMetricsForTesting(500_000L, 100_000_000L);
+        Assert.assertEquals(
+                "Threshold must report 0 when commit < scanPerTsUnit; the >=1 clamp hides a disabled cost model",
+                0L,
+                state.getCommitGapThresholdTsUnits()
+        );
+    }
+
+    @Test
     public void testThresholdSurvivesExtremeScanRate() {
         // Pathological cold-start: a single first sample with tiny range
-        // can lock in a huge per-tsUnit rate. The threshold falls but does
-        // not flip negative or overflow.
+        // can lock in a huge per-tsUnit rate. The threshold collapses to
+        // the "disabled" sentinel (0) without flipping negative or
+        // overflowing.
         state.setRefreshMetricsForTesting(0L, 0L);
         // 100ms scan over 1us range -> 100_000_000 ns/us.
         state.recordScanMetrics(100_000_000L, 1L);
         state.recordCommitNanos(500_000L);
         final long threshold = state.getCommitGapThresholdTsUnits();
-        Assert.assertTrue("Threshold should be >= 1 even under pathological scan rate; got: "
-                + threshold, threshold >= 1);
-        // commit (500_000) / perTsUnit (100_000_000) = 0; max(1, 0) = 1.
-        Assert.assertEquals(1L, threshold);
+        Assert.assertTrue("Threshold must not flip negative under pathological scan rate; got: "
+                + threshold, threshold >= 0);
+        // commit (500_000) / perTsUnit (100_000_000) = 0, the gap-merge-disabled sentinel.
+        Assert.assertEquals(0L, threshold);
     }
 
     @Test
@@ -168,10 +206,12 @@ public class MatViewStateEmaTest {
                 expectedAvg,
                 state.getAvgCommitNanos()
         );
-        // Threshold floor: 1, no matter the prev / scan ratio.
+        // Threshold must remain non-negative even when the EMA folds via the
+        // overflow fallback. Whether it lands at 0 (disabled sentinel) or a
+        // positive value depends on the post-fallback commit/perTsUnit ratio.
         Assert.assertTrue(
-                "Threshold must stay >= 1 even after overflow; got: " + state.getCommitGapThresholdTsUnits(),
-                state.getCommitGapThresholdTsUnits() >= 1L
+                "Threshold must stay >= 0 even after overflow; got: " + state.getCommitGapThresholdTsUnits(),
+                state.getCommitGapThresholdTsUnits() >= 0L
         );
     }
 

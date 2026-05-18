@@ -284,8 +284,15 @@ public class MatViewState implements QuietCloseable {
      * cost equals one extra REPLACE_RANGE commit -- below it, merging beats
      * splitting.
      * <p>
-     * Cold-start default ({@value #COLD_START_GAP_THRESHOLD_TS_UNITS} ts-units)
-     * covers the case where no samples have been recorded yet.
+     * Returns the cold-start default ({@value #COLD_START_GAP_THRESHOLD_TS_UNITS}
+     * ts-units) when no samples have been recorded yet. Returns 0 when the cost
+     * model says merging is never worth it (commit cheaper than scanning one
+     * ts unit of gap); {@link MatViewRefreshJob#clusterIntervals} interprets a
+     * zero threshold as "gap-based merging disabled" because
+     * {@link io.questdb.griffin.model.IntervalUtils#unionInPlace} already
+     * guarantees adjacent intervals are at least one ts unit apart, so no gap
+     * can satisfy {@code gap < 0}. Operators reading the catalogue see 0
+     * instead of a misleading 1 that would suggest the cost model is active.
      */
     public long getCommitGapThresholdTsUnits() {
         final long commit = avgCommitNanos;
@@ -293,7 +300,7 @@ public class MatViewState implements QuietCloseable {
         if (commit <= 0 || scanPerTsUnit <= 0) {
             return COLD_START_GAP_THRESHOLD_TS_UNITS;
         }
-        return Math.max(1, commit / scanPerTsUnit);
+        return commit / scanPerTsUnit;
     }
 
     /**
@@ -461,18 +468,24 @@ public class MatViewState implements QuietCloseable {
      * latency. {@code rangeTsUnits} is the timestamp range width that the cursor
      * scanned (i.e. {@code iteratorHi - iteratorLo}) in the base table's
      * timestamp unit (us for TIMESTAMP, ns for TIMESTAMP_NS), not row counts.
-     * Ignores zero-range samples so the rate isn't pulled to infinity.
+     * Ignores zero-range samples so the rate isn't pulled to infinity, and
+     * ignores sub-resolution samples (where {@code sampleNanos < rangeTsUnits})
+     * because integer division would floor the per-ts-unit rate to zero and the
+     * subsequent {@code Math.max(1, ...)} clamp would lock the EMA into a
+     * regime orders of magnitude above the true rate -- which would in turn
+     * collapse {@link #getCommitGapThresholdTsUnits()} below the cold-start
+     * default. Letting the cold-start guard keep firing is preferable to
+     * folding in a sample with no usable signal.
      * <p>
      * Samples larger than {@value #EMA_OUTLIER_MULTIPLIER}x the current average
      * are capped before folding.
      */
     public void recordScanMetrics(long sampleNanos, long rangeTsUnits) {
         assert latch.get();
-        if (sampleNanos <= 0 || rangeTsUnits <= 0) {
+        if (sampleNanos <= 0 || rangeTsUnits <= 0 || sampleNanos < rangeTsUnits) {
             return;
         }
-        final long perTsUnit = Math.max(1, sampleNanos / rangeTsUnits);
-        avgScanNanosPerTsUnit = foldEma(avgScanNanosPerTsUnit, perTsUnit);
+        avgScanNanosPerTsUnit = foldEma(avgScanNanosPerTsUnit, sampleNanos / rangeTsUnits);
     }
 
     public void refreshFail(long refreshTimestamp, CharSequence errorMessage) {

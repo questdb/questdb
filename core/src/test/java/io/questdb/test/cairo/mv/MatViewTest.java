@@ -5882,7 +5882,14 @@ public class MatViewTest extends AbstractCairoTest {
                             "select ts, last(price) as price from base_price sample by 1h"
             );
 
-            // Drive at least one refresh through so the EMAs hold real samples.
+            // Drive at least one refresh through so the commit EMA holds a real
+            // sample. The scan EMA may legitimately stay at zero in this
+            // scenario: recordScanMetrics rejects samples where the scan time
+            // falls below the timestamp range scanned (a one-row refresh over
+            // a one-hour partition produces a few microseconds of scan time
+            // against thousands of microseconds of range width), so seed it
+            // explicitly so the STATS reset assertions below have something
+            // non-trivial to clear.
             execute("insert into base_price(price, ts) values (1.0, '2024-09-10T12:01')");
             currentMicros = parseFloorPartialTimestamp("2024-09-10T13:00:00.000000Z");
             drainWalAndMatViewQueues();
@@ -5890,8 +5897,14 @@ public class MatViewTest extends AbstractCairoTest {
             final TableToken viewToken = engine.getTableTokenIfExists("price_1h");
             final MatViewState viewState = engine.getMatViewStateStore().getViewState(viewToken);
             Assert.assertNotNull(viewState);
-            Assert.assertTrue("Expected EMA samples after refresh", viewState.getAvgCommitNanos() > 0);
-            Assert.assertTrue("Expected scan samples after refresh", viewState.getAvgScanNanosPerTsUnit() > 0);
+            Assert.assertTrue("Expected commit EMA after refresh", viewState.getAvgCommitNanos() > 0);
+            Assert.assertTrue("Could not acquire refresh latch to seed scan EMA", viewState.tryLock());
+            try {
+                viewState.setRefreshMetricsForTesting(viewState.getAvgCommitNanos(), 7L);
+            } finally {
+                viewState.unlock();
+            }
+            Assert.assertTrue("Seeded scan EMA must be non-zero", viewState.getAvgScanNanosPerTsUnit() > 0);
 
             execute("refresh materialized view price_1h stats");
 
@@ -5911,8 +5924,10 @@ public class MatViewTest extends AbstractCairoTest {
                             "from materialized_views() where view_name = 'price_1h'"
             );
 
-            // Drive another refresh and verify the catalogue starts reporting
-            // non-zero EMA samples again.
+            // Drive another refresh and verify the commit EMA recovers. Scan
+            // EMA may stay at zero (same sub-resolution rejection as above),
+            // in which case the threshold falls back to the cold-start
+            // default; both outcomes are catalogued correctly.
             execute("insert into base_price(price, ts) values (2.0, '2024-09-10T14:01')");
             drainWalAndMatViewQueues();
             Assert.assertTrue(
@@ -5920,15 +5935,14 @@ public class MatViewTest extends AbstractCairoTest {
                     viewState.getAvgCommitNanos() > 0
             );
             try (RecordCursorFactory factory = engine.select(
-                    "select refresh_avg_commit_nanos > 0, refresh_avg_scan_nanos_per_ts_unit > 0, refresh_gap_threshold_ts_units > 0 " +
+                    "select refresh_avg_commit_nanos > 0, refresh_gap_threshold_ts_units > 0 " +
                             "from materialized_views() where view_name = 'price_1h'",
                     sqlExecutionContext
             ); RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                 Assert.assertTrue(cursor.hasNext());
                 final Record record = cursor.getRecord();
                 Assert.assertTrue("avg_commit_nanos > 0 via SQL", record.getBool(0));
-                Assert.assertTrue("avg_scan_nanos_per_ts_unit > 0 via SQL", record.getBool(1));
-                Assert.assertTrue("gap_threshold_ts_units > 0 via SQL", record.getBool(2));
+                Assert.assertTrue("gap_threshold_ts_units > 0 via SQL", record.getBool(1));
             }
         });
     }
