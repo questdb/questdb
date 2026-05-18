@@ -899,49 +899,47 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         anchorDispatchingCursor.of(source, anchorWindow, executionContext);
                         source = anchorDispatchingCursor;
                     }
-                    RecordCursor windowCursor = windowFactory.getIncrementalCursor(source, executionContext);
-                    // Drop pre-O3 drift before restoring from the head: clear
-                    // each function's partition map so accumulator state that
-                    // outran the head's snapshot moment is discarded. The
-                    // anchor map gets the same treatment inside
-                    // LiveViewWindow.restore() (it clears before reinserting),
-                    // so no explicit wipe is needed here. Order matters:
-                    // function maps clear -> restore from .cp.
-                    final ObjList<WindowFunction> functions = windowFactory.getWindowFunctions();
-                    for (int i = 0, n = functions.size(); i < n; i++) {
-                        Map m = functions.getQuick(i).getPartitionMap();
-                        if (m != null) {
-                            m.clear();
+                    try (RecordCursor windowCursor = windowFactory.getIncrementalCursor(source, executionContext)) {
+                        // Drop pre-O3 drift before restoring from the head:
+                        // clear each function's partition map so accumulator
+                        // state that outran the head's snapshot moment is
+                        // discarded. The anchor map gets the same treatment
+                        // inside LiveViewWindow.restore() (it clears before
+                        // reinserting), so no explicit wipe is needed here.
+                        // Order matters: function maps clear -> restore from
+                        // .cp.
+                        final ObjList<WindowFunction> functions = windowFactory.getWindowFunctions();
+                        for (int i = 0, n = functions.size(); i < n; i++) {
+                            Map m = functions.getQuick(i).getPartitionMap();
+                            if (m != null) {
+                                m.clear();
+                            }
                         }
-                    }
-                    if (!restoreFromHead(instance, windowFactory, headLvSeqTxn, restoredHeadState)) {
-                        // restoreFromHead retired the corrupt .cp + cleared head
-                        // metadata. State is now empty across the board - the
-                        // same starting condition head-miss replay expects.
-                        // Close out and let the outer guard dispatch to it.
-                        windowCursor.close();
-                        return;
-                    }
-                    restoredOk = true;
-                    try {
+                        if (!restoreFromHead(instance, windowFactory, headLvSeqTxn, restoredHeadState)) {
+                            // restoreFromHead retired the corrupt .cp + cleared
+                            // head metadata (or stashed an invalidate reason).
+                            // State is now empty across the board - the same
+                            // starting condition head-miss replay expects.
+                            // try-with-resources closes the cursor on return.
+                            return;
+                        }
+                        restoredOk = true;
                         Record outRecord = windowCursor.getRecord();
                         while (windowCursor.hasNext()) {
                             long ts = outRecord.getTimestamp(cursorTimestampIndex);
                             if (replayMaxTs == Numbers.LONG_NULL || ts > replayMaxTs) {
                                 replayMaxTs = ts;
                             }
-                            // Re-stamp the O3 detection watermark off the post-
-                            // window output. The monotonic clamp on the setter
-                            // means re-iterating rows the head already covered
-                            // never lowers it.
+                            // Re-stamp the O3 detection watermark off the
+                            // post-window output. The monotonic clamp on the
+                            // setter means re-iterating rows the head already
+                            // covered never lowers it.
                             instance.setLatestSeenTs(ts);
                             TableWriter.Row row = walWriter.newRow(ts);
                             copier.copy(executionContext, outRecord, row);
                             row.append();
                             appendedRows++;
                         }
-                    } finally {
-                        windowCursor.close();
                     }
                     if (appendedRows > 0) {
                         walWriter.commitLiveViewWithReplaceRange(advanceTo, replayLowTs, Long.MAX_VALUE);
