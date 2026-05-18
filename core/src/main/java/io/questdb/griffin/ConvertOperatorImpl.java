@@ -223,10 +223,16 @@ public class ConvertOperatorImpl implements Closeable {
             // Case 1: chained conversion (e.g. INT -> STRING -> DATE) where parquet stores an
             //         older type - convert so the two-step path matches native behavior.
             // Case 2: target type is Symbol — symbol maps cannot be built from parquet.
+            //
+            // Each per-partition convert is performed without committing; a single batched
+            // commit at the end of the loop publishes them atomically. If any partition
+            // throws midway, the loop exits without commit and the writer becomes distressed,
+            // so the in-memory updates are discarded and the on-disk state stays unchanged.
             boolean hasPriorConversion = tableWriter.getMetadata()
                     .getColumnMetadata(existingColIndex).getReplacingIndex() >= 0;
             boolean isTargetSymbol = ColumnType.isSymbol(newType);
             if (hasPriorConversion || isTargetSymbol) {
+                boolean anyPartitionConverted = false;
                 for (int pi = 0, pn = tableWriter.getPartitionCount(); pi < pn; pi++) {
                     if (tableWriter.getPartitionFormat(pi) != PartitionFormat.PARQUET) {
                         continue;
@@ -241,7 +247,8 @@ public class ConvertOperatorImpl implements Closeable {
                                 .$(", column=").$safe(columnName)
                                 .$(", targetType=").$(ColumnType.nameOf(newType))
                                 .I$();
-                        tableWriter.convertPartitionParquetToNative(pts);
+                        tableWriter.convertPartitionParquetToNative(pts, false);
+                        anyPartitionConverted = true;
                     } else {
                         long pts = tableWriter.getPartitionTimestamp(pi);
                         LOG.info()
@@ -255,6 +262,9 @@ public class ConvertOperatorImpl implements Closeable {
                                         : "parquet storage is compatible with existing type, lazy decode handles conversion")
                                 .I$();
                     }
+                }
+                if (anyPartitionConverted) {
+                    tableWriter.commitPendingParquetToNativeConversions();
                 }
             }
 

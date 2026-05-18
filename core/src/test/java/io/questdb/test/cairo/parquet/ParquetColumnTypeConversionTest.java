@@ -1475,6 +1475,95 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
     }
 
     /**
+     * Regression for the fixed-to-var typecast read in {@link io.questdb.cairo.sql.PageFrameFilteredMemoryRecord}.
+     * <p>
+     * {@code val} starts as INT, the partition is converted to parquet, then {@code val}
+     * is ALTERed to STRING. Reads on the parquet partition take the fixed-to-var lazy
+     * conversion path ({@code sourceColumnTypes[val] >= 0}, {@code hasTypeCasts=true}).
+     * <p>
+     * The query groups by {@code val} and filters on a separate non-typecast column
+     * {@code other}. This sequences the failing code path:
+     * <ol>
+     *   <li>{@code AsyncGroupByRecordCursorFactory.run} sees
+     *       {@code frameMemory.needsColumnTypeCast()} and falls back to the scalar filter,
+     *       calling {@code populateRemainingColumns(filterColumnIndexes, rows, false)}
+     *       which decodes non-filter columns in compacted layout.</li>
+     *   <li>{@code aggregateFilteredNonSharded} wraps the frame in a
+     *       {@link io.questdb.cairo.sql.PageFrameFilteredMemoryRecord}, where
+     *       {@code filteredColumns[val]=false} since {@code val} is the GROUP BY key,
+     *       not the filter target.</li>
+     *   <li>The map sink calls {@code getStrA(val)}. {@code PageFrameFilteredMemoryRecord}
+     *       does NOT override {@code getStrA} (or {@code getStrB}), so the call falls
+     *       through to the parent {@link io.questdb.cairo.sql.PageFrameMemoryRecord},
+     *       which routes to {@code convertFixedToStr} and indexes by the parent's
+     *       absolute {@code rowIndex} field rather than {@code getRowIndex(columnIndex)}
+     *       (which would return the compacted index).</li>
+     *   <li>The non-filter column buffer holds only {@code rows.size()} entries in
+     *       compacted layout, so the absolute-index read goes out of bounds.</li>
+     * </ol>
+     * The bug surfaces as wrong GROUP BY keys (silent data corruption) or a JVM crash
+     * on native OOB. The control table {@code nt} is native; both tables produce
+     * identical cursors after the fix.
+     */
+    @Test
+    public void testAsyncGroupByKeyedByFixedToStrParquetColumn() throws Exception {
+        assertMemoryLeak(() -> assertAsyncFactoryFixedToVarParity(
+                "STRING",
+                "SELECT val, count() c FROM $T WHERE other > 700 GROUP BY val ORDER BY val"
+        ));
+    }
+
+    /**
+     * Same regression as {@link #testAsyncGroupByKeyedByFixedToStrParquetColumn} but for
+     * fixed-to-VARCHAR. {@code PageFrameFilteredMemoryRecord} does not override
+     * {@code getVarcharA} / {@code getVarcharB}, so the call falls through to the parent
+     * which routes to {@code convertFixedToVarchar} and indexes by the absolute rowIndex
+     * into the compacted buffer.
+     */
+    @Test
+    public void testAsyncGroupByKeyedByFixedToVarcharParquetColumn() throws Exception {
+        assertMemoryLeak(() -> assertAsyncFactoryFixedToVarParity(
+                "VARCHAR",
+                "SELECT val, count() c FROM $T WHERE other > 700 GROUP BY val ORDER BY val"
+        ));
+    }
+
+    /**
+     * Regression for the {@code getStrLen} override gap. {@code length(val)} routes
+     * through {@code LengthStrFunctionFactory.getInt} which calls
+     * {@code arg.getStrLen(rec)}. With {@code val} on the fixed-to-STRING lazy conversion
+     * path,
+     * {@link io.questdb.cairo.sql.PageFrameFilteredMemoryRecord#getStrLen(int)} fires
+     * instead of the parent. The filtered override reads the aux page directly and
+     * does NOT check {@code needsLazyConversion}, so for a fixed-source column where
+     * no STRING aux page exists, it either returns {@code TableUtils.NULL_LEN} or
+     * reads garbage. The GROUP BY result diverges from the native control table.
+     */
+    @Test
+    public void testAsyncGroupByByLengthOfFixedToStrParquetColumn() throws Exception {
+        assertMemoryLeak(() -> assertAsyncFactoryFixedToVarParity(
+                "STRING",
+                "SELECT length(val) len, sym, count() c FROM $T WHERE other > 700 GROUP BY len, sym ORDER BY len, sym"
+        ));
+    }
+
+    /**
+     * Regression for the {@code getVarcharSize} override gap. {@code length_bytes(val)}
+     * routes through {@code LengthBytesVarcharFunctionFactory.getInt} which calls
+     * {@code arg.getVarcharSize(rec)}.
+     * {@link io.questdb.cairo.sql.PageFrameFilteredMemoryRecord#getVarcharSize(int)}
+     * reads the aux page without consulting {@code needsLazyConversion}, mirroring the
+     * {@code getStrLen} gap.
+     */
+    @Test
+    public void testAsyncGroupByByLengthBytesOfFixedToVarcharParquetColumn() throws Exception {
+        assertMemoryLeak(() -> assertAsyncFactoryFixedToVarParity(
+                "VARCHAR",
+                "SELECT length_bytes(val) len, sym, count() c FROM $T WHERE other > 700 GROUP BY len, sym ORDER BY len, sym"
+        ));
+    }
+
+    /**
      * The async top-K factory orders by {@code val} with a {@code LIMIT}. Its vectorized
      * comparator path reads {@code val} via the column page address; with a lazy var to
      * fixed conversion in parquet, only the scalar fallback materializes the converted
@@ -1726,6 +1815,45 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
             drainWalQueue();
             execute("ALTER TABLE nt ALTER COLUMN val TYPE INT");
             execute("ALTER TABLE pt ALTER COLUMN val TYPE INT");
+            drainWalQueue();
+            assertSqlCursors(
+                    queryTemplate.replace("$T", "nt"),
+                    queryTemplate.replace("$T", "pt")
+            );
+        } finally {
+            tryDrop("nt");
+            tryDrop("pt");
+        }
+    }
+
+    /**
+     * Mirror of {@link #assertAsyncFactoryParity(String)} for the reverse cast direction:
+     * {@code val} starts as INT, the partition is converted to parquet, and {@code val}
+     * is ALTERed to a var type ({@code STRING} or {@code VARCHAR}). On {@code pt} the
+     * parquet keeps the INT storage so reads go through lazy fixed-to-var conversion,
+     * setting {@code needsColumnTypeCast()=true} on every parquet frame. The extra
+     * {@code other LONG} column carries the WHERE predicate so {@code val} can remain
+     * a non-filter column (in compacted layout under
+     * {@link io.questdb.cairo.sql.PageFrameFilteredMemoryRecord}).
+     */
+    private void assertAsyncFactoryFixedToVarParity(String targetType, String queryTemplate) throws Exception {
+        try {
+            execute("CREATE TABLE nt (val INT, other LONG, sym SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE pt (val INT, other LONG, sym SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            String insert = """
+                    INSERT INTO $T
+                    SELECT x::INT AS val,
+                           (x * 7)::LONG AS other,
+                           ('s' || (x % 5)::STRING)::SYMBOL AS sym,
+                           timestamp_sequence('2024-01-01T00:00:00.000000Z', 60_000_000) AS ts
+                    FROM long_sequence(200)""";
+            execute(insert.replace("$T", "nt"));
+            execute(insert.replace("$T", "pt"));
+            drainWalQueue();
+            execute("ALTER TABLE pt CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            drainWalQueue();
+            execute("ALTER TABLE nt ALTER COLUMN val TYPE " + targetType);
+            execute("ALTER TABLE pt ALTER COLUMN val TYPE " + targetType);
             drainWalQueue();
             assertSqlCursors(
                     queryTemplate.replace("$T", "nt"),

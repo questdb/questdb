@@ -139,6 +139,21 @@ fn primitive_type_for(column_type: ColumnType) -> PrimitiveType {
     }
 }
 
+// Like `primitive_type_for`, but forces `Repetition::Required`. Used by the
+// notnull encoder paths (`int_slice_to_page_notnull`), which assert that the
+// parquet schema has Required repetition. Byte/Short/Char are now declared
+// Optional at the schema level, so we override here just for the bench.
+fn required_primitive_type_for(column_type: ColumnType) -> PrimitiveType {
+    let raw_array_encoding = column_type.tag() == ColumnTypeTag::Array;
+    let parquet_type = column_type_to_parquet_type(0, "col", column_type, true, raw_array_encoding)
+        .expect("parquet type");
+
+    match parquet_type {
+        ParquetType::PrimitiveType(prim) => prim,
+        ParquetType::GroupType { .. } => panic!("expected primitive type"),
+    }
+}
+
 fn enc_label(encoding: Encoding) -> &'static str {
     match encoding {
         Encoding::Plain => "plain",
@@ -919,7 +934,7 @@ macro_rules! encode_int_notnull_cases {
             for &$np in null_pcts(false) {
                 let data: Vec<$T> = $data;
                 let ct = ColumnType::new(ColumnTypeTag::$tag, 0);
-                let pt = primitive_type_for(ct);
+                let pt = required_primitive_type_for(ct);
                 let opts = $opts;
                 $cases.push(EncodeBenchCase {
                     name: format!(

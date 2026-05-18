@@ -429,10 +429,10 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
                 final int sourceTag = ColumnType.tagOf(sourceType);
                 final int targetTag = ColumnType.tagOf(targetType);
                 if (ColumnType.isSymbol(targetTag) && !ColumnType.isSymbol(sourceTag)) {
-                    // Non-symbol → symbol: the pre-pass in ConvertOperatorImpl should have
+                    // Non-symbol -> symbol: the pre-pass in ConvertOperatorImpl should have
                     // converted this parquet partition to native. If we get here, it's a bug.
                     throw CairoException.critical(0)
-                            .put("unexpected non-symbol→symbol in parquet, column=").put(i)
+                            .put("unexpected non-symbol->symbol in parquet, column=").put(i)
                             .put(", sourceType=").put(ColumnType.nameOf(sourceTag))
                             .put(", targetType=").put(ColumnType.nameOf(targetTag));
                 }

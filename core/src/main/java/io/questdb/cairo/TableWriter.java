@@ -269,6 +269,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private final Path path;
     private final int pathRootSize;
     private final int pathSize;
+    // Pending parquet->native conversions awaiting a single batched commit.
+    // Three longs per entry: [partitionTimestamp, oldPartitionNameTxn, lastPartitionConvertedFlag].
+    private final LongList pendingParquetToNativeConversions = new LongList();
     private final FragileCode RECOVER_FROM_META_RENAME_FAILURE = this::recoverFromMetaRenameFailure;
     private final LongAdder physicallyWrittenRowsSinceLastCommit = new LongAdder();
     private final Row row = new RowImpl();
@@ -1407,6 +1410,44 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         commit(0);
     }
 
+    /**
+     * Commits the batch of parquet->native conversions queued by
+     * {@link #convertPartitionParquetToNative(long, boolean)} calls with {@code doCommit=false},
+     * then runs the deferred per-partition housekeeping (metadata cache refresh, old parquet
+     * dir cleanup, active partition reopen if the last partition was converted). Empty batch
+     * is a no-op. The pending list is cleared regardless of housekeeping outcome.
+     */
+    public void commitPendingParquetToNativeConversions() {
+        if (pendingParquetToNativeConversions.size() == 0) {
+            return;
+        }
+        try {
+            txWriter.commit(denseSymbolMapWriters);
+            for (int i = 0, n = pendingParquetToNativeConversions.size(); i < n; i += 3) {
+                long pts = pendingParquetToNativeConversions.getQuick(i);
+                long oldNameTxn = pendingParquetToNativeConversions.getQuick(i + 1);
+                boolean lastConverted = pendingParquetToNativeConversions.getQuick(i + 2) != 0L;
+                try {
+                    try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
+                        metadataRW.setHasParquetPartitions(tableToken, txWriter.hasParquetPartitions());
+                    }
+                    if (lastConverted) {
+                        closeActivePartition(false);
+                    }
+                    safeDeletePartitionDir(pts, oldNameTxn);
+                    if (lastConverted) {
+                        openPartition(pts, txWriter.getTransientRowCount());
+                        setAppendPosition(txWriter.getTransientRowCount(), false);
+                    }
+                } catch (Throwable e) {
+                    handleHousekeepingException(e);
+                }
+            }
+        } finally {
+            pendingParquetToNativeConversions.clear();
+        }
+    }
+
     public void commitSeqTxn(long seqTxn) {
         txWriter.setSeqTxn(seqTxn);
         txWriter.commit(denseSymbolMapWriters);
@@ -1626,10 +1667,25 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     @Override
     public boolean convertPartitionParquetToNative(long partitionTimestamp) {
+        return convertPartitionParquetToNative(partitionTimestamp, true);
+    }
+
+    /**
+     * When {@code doCommit} is true, behaves identically to the no-arg variant: commits
+     * the conversion and runs post-commit housekeeping before returning.
+     * <p>
+     * When {@code doCommit} is false, performs the partition rewrite and updates in-memory
+     * {@code txWriter} state, but does not commit and does not run post-commit housekeeping.
+     * The caller must invoke {@link #commitPendingParquetToNativeConversions()} once after
+     * the batch to publish the changes atomically. If the caller fails before that call,
+     * the in-memory updates are discarded along with the (subsequently distressed) writer,
+     * leaving the on-disk state unchanged.
+     */
+    public boolean convertPartitionParquetToNative(long partitionTimestamp, boolean doCommit) {
         assert metadata.getTimestampIndex() > -1;
         assert PartitionBy.isPartitioned(partitionBy);
 
-        if (inTransaction()) {
+        if (doCommit && inTransaction()) {
             LOG.info()
                     .$("committing open transaction before applying convert partition to native command [table=")
                     .$(tableToken)
@@ -1682,7 +1738,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             txWriter.resetPartitionParquetFormat(partitionTimestamp);
             txWriter.resetPartitionParquetGenerated(partitionIndex);
             txWriter.bumpPartitionTableVersion();
-            txWriter.commit(denseSymbolMapWriters);
+            if (doCommit) {
+                txWriter.commit(denseSymbolMapWriters);
+            } else {
+                pendingParquetToNativeConversions.add(partitionTimestamp);
+                pendingParquetToNativeConversions.add(partitionNameTxn);
+                pendingParquetToNativeConversions.add(lastPartitionConverted ? 1L : 0L);
+            }
 
         } catch (Throwable th) {
             if (newPartitionDirLen > 0 && !ff.rmdir(other.trimTo(newPartitionDirLen).slash())) {
@@ -1692,6 +1754,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         } finally {
             path.trimTo(pathSize);
             other.trimTo(pathSize);
+        }
+
+        if (!doCommit) {
+            return true;
         }
 
         // Post-commit: the conversion is logically complete. Everything below

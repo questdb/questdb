@@ -421,7 +421,44 @@ public class PageFrameFilteredMemoryRecord extends PageFrameMemoryRecord {
     }
 
     @Override
+    public CharSequence getStrA(int columnIndex) {
+        if (needsLazyConversion(columnIndex)) {
+            final long saved = rowIndex;
+            try {
+                rowIndex = getRowIndex(columnIndex);
+                return super.getStrA(columnIndex);
+            } finally {
+                rowIndex = saved;
+            }
+        }
+        return super.getStrA(columnIndex);
+    }
+
+    @Override
+    public CharSequence getStrB(int columnIndex) {
+        if (needsLazyConversion(columnIndex)) {
+            final long saved = rowIndex;
+            try {
+                rowIndex = getRowIndex(columnIndex);
+                return super.getStrB(columnIndex);
+            } finally {
+                rowIndex = saved;
+            }
+        }
+        return super.getStrB(columnIndex);
+    }
+
+    @Override
     public int getStrLen(int columnIndex) {
+        if (needsLazyConversion(columnIndex)) {
+            final long saved = rowIndex;
+            try {
+                rowIndex = getRowIndex(columnIndex);
+                return super.getStrLen(columnIndex);
+            } finally {
+                rowIndex = saved;
+            }
+        }
         final long dataPageAddress = pageAddresses.get(columnOffset + columnIndex);
         if (dataPageAddress != 0) {
             final long auxPageAddress = auxPageAddresses.get(columnOffset + columnIndex);
@@ -475,7 +512,44 @@ public class PageFrameFilteredMemoryRecord extends PageFrameMemoryRecord {
     }
 
     @Override
+    public Utf8Sequence getVarcharA(int columnIndex) {
+        if (needsLazyConversion(columnIndex)) {
+            final long saved = rowIndex;
+            try {
+                rowIndex = getRowIndex(columnIndex);
+                return super.getVarcharA(columnIndex);
+            } finally {
+                rowIndex = saved;
+            }
+        }
+        return super.getVarcharA(columnIndex);
+    }
+
+    @Override
+    public Utf8Sequence getVarcharB(int columnIndex) {
+        if (needsLazyConversion(columnIndex)) {
+            final long saved = rowIndex;
+            try {
+                rowIndex = getRowIndex(columnIndex);
+                return super.getVarcharB(columnIndex);
+            } finally {
+                rowIndex = saved;
+            }
+        }
+        return super.getVarcharB(columnIndex);
+    }
+
+    @Override
     public int getVarcharSize(int columnIndex) {
+        if (needsLazyConversion(columnIndex)) {
+            final long saved = rowIndex;
+            try {
+                rowIndex = getRowIndex(columnIndex);
+                return super.getVarcharSize(columnIndex);
+            } finally {
+                rowIndex = saved;
+            }
+        }
         final long auxPageAddress = auxPageAddresses.get(columnOffset + columnIndex);
         if (auxPageAddress != 0) {
             if (frameFormat == PartitionFormat.PARQUET) {
