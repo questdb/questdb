@@ -954,6 +954,14 @@ public class CairoEngine implements Closeable, WriterSource {
                     TableUtils.TABLE_KIND_REGULAR_TABLE
             );
 
+            // Narrow CREATE visibility window: the helper above registers the
+            // LV's name with the registry before the _lv.s / _lv files land
+            // below, so a concurrent reader that resolves the name in this
+            // window can see a half-built LV. Closing the window cleanly
+            // requires a deferred-register variant of the helper; until that
+            // lands the gap is bounded by the file writes below and the
+            // rollback path drops the LV on any failure.
+            //
             // From here on, any failure must roll back the table to avoid orphan
             // LV-typed directories the startup loader skips and never reclaims.
             try {
