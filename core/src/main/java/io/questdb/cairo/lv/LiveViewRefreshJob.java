@@ -169,6 +169,12 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     // window.processRow. Single instance reused across cycles; rebound via
     // of() each replay.
     private final TimestampLowerBoundCursor tsLowerBoundCursor = new TimestampLowerBoundCursor();
+    // Per-turn budget accounting. Reset on entry to refreshInstance; consulted
+    // at the per-base-seqTxn boundary inside incrementalRefresh so a long
+    // backlog does not monopolise the worker. The budget bounds (max commits
+    // and max wall-clock duration) come from CairoConfiguration.
+    private int turnCommitsProcessed;
+    private long turnStartUs;
     private final ObjList<LiveViewInstance> viewInstanceSink = new ObjList<>();
     private final WalEventReader walEventReader;
     // Reusable WAL-segment cursors hoisted out of incrementalRefresh — each
@@ -463,13 +469,27 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         .put(instance.getDefinition().getViewName()).put(']');
             }
 
+            final int turnMaxCommits = engine.getConfiguration().getLiveViewRefreshTurnMaxCommits();
+            final long turnMaxDurationUs = engine.getConfiguration().getLiveViewRefreshTurnMaxDurationMicros();
             try (TransactionLogCursor txnCursor = engine.getTableSequencerAPI().getCursor(baseToken, fromSeqTxn)) {
                 while (txnCursor.hasNext()) {
                     long txn = txnCursor.getTxn();
                     if (txn > toSeqTxn) {
                         break;
                     }
+                    // Per-turn budget yield (RFC 123 "Refresh worker thread
+                    // model"). Always make at least one commit per turn so a
+                    // very slow first commit cannot starve forever; the
+                    // duration check therefore gates on turnCommitsProcessed > 0.
+                    // Yields land at the per-base-seqTxn boundary - never mid-row.
+                    // The next worker tick resumes from advanceTo + 1.
+                    if (turnCommitsProcessed > 0
+                            && (turnCommitsProcessed >= turnMaxCommits
+                            || engine.getConfiguration().getMicrosecondClock().getTicks() - turnStartUs >= turnMaxDurationUs)) {
+                        break;
+                    }
                     advanceTo = txn;
+                    turnCommitsProcessed++;
                     int walId = txnCursor.getWalId();
                     int segmentId = txnCursor.getSegmentId();
                     int segmentTxn = txnCursor.getSegmentTxn();
@@ -1821,6 +1841,12 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             return;
         }
         String invalidationReason = null;
+        // RFC 123 "Refresh worker thread model": each refresh turn (one
+        // refreshInstance call) is bounded by max commits and max duration
+        // so a long backlog does not monopolise the worker. The yield itself
+        // lives at the per-base-seqTxn boundary inside incrementalRefresh.
+        turnStartUs = engine.getConfiguration().getMicrosecondClock().getTicks();
+        turnCommitsProcessed = 0;
         try {
             if (instance.isDropped() || instance.isInvalid()) {
                 return;

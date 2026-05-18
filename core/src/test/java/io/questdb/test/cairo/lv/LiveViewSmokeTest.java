@@ -5429,6 +5429,76 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testWorkerYieldsAtTurnBudget() throws Exception {
+        // RFC 123 "Refresh worker thread model": a single refresh turn is
+        // bounded by max commits and max duration so a long backlog cannot
+        // monopolise the worker. With budget = 3 commits per turn and a
+        // five-commit gap to close in scanForLaggingViews, the worker
+        // processes exactly three commits then yields; the next FLUSH-EVERY
+        // pass drains the remainder.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_REFRESH_TURN_MAX_COMMITS, 3);
+        assertMemoryLeak(() -> {
+            setCurrentMicros(0L);
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base");
+
+            // Six separate base WAL commits - one INSERT per row so each
+            // becomes its own sequencer txn for the refresh worker to walk.
+            execute("INSERT INTO base (ts, x) VALUES ('2026-04-01T00:00:01.000000Z', 1)");
+            execute("INSERT INTO base (ts, x) VALUES ('2026-04-01T00:00:02.000000Z', 2)");
+            execute("INSERT INTO base (ts, x) VALUES ('2026-04-01T00:00:03.000000Z', 3)");
+            execute("INSERT INTO base (ts, x) VALUES ('2026-04-01T00:00:04.000000Z', 4)");
+            execute("INSERT INTO base (ts, x) VALUES ('2026-04-01T00:00:05.000000Z', 5)");
+            execute("INSERT INTO base (ts, x) VALUES ('2026-04-01T00:00:06.000000Z', 6)");
+            drainWalQueue();
+
+            LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(lv);
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                // First drainJob at clock = 0 processes the first queued
+                // notification (seqTxn = 1) and then the FLUSH EVERY gate
+                // freezes further work until the clock advances.
+                drainJob(job);
+                drainWalQueue();
+                Assert.assertEquals(
+                        "initial notification turn processes one commit",
+                        1L,
+                        lv.getLastProcessedSeqTxn()
+                );
+                assertSql("count\n1\n", "SELECT count() FROM lv");
+
+                // Advance past FLUSH EVERY. scanForLaggingViews picks up the
+                // five remaining commits in one refreshInstance call; budget = 3
+                // forces a yield after the first three.
+                setCurrentMicros(200_000L);
+                drainJob(job);
+                drainWalQueue();
+                Assert.assertEquals(
+                        "turn budget yields after processing exactly three more commits",
+                        4L,
+                        lv.getLastProcessedSeqTxn()
+                );
+                assertSql("count\n4\n", "SELECT count() FROM lv");
+
+                // Advance again; the residual two commits fit inside the next turn.
+                setCurrentMicros(400_000L);
+                drainJob(job);
+                drainWalQueue();
+                Assert.assertEquals(
+                        "final turn drains the residual two commits",
+                        6L,
+                        lv.getLastProcessedSeqTxn()
+                );
+                assertSql("count\n6\n", "SELECT count() FROM lv");
+            }
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
     public void testLiveViewsCatalogueExposesHeadCheckpointColumns() throws Exception {
         // Phase 2a.10: head_checkpoint_* columns are preallocated; values stay
         // at LONG_NULL / 0 until the Phase 2a.4 flush-cycle write hook starts
