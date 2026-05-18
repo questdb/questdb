@@ -4990,6 +4990,132 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFreezeBlocksInFlightRefreshCycle() throws Exception {
+        // RFC 123 §"Snapshot interaction": startCheckpoint must force a
+        // happens-before edge with any in-flight refresh turn before its file
+        // copy begins, so the agent never reads _lv.s mid-rewrite. The fix
+        // takes and releases the refresh latch inside startCheckpoint. Here
+        // the test stands in for the worker by holding the latch manually and
+        // asserts startCheckpoint blocks until the latch is released.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base WHERE x > 0");
+
+            final LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(lv);
+
+            // Simulate the worker mid-turn by holding the latch on this thread.
+            Assert.assertTrue(
+                    "test setup must take the refresh latch",
+                    lv.tryLockForRefresh()
+            );
+
+            final AtomicBoolean returned = new AtomicBoolean(false);
+            final Thread agent = new Thread(() -> {
+                lv.startCheckpoint(lv.getStateReader().getAppliedWatermark());
+                returned.set(true);
+            }, "lv-freeze-handshake-test");
+            try {
+                agent.start();
+                // Give the agent time to publish the flag and start spinning on
+                // the latch. startCheckpoint must not return while we hold it.
+                Thread.sleep(50);
+                Assert.assertTrue(
+                        "freeze flag must be published before the agent blocks on the latch",
+                        lv.isFreezeInProgress()
+                );
+                Assert.assertFalse(
+                        "startCheckpoint must block while the refresh latch is held",
+                        returned.get()
+                );
+
+                // Release the latch. startCheckpoint should return promptly.
+                lv.unlockAfterRefresh();
+                agent.join(5_000);
+                Assert.assertFalse(
+                        "startCheckpoint thread must have completed",
+                        agent.isAlive()
+                );
+                Assert.assertTrue(
+                        "startCheckpoint must return after the latch is released",
+                        returned.get()
+                );
+            } finally {
+                if (lv.isFreezeInProgress()) {
+                    lv.endCheckpoint();
+                }
+            }
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testFreezeQueuesInvalidationUntilEnd() throws Exception {
+        // RFC 123 §"Snapshot interaction": markInvalid blocks on the freeze.
+        // If a base-table schema change happens mid-snapshot, invalidation is
+        // queued and applied right after endCheckpoint. The snapshot reflects
+        // the pre-invalidation state.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base WHERE x > 0");
+
+            final LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(lv);
+
+            // Take the freeze. Now an out-of-band invalidate must wait.
+            lv.startCheckpoint(lv.getStateReader().getAppliedWatermark());
+            Assert.assertTrue(lv.isFreezeInProgress());
+            Assert.assertFalse("LV must still be valid pre-freeze", lv.isInvalid());
+
+            final AtomicBoolean returned = new AtomicBoolean(false);
+            final Thread invalidator = new Thread(() -> {
+                engine.invalidateLiveView(lv, "test queued behind freeze");
+                returned.set(true);
+            }, "lv-invalidate-freeze-test");
+            try {
+                invalidator.start();
+                Thread.sleep(50);
+                Assert.assertFalse(
+                        "invalidateLiveView must wait until endCheckpoint",
+                        returned.get()
+                );
+                Assert.assertFalse(
+                        "LV must still be valid while frozen",
+                        lv.isInvalid()
+                );
+
+                lv.endCheckpoint();
+                invalidator.join(5_000);
+                Assert.assertFalse(
+                        "invalidate thread must have returned",
+                        invalidator.isAlive()
+                );
+                Assert.assertTrue(
+                        "invalidate must complete after endCheckpoint",
+                        returned.get()
+                );
+                Assert.assertTrue(
+                        "LV is invalid after endCheckpoint",
+                        lv.isInvalid()
+                );
+                Assert.assertTrue(
+                        "invalidation reason persisted",
+                        Chars.equals("test queued behind freeze", lv.getStateReader().getInvalidationReason())
+                );
+            } finally {
+                if (lv.isFreezeInProgress()) {
+                    lv.endCheckpoint();
+                }
+            }
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
     public void testFreezeGateSkipsRefreshTurn() throws Exception {
         // Phase 2a.9c: DatabaseCheckpointAgent toggles freezeInProgress around
         // its per-LV file copy so the refresh worker does not advance _lv.s /

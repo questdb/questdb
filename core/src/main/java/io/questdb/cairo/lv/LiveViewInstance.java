@@ -32,6 +32,7 @@ import io.questdb.griffin.RecordToRowCopier;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
+import io.questdb.std.Os;
 import io.questdb.std.QuietCloseable;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -208,11 +209,15 @@ public class LiveViewInstance implements QuietCloseable {
 
     /**
      * Companion to {@link #startCheckpoint(long)}. Clears the freeze gate so
-     * the refresh worker resumes on its next turn. Idempotent.
+     * the refresh worker resumes on its next turn and wakes any thread blocked
+     * in {@link #waitForUnfrozen()}. Idempotent.
      */
     public void endCheckpoint() {
-        freezeInProgress = false;
-        freezeFrozenLvSeqTxn = Numbers.LONG_NULL;
+        synchronized (this) {
+            freezeInProgress = false;
+            freezeFrozenLvSeqTxn = Numbers.LONG_NULL;
+            notifyAll();
+        }
     }
 
     public Function getAnchorFunction() {
@@ -597,10 +602,27 @@ public class LiveViewInstance implements QuietCloseable {
      * observe {@link #isFreezeInProgress()} short-circuit before mutating
      * {@code _lv.s} or advancing any LV watermark. The caller is responsible
      * for pairing this with a {@link #endCheckpoint()} after the copy completes.
+     * <p>
+     * After setting the flag the call takes and releases the refresh latch.
+     * The CAS spins until any in-flight refresh turn releases the latch in
+     * its finally block; this forces happens-before with the worker so that
+     * (a) no refresh turn is still mutating {@code _lv.s} when the caller
+     * proceeds with its copy, and (b) the worker's next call to
+     * {@link #tryLockForRefresh()} observes {@code freezeInProgress=true}.
      */
     public void startCheckpoint(long frozenLvSeqTxn) {
-        freezeFrozenLvSeqTxn = frozenLvSeqTxn;
-        freezeInProgress = true;
+        // Synchronize on the instance monitor while publishing the flag so any
+        // invalidator inside synchronized(instance) on another thread either
+        // (a) commits its rewrite before the agent's file copy begins, or
+        // (b) observes freezeInProgress=true and parks via waitForUnfrozen().
+        synchronized (this) {
+            freezeFrozenLvSeqTxn = frozenLvSeqTxn;
+            freezeInProgress = true;
+        }
+        while (!refreshLatch.compareAndSet(false, true)) {
+            Os.pause();
+        }
+        refreshLatch.set(false);
     }
 
     public void tryCloseIfDropped() {
@@ -631,6 +653,33 @@ public class LiveViewInstance implements QuietCloseable {
     public void unlockAfterRefresh() {
         if (!refreshLatch.compareAndSet(true, false)) {
             throw new IllegalStateException("refresh latch is not held");
+        }
+    }
+
+    /**
+     * Parks the calling thread on the instance monitor while
+     * {@link #isFreezeInProgress()} is true. Must be invoked from within a
+     * {@code synchronized(instance)} block; releases the monitor while waiting
+     * and reacquires it before returning. {@link #endCheckpoint()} wakes
+     * waiters once the freeze clears.
+     * <p>
+     * RFC 123 contract: out-of-band {@code _lv.s} mutators (engine-side
+     * invalidation paths) call this at the top of their synchronized block so
+     * the snapshot agent's file copy is not racing concurrent rewrites. The
+     * caller does not need to recheck the flag after the call returns; the
+     * synchronized block holds the monitor, so any subsequent
+     * {@code startCheckpoint} that synchronizes on the same monitor will
+     * block until this work completes.
+     */
+    public void waitForUnfrozen() {
+        assert Thread.holdsLock(this);
+        while (freezeInProgress) {
+            try {
+                wait();
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return;
+            }
         }
     }
 }

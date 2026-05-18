@@ -1774,6 +1774,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         if (!instance.tryLockForRefresh()) {
             return;
         }
+        String invalidationReason = null;
         try {
             if (instance.isDropped() || instance.isInvalid()) {
                 return;
@@ -1822,21 +1823,31 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     instance.recordRefreshSuccess();
                 }
             } catch (Throwable t) {
-                handleRefreshFailure(instance, t);
+                invalidationReason = handleRefreshFailure(instance, t);
             }
         } finally {
             instance.unlockAfterRefresh();
             instance.tryCloseIfDropped();
         }
+        // Invalidate outside the refresh latch: invalidateLiveView's
+        // freeze-aware synchronized block parks on the instance monitor when a
+        // checkpoint freeze is active, and the agent's startCheckpoint cannot
+        // complete its latch handshake while the worker still holds the
+        // refresh latch. Running the invalidate after unlockAfterRefresh
+        // avoids that deadlock.
+        if (invalidationReason != null) {
+            engine.invalidateLiveView(instance, invalidationReason);
+        }
     }
 
     /**
      * RFC 123 §"Flush" retry budget: count consecutive failures and the elapsed
-     * wall-clock time since the streak began. On budget exhaustion, invalidate
-     * the view via the unified path. The view stops refreshing but stays
-     * queryable; recovery is operator-driven (DROP + CREATE).
+     * wall-clock time since the streak began. On budget exhaustion, returns
+     * the reason string so the caller can drive the invalidation outside the
+     * refresh latch; otherwise returns null. The view stops refreshing but
+     * stays queryable; recovery is operator-driven (DROP + CREATE).
      */
-    private void handleRefreshFailure(LiveViewInstance instance, Throwable t) {
+    private String handleRefreshFailure(LiveViewInstance instance, Throwable t) {
         long nowUs = engine.getConfiguration().getMicrosecondClock().getTicks();
         instance.recordRefreshFailure(nowUs);
         int retryCount = instance.getFlushRetryCount();
@@ -1850,12 +1861,12 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     .$(", retryCount=").$(retryCount)
                     .$(", elapsedUs=").$(elapsedUs)
                     .$(", error=").$(t).I$();
-            engine.invalidateLiveView(instance, "flush retry budget exhausted");
-        } else {
-            LOG.critical().$("live view refresh failed [view=").$(instance.getDefinition().getViewName())
-                    .$(", retryCount=").$(retryCount)
-                    .$(", error=").$(t).I$();
+            return "flush retry budget exhausted";
         }
+        LOG.critical().$("live view refresh failed [view=").$(instance.getDefinition().getViewName())
+                .$(", retryCount=").$(retryCount)
+                .$(", error=").$(t).I$();
+        return null;
     }
 
     private void refreshViewsForBaseTable(TableToken baseTableToken, long seqTxn) {
