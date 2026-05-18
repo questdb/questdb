@@ -53,6 +53,22 @@ public class MatViewState implements QuietCloseable {
     public static final int MAT_VIEW_STATE_FORMAT_EXTRA_PERIOD_MSG_TYPE = 2;
     public static final int MAT_VIEW_STATE_FORMAT_EXTRA_TS_MSG_TYPE = 1;
     public static final int MAT_VIEW_STATE_FORMAT_MSG_TYPE = 0;
+    // Cold-start gap-width threshold used when no scan/commit samples have been
+    // observed yet. Units match the base table's timestamp column (us for
+    // TIMESTAMP, ns for TIMESTAMP_NS). The value 2_000_000 corresponds to 2
+    // seconds in microseconds and 2 milliseconds in nanoseconds -- both are
+    // mild defaults that bias toward minimum merging until measured cost data
+    // arrives. Subsequent refreshes will override via the EMA-derived
+    // threshold computed from observed commit and scan latencies.
+    public static final long COLD_START_GAP_THRESHOLD_TS_UNITS = 2_000_000L;
+    // EMA smoothing inverse: new = (prev * (N-1) + sample) / N. Larger N is
+    // smoother but slower to adapt. 8 gives ~6 samples to reach halfway to a
+    // new steady state, which is a reasonable balance.
+    static final int EMA_ALPHA_INV = 8;
+    // Hard cap on incoming sample relative to current average, to prevent a
+    // single outlier (GC pause, O3 partition rewrite) from poisoning the EMA
+    // for the next several refreshes.
+    static final int EMA_OUTLIER_MULTIPLIER = 5;
     // Used to avoid concurrent refresh runs.
     private final AtomicBoolean latch = new AtomicBoolean(false);
     // Protected by this.latch.
@@ -67,6 +83,20 @@ public class MatViewState implements QuietCloseable {
     // Used by MatViewTimerJob to avoid queueing redundant refresh tasks.
     private final AtomicLong refreshSeq = new AtomicLong();
     private final MatViewTelemetryFacade telemetryFacade;
+    // Exponential moving average of one REPLACE_RANGE commit, in nanoseconds.
+    // Used together with avgScanNanosPerTsUnit to derive a timestamp-width
+    // threshold below which clustering two adjacent cached refresh intervals
+    // is cheaper than paying for an extra commit.
+    // Writes protected by this.latch; reads may be racy (used for display
+    // and cost-model decisions, never for correctness).
+    private volatile long avgCommitNanos;
+    // Exponential moving average of base-table scan latency per unit of the
+    // base table's timestamp column (us for TIMESTAMP, ns for TIMESTAMP_NS).
+    // This is the rate at which the refresh cursor processes wall-clock time
+    // width regardless of underlying row density -- the cost model wants
+    // "how long to scan a gap of N ts-units", which this directly answers.
+    // Same locking discipline as avgCommitNanos.
+    private volatile long avgScanNanosPerTsUnit;
     // Protected by this.latch.
     private RecordCursorFactory cursorFactory;
     private volatile boolean dropped;
@@ -198,6 +228,33 @@ public class MatViewState implements QuietCloseable {
     @Override
     public void close() {
         cursorFactory = Misc.free(cursorFactory);
+    }
+
+    /**
+     * Returns the gap-width threshold below which two adjacent cached refresh
+     * intervals should be merged into one cluster (in microseconds of timestamp
+     * range). Derived from the recent moving averages: the threshold is the
+     * timestamp-range width whose scan cost equals one extra REPLACE_RANGE
+     * commit -- below it, merging beats splitting.
+     * <p>
+     * Cold-start default ({@value #COLD_START_GAP_THRESHOLD_TS_UNITS} us) covers
+     * the case where no samples have been recorded yet.
+     */
+    public long getAvgCommitNanos() {
+        return avgCommitNanos;
+    }
+
+    public long getAvgScanNanosPerTsUnit() {
+        return avgScanNanosPerTsUnit;
+    }
+
+    public long getCommitGapThresholdTsUnits() {
+        final long commit = avgCommitNanos;
+        final long scanPerTsUnit = avgScanNanosPerTsUnit;
+        if (commit <= 0 || scanPerTsUnit <= 0) {
+            return COLD_START_GAP_THRESHOLD_TS_UNITS;
+        }
+        return Math.max(1, commit / scanPerTsUnit);
     }
 
     /**
@@ -342,6 +399,75 @@ public class MatViewState implements QuietCloseable {
                 null,
                 refreshFinishedTimestampUs - refreshTriggeredTimestampUs
         );
+    }
+
+    /**
+     * Folds a sampled REPLACE_RANGE commit latency into the rolling average used
+     * for {@link #getCommitGapThresholdTsUnits()}. Samples in nanoseconds.
+     * <p>
+     * Samples larger than {@value #EMA_OUTLIER_MULTIPLIER}x the current average
+     * are capped before folding, so a single GC pause or O3 partition rewrite
+     * doesn't contaminate the cost model for the next several refreshes.
+     */
+    public void recordCommitNanos(long sampleNanos) {
+        assert latch.get();
+        if (sampleNanos <= 0) {
+            return;
+        }
+        final long prev = avgCommitNanos;
+        if (prev == 0) {
+            avgCommitNanos = sampleNanos;
+        } else {
+            final long capped = Math.min(sampleNanos, prev * EMA_OUTLIER_MULTIPLIER);
+            avgCommitNanos = (prev * (EMA_ALPHA_INV - 1) + capped) / EMA_ALPHA_INV;
+        }
+    }
+
+    /**
+     * Test-only seeder for the rolling averages. Lets tests drive the
+     * clustering cost model into a known regime without having to predict the
+     * exact scan-time of a warmup refresh on the running hardware.
+     */
+    public void setRefreshMetricsForTesting(long commitNanos, long scanNanosPerMicro) {
+        assert latch.get();
+        this.avgCommitNanos = Math.max(0, commitNanos);
+        this.avgScanNanosPerTsUnit = Math.max(0, scanNanosPerMicro);
+    }
+
+    /**
+     * Folds a sampled base-table scan into the rolling per-microsecond scan
+     * latency. {@code rangeMicros} is the timestamp range width that the cursor
+     * scanned (i.e. {@code iteratorHi - iteratorLo}), in microseconds, not row
+     * counts. Ignores zero-range samples so the rate isn't pulled to infinity.
+     * <p>
+     * Samples larger than {@value #EMA_OUTLIER_MULTIPLIER}x the current average
+     * are capped before folding.
+     */
+    public void recordScanMetrics(long sampleNanos, long rangeMicros) {
+        assert latch.get();
+        if (sampleNanos <= 0 || rangeMicros <= 0) {
+            return;
+        }
+        final long perMicro = Math.max(1, sampleNanos / rangeMicros);
+        final long prev = avgScanNanosPerTsUnit;
+        if (prev == 0) {
+            avgScanNanosPerTsUnit = perMicro;
+        } else {
+            final long capped = Math.min(perMicro, prev * EMA_OUTLIER_MULTIPLIER);
+            avgScanNanosPerTsUnit = (prev * (EMA_ALPHA_INV - 1) + capped) / EMA_ALPHA_INV;
+        }
+    }
+
+    /**
+     * Clears the rolling commit and scan latency averages, returning the cost
+     * model to its cold-start state. Used by {@code REFRESH MATERIALIZED VIEW
+     * ... STATS} when an operator wants to force the auto-tune to re-learn
+     * (e.g. after a workload shape change or a hardware migration).
+     */
+    public void refreshStats() {
+        assert latch.get();
+        this.avgCommitNanos = 0;
+        this.avgScanNanosPerTsUnit = 0;
     }
 
     public void refreshFail(long refreshTimestamp, CharSequence errorMessage) {
