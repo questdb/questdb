@@ -40,7 +40,14 @@ public enum LiveViewLifecycleState {
     /** Registry committed, {@code _lv.s.invalid=true}; refresh stopped, last persisted state remains queryable. */
     INVALID,
     /** Registry entry marked-dropped; draining, not visible to new readers. */
-    DROPPING;
+    DROPPING,
+    /**
+     * Restart load saw an on-disk format version this build cannot read.
+     * The LV's row data is intact but its definition / state cannot be
+     * deserialised; the refresh worker skips it and the catalogue surfaces
+     * the view so operators can DROP + CREATE to recover.
+     */
+    VERSION_UNSUPPORTED;
 
     /**
      * Derives the lifecycle state from durable signals. Mirrors the RFC's "single
@@ -80,6 +87,7 @@ public enum LiveViewLifecycleState {
             case ACTIVE -> "active";
             case INVALID -> "invalid";
             case DROPPING -> "dropping";
+            case VERSION_UNSUPPORTED -> "version_unsupported";
         };
     }
 }
