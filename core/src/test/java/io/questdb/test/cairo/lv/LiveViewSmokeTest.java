@@ -5748,7 +5748,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
             } catch (SqlException e) {
                 Assert.assertTrue(
                         e.getMessage(),
-                        e.getMessage().contains("must return a scalar primitive type")
+                        e.getMessage().contains("must return TIMESTAMP or LONG")
                 );
             }
         });
@@ -5767,7 +5767,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
             } catch (SqlException e) {
                 Assert.assertTrue(
                         e.getMessage(),
-                        e.getMessage().contains("must return a scalar primitive type")
+                        e.getMessage().contains("must return TIMESTAMP or LONG")
                 );
             }
         });

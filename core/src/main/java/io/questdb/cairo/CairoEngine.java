@@ -2631,32 +2631,18 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     /**
-     * Rejects anchor expressions whose top-level return type is not a scalar
-     * primitive (or string-like). The anchor value flows through partition-key
-     * equality comparisons; array / geohash / binary / interval / decimal /
-     * uuid / long128 / long256 return types have no clean equality semantics
-     * for that path and crash later in the cursor stack.
+     * Rejects anchor expressions whose top-level return type is not TIMESTAMP
+     * or LONG. Other scalar primitives (INT, BOOLEAN, DOUBLE, STRING, ...) and
+     * composite types (ARRAY, GEOHASH, BINARY, INTERVAL, ...) cannot flow
+     * through the V1 anchor map's LONG slot. Catching the type mismatch at
+     * CREATE keeps the failure visible to the operator instead of waiting for
+     * the first refresh cycle to surface it.
      */
     private static void validateAnchorReturnType(Function fn, int position) throws SqlException {
-        final int type = fn.getType();
-        switch (ColumnType.tagOf(type)) {
-            case ColumnType.BOOLEAN:
-            case ColumnType.BYTE:
-            case ColumnType.CHAR:
-            case ColumnType.DATE:
-            case ColumnType.DOUBLE:
-            case ColumnType.FLOAT:
-            case ColumnType.INT:
-            case ColumnType.LONG:
-            case ColumnType.SHORT:
-            case ColumnType.STRING:
-            case ColumnType.SYMBOL:
-            case ColumnType.TIMESTAMP:
-            case ColumnType.VARCHAR:
-                return;
-            default:
-                throw SqlException.$(position, "ANCHOR EXPRESSION must return a scalar primitive type; got ")
-                        .put(ColumnType.nameOf(type));
+        final int tag = ColumnType.tagOf(fn.getType());
+        if (tag != ColumnType.TIMESTAMP && tag != ColumnType.LONG) {
+            throw SqlException.$(position, "ANCHOR EXPRESSION must return TIMESTAMP or LONG in V1; got ")
+                    .put(ColumnType.nameOf(fn.getType()));
         }
     }
 
