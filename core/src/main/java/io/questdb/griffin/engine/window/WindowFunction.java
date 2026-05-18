@@ -31,11 +31,13 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.cairo.sql.WindowSPI;
 import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.griffin.SqlCodeGenerator;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Decimal128;
@@ -355,6 +357,22 @@ public interface WindowFunction extends Function {
     @Override
     default int getVarcharSize(Record rec) {
         throw new UnsupportedOperationException();
+    }
+
+    /**
+     * Rebinds the partition-by expressions (and any other inner expressions that
+     * depend on the base cursor's per-cursor state) to the new cursor without
+     * resetting the function's accumulated per-partition state.
+     * <p>
+     * The live-view incremental refresh path skips the regular {@link #init}
+     * call on window functions so their cross-cycle accumulator state survives;
+     * partition-by expressions that resolve SYMBOL columns to STRING still need
+     * a fresh symbol-table binding each cycle, so the refresh path invokes
+     * this entry point instead.
+     * <p>
+     * Default no-op for unpartitioned window functions.
+     */
+    default void initPartitionBy(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
     }
 
     default void initRecordComparator(

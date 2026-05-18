@@ -75,6 +75,11 @@ public abstract class BasePartitionedBivariateWindowFunction extends BaseBivaria
     }
 
     @Override
+    public void initPartitionBy(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+        Function.init(partitionByRecord.getFunctions(), symbolTableSource, executionContext, null);
+    }
+
+    @Override
     public void markPartitionAlive(Record record) {
         if (tombstoneValueIndex < 0 || tombstoneCount == 0) {
             return;

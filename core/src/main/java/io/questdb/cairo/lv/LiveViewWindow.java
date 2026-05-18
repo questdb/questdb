@@ -47,6 +47,7 @@ import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.window.WindowFunction;
+import io.questdb.std.BitSet;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
@@ -181,8 +182,15 @@ public class LiveViewWindow implements QuietCloseable {
         // FULL source metadata's types (the sink looks up types by source index,
         // not by filter slot). The map's key types — separately — must match
         // the filtered subset.
+        // SYMBOL partition columns route through writeSymbolAsString so the
+        // map key holds the resolved string rather than the segment-local
+        // symbol index. WAL segments assign different local indices to the
+        // same string, so a raw-int key would collide across incremental
+        // refresh cycles whose rows come from different WAL segments. The map
+        // key type for those columns becomes STRING to match the sink's writes.
         ListColumnFilter columnFilter = new ListColumnFilter();
         ArrayColumnTypes mapKeyTypes = new ArrayColumnTypes();
+        BitSet writeSymbolAsString = null;
         for (int i = 0; i < n; i++) {
             String name = partitionColumnNames.getQuick(i);
             int idx = projectedMetadata.getColumnIndexQuiet(name);
@@ -191,13 +199,22 @@ public class LiveViewWindow implements QuietCloseable {
                         .put("partition column not found in projected metadata [column=").put(name).put(']');
             }
             columnFilter.add(idx + 1);
-            mapKeyTypes.add(projectedMetadata.getColumnType(idx));
+            int columnType = projectedMetadata.getColumnType(idx);
+            if (ColumnType.isSymbol(columnType)) {
+                if (writeSymbolAsString == null) {
+                    writeSymbolAsString = new BitSet();
+                }
+                writeSymbolAsString.set(idx);
+                mapKeyTypes.add(ColumnType.STRING);
+            } else {
+                mapKeyTypes.add(columnType);
+            }
         }
         ArrayColumnTypes sourceColumnTypes = new ArrayColumnTypes();
         for (int i = 0, m = projectedMetadata.getColumnCount(); i < m; i++) {
             sourceColumnTypes.add(projectedMetadata.getColumnType(i));
         }
-        RecordSink sink = RecordSinkFactory.getInstance(configuration, asm, sourceColumnTypes, columnFilter, null);
+        RecordSink sink = RecordSinkFactory.getInstance(configuration, asm, sourceColumnTypes, columnFilter, writeSymbolAsString);
         Map map = MapFactory.createOrderedMap(configuration, mapKeyTypes, anchorMapValueTypes());
         int returnType = anchorExpression.getType();
         int tag = ColumnType.tagOf(returnType);

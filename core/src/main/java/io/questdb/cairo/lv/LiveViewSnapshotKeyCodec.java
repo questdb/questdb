@@ -45,10 +45,15 @@ import io.questdb.cairo.vm.api.MemoryR;
  *     {@link MapValue}), since {@link MapValue} extends {@link Record} and
  *     exposes the same {@code getXxx(columnIndex)} accessors.</li>
  * </ul>
- * Variable-width column types (STRING, VARCHAR, BINARY, UUID, LONG256,
- * DECIMAL128, DECIMAL256, etc.) are not supported and force the containing
- * function or anchor map onto the head-miss path. Callers should gate
- * {@code supportsSnapshot()} on {@link #isAllTypesSupported(ColumnTypes)}.
+ * Variable-width column types other than STRING (VARCHAR, BINARY, UUID,
+ * LONG256, DECIMAL128, DECIMAL256, etc.) are not supported and force the
+ * containing function or anchor map onto the head-miss path. STRING is
+ * supported because live-view partition-by RecordSinks rewrite SYMBOL
+ * partition columns as resolved STRING values (see {@code LiveViewWindow.build}
+ * and the live-view path in {@code SqlCodeGenerator.generateSelectWindow}),
+ * so the live-view partition-key key types end up as STRING for any LV that
+ * partitions by SYMBOL. Callers should gate {@code supportsSnapshot()} on
+ * {@link #isAllTypesSupported(ColumnTypes)}.
  * <p>
  * Format is type-dispatched and grows from {@code offset} byte-by-byte:
  * <pre>
@@ -58,6 +63,7 @@ import io.questdb.cairo.vm.api.MemoryR;
  *     GEOINT     / FLOAT                - 4 bytes
  *     LONG       / DATE     / TIMESTAMP - 8 bytes
  *     GEOLONG    / DOUBLE               - 8 bytes
+ *     STRING                            - 4 byte length prefix + 2 bytes per char
  * </pre>
  * No length prefix on the entry itself - callers know the slot shape from the
  * function's stored {@link ColumnTypes}.
@@ -69,8 +75,11 @@ public final class LiveViewSnapshotKeyCodec {
 
     /**
      * @return total byte size of a key row across all columns in
-     * {@code keyTypes}, or -1 if any column type is not supported (callers
-     * should check {@link #isAllTypesSupported(ColumnTypes)} first).
+     * {@code keyTypes}, or -1 if the type set has any unsupported column
+     * (also returns -1 for keys that contain a STRING column — STRING keys
+     * are encoded variable-width so the row size is per-value, not derivable
+     * from the type set). Callers should check
+     * {@link #isAllTypesSupported(ColumnTypes)} first.
      */
     public static int byteSizeOf(ColumnTypes keyTypes) {
         int total = 0;
@@ -86,7 +95,7 @@ public final class LiveViewSnapshotKeyCodec {
 
     public static boolean isAllTypesSupported(ColumnTypes keyTypes) {
         for (int i = 0, n = keyTypes.getColumnCount(); i < n; i++) {
-            if (byteSizeOfType(keyTypes.getColumnType(i)) < 0) {
+            if (!isSupportedKeyType(keyTypes.getColumnType(i))) {
                 return false;
             }
         }
@@ -145,6 +154,16 @@ public final class LiveViewSnapshotKeyCodec {
                 case ColumnType.DOUBLE:
                     dst.putDouble(source.getDouble(offset));
                     offset += Double.BYTES;
+                    break;
+                case ColumnType.STRING:
+                    final int strLen = source.getInt(offset);
+                    offset += Integer.BYTES;
+                    if (strLen < 0) {
+                        dst.putStr(null);
+                    } else {
+                        dst.putStr(source.getStrA(offset - Integer.BYTES));
+                        offset += (long) strLen * Character.BYTES;
+                    }
                     break;
                 default:
                     throw unsupportedType(type);
@@ -288,6 +307,9 @@ public final class LiveViewSnapshotKeyCodec {
                 case ColumnType.DOUBLE:
                     sink.putDouble(record.getDouble(columnIndex));
                     break;
+                case ColumnType.STRING:
+                    sink.putStr(record.getStrA(columnIndex));
+                    break;
                 default:
                     throw unsupportedType(type);
             }
@@ -319,6 +341,20 @@ public final class LiveViewSnapshotKeyCodec {
             default:
                 return -1;
         }
+    }
+
+    /**
+     * Returns {@code true} for column types this codec can read and write at
+     * the partition-key slot. Mirrors {@link #byteSizeOfType} for fixed-width
+     * types, with STRING admitted as a variable-width exception (the live-view
+     * partition-by RecordSink rewrites SYMBOL columns as resolved STRING so
+     * SYMBOL-partitioned LVs ride STRING keys end-to-end).
+     */
+    private static boolean isSupportedKeyType(int columnType) {
+        if (ColumnType.tagOf(columnType) == ColumnType.STRING) {
+            return true;
+        }
+        return byteSizeOfType(columnType) >= 0;
     }
 
     private static CairoException unsupportedType(int type) {

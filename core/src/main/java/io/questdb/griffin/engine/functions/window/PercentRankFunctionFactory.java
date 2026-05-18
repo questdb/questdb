@@ -277,6 +277,13 @@ public class PercentRankFunctionFactory extends AbstractWindowFunctionFactory {
         }
 
         @Override
+        public void initPartitionBy(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            if (partitionByRecord != null) {
+                Function.init(partitionByRecord.getFunctions(), symbolTableSource, executionContext, null);
+            }
+        }
+
+        @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             Unsafe.putDouble(spi.getAddress(recordOffset, columnIndex), PERCENT_RANK_CONST);
         }
@@ -361,6 +368,11 @@ public class PercentRankFunctionFactory extends AbstractWindowFunctionFactory {
             super.init(symbolTableSource, executionContext);
             Function.init(partitionByRecord.getFunctions(), symbolTableSource, executionContext, null);
             SortKeyEncoder.buildRankMaps(symbolTableSource, rankMaps, recordComparator);
+        }
+
+        @Override
+        public void initPartitionBy(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            Function.init(partitionByRecord.getFunctions(), symbolTableSource, executionContext, null);
         }
 
         @Override

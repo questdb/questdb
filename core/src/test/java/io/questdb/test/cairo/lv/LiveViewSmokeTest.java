@@ -2537,6 +2537,91 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSymbolPartitionKeyStableAcrossWalSegments() throws Exception {
+        // Anchored LV with PARTITION BY <SYMBOL col> against a base table that
+        // receives multiple INSERT statements. Each INSERT emits its own WAL
+        // segment whose local symbol indices start at 0 and grow independently
+        // of prior segments, so the same partition string ('a') resolves to a
+        // different segment-local int in cycle 2 than in cycle 1.
+        // The fix routes SYMBOL partition columns through their resolved
+        // string in both the anchor map sink and the per-function partition
+        // map sink, so multi-segment cycles converge on a single set of
+        // partition entries instead of growing per-segment.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x DOUBLE, sym SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+                    "SELECT ts, sym, sum(x) OVER w AS s FROM base " +
+                    "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                setCurrentMicros(0L);
+                execute("INSERT INTO base (ts, x, sym) VALUES " +
+                        "('2026-11-01T00:00:00.000000Z', 10.0, 'a'), " +
+                        "('2026-11-01T01:00:00.000000Z', 20.0, 'b')");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertEquals(
+                        "two partitions seeded on cycle 1",
+                        2L,
+                        lv.getAnchorWindow().getAnchorMapSize()
+                );
+
+                // Cycle 2 lands in a separate WAL segment. The local index for
+                // 'a' here is again 0 (the segment starts fresh), but the fix
+                // routes the resolved string into the map key so the same
+                // partition does not split into two entries.
+                setCurrentMicros(200_000L);
+                execute("INSERT INTO base (ts, x, sym) VALUES " +
+                        "('2026-11-01T02:00:00.000000Z', 30.0, 'a'), " +
+                        "('2026-11-01T03:00:00.000000Z', 40.0, 'c')");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                Assert.assertEquals(
+                        "anchor map carries 'a' (from cycle 1), 'b', and the new 'c'",
+                        3L,
+                        lv.getAnchorWindow().getAnchorMapSize()
+                );
+
+                // Per-function map check: 'a' must accumulate 10 + 30 = 40 in
+                // a single entry, not split into a cycle-1 and cycle-2 entry
+                // by segment-local index collision.
+                assertSql(
+                        "ts\tsym\ts\n" +
+                                "2026-11-01T00:00:00.000000Z\ta\t10.0\n" +
+                                "2026-11-01T01:00:00.000000Z\tb\t20.0\n" +
+                                "2026-11-01T02:00:00.000000Z\ta\t40.0\n" +
+                                "2026-11-01T03:00:00.000000Z\tc\t40.0\n",
+                        "SELECT ts, sym, s FROM lv ORDER BY ts"
+                );
+
+                // Day boundary in cycle 3 anchor-crosses 'a' so its running
+                // sum resets. The anchor reset must reach the per-function
+                // map entry keyed by the resolved string, not by the
+                // segment-local index.
+                setCurrentMicros(400_000L);
+                execute("INSERT INTO base (ts, x, sym) VALUES " +
+                        "('2026-11-02T00:00:00.000000Z', 7.0, 'a')");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                assertSql(
+                        "ts\tsym\ts\n" +
+                                "2026-11-02T00:00:00.000000Z\ta\t7.0\n",
+                        "SELECT ts, sym, s FROM lv WHERE ts >= '2026-11-02' ORDER BY ts"
+                );
+            }
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
     public void testAnchorResetsEmaAcrossDayBoundary() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x DOUBLE, sym SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
@@ -3397,8 +3482,12 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
 
                     // Sanity-check the documented payload prefix:
                     //   STR windowName (INT len + len * CHAR), INT keyCount=1,
-                    //   INT keyType=SYMBOL, INT anchorValueType=TIMESTAMP,
+                    //   INT keyType=STRING, INT anchorValueType=TIMESTAMP,
                     //   LONG partitionCount=2.
+                    // The persisted key column type is STRING (not SYMBOL):
+                    // LiveViewWindow.build rewrites SYMBOL partition columns as
+                    // STRING in the anchor map's key types so cross-WAL-segment
+                    // SYMBOL collisions can't corrupt the partition state.
                     long off = 0;
                     final int nameLen = sink.getInt(off);
                     off += Integer.BYTES;
@@ -3407,7 +3496,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                     off += (long) nameLen * Character.BYTES;
                     Assert.assertEquals("single key column", 1, sink.getInt(off));
                     off += Integer.BYTES;
-                    Assert.assertEquals("key column is SYMBOL", ColumnType.SYMBOL, sink.getInt(off));
+                    Assert.assertEquals("key column is STRING (SYMBOL columns route through resolved STRING)", ColumnType.STRING, sink.getInt(off));
                     off += Integer.BYTES;
                     Assert.assertEquals("anchor value type is TIMESTAMP", ColumnType.TIMESTAMP, sink.getInt(off));
                     off += Integer.BYTES;

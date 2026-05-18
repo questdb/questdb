@@ -74,6 +74,11 @@ public abstract class BasePartitionedWindowFunction extends BaseWindowFunction i
         Function.init(partitionByRecord.getFunctions(), symbolTableSource, executionContext, null);
     }
 
+    @Override
+    public void initPartitionBy(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+        Function.init(partitionByRecord.getFunctions(), symbolTableSource, executionContext, null);
+    }
+
     /**
      * Generic markPartitionAlive impl shared across every partitioned window
      * function that carries a tombstone bit. The hot-path early-exit

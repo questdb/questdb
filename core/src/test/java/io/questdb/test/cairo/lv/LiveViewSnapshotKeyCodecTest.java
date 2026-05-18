@@ -69,9 +69,12 @@ public class LiveViewSnapshotKeyCodecTest extends AbstractCairoTest {
         supported.add(ColumnType.getGeoHashTypeWithBits(40));  // GEOLONG
         Assert.assertTrue(LiveViewSnapshotKeyCodec.isAllTypesSupported(supported));
 
-        ArrayColumnTypes unsupported = new ArrayColumnTypes();
-        unsupported.add(ColumnType.STRING);
-        Assert.assertFalse(LiveViewSnapshotKeyCodec.isAllTypesSupported(unsupported));
+        // STRING is admitted as a variable-width exception so SYMBOL-partitioned
+        // LVs can ride STRING keys end-to-end (LiveViewWindow.build rewrites
+        // SYMBOL partition columns to STRING in the anchor map's key types).
+        ArrayColumnTypes stringOnly = new ArrayColumnTypes();
+        stringOnly.add(ColumnType.STRING);
+        Assert.assertTrue(LiveViewSnapshotKeyCodec.isAllTypesSupported(stringOnly));
 
         ArrayColumnTypes uuidOnly = new ArrayColumnTypes();
         uuidOnly.add(ColumnType.UUID);

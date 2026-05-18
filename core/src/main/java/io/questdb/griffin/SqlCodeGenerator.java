@@ -9302,12 +9302,26 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         partitionByRecord = new VirtualRecord(partitionByFunctions);
                         keyTypes.clear();
                         final int partitionByCount = partitionByFunctions.size();
-
+                        // SYMBOL partition columns under a live-view refresh must
+                        // route through the resolved STRING because the source
+                        // record yields WAL-segment-local symbol indices that
+                        // differ across cycles for the same string value.
+                        final boolean lvCompile = executionContext.isLiveViewCompile();
+                        BitSet lvWriteSymbolAsString = null;
                         for (int j = 0; j < partitionByCount; j++) {
-                            keyTypes.add(partitionByFunctions.getQuick(j).getType());
+                            int type = partitionByFunctions.getQuick(j).getType();
+                            if (lvCompile && ColumnType.isSymbol(type)) {
+                                if (lvWriteSymbolAsString == null) {
+                                    lvWriteSymbolAsString = new BitSet();
+                                }
+                                lvWriteSymbolAsString.set(j);
+                                keyTypes.add(ColumnType.STRING);
+                            } else {
+                                keyTypes.add(type);
+                            }
                         }
                         entityColumnFilter.of(partitionByCount);
-                        partitionBySink = RecordSinkFactory.getInstance(configuration, asm, keyTypes, entityColumnFilter);
+                        partitionBySink = RecordSinkFactory.getInstance(configuration, asm, keyTypes, entityColumnFilter, lvWriteSymbolAsString);
                     } else {
                         partitionByRecord = null;
                         partitionBySink = null;
@@ -9540,13 +9554,27 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         partitionByRecord = new VirtualRecord(partitionByFunctions);
                         keyTypes.clear();
                         final int partitionByCount = partitionByFunctions.size();
-
+                        // SYMBOL partition columns under a live-view refresh must
+                        // route through the resolved STRING because the source
+                        // record yields WAL-segment-local symbol indices that
+                        // differ across cycles for the same string value.
+                        final boolean lvCompile = executionContext.isLiveViewCompile();
+                        BitSet lvWriteSymbolAsString = null;
                         for (int j = 0; j < partitionByCount; j++) {
-                            keyTypes.add(partitionByFunctions.getQuick(j).getType());
+                            int type = partitionByFunctions.getQuick(j).getType();
+                            if (lvCompile && ColumnType.isSymbol(type)) {
+                                if (lvWriteSymbolAsString == null) {
+                                    lvWriteSymbolAsString = new BitSet();
+                                }
+                                lvWriteSymbolAsString.set(j);
+                                keyTypes.add(ColumnType.STRING);
+                            } else {
+                                keyTypes.add(type);
+                            }
                         }
                         entityColumnFilter.of(partitionByCount);
                         // create sink
-                        partitionBySink = RecordSinkFactory.getInstance(configuration, asm, keyTypes, entityColumnFilter);
+                        partitionBySink = RecordSinkFactory.getInstance(configuration, asm, keyTypes, entityColumnFilter, lvWriteSymbolAsString);
                     } else {
                         partitionByRecord = null;
                         partitionBySink = null;

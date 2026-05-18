@@ -327,7 +327,11 @@ public class WindowRecordCursorFactory extends AbstractRecordCursorFactory {
          * Incremental entry point for live view refresh. Rebinds the base cursor
          * but skips {@link Function#init} for window functions so that their accumulated
          * state from prior refreshes is preserved. Non-window functions are re-initialized
-         * to bind to the new cursor's symbol source.
+         * to bind to the new cursor's symbol source; window functions get their
+         * partition-by expressions re-bound through
+         * {@link WindowFunction#initPartitionBy(SymbolTableSource, SqlExecutionContext)}
+         * so SYMBOL partition columns can resolve through the current cursor's
+         * symbol table.
          */
         private void ofIncremental(RecordCursor baseCursor, SqlExecutionContext executionContext) throws SqlException {
             isIncremental = true;
@@ -336,7 +340,9 @@ public class WindowRecordCursorFactory extends AbstractRecordCursorFactory {
             assert isOpen : "incremental cursor requires a prior bootstrap";
             for (int i = 0, n = functions.size(); i < n; i++) {
                 Function f = functions.getQuick(i);
-                if (!(f instanceof WindowFunction)) {
+                if (f instanceof WindowFunction wf) {
+                    wf.initPartitionBy(baseCursor, executionContext);
+                } else {
                     f.init(baseCursor, executionContext);
                 }
             }
