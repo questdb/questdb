@@ -303,6 +303,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final boolean liveViewEnabled;
     private final int liveViewFlushRetryMax;
     private final long liveViewFlushRetryMaxDurationMicros;
+    private final long liveViewInMemoryBufferGrowthBytes;
     private final long liveViewInMemoryBufferInitialBytes;
     private final long liveViewInMemoryMaxMicros;
     private final int liveViewPartitionCompactThreshold;
@@ -1478,6 +1479,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.liveViewEnabled = getBoolean(properties, env, PropertyKey.CAIRO_LIVE_VIEW_ENABLED, true);
             this.liveViewFlushRetryMax = getInt(properties, env, PropertyKey.CAIRO_LIVE_VIEW_FLUSH_RETRY_MAX, 5);
             this.liveViewFlushRetryMaxDurationMicros = getMicros(properties, env, PropertyKey.CAIRO_LIVE_VIEW_FLUSH_RETRY_MAX_DURATION_MICROS, 60L * Micros.SECOND_MICROS);
+            this.liveViewInMemoryBufferGrowthBytes = getLongSize(properties, env, PropertyKey.CAIRO_LIVE_VIEW_IN_MEMORY_BUFFER_GROWTH_BYTES, 16L * 1024L * 1024L);
             this.liveViewInMemoryBufferInitialBytes = getLongSize(properties, env, PropertyKey.CAIRO_LIVE_VIEW_IN_MEMORY_BUFFER_INITIAL_BYTES, 64L * 1024L);
             this.liveViewInMemoryMaxMicros = getMicros(properties, env, PropertyKey.CAIRO_LIVE_VIEW_IN_MEMORY_MAX, 60L * Micros.MINUTE_MICROS);
             this.liveViewPartitionCompactThreshold = getInt(properties, env, PropertyKey.CAIRO_LIVE_VIEW_PARTITION_COMPACT_THRESHOLD, 100_000);
@@ -3899,6 +3901,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public long getLiveViewFlushRetryMaxDurationMicros() {
             return liveViewFlushRetryMaxDurationMicros;
+        }
+
+        @Override
+        public long getLiveViewInMemoryBufferGrowthBytes() {
+            return liveViewInMemoryBufferGrowthBytes;
         }
 
         @Override

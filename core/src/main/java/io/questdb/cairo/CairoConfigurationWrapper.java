@@ -503,6 +503,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public long getLiveViewInMemoryBufferGrowthBytes() {
+        return getDelegate().getLiveViewInMemoryBufferGrowthBytes();
+    }
+
+    @Override
     public long getLiveViewInMemoryBufferInitialBytes() {
         return getDelegate().getLiveViewInMemoryBufferInitialBytes();
     }

@@ -340,6 +340,9 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
         // the duration via live_views(). We pin both slots through the test
         // by manipulating the tier directly, then run a refresh — the in-mem
         // populate path stalls but the on-disk apply still advances.
+        // Force slow-path on every cycle (growth=0 disables fast-path) so the
+        // setup's "publishedIdx flipped after each cycle" precondition holds.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_IN_MEMORY_BUFFER_GROWTH_BYTES, 0);
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms IN MEMORY 5s AS " +
@@ -429,6 +432,10 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
         // IN MEMORY 100ms and a 200ms gap between the two inserts (data ts),
         // the first row's ts is below the eviction threshold by the time the
         // second refresh cycle runs, so only the second row survives.
+        // Phase 3a: IN_MEMORY eviction runs on slow-path edges only — the
+        // fast-path append leaves prior rows intact regardless of age. Force
+        // slow-path (growth=0) to exercise the eviction policy.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_IN_MEMORY_BUFFER_GROWTH_BYTES, 0);
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms IN MEMORY 100ms AS " +
@@ -604,6 +611,9 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
         // testReleaseWriteWithoutPublishKeepsPriorSlotPublished pins the tier
         // contract; this smoke test drives the same recovery via the refresh
         // worker so the production catch path itself is exercised.
+        // Phase 3a: the publishSwap injection point fires only on the
+        // slow-path. Force slow-path (growth=0) so the failure injection runs.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_IN_MEMORY_BUFFER_GROWTH_BYTES, 0);
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms IN MEMORY 5s AS " +
@@ -5956,6 +5966,187 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
             } catch (SqlException e) {
                 Assert.assertTrue(e.getMessage(), e.getMessage().contains("flush every"));
             }
+        });
+    }
+
+    @Test
+    public void testFastPathAppendsToSamePublishedSlot() throws Exception {
+        // RFC 123 Phase 3a: when no reader pins the published slot and the
+        // slot's footprint is under the growth budget, the refresh worker
+        // appends staging rows in place via the {@code 0 -> -1} CAS protocol
+        // and releases without flipping {@code publishedIdx}. Three
+        // back-to-back cycles must therefore land on the same slot index and
+        // accumulate rows linearly.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms IN MEMORY 1h AS " +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base WHERE x > 0");
+
+            LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(instance);
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                setCurrentMicros(0L);
+                execute("INSERT INTO base (ts, x) VALUES ('2026-05-12T00:00:00.000001Z', 1)");
+                drainWalQueue();
+                drainJob(job);
+                LiveViewInMemoryTier tier = instance.getInMemoryTier();
+                Assert.assertNotNull(tier);
+                int initialIdx = tier.getPublishedIdx();
+
+                setCurrentMicros(200_000L);
+                execute("INSERT INTO base (ts, x) VALUES ('2026-05-12T00:00:00.000002Z', 2)");
+                drainWalQueue();
+                drainJob(job);
+                Assert.assertEquals("fast-path must not flip publishedIdx (cycle 2)",
+                        initialIdx, tier.getPublishedIdx());
+
+                setCurrentMicros(400_000L);
+                execute("INSERT INTO base (ts, x) VALUES ('2026-05-12T00:00:00.000003Z', 3)");
+                drainWalQueue();
+                drainJob(job);
+                Assert.assertEquals("fast-path must not flip publishedIdx (cycle 3)",
+                        initialIdx, tier.getPublishedIdx());
+
+                LiveViewInMemoryBuffer published = tier.getSlot(initialIdx);
+                Assert.assertEquals("fast-path accumulated three rows in the same slot",
+                        3, published.rowCount());
+                Assert.assertEquals(1, published.getInt(0, 1));
+                Assert.assertEquals(2, published.getInt(1, 1));
+                Assert.assertEquals(3, published.getInt(2, 1));
+            }
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testFastPathFallsBackToSlowPathWhenReaderPinned() throws Exception {
+        // RFC 123 Phase 3a: a reader pin on the published slot makes the
+        // fast-path CAS {@code 0 -> -1} fail (rc > 0). The refresh worker
+        // falls through to the slow-path swap, taking the non-published
+        // slot, copying retained rows, appending staging, and flipping
+        // {@code publishedIdx}. The reader's snapshot on the old slot
+        // remains intact.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms IN MEMORY 1h AS " +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base WHERE x > 0");
+
+            LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(instance);
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                setCurrentMicros(0L);
+                execute("INSERT INTO base (ts, x) VALUES ('2026-05-12T00:00:00.000001Z', 1)");
+                drainWalQueue();
+                drainJob(job);
+                LiveViewInMemoryTier tier = instance.getInMemoryTier();
+                Assert.assertNotNull(tier);
+                int initialIdx = tier.getPublishedIdx();
+
+                // Pin the published slot — the next cycle's fast-path CAS
+                // must fail and slow-path must engage.
+                int pin = tier.acquireRead();
+                Assert.assertEquals("pin lands on the currently-published slot",
+                        initialIdx, pin);
+                try {
+                    setCurrentMicros(200_000L);
+                    execute("INSERT INTO base (ts, x) VALUES ('2026-05-12T00:00:00.000002Z', 2)");
+                    drainWalQueue();
+                    drainJob(job);
+
+                    Assert.assertNotEquals(
+                            "slow-path must flip publishedIdx when fast-path is blocked",
+                            initialIdx, tier.getPublishedIdx()
+                    );
+                    LiveViewInMemoryBuffer pinned = tier.getSlot(pin);
+                    Assert.assertEquals("reader's pinned slot retains its single row",
+                            1, pinned.rowCount());
+                    LiveViewInMemoryBuffer published = tier.getSlot(tier.getPublishedIdx());
+                    Assert.assertEquals("new published slot holds retained + staging",
+                            2, published.rowCount());
+                } finally {
+                    tier.releaseRead(pin);
+                }
+            }
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testGrowthThresholdForcesSwap() throws Exception {
+        // RFC 123 Phase 3a: when the published slot's footprint already
+        // meets or exceeds {@code cairo.live.view.in.memory.buffer.growth.bytes},
+        // the refresh worker skips the fast-path acquire and goes directly to
+        // the slow-path swap. The growth budget acts as a backstop against
+        // unbounded in-place growth between slow-path edges.
+        // Setting the threshold to 0 forces the very first fast-path check
+        // to fail (footprint 0 < 0 is false), so cycle 2 takes the slow path
+        // and publishedIdx flips. (Cycle 1 also takes slow path under
+        // growth=0; the assertion is that cycle 2's publishedIdx differs
+        // from cycle 1's.)
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_IN_MEMORY_BUFFER_GROWTH_BYTES, 0);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms IN MEMORY 1h AS " +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base WHERE x > 0");
+
+            LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(instance);
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                setCurrentMicros(0L);
+                execute("INSERT INTO base (ts, x) VALUES ('2026-05-12T00:00:00.000001Z', 1)");
+                drainWalQueue();
+                drainJob(job);
+                LiveViewInMemoryTier tier = instance.getInMemoryTier();
+                int firstIdx = tier.getPublishedIdx();
+
+                setCurrentMicros(200_000L);
+                execute("INSERT INTO base (ts, x) VALUES ('2026-05-12T00:00:00.000002Z', 2)");
+                drainWalQueue();
+                drainJob(job);
+                Assert.assertNotEquals(
+                        "growth=0 forces slow-path swap on every cycle",
+                        firstIdx, tier.getPublishedIdx()
+                );
+            }
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testInMemTierSkipsAllocationForUnsupportedColumnTypes() throws Exception {
+        // RFC 123 Phase 3a: an LV whose output schema contains a column type
+        // the fixed-width in-mem tier cannot store (STRING / VARCHAR /
+        // BINARY / ARRAY) skips tier allocation entirely. The cursor stays
+        // disk-only with no pin, and reads pass through unchanged. The
+        // seam_ts routing scaffolding in LiveViewRecordCursor exits via the
+        // {@code pinnedSlot == null} branch.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT, s STRING) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+                    "SELECT ts, x, s, row_number() OVER () AS rn FROM base WHERE x > 0");
+
+            execute("INSERT INTO base (ts, x, s) VALUES ('2026-05-12T00:00:00.000001Z', 1, 'a')");
+            drainWalQueue();
+            LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(instance);
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+            }
+
+            Assert.assertNull(
+                    "in-mem tier must not be allocated for an LV with a STRING output column",
+                    instance.getInMemoryTier()
+            );
+            // Disk-only cursor must return the inserted row through SELECT.
+            assertSql(
+                    "x\ts\trn\n1\ta\t1\n",
+                    "SELECT x, s, rn FROM lv ORDER BY ts"
+            );
+
+            execute("DROP LIVE VIEW lv");
         });
     }
 

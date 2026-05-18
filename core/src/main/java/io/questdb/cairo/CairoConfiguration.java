@@ -361,6 +361,17 @@ public interface CairoConfiguration {
 
     long getLiveViewFlushRetryMaxDurationMicros();
 
+    /**
+     * Fast-path growth budget. When the published in-memory slot's footprint
+     * already meets or exceeds this size, the Phase 3a refresh worker falls
+     * back to a slow-path swap (which evicts rows older than {@code IN MEMORY}
+     * and may shrink the slot) instead of appending in place. Acts as a
+     * safety backstop against unbounded slot growth between slow-path edges.
+     * Operators with an {@code IN MEMORY} window large enough to exceed the
+     * default should raise this proportionally to keep the fast-path engaged.
+     */
+    long getLiveViewInMemoryBufferGrowthBytes();
+
     long getLiveViewInMemoryBufferInitialBytes();
 
     long getLiveViewInMemoryMaxMicros();

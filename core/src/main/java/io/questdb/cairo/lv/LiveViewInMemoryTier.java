@@ -41,11 +41,23 @@ import java.util.concurrent.atomic.AtomicInteger;
  * refcount; the writer takes a slot with a {@code 0 -> -1} sentinel CAS that
  * fails while any reader pins it.
  * <p>
- * Phase 1b ships the slow-path-only flow: every refresh cycle, the writer
- * acquires the non-published slot, copies still-in-window rows from the
- * published slot, appends the new rows produced this cycle, then flips
- * {@code publishedIdx}. The in-place fast-path append described in the RFC is
- * deferred to Phase 3.
+ * Two writer paths share the same primitive:
+ * <ul>
+ *   <li><b>Slow-path swap</b> — writer calls
+ *     {@link #tryAcquireWrite(int)} on the <em>non-published</em> slot, copies
+ *     retained rows from the published slot, appends new rows, and flips the
+ *     published index via {@link #publishSwap(int)}. The post-flip release
+ *     also drops the writer sentinel on the new slot.</li>
+ *   <li><b>Fast-path in-place append</b> (Phase 3a) — writer calls
+ *     {@link #tryAcquireWrite(int)} on the <em>published</em> slot, appends
+ *     new rows in place, and drops the sentinel via
+ *     {@link #releaseWriteWithoutPublish(int)} without changing
+ *     {@code publishedIdx}. Requires zero active read pins on the published
+ *     slot (the {@code 0 -> -1} CAS fails otherwise); the caller falls back
+ *     to the slow path on conflict.</li>
+ * </ul>
+ * Both paths use the same CAS primitive and release through one of the two
+ * complementary methods; there is no fast-path-specific API.
  * <p>
  * Refcounts live in a 16-byte off-heap region (one long per slot) so all CAS
  * traffic uses {@link Os#compareAndSwap(long, long, long)} — no
@@ -54,8 +66,8 @@ import java.util.concurrent.atomic.AtomicInteger;
  * <p>
  * The {@code rc == -1} sentinel means "writer in flight on this slot." A reader
  * that observes {@code rc < 0} during its acquire spins until the writer
- * releases (the slow path is bounded by a single column-slab copy, so the spin
- * is short).
+ * releases (the slow path is bounded by a single column-slab copy and the
+ * fast-path by an in-place row append, so the spin is short).
  * <p>
  * Close is <strong>deferred</strong>: a {@link #close()} call only marks the
  * tier closed and prevents new {@link #acquireRead()} pins; native memory
@@ -128,9 +140,9 @@ public class LiveViewInMemoryTier implements QuietCloseable {
             long addr = refCountsAddr + ((long) idx) * Long.BYTES;
             long current = Unsafe.getLongVolatile(addr);
             if (current < 0) {
-                // Writer in flight on this slot. Yield and re-read; publishedIdx may
-                // have moved (slow-path swap completing) or stay on the same slot
-                // while a fast-path-style in-place op (Phase 3) finishes.
+                // Writer in flight on this slot. Yield and re-read; publishedIdx
+                // may have moved (slow-path swap completing) or stay on the same
+                // slot while a Phase 3a fast-path in-place append finishes.
                 Os.pause();
                 continue;
             }
@@ -210,8 +222,11 @@ public class LiveViewInMemoryTier implements QuietCloseable {
      * to readers and idle (refcount = 0). The old published slot's refcount is
      * unchanged: readers that pinned it continue to do so until they release.
      * <p>
-     * Same-slot publish (Phase 3 fast-path in-place append) reuses the same
-     * code path: the slot the writer filled is the slot to release.
+     * Same-slot publish is not the fast-path: a fast-path append leaves
+     * {@code publishedIdx} untouched and releases the sentinel via
+     * {@link #releaseWriteWithoutPublish(int)} instead. Calling
+     * {@code publishSwap} on the same slot the reader already sees is harmless
+     * but redundant.
      */
     public void publishSwap(int newPublishedIdx) {
         RuntimeException injected = failNextPublishSwap;
@@ -246,10 +261,17 @@ public class LiveViewInMemoryTier implements QuietCloseable {
 
     /**
      * Drops the writer sentinel on {@code slotIdx} without flipping
-     * {@code publishedIdx}. Used by the refresh worker's slow-path error
-     * branch: if a copy throws mid-swap, we want to release the sentinel
-     * (so the slot can be retried next cycle) without exposing partial /
-     * zero-row contents to readers as the new published state.
+     * {@code publishedIdx}. Two callers:
+     * <ul>
+     *   <li><b>Slow-path error branch</b> — if a copy throws mid-swap, the
+     *     writer releases the sentinel (so the slot can be retried next
+     *     cycle) without exposing partial / zero-row contents to readers as
+     *     the new published state.</li>
+     *   <li><b>Fast-path success</b> (Phase 3a) — the writer appended in
+     *     place on the published slot; readers were already seeing this
+     *     slot, so {@code publishedIdx} stays put and only the sentinel
+     *     drops.</li>
+     * </ul>
      */
     public void releaseWriteWithoutPublish(int slotIdx) {
         long addr = refCountsAddr + ((long) slotIdx) * Long.BYTES;
@@ -282,6 +304,12 @@ public class LiveViewInMemoryTier implements QuietCloseable {
      * new slot and release the sentinel, or
      * {@link #releaseWriteWithoutPublish(int)} to release the sentinel
      * without flipping {@code publishedIdx}.
+     * <p>
+     * Calling with {@code slotIdx = }{@link #getPublishedIdx()} is the Phase
+     * 3a fast-path acquire: a successful CAS proves no readers currently pin
+     * the published slot, so the writer can append in place and release via
+     * {@link #releaseWriteWithoutPublish(int)} without ever flipping the
+     * published index.
      */
     public LiveViewInMemoryBuffer tryAcquireWrite(int slotIdx) {
         long addr = refCountsAddr + ((long) slotIdx) * Long.BYTES;

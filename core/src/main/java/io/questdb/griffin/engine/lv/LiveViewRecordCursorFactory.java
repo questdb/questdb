@@ -43,13 +43,12 @@ import io.questdb.std.Misc;
  * the cursor's lifetime so the refresh worker's slow-path
  * {@code tryAcquireWrite} sees the reader (RFC 123 §"Stall behavior").
  * <p>
- * Phase 1b reads still come entirely from the disk cursor: the inline apply
- * (Phase 1b Commit 1) commits the LV WAL block synchronously with the
- * refresh worker's compute step, so every row visible in the in-mem tier is
- * also durable on disk and the disk cursor returns the complete picture.
- * The tier pin is therefore scaffolding for §"Stall behavior" and for the
- * future seam-routing cursor (Phase 4 hand-off ring with deferred apply),
- * not a read source today.
+ * Phase 3a wires seam_ts routing in the returned cursor: disk rows are
+ * served first, then in-mem rows whose timestamp exceeds the disk's maximum.
+ * In the current inline-apply architecture the in-mem tier is at most one
+ * cycle behind disk, so the in-mem iteration is almost always empty; the
+ * routing logic engages in narrow races and in future phases that decouple
+ * apply from per-notification refresh (Phase 4 hand-off ring).
  * <p>
  * Each {@link #getCursor(SqlExecutionContext)} call allocates a fresh
  * {@link LiveViewRecordCursor}: the cursor pins a tier slot until
@@ -63,12 +62,14 @@ public class LiveViewRecordCursorFactory extends AbstractRecordCursorFactory {
     private final RecordCursorFactory base;
     private final CairoEngine engine;
     private final TableToken liveViewToken;
+    private final int timestampColumnIndex;
 
     public LiveViewRecordCursorFactory(CairoEngine engine, TableToken liveViewToken, RecordCursorFactory base) {
         super(base.getMetadata());
         this.engine = engine;
         this.liveViewToken = liveViewToken;
         this.base = base;
+        this.timestampColumnIndex = base.getMetadata().getTimestampIndex();
     }
 
     @Override
@@ -77,7 +78,7 @@ public class LiveViewRecordCursorFactory extends AbstractRecordCursorFactory {
         LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance(liveViewToken.getTableName());
         LiveViewRecordCursor cursor = new LiveViewRecordCursor();
         try {
-            cursor.of(diskCursor, instance);
+            cursor.of(diskCursor, instance, timestampColumnIndex);
         } catch (Throwable t) {
             Misc.free(cursor);
             throw t;

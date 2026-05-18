@@ -1699,17 +1699,39 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     }
 
     /**
-     * Runs the slow-path swap into the LV's in-memory tier. After the inline
-     * apply commits the WAL block to the on-disk tier, this method takes the
-     * non-published slot via {@code tryAcquireWrite}, copies retained rows
-     * from the published slot (those still within the {@code IN MEMORY}
-     * window relative to {@code stagingMaxTs}), appends the staging rows on
-     * top, and publishes the swap.
+     * Publishes this cycle's staging rows into the LV's in-memory tier
+     * (RFC 123 Phase 3a).
      * <p>
-     * On {@code tryAcquireWrite} failure (both slots reader-pinned) the
-     * writer stalls: the in-mem tier trails for this cycle, the disk tier is
-     * still up to date, and {@code writerStallStartUs} is set so
-     * {@code live_views().writer_stall_micros} surfaces the stall duration.
+     * Two paths share the same {@code 0 -> -1} CAS primitive on a slot's
+     * refcount:
+     * <ul>
+     *   <li><b>Fast-path</b> — try to acquire the writer sentinel on the
+     *     <em>published</em> slot. On success (no readers currently pin it
+     *     and the slot's footprint is still under the growth budget),
+     *     append staging rows in place and release the sentinel via
+     *     {@link LiveViewInMemoryTier#releaseWriteWithoutPublish(int)}
+     *     without flipping the published index. No per-cycle memcpy of
+     *     retained rows; {@code seamTs} stays at the published slot's
+     *     existing minimum.</li>
+     *   <li><b>Slow-path</b> — acquire the non-published slot, copy
+     *     retained rows (those still inside the {@code IN MEMORY} window
+     *     relative to {@code stagingMaxTs}), append staging on top, and
+     *     publish the swap. The {@code IN MEMORY} eviction runs here; the
+     *     fast-path defers it to the next slow-path edge.</li>
+     * </ul>
+     * Slow-path triggers when (a) a reader holds a pin on the published
+     * slot (fast-path CAS fails), or (b) the published slot's footprint
+     * already meets or exceeds
+     * {@code cairo.live.view.in.memory.buffer.growth.bytes} (growth
+     * backstop), or (c) the fast-path acquire fails despite no reader pin
+     * — which can only happen if the writer sentinel was somehow left
+     * dangling, a contract violation that falls through cleanly.
+     * <p>
+     * If both slow-path acquire attempts fail (both slots reader-pinned),
+     * the writer stalls: the in-mem tier trails for this cycle, the disk
+     * tier is still up to date, and {@code writerStallStartUs} is set so
+     * {@code live_views().writer_stall_micros} surfaces the stall duration
+     * (RFC 123 §"Stall behavior").
      */
     private void publishToInMemoryTier(LiveViewInstance instance, long stagingMaxTs) {
         LiveViewInMemoryTier tier = instance.getInMemoryTier();
@@ -1717,12 +1739,42 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             return;
         }
         int publishedIdx = tier.getPublishedIdx();
+        LiveViewInMemoryBuffer pubSlot = tier.getSlot(publishedIdx);
+
+        // Fast-path: append in place when no reader pins the published slot
+        // and the slot's footprint is still under the growth budget. Growth
+        // backstop ensures the in-mem tier cannot accumulate indefinitely
+        // even when readers never pin (e.g. an idle LV with steady
+        // ingestion); the IN MEMORY eviction runs on the slow-path edge
+        // that fires when the threshold trips.
+        long growthBudget = engine.getConfiguration().getLiveViewInMemoryBufferGrowthBytes();
+        if (pubSlot.footprintBytes() < growthBudget) {
+            LiveViewInMemoryBuffer acquired = tier.tryAcquireWrite(publishedIdx);
+            if (acquired != null) {
+                try {
+                    appendStagingInPlace(acquired, stagingBuffer.seamTs());
+                } catch (Throwable t) {
+                    // Fast-path append cannot leave the slot partially
+                    // populated visibly to readers: rowCount only advances
+                    // after each row's column writes succeed. Drop the
+                    // sentinel and let the flush-retry budget tick.
+                    tier.releaseWriteWithoutPublish(publishedIdx);
+                    throw t;
+                }
+                tier.releaseWriteWithoutPublish(publishedIdx);
+                instance.setWriterStallStartUs(Numbers.LONG_NULL);
+                return;
+            }
+        }
+
+        // Slow-path: take the non-published slot, copy retained rows, append
+        // staging, swap published index.
         int writeIdx = 1 - publishedIdx;
         LiveViewInMemoryBuffer writeSlot = tier.tryAcquireWrite(writeIdx);
         if (writeSlot == null) {
-            // Both slots reader-pinned: the view trails this cycle. Record the
-            // start of the stall streak; a subsequent successful acquire clears
-            // it. RFC 123 §"Stall behavior".
+            // Both slots reader-pinned: the view trails this cycle. Record
+            // the start of the stall streak; a subsequent successful
+            // acquire clears it.
             if (instance.getWriterStallStartUs() == Numbers.LONG_NULL) {
                 instance.setWriterStallStartUs(engine.getConfiguration().getMicrosecondClock().getTicks());
             }
@@ -1739,11 +1791,10 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             long inMemoryInBaseUnits = driver.fromMicros(instance.getDefinition().getInMemoryMicros());
             long retainThreshold = stagingMaxTs - inMemoryInBaseUnits;
 
-            // Copy retained rows from the currently-published slot (those with
-            // ts >= retainThreshold). Rows in the slot are stored in
-            // ts-ascending order, so we can simply skip leading rows until the
-            // first retained one is found.
-            LiveViewInMemoryBuffer pubSlot = tier.getSlot(publishedIdx);
+            // Copy retained rows from the currently-published slot (those
+            // with ts >= retainThreshold). Rows in the slot are stored in
+            // ts-ascending order, so we can simply skip leading rows until
+            // the first retained one is found.
             long writeRow = 0;
             long writeSeamTs = Numbers.LONG_NULL;
             for (long r = 0, rn = pubSlot.rowCount(); r < rn; r++) {
@@ -1781,6 +1832,33 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             tier.releaseWriteWithoutPublish(writeIdx);
             throw t;
         }
+    }
+
+    /**
+     * Fast-path append helper: copies staging rows onto the tail of
+     * {@code slot}, bumping {@code rowCount} once at the end. Runs under the
+     * writer sentinel ({@code rc = -1}) so no reader observes intermediate
+     * state.
+     * <p>
+     * {@code seamTs} bookkeeping: when the slot is empty at fast-path entry,
+     * the first appended row's ts becomes the slot's minimum; the helper
+     * initialises {@code seamTs} accordingly. When the slot already holds
+     * rows, the existing {@code seamTs} is already the slot's minimum and
+     * staging rows are strictly newer (ts-ascending append), so no update is
+     * needed. The fast-path defers {@code IN MEMORY} eviction to the next
+     * slow-path edge — {@code seamTs} therefore never grows on the
+     * fast-path.
+     */
+    private void appendStagingInPlace(LiveViewInMemoryBuffer slot, long stagingMinTs) {
+        long writeRow = slot.rowCount();
+        if (writeRow == 0 && stagingBuffer.rowCount() > 0) {
+            slot.setSeamTs(stagingMinTs);
+        }
+        for (long r = 0, rn = stagingBuffer.rowCount(); r < rn; r++) {
+            slot.copyRowFrom(stagingBuffer, r, writeRow);
+            writeRow++;
+        }
+        slot.setRowCount(writeRow);
     }
 
     /**

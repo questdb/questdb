@@ -53,6 +53,13 @@ import io.questdb.std.QuietCloseable;
  * enforce a write order — callers are expected to write all columns for a
  * given row index before bumping {@code rowCount}.
  * <p>
+ * Phase 3a fast-path: the refresh worker calls {@link #copyRowFromRecord(Record, long)}
+ * directly into the published slot, then bumps {@link #setRowCount(long)} for
+ * each appended row. {@code seamTs} is left unchanged on the fast-path (the
+ * minimum retained timestamp does not move when appending at the tail). The
+ * slow-path swap path resets the buffer and rewrites both {@code rowCount}
+ * and {@code seamTs} from scratch.
+ * <p>
  * All native memory is tagged {@link MemoryTag#NATIVE_LIVE_VIEW_IN_MEM} so leak
  * accounting and operator-facing memory metrics are clean.
  */
