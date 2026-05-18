@@ -3870,11 +3870,11 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
 
             // Drive a refresh so a real .cp is written and the compiled
             // factory is cached on the instance. Capture the lvSeqTxn and the
-            // actual function class name; the hand-written replacement below
-            // must match the name so restoreFunctionBlock's dispatch finds it.
+            // factory name; the hand-written replacement below must match the
+            // factory name so restoreFunctionBlock's dispatch finds it.
             execute("INSERT INTO base (ts, sym, x) VALUES ('2026-06-01T00:00:00.000000Z', 'a', 1)");
             drainWalQueue();
-            final String fnClassName;
+            final String fnFactoryName;
             final long headLvSeqTxn;
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 drainJob(job);
@@ -3883,7 +3883,9 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                 Assert.assertNotNull(instance);
                 headLvSeqTxn = instance.getHeadCheckpointLvSeqTxn();
                 Assert.assertNotEquals(Numbers.LONG_NULL, headLvSeqTxn);
-                fnClassName = instance.getAnchorWindow().getFunctions().getQuick(0).getClass().getName();
+                Class<?> fnClass = instance.getAnchorWindow().getFunctions().getQuick(0).getClass();
+                Class<?> enclosing = fnClass.getEnclosingClass();
+                fnFactoryName = (enclosing != null ? enclosing : fnClass).getName();
             }
 
             // Replace the .cp with one that has the same lvSeqTxn but
@@ -3911,7 +3913,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                             .addWindowName("w"));
                     final MemoryA fnSink = w.beginBlock(LiveViewCheckpointBlockType.BLOCK_FUNCTION_SNAPSHOT);
                     fnSink.putStr("w");
-                    fnSink.putStr(fnClassName);
+                    fnSink.putStr(fnFactoryName);
                     fnSink.putInt(0); // intentionally below snapshotMinSupportedVersion
                     w.endBlock();
                     w.commit(Numbers.LONG_NULL);

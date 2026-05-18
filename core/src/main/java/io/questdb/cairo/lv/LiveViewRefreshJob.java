@@ -1343,7 +1343,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 }
                 final MemoryA fnSink = checkpointWriter.beginBlock(LiveViewCheckpointBlockType.BLOCK_FUNCTION_SNAPSHOT);
                 fnSink.putStr(windowName);
-                fnSink.putStr(f.getClass().getName());
+                fnSink.putStr(snapshotFactoryName(f));
                 fnSink.putInt(f.snapshotFormatVersion());
                 f.snapshot(fnSink);
                 checkpointWriter.endBlock();
@@ -1547,14 +1547,15 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * Decodes a single FUNCTION_SNAPSHOT block:
      * <pre>
      *     STR windowName
-     *     STR functionClassName  (matches f.getClass().getName())
+     *     STR factoryName     (matches snapshotFactoryName(f) - factory class,
+     *                          not the function impl, so impl renames survive)
      *     INT formatVersion
      *     ...function-private state bytes (consumed by WindowFunction.restore)
      * </pre>
      * Then bulk-copies the trailing state bytes into the per-worker scratch
      * buffer (so {@link WindowFunction#restore(MemoryR, int)} reads from
      * offset 0 as the contract requires) and dispatches by matching the
-     * function class name against the compiled SELECT's window functions.
+     * factory name against the compiled SELECT's window functions.
      */
     private void restoreFunctionBlock(LiveViewCheckpointReader.ReadableBlock block, ObjList<WindowFunction> functions) {
         long offset = 0;
@@ -1562,25 +1563,24 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         // already captured window names; cross-validation belongs in a
         // later commit if needed.
         offset += strByteSize(block, offset);
-        final CharSequence storedClassName = block.getStr(offset);
-        final long classNameByteSize = strByteSize(block, offset);
-        offset += classNameByteSize;
+        final CharSequence storedFactoryName = block.getStr(offset);
+        final long factoryNameByteSize = strByteSize(block, offset);
+        offset += factoryNameByteSize;
         final int formatVersion = block.getInt(offset);
         offset += Integer.BYTES;
 
         WindowFunction match = null;
         for (int i = 0, n = functions.size(); i < n; i++) {
             final WindowFunction candidate = functions.getQuick(i);
-            final String candidateName = candidate.getClass().getName();
-            if (Chars.equals(storedClassName, candidateName)) {
+            if (Chars.equals(storedFactoryName, snapshotFactoryName(candidate))) {
                 match = candidate;
                 break;
             }
         }
         if (match == null) {
             throw CairoException.critical(0)
-                    .put("function not found in compiled live view SELECT, name=")
-                    .put(storedClassName);
+                    .put("function not found in compiled live view SELECT, factory=")
+                    .put(storedFactoryName);
         }
         if (formatVersion < match.snapshotMinSupportedVersion()) {
             // Below-min versions signal a real compatibility break (operator
@@ -1590,8 +1590,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // are tolerated: future writers may emit blocks readers do not
             // understand yet.
             throw CairoException.critical(CairoException.LV_FUNCTION_SNAPSHOT_VERSION_TOO_OLD)
-                    .put("live view function snapshot version too old, function=")
-                    .put(storedClassName)
+                    .put("live view function snapshot version too old, factory=")
+                    .put(storedFactoryName)
                     .put(", read=")
                     .put(formatVersion)
                     .put(", minSupported=")
@@ -1976,6 +1976,19 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 refreshInstance(instance, seqTxn);
             }
         }
+    }
+
+    /**
+     * Returns the stable identifier for a window function's enclosing
+     * factory. Window function impls live as static inner classes of their
+     * factory (e.g. {@code AvgDoubleWindowFunctionFactory$AvgOverPartition...}),
+     * so the enclosing class name survives an impl rename while the
+     * function class name does not. Top-level WindowFunction impls (none
+     * today) fall back to their own class name.
+     */
+    private static String snapshotFactoryName(WindowFunction f) {
+        Class<?> enclosing = f.getClass().getEnclosingClass();
+        return (enclosing != null ? enclosing : f.getClass()).getName();
     }
 
     private static WindowRecordCursorFactory unwrapWindowFactory(RecordCursorFactory factory) {
