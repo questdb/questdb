@@ -290,8 +290,9 @@ public class ServerMainTest extends AbstractBootstrapTest {
                 );
 
                 serverMain.getEngine().execute(
-                        "CREATE LIVE VIEW live_rn LAG 1s RETENTION 1h AS" +
-                                " SELECT symbol, price, ts, row_number() OVER (PARTITION BY symbol ORDER BY ts) AS rn" +
+                        "CREATE LIVE VIEW live_rn FLUSH EVERY 1s AS" +
+                                " SELECT symbol, price, ts," +
+                                " row_number() OVER (PARTITION BY symbol ORDER BY ts ANCHOR DAILY '00:00') AS rn" +
                                 " FROM trades",
                         sqlExecutionContext
                 );
@@ -593,6 +594,16 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "cairo.latestby.queue.capacity\tQDB_CAIRO_LATESTBY_QUEUE_CAPACITY\t32\tdefault\tfalse\tfalse\n" +
                                     "cairo.legacy.string.column.type.default\tQDB_CAIRO_LEGACY_STRING_COLUMN_TYPE_DEFAULT\tfalse\tdefault\tfalse\tfalse\n" +
                                     "cairo.lexer.pool.capacity\tQDB_CAIRO_LEXER_POOL_CAPACITY\t2048\tdefault\tfalse\tfalse\n" +
+                                    "cairo.live.view.checkpoint.max.duration.micros\tQDB_CAIRO_LIVE_VIEW_CHECKPOINT_MAX_DURATION_MICROS\t300000000\tdefault\tfalse\tfalse\n" +
+                                    "cairo.live.view.checkpoint.rows\tQDB_CAIRO_LIVE_VIEW_CHECKPOINT_ROWS\t1000000\tdefault\tfalse\tfalse\n" +
+                                    "cairo.live.view.enabled\tQDB_CAIRO_LIVE_VIEW_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
+                                    "cairo.live.view.flush.retry.max\tQDB_CAIRO_LIVE_VIEW_FLUSH_RETRY_MAX\t5\tdefault\tfalse\tfalse\n" +
+                                    "cairo.live.view.flush.retry.max.duration.micros\tQDB_CAIRO_LIVE_VIEW_FLUSH_RETRY_MAX_DURATION_MICROS\t60000000\tdefault\tfalse\tfalse\n" +
+                                    "cairo.live.view.in.memory.buffer.initial.bytes\tQDB_CAIRO_LIVE_VIEW_IN_MEMORY_BUFFER_INITIAL_BYTES\t65536\tdefault\tfalse\tfalse\n" +
+                                    "cairo.live.view.in.memory.max\tQDB_CAIRO_LIVE_VIEW_IN_MEMORY_MAX\t3600000000\tdefault\tfalse\tfalse\n" +
+                                    "cairo.live.view.partition.compact.threshold\tQDB_CAIRO_LIVE_VIEW_PARTITION_COMPACT_THRESHOLD\t100000\tdefault\tfalse\tfalse\n" +
+                                    "cairo.live.view.refresh.turn.max.commits\tQDB_CAIRO_LIVE_VIEW_REFRESH_TURN_MAX_COMMITS\t64\tdefault\tfalse\tfalse\n" +
+                                    "cairo.live.view.refresh.turn.max.duration.micros\tQDB_CAIRO_LIVE_VIEW_REFRESH_TURN_MAX_DURATION_MICROS\t50000\tdefault\tfalse\tfalse\n" +
                                     "cairo.max.crash.files\tQDB_CAIRO_MAX_CRASH_FILES\t100\tdefault\tfalse\tfalse\n" +
                                     "cairo.max.file.name.length\tQDB_CAIRO_MAX_FILE_NAME_LENGTH\t127\tdefault\tfalse\tfalse\n" +
                                     "cairo.max.swap.file.count\tQDB_CAIRO_MAX_SWAP_FILE_COUNT\t30\tdefault\tfalse\tfalse\n" +
