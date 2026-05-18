@@ -1434,6 +1434,14 @@ public class SqlParser {
         // we walk the named-window map here as the V1 entry point.
         validateLiveViewAnchors(queryModel);
 
+        // Defense-in-depth lead() reject. The factory-side check inside
+        // CairoEngine only fires when the planner picks a window factory
+        // that exposes lead - a future planner path that bypasses both
+        // CachedWindowRecordCursorFactory and WindowRecordCursorFactory
+        // would silently accept lead-only LVs. Surface it at the parser
+        // level too.
+        rejectLeadInSelect(queryModel);
+
         // Capture the (at most one) anchored named WINDOW for persistence in _lv.
         // The runtime side reads this back to compile the anchor expression and
         // build the LiveViewWindow without re-parsing the SELECT.
@@ -1738,6 +1746,20 @@ public class SqlParser {
         }
     }
 
+    /**
+     * Walks the SELECT columns and inline OVER trees looking for any
+     * {@code lead(...)} function call. The factory-side reject inside
+     * {@code CairoEngine} only fires when the planner picks a window factory
+     * exposing lead; a future planner change could bypass both factories for
+     * a lead-only query. This walk is the parser-level safety net.
+     */
+    private static void rejectLeadInSelect(IQueryModel queryModel) throws SqlException {
+        ObjList<QueryColumn> columns = queryModel.getBottomUpColumns();
+        for (int i = 0, n = columns.size(); i < n; i++) {
+            walkForLeadCall(columns.getQuick(i).getAst());
+        }
+    }
+
     private static void rejectIfBareUnbounded(WindowExpression w, ExpressionNode fallback) throws SqlException {
         // An OVER <named-window> reference inherits the bound check from the
         // named definition (already validated upstream in this method).
@@ -1804,6 +1826,29 @@ public class SqlParser {
         if (node.args != null) {
             for (int i = 0, n = node.args.size(); i < n; i++) {
                 walkAnchorExpressionForPurity(node.args.getQuick(i));
+            }
+        }
+    }
+
+    /**
+     * Recursive AST walk for the parser-side lead() reject. Any function
+     * node whose token equals "lead" is rejected at its position with the
+     * same wording the factory-side reject in CairoEngine uses.
+     */
+    private static void walkForLeadCall(ExpressionNode node) throws SqlException {
+        if (node == null) {
+            return;
+        }
+        if (node.type == ExpressionNode.FUNCTION && node.token != null
+                && Chars.equalsLowerCaseAscii(node.token, "lead")) {
+            throw SqlException.$(node.position, "lead() is not supported in live views; use lag() for lookback");
+        }
+        if (node.paramCount < 3) {
+            walkForLeadCall(node.lhs);
+            walkForLeadCall(node.rhs);
+        } else if (node.args != null) {
+            for (int i = 0, n = node.paramCount; i < n; i++) {
+                walkForLeadCall(node.args.getQuick(i));
             }
         }
     }
