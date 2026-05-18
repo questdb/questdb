@@ -4156,8 +4156,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             throw SqlException.$(op.getViewNamePosition(), "base table must be a WAL table [name=").put(op.getBaseTableName()).put(']');
         }
         if (baseTableToken.isLiveView()) {
-            // V1 rejects live-on-live composition per RFC 123.
-            throw SqlException.$(op.getViewNamePosition(),
+            // V1 rejects live-on-live composition; live views can be
+            // composed once the apply pipeline supports LV-as-base.
+            // Position at the base table name.
+            throw SqlException.$(op.getBaseTableNamePosition(),
                     "live views are not allowed as base tables in V1 [name=").put(op.getBaseTableName()).put(']');
         }
 

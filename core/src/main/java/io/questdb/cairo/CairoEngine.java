@@ -837,14 +837,14 @@ public class CairoEngine implements Closeable, WriterSource {
         try (TableMetadata baseMetadata = getTableMetadata(baseTableToken)) {
             for (int i = 0, n = baseMetadata.getColumnCount(); i < n; i++) {
                 if (baseMetadata.isDedupKey(i)) {
-                    throw SqlException.$(op.getViewNamePosition(),
+                    throw SqlException.$(op.getBaseTableNamePosition(),
                             "live view cannot be created over a base table with DEDUP keys");
                 }
             }
             basePartitionBy = baseMetadata.getPartitionBy();
             int tsIndex = baseMetadata.getTimestampIndex();
             if (tsIndex < 0) {
-                throw SqlException.$(op.getViewNamePosition(),
+                throw SqlException.$(op.getBaseTableNamePosition(),
                         "live view base table must have a designated timestamp");
             }
             baseTimestampType = baseMetadata.getColumnType(tsIndex);
@@ -1844,9 +1844,9 @@ public class CairoEngine implements Closeable, WriterSource {
     public void invalidateLiveView(LiveViewInstance instance, String reason) {
         final long invalidationTimestampUs = configuration.getMicrosecondClock().getTicks();
         synchronized (instance) {
-            // RFC 123: invalidation is queued behind any in-progress checkpoint
-            // freeze so the snapshot reflects the pre-invalidation state and the
-            // agent's _lv.s copy is not raced by this rewrite.
+            // Queue invalidation behind any in-progress checkpoint freeze so
+            // the snapshot reflects the pre-invalidation state and the agent's
+            // _lv.s copy is not raced by this rewrite.
             instance.waitForUnfrozen();
             instance.markInvalid(reason, invalidationTimestampUs);
             try (
@@ -1906,10 +1906,10 @@ public class CairoEngine implements Closeable, WriterSource {
                     continue;
                 }
                 synchronized (instance) {
-                    // RFC 123: invalidation is queued behind any in-progress
-                    // checkpoint freeze so the snapshot reflects the
-                    // pre-invalidation state and the agent's _lv.s copy is
-                    // not raced by this rewrite.
+                    // Queue invalidation behind any in-progress checkpoint
+                    // freeze so the snapshot reflects the pre-invalidation
+                    // state and the agent's _lv.s copy is not raced by this
+                    // rewrite.
                     instance.waitForUnfrozen();
                     instance.markInvalid(reason, invalidationTimestampUs);
                     path.of(configuration.getDbRoot()).concat(instance.getLiveViewToken()).concat(LiveViewState.LIVE_VIEW_STATE_FILE_NAME);

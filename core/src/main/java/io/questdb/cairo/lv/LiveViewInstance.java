@@ -155,12 +155,12 @@ public class LiveViewInstance implements QuietCloseable {
     // Live-view's own table token. Populated at construction.
     private final TableToken liveViewToken;
     // Reason string the refresh worker stashes here when a head-restore step
-    // surfaces a "version too old" function snapshot (RFC 123 .cp file framing).
-    // The worker holds the refresh latch when populating this field; the same
-    // worker drains it (consumes and clears) after releasing the latch and runs
+    // surfaces a "version too old" function snapshot. The worker holds the
+    // refresh latch when populating this field; the same worker drains it
+    // (consumes and clears) after releasing the latch and runs
     // engine.invalidateLiveView. The two-step is to avoid a deadlock: the
-    // invalidate path parks on the instance monitor when a checkpoint freeze is
-    // active, and the agent's startCheckpoint cannot complete its latch
+    // invalidate path parks on the instance monitor when a checkpoint freeze
+    // is active, and the agent's startCheckpoint cannot complete its latch
     // handshake while the worker holds the refresh latch.
     private String pendingInvalidationReason;
     // Cached RecordToRowCopier (compiled bytecode bridging the SELECT cursor's record
@@ -689,13 +689,12 @@ public class LiveViewInstance implements QuietCloseable {
      * and reacquires it before returning. {@link #endCheckpoint()} wakes
      * waiters once the freeze clears.
      * <p>
-     * RFC 123 contract: out-of-band {@code _lv.s} mutators (engine-side
-     * invalidation paths) call this at the top of their synchronized block so
-     * the snapshot agent's file copy is not racing concurrent rewrites. The
-     * caller does not need to recheck the flag after the call returns; the
-     * synchronized block holds the monitor, so any subsequent
-     * {@code startCheckpoint} that synchronizes on the same monitor will
-     * block until this work completes.
+     * Out-of-band {@code _lv.s} mutators (engine-side invalidation paths) call
+     * this at the top of their synchronized block so the snapshot agent's
+     * file copy is not racing concurrent rewrites. The caller does not need
+     * to recheck the flag after the call returns; the synchronized block
+     * holds the monitor, so any subsequent {@code startCheckpoint} that
+     * synchronizes on the same monitor will block until this work completes.
      */
     public void waitForUnfrozen() {
         assert Thread.holdsLock(this);

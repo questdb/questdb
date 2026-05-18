@@ -36,6 +36,7 @@ import org.jetbrains.annotations.Nullable;
 public class CreateLiveViewOperation implements Operation {
     private final @Nullable LiveViewDefinition.LvAnchorSpec anchorSpec;
     private final String baseTableName;
+    private final int baseTableNamePosition;
     private final long flushEveryInterval;
     private final char flushEveryIntervalUnit;
     private final boolean ignoreIfExists;
@@ -50,6 +51,7 @@ public class CreateLiveViewOperation implements Operation {
             String viewName,
             int viewNamePosition,
             String baseTableName,
+            int baseTableNamePosition,
             String selectSql,
             long flushEveryInterval,
             char flushEveryIntervalUnit,
@@ -62,6 +64,7 @@ public class CreateLiveViewOperation implements Operation {
         this.viewName = viewName;
         this.viewNamePosition = viewNamePosition;
         this.baseTableName = baseTableName;
+        this.baseTableNamePosition = baseTableNamePosition;
         this.selectSql = selectSql;
         this.flushEveryInterval = flushEveryInterval;
         this.flushEveryIntervalUnit = flushEveryIntervalUnit;
@@ -91,6 +94,10 @@ public class CreateLiveViewOperation implements Operation {
 
     public String getBaseTableName() {
         return baseTableName;
+    }
+
+    public int getBaseTableNamePosition() {
+        return baseTableNamePosition;
     }
 
     public long getFlushEveryInterval() {

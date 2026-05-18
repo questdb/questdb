@@ -239,14 +239,21 @@ public class LiveViewTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (sym SYMBOL, val INT, ts TIMESTAMP) " +
                     "TIMESTAMP(ts) PARTITION BY HOUR WAL DEDUP UPSERT KEYS(ts, sym)");
+            final String sql = "CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                    "SELECT sym, val, ts, row_number() OVER () AS rn FROM base";
             try {
-                execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
-                        "SELECT sym, val, ts, row_number() OVER () AS rn FROM base");
+                execute(sql);
                 Assert.fail("expected SqlException for DEDUP base");
             } catch (SqlException e) {
                 Assert.assertTrue(
                         e.getMessage(),
                         e.getMessage().contains("live view cannot be created over a base table with DEDUP keys")
+                );
+                // Position must point at the base table name, not the view name.
+                Assert.assertEquals(
+                        "position must point at the base table name",
+                        sql.lastIndexOf("base"),
+                        e.getPosition()
                 );
             }
         });

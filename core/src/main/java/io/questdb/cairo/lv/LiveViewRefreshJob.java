@@ -1410,13 +1410,13 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             return true;
         } catch (CairoException ce) {
             if (ce.getErrno() == CairoException.LV_FUNCTION_SNAPSHOT_VERSION_TOO_OLD) {
-                // RFC 123 ".cp file framing": version mismatch is a real
-                // compatibility break, not corruption. Stash the reason on
-                // the instance so the caller drives invalidation outside
-                // the refresh latch (engine.invalidateLiveView parks on the
-                // instance monitor when a checkpoint freeze is active, and
-                // the agent's startCheckpoint cannot complete its latch
-                // handshake while the worker still holds the refresh latch).
+                // Version mismatch is a real compatibility break, not
+                // corruption. Stash the reason on the instance so the caller
+                // drives invalidation outside the refresh latch
+                // (engine.invalidateLiveView parks on the instance monitor
+                // when a checkpoint freeze is active, and the agent's
+                // startCheckpoint cannot complete its latch handshake while
+                // the worker still holds the refresh latch).
                 LOG.critical().$("live view function snapshot version mismatch [view=")
                         .$(instance.getDefinition().getViewName())
                         .$(", lvSeqTxn=").$(headLvSeqTxn)
@@ -1542,12 +1542,12 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     .put(storedClassName);
         }
         if (formatVersion < match.snapshotMinSupportedVersion()) {
-            // RFC 123 ".cp file framing / Corruption handling": below-min
-            // versions are a real compatibility break (operator DROP+CREATE
-            // is the recovery), not structural corruption. Tag the throw so
-            // the catch site invalidates the LV rather than unlinking and
-            // replaying from head-miss. Above-current versions are tolerated:
-            // future writers may emit blocks readers do not understand yet.
+            // Below-min versions signal a real compatibility break (operator
+            // DROP+CREATE is the recovery), not structural corruption. Tag
+            // the throw so the catch site invalidates the LV rather than
+            // unlinking and replaying from head-miss. Above-current versions
+            // are tolerated: future writers may emit blocks readers do not
+            // understand yet.
             throw CairoException.critical(CairoException.LV_FUNCTION_SNAPSHOT_VERSION_TOO_OLD)
                     .put("live view function snapshot version too old, function=")
                     .put(storedClassName)

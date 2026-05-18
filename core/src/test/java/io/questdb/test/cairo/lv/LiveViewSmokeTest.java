@@ -156,12 +156,20 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("CREATE LIVE VIEW lv1 FLUSH EVERY 1s AS " +
                     "SELECT ts, x, row_number() OVER () AS rn FROM base");
+            final String sql = "CREATE LIVE VIEW lv2 FLUSH EVERY 1s AS " +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM lv1";
             try {
-                execute("CREATE LIVE VIEW lv2 FLUSH EVERY 1s AS " +
-                        "SELECT ts, x, row_number() OVER () AS rn FROM lv1");
+                execute(sql);
                 Assert.fail("expected live-on-live reject");
             } catch (SqlException e) {
                 Assert.assertTrue(e.getMessage(), e.getMessage().contains("not allowed as base tables"));
+                // Position must point at the base table name, not the view
+                // name.
+                Assert.assertEquals(
+                        "position must point at the base table name",
+                        sql.lastIndexOf("lv1"),
+                        e.getPosition()
+                );
             }
             execute("DROP LIVE VIEW lv1");
         });
@@ -183,9 +191,9 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
 
     @Test
     public void testRejectBareUnboundedWindow() throws Exception {
-        // RFC 123 CREATE-time validation: a window with PARTITION BY and the
-        // default (UNBOUNDED PRECEDING ... CURRENT ROW) frame must have an
-        // ANCHOR clause, otherwise partition count grows without bound.
+        // A window with PARTITION BY and the default (UNBOUNDED PRECEDING ...
+        // CURRENT ROW) frame must have an ANCHOR clause, otherwise partition
+        // count grows without bound.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, symbol SYMBOL, price DOUBLE) " +
                     "TIMESTAMP(ts) PARTITION BY DAY WAL");
@@ -2972,10 +2980,10 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
 
     @Test
     public void testLiveViewsCatalogueColumnOrderMatchesRfc() throws Exception {
-        // RFC 123 §"Catalogue function live_views()": columns appear in the
-        // documented order so clients binding by ordinal see a stable shape.
-        // RFC-listed columns come first; the three head_checkpoint_* columns
-        // trail as Phase 2a debug surface beyond the RFC.
+        // Columns appear in the documented order so clients binding by
+        // ordinal see a stable shape. The documented columns come first;
+        // the three head_checkpoint_* columns trail as Phase 2a debug
+        // surface.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
@@ -3777,12 +3785,11 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
 
     @Test
     public void testRestoreVersionMismatchInvalidatesView() throws Exception {
-        // RFC 123 ".cp file framing / Corruption handling": a FUNCTION_SNAPSHOT
-        // block whose formatVersion is below the function's current
-        // snapshotMinSupportedVersion is a real compatibility break, not
-        // structural corruption. The restore path must mark the LV INVALID
-        // (operators recover with DROP+CREATE) instead of unlinking the .cp
-        // and falling into head-miss replay.
+        // A FUNCTION_SNAPSHOT block whose formatVersion is below the
+        // function's current snapshotMinSupportedVersion is a real
+        // compatibility break, not structural corruption. The restore path
+        // must mark the LV INVALID (operators recover with DROP+CREATE)
+        // instead of unlinking the .cp and falling into head-miss replay.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x INT) " +
                     "TIMESTAMP(ts) PARTITION BY DAY WAL");
@@ -4828,14 +4835,13 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
 
     @Test
     public void testO3HeadMissWithFullyFilteredReplayPreservesState() throws Exception {
-        // RFC 123 §"O3 replay / Head miss" — the head-miss path replays from
-        // viewLowerBoundTimestamp and rebuilds state. The probe-then-wipe
-        // ordering ensures a replay that produces zero output rows does not
-        // clobber pre-O3 accumulator state. This test covers the closely
-        // related scenario: an O3 commit whose row is filtered out by the
-        // LV's WHERE; the replay still reads two surviving base rows so the
-        // probe passes, the wipe + replay run as usual, and the LV's output
-        // matches the pre-O3 state.
+        // The head-miss path replays from viewLowerBoundTimestamp and
+        // rebuilds state. The probe-then-wipe ordering ensures a replay that
+        // produces zero output rows does not clobber pre-O3 accumulator
+        // state. This test covers the closely related scenario: an O3 commit
+        // whose row is filtered out by the LV's WHERE; the replay still reads
+        // two surviving base rows so the probe passes, the wipe + replay run
+        // as usual, and the LV's output matches the pre-O3 state.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x DOUBLE) " +
                     "TIMESTAMP(ts) PARTITION BY DAY WAL");
@@ -5172,12 +5178,12 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
 
     @Test
     public void testFreezeBlocksInFlightRefreshCycle() throws Exception {
-        // RFC 123 §"Snapshot interaction": startCheckpoint must force a
-        // happens-before edge with any in-flight refresh turn before its file
-        // copy begins, so the agent never reads _lv.s mid-rewrite. The fix
-        // takes and releases the refresh latch inside startCheckpoint. Here
-        // the test stands in for the worker by holding the latch manually and
-        // asserts startCheckpoint blocks until the latch is released.
+        // startCheckpoint must force a happens-before edge with any in-flight
+        // refresh turn before its file copy begins, so the agent never reads
+        // _lv.s mid-rewrite. The fix takes and releases the refresh latch
+        // inside startCheckpoint. Here the test stands in for the worker by
+        // holding the latch manually and asserts startCheckpoint blocks
+        // until the latch is released.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
@@ -5234,10 +5240,10 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
 
     @Test
     public void testFreezeQueuesInvalidationUntilEnd() throws Exception {
-        // RFC 123 §"Snapshot interaction": markInvalid blocks on the freeze.
-        // If a base-table schema change happens mid-snapshot, invalidation is
-        // queued and applied right after endCheckpoint. The snapshot reflects
-        // the pre-invalidation state.
+        // markInvalid blocks on the freeze. If a base-table schema change
+        // happens mid-snapshot, invalidation is queued and applied right
+        // after endCheckpoint. The snapshot reflects the pre-invalidation
+        // state.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +

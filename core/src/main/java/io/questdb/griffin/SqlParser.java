@@ -1416,6 +1416,11 @@ public class SqlParser {
             throw SqlException.$(selectStart, "live view requires a single base table in FROM clause");
         }
         builder.setBaseTableName(Chars.toString(from.getTableName()));
+        // Position of the base table name in the source SQL; engine-side
+        // validation rules that reject based on the base table (DEDUP keys,
+        // missing designated timestamp, live-on-live) point at this offset.
+        final ExpressionNode baseNameExpr = from.getTableNameExpr();
+        builder.setBaseTableNamePosition(baseNameExpr != null ? baseNameExpr.position : selectStart);
 
         // Validate ORDER BY on each named window: RFC 123 §"CREATE-time validation"
         // requires the ORDER BY column to be the base table's designated timestamp,
@@ -1685,11 +1690,11 @@ public class SqlParser {
                 continue;
             }
             if (w.getAnchorKind() == WindowExpression.ANCHOR_KIND_NONE) {
-                // RFC 123 CREATE-time validation: a bare unbounded window
-                // (default RANGE UNBOUNDED PRECEDING ... CURRENT ROW frame
-                // with PARTITION BY) without ANCHOR grows the partition count
-                // without bound. Bounded frames remain allowed without
-                // ANCHOR; so does a single-partition window (OVER ()).
+                // A bare unbounded window (default RANGE UNBOUNDED PRECEDING
+                // ... CURRENT ROW frame with PARTITION BY) without ANCHOR
+                // grows the partition count without bound. Bounded frames
+                // remain allowed without ANCHOR; so does a single-partition
+                // window (OVER ()).
                 if (!w.isNonDefaultFrame() && w.getPartitionBy().size() > 0) {
                     throw SqlException.$(positionOfWindow(w, null),
                             "live view unbounded window must have an ANCHOR clause; bare unbounded windows are not supported");
