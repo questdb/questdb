@@ -124,6 +124,15 @@ public class TableSequencerImpl implements TableSequencer {
             walIdGenerator.open(path);
             metadata.open(path, rootLen, tableToken);
             tableTransactionLog.open(path);
+            // Replay any structure changes that were committed to the txn
+            // log but had not yet been written to the metaFile mmap before
+            // the previous shutdown. nextStructureTxn writes txnLog first
+            // and metaFile second, so a crash between the two leaves the
+            // metaFile lagging; without this catch-up the next structure
+            // change would observe metadata.getMetadataVersion() <
+            // tableTransactionLog.maxMetadataVersion and trip
+            // beginMetadataChangeEntry's invariant.
+            catchUpMetadataFromTxnLog();
         } catch (CairoException ex) {
             closeLocked();
             if (ex.isTableDropped()) {
@@ -327,7 +336,26 @@ public class TableSequencerImpl implements TableSequencer {
                 AlterOperation deserializedAlter = tableTransactionLog.readTableMetadataChangeLog(
                         expectedStructureVersion, alterCommandWalFormatter);
 
-                applyToMetadata(deserializedAlter);
+                // Apply the (round-tripped) change to the in-memory metadata
+                // so the bumped metadata.getMetadataVersion() is visible to
+                // the invariant check below, but defer writing the metaFile
+                // mmap until AFTER endMetadataChangeEntry commits the txn
+                // log. mmap writes survive a process restart through the
+                // kernel page cache regardless of msync, so what matters
+                // here is the ORDER in which the two files receive their
+                // writes. If the metaFile mmap is written first (structure
+                // version bumped) and we crash before MAX_TXN_OFFSET is
+                // bumped, on restart metadata.getMetadataVersion() reads
+                // the new version while txnLog reports the old, and the
+                // next nextStructureTxn fails beginMetadataChangeEntry's
+                // invariant with
+                //   "possible corruption in transaction metadata
+                //    [offset=..., newVersion=...]"
+                // Writing the txn-log commit first leaves only the inverse
+                // window (metaFile behind txnLog) which
+                // catchUpMetadataFromTxnLog resolves on open by replaying
+                // pending alters.
+                deserializedAlter.apply(metadataSvc, true);
                 if (metadata.getMetadataVersion() != expectedStructureVersion + 1) {
                     throw CairoException.critical(0)
                             .put("applying structure change to WAL table failed [table=").put(tableToken)
@@ -335,10 +363,11 @@ public class TableSequencerImpl implements TableSequencer {
                             .put(", newVersion: ").put(metadata.getMetadataVersion())
                             .put(']');
                 }
-                metadata.sync();
                 // TableToken can become updated as a result of alter.
                 tableToken = metadata.getTableToken();
                 txn = tableTransactionLog.endMetadataChangeEntry();
+                metadata.syncToMetaFile();
+                metadata.sync();
 
                 if (!seqTxnTracker.isSuspended()) {
                     notifyTxnCommitted(txn);
@@ -408,19 +437,7 @@ public class TableSequencerImpl implements TableSequencer {
             return null;
         }
 
-        try (TableMetadataChangeLog metaChangeCursor = tableTransactionLog.getTableMetadataChangeLog(
-                metadata.getMetadataVersion(), alterCommandWalFormatter)
-        ) {
-            boolean updated = false;
-            while (metaChangeCursor.hasNext()) {
-                TableMetadataChange change = metaChangeCursor.next();
-                change.apply(metadataSvc, true);
-                updated = true;
-            }
-            if (updated) {
-                metadata.syncToMetaFile();
-            }
-        }
+        catchUpMetadataFromTxnLog();
         long lastTxn = tableTransactionLog.lastTxn();
         LOG.info()
                 .$("reloaded table sequencer [table=").$(tableToken)
@@ -441,9 +458,31 @@ public class TableSequencerImpl implements TableSequencer {
         this.distressed = true;
     }
 
-    private void applyToMetadata(TableMetadataChange change) {
-        change.apply(metadataSvc, true);
-        metadata.syncToMetaFile();
+    /**
+     * Bring the metaFile forward to match any structure changes that were
+     * committed to the txn log but had not yet propagated into the metaFile
+     * mmap before a crash. nextStructureTxn now writes the metaFile mmap
+     * AFTER endMetadataChangeEntry commits the txn log, so the only
+     * post-crash inconsistency window is metaFile lagging txnLog. This
+     * replays the missing alters from txnMetaMem into the metaFile mmap
+     * (which the kernel page cache then exposes to the next reader),
+     * so subsequent calls into nextStructureTxn see a consistent
+     * metadata.getMetadataVersion().
+     */
+    private void catchUpMetadataFromTxnLog() {
+        try (TableMetadataChangeLog metaChangeCursor = tableTransactionLog.getTableMetadataChangeLog(
+                metadata.getMetadataVersion(), alterCommandWalFormatter)
+        ) {
+            boolean updated = false;
+            while (metaChangeCursor.hasNext()) {
+                TableMetadataChange change = metaChangeCursor.next();
+                change.apply(metadataSvc, true);
+                updated = true;
+            }
+            if (updated) {
+                metadata.syncToMetaFile();
+            }
+        }
     }
 
     private void checkDropped() {
