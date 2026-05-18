@@ -3618,6 +3618,77 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testHeadCheckpointSetAndReadAtomicity() throws Exception {
+        // The head-checkpoint trio (lvSeqTxn, maxTs, stateBytes) is published
+        // via an immutable long[] reference store so the lock-free O3 head-hit
+        // reader cannot observe a torn (lvSeqTxn, maxTs) pair across a
+        // concurrent setHeadCheckpoint. Stress: writer alternates between two
+        // known tuples; reader spins and asserts every snapshot it sees is
+        // exactly one of those tuples.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base");
+
+            final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(instance);
+
+            final long lvSeqA = 10L;
+            final long maxTsA = 100L;
+            final long lvSeqB = 20L;
+            final long maxTsB = 200L;
+            // Seed with tuple A so the reader sees a known value on first read.
+            instance.setHeadCheckpoint(lvSeqA, maxTsA, 1L, 1L);
+
+            final AtomicBoolean stop = new AtomicBoolean(false);
+            final AtomicBoolean tornObserved = new AtomicBoolean(false);
+
+            final Thread writer = new Thread(() -> {
+                int n = 0;
+                while (!stop.get()) {
+                    if ((n & 1) == 0) {
+                        instance.setHeadCheckpoint(lvSeqA, maxTsA, 1L, 1L);
+                    } else {
+                        instance.setHeadCheckpoint(lvSeqB, maxTsB, 2L, 2L);
+                    }
+                    n++;
+                    if ((n & 0xff) == 0) {
+                        Thread.yield();
+                    }
+                }
+            }, "lv-head-checkpoint-writer");
+            final Thread reader = new Thread(() -> {
+                while (!stop.get()) {
+                    long[] pair = instance.getHeadCheckpointSeqAndMaxTs();
+                    long lvSeq = pair[0];
+                    long maxTs = pair[1];
+                    boolean isA = lvSeq == lvSeqA && maxTs == maxTsA;
+                    boolean isB = lvSeq == lvSeqB && maxTs == maxTsB;
+                    if (!isA && !isB) {
+                        tornObserved.set(true);
+                        return;
+                    }
+                }
+            }, "lv-head-checkpoint-reader");
+
+            writer.start();
+            reader.start();
+            Thread.sleep(250);
+            stop.set(true);
+            writer.join(5_000);
+            reader.join(5_000);
+            Assert.assertFalse("writer thread must have stopped", writer.isAlive());
+            Assert.assertFalse("reader thread must have stopped", reader.isAlive());
+            Assert.assertFalse(
+                    "reader observed a torn (lvSeqTxn, maxTs) pair",
+                    tornObserved.get()
+            );
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
     public void testHeadCheckpointWrittenOnFirstCommit() throws Exception {
         // Phase 2a.4: the refresh worker writes a head .cp on the first cycle
         // that lands rows, so subsequent restart / O3 paths have a head to

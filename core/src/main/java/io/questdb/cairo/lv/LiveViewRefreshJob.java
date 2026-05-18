@@ -815,8 +815,12 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             return;
         }
 
-        final long headLvSeqTxn = instance.getHeadCheckpointLvSeqTxn();
-        final long headMaxTs = instance.getHeadCheckpointMaxTs();
+        // Atomic snapshot of (lvSeqTxn, maxTs); without it a concurrent
+        // setHeadCheckpoint could pair a fresh lvSeqTxn with the prior
+        // maxTs and drive the head-hit decision off a torn read.
+        final long[] headPair = instance.getHeadCheckpointSeqAndMaxTs();
+        final long headLvSeqTxn = headPair[0];
+        final long headMaxTs = headPair[1];
         final boolean headHitEligible = headLvSeqTxn != Numbers.LONG_NULL && headMaxTs <= lateRowTs;
         LOG.info().$("live view O3 replay [view=").$(viewName)
                 .$(", lateRowTs=").$(lateRowTs)

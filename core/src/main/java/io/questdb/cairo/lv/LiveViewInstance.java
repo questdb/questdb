@@ -67,6 +67,10 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * stateless on the instance side).
  */
 public class LiveViewInstance implements QuietCloseable {
+    private static final int HEAD_CHECKPOINT_LV_SEQ_TXN = 0;
+    private static final int HEAD_CHECKPOINT_MAX_TS = 1;
+    private static final int HEAD_CHECKPOINT_STATE_BYTES = 2;
+    private static final long[] EMPTY_HEAD_CHECKPOINT = {Numbers.LONG_NULL, Numbers.LONG_NULL, 0L};
     private final LiveViewDefinition definition;
     private final AtomicBoolean refreshLatch = new AtomicBoolean(false);
     private final LiveViewStateReader stateReader = new LiveViewStateReader();
@@ -109,12 +113,14 @@ public class LiveViewInstance implements QuietCloseable {
     // Head-checkpoint metadata mirrored from the most recently committed
     // _checkpoints/<lvSeqTxn>.cp. Populated by the Phase 2a.4 flush-cycle
     // write hook (deferred) and consumed by the live_views() catalogue and
-    // by the O3 head-hit / restart-restore decision paths. Preallocated
-    // here so the catalogue surface lands first and stays stable when the
-    // write hook is wired.
-    private volatile long headCheckpointLvSeqTxn = Numbers.LONG_NULL;
-    private volatile long headCheckpointMaxTs = Numbers.LONG_NULL;
-    private volatile long headCheckpointStateBytes = 0;
+    // by the O3 head-hit / restart-restore decision paths.
+    // <p>
+    // The trio is packed into one immutable long[] published via volatile
+    // store so the O3 head-hit lock-free reader always sees a consistent
+    // (lvSeqTxn, maxTs, stateBytes) tuple; without the packing a reader
+    // could observe a fresh lvSeqTxn paired with the prior maxTs.
+    // Indexes: HEAD_CHECKPOINT_LV_SEQ_TXN / _MAX_TS / _STATE_BYTES.
+    private volatile long[] headCheckpoint = EMPTY_HEAD_CHECKPOINT;
     private volatile LiveViewInMemoryTier inMemoryTier;
     private volatile boolean isClosed;
     // Restart-restore single-shot flag. The refresh worker flips it true on
@@ -287,15 +293,26 @@ public class LiveViewInstance implements QuietCloseable {
     }
 
     public long getHeadCheckpointLvSeqTxn() {
-        return headCheckpointLvSeqTxn;
+        return headCheckpoint[HEAD_CHECKPOINT_LV_SEQ_TXN];
     }
 
     public long getHeadCheckpointMaxTs() {
-        return headCheckpointMaxTs;
+        return headCheckpoint[HEAD_CHECKPOINT_MAX_TS];
+    }
+
+    /**
+     * Atomic read of the {@code (lvSeqTxn, maxTs)} pair the O3 head-hit
+     * eligibility check needs. Returns a stable two-element array
+     * {@code [lvSeqTxn, maxTs]} so callers cannot observe a torn pair across
+     * a concurrent {@link #setHeadCheckpoint(long, long, long, long)}.
+     */
+    public long[] getHeadCheckpointSeqAndMaxTs() {
+        final long[] local = headCheckpoint;
+        return new long[]{local[HEAD_CHECKPOINT_LV_SEQ_TXN], local[HEAD_CHECKPOINT_MAX_TS]};
     }
 
     public long getHeadCheckpointStateBytes() {
-        return headCheckpointStateBytes;
+        return headCheckpoint[HEAD_CHECKPOINT_STATE_BYTES];
     }
 
     public LiveViewInMemoryTier getInMemoryTier() {
@@ -532,9 +549,11 @@ public class LiveViewInstance implements QuietCloseable {
      * immediately rather than waiting for the row-count trigger to re-fire.
      */
     public void setHeadCheckpoint(long lvSeqTxn, long maxTs, long stateBytes, long writtenUs) {
-        this.headCheckpointLvSeqTxn = lvSeqTxn;
-        this.headCheckpointMaxTs = maxTs;
-        this.headCheckpointStateBytes = stateBytes;
+        // Publish the (lvSeqTxn, maxTs, stateBytes) trio atomically: build a
+        // fresh immutable array and store the reference volatile. A reader
+        // observing the new reference is guaranteed to see all three fields
+        // from the same setHeadCheckpoint call, never a torn mix.
+        this.headCheckpoint = new long[]{lvSeqTxn, maxTs, stateBytes};
         this.rowsSinceLastCheckpointWritten = 0;
         this.lastCheckpointWrittenUs = writtenUs;
     }
