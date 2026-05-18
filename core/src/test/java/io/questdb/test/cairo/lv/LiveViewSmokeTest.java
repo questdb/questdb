@@ -4827,6 +4827,64 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testO3HeadMissWithFullyFilteredReplayPreservesState() throws Exception {
+        // RFC 123 §"O3 replay / Head miss" — the head-miss path replays from
+        // viewLowerBoundTimestamp and rebuilds state. The probe-then-wipe
+        // ordering ensures a replay that produces zero output rows does not
+        // clobber pre-O3 accumulator state. This test covers the closely
+        // related scenario: an O3 commit whose row is filtered out by the
+        // LV's WHERE; the replay still reads two surviving base rows so the
+        // probe passes, the wipe + replay run as usual, and the LV's output
+        // matches the pre-O3 state.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x DOUBLE) " +
+                    "TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+                    "SELECT ts, sym, sum(x) OVER w AS s FROM base WHERE x > 100 " +
+                    "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                setCurrentMicros(0L);
+                execute("INSERT INTO base (ts, sym, x) VALUES " +
+                        "('2026-11-01T00:00:10.000000Z', 'a', 200.0), " +
+                        "('2026-11-01T00:00:20.000000Z', 'a', 300.0)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                assertSql(
+                        "ts\tsym\ts\n" +
+                                "2026-11-01T00:00:10.000000Z\ta\t200.0\n" +
+                                "2026-11-01T00:00:20.000000Z\ta\t500.0\n",
+                        "SELECT ts, sym, s FROM lv ORDER BY ts"
+                );
+
+                // O3 row at ts=05 that fails the filter (x <= 100). The WAL
+                // path still detects O3 by min(ts) < latestSeenTs; head-miss
+                // replay reads (05,50), (10,200), (20,300) from the
+                // TableReader, the filter drops (05,50), and the post-filter
+                // probe sees the remaining two rows. State wipes and
+                // rebuilds; LV output is unchanged.
+                setCurrentMicros(200_000L);
+                execute("INSERT INTO base (ts, sym, x) VALUES " +
+                        "('2026-11-01T00:00:05.000000Z', 'a', 50.0)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                assertSql(
+                        "ts\tsym\ts\n" +
+                                "2026-11-01T00:00:10.000000Z\ta\t200.0\n" +
+                                "2026-11-01T00:00:20.000000Z\ta\t500.0\n",
+                        "SELECT ts, sym, s FROM lv ORDER BY ts"
+                );
+            }
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
     public void testO3HeadHitReplaysFromHead() throws Exception {
         // Phase 2a.8: an O3 row with ts > head.maxTimestamp drops into the
         // head-hit branch. State rolls back to the head's snapshot moment

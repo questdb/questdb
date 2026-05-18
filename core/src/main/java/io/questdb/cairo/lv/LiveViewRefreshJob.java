@@ -1039,22 +1039,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             invalidateHeadOnO3(instance, advanceTo, Numbers.LONG_NULL, Numbers.LONG_NULL);
         }
 
-        // Wipe per-function partition state and the anchor map. The
-        // compiled factory's WindowFunction instances stay live so the
-        // cursor chain below can reuse them; only their accumulated state
-        // resets.
         final ObjList<WindowFunction> functions = windowFactory.getWindowFunctions();
-        for (int i = 0, n = functions.size(); i < n; i++) {
-            Map m = functions.getQuick(i).getPartitionMap();
-            if (m != null) {
-                m.clear();
-            }
-        }
         final LiveViewWindow anchorWindow = instance.getAnchorWindow();
-        if (anchorWindow != null) {
-            anchorWindow.toTop();
-        }
-
         final long viewLowerBoundTimestamp = instance.getDefinition().getViewLowerBoundTimestamp();
         TableReader reader = waitForApply(baseToken, advanceTo);
         boolean readerAttached = false;
@@ -1073,47 +1059,76 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             RecordMetadata outMetadata = windowFactory.getMetadata();
             final int cursorTimestampIndex = outMetadata.getTimestampIndex();
 
-            try (WalWriter walWriter = engine.getWalWriter(instance.getLiveViewToken())) {
-                RecordToRowCopier copier = ensureCopier(instance, windowFactory, walWriter);
-                try (RecordCursor pageCursor = pageFrameFactory.getCursor(executionContext)) {
-                    tsLowerBoundCursor.of(pageCursor, baseTimestampIndex, viewLowerBoundTimestamp);
-                    RecordCursor source = tsLowerBoundCursor;
-                    if (filter != null) {
-                        filteringCursor.of(source, filter, executionContext);
-                        source = filteringCursor;
-                    }
-                    if (anchorWindow != null) {
-                        anchorDispatchingCursor.of(source, anchorWindow, executionContext);
-                        source = anchorDispatchingCursor;
-                    }
-                    RecordCursor windowCursor = windowFactory.getIncrementalCursor(source, executionContext);
-                    try {
-                        Record outRecord = windowCursor.getRecord();
-                        while (windowCursor.hasNext()) {
-                            long ts = outRecord.getTimestamp(cursorTimestampIndex);
-                            if (replayMaxTs == Numbers.LONG_NULL || ts > replayMaxTs) {
-                                replayMaxTs = ts;
-                            }
-                            // Re-stamp the O3 detection watermark off the post-
-                            // window output so any subsequent O3 in the same
-                            // worker cycle is caught against the just-rebuilt
-                            // state.
-                            instance.setLatestSeenTs(ts);
-                            TableWriter.Row row = walWriter.newRow(ts);
-                            copier.copy(executionContext, outRecord, row);
-                            row.append();
-                            appendedRows++;
-                        }
-                    } finally {
-                        windowCursor.close();
-                    }
+            // Probe pass: open a separate cursor over the same source + filter
+            // chain and check whether any row survives. Skipping the wipe when
+            // no rows pass the filter prevents a degenerate replay (e.g. WHERE
+            // discards every row in the replay window) from permanently
+            // erasing cumulative accumulator state for every partition.
+            final boolean hasReplayRow;
+            try (RecordCursor probeCursor = pageFrameFactory.getCursor(executionContext)) {
+                tsLowerBoundCursor.of(probeCursor, baseTimestampIndex, viewLowerBoundTimestamp);
+                RecordCursor probeSource = tsLowerBoundCursor;
+                if (filter != null) {
+                    filteringCursor.of(probeSource, filter, executionContext);
+                    probeSource = filteringCursor;
+                }
+                hasReplayRow = probeSource.hasNext();
+            }
 
-                    if (appendedRows > 0) {
-                        walWriter.commitLiveViewWithReplaceRange(
-                                advanceTo,
-                                viewLowerBoundTimestamp,
-                                Long.MAX_VALUE
-                        );
+            if (hasReplayRow) {
+                // Wipe per-function partition state and the anchor map. The
+                // compiled factory's WindowFunction instances stay live so
+                // the cursor chain below can reuse them; only their
+                // accumulated state resets.
+                for (int i = 0, n = functions.size(); i < n; i++) {
+                    Map m = functions.getQuick(i).getPartitionMap();
+                    if (m != null) {
+                        m.clear();
+                    }
+                }
+                if (anchorWindow != null) {
+                    anchorWindow.toTop();
+                }
+
+                try (WalWriter walWriter = engine.getWalWriter(instance.getLiveViewToken())) {
+                    RecordToRowCopier copier = ensureCopier(instance, windowFactory, walWriter);
+                    try (RecordCursor pageCursor = pageFrameFactory.getCursor(executionContext)) {
+                        tsLowerBoundCursor.of(pageCursor, baseTimestampIndex, viewLowerBoundTimestamp);
+                        RecordCursor source = tsLowerBoundCursor;
+                        if (filter != null) {
+                            filteringCursor.of(source, filter, executionContext);
+                            source = filteringCursor;
+                        }
+                        if (anchorWindow != null) {
+                            anchorDispatchingCursor.of(source, anchorWindow, executionContext);
+                            source = anchorDispatchingCursor;
+                        }
+                        try (RecordCursor windowCursor = windowFactory.getIncrementalCursor(source, executionContext)) {
+                            Record outRecord = windowCursor.getRecord();
+                            while (windowCursor.hasNext()) {
+                                long ts = outRecord.getTimestamp(cursorTimestampIndex);
+                                if (replayMaxTs == Numbers.LONG_NULL || ts > replayMaxTs) {
+                                    replayMaxTs = ts;
+                                }
+                                // Re-stamp the O3 detection watermark off the
+                                // post-window output so any subsequent O3 in
+                                // the same worker cycle is caught against the
+                                // just-rebuilt state.
+                                instance.setLatestSeenTs(ts);
+                                TableWriter.Row row = walWriter.newRow(ts);
+                                copier.copy(executionContext, outRecord, row);
+                                row.append();
+                                appendedRows++;
+                            }
+                        }
+
+                        if (appendedRows > 0) {
+                            walWriter.commitLiveViewWithReplaceRange(
+                                    advanceTo,
+                                    viewLowerBoundTimestamp,
+                                    Long.MAX_VALUE
+                            );
+                        }
                     }
                 }
             }
