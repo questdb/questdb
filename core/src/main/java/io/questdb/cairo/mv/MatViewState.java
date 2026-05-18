@@ -414,13 +414,7 @@ public class MatViewState implements QuietCloseable {
         if (sampleNanos <= 0) {
             return;
         }
-        final long prev = avgCommitNanos;
-        if (prev == 0) {
-            avgCommitNanos = sampleNanos;
-        } else {
-            final long capped = Math.min(sampleNanos, prev * EMA_OUTLIER_MULTIPLIER);
-            avgCommitNanos = (prev * (EMA_ALPHA_INV - 1) + capped) / EMA_ALPHA_INV;
-        }
+        avgCommitNanos = foldEma(avgCommitNanos, sampleNanos);
     }
 
     /**
@@ -448,13 +442,43 @@ public class MatViewState implements QuietCloseable {
         if (sampleNanos <= 0 || rangeMicros <= 0) {
             return;
         }
-        final long perMicro = Math.max(1, sampleNanos / rangeMicros);
-        final long prev = avgScanNanosPerTsUnit;
+        final long perTsUnit = Math.max(1, sampleNanos / rangeMicros);
+        avgScanNanosPerTsUnit = foldEma(avgScanNanosPerTsUnit, perTsUnit);
+    }
+
+    /**
+     * Folds a positive sample into a positive EMA, applying the outlier
+     * multiplier cap and recovering safely from arithmetic overflow.
+     * <p>
+     * The pre-overflow form is {@code (prev*(N-1) + min(sample, prev*K)) / N}.
+     * For values near {@code Long.MAX_VALUE / 7} the {@code prev*(N-1)} step
+     * wraps -- in that case we fall back to a 50/50 blend of {@code prev} and
+     * the capped sample, which keeps the EMA monotonic in sign and prevents
+     * a single outlier from latching the average to a corrupted value.
+     */
+    private static long foldEma(long prev, long sample) {
         if (prev == 0) {
-            avgScanNanosPerTsUnit = perMicro;
-        } else {
-            final long capped = Math.min(perMicro, prev * EMA_OUTLIER_MULTIPLIER);
-            avgScanNanosPerTsUnit = (prev * (EMA_ALPHA_INV - 1) + capped) / EMA_ALPHA_INV;
+            return sample;
+        }
+        // Cap outlier samples relative to prev. multiplyExact guards against
+        // overflow if prev itself is enormous; on overflow we treat the cap
+        // as Long.MAX_VALUE (i.e. effectively no cap, which is fine because
+        // we only cap when prev is small enough to make 5*prev finite).
+        long cap;
+        try {
+            cap = Math.multiplyExact(prev, (long) EMA_OUTLIER_MULTIPLIER);
+        } catch (ArithmeticException overflow) {
+            cap = Long.MAX_VALUE;
+        }
+        final long capped = Math.min(sample, cap);
+        // Standard EMA: (prev * (N-1) + capped) / N. Guard the multiply and
+        // addition; on overflow fall back to a 50/50 blend.
+        try {
+            final long weighted = Math.multiplyExact(prev, (long) (EMA_ALPHA_INV - 1));
+            final long sum = Math.addExact(weighted, capped);
+            return sum / EMA_ALPHA_INV;
+        } catch (ArithmeticException overflow) {
+            return (prev / 2) + (capped / 2);
         }
     }
 
