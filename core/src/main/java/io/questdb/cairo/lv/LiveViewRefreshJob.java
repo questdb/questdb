@@ -1345,6 +1345,10 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 fnSink.putStr(windowName);
                 fnSink.putStr(snapshotFactoryName(f));
                 fnSink.putInt(f.snapshotFormatVersion());
+                // The snapshot payload is implicitly length-bounded by the
+                // enclosing FUNCTION_SNAPSHOT block. A future change that
+                // packs multiple payloads into a single block would need an
+                // explicit LONG length prefix here.
                 f.snapshot(fnSink);
                 checkpointWriter.endBlock();
             }
