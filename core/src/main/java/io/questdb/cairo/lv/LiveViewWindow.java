@@ -270,6 +270,24 @@ public class LiveViewWindow implements QuietCloseable {
     }
 
     /**
+     * Reopen hook for the wrapping {@link AnchorDispatchingCursor}: invoked
+     * whenever the cursor stack issues {@code toTop()} between refresh ticks.
+     * Resets only the anchor expression's per-cursor iteration state; the
+     * anchor map and tombstone count are preserved so the in-memory
+     * partition-anchor record survives across incremental refresh cycles
+     * (and across the first post-restart tick following
+     * {@link io.questdb.cairo.lv.LiveViewRefreshJob}'s restore from a head
+     * checkpoint).
+     * <p>
+     * Full-reset semantics live on {@link #toTop()} and are invoked
+     * explicitly by the head-miss replay path before reopening the cursor
+     * stack.
+     */
+    public void onCursorReopen() {
+        anchorExpression.toTop();
+    }
+
+    /**
      * Drives the per-row anchor-comparison + reset-dispatch logic for one input row.
      * Must be invoked before the row reaches the underlying window cursor's
      * {@code computeNext}.
@@ -472,10 +490,17 @@ public class LiveViewWindow implements QuietCloseable {
     }
 
     /**
-     * Clears the per-partition anchor map and re-initialises the anchor expression.
-     * Mirrors {@link RecordCursor#toTop()}: the cursor restarts the underlying
-     * source, so partitions that had been seen are about to be re-fed and need
-     * a clean reset.
+     * Full reset: wipes the per-partition anchor map, zeroes the tombstone
+     * counter, and re-initialises the anchor expression. Intended for
+     * non-incremental rebuild paths (head-miss O3 replay, full bootstrap)
+     * where downstream callers explicitly want a clean slate before the
+     * cursor stack reopens.
+     * <p>
+     * The wrapping {@link AnchorDispatchingCursor} routes its cursor-stack
+     * {@code toTop()} through {@link #onCursorReopen()} instead, so
+     * back-to-back incremental refresh ticks (including the first tick
+     * after a restart that just rehydrated this map from a head
+     * checkpoint) preserve the recorded partition-anchor state.
      */
     public void toTop() {
         anchorMap.clear();

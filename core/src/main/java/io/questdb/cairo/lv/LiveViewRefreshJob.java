@@ -900,12 +900,13 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         source = anchorDispatchingCursor;
                     }
                     RecordCursor windowCursor = windowFactory.getIncrementalCursor(source, executionContext);
-                    // getIncrementalCursor wiped the anchor map via the
-                    // AnchorDispatchingCursor.toTop chain. Clear per-function
-                    // partition maps too so any drift past the head's snapshot
-                    // moment is discarded, then re-populate everything from
-                    // the head .cp. Order matters: cursor-open wipe -> maps
-                    // clear -> restore.
+                    // Drop pre-O3 drift before restoring from the head: clear
+                    // each function's partition map so accumulator state that
+                    // outran the head's snapshot moment is discarded. The
+                    // anchor map gets the same treatment inside
+                    // LiveViewWindow.restore() (it clears before reinserting),
+                    // so no explicit wipe is needed here. Order matters:
+                    // function maps clear -> restore from .cp.
                     final ObjList<WindowFunction> functions = windowFactory.getWindowFunctions();
                     for (int i = 0, n = functions.size(); i < n; i++) {
                         Map m = functions.getQuick(i).getPartitionMap();

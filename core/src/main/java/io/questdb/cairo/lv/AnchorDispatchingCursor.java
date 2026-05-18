@@ -114,6 +114,13 @@ final class AnchorDispatchingCursor implements RecordCursor {
     @Override
     public void toTop() {
         base.toTop();
-        window.toTop();
+        // Preserve the anchor map across cursor reopens: the wrapping factory
+        // calls toTop() through this cursor at the head of every incremental
+        // refresh tick, and the first such call after a restart sees the map
+        // freshly rehydrated from a head checkpoint. Routing through
+        // onCursorReopen() resets the anchor expression but keeps the
+        // partition-anchor records intact. Full-reset paths (head-miss replay)
+        // call LiveViewWindow.toTop() explicitly before reopening this cursor.
+        window.onCursorReopen();
     }
 }
