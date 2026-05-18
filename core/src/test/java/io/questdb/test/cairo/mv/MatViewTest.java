@@ -5737,6 +5737,354 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRefreshIntervalsO3PeriodMatView() throws Exception {
+        // Verify clustering + step-cap also fire correctly on the period mat
+        // view code path, which has its own union/intersect of the cached
+        // refresh-intervals list (period extension + refresh limit clipping).
+        // The clustering happens BEFORE those period mutations, but the
+        // step-cap operates on the post-mutation list. This test checks the
+        // combined behaviour: an O3 write into an already-refreshed period
+        // gets only its own buckets recomputed.
+        setProperty(PropertyKey.CAIRO_MAT_VIEW_ROWS_PER_QUERY_ESTIMATE, 1_000_000);
+        setProperty(PropertyKey.CAIRO_MAT_VIEW_REFRESH_INTERVALS_UPDATE_PERIOD, "5s");
+        assertMemoryLeak(() -> {
+            TestTimestampCounterFactory.COUNTER.set(0);
+
+            executeWithRewriteTimestamp(
+                    "create table base_price (" +
+                            "  price double, ts #TIMESTAMP" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            execute(
+                    "create materialized view price_1h refresh immediate period (length 1h) as " +
+                            "select ts, test_timestamp_counter(ts) ts0, last(price) as price " +
+                            "from base_price sample by 1h"
+            );
+
+            // First period of data; let the period refresh complete.
+            execute("insert into base_price(price, ts) values (1.0, '2024-09-10T10:01')");
+            currentMicros = parseFloorPartialTimestamp("2024-09-10T11:30:00.000000Z");
+            final MatViewTimerJob timerJob = new MatViewTimerJob(engine);
+            drainMatViewTimerQueue(timerJob);
+            drainQueues();
+
+            final long counterAfterInitial = TestTimestampCounterFactory.COUNTER.get();
+            Assert.assertEquals("Initial period refresh should emit 1 bucket", 1, counterAfterInitial);
+
+            // O3 write 24h back, plus a current write -- arrived as 2 separate
+            // WAL txns. With ~24h gap and warm EMA, clustering should split.
+            execute("insert into base_price(price, ts) values (2.0, '2024-09-09T05:01')");
+            execute("insert into base_price(price, ts) values (3.0, '2024-09-10T11:01')");
+
+            currentMicros = parseFloorPartialTimestamp("2024-09-10T12:30:00.000000Z");
+            drainMatViewTimerQueue(timerJob);
+            drainQueues();
+
+            final long bucketsEmittedByO3Refresh =
+                    TestTimestampCounterFactory.COUNTER.get() - counterAfterInitial;
+
+            // Only the two newly-dirty buckets (09-09T05:00 and 09-10T11:00)
+            // should be recomputed -- not the 09-10T10:00 bucket from the
+            // initial period that sits between them.
+            Assert.assertEquals(
+                    "Period mat view should only recompute the 2 dirty buckets, got: " + bucketsEmittedByO3Refresh,
+                    2, bucketsEmittedByO3Refresh
+            );
+
+            assertQueryNoLeakCheck(
+                    replaceExpectedTimestamp(
+                            """
+                                    ts\tts0\tprice
+                                    2024-09-09T05:00:00.000000Z\t2024-09-09T05:00:00.000000Z\t2.0
+                                    2024-09-10T10:00:00.000000Z\t2024-09-10T10:00:00.000000Z\t1.0
+                                    2024-09-10T11:00:00.000000Z\t2024-09-10T11:00:00.000000Z\t3.0
+                                    """),
+                    "price_1h order by ts",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testRefreshMaterializedViewStatsResetsEma() throws Exception {
+        // REFRESH MATERIALIZED VIEW <name> STATS clears the EMA values so the
+        // cost model returns to its cold-start state. Operators reach for
+        // this when workload shape has changed and the historical averages
+        // no longer reflect reality.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table base_price (" +
+                            "  price double, ts #TIMESTAMP" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            execute(
+                    "create materialized view price_1h refresh immediate as " +
+                            "select ts, last(price) as price from base_price sample by 1h"
+            );
+
+            // Drive at least one refresh through so the EMAs hold real samples.
+            execute("insert into base_price(price, ts) values (1.0, '2024-09-10T12:01')");
+            currentMicros = parseFloorPartialTimestamp("2024-09-10T13:00:00.000000Z");
+            drainWalAndMatViewQueues();
+
+            final TableToken viewToken = engine.getTableTokenIfExists("price_1h");
+            final MatViewState viewState = engine.getMatViewStateStore().getViewState(viewToken);
+            Assert.assertNotNull(viewState);
+            Assert.assertTrue("Expected EMA samples after refresh", viewState.getAvgCommitNanos() > 0);
+            Assert.assertTrue("Expected scan samples after refresh", viewState.getAvgScanNanosPerTsUnit() > 0);
+
+            execute("refresh materialized view price_1h stats");
+
+            Assert.assertEquals("Stats reset should zero avgCommitNanos", 0L, viewState.getAvgCommitNanos());
+            Assert.assertEquals("Stats reset should zero avgScanNanosPerTsUnit", 0L, viewState.getAvgScanNanosPerTsUnit());
+            Assert.assertEquals(
+                    "Threshold should fall back to cold-start default after reset",
+                    MatViewState.COLD_START_GAP_THRESHOLD_TS_UNITS,
+                    viewState.getCommitGapThresholdTsUnits()
+            );
+        });
+    }
+
+    @Test
+    public void testRefreshIntervalsO3SingleIntervalUnaffected() throws Exception {
+        // With only one cached refresh interval, capStepByNarrowestInterval
+        // shrinks step to a single bucket. The iterator then does one cursor
+        // pass over that bucket -- functionally identical to the pre-fix
+        // behaviour (since the envelope was already 1 bucket wide). This
+        // test guards against an over-aggressive step cap that would split
+        // a single dirty bucket into many cursor calls.
+        setProperty(PropertyKey.CAIRO_MAT_VIEW_ROWS_PER_QUERY_ESTIMATE, 1_000_000);
+        setProperty(PropertyKey.CAIRO_MAT_VIEW_REFRESH_INTERVALS_UPDATE_PERIOD, "5s");
+        assertMemoryLeak(() -> {
+            TestTimestampCounterFactory.COUNTER.set(0);
+
+            executeWithRewriteTimestamp(
+                    "create table base_price (" +
+                            "  price double, ts #TIMESTAMP" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            execute(
+                    "create materialized view price_1h refresh manual as " +
+                            "select ts, test_timestamp_counter(ts) ts0, last(price) as price " +
+                            "from base_price sample by 1h;"
+            );
+
+            execute("insert into base_price(price, ts) values (1.0, '2024-09-10T12:01')");
+            currentMicros = parseFloorPartialTimestamp("2099-01-01T01:01:01.000000Z");
+            final MatViewTimerJob timerJob = new MatViewTimerJob(engine);
+            execute("refresh materialized view price_1h incremental;");
+            drainMatViewTimerQueue(timerJob);
+            drainQueues();
+
+            // Single new WAL txn -- one cached interval, one cluster.
+            execute("insert into base_price(price, ts) values (2.0, '2024-09-10T13:01')");
+            currentMicros += 6 * Micros.SECOND_MICROS;
+            drainMatViewTimerQueue(timerJob);
+            drainQueues();
+
+            final long counterBefore = TestTimestampCounterFactory.COUNTER.get();
+            execute("refresh materialized view price_1h incremental;");
+            drainMatViewTimerQueue(timerJob);
+            drainQueues();
+            final long bucketsEmitted = TestTimestampCounterFactory.COUNTER.get() - counterBefore;
+
+            // Exactly one bucket recomputed -- the new 13:00 bucket.
+            Assert.assertEquals(1, bucketsEmitted);
+        });
+    }
+
+    @Test
+    public void testRefreshIntervalsO3SplitsWideEnvelope() throws Exception {
+        // Regression test for the wasted-bucket-recompute that fires when an O3
+        // historical write into the base table sits far away from the current
+        // commit position. Before the cost-aware clustering + step-cap was
+        // added, the refresh would scan and recompute every non-empty bucket
+        // between the O3 timestamp and "now", including ones that no WAL txn
+        // had actually touched.
+        //
+        // Setup: an existing bucket at 2024-09-10T12:00. Two new WAL txns
+        // arrive: one at 13:01 (current), one at 2024-08-10T07:01 (O3, 31
+        // days earlier). The cached refresh intervals are two point
+        // intervals 31 days apart. The auto-tune's cold-start gap-threshold
+        // is 2 ms -- the 31-day gap is way over that -- so clustering keeps
+        // them separate, and capStepByNarrowestInterval reduces the iterator
+        // step to 1 bucket. The iterator then walks the gap step-groups
+        // cheaply and emits a cursor scan only for the two truly-dirty
+        // buckets.
+        //
+        // Pre-fix: the test_timestamp_counter would fire 3 times (the two
+        // dirty buckets + the unchanged 12:00 bucket that fell inside the
+        // step-group). Post-fix: it fires exactly 2 times.
+        setProperty(PropertyKey.CAIRO_MAT_VIEW_ROWS_PER_QUERY_ESTIMATE, 1_000_000);
+        setProperty(PropertyKey.CAIRO_MAT_VIEW_REFRESH_INTERVALS_UPDATE_PERIOD, "5s");
+        assertMemoryLeak(() -> {
+            TestTimestampCounterFactory.COUNTER.set(0);
+
+            executeWithRewriteTimestamp(
+                    "create table base_price (" +
+                            "  price double, ts #TIMESTAMP" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            execute(
+                    "create materialized view price_1h refresh manual as " +
+                            "select ts, test_timestamp_counter(ts) ts0, last(price) as price " +
+                            "from base_price sample by 1h;"
+            );
+
+            execute("insert into base_price(price, ts) values (1.0, '2024-09-10T12:01')");
+            currentMicros = parseFloorPartialTimestamp("2099-01-01T01:01:01.000000Z");
+            final MatViewTimerJob timerJob = new MatViewTimerJob(engine);
+            execute("refresh materialized view price_1h incremental;");
+            drainMatViewTimerQueue(timerJob);
+            drainQueues();
+
+            final TableToken viewToken = engine.getTableTokenIfExists("price_1h");
+            Assert.assertNotNull(viewToken);
+            final MatViewState viewState = engine.getMatViewStateStore().getViewState(viewToken);
+            Assert.assertNotNull(viewState);
+            Assert.assertEquals(-1, viewState.getRefreshIntervalsBaseTxn());
+            Assert.assertEquals(0, viewState.getRefreshIntervals().size());
+            Assert.assertEquals(1, TestTimestampCounterFactory.COUNTER.get());
+
+            execute("insert into base_price(price, ts) values (2.0, '2024-09-10T13:01')");
+            execute("insert into base_price(price, ts) values (3.0, '2024-08-10T07:01')");
+
+            currentMicros += 6 * Micros.SECOND_MICROS;
+            drainMatViewTimerQueue(timerJob);
+            drainQueues();
+
+            // Two distinct cached intervals, ~31 days apart.
+            final LongList cached = viewState.getRefreshIntervals();
+            Assert.assertEquals(
+                    "Expected two distinct intervals (one per affected bucket), got: " + cached,
+                    4, cached.size()
+            );
+
+            final long counterBefore = TestTimestampCounterFactory.COUNTER.get();
+            execute("refresh materialized view price_1h incremental;");
+            drainMatViewTimerQueue(timerJob);
+            drainQueues();
+            final long bucketsEmitted = TestTimestampCounterFactory.COUNTER.get() - counterBefore;
+
+            // The fix: only the two truly-dirty buckets are recomputed.
+            // Without the cost-aware clustering + step-cap this would be 3.
+            Assert.assertEquals(
+                    "Expected only the 2 truly-dirty buckets to be recomputed, got: " + bucketsEmitted,
+                    2, bucketsEmitted
+            );
+
+            Assert.assertEquals(-1, viewState.getRefreshIntervalsBaseTxn());
+            Assert.assertEquals(0, viewState.getRefreshIntervals().size());
+
+            assertQueryNoLeakCheck(
+                    replaceExpectedTimestamp(
+                            """
+                                    ts\tts0\tprice
+                                    2024-08-10T07:00:00.000000Z\t2024-08-10T07:00:00.000000Z\t3.0
+                                    2024-09-10T12:00:00.000000Z\t2024-09-10T12:00:00.000000Z\t1.0
+                                    2024-09-10T13:00:00.000000Z\t2024-09-10T13:00:00.000000Z\t2.0
+                                    """),
+                    "price_1h order by ts",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testRefreshIntervalsO3MergesNarrowGap() throws Exception {
+        // Companion to testRefreshIntervalsO3SplitsWideEnvelope: when two
+        // cached intervals sit close enough together that scanning the gap
+        // would be cheaper than paying for an extra REPLACE_RANGE commit,
+        // clusterIntervals merges them into one cluster and the refresh
+        // does a single cursor scan covering both. The "wasted" recompute
+        // of any pre-existing bucket inside the merged cluster is the
+        // cost-optimal call.
+        //
+        // Setup: a pre-existing bucket at T=12s. Then two new WAL txns at
+        // T=11s and T=13s (~1s gap on each side of the pre-existing bucket).
+        // The cold-start gap-threshold is 2 ms; here both gaps are 1s = 1_000_000 us,
+        // well above 2_000 us, so clustering would NORMALLY split. We bump
+        // the threshold via setting the env-var-equivalent rowsPerQuery so
+        // that the auto-tune at this scale chooses to merge.
+        //
+        // Simpler approach: use a refresh that processes one big cluster
+        // up-front. After the warmup refresh, scanNanosPerMicro is small
+        // (sparse data: cursor finishes fast for the wide envelope) and the
+        // gap threshold grows large enough that 1s gaps merge.
+        setProperty(PropertyKey.CAIRO_MAT_VIEW_ROWS_PER_QUERY_ESTIMATE, 1_000_000);
+        setProperty(PropertyKey.CAIRO_MAT_VIEW_REFRESH_INTERVALS_UPDATE_PERIOD, "5s");
+        assertMemoryLeak(() -> {
+            TestTimestampCounterFactory.COUNTER.set(0);
+
+            executeWithRewriteTimestamp(
+                    "create table base_price (" +
+                            "  price double, ts #TIMESTAMP" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            execute(
+                    "create materialized view price_1s refresh manual as " +
+                            "select ts, test_timestamp_counter(ts) ts0, last(price) as price " +
+                            "from base_price sample by 1s;"
+            );
+
+            // Pre-existing bucket at 12s. This will end up between the two
+            // new intervals once they arrive.
+            execute("insert into base_price(price, ts) values (1.0, '2024-09-10T12:00:12.5')");
+            currentMicros = parseFloorPartialTimestamp("2099-01-01T01:01:01.000000Z");
+            final MatViewTimerJob timerJob = new MatViewTimerJob(engine);
+            execute("refresh materialized view price_1s incremental;");
+            drainMatViewTimerQueue(timerJob);
+            drainQueues();
+
+            // Two new WAL txns straddling the pre-existing 12s bucket, 2s
+            // apart in actual timestamp space.
+            execute("insert into base_price(price, ts) values (2.0, '2024-09-10T12:00:11.7')");
+            execute("insert into base_price(price, ts) values (3.0, '2024-09-10T12:00:13.3')");
+
+            currentMicros += 6 * Micros.SECOND_MICROS;
+            drainMatViewTimerQueue(timerJob);
+            drainQueues();
+
+            // Seed the EMA so the cost model has a known threshold. The
+            // threshold value is in the base table's timestamp unit (us for
+            // TIMESTAMP, ns for TIMESTAMP_NS). For our 1.6 s gap (= 1.6e6 us
+            // = 1.6e9 ns), seed values that produce a threshold of 5 s
+            // expressed in whichever unit is in play.
+            final TableToken viewToken = engine.getTableTokenIfExists("price_1s");
+            final MatViewState viewState = engine.getMatViewStateStore().getViewState(viewToken);
+            final long fiveSecondsInTsUnits = timestampType.getDriver().fromMicros(5_000_000L);
+            Assert.assertTrue(viewState.tryLock());
+            try {
+                // commitNanos / scanNanosPerTsUnit = threshold (in ts-units),
+                // so set commitNanos = N * scanRate to land threshold at N.
+                viewState.setRefreshMetricsForTesting(fiveSecondsInTsUnits, 1L);
+            } finally {
+                viewState.unlock();
+            }
+
+            final long counterBefore = TestTimestampCounterFactory.COUNTER.get();
+            execute("refresh materialized view price_1s incremental;");
+            drainMatViewTimerQueue(timerJob);
+            drainQueues();
+            final long bucketsEmitted = TestTimestampCounterFactory.COUNTER.get() - counterBefore;
+
+            // Clustering merges the two intervals -- the merged cluster
+            // [11s, 13s] contains the pre-existing 12s bucket. The cursor
+            // scans the full cluster range and emits all 3 buckets, but
+            // this is the cost-optimal call (one cursor + one commit beats
+            // two cursors + two commits when the gap is tiny).
+            Assert.assertEquals(
+                    "Expected merged-cluster behaviour: 3 emitted buckets, got: " + bucketsEmitted,
+                    3, bucketsEmitted
+            );
+        });
+    }
+
+    @Test
     public void testRefreshSkipsUnchangedBuckets() throws Exception {
         // Verify that incremental refresh skips unchanged SAMPLE BY buckets.
         assertMemoryLeak(() -> {

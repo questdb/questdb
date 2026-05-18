@@ -538,6 +538,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getMatViewRefreshMaxClusters() {
+        return getDelegate().getMatViewRefreshMaxClusters();
+    }
+
+    @Override
     public long getMatViewRefreshOomRetryTimeout() {
         return getDelegate().getMatViewRefreshOomRetryTimeout();
     }

@@ -115,6 +115,9 @@ public class MatViewsFunctionFactory implements FunctionFactory {
         private static final int COLUMN_PERIOD_LENGTH_UNIT = COLUMN_PERIOD_LENGTH + 1;
         private static final int COLUMN_PERIOD_DELAY = COLUMN_PERIOD_LENGTH_UNIT + 1;
         private static final int COLUMN_PERIOD_DELAY_UNIT = COLUMN_PERIOD_DELAY + 1;
+        private static final int COLUMN_REFRESH_AVG_COMMIT_NANOS = COLUMN_PERIOD_DELAY_UNIT + 1;
+        private static final int COLUMN_REFRESH_AVG_SCAN_NANOS_PER_TS_UNIT = COLUMN_REFRESH_AVG_COMMIT_NANOS + 1;
+        private static final int COLUMN_REFRESH_GAP_THRESHOLD_TS_UNITS = COLUMN_REFRESH_AVG_SCAN_NANOS_PER_TS_UNIT + 1;
         private static final RecordMetadata METADATA;
         private final ViewsListCursor cursor;
 
@@ -231,6 +234,12 @@ public class MatViewsFunctionFactory implements FunctionFactory {
                         final MatViewState state = engine.getMatViewStateStore().getViewState(viewToken);
                         // start timestamp is not persisted
                         final long lastRefreshStartTimestamp = state != null ? state.getLastRefreshStartTimestampUs() : Numbers.LONG_NULL;
+                        // EMA stats are transient (refresh job re-seeds them) and
+                        // not persisted to disk; only available when the engine
+                        // has the view state in memory.
+                        final long avgCommitNanos = state != null ? state.getAvgCommitNanos() : 0L;
+                        final long avgScanNanosPerTsUnit = state != null ? state.getAvgScanNanosPerTsUnit() : 0L;
+                        final long commitGapThresholdTsUnits = state != null ? state.getCommitGapThresholdTsUnits() : 0L;
 
                         record.of(
                                 viewDefinition,
@@ -248,7 +257,10 @@ public class MatViewsFunctionFactory implements FunctionFactory {
                                 periodLength,
                                 periodLengthUnit,
                                 periodDelay,
-                                periodDelayUnit
+                                periodDelayUnit,
+                                avgCommitNanos,
+                                avgScanNanosPerTsUnit,
+                                commitGapThresholdTsUnits
                         );
                         viewIndex++;
                         return true;
@@ -276,6 +288,9 @@ public class MatViewsFunctionFactory implements FunctionFactory {
 
             private static class MatViewsRecord implements Record {
                 private final StringSink invalidationReason = new StringSink();
+                private long avgCommitNanos;
+                private long avgScanNanosPerTsUnit;
+                private long commitGapThresholdTsUnits;
                 private boolean invalid;
                 private long lastAppliedBaseTxn;
                 private long lastPeriodHi;
@@ -306,6 +321,9 @@ public class MatViewsFunctionFactory implements FunctionFactory {
                 @Override
                 public long getLong(int col) {
                     return switch (col) {
+                        case COLUMN_REFRESH_AVG_COMMIT_NANOS -> avgCommitNanos;
+                        case COLUMN_REFRESH_AVG_SCAN_NANOS_PER_TS_UNIT -> avgScanNanosPerTsUnit;
+                        case COLUMN_REFRESH_GAP_THRESHOLD_TS_UNITS -> commitGapThresholdTsUnits;
                         case COLUMN_LAST_REFRESH_START_TIMESTAMP -> lastRefreshStartTimestamp;
                         case COLUMN_LAST_REFRESH_FINISH_TIMESTAMP -> lastRefreshFinishTimestamp;
                         case COLUMN_REFRESH_PERIOD_HI -> lastPeriodHi;
@@ -371,7 +389,10 @@ public class MatViewsFunctionFactory implements FunctionFactory {
                         int periodLength,
                         char periodLengthUnit,
                         int periodDelay,
-                        char periodDelayUnit
+                        char periodDelayUnit,
+                        long avgCommitNanos,
+                        long avgScanNanosPerTsUnit,
+                        long commitGapThresholdTsUnits
                 ) {
                     this.viewDefinition = viewDefinition;
                     this.lastRefreshStartTimestamp = lastRefreshStartTimestamp;
@@ -390,6 +411,9 @@ public class MatViewsFunctionFactory implements FunctionFactory {
                     this.periodLengthUnit = periodLengthUnit;
                     this.periodDelay = periodDelay;
                     this.periodDelayUnit = periodDelayUnit;
+                    this.avgCommitNanos = avgCommitNanos;
+                    this.avgScanNanosPerTsUnit = avgScanNanosPerTsUnit;
+                    this.commitGapThresholdTsUnits = commitGapThresholdTsUnits;
                 }
 
                 private CharSequence getViewStatus() {
@@ -427,6 +451,9 @@ public class MatViewsFunctionFactory implements FunctionFactory {
             metadata.add(new TableColumnMetadata("period_length_unit", ColumnType.STRING));
             metadata.add(new TableColumnMetadata("period_delay", ColumnType.INT));
             metadata.add(new TableColumnMetadata("period_delay_unit", ColumnType.STRING));
+            metadata.add(new TableColumnMetadata("refresh_avg_commit_nanos", ColumnType.LONG));
+            metadata.add(new TableColumnMetadata("refresh_avg_scan_nanos_per_ts_unit", ColumnType.LONG));
+            metadata.add(new TableColumnMetadata("refresh_gap_threshold_ts_units", ColumnType.LONG));
             METADATA = metadata;
         }
     }

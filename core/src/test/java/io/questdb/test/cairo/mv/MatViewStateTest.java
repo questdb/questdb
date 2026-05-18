@@ -65,8 +65,8 @@ public class MatViewStateTest extends AbstractCairoTest {
                 assertFalse(configuration.getFilesFacade().exists(path.$()));
                 assertQueryNoLeakCheck(
                         """
-                                view_name\trefresh_type\tbase_table_name\tlast_refresh_start_timestamp\tlast_refresh_finish_timestamp\tview_sql\tview_table_dir_name\tinvalidation_reason\tview_status\trefresh_period_hi\trefresh_base_table_txn\tbase_table_txn\trefresh_limit\trefresh_limit_unit\ttimer_time_zone\ttimer_start\ttimer_interval\ttimer_interval_unit\tperiod_length\tperiod_length_unit\tperiod_delay\tperiod_delay_unit
-                                price_1h\timmediate\tbase_price\t\t\tselect sym0, last(price0) price, ts0 from (select ts as ts0, sym as sym0, price as price0 from base_price) sample by 1h\tprice_1h~2\t\tvalid\t\t-1\t0\t0\t\t\t\t0\t\t0\t\t0\t
+                                view_name\trefresh_type\tbase_table_name\tlast_refresh_start_timestamp\tlast_refresh_finish_timestamp\tview_sql\tview_table_dir_name\tinvalidation_reason\tview_status\trefresh_period_hi\trefresh_base_table_txn\tbase_table_txn\trefresh_limit\trefresh_limit_unit\ttimer_time_zone\ttimer_start\ttimer_interval\ttimer_interval_unit\tperiod_length\tperiod_length_unit\tperiod_delay\tperiod_delay_unit\trefresh_avg_commit_nanos\trefresh_avg_scan_nanos_per_ts_unit\trefresh_gap_threshold_ts_units
+                                price_1h\timmediate\tbase_price\t\t\tselect sym0, last(price0) price, ts0 from (select ts as ts0, sym as sym0, price as price0 from base_price) sample by 1h\tprice_1h~2\t\tvalid\t\t-1\t0\t0\t\t\t\t0\t\t0\t\t0\t\t0\t0\t2000000
                                 """,
                         "select * from materialized_views()",
                         null
