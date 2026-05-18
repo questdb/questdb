@@ -1038,7 +1038,16 @@ public class FirstValueTimestampWindowFunctionFactory extends AbstractWindowFunc
 
             if (value.isNew()) {
                 loIdx = 0;
-                startOffset = memory.appendAddressFor((long) bufferSize * Long.BYTES) - memory.getPageAddress(0);
+                final int freeN = freeList.size();
+                if (freeN > 0) {
+                    // Reuse a slab reclaimed from a tombstoned partition. The
+                    // capacity slot is always bufferSize here, so only the
+                    // startOffset matters.
+                    startOffset = freeList.getQuick(freeN - 1);
+                    freeList.setPos(freeN - 2);
+                } else {
+                    startOffset = memory.appendAddressFor((long) bufferSize * Long.BYTES) - memory.getPageAddress(0);
+                }
                 value.putLong(1, startOffset);
                 for (int i = 0; i < bufferSize; i++) {
                     memory.putLong(startOffset + (long) i * Long.BYTES, Numbers.LONG_NULL);
@@ -1129,6 +1138,7 @@ public class FirstValueTimestampWindowFunctionFactory extends AbstractWindowFunc
         public void restore(MemoryR source, int formatVersion) {
             map.clear();
             memory.truncate();
+            freeList.clear();
             tombstoneCount = 0;
             long srcOffset = 0;
             final long partitionCount = source.getLong(srcOffset);
@@ -2286,6 +2296,14 @@ public class FirstValueTimestampWindowFunctionFactory extends AbstractWindowFunc
         protected final boolean frameIncludesCurrentValue;
         protected final boolean frameLoBounded;
         protected final int frameSize;
+        // (capacity, startOffset) pairs marking free space within memory. Each
+        // entry is a ring slab evicted from a tombstoned partition by
+        // compactPartitionMap. computeNext's isNew branch (in both this class
+        // and the FirstNotNullValue subclass) pops the last pair before
+        // falling back to memory.appendAddressFor. The capacity slot mirrors
+        // the bounded-RANGE freeList convention; bounded ROWS slabs are
+        // always bufferSize timestamps long.
+        protected final LongList freeList = new LongList();
         protected final ArrayColumnTypes keyColumnTypes;
         protected final boolean liveView;
         protected final ArrayColumnTypes mapValueTypes;
@@ -2361,6 +2379,7 @@ public class FirstValueTimestampWindowFunctionFactory extends AbstractWindowFunc
         public void close() {
             super.close();
             memory.close();
+            freeList.clear();
         }
 
         @Override
@@ -2375,6 +2394,10 @@ public class FirstValueTimestampWindowFunctionFactory extends AbstractWindowFunc
                 while (cursor.hasNext()) {
                     MapValue srcValue = record.getValue();
                     if (srcValue.getByte(tombstoneValueIndex) == 1) {
+                        // Reclaim the tombstoned partition's ring slab so a
+                        // future isNew partition can reuse it instead of
+                        // growing memory.
+                        freeList.add((long) bufferSize, srcValue.getLong(1));
                         continue;
                     }
                     long srcKeyHash = record.keyHashCode();
@@ -2412,7 +2435,16 @@ public class FirstValueTimestampWindowFunctionFactory extends AbstractWindowFunc
             if (value.isNew()) {
                 loIdx = 0;
                 count = 0;
-                startOffset = memory.appendAddressFor((long) bufferSize * Long.BYTES) - memory.getPageAddress(0);
+                final int freeN = freeList.size();
+                if (freeN > 0) {
+                    // Reuse a slab reclaimed from a tombstoned partition. The
+                    // capacity slot is always bufferSize here, so only the
+                    // startOffset matters.
+                    startOffset = freeList.getQuick(freeN - 1);
+                    freeList.setPos(freeN - 2);
+                } else {
+                    startOffset = memory.appendAddressFor((long) bufferSize * Long.BYTES) - memory.getPageAddress(0);
+                }
                 value.putLong(1, startOffset);
                 for (int i = 0; i < bufferSize; i++) {
                     memory.putLong(startOffset + (long) i * Long.BYTES, Numbers.LONG_NULL);
@@ -2478,6 +2510,7 @@ public class FirstValueTimestampWindowFunctionFactory extends AbstractWindowFunc
         @Override
         public void reopen() {
             super.reopen();
+            freeList.clear();
             tombstoneCount = 0;
             // memory will allocate on first use
         }
@@ -2486,6 +2519,7 @@ public class FirstValueTimestampWindowFunctionFactory extends AbstractWindowFunc
         public void reset() {
             super.reset();
             memory.close();
+            freeList.clear();
             tombstoneCount = 0;
         }
 
@@ -2513,6 +2547,7 @@ public class FirstValueTimestampWindowFunctionFactory extends AbstractWindowFunc
         public void restore(MemoryR source, int formatVersion) {
             map.clear();
             memory.truncate();
+            freeList.clear();
             tombstoneCount = 0;
             long srcOffset = 0;
             final long partitionCount = source.getLong(srcOffset);
@@ -2613,6 +2648,7 @@ public class FirstValueTimestampWindowFunctionFactory extends AbstractWindowFunc
         public void toTop() {
             super.toTop();
             memory.truncate();
+            freeList.clear();
             tombstoneCount = 0;
         }
     }
