@@ -460,6 +460,11 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         long o3SeqTxn = Numbers.LONG_NULL;
         long stagingMaxTs = Numbers.LONG_NULL;
         long stagingMinTs = Numbers.LONG_NULL;
+        // Snapshot the LV's latestSeenTs at cycle entry. On O3 detect +
+        // rollback any in-cycle bumps from the discarded rows must roll back
+        // too, otherwise a later in-order commit whose ts sits between the
+        // pre-cycle watermark and the inflated value gets misclassified as O3.
+        final long latestSeenTsSnapshot = instance.getLatestSeenTs();
         try (WalWriter walWriter = engine.getWalWriter(instance.getLiveViewToken())) {
             RecordToRowCopier copier = ensureCopier(instance, windowFactory, walWriter);
             int lvTimestampIndex = walWriter.getMetadata().getTimestampIndex();
@@ -477,12 +482,12 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     if (txn > toSeqTxn) {
                         break;
                     }
-                    // Per-turn budget yield (RFC 123 "Refresh worker thread
-                    // model"). Always make at least one commit per turn so a
-                    // very slow first commit cannot starve forever; the
-                    // duration check therefore gates on turnCommitsProcessed > 0.
-                    // Yields land at the per-base-seqTxn boundary - never mid-row.
-                    // The next worker tick resumes from advanceTo + 1.
+                    // Per-turn budget yield. Always make at least one commit
+                    // per turn so a slow first commit cannot starve forever;
+                    // the duration check therefore gates on
+                    // turnCommitsProcessed > 0. Yields land at the per-base-
+                    // seqTxn boundary - never mid-row. The next worker tick
+                    // resumes from advanceTo + 1.
                     if (turnCommitsProcessed > 0
                             && (turnCommitsProcessed >= turnMaxCommits
                             || engine.getConfiguration().getMicrosecondClock().getTicks() - turnStartUs >= turnMaxDurationUs)) {
@@ -526,6 +531,12 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     final long txnMinTs = dataInfo.getMinTimestamp();
                     if (latestSeen != Numbers.LONG_NULL && txnMinTs < latestSeen) {
                         walWriter.rollback();
+                        // Roll back the in-cycle latestSeenTs bumps along with
+                        // the WAL writes. The replay path below re-stamps the
+                        // watermark from the re-fed rows; without this restore
+                        // a follow-up in-order commit at the inflated ts would
+                        // be misclassified as O3.
+                        instance.forceSetLatestSeenTs(latestSeenTsSnapshot);
                         o3Detected = true;
                         o3LateRowTs = txnMinTs;
                         o3SeqTxn = txn;
@@ -1847,10 +1858,10 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             return;
         }
         String invalidationReason = null;
-        // RFC 123 "Refresh worker thread model": each refresh turn (one
-        // refreshInstance call) is bounded by max commits and max duration
-        // so a long backlog does not monopolise the worker. The yield itself
-        // lives at the per-base-seqTxn boundary inside incrementalRefresh.
+        // Bound each refresh turn (one refreshInstance call) by max commits
+        // and max duration so a long backlog does not monopolise the worker.
+        // The yield itself lives at the per-base-seqTxn boundary inside
+        // incrementalRefresh; the budget snapshot resets per turn.
         turnStartUs = engine.getConfiguration().getMicrosecondClock().getTicks();
         turnCommitsProcessed = 0;
         try {

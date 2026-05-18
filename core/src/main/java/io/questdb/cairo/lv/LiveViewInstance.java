@@ -235,6 +235,17 @@ public class LiveViewInstance implements QuietCloseable {
         }
     }
 
+    /**
+     * Non-monotonic restore of {@link #getLatestSeenTs()} used by the refresh
+     * worker after an O3 detect + WAL rollback to revert any in-cycle bumps
+     * the discarded rows applied. The snapshot must come from the cycle's
+     * entry point. Bypassing the monotonic clamp is intentional and unsafe
+     * in any other context, hence the explicit name.
+     */
+    public void forceSetLatestSeenTs(long ts) {
+        latestSeenTs = ts;
+    }
+
     public Function getAnchorFunction() {
         return anchorFunction;
     }

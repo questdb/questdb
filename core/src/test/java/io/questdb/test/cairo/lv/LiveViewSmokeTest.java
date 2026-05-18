@@ -4728,6 +4728,18 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                         beforeClampAttempt,
                         lv.getLatestSeenTs()
                 );
+
+                // forceSetLatestSeenTs bypasses the monotonic clamp; the
+                // refresh worker uses it on O3 detect + rollback to revert
+                // any in-cycle bumps the discarded rows applied.
+                long rollbackTarget = beforeClampAttempt - 10_000_000L;
+                lv.forceSetLatestSeenTs(rollbackTarget);
+                Assert.assertEquals(
+                        "forceSetLatestSeenTs writes the value verbatim",
+                        rollbackTarget,
+                        lv.getLatestSeenTs()
+                );
+                lv.forceSetLatestSeenTs(beforeClampAttempt);
             }
 
             execute("DROP LIVE VIEW lv");
@@ -5430,12 +5442,11 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
 
     @Test
     public void testWorkerYieldsAtTurnBudget() throws Exception {
-        // RFC 123 "Refresh worker thread model": a single refresh turn is
-        // bounded by max commits and max duration so a long backlog cannot
-        // monopolise the worker. With budget = 3 commits per turn and a
-        // five-commit gap to close in scanForLaggingViews, the worker
-        // processes exactly three commits then yields; the next FLUSH-EVERY
-        // pass drains the remainder.
+        // A single refresh turn is bounded by max commits and max duration
+        // so a long backlog cannot monopolise the worker. With budget = 3
+        // commits per turn and a five-commit gap to close in
+        // scanForLaggingViews, the worker processes exactly three commits
+        // then yields; the next FLUSH-EVERY pass drains the remainder.
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_REFRESH_TURN_MAX_COMMITS, 3);
         assertMemoryLeak(() -> {
             setCurrentMicros(0L);
