@@ -137,8 +137,7 @@ public class QwpWebSocketUpgradeProcessorOnHeadersReadyTest extends AbstractCair
     @Test
     public void testOnHeadersReadyFailsHardWhenMisdirectedRequestResponseDoesNotFitBuffer() throws Exception {
         assertMemoryLeak(() -> {
-            QwpServerInfoProvider previous = engine.getQwpServerInfoProvider();
-            engine.setQwpServerInfoProvider(new FakeRoleProvider(QwpEgressMsgKind.ROLE_REPLICA));
+            node1.getConfigurationOverrides().setQwpServerInfoProvider(new FakeRoleProvider(QwpEgressMsgKind.ROLE_REPLICA));
             HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
             QwpWebSocketUpgradeProcessor processor = new QwpWebSocketUpgradeProcessor(engine, httpConfig);
             LocalValue<QwpProcessorState> lv = getLV();
@@ -160,7 +159,6 @@ public class QwpWebSocketUpgradeProcessorOnHeadersReadyTest extends AbstractCair
                 Assert.assertNull(lv.get(context));
             } finally {
                 Unsafe.free(bufferAddr, TINY_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
-                engine.setQwpServerInfoProvider(previous);
             }
         });
     }
@@ -306,8 +304,7 @@ public class QwpWebSocketUpgradeProcessorOnHeadersReadyTest extends AbstractCair
     }
 
     private static void assertHandshakeAcceptedForRole(byte role, String expectedRoleName) throws Exception {
-        QwpServerInfoProvider previous = engine.getQwpServerInfoProvider();
-        engine.setQwpServerInfoProvider(new FakeRoleProvider(role));
+        node1.getConfigurationOverrides().setQwpServerInfoProvider(new FakeRoleProvider(role));
         HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
         QwpWebSocketUpgradeProcessor processor = new QwpWebSocketUpgradeProcessor(engine, httpConfig);
         LocalValue<QwpProcessorState> lv = getLV();
@@ -334,13 +331,11 @@ public class QwpWebSocketUpgradeProcessorOnHeadersReadyTest extends AbstractCair
                     response.contains("\r\nX-QuestDB-Role: " + expectedRoleName + "\r\n"));
         } finally {
             Unsafe.free(bufferAddr, HANDSHAKE_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
-            engine.setQwpServerInfoProvider(previous);
         }
     }
 
     private static void assertHandshakeRejectedForRole(byte role, String expectedRoleName) throws Exception {
-        QwpServerInfoProvider previous = engine.getQwpServerInfoProvider();
-        engine.setQwpServerInfoProvider(new FakeRoleProvider(role));
+        node1.getConfigurationOverrides().setQwpServerInfoProvider(new FakeRoleProvider(role));
         HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
         QwpWebSocketUpgradeProcessor processor = new QwpWebSocketUpgradeProcessor(engine, httpConfig);
         LocalValue<QwpProcessorState> lv = getLV();
@@ -367,7 +362,6 @@ public class QwpWebSocketUpgradeProcessorOnHeadersReadyTest extends AbstractCair
                     response.contains("\r\nX-QuestDB-Role: " + expectedRoleName + "\r\n"));
         } finally {
             Unsafe.free(bufferAddr, HANDSHAKE_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
-            engine.setQwpServerInfoProvider(previous);
         }
     }
 
@@ -381,7 +375,7 @@ public class QwpWebSocketUpgradeProcessorOnHeadersReadyTest extends AbstractCair
     private static String readResponse(long bufferAddr, int size) {
         byte[] bytes = new byte[size];
         for (int i = 0; i < size; i++) {
-            bytes[i] = Unsafe.getUnsafe().getByte(bufferAddr + i);
+            bytes[i] = Unsafe.getByte(bufferAddr + i);
         }
         return new String(bytes, StandardCharsets.US_ASCII);
     }

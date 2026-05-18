@@ -131,6 +131,23 @@ pub struct ParquetUpdater {
     parquet_meta_file_size: u64,
     existing_parquet_meta_file_size: i64,
     result_parquet_meta_size: i64,
+    // Per-VARCHAR-column "still all-ASCII" tracker, keyed by parquet field_id.
+    // Seeded at construction from the old qdb_meta's ascii flag:
+    //   old.ascii == Some(true)  -> initial value `true`  (scan new aux to verify)
+    //   old.ascii == Some(false) -> initial value `false` (any copied old row
+    //                               group already carries non-ASCII bytes, so
+    //                               the final flag can only be `Some(false)`)
+    //   old.ascii == None        -> initial value `false` (unknown about old,
+    //                               so be conservative)
+    // set_target_schema() additionally seeds fresh VARCHAR columns from
+    // ADD COLUMN as `true`: existing rows backfill with nulls, which
+    // is_column_ascii skips, so a new column is trivially all-ASCII until
+    // a write proves otherwise. Each write call updates the tracker only
+    // for columns whose value is still `true`, so the scan is skipped in
+    // the common case where the column already contains a non-ASCII byte.
+    // Columns missing from the map at end() (no old entry and no
+    // set_target_schema seeding) resolve to `false` via unwrap_or(false).
+    varchar_all_ascii: RapidHashMap<i32, bool>,
 }
 
 impl ParquetUpdater {
@@ -237,6 +254,40 @@ impl ParquetUpdater {
         let schema = metadata.schema_descr.clone();
         let options = write::WriteOptions { write_statistics, version, bloom_filter_fpp };
 
+        // Seed the per-column "still all-ASCII" tracker from the old qdb_meta.
+        // Columns whose old ascii was already Some(false) or None get `false`
+        // here, which lets track_new_data_ascii short-circuit their per-write
+        // aux scan: there is no path back to Some(true) once any old data has
+        // been seen as non-ASCII (or as unknown), because copied row groups
+        // carry that data through. Only columns starting at `true` are
+        // scanned, and the scan downgrades them to `false` on the first
+        // non-ASCII entry.
+        let mut varchar_all_ascii: RapidHashMap<i32, bool> = RapidHashMap::default();
+        if let Some(old_qdb) = metadata
+            .key_value_metadata
+            .as_ref()
+            .and_then(|kvs| {
+                kvs.iter()
+                    .find(|kv| kv.key == QDB_META_KEY)
+                    .and_then(|kv| kv.value.as_ref())
+            })
+            .map(|raw| QdbMeta::deserialize(raw))
+            .transpose()?
+        {
+            let schema_cols = metadata.schema_descr.columns();
+            for (i, col) in old_qdb.schema.iter().enumerate() {
+                if col.column_type.tag() != ColumnTypeTag::Varchar {
+                    continue;
+                }
+                if let Some(field_id) = schema_cols
+                    .get(i)
+                    .and_then(|c| c.base_type.get_field_info().id)
+                {
+                    varchar_all_ascii.insert(field_id, col.ascii == Some(true));
+                }
+            }
+        }
+
         let (parquet_file, accumulated_unused_bytes) = if is_rewrite {
             // Rewrite mode: write to a fresh file
             let pf = ParquetFile::with_sorting_columns(
@@ -321,7 +372,43 @@ impl ParquetUpdater {
             parquet_meta_file_size,
             existing_parquet_meta_file_size,
             result_parquet_meta_size: -1,
+            varchar_all_ascii,
         })
+    }
+
+    /// Inspect VARCHAR aux for any column whose flag is still `true` in
+    /// varchar_all_ascii and downgrade it to `false` if a non-ASCII entry is
+    /// found. Columns whose flag is already `false` are skipped entirely:
+    /// the result cannot return to `Some(true)` once any old or new data has
+    /// been seen as non-ASCII (or as unknown), so there is no reason to
+    /// re-scan their aux on every row-group write.
+    fn track_new_data_ascii(&mut self, partition: &Partition) {
+        use super::varchar::is_column_ascii;
+        for col in &partition.columns {
+            if col.data_type.tag() != ColumnTypeTag::Varchar {
+                continue;
+            }
+            // Only scan when there is still a chance of staying all-ASCII.
+            // Missing entries are treated as `false` (e.g. brand-new columns
+            // from ADD COLUMN that are not yet in the tracker).
+            if !self
+                .varchar_all_ascii
+                .get(&col.id)
+                .copied()
+                .unwrap_or(false)
+            {
+                continue;
+            }
+            if col.secondary_data.is_empty() {
+                continue;
+            }
+            // SAFETY: aux originates from JNI/Java memory-mapped column data and is
+            // page-aligned. Each entry is exactly 16 bytes.
+            let aux: &[[u8; 16]] = unsafe { super::util::transmute_slice(col.secondary_data) };
+            if !is_column_ascii(aux) {
+                self.varchar_all_ascii.insert(col.id, false);
+            }
+        }
     }
 
     /// Computes the per-column ASCII flag from the partition's VARCHAR aux data
@@ -367,6 +454,7 @@ impl ParquetUpdater {
     ) -> ParquetResult<()> {
         self.track_ascii(partition);
         self.ensure_schema_matches_columns(partition)?;
+        self.track_new_data_ascii(partition);
         let row_count = partition
             .columns
             .first()
@@ -435,6 +523,7 @@ impl ParquetUpdater {
     pub fn insert_row_group(&mut self, partition: &Partition, position: i32) -> ParquetResult<()> {
         self.track_ascii(partition);
         self.ensure_schema_matches_columns(partition)?;
+        self.track_new_data_ascii(partition);
         let row_count = partition
             .columns
             .first()
@@ -584,6 +673,8 @@ impl ParquetUpdater {
 
         let mut qdb_meta = QdbMeta::new(partition.columns.len());
         for col in &partition.columns {
+            let is_existing_col = old_col_id_to_idx.contains_key(&col.id);
+
             // Preserve format hint from old schema for existing columns.
             let format = old_col_id_to_idx
                 .get(&col.id)
@@ -601,6 +692,16 @@ impl ParquetUpdater {
                         None
                     }
                 });
+
+            // Seed a fresh VARCHAR column added by ADD COLUMN as `true`:
+            // existing rows backfill with nulls (which is_column_ascii
+            // skips), so the column is trivially all-ASCII until a write
+            // proves otherwise. track_new_data_ascii will downgrade it on
+            // the first non-ASCII aux entry. Existing columns already have
+            // a tracker entry from new() and must not be overwritten here.
+            if !is_existing_col && col.data_type.tag() == ColumnTypeTag::Varchar {
+                self.varchar_all_ascii.insert(col.id, true);
+            }
 
             let column_type = if col.designated_timestamp {
                 col.data_type
@@ -839,6 +940,32 @@ impl ParquetUpdater {
             }
             meta
         };
+
+        // Emit the VARCHAR column-level ascii flag from the tracker built
+        // during writes. Each tracker entry started life as `true` for an
+        // old column whose old.ascii was Some(true) or for a fresh ADD
+        // COLUMN VARCHAR (existing rows backfill with nulls, which are
+        // ASCII-compatible), and as `false` otherwise. track_new_data_ascii
+        // flips it to `false` on the first non-ASCII aux entry. So the
+        // tracker encodes "old data was all-ASCII (or absent) AND every new
+        // write stayed all-ASCII". Columns missing from the tracker emit
+        // Some(false), matching the conservative default.
+        let schema_fields = self.parquet_file.schema().fields();
+        for (i, col) in qdb_meta.schema.iter_mut().enumerate() {
+            if col.column_type.tag() != ColumnTypeTag::Varchar {
+                continue;
+            }
+            let field_id = schema_fields
+                .get(i)
+                .and_then(|f| f.get_field_info().id)
+                .unwrap_or(-1);
+            col.ascii = Some(
+                self.varchar_all_ascii
+                    .get(&field_id)
+                    .copied()
+                    .unwrap_or(false),
+            );
+        }
 
         if self.is_rewrite {
             qdb_meta.unused_bytes = 0;

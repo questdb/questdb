@@ -36,9 +36,9 @@ import io.questdb.cutlass.json.JsonException;
 import io.questdb.cutlass.line.tcp.LineTcpReceiverConfiguration;
 import io.questdb.cutlass.line.tcp.LineTcpReceiverConfigurationWrapper;
 import io.questdb.cutlass.line.udp.LineUdpReceiverConfiguration;
-import io.questdb.cutlass.qwp.server.QwpUdpReceiverConfiguration;
 import io.questdb.cutlass.pgwire.PGConfiguration;
 import io.questdb.cutlass.pgwire.PGConfigurationWrapper;
+import io.questdb.cutlass.qwp.server.QwpUdpReceiverConfiguration;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
@@ -213,7 +213,7 @@ public class DynamicPropServerConfiguration implements ServerConfiguration, Conf
                 buildInformation,
                 FilesFacadeImpl.INSTANCE,
                 MicrosecondClockImpl.INSTANCE,
-                (configuration, engine, freeOnExitList) -> DefaultFactoryProvider.INSTANCE,
+                (_, _, _) -> DefaultFactoryProvider.INSTANCE,
                 true
         );
     }
@@ -356,12 +356,6 @@ public class DynamicPropServerConfiguration implements ServerConfiguration, Conf
     }
 
     @Override
-    public QwpUdpReceiverConfiguration getQwpUdpReceiverConfiguration() {
-        // nested object is kept non-reloadable
-        return serverConfig.get().getQwpUdpReceiverConfiguration();
-    }
-
-    @Override
     public MemoryConfiguration getMemoryConfiguration() {
         return memoryConfig;
     }
@@ -386,6 +380,12 @@ public class DynamicPropServerConfiguration implements ServerConfiguration, Conf
     public PublicPassthroughConfiguration getPublicPassthroughConfiguration() {
         // nested object is kept non-reloadable
         return serverConfig.get().getPublicPassthroughConfiguration();
+    }
+
+    @Override
+    public QwpUdpReceiverConfiguration getQwpUdpReceiverConfiguration() {
+        // nested object is kept non-reloadable
+        return serverConfig.get().getQwpUdpReceiverConfiguration();
     }
 
     @Override

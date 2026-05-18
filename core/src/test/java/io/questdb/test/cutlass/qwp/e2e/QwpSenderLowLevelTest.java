@@ -46,7 +46,7 @@ public class QwpSenderLowLevelTest extends AbstractQwpWebSocketTest {
                     "ts TIMESTAMP" +
                     ") TIMESTAMP(ts) PARTITION BY DAY WAL");
 
-            try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", port)) {
+            try (QwpWebSocketSender sender = connectWs(port)) {
                 QwpTableBuffer buf = sender.getTableBuffer("test_date");
                 QwpTableBuffer.ColumnBuffer dateCol = buf.getOrCreateColumn("event_date", TYPE_DATE, false);
 
@@ -75,7 +75,7 @@ public class QwpSenderLowLevelTest extends AbstractQwpWebSocketTest {
     @Test
     public void testNullLong256() throws Exception {
         runInContext((port) -> {
-            try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", port)) {
+            try (QwpWebSocketSender sender = connectWs(port)) {
                 // Use fast-path API to send null LONG256 via null bitmap
                 QwpTableBuffer buf = sender.getTableBuffer("test_null_long256");
                 QwpTableBuffer.ColumnBuffer col = buf.getOrCreateColumn("value", TYPE_LONG256, true);
@@ -106,7 +106,7 @@ public class QwpSenderLowLevelTest extends AbstractQwpWebSocketTest {
     @Test
     public void testNullTimestamp() throws Exception {
         runInContext((port) -> {
-            try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", port)) {
+            try (QwpWebSocketSender sender = connectWs(port)) {
                 // Use fast-path API to send null timestamp via null bitmap
                 QwpTableBuffer buf = sender.getTableBuffer("test_null_ts");
                 QwpTableBuffer.ColumnBuffer tsCol = buf.getOrCreateColumn("event_time", TYPE_TIMESTAMP, true);
@@ -137,7 +137,7 @@ public class QwpSenderLowLevelTest extends AbstractQwpWebSocketTest {
     @Test
     public void testNullUuid() throws Exception {
         runInContext((port) -> {
-            try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", port)) {
+            try (QwpWebSocketSender sender = connectWs(port)) {
                 // Use fast-path API to send null UUID via null bitmap
                 QwpTableBuffer buf = sender.getTableBuffer("test_null_uuid");
                 QwpTableBuffer.ColumnBuffer col = buf.getOrCreateColumn("id", TYPE_UUID, true);
@@ -173,7 +173,7 @@ public class QwpSenderLowLevelTest extends AbstractQwpWebSocketTest {
                     "ts TIMESTAMP" +
                     ") TIMESTAMP(ts) PARTITION BY DAY WAL");
 
-            try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", port)) {
+            try (QwpWebSocketSender sender = connectWs(port)) {
                 QwpTableBuffer buf = sender.getTableBuffer("omit_date");
                 QwpTableBuffer.ColumnBuffer col = buf.getOrCreateColumn("col", TYPE_DATE, true);
 
@@ -216,7 +216,7 @@ public class QwpSenderLowLevelTest extends AbstractQwpWebSocketTest {
                     "ts TIMESTAMP" +
                     ") TIMESTAMP(ts) PARTITION BY DAY WAL");
 
-            try (QwpWebSocketSender sender = QwpWebSocketSender.connect("localhost", port)) {
+            try (QwpWebSocketSender sender = connectWs(port)) {
                 QwpTableBuffer buf = sender.getTableBuffer("omit_geohash");
                 QwpTableBuffer.ColumnBuffer col = buf.getOrCreateColumn("col", TYPE_GEOHASH, true);
 
