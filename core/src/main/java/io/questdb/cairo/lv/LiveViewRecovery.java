@@ -38,6 +38,16 @@ import org.jetbrains.annotations.NotNull;
  * file-system housekeeping inside a live view's {@code _checkpoints/}
  * directory; the actual deserialisation lives in {@link LiveViewCheckpointReader}
  * and the refresh worker's first-cycle hook.
+ * <p>
+ * No forward-scan reconstruction of {@code lvConsumedSeqTxn} from the LV WAL
+ * is required: {@code CairoEngine.advanceLiveViewConsumedSeqTxn} persists the
+ * new floor into {@code _lv.s} before publishing it in-memory, so the durable
+ * value never sits ahead of the LV WAL state. A persist failure leaves the
+ * floor at the previous durable value; the next successful apply re-publishes
+ * it. The worst case is a temporary leak of base WAL segments that {@code
+ * WalPurgeJob} retains longer than necessary, bounded by the apply-to-persist
+ * window. If that leak becomes material under {@code cairo.commit.mode=async},
+ * the forward-scan recovery from the LV WAL is the proper fix.
  */
 public final class LiveViewRecovery {
 
