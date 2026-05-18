@@ -5736,6 +5736,44 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRejectGeohashAnchorExpression() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, lon DOUBLE, lat DOUBLE, sym SYMBOL) " +
+                    "TIMESTAMP(ts) PARTITION BY DAY WAL");
+            try {
+                execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                        "SELECT ts, sym, lon, lat, sum(lon) OVER w AS s FROM base " +
+                        "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION make_geohash(lon, lat, 10))");
+                Assert.fail("expected GEOHASH anchor return type reject");
+            } catch (SqlException e) {
+                Assert.assertTrue(
+                        e.getMessage(),
+                        e.getMessage().contains("must return a scalar primitive type")
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testRejectArrayAnchorExpression() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, xs DOUBLE[], sym SYMBOL) " +
+                    "TIMESTAMP(ts) PARTITION BY DAY WAL");
+            try {
+                execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                        "SELECT ts, sym, xs, count() OVER w AS s FROM base " +
+                        "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION xs)");
+                Assert.fail("expected ARRAY anchor return type reject");
+            } catch (SqlException e) {
+                Assert.assertTrue(
+                        e.getMessage(),
+                        e.getMessage().contains("must return a scalar primitive type")
+                );
+            }
+        });
+    }
+
+    @Test
     public void testRejectAnchorWithRandomFunction() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");

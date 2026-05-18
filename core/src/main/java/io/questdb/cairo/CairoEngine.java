@@ -2597,8 +2597,11 @@ public class CairoEngine implements Closeable, WriterSource {
         if (fn == null) {
             return;
         }
-        if (isTopLevel && fn.isConstant()) {
-            throw SqlException.$(rootPosition, "ANCHOR EXPRESSION must not be a constant");
+        if (isTopLevel) {
+            if (fn.isConstant()) {
+                throw SqlException.$(rootPosition, "ANCHOR EXPRESSION must not be a constant");
+            }
+            validateAnchorReturnType(fn, rootPosition);
         }
         if (fn.isRandom() || fn.isRuntimeConstant() || fn.isNonDeterministic()) {
             throw SqlException.$(rootPosition, "ANCHOR EXPRESSION must be deterministic; ")
@@ -2624,6 +2627,36 @@ public class CairoEngine implements Closeable, WriterSource {
                     validateAnchorPurity(args.getQuick(i), rootPosition, false);
                 }
             }
+        }
+    }
+
+    /**
+     * Rejects anchor expressions whose top-level return type is not a scalar
+     * primitive (or string-like). The anchor value flows through partition-key
+     * equality comparisons; array / geohash / binary / interval / decimal /
+     * uuid / long128 / long256 return types have no clean equality semantics
+     * for that path and crash later in the cursor stack.
+     */
+    private static void validateAnchorReturnType(Function fn, int position) throws SqlException {
+        final int type = fn.getType();
+        switch (ColumnType.tagOf(type)) {
+            case ColumnType.BOOLEAN:
+            case ColumnType.BYTE:
+            case ColumnType.CHAR:
+            case ColumnType.DATE:
+            case ColumnType.DOUBLE:
+            case ColumnType.FLOAT:
+            case ColumnType.INT:
+            case ColumnType.LONG:
+            case ColumnType.SHORT:
+            case ColumnType.STRING:
+            case ColumnType.SYMBOL:
+            case ColumnType.TIMESTAMP:
+            case ColumnType.VARCHAR:
+                return;
+            default:
+                throw SqlException.$(position, "ANCHOR EXPRESSION must return a scalar primitive type; got ")
+                        .put(ColumnType.nameOf(type));
         }
     }
 
