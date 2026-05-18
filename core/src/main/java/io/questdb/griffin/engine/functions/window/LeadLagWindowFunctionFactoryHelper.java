@@ -52,6 +52,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.window.WindowContext;
 import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.std.IntList;
+import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
@@ -274,6 +275,12 @@ public class LeadLagWindowFunctionFactoryHelper {
         // sink.putLong regardless of the semantic type.
         private static final int RING_SLOT_BYTES = 8;
         protected final Function defaultValue;
+        // Reclaim list of ring-slab startOffsets evicted by compactPartitionMap.
+        // Each lag partition's ring is a fixed offset * RING_SLOT_BYTES bytes,
+        // so capacity is implicit and only the startOffset is tracked. The next
+        // computeNext that creates a partition prefers a reclaimed slab over a
+        // fresh memory.appendAddressFor allocation. Cleared in reset / toTop.
+        private final LongList freeList = new LongList();
         protected final boolean ignoreNulls;
         protected final MemoryARW memory;
         protected final long offset;
@@ -348,6 +355,10 @@ public class LeadLagWindowFunctionFactoryHelper {
                 while (cursor.hasNext()) {
                     MapValue srcValue = record.getValue();
                     if (srcValue.getByte(tombstoneValueIndex) == 1) {
+                        // Capture the tombstoned partition's startOffset
+                        // (slot 0) so a future computeNext can reuse the
+                        // ring slab instead of growing memory.
+                        freeList.add(srcValue.getLong(0));
                         continue;
                     }
                     long srcKeyHash = record.keyHashCode();
@@ -376,7 +387,16 @@ public class LeadLagWindowFunctionFactoryHelper {
             long count = 0;
 
             if (mapValue.isNew()) {
-                startOffset = memory.appendAddressFor(offset * RING_SLOT_BYTES) - memory.getPageAddress(0);
+                final int freeN = freeList.size();
+                if (freeN > 0) {
+                    // Reuse a ring slab reclaimed from a tombstoned partition.
+                    // Every lag ring is offset * RING_SLOT_BYTES bytes, so the
+                    // capacity is implicit; only the startOffset matters.
+                    startOffset = freeList.getQuick(freeN - 1);
+                    freeList.setPos(freeN - 1);
+                } else {
+                    startOffset = memory.appendAddressFor(offset * RING_SLOT_BYTES) - memory.getPageAddress(0);
+                }
                 firstIdx = 0;
                 // Live mode keeps a tombstone byte in the value slots; write it
                 // explicitly so the two-pass snapshot walk sees the same byte both
@@ -431,6 +451,7 @@ public class LeadLagWindowFunctionFactoryHelper {
         public void reset() {
             super.reset();
             Misc.free(memory);
+            freeList.clear();
             tombstoneCount = 0;
         }
 
@@ -564,6 +585,7 @@ public class LeadLagWindowFunctionFactoryHelper {
         public void toTop() {
             super.toTop();
             memory.truncate();
+            freeList.clear();
             tombstoneCount = 0;
         }
 
