@@ -34,6 +34,7 @@ import io.questdb.std.Numbers;
 import io.questdb.std.QuietCloseable;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
@@ -48,11 +49,6 @@ import static io.questdb.TelemetryEvent.*;
  * string as that field is not needed for refresh jobs.
  */
 public class MatViewState implements QuietCloseable {
-    public static final String MAT_VIEW_STATE_FILE_NAME = "_mv.s";
-    public static final int MAT_VIEW_STATE_FORMAT_EXTRA_INTERVALS_MSG_TYPE = 3;
-    public static final int MAT_VIEW_STATE_FORMAT_EXTRA_PERIOD_MSG_TYPE = 2;
-    public static final int MAT_VIEW_STATE_FORMAT_EXTRA_TS_MSG_TYPE = 1;
-    public static final int MAT_VIEW_STATE_FORMAT_MSG_TYPE = 0;
     // Cold-start gap-width threshold used when no scan/commit samples have been
     // observed yet. Units match the base table's timestamp column (us for
     // TIMESTAMP, ns for TIMESTAMP_NS). The value 2_000_000 corresponds to 2
@@ -61,6 +57,11 @@ public class MatViewState implements QuietCloseable {
     // arrives. Subsequent refreshes will override via the EMA-derived
     // threshold computed from observed commit and scan latencies.
     public static final long COLD_START_GAP_THRESHOLD_TS_UNITS = 2_000_000L;
+    public static final String MAT_VIEW_STATE_FILE_NAME = "_mv.s";
+    public static final int MAT_VIEW_STATE_FORMAT_EXTRA_INTERVALS_MSG_TYPE = 3;
+    public static final int MAT_VIEW_STATE_FORMAT_EXTRA_PERIOD_MSG_TYPE = 2;
+    public static final int MAT_VIEW_STATE_FORMAT_EXTRA_TS_MSG_TYPE = 1;
+    public static final int MAT_VIEW_STATE_FORMAT_MSG_TYPE = 0;
     // EMA smoothing inverse: new = (prev * (N-1) + sample) / N. Larger N is
     // smoother but slower to adapt. 8 gives ~6 samples to reach halfway to a
     // new steady state, which is a reasonable balance.
@@ -218,6 +219,42 @@ public class MatViewState implements QuietCloseable {
         block.putLong(lastRefreshTimestamp);
     }
 
+    /**
+     * Folds a positive sample into a positive EMA, applying the outlier
+     * multiplier cap and recovering safely from arithmetic overflow.
+     * <p>
+     * The pre-overflow form is {@code (prev*(N-1) + min(sample, prev*K)) / N}.
+     * For values near {@code Long.MAX_VALUE / 7} the {@code prev*(N-1)} step
+     * wraps -- in that case we fall back to a 50/50 blend of {@code prev} and
+     * the capped sample, which keeps the EMA monotonic in sign and prevents
+     * a single outlier from latching the average to a corrupted value.
+     */
+    private static long foldEma(long prev, long sample) {
+        if (prev == 0) {
+            return sample;
+        }
+        // Cap outlier samples relative to prev. multiplyExact guards against
+        // overflow if prev itself is enormous; on overflow we treat the cap
+        // as Long.MAX_VALUE (i.e. effectively no cap, which is fine because
+        // we only cap when prev is small enough to make 5*prev finite).
+        long cap;
+        try {
+            cap = Math.multiplyExact(prev, (long) EMA_OUTLIER_MULTIPLIER);
+        } catch (ArithmeticException overflow) {
+            cap = Long.MAX_VALUE;
+        }
+        final long capped = Math.min(sample, cap);
+        // Standard EMA: (prev * (N-1) + capped) / N. Guard the multiply and
+        // addition; on overflow fall back to a 50/50 blend.
+        try {
+            final long weighted = Math.multiplyExact(prev, (long) (EMA_ALPHA_INV - 1));
+            final long sum = Math.addExact(weighted, capped);
+            return sum / EMA_ALPHA_INV;
+        } catch (ArithmeticException overflow) {
+            return (prev / 2) + (capped / 2);
+        }
+    }
+
     public RecordCursorFactory acquireRecordFactory() {
         assert latch.get();
         RecordCursorFactory factory = cursorFactory;
@@ -230,16 +267,6 @@ public class MatViewState implements QuietCloseable {
         cursorFactory = Misc.free(cursorFactory);
     }
 
-    /**
-     * Returns the gap-width threshold below which two adjacent cached refresh
-     * intervals should be merged into one cluster (in microseconds of timestamp
-     * range). Derived from the recent moving averages: the threshold is the
-     * timestamp-range width whose scan cost equals one extra REPLACE_RANGE
-     * commit -- below it, merging beats splitting.
-     * <p>
-     * Cold-start default ({@value #COLD_START_GAP_THRESHOLD_TS_UNITS} us) covers
-     * the case where no samples have been recorded yet.
-     */
     public long getAvgCommitNanos() {
         return avgCommitNanos;
     }
@@ -248,6 +275,18 @@ public class MatViewState implements QuietCloseable {
         return avgScanNanosPerTsUnit;
     }
 
+    /**
+     * Returns the gap-width threshold below which two adjacent cached refresh
+     * intervals should be merged into one cluster. Units match the base
+     * table's timestamp column (us for TIMESTAMP, ns for TIMESTAMP_NS), the
+     * same as the cached interval values themselves. Derived from the recent
+     * moving averages: the threshold is the timestamp-range width whose scan
+     * cost equals one extra REPLACE_RANGE commit -- below it, merging beats
+     * splitting.
+     * <p>
+     * Cold-start default ({@value #COLD_START_GAP_THRESHOLD_TS_UNITS} ts-units)
+     * covers the case where no samples have been recorded yet.
+     */
     public long getCommitGapThresholdTsUnits() {
         final long commit = avgCommitNanos;
         final long scanPerTsUnit = avgScanNanosPerTsUnit;
@@ -418,68 +457,29 @@ public class MatViewState implements QuietCloseable {
     }
 
     /**
-     * Test-only seeder for the rolling averages. Lets tests drive the
-     * clustering cost model into a known regime without having to predict the
-     * exact scan-time of a warmup refresh on the running hardware.
-     */
-    public void setRefreshMetricsForTesting(long commitNanos, long scanNanosPerMicro) {
-        assert latch.get();
-        this.avgCommitNanos = Math.max(0, commitNanos);
-        this.avgScanNanosPerTsUnit = Math.max(0, scanNanosPerMicro);
-    }
-
-    /**
-     * Folds a sampled base-table scan into the rolling per-microsecond scan
-     * latency. {@code rangeMicros} is the timestamp range width that the cursor
-     * scanned (i.e. {@code iteratorHi - iteratorLo}), in microseconds, not row
-     * counts. Ignores zero-range samples so the rate isn't pulled to infinity.
+     * Folds a sampled base-table scan into the rolling per-ts-unit scan
+     * latency. {@code rangeTsUnits} is the timestamp range width that the cursor
+     * scanned (i.e. {@code iteratorHi - iteratorLo}) in the base table's
+     * timestamp unit (us for TIMESTAMP, ns for TIMESTAMP_NS), not row counts.
+     * Ignores zero-range samples so the rate isn't pulled to infinity.
      * <p>
      * Samples larger than {@value #EMA_OUTLIER_MULTIPLIER}x the current average
      * are capped before folding.
      */
-    public void recordScanMetrics(long sampleNanos, long rangeMicros) {
+    public void recordScanMetrics(long sampleNanos, long rangeTsUnits) {
         assert latch.get();
-        if (sampleNanos <= 0 || rangeMicros <= 0) {
+        if (sampleNanos <= 0 || rangeTsUnits <= 0) {
             return;
         }
-        final long perTsUnit = Math.max(1, sampleNanos / rangeMicros);
+        final long perTsUnit = Math.max(1, sampleNanos / rangeTsUnits);
         avgScanNanosPerTsUnit = foldEma(avgScanNanosPerTsUnit, perTsUnit);
     }
 
-    /**
-     * Folds a positive sample into a positive EMA, applying the outlier
-     * multiplier cap and recovering safely from arithmetic overflow.
-     * <p>
-     * The pre-overflow form is {@code (prev*(N-1) + min(sample, prev*K)) / N}.
-     * For values near {@code Long.MAX_VALUE / 7} the {@code prev*(N-1)} step
-     * wraps -- in that case we fall back to a 50/50 blend of {@code prev} and
-     * the capped sample, which keeps the EMA monotonic in sign and prevents
-     * a single outlier from latching the average to a corrupted value.
-     */
-    private static long foldEma(long prev, long sample) {
-        if (prev == 0) {
-            return sample;
-        }
-        // Cap outlier samples relative to prev. multiplyExact guards against
-        // overflow if prev itself is enormous; on overflow we treat the cap
-        // as Long.MAX_VALUE (i.e. effectively no cap, which is fine because
-        // we only cap when prev is small enough to make 5*prev finite).
-        long cap;
-        try {
-            cap = Math.multiplyExact(prev, (long) EMA_OUTLIER_MULTIPLIER);
-        } catch (ArithmeticException overflow) {
-            cap = Long.MAX_VALUE;
-        }
-        final long capped = Math.min(sample, cap);
-        // Standard EMA: (prev * (N-1) + capped) / N. Guard the multiply and
-        // addition; on overflow fall back to a 50/50 blend.
-        try {
-            final long weighted = Math.multiplyExact(prev, (long) (EMA_ALPHA_INV - 1));
-            final long sum = Math.addExact(weighted, capped);
-            return sum / EMA_ALPHA_INV;
-        } catch (ArithmeticException overflow) {
-            return (prev / 2) + (capped / 2);
-        }
+    public void refreshFail(long refreshTimestamp, CharSequence errorMessage) {
+        assert latch.get();
+        this.lastRefreshFinishTimestampUs = refreshTimestamp;
+        markAsInvalid(errorMessage);
+        telemetryFacade.store(MAT_VIEW_REFRESH_FAIL, viewDefinition.getMatViewToken(), Numbers.LONG_NULL, errorMessage, 0);
     }
 
     /**
@@ -492,13 +492,6 @@ public class MatViewState implements QuietCloseable {
         assert latch.get();
         this.avgCommitNanos = 0;
         this.avgScanNanosPerTsUnit = 0;
-    }
-
-    public void refreshFail(long refreshTimestamp, CharSequence errorMessage) {
-        assert latch.get();
-        this.lastRefreshFinishTimestampUs = refreshTimestamp;
-        markAsInvalid(errorMessage);
-        telemetryFacade.store(MAT_VIEW_REFRESH_FAIL, viewDefinition.getMatViewToken(), Numbers.LONG_NULL, errorMessage, 0);
     }
 
     public void refreshSuccess(
@@ -574,6 +567,20 @@ public class MatViewState implements QuietCloseable {
 
     public void setRefreshIntervalsBaseTxn(long refreshIntervalsBaseTxn) {
         this.refreshIntervalsBaseTxn = refreshIntervalsBaseTxn;
+    }
+
+    /**
+     * Test-only seeder for the rolling averages. Lets tests drive the
+     * clustering cost model into a known regime without having to predict the
+     * exact scan-time of a warmup refresh on the running hardware. Production
+     * callers must use the {@code recordCommitNanos} / {@code recordScanMetrics}
+     * pair instead.
+     */
+    @TestOnly
+    public void setRefreshMetricsForTesting(long commitNanos, long scanNanosPerTsUnit) {
+        assert latch.get();
+        this.avgCommitNanos = Math.max(0, commitNanos);
+        this.avgScanNanosPerTsUnit = Math.max(0, scanNanosPerTsUnit);
     }
 
     public void setViewDefinition(MatViewDefinition viewDefinition) {

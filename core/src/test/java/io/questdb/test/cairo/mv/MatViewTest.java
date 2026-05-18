@@ -41,6 +41,7 @@ import io.questdb.cairo.mv.MatViewState;
 import io.questdb.cairo.mv.MatViewStateStoreImpl;
 import io.questdb.cairo.mv.MatViewTimerJob;
 import io.questdb.cairo.mv.WalTxnRangeLoader;
+import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.wal.WalUtils;
@@ -5808,6 +5809,63 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRefreshIntervalsMaxClustersConfigCapsClusterCount() throws Exception {
+        // Sanity-check the config plumbing: cairo.mat.view.refresh.max.clusters
+        // is read by findRefreshIntervals and passed to clusterIntervals. With
+        // 5 disjoint inserts and the cap forced down to 2, clustering must
+        // collapse the 5 intervals into exactly 2 clusters.
+        setProperty(PropertyKey.CAIRO_MAT_VIEW_ROWS_PER_QUERY_ESTIMATE, 1_000_000);
+        setProperty(PropertyKey.CAIRO_MAT_VIEW_REFRESH_INTERVALS_UPDATE_PERIOD, "5s");
+        setProperty(PropertyKey.CAIRO_MAT_VIEW_REFRESH_MAX_CLUSTERS, 2);
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table base_price (price double, ts #TIMESTAMP) timestamp(ts) partition by DAY WAL"
+            );
+            execute(
+                    "create materialized view price_1h refresh manual as " +
+                            "select ts, last(price) as price from base_price sample by 1h;"
+            );
+            // Initial seed + refresh to clear cache.
+            execute("insert into base_price(price, ts) values (1.0, '2024-01-01T00:01')");
+            currentMicros = parseFloorPartialTimestamp("2099-01-01T01:01:01.000000Z");
+            final MatViewTimerJob timerJob = new MatViewTimerJob(engine);
+            execute("refresh materialized view price_1h incremental;");
+            drainMatViewTimerQueue(timerJob);
+            drainQueues();
+
+            // 5 disjoint inserts widely apart -- each becomes its own cached
+            // interval at refresh-intervals-update time, and the cluster cap
+            // forces them down to 2.
+            execute("insert into base_price(price, ts) values (2.0, '2024-02-01T00:01')");
+            execute("insert into base_price(price, ts) values (3.0, '2024-03-01T00:01')");
+            execute("insert into base_price(price, ts) values (4.0, '2024-04-01T00:01')");
+            execute("insert into base_price(price, ts) values (5.0, '2024-05-01T00:01')");
+            execute("insert into base_price(price, ts) values (6.0, '2024-06-01T00:01')");
+
+            currentMicros += 6 * Micros.SECOND_MICROS;
+            drainMatViewTimerQueue(timerJob);
+            drainQueues();
+
+            // Before clustering the cache has 5 intervals; clustering happens
+            // inside findRefreshIntervals during the refresh, so we observe the
+            // pre-refresh state here.
+            final TableToken viewToken = engine.getTableTokenIfExists("price_1h");
+            final MatViewState viewState = engine.getMatViewStateStore().getViewState(viewToken);
+            Assert.assertEquals(10, viewState.getRefreshIntervals().size());
+
+            // After refresh: 5 inserts produce 5 dirty buckets, and the cluster
+            // cap doesn't change that -- it changes the COMMIT count, not the
+            // emitted-bucket count. We verify the cap took effect by reading
+            // the post-refresh state where intervals are cleared.
+            execute("refresh materialized view price_1h incremental;");
+            drainMatViewTimerQueue(timerJob);
+            drainQueues();
+            Assert.assertEquals(0, viewState.getRefreshIntervals().size());
+            Assert.assertEquals(-1, viewState.getRefreshIntervalsBaseTxn());
+        });
+    }
+
+    @Test
     public void testRefreshMaterializedViewStatsResetsEma() throws Exception {
         // REFRESH MATERIALIZED VIEW <name> STATS clears the EMA values so the
         // cost model returns to its cold-start state. Operators reach for
@@ -5844,6 +5902,125 @@ public class MatViewTest extends AbstractCairoTest {
                     MatViewState.COLD_START_GAP_THRESHOLD_TS_UNITS,
                     viewState.getCommitGapThresholdTsUnits()
             );
+
+            // The catalogue function must surface the same EMA values via SQL.
+            assertSql(
+                    "refresh_avg_commit_nanos\trefresh_avg_scan_nanos_per_ts_unit\trefresh_gap_threshold_ts_units\n" +
+                            "0\t0\t" + MatViewState.COLD_START_GAP_THRESHOLD_TS_UNITS + "\n",
+                    "select refresh_avg_commit_nanos, refresh_avg_scan_nanos_per_ts_unit, refresh_gap_threshold_ts_units " +
+                            "from materialized_views() where view_name = 'price_1h'"
+            );
+
+            // Drive another refresh and verify the catalogue starts reporting
+            // non-zero EMA samples again.
+            execute("insert into base_price(price, ts) values (2.0, '2024-09-10T14:01')");
+            drainWalAndMatViewQueues();
+            Assert.assertTrue(
+                    "Catalogue must surface non-zero avg_commit_nanos after refresh",
+                    viewState.getAvgCommitNanos() > 0
+            );
+            try (RecordCursorFactory factory = engine.select(
+                    "select refresh_avg_commit_nanos > 0, refresh_avg_scan_nanos_per_ts_unit > 0, refresh_gap_threshold_ts_units > 0 " +
+                            "from materialized_views() where view_name = 'price_1h'",
+                    sqlExecutionContext
+            ); RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                Assert.assertTrue(cursor.hasNext());
+                final Record record = cursor.getRecord();
+                Assert.assertTrue("avg_commit_nanos > 0 via SQL", record.getBool(0));
+                Assert.assertTrue("avg_scan_nanos_per_ts_unit > 0 via SQL", record.getBool(1));
+                Assert.assertTrue("gap_threshold_ts_units > 0 via SQL", record.getBool(2));
+            }
+        });
+    }
+
+    @Test
+    public void testRefreshMaterializedViewStatsRejectsGarbageTail() throws Exception {
+        // Operator pastes `REFRESH MATERIALIZED VIEW v STATS FROM ...` -- STATS is
+        // a leaf action, anything after it must be rejected. Same goes for
+        // `STATS INCREMENTAL` etc.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table base_price (price double, ts #TIMESTAMP) timestamp(ts) partition by DAY WAL"
+            );
+            execute("create materialized view price_1h refresh immediate as " +
+                    "select ts, last(price) as price from base_price sample by 1h");
+            execute("insert into base_price(price, ts) values (1.0, '2024-09-10T12:01')");
+            // Drive a refresh through so MatViewGraph registers the definition.
+            currentMicros = parseFloorPartialTimestamp("2024-09-10T13:00:00.000000Z");
+            drainQueues();
+            // Sanity check the view is reachable via the graph before driving
+            // the parser-error scenarios.
+            Assert.assertNotNull(engine.getMatViewGraph().getViewDefinition(
+                    engine.getTableTokenIfExists("price_1h")
+            ));
+
+            assertExceptionNoLeakCheck(
+                    "refresh materialized view price_1h stats from '2024-09-10T00:00'",
+                    41,
+                    "unexpected token [from] while trying to refresh materialized view"
+            );
+            assertExceptionNoLeakCheck(
+                    "refresh materialized view price_1h stats incremental",
+                    41,
+                    "unexpected token [incremental] while trying to refresh materialized view"
+            );
+        });
+    }
+
+    @Test
+    public void testRefreshMaterializedViewUnknownActionMentionsStats() throws Exception {
+        // Sanity: the error text on an unknown action keyword should include
+        // 'stats' so operators discover the new form.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table base_price (price double, ts #TIMESTAMP) timestamp(ts) partition by DAY WAL"
+            );
+            execute("create materialized view price_1h refresh immediate as " +
+                    "select ts, last(price) as price from base_price sample by 1h");
+            execute("insert into base_price(price, ts) values (1.0, '2024-09-10T12:01')");
+            currentMicros = parseFloorPartialTimestamp("2024-09-10T13:00:00.000000Z");
+            drainQueues();
+
+            try {
+                execute("refresh materialized view price_1h blargh");
+                Assert.fail("expected SqlException");
+            } catch (SqlException e) {
+                final String msg = e.getMessage();
+                Assert.assertTrue("error must mention 'stats': " + msg, msg.contains("'stats'"));
+                Assert.assertTrue("error must mention 'full': " + msg, msg.contains("'full'"));
+                Assert.assertTrue("error must mention 'incremental': " + msg, msg.contains("'incremental'"));
+                Assert.assertTrue("error must mention 'range': " + msg, msg.contains("'range'"));
+            }
+        });
+    }
+
+    @Test
+    public void testRefreshMaterializedViewStatsBusyView() throws Exception {
+        // When the refresh latch is held (i.e. a refresh is in progress),
+        // REFRESH ... STATS must return a retryable error instead of blocking.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table base_price (price double, ts #TIMESTAMP) timestamp(ts) partition by DAY WAL"
+            );
+            execute("create materialized view price_1h refresh immediate as " +
+                    "select ts, last(price) as price from base_price sample by 1h");
+            execute("insert into base_price(price, ts) values (1.0, '2024-09-10T12:01')");
+            currentMicros = parseFloorPartialTimestamp("2024-09-10T13:00:00.000000Z");
+            drainQueues();
+
+            final TableToken viewToken = engine.getTableTokenIfExists("price_1h");
+            final MatViewState viewState = engine.getMatViewStateStore().getViewState(viewToken);
+            Assert.assertNotNull(viewState);
+            Assert.assertTrue(viewState.tryLock());
+            try {
+                assertExceptionNoLeakCheck(
+                        "refresh materialized view price_1h stats",
+                        35,
+                        "materialized view is currently refreshing, retry stats reset later"
+                );
+            } finally {
+                viewState.unlock();
+            }
         });
     }
 

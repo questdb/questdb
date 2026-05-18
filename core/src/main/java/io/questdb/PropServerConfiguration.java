@@ -333,8 +333,8 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int matViewMaxRefreshRetries;
     private final long matViewMaxRefreshStepUs;
     private final boolean matViewParallelExecutionEnabled;
-    private final int matViewRefreshMaxClusters;
     private final long matViewRefreshIntervalsUpdatePeriod;
+    private final int matViewRefreshMaxClusters;
     private final boolean matViewRefreshMissingWalFilesFatal;
     private final long matViewRefreshOomRetryTimeout;
     private final WorkerPoolConfiguration matViewRefreshPoolConfiguration = new PropMatViewsRefreshPoolConfiguration();

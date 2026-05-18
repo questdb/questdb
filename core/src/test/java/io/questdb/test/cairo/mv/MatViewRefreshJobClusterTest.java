@@ -61,6 +61,17 @@ public class MatViewRefreshJobClusterTest {
     }
 
     @Test
+    public void testCapStepSkipsMalformedHiLessThanLo() {
+        // Defensive: an interval with hi < lo would produce a negative width.
+        // Such entries are skipped; the cap comes from the well-formed siblings.
+        final LongList intervals = list(
+                50, 30,    // malformed (hi < lo), width = -20 -> skipped
+                100, 100   // well-formed point, widthBuckets = 1
+        );
+        Assert.assertEquals(1L, MatViewRefreshJob.capStepByNarrowestInterval(intervals, 10, 50));
+    }
+
+    @Test
     public void testCapStepPicksNarrowestAmongMany() {
         // Three intervals: widths 5, 1, 3 (in buckets) at bucketSize=10.
         final LongList intervals = list(

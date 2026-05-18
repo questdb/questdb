@@ -3448,7 +3448,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         // STATS is a sentinel for "reset the cost-model EMA values" -- not a
         // data refresh. Handled inline here rather than through the refresh
         // queue because it's a synchronous metadata-only operation.
-        final boolean statsReset = SqlKeywords.isStatsKeyword(tok);
+        final boolean isStatsReset = SqlKeywords.isStatsKeyword(tok);
         long from = Numbers.LONG_NULL;
         long to = Numbers.LONG_NULL;
         if (isRangeKeyword(tok)) {
@@ -3469,7 +3469,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             if (from > to) {
                 throw SqlException.$(lexer.lastTokenPosition(), "TO timestamp must not be earlier than FROM timestamp");
             }
-        } else if (!fullRefresh && !statsReset && !isIncrementalKeyword(tok)) {
+        } else if (!fullRefresh && !isStatsReset && !isIncrementalKeyword(tok)) {
             throw SqlException.$(lexer.lastTokenPosition(), "'full', 'incremental', 'range' or 'stats' expected");
         }
 
@@ -3482,7 +3482,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             executionContext.getSecurityContext().authorizeMatViewRefresh(matViewToken);
 
             final MatViewStateStore matViewStateStore = engine.getMatViewStateStore();
-            if (statsReset) {
+            if (isStatsReset) {
                 final MatViewState viewState = matViewStateStore.getViewState(matViewToken);
                 if (viewState != null) {
                     if (viewState.tryLock()) {

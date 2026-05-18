@@ -223,6 +223,17 @@ public class MatViewO3RefreshBenchmark {
                 final double p99 = percentile(timings, 99);
                 final long min = timings[0];
 
+                final long rowsDelta = rowsAfterIters - rowsAfterSeed;
+                if (rowsDelta <= 0) {
+                    // Sanity guard: if a future change accidentally short-circuits
+                    // the refresh path the timings look "fast" because nothing
+                    // ran. Surface that loudly rather than reporting a phantom
+                    // win.
+                    throw new IllegalStateException(
+                            "Benchmark scenario produced no new mat view rows -- refresh likely skipped." +
+                                    " rowsPerQuery=" + rowsPerQuery + ", o3LagMinutes=" + o3LagMinutes
+                    );
+                }
                 System.out.printf("%-18d %-14d %12.3f %12.3f %12.3f %12.3f %14d%n",
                         rowsPerQuery,
                         o3LagMinutes,
@@ -230,7 +241,7 @@ public class MatViewO3RefreshBenchmark {
                         median / 1_000_000.0,
                         p99 / 1_000_000.0,
                         min / 1_000_000.0,
-                        rowsAfterIters - rowsAfterSeed
+                        rowsDelta
                 );
             }
         } finally {

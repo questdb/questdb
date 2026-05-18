@@ -148,6 +148,46 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
     }
 
     /**
+     * Returns {@code step} capped at the narrowest entry width (in buckets) of
+     * the given intervals list. Returns {@code step} unchanged if the list is
+     * null, has fewer than one entry, or the bucket size is non-positive.
+     * <p>
+     * Goes together with {@link #clusterIntervals}: each list entry is one
+     * cluster after auto-tuning, and we want a step-group to fit inside one
+     * cluster so the iterator's gap-skip can excise the gaps between them
+     * without dragging unchanged buckets into the cursor's scan range.
+     */
+    // kept public for testing
+    public static long capStepByNarrowestInterval(@Nullable LongList intervals, long approxBucketSize, long step) {
+        if (intervals == null || intervals.size() < 2 || approxBucketSize <= 0) {
+            return step;
+        }
+        long narrowestBuckets = Long.MAX_VALUE;
+        for (int i = 0, n = intervals.size(); i < n; i += 2) {
+            final long widthTsUnits;
+            try {
+                widthTsUnits = Math.subtractExact(intervals.getQuick(i + 1), intervals.getQuick(i));
+            } catch (ArithmeticException overflow) {
+                // Pathological interval spans almost the full long range; the
+                // step cap can't say anything useful, leave it alone.
+                continue;
+            }
+            if (widthTsUnits < 0) {
+                // Malformed (hi < lo) -- be defensive, skip.
+                continue;
+            }
+            final long widthBuckets = Math.max(1, widthTsUnits / approxBucketSize + 1);
+            if (widthBuckets < narrowestBuckets) {
+                narrowestBuckets = widthBuckets;
+            }
+        }
+        if (narrowestBuckets > 0 && narrowestBuckets < step) {
+            return narrowestBuckets;
+        }
+        return step;
+    }
+
+    /**
      * Merges adjacent cached refresh intervals in place when the timestamp gap
      * between them is cheaper to scan than to pay for an extra REPLACE_RANGE
      * commit. {@code gapThresholdTsUnits} comes from
@@ -190,20 +230,20 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             // Compute gap via subtractExact; a positive gap that overflows is
             // by definition larger than any possible threshold, so we treat
             // it as not mergeable.
-            boolean mergeable;
+            boolean isMergeable;
             try {
                 final long gapTsUnits = Math.subtractExact(lo, prevHi);
-                mergeable = gapTsUnits < gapThresholdTsUnits;
+                isMergeable = gapTsUnits < gapThresholdTsUnits;
             } catch (ArithmeticException overflow) {
-                mergeable = false;
+                isMergeable = false;
             }
             // Force a merge if we've already produced maxClusters clusters --
             // the safety cap prevents pathological refreshes from producing
             // hundreds of tiny commits.
-            if (!mergeable && (write / 2) >= maxClusters) {
-                mergeable = true;
+            if (!isMergeable && (write / 2) >= maxClusters) {
+                isMergeable = true;
             }
-            if (mergeable) {
+            if (isMergeable) {
                 if (hi > prevHi) {
                     intervals.setQuick(write - 1, hi);
                     prevHi = hi;
@@ -217,46 +257,6 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         }
         intervals.setPos(write);
         return write / 2;
-    }
-
-    /**
-     * Returns {@code step} capped at the narrowest entry width (in buckets) of
-     * the given intervals list. Returns {@code step} unchanged if the list is
-     * null, has fewer than one entry, or the bucket size is non-positive.
-     * <p>
-     * Goes together with {@link #clusterIntervals}: each list entry is one
-     * cluster after auto-tuning, and we want a step-group to fit inside one
-     * cluster so the iterator's gap-skip can excise the gaps between them
-     * without dragging unchanged buckets into the cursor's scan range.
-     */
-    // kept public for testing
-    public static long capStepByNarrowestInterval(@Nullable LongList intervals, long approxBucketSize, long step) {
-        if (intervals == null || intervals.size() < 2 || approxBucketSize <= 0) {
-            return step;
-        }
-        long narrowestBuckets = Long.MAX_VALUE;
-        for (int i = 0, n = intervals.size(); i < n; i += 2) {
-            final long widthTsUnits;
-            try {
-                widthTsUnits = Math.subtractExact(intervals.getQuick(i + 1), intervals.getQuick(i));
-            } catch (ArithmeticException overflow) {
-                // Pathological interval spans almost the full long range; the
-                // step cap can't say anything useful, leave it alone.
-                continue;
-            }
-            if (widthTsUnits < 0) {
-                // Malformed (hi < lo) -- be defensive, skip.
-                continue;
-            }
-            final long widthBuckets = Math.max(1, widthTsUnits / approxBucketSize + 1);
-            if (widthBuckets < narrowestBuckets) {
-                narrowestBuckets = widthBuckets;
-            }
-        }
-        if (narrowestBuckets > 0 && narrowestBuckets < step) {
-            return narrowestBuckets;
-        }
-        return step;
     }
 
     /**
@@ -401,7 +401,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
      * Precondition: the caller must hold {@code viewState}'s refresh latch
      * (acquired via {@link MatViewState#tryLock()}). The method reads and
      * mutates view-state fields (cached intervals, EMA accessors via
-     * {@link MatViewState#getCommitGapThresholdMicros()}) that are protected
+     * {@link MatViewState#getCommitGapThresholdTsUnits()}) that are protected
      * by that latch.
      */
     private RefreshContext findRefreshIntervals(

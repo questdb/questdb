@@ -24,15 +24,20 @@
 
 package io.questdb.test.cairo.mv;
 
+import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.mv.MatViewState;
+import org.junit.After;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
 /**
  * Edge-case tests for the EMA recording and gap-threshold derivation on
- * {@link MatViewState}. Uses the test-only constructor path that skips the
- * mat view definition, since the EMA methods are independent of it.
+ * {@link MatViewState}. The EMA methods don't dereference the mat view
+ * definition or the telemetry facade, but we still construct a real (empty)
+ * definition rather than passing {@code null} -- otherwise a future maintainer
+ * adding a {@code viewDefinition.getMatViewToken()} call to any EMA method
+ * would silently NPE every test in this class.
  */
 public class MatViewStateEmaTest {
 
@@ -40,9 +45,16 @@ public class MatViewStateEmaTest {
 
     @Before
     public void setUp() {
-        // Pass nulls; EMA methods don't touch viewDefinition / telemetryFacade.
-        state = new MatViewState(null, null);
+        state = new MatViewState(new MatViewDefinition(), null);
         Assert.assertTrue(state.tryLock());
+    }
+
+    @After
+    public void tearDown() {
+        if (state != null) {
+            state.unlock();
+            state.close();
+        }
     }
 
     @Test
@@ -140,26 +152,40 @@ public class MatViewStateEmaTest {
     @Test
     public void testEmaArithmeticDoesNotOverflowOnMaxValues() {
         // Seed near Long.MAX_VALUE / 7 so prev * (EMA_ALPHA_INV - 1) is right
-        // at the overflow boundary; verify no negative value is produced.
+        // at the overflow boundary; verify the 50/50-blend fallback fires and
+        // produces the exact expected value.
         final long seed = Long.MAX_VALUE / 7 - 1;
         state.setRefreshMetricsForTesting(seed, 1L);
-        // Sample > 5*prev is capped to 5*prev. With seed = MAX/7, capping
-        // multiplies by 5 -- which itself is in-range. Then prev*7 + capped
-        // overflows to a negative-ish value. The arithmetic is undefined
-        // behaviour, but we should not produce a value that breaks
-        // subsequent decisions catastrophically (e.g. become a permanent
-        // negative cache).
         state.recordCommitNanos(Long.MAX_VALUE);
-        final long avg = state.getAvgCommitNanos();
-        // If the value did wrap, getCommitGapThresholdTsUnits should still
-        // return something sensible (>= 1 due to the floor).
-        Assert.assertTrue("Threshold must stay >= 1 even after overflow; got: "
-                + state.getCommitGapThresholdTsUnits(),
-                state.getCommitGapThresholdTsUnits() >= 1L);
-        // Log the resulting avg for inspection -- not asserting a specific
-        // value, just confirming the EMA hasn't permanently broken.
-        Assert.assertNotEquals("Sanity: avg should not be zero after a real sample",
-                0L, avg);
+
+        // Expected math: cap = min(MAX, 5*seed). 5*seed = 5*(MAX/7-1) is
+        // in-range, so cap = 5*(MAX/7-1). Then weighted = 7*seed wraps via
+        // multiplyExact; the fallback returns (seed/2) + (cap/2).
+        final long expectedCap = 5L * seed;
+        final long expectedAvg = (seed / 2) + (expectedCap / 2);
+        Assert.assertEquals(
+                "EMA fallback must use exact 50/50 blend on overflow",
+                expectedAvg,
+                state.getAvgCommitNanos()
+        );
+        // Threshold floor: 1, no matter the prev / scan ratio.
+        Assert.assertTrue(
+                "Threshold must stay >= 1 even after overflow; got: " + state.getCommitGapThresholdTsUnits(),
+                state.getCommitGapThresholdTsUnits() >= 1L
+        );
+    }
+
+    @Test
+    public void testEmaOuterMultiplierOverflowFallback() {
+        // Seed prev where 5 * prev overflows -- the outlier cap multiplyExact
+        // catch should saturate to Long.MAX_VALUE and the EMA still update.
+        final long seed = Long.MAX_VALUE / 4; // 5 * seed overflows
+        state.setRefreshMetricsForTesting(seed, 1L);
+        // Sample below seed -- not capped, used directly.
+        state.recordCommitNanos(seed - 100L);
+        // weighted = 7 * seed overflows; fallback = (seed/2) + (sample/2).
+        final long expectedAvg = (seed / 2) + ((seed - 100L) / 2);
+        Assert.assertEquals(expectedAvg, state.getAvgCommitNanos());
     }
 
     @Test
