@@ -74,6 +74,11 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
     private static final Log LOG = LogFactory.getLog(MatViewRefreshJob.class);
     private final ObjList<TableToken> childViewSink = new ObjList<>();
     private final ObjList<TableToken> childViewSink2 = new ObjList<>();
+    // Scratch list for the post-cluster working copy of refresh intervals.
+    // Decouples downstream cluster/period/limit mutations from the live
+    // viewState.refreshIntervals reference -- mutating the cache would persist
+    // lossy clusters on the next cache write and survive across restarts.
+    private final LongList clusteredIntervals = new LongList();
     private final EntityColumnFilter columnFilter = new EntityColumnFilter();
     private final CairoConfiguration configuration;
     private final CairoEngine engine;
@@ -188,9 +193,9 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
     }
 
     /**
-     * Merges adjacent cached refresh intervals in place when the timestamp gap
-     * between them is cheaper to scan than to pay for an extra REPLACE_RANGE
-     * commit. {@code gapThresholdTsUnits} comes from
+     * Copies {@code src} into {@code dst} and merges adjacent intervals when the
+     * timestamp gap between them is cheaper to scan than to pay for an extra
+     * REPLACE_RANGE commit. {@code gapThresholdTsUnits} comes from
      * {@link MatViewState#getCommitGapThresholdTsUnits()} and represents the
      * gap-width below which merging beats splitting; it is derived from the
      * rolling commit and per-unit scan latencies the refresh job records on
@@ -198,19 +203,25 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
      * (microseconds for TIMESTAMP, nanoseconds for TIMESTAMP_NS) and is
      * consistent with the cached interval values.
      * <p>
-     * The intervals list must be sorted and disjoint on entry (as produced by
-     * {@link IntervalUtils#unionInPlace}); on return it is also sorted and
-     * disjoint with at most {@code maxClusters} entries.
+     * {@code src} must be sorted and disjoint on entry (as produced by
+     * {@link IntervalUtils#unionInPlace}); on return {@code dst} is also sorted
+     * and disjoint with at most {@code maxClusters} entries. {@code src} is not
+     * mutated -- the separate destination is required so that the cached union
+     * of unprocessed WAL ranges (a live {@link MatViewState#getRefreshIntervals()}
+     * reference) stays loss-free across refresh retries and restarts.
      *
-     * @return number of clusters in the final list (i.e. {@code intervals.size() / 2}).
+     * @return number of clusters in the final list (i.e. {@code dst.size() / 2}).
      */
     // kept public for testing
     public static int clusterIntervals(
-            @NotNull LongList intervals,
+            @NotNull LongList src,
+            @NotNull LongList dst,
             long gapThresholdTsUnits,
             int maxClusters
     ) {
-        final int initialSize = intervals.size();
+        dst.clear();
+        dst.addAll(src);
+        final int initialSize = dst.size();
         if (initialSize <= 2) {
             return initialSize / 2;
         }
@@ -222,10 +233,10 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             gapThresholdTsUnits = 0;
         }
         int write = 2;
-        long prevHi = intervals.getQuick(1);
+        long prevHi = dst.getQuick(1);
         for (int read = 2; read < initialSize; read += 2) {
-            final long lo = intervals.getQuick(read);
-            final long hi = intervals.getQuick(read + 1);
+            final long lo = dst.getQuick(read);
+            final long hi = dst.getQuick(read + 1);
             assert lo >= prevHi : "intervals must be sorted and disjoint";
             // Compute gap via subtractExact; a positive gap that overflows is
             // by definition larger than any possible threshold, so we treat
@@ -245,17 +256,17 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             }
             if (isMergeable) {
                 if (hi > prevHi) {
-                    intervals.setQuick(write - 1, hi);
+                    dst.setQuick(write - 1, hi);
                     prevHi = hi;
                 }
             } else {
-                intervals.setQuick(write, lo);
-                intervals.setQuick(write + 1, hi);
+                dst.setQuick(write, lo);
+                dst.setQuick(write + 1, hi);
                 write += 2;
                 prevHi = hi;
             }
         }
-        intervals.setPos(write);
+        dst.setPos(write);
         return write / 2;
     }
 
@@ -434,9 +445,9 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             // Let's find min/max timestamps in the new WAL transactions.
             if (lastRefreshTxn > -1) {
                 // It's a subsequent incremental refresh, so WalPurgeJob must be aware of us.
-                refreshIntervals = updateRefreshIntervals0(lastTxn, baseTableToken, viewDefinition, viewState, walWriter);
-                if (refreshIntervals != null) {
-                    if (refreshIntervals.size() > 0) {
+                final LongList cachedIntervals = updateRefreshIntervals0(lastTxn, baseTableToken, viewDefinition, viewState, walWriter);
+                if (cachedIntervals != null) {
+                    if (cachedIntervals.size() > 0) {
                         // Merge cached intervals into cost-aware clusters so a single far-back
                         // O3 write does not drag a wide envelope of unchanged buckets into the
                         // refresh. The iterator preserves the gap-skip between clusters; within
@@ -444,8 +455,12 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                         // Threshold and intervals are both in the base table's timestamp unit
                         // (us for TIMESTAMP, ns for TIMESTAMP_NS) -- the comparison is
                         // unit-consistent so the clustering decision is correct on both.
+                        // Output goes into a job-owned scratch list so the cached union of
+                        // unprocessed WAL ranges stays pristine -- downstream period and
+                        // refresh-limit adjustments operate on the scratch, not the cache.
                         final long gapThresholdTsUnits = viewState.getCommitGapThresholdTsUnits();
-                        clusterIntervals(refreshIntervals, gapThresholdTsUnits, configuration.getMatViewRefreshMaxClusters());
+                        clusterIntervals(cachedIntervals, clusteredIntervals, gapThresholdTsUnits, configuration.getMatViewRefreshMaxClusters());
+                        refreshIntervals = clusteredIntervals;
                         // BAU incremental refresh.
                         minTs = refreshIntervals.getQuick(0);
                         maxTs = refreshIntervals.getQuick(refreshIntervals.size() - 1);

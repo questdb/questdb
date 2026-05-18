@@ -91,11 +91,17 @@ public class MatViewRefreshJobClusterTest {
     @Test
     public void testClusterEmptyAndSingleAreNoOps() {
         final LongList empty = new LongList();
-        Assert.assertEquals(0, MatViewRefreshJob.clusterIntervals(empty, 1_000, 8));
+        final LongList clustered = new LongList();
+        Assert.assertEquals(0, MatViewRefreshJob.clusterIntervals(empty, clustered, 1_000, 8));
+        Assert.assertEquals(0, clustered.size());
         Assert.assertEquals(0, empty.size());
 
         final LongList single = list(100, 200);
-        Assert.assertEquals(1, MatViewRefreshJob.clusterIntervals(single, 1_000, 8));
+        Assert.assertEquals(1, MatViewRefreshJob.clusterIntervals(single, clustered, 1_000, 8));
+        Assert.assertEquals(2, clustered.size());
+        Assert.assertEquals(100, clustered.getQuick(0));
+        Assert.assertEquals(200, clustered.getQuick(1));
+        // Source must stay untouched.
         Assert.assertEquals(2, single.size());
         Assert.assertEquals(100, single.getQuick(0));
         Assert.assertEquals(200, single.getQuick(1));
@@ -112,38 +118,45 @@ public class MatViewRefreshJobClusterTest {
                 330, 340,
                 440, 450
         );
-        final int clusters = MatViewRefreshJob.clusterIntervals(intervals, 50, 3);
+        final LongList clustered = new LongList();
+        final int clusters = MatViewRefreshJob.clusterIntervals(intervals, clustered, 50, 3);
         Assert.assertEquals(3, clusters);
-        Assert.assertEquals(6, intervals.size());
-        Assert.assertEquals(0, intervals.getQuick(0));
-        Assert.assertEquals(10, intervals.getQuick(1));
-        Assert.assertEquals(110, intervals.getQuick(2));
-        Assert.assertEquals(120, intervals.getQuick(3));
+        Assert.assertEquals(6, clustered.size());
+        Assert.assertEquals(0, clustered.getQuick(0));
+        Assert.assertEquals(10, clustered.getQuick(1));
+        Assert.assertEquals(110, clustered.getQuick(2));
+        Assert.assertEquals(120, clustered.getQuick(3));
         // Third cluster swallows intervals 3, 4, 5.
-        Assert.assertEquals(220, intervals.getQuick(4));
-        Assert.assertEquals(450, intervals.getQuick(5));
+        Assert.assertEquals(220, clustered.getQuick(4));
+        Assert.assertEquals(450, clustered.getQuick(5));
+        // Source must be unchanged.
+        Assert.assertEquals(10, intervals.size());
     }
 
     @Test
     public void testClusterMaxClustersOneFloorsAtOne() {
         // maxClusters < 1 should be treated as 1 (one cluster covers everything).
         final LongList intervals = list(0, 10, 1_000, 1_010, 5_000, 5_010);
-        final int clusters = MatViewRefreshJob.clusterIntervals(intervals, 1, 0);
+        final LongList clustered = new LongList();
+        final int clusters = MatViewRefreshJob.clusterIntervals(intervals, clustered, 1, 0);
         Assert.assertEquals(1, clusters);
-        Assert.assertEquals(2, intervals.size());
-        Assert.assertEquals(0, intervals.getQuick(0));
-        Assert.assertEquals(5_010, intervals.getQuick(1));
+        Assert.assertEquals(2, clustered.size());
+        Assert.assertEquals(0, clustered.getQuick(0));
+        Assert.assertEquals(5_010, clustered.getQuick(1));
     }
 
     @Test
     public void testClusterMergesAdjacentWhenBelowThreshold() {
         // Two intervals 5us apart; threshold = 10us -> merge.
         final LongList intervals = list(100, 110, 115, 120);
-        final int clusters = MatViewRefreshJob.clusterIntervals(intervals, 10, 8);
+        final LongList clustered = new LongList();
+        final int clusters = MatViewRefreshJob.clusterIntervals(intervals, clustered, 10, 8);
         Assert.assertEquals(1, clusters);
-        Assert.assertEquals(2, intervals.size());
-        Assert.assertEquals(100, intervals.getQuick(0));
-        Assert.assertEquals(120, intervals.getQuick(1));
+        Assert.assertEquals(2, clustered.size());
+        Assert.assertEquals(100, clustered.getQuick(0));
+        Assert.assertEquals(120, clustered.getQuick(1));
+        // Source untouched.
+        Assert.assertEquals(4, intervals.size());
     }
 
     @Test
@@ -158,15 +171,16 @@ public class MatViewRefreshJobClusterTest {
                 128, 128,    // gap 3 -> merge
                 228, 235     // gap 100 -> split
         );
-        final int clusters = MatViewRefreshJob.clusterIntervals(intervals, 10, 8);
+        final LongList clustered = new LongList();
+        final int clusters = MatViewRefreshJob.clusterIntervals(intervals, clustered, 10, 8);
         Assert.assertEquals(3, clusters);
-        Assert.assertEquals(6, intervals.size());
-        Assert.assertEquals(0, intervals.getQuick(0));
-        Assert.assertEquals(15, intervals.getQuick(1));
-        Assert.assertEquals(115, intervals.getQuick(2));
-        Assert.assertEquals(128, intervals.getQuick(3));
-        Assert.assertEquals(228, intervals.getQuick(4));
-        Assert.assertEquals(235, intervals.getQuick(5));
+        Assert.assertEquals(6, clustered.size());
+        Assert.assertEquals(0, clustered.getQuick(0));
+        Assert.assertEquals(15, clustered.getQuick(1));
+        Assert.assertEquals(115, clustered.getQuick(2));
+        Assert.assertEquals(128, clustered.getQuick(3));
+        Assert.assertEquals(228, clustered.getQuick(4));
+        Assert.assertEquals(235, clustered.getQuick(5));
     }
 
     @Test
@@ -200,9 +214,10 @@ public class MatViewRefreshJobClusterTest {
         // gap = MAX-1 - (MIN+1) which overflows; the function still produces
         // a deterministic answer (either split or merge -- contract is "no
         // crash", not "specific result"). Just verify it doesn't throw.
-        final int clusters = MatViewRefreshJob.clusterIntervals(intervals, 1_000_000L, 8);
+        final LongList clustered = new LongList();
+        final int clusters = MatViewRefreshJob.clusterIntervals(intervals, clustered, 1_000_000L, 8);
         Assert.assertTrue("Clusters should be 1 or 2; got: " + clusters, clusters == 1 || clusters == 2);
-        Assert.assertEquals("List size must match cluster count * 2", clusters * 2, intervals.size());
+        Assert.assertEquals("List size must match cluster count * 2", clusters * 2, clustered.size());
     }
 
     @Test
@@ -214,10 +229,11 @@ public class MatViewRefreshJobClusterTest {
             intervals.add(i * 1000);
             intervals.add(i * 1000);
         }
-        final int clusters = MatViewRefreshJob.clusterIntervals(intervals, 0, 8);
+        final LongList clustered = new LongList();
+        final int clusters = MatViewRefreshJob.clusterIntervals(intervals, clustered, 0, 8);
         Assert.assertEquals(8, clusters);
         // Last cluster must extend to include the last point interval.
-        Assert.assertEquals(99 * 1000, intervals.getQuick(intervals.size() - 1));
+        Assert.assertEquals(99 * 1000, clustered.getQuick(clustered.size() - 1));
     }
 
     @Test
@@ -229,15 +245,16 @@ public class MatViewRefreshJobClusterTest {
             intervals.add(i * 10_000_000L);
             intervals.add(i * 10_000_000L);
         }
-        final int clusters = MatViewRefreshJob.clusterIntervals(intervals, 1, 32);
+        final LongList clustered = new LongList();
+        final int clusters = MatViewRefreshJob.clusterIntervals(intervals, clustered, 1, 32);
         Assert.assertEquals(32, clusters);
-        Assert.assertEquals(64, intervals.size());
+        Assert.assertEquals(64, clustered.size());
         // First cluster is the first interval untouched.
-        Assert.assertEquals(0L, intervals.getQuick(0));
-        Assert.assertEquals(0L, intervals.getQuick(1));
+        Assert.assertEquals(0L, clustered.getQuick(0));
+        Assert.assertEquals(0L, clustered.getQuick(1));
         // Last cluster spans from the 32nd interval start to the last point.
-        Assert.assertEquals(31L * 10_000_000L, intervals.getQuick(intervals.size() - 2));
-        Assert.assertEquals(199L * 10_000_000L, intervals.getQuick(intervals.size() - 1));
+        Assert.assertEquals(31L * 10_000_000L, clustered.getQuick(clustered.size() - 2));
+        Assert.assertEquals(199L * 10_000_000L, clustered.getQuick(clustered.size() - 1));
     }
 
     @Test
@@ -252,42 +269,87 @@ public class MatViewRefreshJobClusterTest {
                 201, 201    // gap 1
         );
         // Threshold = 10 -> merge gaps of 5 and 1; split gap of 95.
-        final int clusters = MatViewRefreshJob.clusterIntervals(intervals, 10, 8);
+        final LongList clustered = new LongList();
+        final int clusters = MatViewRefreshJob.clusterIntervals(intervals, clustered, 10, 8);
         Assert.assertEquals(2, clusters);
-        Assert.assertEquals(100L, intervals.getQuick(0));
-        Assert.assertEquals(105L, intervals.getQuick(1));
-        Assert.assertEquals(200L, intervals.getQuick(2));
-        Assert.assertEquals(201L, intervals.getQuick(3));
+        Assert.assertEquals(100L, clustered.getQuick(0));
+        Assert.assertEquals(105L, clustered.getQuick(1));
+        Assert.assertEquals(200L, clustered.getQuick(2));
+        Assert.assertEquals(201L, clustered.getQuick(3));
     }
 
     @Test
     public void testClusterNegativeThresholdTreatedAsZero() {
         // Negative threshold should never merge non-overlapping intervals.
         final LongList intervals = list(0, 10, 11, 20);
-        final int clusters = MatViewRefreshJob.clusterIntervals(intervals, -100, 8);
+        final LongList clustered = new LongList();
+        final int clusters = MatViewRefreshJob.clusterIntervals(intervals, clustered, -100, 8);
         Assert.assertEquals(2, clusters);
-        Assert.assertEquals(4, intervals.size());
+        Assert.assertEquals(4, clustered.size());
+    }
+
+    @Test
+    public void testClusterSourceIsNeverMutated() {
+        // Lock in the option (i) contract: the source list -- which in production
+        // is the live viewState.refreshIntervals reference -- must be preserved
+        // bit-for-bit, regardless of whether clustering actually merges anything.
+        final LongList src = list(0, 10, 11, 12, 200, 210, 211, 220);
+        final long[] before = new long[src.size()];
+        for (int i = 0; i < src.size(); i++) {
+            before[i] = src.getQuick(i);
+        }
+        final LongList dst = new LongList();
+        // Threshold large enough to merge across every gap -> clustering does
+        // collapse entries, so the algorithm exercises its write path.
+        MatViewRefreshJob.clusterIntervals(src, dst, 1_000, 8);
+        Assert.assertEquals(before.length, src.size());
+        for (int i = 0; i < before.length; i++) {
+            Assert.assertEquals("src mutated at index " + i, before[i], src.getQuick(i));
+        }
     }
 
     @Test
     public void testClusterSplitsWhenAboveThreshold() {
         // Two intervals 1000us apart; threshold = 10us -> stay separate.
         final LongList intervals = list(100, 110, 1110, 1120);
-        final int clusters = MatViewRefreshJob.clusterIntervals(intervals, 10, 8);
+        final LongList clustered = new LongList();
+        final int clusters = MatViewRefreshJob.clusterIntervals(intervals, clustered, 10, 8);
         Assert.assertEquals(2, clusters);
-        Assert.assertEquals(4, intervals.size());
-        Assert.assertEquals(100, intervals.getQuick(0));
-        Assert.assertEquals(110, intervals.getQuick(1));
-        Assert.assertEquals(1110, intervals.getQuick(2));
-        Assert.assertEquals(1120, intervals.getQuick(3));
+        Assert.assertEquals(4, clustered.size());
+        Assert.assertEquals(100, clustered.getQuick(0));
+        Assert.assertEquals(110, clustered.getQuick(1));
+        Assert.assertEquals(1110, clustered.getQuick(2));
+        Assert.assertEquals(1120, clustered.getQuick(3));
     }
 
     @Test
     public void testClusterZeroThresholdNeverMergesGaps() {
         // gap=1 (adjacent but not contiguous): 0 < 1 is false, no merge.
         final LongList intervals = list(0, 10, 11, 20);
-        Assert.assertEquals(2, MatViewRefreshJob.clusterIntervals(intervals, 0, 8));
-        Assert.assertEquals(4, intervals.size());
+        final LongList clustered = new LongList();
+        Assert.assertEquals(2, MatViewRefreshJob.clusterIntervals(intervals, clustered, 0, 8));
+        Assert.assertEquals(4, clustered.size());
+    }
+
+    @Test
+    public void testClusterReusesDestinationListAcrossCalls() {
+        // The production caller reuses the same scratch list across refreshes.
+        // Each call must clear() it first so stale entries from a previous
+        // refresh never leak into the iterator.
+        final LongList dst = new LongList();
+        dst.add(999);
+        dst.add(999);
+        dst.add(999);
+        dst.add(999);
+
+        MatViewRefreshJob.clusterIntervals(list(10, 20), dst, 0, 8);
+        Assert.assertEquals(2, dst.size());
+        Assert.assertEquals(10L, dst.getQuick(0));
+        Assert.assertEquals(20L, dst.getQuick(1));
+
+        // Second call with an empty source -> dst must end up empty too.
+        MatViewRefreshJob.clusterIntervals(new LongList(), dst, 0, 8);
+        Assert.assertEquals(0, dst.size());
     }
 
     private static LongList list(long... values) {
