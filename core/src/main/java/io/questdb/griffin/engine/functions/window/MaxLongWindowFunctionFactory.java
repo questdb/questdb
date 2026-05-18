@@ -772,6 +772,9 @@ public class MaxLongWindowFunctionFactory extends AbstractWindowFunctionFactory 
             long l = arg.getLong(record);
 
             if (mapValue.isNew()) {
+                if (tombstoneValueIndex >= 0) {
+                    mapValue.putByte(tombstoneValueIndex, (byte) 0);
+                }
                 capacity = initialBufferSize;
                 startOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
                 firstIdx = 0;
@@ -1452,6 +1455,9 @@ public class MaxLongWindowFunctionFactory extends AbstractWindowFunctionFactory 
             long dequeEndIndex = 0;
 
             if (value.isNew()) {
+                if (tombstoneValueIndex >= 0) {
+                    value.putByte(tombstoneValueIndex, (byte) 0);
+                }
                 loIdx = 0;
                 final int freeN = freeList.size();
                 if (freeN > 0) {
@@ -2556,6 +2562,9 @@ public class MaxLongWindowFunctionFactory extends AbstractWindowFunctionFactory 
 
             if (l != Numbers.LONG_NULL) {
                 MapValue value = key.createValue();
+                if (value.isNew() && tombstoneValueIndex >= 0) {
+                    value.putByte(tombstoneValueIndex, (byte) 0);
+                }
                 if (value.isNew() || value.getByte(1) == 0) {
                     value.putLong(0, l);
                     value.putByte(1, (byte) 1);
@@ -2593,7 +2602,11 @@ public class MaxLongWindowFunctionFactory extends AbstractWindowFunctionFactory 
             key.put(partitionByRecord, partitionBySink);
             MapValue value = key.createValue();
             value.putByte(1, (byte) 0);
-            if (!value.isNew() && tombstoneValueIndex >= 0 && value.getByte(tombstoneValueIndex) != 1) {
+            if (value.isNew()) {
+                if (tombstoneValueIndex >= 0) {
+                    value.putByte(tombstoneValueIndex, (byte) 0);
+                }
+            } else if (tombstoneValueIndex >= 0 && value.getByte(tombstoneValueIndex) != 1) {
                 value.putByte(tombstoneValueIndex, (byte) 1);
                 tombstoneCount++;
             }

@@ -363,6 +363,9 @@ public class VwemaDoubleWindowFunctionFactory extends AbstractWindowFunctionFact
             double volume = volumeArg.getDouble(record);
 
             if (mapValue.isNew()) {
+                if (tombstoneValueIndex >= 0) {
+                    mapValue.putByte(tombstoneValueIndex, (byte) 0);
+                }
                 // First value for this partition
                 if (Numbers.isFinite(price) && Numbers.isFinite(volume) && volume > 0) {
                     double numerator = price * volume;
@@ -766,6 +769,9 @@ public class VwemaDoubleWindowFunctionFactory extends AbstractWindowFunctionFact
             long timestamp = record.getTimestamp(timestampIndex);
 
             if (mapValue.isNew()) {
+                if (tombstoneValueIndex >= 0) {
+                    mapValue.putByte(tombstoneValueIndex, (byte) 0);
+                }
                 // First value for this partition
                 if (Numbers.isFinite(price) && Numbers.isFinite(volume) && volume > 0) {
                     double numerator = price * volume;

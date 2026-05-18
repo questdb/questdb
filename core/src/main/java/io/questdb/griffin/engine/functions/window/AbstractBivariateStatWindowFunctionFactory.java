@@ -1695,6 +1695,9 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
             long count;
 
             if (value.isNew()) {
+                if (tombstoneValueIndex >= 0) {
+                    value.putByte(tombstoneValueIndex, (byte) 0);
+                }
                 meanX = 0.0;
                 sumXX = 0.0;
                 meanY = 0.0;

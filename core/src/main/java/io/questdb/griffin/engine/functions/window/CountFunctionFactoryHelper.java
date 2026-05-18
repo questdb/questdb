@@ -503,6 +503,9 @@ public class CountFunctionFactoryHelper {
             long timestamp = record.getTimestamp(timestampIndex);
 
             if (mapValue.isNew()) {
+                if (tombstoneValueIndex >= 0) {
+                    mapValue.putByte(tombstoneValueIndex, (byte) 0);
+                }
                 capacity = initialBufferSize;
                 startOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
                 firstIdx = 0;
@@ -918,6 +921,9 @@ public class CountFunctionFactoryHelper {
             boolean isNotNull = isRecordNotNull.isNotNull(arg, record);
 
             if (value.isNew()) {
+                if (tombstoneValueIndex >= 0) {
+                    value.putByte(tombstoneValueIndex, (byte) 0);
+                }
                 loIdx = 0;
                 final int freeN = freeList.size();
                 if (freeN > 0) {
@@ -1605,6 +1611,8 @@ public class CountFunctionFactoryHelper {
             long count = 0;
             if (!value.isNew()) {
                 count = value.getLong(0);
+            } else if (tombstoneValueIndex >= 0) {
+                value.putByte(tombstoneValueIndex, (byte) 0);
             }
             if (isRecordNotNull.isNotNull(arg, record)) {
                 count++;

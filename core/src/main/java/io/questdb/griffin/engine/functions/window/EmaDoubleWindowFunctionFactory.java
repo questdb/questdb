@@ -344,6 +344,9 @@ public class EmaDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
             double d = arg.getDouble(record);
 
             if (value.isNew()) {
+                if (tombstoneValueIndex >= 0) {
+                    value.putByte(tombstoneValueIndex, (byte) 0);
+                }
                 // First value for this partition
                 if (Numbers.isFinite(d)) {
                     value.putDouble(0, d);
@@ -616,6 +619,9 @@ public class EmaDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
             long timestamp = record.getTimestamp(timestampIndex);
 
             if (value.isNew()) {
+                if (tombstoneValueIndex >= 0) {
+                    value.putByte(tombstoneValueIndex, (byte) 0);
+                }
                 // First value for this partition
                 if (Numbers.isFinite(d)) {
                     value.putDouble(0, d);

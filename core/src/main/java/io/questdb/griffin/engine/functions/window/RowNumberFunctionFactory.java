@@ -216,6 +216,9 @@ public class RowNumberFunctionFactory implements FunctionFactory {
             MapValue value = key.createValue();
             long x;
             if (value.isNew()) {
+                if (tombstoneValueIndex >= 0) {
+                    value.putByte(tombstoneValueIndex, (byte) 0);
+                }
                 x = 0;
             } else {
                 x = value.getLong(ROW_NUMBER_VALUE_INDEX);

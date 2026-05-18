@@ -1438,6 +1438,9 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
             long count;
 
             if (value.isNew()) {
+                if (tombstoneValueIndex >= 0) {
+                    value.putByte(tombstoneValueIndex, (byte) 0);
+                }
                 mean = 0.0;
                 m2 = 0.0;
                 count = 0;

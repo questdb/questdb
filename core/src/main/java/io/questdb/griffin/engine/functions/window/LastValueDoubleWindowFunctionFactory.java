@@ -711,6 +711,9 @@ public class LastValueDoubleWindowFunctionFactory extends AbstractWindowFunction
             double d = arg.getDouble(record);
 
             if (mapValue.isNew()) {
+                if (tombstoneValueIndex >= 0) {
+                    mapValue.putByte(tombstoneValueIndex, (byte) 0);
+                }
                 capacity = initialBufferSize;
                 startOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
                 firstIdx = 0;
@@ -877,6 +880,9 @@ public class LastValueDoubleWindowFunctionFactory extends AbstractWindowFunction
             double d = arg.getDouble(record);
 
             if (value.isNew()) {
+                if (tombstoneValueIndex >= 0) {
+                    value.putByte(tombstoneValueIndex, (byte) 0);
+                }
                 loIdx = 0;
                 final int freeN = freeList.size();
                 if (freeN > 0) {
@@ -1790,6 +1796,9 @@ public class LastValueDoubleWindowFunctionFactory extends AbstractWindowFunction
             double d = arg.getDouble(record);
 
             if (mapValue.isNew()) {
+                if (tombstoneValueIndex >= 0) {
+                    mapValue.putByte(tombstoneValueIndex, (byte) 0);
+                }
                 capacity = initialBufferSize;
                 startOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
                 firstIdx = 0;
@@ -2186,6 +2195,9 @@ public class LastValueDoubleWindowFunctionFactory extends AbstractWindowFunction
             long startOffset;
             double d = arg.getDouble(record);
             if (value.isNew()) {
+                if (tombstoneValueIndex >= 0) {
+                    value.putByte(tombstoneValueIndex, (byte) 0);
+                }
                 loIdx = 0;
                 final int freeN = freeList.size();
                 if (freeN > 0) {

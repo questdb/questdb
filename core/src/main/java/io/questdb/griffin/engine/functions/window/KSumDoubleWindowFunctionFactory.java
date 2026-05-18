@@ -806,6 +806,9 @@ public class KSumDoubleWindowFunctionFactory extends AbstractWindowFunctionFacto
             double d = arg.getDouble(record);
 
             if (value.isNew()) {
+                if (tombstoneValueIndex >= 0) {
+                    value.putByte(tombstoneValueIndex, (byte) 0);
+                }
                 loIdx = 0;
                 final int freeN = freeList.size();
                 if (freeN > 0) {
@@ -1559,6 +1562,9 @@ public class KSumDoubleWindowFunctionFactory extends AbstractWindowFunctionFacto
             long count;
 
             if (value.isNew()) {
+                if (tombstoneValueIndex >= 0) {
+                    value.putByte(tombstoneValueIndex, (byte) 0);
+                }
                 sum = 0;
                 c = 0;
                 count = 0;

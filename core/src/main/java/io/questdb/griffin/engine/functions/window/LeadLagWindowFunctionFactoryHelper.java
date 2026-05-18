@@ -378,6 +378,12 @@ public class LeadLagWindowFunctionFactoryHelper {
             if (mapValue.isNew()) {
                 startOffset = memory.appendAddressFor(offset * RING_SLOT_BYTES) - memory.getPageAddress(0);
                 firstIdx = 0;
+                // Live mode keeps a tombstone byte in the value slots; write it
+                // explicitly so the two-pass snapshot walk sees the same byte both
+                // times. Maps do not guarantee zeroed value bytes on createValue.
+                if (tombstoneValueIndex >= 0) {
+                    mapValue.putByte(tombstoneValueIndex, (byte) 0);
+                }
             } else {
                 startOffset = mapValue.getLong(0);
                 firstIdx = mapValue.getLong(1);

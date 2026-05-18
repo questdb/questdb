@@ -317,12 +317,16 @@ public class LiveViewWindow implements QuietCloseable {
         boolean isNewPartition = value.isNew();
 
         if (isNewPartition) {
-            // First row for this partition — anchor map didn't carry it yet. Functions
+            // First row for this partition - anchor map didn't carry it yet. Functions
             // either have no per-partition state yet (in which case resetPartition is
-            // a no-op) or have stale state from a prior partition that was evicted —
-            // resetting it is the safe default.
-            // Tombstone is implicitly 0 (the Map zero-fills new value bytes); the new
-            // partition is alive by definition since this row is creating it.
+            // a no-op) or have stale state from a prior partition that was evicted -
+            // resetting it is the safe default. The new partition is alive by
+            // definition since this row is creating it; write a 0 tombstone slot
+            // explicitly rather than relying on createValue() value-byte zero-fill,
+            // which OrderedMap does not guarantee (Unsafe.realloc / Unsafe.malloc /
+            // clear() can all leave stale bytes in the heap region the new entry
+            // lands on).
+            value.putByte(SLOT_TOMBSTONE, (byte) 0);
             shouldReset = true;
         } else {
             // Visiting an existing partition is evidence the partition is alive again -

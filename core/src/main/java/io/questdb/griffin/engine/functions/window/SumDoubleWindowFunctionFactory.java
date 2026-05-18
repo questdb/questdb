@@ -573,6 +573,9 @@ public class SumDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
             long count;
 
             if (value.isNew()) {
+                if (tombstoneValueIndex >= 0) {
+                    value.putByte(tombstoneValueIndex, (byte) 0);
+                }
                 sum = 0;
                 count = 0;
             } else {

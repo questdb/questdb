@@ -448,6 +448,13 @@ public class RankFunctionFactory extends AbstractWindowFunctionFactory {
             MapKey key = map.withKey();
             key.put(partitionByRecord, partitionBySink);
             MapValue mapValue = key.createValue();
+            // Live mode keeps a tombstone byte alongside the rank slots; write it
+            // explicitly on the isNew branch so the two-pass snapshot walk sees the
+            // same byte both times. Maps do not guarantee zeroed value bytes on
+            // createValue.
+            if (mapValue.isNew() && tombstoneValueIndex >= 0) {
+                mapValue.putByte(tombstoneValueIndex, (byte) 0);
+            }
             long count;
             // count == 0 acts as the implicit "uninitialized" signal — the natural
             // state after createValue() returns a fresh entry, and the state
@@ -545,7 +552,13 @@ public class RankFunctionFactory extends AbstractWindowFunctionFactory {
             // Rank itself doesn't need an explicit clear; the next computeNext writes
             // both slots before they're read.
             mapValue.putLong(chainTypeIndex + 1, 0);
-            if (!mapValue.isNew() && tombstoneValueIndex >= 0 && mapValue.getByte(tombstoneValueIndex) != 1) {
+            if (mapValue.isNew()) {
+                // Fresh entry: pin the tombstone byte to 0 since Maps don't guarantee
+                // zeroed value bytes on createValue.
+                if (tombstoneValueIndex >= 0) {
+                    mapValue.putByte(tombstoneValueIndex, (byte) 0);
+                }
+            } else if (tombstoneValueIndex >= 0 && mapValue.getByte(tombstoneValueIndex) != 1) {
                 mapValue.putByte(tombstoneValueIndex, (byte) 1);
                 tombstoneCount++;
             }

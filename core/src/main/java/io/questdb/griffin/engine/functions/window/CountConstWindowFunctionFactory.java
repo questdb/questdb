@@ -382,6 +382,8 @@ public class CountConstWindowFunctionFactory extends AbstractWindowFunctionFacto
             long currentSize = 0;
             if (!value.isNew()) {
                 currentSize = value.getLong(0);
+            } else if (tombstoneValueIndex >= 0) {
+                value.putByte(tombstoneValueIndex, (byte) 0);
             }
             currentSize++;
             this.count = currentSize + rowsHi;

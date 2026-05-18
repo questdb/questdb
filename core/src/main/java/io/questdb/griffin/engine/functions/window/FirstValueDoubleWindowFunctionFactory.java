@@ -633,6 +633,9 @@ public class FirstValueDoubleWindowFunctionFactory extends AbstractWindowFunctio
             long timestamp = record.getTimestamp(timestampIndex);
 
             if (mapValue.isNew()) {
+                if (tombstoneValueIndex >= 0) {
+                    mapValue.putByte(tombstoneValueIndex, (byte) 0);
+                }
                 double d = arg.getDouble(record);
                 capacity = initialBufferSize;
                 startOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
@@ -848,6 +851,9 @@ public class FirstValueDoubleWindowFunctionFactory extends AbstractWindowFunctio
             long count = 0;
 
             if (value.isNew()) {
+                if (tombstoneValueIndex >= 0) {
+                    value.putByte(tombstoneValueIndex, (byte) 0);
+                }
                 loIdx = 0;
                 final int freeN = freeList.size();
                 if (freeN > 0) {
@@ -1207,6 +1213,9 @@ public class FirstValueDoubleWindowFunctionFactory extends AbstractWindowFunctio
                 double d = arg.getDouble(record);
                 if (Numbers.isFinite(d)) {
                     mapValue = key.createValue();
+                    if (tombstoneValueIndex >= 0) {
+                        mapValue.putByte(tombstoneValueIndex, (byte) 0);
+                    }
                     mapValue.putDouble(0, d);
                     this.value = d;
                 } else {
@@ -1483,6 +1492,9 @@ public class FirstValueDoubleWindowFunctionFactory extends AbstractWindowFunctio
             double d = arg.getDouble(record);
 
             if (mapValue.isNew()) {
+                if (tombstoneValueIndex >= 0) {
+                    mapValue.putByte(tombstoneValueIndex, (byte) 0);
+                }
                 capacity = initialBufferSize;
                 startOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
                 firstIdx = 0;
@@ -1954,6 +1966,9 @@ public class FirstValueDoubleWindowFunctionFactory extends AbstractWindowFunctio
             double d = arg.getDouble(record);
 
             if (value.isNew()) {
+                if (tombstoneValueIndex >= 0) {
+                    value.putByte(tombstoneValueIndex, (byte) 0);
+                }
                 loIdx = 0;
                 count = 0;
                 final int freeN = freeList.size();
@@ -2595,6 +2610,9 @@ public class FirstValueDoubleWindowFunctionFactory extends AbstractWindowFunctio
             key.put(partitionByRecord, partitionBySink);
             MapValue mapValue = key.createValue();
 
+            if (mapValue.isNew() && tombstoneValueIndex >= 0) {
+                mapValue.putByte(tombstoneValueIndex, (byte) 0);
+            }
             if (mapValue.isNew() || mapValue.getByte(1) == 0) {
                 double d = arg.getDouble(record);
                 mapValue.putDouble(0, d);
@@ -2650,7 +2668,11 @@ public class FirstValueDoubleWindowFunctionFactory extends AbstractWindowFunctio
             key.put(partitionByRecord, partitionBySink);
             MapValue mapValue = key.createValue();
             mapValue.putByte(1, (byte) 0);
-            if (!mapValue.isNew() && tombstoneValueIndex >= 0 && mapValue.getByte(tombstoneValueIndex) != 1) {
+            if (mapValue.isNew()) {
+                if (tombstoneValueIndex >= 0) {
+                    mapValue.putByte(tombstoneValueIndex, (byte) 0);
+                }
+            } else if (tombstoneValueIndex >= 0 && mapValue.getByte(tombstoneValueIndex) != 1) {
                 mapValue.putByte(tombstoneValueIndex, (byte) 1);
                 tombstoneCount++;
             }
