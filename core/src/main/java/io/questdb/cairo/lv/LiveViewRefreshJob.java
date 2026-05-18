@@ -638,8 +638,14 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         }
 
         if (advanceTo > instance.getLastProcessedSeqTxn()) {
-            // Advance the in-memory watermarks first; both advanceLiveViewConsumedSeqTxn
-            // and persistState below read these to write a single, consistent _lv.s.
+            // Advance the in-memory lastProcessedSeqTxn before apply / persist.
+            // A stranded LV WAL block (commit succeeded, apply or persist
+            // failed) cannot drive a duplicate emit because the next cycle
+            // reads the advanced in-memory value and resumes from
+            // advanceTo + 1. testRefreshPersistFailureKeepsInMemoryAdvanced
+            // pins this invariant. The remaining restart-edge-case where
+            // _lv.s is stale on the next process boot is covered by the
+            // forward-scan recovery in LiveViewRecovery.
             instance.setLastProcessedSeqTxn(advanceTo);
             // appliedWatermark mirrors lastProcessed for now; sub-FLUSH-cycle freshness via
             // the in-mem tier is parked, so the seam_ts is anchored at the WAL commit boundary.
