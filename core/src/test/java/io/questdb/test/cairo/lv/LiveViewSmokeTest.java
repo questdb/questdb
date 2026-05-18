@@ -5934,4 +5934,24 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
             }
         });
     }
+
+    @Test
+    public void testRejectDateTruncFoldedConstantAnchor() throws Exception {
+        // A deeper constant fold than the 1+2+3 arithmetic case: every arg of
+        // the top-level call is itself a constant, so the function parser
+        // collapses the whole tree to a single ConstantFunction and the
+        // existing top-level isConstant() check fires.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            try {
+                execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                        "SELECT ts, x, sum(x) OVER w AS s FROM base " +
+                        "WINDOW w AS (PARTITION BY x ORDER BY ts " +
+                        "ANCHOR EXPRESSION date_trunc('day', '2025-01-01'::timestamp))");
+                Assert.fail("expected folded-constant anchor reject");
+            } catch (SqlException e) {
+                Assert.assertTrue(e.getMessage(), e.getMessage().contains("must not be a constant"));
+            }
+        });
+    }
 }
