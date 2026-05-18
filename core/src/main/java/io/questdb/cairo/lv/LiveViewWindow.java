@@ -52,7 +52,6 @@ import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.QuietCloseable;
 import org.jetbrains.annotations.NotNull;
-import org.jetbrains.annotations.TestOnly;
 
 /**
  * Per-row driver that wires a named WINDOW's ANCHOR clause to live-view window
@@ -101,12 +100,11 @@ public class LiveViewWindow implements QuietCloseable {
     private final int anchorValueType;
     private final CairoConfiguration cairoConfiguration;
     // Cached snapshot of cairo.live.view.partition.compact.threshold so the
-    // future auto-trigger does not chase the configuration on every row.
-    // The auto-trigger inside processRow is deferred to Phase 2b: dropping
-    // an anchor-map entry leaves the corresponding per-function-map state
-    // dangling, and the function maps grow tombstone bits only as each
-    // group's 2b migration lands. Until then, compact() exists for tests
-    // and direct invocation but is not wired into the per-row path.
+    // per-row auto-trigger inside processRow does not chase the configuration
+    // on every call. Auto-trigger fires whenever tombstoneCount exceeds this
+    // value, dispatching compactPartitionMap() to every WindowFunction so the
+    // anchor map and the per-function partition maps shed their tombstoned
+    // entries in lockstep.
     private final int compactThreshold;
     private final ObjList<WindowFunction> functions;
     // Static reference to the anchor map's key-column types. Held so compact()
@@ -350,6 +348,14 @@ public class LiveViewWindow implements QuietCloseable {
                 tombstoneCount++;
             }
         }
+        // Auto-trigger lives at the end of processRow so all map mutations above
+        // observe the still-current MapValue handle. compact() rebuilds the
+        // anchor map (and each per-function partition map) in a fresh allocation
+        // and swaps references, invalidating the local `value` reference, so it
+        // must be the last operation on this row.
+        if (tombstoneCount > compactThreshold) {
+            compact();
+        }
     }
 
     /**
@@ -513,16 +519,16 @@ public class LiveViewWindow implements QuietCloseable {
      * {@link Map} with the same key shape, walks the existing map's cursor,
      * copies non-tombstoned entries via {@code MapRecord.copyToKey} /
      * {@code copyValue}, then swaps the reference and frees the old map.
+     * Dispatches {@link WindowFunction#compactPartitionMap()} to every
+     * function so the per-function partition maps shed their own tombstoned
+     * entries in the same sweep.
      * <p>
-     * Not auto-triggered in Phase 2a: dropping an anchor-map entry leaves the
-     * corresponding per-function-map state dangling, and a future row for the
-     * dropped partition would re-clear the function-map state via
-     * {@code resetPartition}. The auto-trigger lands in Phase 2b once each
-     * function migration adds tombstone bookkeeping to its own Map. The
-     * threshold field is preallocated to let that wiring land without a
-     * config-shape change.
+     * Wired into {@link #processRow(Record)} via the auto-trigger: when
+     * {@link #tombstoneCount} exceeds the configured
+     * {@code cairo.live.view.partition.compact.threshold} the next row pays
+     * for the rebuild. The method also remains directly callable from
+     * tests and from any external orchestrator that wants to force a sweep.
      */
-    @TestOnly
     public void compact() {
         Map newMap = MapFactory.createOrderedMap(cairoConfiguration, partitionKeyTypes, anchorMapValueTypes());
         Map oldMap = anchorMap;
@@ -548,12 +554,9 @@ public class LiveViewWindow implements QuietCloseable {
         }
         Misc.free(oldMap);
         // Dispatch through every function so per-function maps shed their own
-        // tombstoned entries. Functions that don't track tombstones (the
-        // not-yet-migrated families) keep the default no-op and their maps
-        // stay unchanged - which is why this method stays @TestOnly until 2b.6
-        // closes the last migration. Auto-trigger from processRow would
-        // corrupt the unmigrated functions' state by dropping anchor entries
-        // their maps still reference.
+        // tombstoned entries in lockstep with the anchor map. Phase 2c.1
+        // retrofitted the previously unmigrated Group #2 functions with
+        // tombstone slots, so every function in a V1 LV now participates.
         for (int i = 0, n = functions.size(); i < n; i++) {
             functions.getQuick(i).compactPartitionMap();
         }
