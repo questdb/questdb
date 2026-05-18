@@ -159,6 +159,97 @@ public class MatViewRefreshJobClusterTest {
     }
 
     @Test
+    public void testCapStepOverflowingBucketArithmetic() {
+        // A pathological huge interval (~290 years in micros) should still
+        // produce a sane cap, not overflow.
+        final long farFuture = Long.MAX_VALUE / 4;
+        final LongList intervals = list(0, farFuture);
+        final long step = MatViewRefreshJob.capStepByNarrowestInterval(intervals, 1_000_000, 1_000);
+        // Width should be huge -> step stays at the input value (1000).
+        Assert.assertEquals(1_000L, step);
+    }
+
+    @Test
+    public void testCapStepWithNegativeStep() {
+        // A negative step (shouldn't happen, but be defensive) should not
+        // be widened by the cap.
+        final LongList intervals = list(0, 100);
+        Assert.assertEquals(-5L, MatViewRefreshJob.capStepByNarrowestInterval(intervals, 10, -5));
+    }
+
+    @Test
+    public void testClusterIntervalsAtLongMaxValue() {
+        // Intervals at the extremes of the long range. The gap arithmetic
+        // (lo - prevHi) could overflow if not careful; verify the function
+        // remains sane.
+        final LongList intervals = list(
+                Long.MIN_VALUE, Long.MIN_VALUE + 1,
+                Long.MAX_VALUE - 1, Long.MAX_VALUE
+        );
+        // gap = MAX-1 - (MIN+1) which overflows; the function still produces
+        // a deterministic answer (either split or merge -- contract is "no
+        // crash", not "specific result"). Just verify it doesn't throw.
+        final int clusters = MatViewRefreshJob.clusterIntervals(intervals, 1_000_000L, 8);
+        Assert.assertTrue("Clusters should be 1 or 2; got: " + clusters, clusters == 1 || clusters == 2);
+        Assert.assertEquals("List size must match cluster count * 2", clusters * 2, intervals.size());
+    }
+
+    @Test
+    public void testClusterIntervalsManySmallIntervalsHitCap() {
+        // 100 disjoint point intervals, threshold = 0 so nothing merges by
+        // cost. maxClusters = 8 forces merging.
+        final LongList intervals = new LongList(200);
+        for (long i = 0; i < 100; i++) {
+            intervals.add(i * 1000);
+            intervals.add(i * 1000);
+        }
+        final int clusters = MatViewRefreshJob.clusterIntervals(intervals, 0, 8);
+        Assert.assertEquals(8, clusters);
+        // Last cluster must extend to include the last point interval.
+        Assert.assertEquals(99 * 1000, intervals.getQuick(intervals.size() - 1));
+    }
+
+    @Test
+    public void testClusterIntervalsPointIntervalRunsAtMaxBuckets() {
+        // 200 point intervals at the cacheCapacity limit. Threshold = 1
+        // (don't merge), maxClusters = 32 (force merge of overflow).
+        final LongList intervals = new LongList(400);
+        for (long i = 0; i < 200; i++) {
+            intervals.add(i * 10_000_000L);
+            intervals.add(i * 10_000_000L);
+        }
+        final int clusters = MatViewRefreshJob.clusterIntervals(intervals, 1, 32);
+        Assert.assertEquals(32, clusters);
+        Assert.assertEquals(64, intervals.size());
+        // First cluster is the first interval untouched.
+        Assert.assertEquals(0L, intervals.getQuick(0));
+        Assert.assertEquals(0L, intervals.getQuick(1));
+        // Last cluster spans from the 32nd interval start to the last point.
+        Assert.assertEquals(31L * 10_000_000L, intervals.getQuick(intervals.size() - 2));
+        Assert.assertEquals(199L * 10_000_000L, intervals.getQuick(intervals.size() - 1));
+    }
+
+    @Test
+    public void testClusterIntervalsWithZeroWidthIntervals() {
+        // All point intervals (lo == hi) -- the most common case for
+        // single-row WAL transactions. Should merge or split based purely
+        // on the gap.
+        final LongList intervals = list(
+                100, 100,
+                105, 105,   // gap 5
+                200, 200,   // gap 95
+                201, 201    // gap 1
+        );
+        // Threshold = 10 -> merge gaps of 5 and 1; split gap of 95.
+        final int clusters = MatViewRefreshJob.clusterIntervals(intervals, 10, 8);
+        Assert.assertEquals(2, clusters);
+        Assert.assertEquals(100L, intervals.getQuick(0));
+        Assert.assertEquals(105L, intervals.getQuick(1));
+        Assert.assertEquals(200L, intervals.getQuick(2));
+        Assert.assertEquals(201L, intervals.getQuick(3));
+    }
+
+    @Test
     public void testClusterNegativeThresholdTreatedAsZero() {
         // Negative threshold should never merge non-overlapping intervals.
         final LongList intervals = list(0, 10, 11, 20);

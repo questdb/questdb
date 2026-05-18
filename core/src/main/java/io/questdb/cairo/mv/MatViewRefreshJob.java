@@ -187,12 +187,22 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             final long lo = intervals.getQuick(read);
             final long hi = intervals.getQuick(read + 1);
             assert lo >= prevHi : "intervals must be sorted and disjoint";
-            final long gapTsUnits = lo - prevHi;
-            // Merge if the gap fits under the cost threshold, or if we've
-            // already emitted maxClusters clusters (the safety cap prevents
-            // pathological refreshes from producing hundreds of tiny commits).
-            final boolean mergeable = gapTsUnits < gapThresholdTsUnits
-                    || (write / 2) >= maxClusters;
+            // Compute gap via subtractExact; a positive gap that overflows is
+            // by definition larger than any possible threshold, so we treat
+            // it as not mergeable.
+            boolean mergeable;
+            try {
+                final long gapTsUnits = Math.subtractExact(lo, prevHi);
+                mergeable = gapTsUnits < gapThresholdTsUnits;
+            } catch (ArithmeticException overflow) {
+                mergeable = false;
+            }
+            // Force a merge if we've already produced maxClusters clusters --
+            // the safety cap prevents pathological refreshes from producing
+            // hundreds of tiny commits.
+            if (!mergeable && (write / 2) >= maxClusters) {
+                mergeable = true;
+            }
             if (mergeable) {
                 if (hi > prevHi) {
                     intervals.setQuick(write - 1, hi);
@@ -226,8 +236,19 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         }
         long narrowestBuckets = Long.MAX_VALUE;
         for (int i = 0, n = intervals.size(); i < n; i += 2) {
-            final long widthMicros = intervals.getQuick(i + 1) - intervals.getQuick(i);
-            final long widthBuckets = Math.max(1, widthMicros / approxBucketSize + 1);
+            final long widthTsUnits;
+            try {
+                widthTsUnits = Math.subtractExact(intervals.getQuick(i + 1), intervals.getQuick(i));
+            } catch (ArithmeticException overflow) {
+                // Pathological interval spans almost the full long range; the
+                // step cap can't say anything useful, leave it alone.
+                continue;
+            }
+            if (widthTsUnits < 0) {
+                // Malformed (hi < lo) -- be defensive, skip.
+                continue;
+            }
+            final long widthBuckets = Math.max(1, widthTsUnits / approxBucketSize + 1);
             if (widthBuckets < narrowestBuckets) {
                 narrowestBuckets = widthBuckets;
             }
