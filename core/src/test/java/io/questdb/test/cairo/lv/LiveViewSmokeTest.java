@@ -162,7 +162,10 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                 execute(sql);
                 Assert.fail("expected live-on-live reject");
             } catch (SqlException e) {
-                Assert.assertTrue(e.getMessage(), e.getMessage().contains("not allowed as base tables"));
+                Assert.assertTrue(
+                        e.getMessage(),
+                        e.getMessage().contains("live views are not allowed as base tables in V1")
+                );
                 // Position must point at the base table name, not the view
                 // name.
                 Assert.assertEquals(
@@ -5783,7 +5786,28 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                         "WINDOW w AS (PARTITION BY x ORDER BY ts ANCHOR EXPRESSION rnd_long())");
                 Assert.fail("expected random anchor reject");
             } catch (SqlException e) {
-                Assert.assertTrue(e.getMessage(), e.getMessage().contains("must be deterministic"));
+                Assert.assertTrue(
+                        e.getMessage(),
+                        e.getMessage().contains("ANCHOR EXPRESSION must be deterministic; rnd_long() is not allowed")
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testRejectAnchorWithBindVariable() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            try {
+                execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                        "SELECT ts, x, sum(x) OVER w AS s FROM base " +
+                        "WINDOW w AS (PARTITION BY x ORDER BY ts ANCHOR EXPRESSION ts + $1)");
+                Assert.fail("expected bind-variable anchor reject");
+            } catch (SqlException e) {
+                Assert.assertTrue(
+                        e.getMessage(),
+                        e.getMessage().contains("ANCHOR EXPRESSION must not reference bind variables")
+                );
             }
         });
     }
