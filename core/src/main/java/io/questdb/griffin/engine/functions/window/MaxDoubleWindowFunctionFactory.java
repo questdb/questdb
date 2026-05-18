@@ -792,6 +792,16 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                 while (cursor.hasNext()) {
                     MapValue srcValue = record.getValue();
                     if (srcValue.getByte(tombstoneValueIndex) == 1) {
+                        // Reclaim both the primary ring slab and, for the
+                        // bounded variant, the monotonic deque slab so
+                        // future expandRingBuffer calls can reuse them.
+                        // Primary slab: capacity at slot 3, startOffset at
+                        // slot 1. Deque slab (bounded only): capacity at
+                        // slot 6, startOffset at slot 5.
+                        freeList.add(srcValue.getLong(3), srcValue.getLong(1));
+                        if (frameLoBounded) {
+                            dequeFreeList.add(srcValue.getLong(6), srcValue.getLong(5));
+                        }
                         continue;
                     }
                     long srcKeyHash = record.keyHashCode();

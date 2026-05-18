@@ -689,6 +689,12 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                 while (cursor.hasNext()) {
                     MapValue srcValue = record.getValue();
                     if (srcValue.getByte(tombstoneValueIndex) == 1) {
+                        // Reclaim the tombstoned partition's ring slab so
+                        // expandRingBuffer can reuse it on a future grow.
+                        // Slot 4 is the per-partition capacity (bounded
+                        // RANGE rings grow on demand); slot 2 is the start
+                        // offset.
+                        freeList.add(srcValue.getLong(4), srcValue.getLong(2));
                         continue;
                     }
                     long srcKeyHash = record.keyHashCode();

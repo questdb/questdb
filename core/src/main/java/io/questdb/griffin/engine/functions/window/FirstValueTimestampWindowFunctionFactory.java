@@ -2086,6 +2086,12 @@ public class FirstValueTimestampWindowFunctionFactory extends AbstractWindowFunc
                 while (cursor.hasNext()) {
                     MapValue srcValue = record.getValue();
                     if (srcValue.getByte(tombstoneValueIndex) == 1) {
+                        // Reclaim the tombstoned partition's ring slab so
+                        // expandRingBuffer can reuse it on a future grow.
+                        // Slot 3 is the per-partition capacity (bounded
+                        // RANGE rings grow on demand); slot 1 is the start
+                        // offset.
+                        freeList.add(srcValue.getLong(3), srcValue.getLong(1));
                         continue;
                     }
                     long srcKeyHash = record.keyHashCode();
