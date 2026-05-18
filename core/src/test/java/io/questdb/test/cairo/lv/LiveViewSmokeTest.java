@@ -2968,6 +2968,33 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLiveViewsCatalogueColumnOrderMatchesRfc() throws Exception {
+        // RFC 123 §"Catalogue function live_views()": columns appear in the
+        // documented order so clients binding by ordinal see a stable shape.
+        // RFC-listed columns come first; the three head_checkpoint_* columns
+        // trail as Phase 2a debug surface beyond the RFC.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base WHERE x > 0");
+            try {
+                assertSql(
+                        "view_name\tview_table_dir_name\tbase_table_name\tview_sql\tview_status\t"
+                                + "invalidation_reason\tflush_every_interval\tflush_every_interval_unit\t"
+                                + "in_memory_interval\tin_memory_interval_unit\tin_mem_bytes\t"
+                                + "symbol_translation_size\to3_rejected_count\tlag_seqtxn\tlag_micros\t"
+                                + "last_processed_seqtxn\tapplied_watermark\tlv_consumed_seqtxn\t"
+                                + "view_lower_bound_timestamp\twriter_stall_micros\tbackfill_target_seqtxn\t"
+                                + "head_checkpoint_lv_seqtxn\thead_checkpoint_max_ts\thead_checkpoint_state_bytes\n",
+                        "SELECT * FROM live_views() WHERE 1 = 0"
+                );
+            } finally {
+                execute("DROP LIVE VIEW lv");
+            }
+        });
+    }
+
+    @Test
     public void testLiveViewsCatalogueExposesView() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");

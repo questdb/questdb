@@ -51,17 +51,18 @@ import io.questdb.std.ObjList;
 
 /**
  * {@code live_views()} catalogue. Exposes per-view operator state derived from
- * {@link LiveViewInstance}'s in-memory mirror of {@code _lv} + {@code _lv.s},
- * with three head-checkpoint columns (Phase 2a.10) that stay at
- * {@code LONG_NULL} / 0 until the flush-cycle write hook lands in Phase 2a.4.
+ * {@link LiveViewInstance}'s in-memory mirror of {@code _lv} + {@code _lv.s}.
  * <p>
- * Still omitted vs. the RFC's V1 set: backfill columns (BACKFILL is rejected at
- * CREATE), {@code symbol_translation_size} (no T table yet), and
- * {@code o3_rejected_count} (O3 rejects land in a later phase).
- * {@code last_processed_seqtxn} and {@code applied_watermark} are surfaced as
- * debug columns beyond the RFC's V1 set; both are useful for operators tracking
- * refresh-worker progress before the corresponding {@code lvConsumed} flow
- * catches up.
+ * Column order matches RFC 123 §"Catalogue function {@code live_views()}".
+ * {@code symbol_translation_size}, {@code o3_rejected_count}, and
+ * {@code backfill_target_seqtxn} are wired as stable defaults (zero for the
+ * count columns, {@code LONG_NULL} for the seqtxn) until their producing
+ * subsystems land in later phases. {@code last_processed_seqtxn} and
+ * {@code applied_watermark} are surfaced as debug columns beyond the RFC's
+ * V1 set; both are useful for operators tracking refresh-worker progress
+ * before the corresponding {@code lvConsumed} flow catches up. Three
+ * head-checkpoint columns trail the RFC column set as additional debug
+ * surface for Phase 2a head checkpoints.
  */
 public class LiveViewsFunctionFactory implements FunctionFactory {
 
@@ -98,27 +99,30 @@ public class LiveViewsFunctionFactory implements FunctionFactory {
     }
 
     private static class LiveViewsCursorFactory implements RecordCursorFactory {
-        private static final int COLUMN_APPLIED_WATERMARK = 14;
+        private static final int COLUMN_APPLIED_WATERMARK = 16;
+        private static final int COLUMN_BACKFILL_TARGET_SEQTXN = 20;
         private static final int COLUMN_BASE_TABLE_NAME = 2;
-        private static final int COLUMN_FLUSH_EVERY_INTERVAL = 5;
-        private static final int COLUMN_FLUSH_EVERY_INTERVAL_UNIT = 6;
-        private static final int COLUMN_HEAD_CHECKPOINT_LV_SEQTXN = 18;
-        private static final int COLUMN_HEAD_CHECKPOINT_MAX_TS = 19;
-        private static final int COLUMN_HEAD_CHECKPOINT_STATE_BYTES = 20;
-        private static final int COLUMN_INVALIDATION_REASON = 4;
-        private static final int COLUMN_IN_MEMORY_INTERVAL = 7;
-        private static final int COLUMN_IN_MEMORY_INTERVAL_UNIT = 8;
-        private static final int COLUMN_IN_MEM_BYTES = 9;
-        private static final int COLUMN_LAG_MICROS = 12;
-        private static final int COLUMN_LAG_SEQTXN = 11;
-        private static final int COLUMN_LAST_PROCESSED_SEQTXN = 13;
-        private static final int COLUMN_LV_CONSUMED_SEQTXN = 15;
-        private static final int COLUMN_VIEW_LOWER_BOUND_TIMESTAMP = 16;
+        private static final int COLUMN_FLUSH_EVERY_INTERVAL = 6;
+        private static final int COLUMN_FLUSH_EVERY_INTERVAL_UNIT = 7;
+        private static final int COLUMN_HEAD_CHECKPOINT_LV_SEQTXN = 21;
+        private static final int COLUMN_HEAD_CHECKPOINT_MAX_TS = 22;
+        private static final int COLUMN_HEAD_CHECKPOINT_STATE_BYTES = 23;
+        private static final int COLUMN_INVALIDATION_REASON = 5;
+        private static final int COLUMN_IN_MEMORY_INTERVAL = 8;
+        private static final int COLUMN_IN_MEMORY_INTERVAL_UNIT = 9;
+        private static final int COLUMN_IN_MEM_BYTES = 10;
+        private static final int COLUMN_LAG_MICROS = 14;
+        private static final int COLUMN_LAG_SEQTXN = 13;
+        private static final int COLUMN_LAST_PROCESSED_SEQTXN = 15;
+        private static final int COLUMN_LV_CONSUMED_SEQTXN = 17;
+        private static final int COLUMN_O3_REJECTED_COUNT = 12;
+        private static final int COLUMN_SYMBOL_TRANSLATION_SIZE = 11;
+        private static final int COLUMN_VIEW_LOWER_BOUND_TIMESTAMP = 18;
         private static final int COLUMN_VIEW_NAME = 0;
-        private static final int COLUMN_VIEW_SQL = 10;
-        private static final int COLUMN_VIEW_STATUS = 3;
+        private static final int COLUMN_VIEW_SQL = 3;
+        private static final int COLUMN_VIEW_STATUS = 4;
         private static final int COLUMN_VIEW_TABLE_DIR_NAME = 1;
-        private static final int COLUMN_WRITER_STALL_MICROS = 17;
+        private static final int COLUMN_WRITER_STALL_MICROS = 19;
         private static final RecordMetadata METADATA;
         private final LiveViewsListCursor cursor = new LiveViewsListCursor();
 
@@ -264,6 +268,13 @@ public class LiveViewsFunctionFactory implements FunctionFactory {
                             long nowUs = engine.getConfiguration().getMicrosecondClock().getTicks();
                             yield Math.max(0, nowUs - stallStart);
                         }
+                        // RFC 123 V1: BACKFILL is rejected at CREATE, so the target seqtxn
+                        // never gets populated; surface LONG_NULL until Phase 3 lands.
+                        case COLUMN_BACKFILL_TARGET_SEQTXN -> Numbers.LONG_NULL;
+                        // RFC 123 V1: the per-view symbol-id translation table T and the
+                        // O3-rejected-row counter land in later phases; surface zero so the
+                        // catalogue column shape is stable for clients.
+                        case COLUMN_SYMBOL_TRANSLATION_SIZE, COLUMN_O3_REJECTED_COUNT -> 0L;
                         default -> 0;
                     };
                 }
@@ -306,24 +317,27 @@ public class LiveViewsFunctionFactory implements FunctionFactory {
             metadata.add(new TableColumnMetadata("view_name", ColumnType.STRING));                          // 0
             metadata.add(new TableColumnMetadata("view_table_dir_name", ColumnType.STRING));                // 1
             metadata.add(new TableColumnMetadata("base_table_name", ColumnType.STRING));                    // 2
-            metadata.add(new TableColumnMetadata("view_status", ColumnType.STRING));                        // 3
-            metadata.add(new TableColumnMetadata("invalidation_reason", ColumnType.STRING));                // 4
-            metadata.add(new TableColumnMetadata("flush_every_interval", ColumnType.LONG));                 // 5
-            metadata.add(new TableColumnMetadata("flush_every_interval_unit", ColumnType.STRING));          // 6
-            metadata.add(new TableColumnMetadata("in_memory_interval", ColumnType.LONG));                   // 7
-            metadata.add(new TableColumnMetadata("in_memory_interval_unit", ColumnType.STRING));            // 8
-            metadata.add(new TableColumnMetadata("in_mem_bytes", ColumnType.LONG));                         // 9
-            metadata.add(new TableColumnMetadata("view_sql", ColumnType.STRING));                           // 10
-            metadata.add(new TableColumnMetadata("lag_seqtxn", ColumnType.LONG));                           // 11
-            metadata.add(new TableColumnMetadata("lag_micros", ColumnType.LONG));                           // 12
-            metadata.add(new TableColumnMetadata("last_processed_seqtxn", ColumnType.LONG));                // 13
-            metadata.add(new TableColumnMetadata("applied_watermark", ColumnType.LONG));                    // 14
-            metadata.add(new TableColumnMetadata("lv_consumed_seqtxn", ColumnType.LONG));                   // 15
-            metadata.add(new TableColumnMetadata("view_lower_bound_timestamp", ColumnType.TIMESTAMP_MICRO));// 16
-            metadata.add(new TableColumnMetadata("writer_stall_micros", ColumnType.LONG));                  // 17
-            metadata.add(new TableColumnMetadata("head_checkpoint_lv_seqtxn", ColumnType.LONG));            // 18
-            metadata.add(new TableColumnMetadata("head_checkpoint_max_ts", ColumnType.TIMESTAMP_MICRO));    // 19
-            metadata.add(new TableColumnMetadata("head_checkpoint_state_bytes", ColumnType.LONG));          // 20
+            metadata.add(new TableColumnMetadata("view_sql", ColumnType.STRING));                           // 3
+            metadata.add(new TableColumnMetadata("view_status", ColumnType.STRING));                        // 4
+            metadata.add(new TableColumnMetadata("invalidation_reason", ColumnType.STRING));                // 5
+            metadata.add(new TableColumnMetadata("flush_every_interval", ColumnType.LONG));                 // 6
+            metadata.add(new TableColumnMetadata("flush_every_interval_unit", ColumnType.STRING));          // 7
+            metadata.add(new TableColumnMetadata("in_memory_interval", ColumnType.LONG));                   // 8
+            metadata.add(new TableColumnMetadata("in_memory_interval_unit", ColumnType.STRING));            // 9
+            metadata.add(new TableColumnMetadata("in_mem_bytes", ColumnType.LONG));                         // 10
+            metadata.add(new TableColumnMetadata("symbol_translation_size", ColumnType.LONG));              // 11
+            metadata.add(new TableColumnMetadata("o3_rejected_count", ColumnType.LONG));                    // 12
+            metadata.add(new TableColumnMetadata("lag_seqtxn", ColumnType.LONG));                           // 13
+            metadata.add(new TableColumnMetadata("lag_micros", ColumnType.LONG));                           // 14
+            metadata.add(new TableColumnMetadata("last_processed_seqtxn", ColumnType.LONG));                // 15
+            metadata.add(new TableColumnMetadata("applied_watermark", ColumnType.LONG));                    // 16
+            metadata.add(new TableColumnMetadata("lv_consumed_seqtxn", ColumnType.LONG));                   // 17
+            metadata.add(new TableColumnMetadata("view_lower_bound_timestamp", ColumnType.TIMESTAMP_MICRO));// 18
+            metadata.add(new TableColumnMetadata("writer_stall_micros", ColumnType.LONG));                  // 19
+            metadata.add(new TableColumnMetadata("backfill_target_seqtxn", ColumnType.LONG));               // 20
+            metadata.add(new TableColumnMetadata("head_checkpoint_lv_seqtxn", ColumnType.LONG));            // 21
+            metadata.add(new TableColumnMetadata("head_checkpoint_max_ts", ColumnType.TIMESTAMP_MICRO));    // 22
+            metadata.add(new TableColumnMetadata("head_checkpoint_state_bytes", ColumnType.LONG));          // 23
             METADATA = metadata;
         }
     }
