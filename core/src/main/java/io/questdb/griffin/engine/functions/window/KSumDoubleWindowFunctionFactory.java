@@ -716,6 +716,13 @@ public class KSumDoubleWindowFunctionFactory extends AbstractWindowFunctionFacto
         private final boolean frameIncludesCurrentValue;
         private final boolean frameLoBounded;
         private final int frameSize;
+        // (capacity, startOffset) pairs marking free space within memory. Each
+        // entry is a ring slab evicted from a tombstoned partition by
+        // compactPartitionMap. computeNext's isNew branch pops the last pair
+        // before falling back to memory.appendAddressFor. The capacity slot
+        // mirrors the bounded-RANGE freeList convention; bounded ROWS slabs
+        // are always bufferSize doubles long.
+        private final LongList freeList = new LongList();
         private final MemoryARW memory;
         private final CairoConfiguration configuration;
         private final ArrayColumnTypes keyColumnTypes;
@@ -774,6 +781,7 @@ public class KSumDoubleWindowFunctionFactory extends AbstractWindowFunctionFacto
         public void close() {
             super.close();
             memory.close();
+            freeList.clear();
         }
 
         @Override
@@ -799,7 +807,16 @@ public class KSumDoubleWindowFunctionFactory extends AbstractWindowFunctionFacto
 
             if (value.isNew()) {
                 loIdx = 0;
-                startOffset = memory.appendAddressFor((long) bufferSize * Double.BYTES) - memory.getPageAddress(0);
+                final int freeN = freeList.size();
+                if (freeN > 0) {
+                    // Reuse a slab reclaimed from a tombstoned partition. The
+                    // capacity slot is always bufferSize here, so only the
+                    // startOffset matters.
+                    startOffset = freeList.getQuick(freeN - 1);
+                    freeList.setPos(freeN - 2);
+                } else {
+                    startOffset = memory.appendAddressFor((long) bufferSize * Double.BYTES) - memory.getPageAddress(0);
+                }
                 if (frameIncludesCurrentValue && Numbers.isFinite(d)) {
                     sum = d;
                     c = 0.0;
@@ -873,6 +890,10 @@ public class KSumDoubleWindowFunctionFactory extends AbstractWindowFunctionFacto
                 while (cursor.hasNext()) {
                     MapValue srcValue = record.getValue();
                     if (srcValue.getByte(tombstoneValueIndex) == 1) {
+                        // Reclaim the tombstoned partition's ring slab so a
+                        // future isNew partition can reuse it instead of
+                        // growing memory.
+                        freeList.add((long) bufferSize, srcValue.getLong(4));
                         continue;
                     }
                     long srcKeyHash = record.keyHashCode();
@@ -919,6 +940,7 @@ public class KSumDoubleWindowFunctionFactory extends AbstractWindowFunctionFacto
         @Override
         public void reopen() {
             super.reopen();
+            freeList.clear();
             tombstoneCount = 0;
         }
 
@@ -926,6 +948,7 @@ public class KSumDoubleWindowFunctionFactory extends AbstractWindowFunctionFacto
         public void reset() {
             super.reset();
             memory.close();
+            freeList.clear();
             tombstoneCount = 0;
         }
 
@@ -957,6 +980,7 @@ public class KSumDoubleWindowFunctionFactory extends AbstractWindowFunctionFacto
         public void restore(MemoryR source, int formatVersion) {
             map.clear();
             memory.truncate();
+            freeList.clear();
             tombstoneCount = 0;
             long srcOffset = 0;
             final long partitionCount = source.getLong(srcOffset);
@@ -1066,6 +1090,7 @@ public class KSumDoubleWindowFunctionFactory extends AbstractWindowFunctionFacto
         public void toTop() {
             super.toTop();
             memory.truncate();
+            freeList.clear();
             tombstoneCount = 0;
         }
     }
