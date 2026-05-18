@@ -443,6 +443,19 @@ public class LeadLagWindowFunctionFactoryHelper {
         }
 
         @Override
+        public void initPartitionBy(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            super.initPartitionBy(symbolTableSource, executionContext);
+            // The third arg of lag (defaultValue) can be a non-constant
+            // function over base columns. Each incremental refresh hands the
+            // function a fresh WAL-segment-scoped SymbolTableSource, so the
+            // cached column / symbol bindings inside defaultValue must rebind
+            // every cycle. The full init path runs once at first compile only.
+            if (defaultValue != null) {
+                defaultValue.init(symbolTableSource, executionContext);
+            }
+        }
+
+        @Override
         public boolean isIgnoreNulls() {
             return ignoreNulls;
         }
