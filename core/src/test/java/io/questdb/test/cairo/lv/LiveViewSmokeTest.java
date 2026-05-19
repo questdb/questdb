@@ -4340,6 +4340,165 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNthValueDoubleOverPartitionRowsBoundedSnapshotRoundTrip() throws Exception {
+        // nth_value() Step 3 -- DOUBLE variant, bounded ROWS BETWEEN X PRECEDING
+        // AND CURRENT ROW (non-anchored). State per partition is
+        // [loIdx: LONG, startOffset: LONG, count: LONG, tombstone: BYTE] plus
+        // a bufferSize-long ring of DOUBLE values in MemoryARW.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x DOUBLE, sym SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+                    "SELECT ts, sym, nth_value(x, 2) OVER w AS nv FROM base " +
+                    "WINDOW w AS (PARTITION BY sym ORDER BY ts ROWS BETWEEN 3 PRECEDING AND CURRENT ROW)");
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                setCurrentMicros(0L);
+                execute("INSERT INTO base (ts, x, sym) VALUES " +
+                        "('2026-08-01T00:00:00.000000Z', 5.0, 'a'), " +
+                        "('2026-08-01T01:00:00.000000Z', 50.0, 'a'), " +
+                        "('2026-08-01T02:00:00.000000Z', 20.0, 'a'), " +
+                        "('2026-08-01T00:00:00.000000Z', 7.0, 'b'), " +
+                        "('2026-08-01T01:00:00.000000Z', 11.0, 'b'), " +
+                        "('2026-08-01T02:00:00.000000Z', 13.0, 'b')");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
+                WindowFunction nvFunc = unwrapWindowFunctions(lv).getQuick(0);
+                Assert.assertTrue(nvFunc.supportsSnapshot());
+                Map fnMap = nvFunc.getPartitionMap();
+                Assert.assertEquals(2L, fnMap.size());
+
+                try (MemoryCARW sink = Vm.getCARWInstance(4096L, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
+                    nvFunc.snapshot(sink);
+                    nvFunc.toTop();
+                    Assert.assertEquals(0L, fnMap.size());
+                    nvFunc.restore(sink, 1);
+                    Assert.assertEquals(2L, fnMap.size());
+
+                    // After 3 rows per partition, both rings hold (val_0, val_1, val_2) with count=3.
+                    // We only assert state round-trip via aggregated counts; ring contents are
+                    // off-heap and validated indirectly by the count slot matching.
+                    MapRecordCursor mc = fnMap.getCursor();
+                    MapRecord rec = fnMap.getRecord();
+                    long totalCount = 0;
+                    while (mc.hasNext()) {
+                        totalCount += rec.getValue().getLong(2);
+                    }
+                    Assert.assertEquals(6L, totalCount);
+                }
+            }
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testNthValueLongOverPartitionRowsBoundedSnapshotRoundTrip() throws Exception {
+        // nth_value() Step 3 -- LONG variant, bounded ROWS BETWEEN X PRECEDING
+        // AND CURRENT ROW (non-anchored). State per partition is
+        // [loIdx: LONG, startOffset: LONG, count: LONG, tombstone: BYTE] plus
+        // a bufferSize-long ring of LONG values in MemoryARW.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x LONG, sym SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+                    "SELECT ts, sym, nth_value(x, 2) OVER w AS nv FROM base " +
+                    "WINDOW w AS (PARTITION BY sym ORDER BY ts ROWS BETWEEN 3 PRECEDING AND CURRENT ROW)");
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                setCurrentMicros(0L);
+                execute("INSERT INTO base (ts, x, sym) VALUES " +
+                        "('2026-08-01T00:00:00.000000Z', 5, 'a'), " +
+                        "('2026-08-01T01:00:00.000000Z', 50, 'a'), " +
+                        "('2026-08-01T02:00:00.000000Z', 20, 'a'), " +
+                        "('2026-08-01T00:00:00.000000Z', 7, 'b'), " +
+                        "('2026-08-01T01:00:00.000000Z', 11, 'b'), " +
+                        "('2026-08-01T02:00:00.000000Z', 13, 'b')");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
+                WindowFunction nvFunc = unwrapWindowFunctions(lv).getQuick(0);
+                Assert.assertTrue(nvFunc.supportsSnapshot());
+                Map fnMap = nvFunc.getPartitionMap();
+                Assert.assertEquals(2L, fnMap.size());
+
+                try (MemoryCARW sink = Vm.getCARWInstance(4096L, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
+                    nvFunc.snapshot(sink);
+                    nvFunc.toTop();
+                    Assert.assertEquals(0L, fnMap.size());
+                    nvFunc.restore(sink, 1);
+                    Assert.assertEquals(2L, fnMap.size());
+
+                    MapRecordCursor mc = fnMap.getCursor();
+                    MapRecord rec = fnMap.getRecord();
+                    long totalCount = 0;
+                    while (mc.hasNext()) {
+                        totalCount += rec.getValue().getLong(2);
+                    }
+                    Assert.assertEquals(6L, totalCount);
+                }
+            }
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testNthValueTimestampOverPartitionRowsBoundedSnapshotRoundTrip() throws Exception {
+        // nth_value() Step 3 -- TIMESTAMP variant, bounded ROWS BETWEEN X PRECEDING
+        // AND CURRENT ROW (non-anchored). State per partition is
+        // [loIdx: LONG, startOffset: LONG, count: LONG, tombstone: BYTE] plus
+        // a bufferSize-long ring of TIMESTAMP-as-LONG values in MemoryARW.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+                    "SELECT ts, sym, nth_value(ts, 2) OVER w AS nv FROM base " +
+                    "WINDOW w AS (PARTITION BY sym ORDER BY ts ROWS BETWEEN 3 PRECEDING AND CURRENT ROW)");
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                setCurrentMicros(0L);
+                execute("INSERT INTO base (ts, sym) VALUES " +
+                        "('2026-08-01T00:00:00.000000Z', 'a'), " +
+                        "('2026-08-01T01:00:00.000000Z', 'a'), " +
+                        "('2026-08-01T02:00:00.000000Z', 'a'), " +
+                        "('2026-08-01T00:00:00.000000Z', 'b'), " +
+                        "('2026-08-01T01:00:00.000000Z', 'b'), " +
+                        "('2026-08-01T02:00:00.000000Z', 'b')");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
+                WindowFunction nvFunc = unwrapWindowFunctions(lv).getQuick(0);
+                Assert.assertTrue(nvFunc.supportsSnapshot());
+                Map fnMap = nvFunc.getPartitionMap();
+                Assert.assertEquals(2L, fnMap.size());
+
+                try (MemoryCARW sink = Vm.getCARWInstance(4096L, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
+                    nvFunc.snapshot(sink);
+                    nvFunc.toTop();
+                    Assert.assertEquals(0L, fnMap.size());
+                    nvFunc.restore(sink, 1);
+                    Assert.assertEquals(2L, fnMap.size());
+
+                    MapRecordCursor mc = fnMap.getCursor();
+                    MapRecord rec = fnMap.getRecord();
+                    long totalCount = 0;
+                    while (mc.hasNext()) {
+                        totalCount += rec.getValue().getLong(2);
+                    }
+                    Assert.assertEquals(6L, totalCount);
+                }
+            }
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
     public void testRowNumberSnapshotRoundTrip() throws Exception {
         // Phase 2a.5 Group #1: row_number() implements snapshot/restore.
         // Drive a single refresh cycle so the function's Map is populated with
