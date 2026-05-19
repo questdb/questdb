@@ -7822,11 +7822,12 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
 
     @Test
     public void testDailyUtcMidnightDesugarsToTimestampFloor() throws Exception {
-        // RFC 123 §"DAILY sugar" line 803: ANCHOR DAILY '00:00' 'UTC'
-        // desugars to the same expression as the no-tz form (line 802),
-        // since a 'UTC' tz at zero offset contributes nothing. Persisting
-        // the verbatim line-805 form would diverge from the RFC table and
-        // pin a needless timestamp_floor_utc call on the hot anchor path.
+        // ANCHOR DAILY '00:00' 'UTC' produces the same buckets as the
+        // unqualified ANCHOR DAILY '00:00' since a UTC tz at zero offset
+        // contributes nothing. The desugarer must collapse the two forms
+        // into the same timestamp_floor('1d', ts) expression so neither
+        // pins a needless timestamp_floor_utc call on the hot anchor path
+        // or persists a heavier expression than necessary.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("CREATE LIVE VIEW lv_utc FLUSH EVERY 1s AS " +
