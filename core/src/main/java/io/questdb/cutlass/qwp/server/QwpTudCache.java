@@ -49,7 +49,6 @@ import io.questdb.cutlass.qwp.protocol.QwpConstants;
 import io.questdb.cutlass.qwp.protocol.QwpTableBlockCursor;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.Decimals;
 import io.questdb.std.IntList;
 import io.questdb.std.LowerCaseUtf8SequenceObjHashMap;
 import io.questdb.std.Misc;
@@ -598,14 +597,6 @@ public class QwpTudCache implements QuietCloseable {
 
         private int getSchemaColumnType(int schemaIndex) {
             final byte typeCode = schema.getQuick(schemaIndex).getTypeCode();
-            if (typeCode == QwpConstants.TYPE_DECIMAL64 ||
-                    typeCode == QwpConstants.TYPE_DECIMAL128 ||
-                    typeCode == QwpConstants.TYPE_DECIMAL256) {
-                final int scale = cursor.getDecimalColumn(schemaIndex).getScale() & 0xFF;
-                final int tag = QwpWalAppender.mapQwpTypeToQuestDB(typeCode);
-                final int precision = Decimals.getDecimalTagPrecision(tag);
-                return ColumnType.getDecimalType(tag, precision, scale);
-            }
             if (typeCode == QwpConstants.TYPE_DOUBLE_ARRAY) {
                 final int nDims = getArrayBatchDimensionality(
                         cursor.getArrayColumn(schemaIndex),
@@ -617,7 +608,7 @@ public class QwpTudCache implements QuietCloseable {
                 }
                 return ColumnType.encodeArrayType(ColumnType.DOUBLE, nDims);
             }
-            return QwpWalAppender.mapQwpTypeToQuestDB(typeCode);
+            return QwpWalAppender.mapQwpTypeToQuestDB(typeCode, cursor, schemaIndex);
         }
     }
 }
