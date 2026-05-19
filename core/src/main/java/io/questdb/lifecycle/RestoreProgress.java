@@ -4,7 +4,7 @@ package io.questdb.lifecycle;
  * Restore progress event emitted by the enterprise BackupRestoreEnvelope at table-iteration
  * boundaries during a PITR / backup restore. One event per restored table.
  *
- * <p>WR-11 schema contract: in the Phase 3 (Plan A) wire schema, {@code bytesDone} and
+ * <p>Schema contract: in the current wire schema, {@code bytesDone} and
  * {@code bytesTotal} are RESERVED placeholders. The production emitter always passes 0L
  * for both because the Rust-side restore loop does not track byte counts yet. Consumers
  * of the /lifecycle JSON MUST treat {@code bytesDone:0, bytesTotal:0} as "byte tracking

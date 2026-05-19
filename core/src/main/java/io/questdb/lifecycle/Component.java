@@ -3,7 +3,7 @@ package io.questdb.lifecycle;
 import io.questdb.std.ObjList;
 
 /**
- * Lifecycle component (LIFE-01). Implementations participate in the
+ * Lifecycle component. Implementations participate in the
  * component DAG owned by {@link LifecycleOrchestrator}.
  * <p>
  * {@link #start(LifecycleContext)} MAY be called after {@link #stop()} on the
@@ -35,7 +35,7 @@ public interface Component {
 
     /**
      * Names of components whose state changes are observed via
-     * {@link #onDependencyState} but NOT auto-cascaded. Empty in Phase 2.
+     * {@link #onDependencyState} but NOT auto-cascaded.
      */
     ObjList<String> softDependencies();
 

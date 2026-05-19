@@ -609,8 +609,8 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     /**
-     * Runs the post-restore engine initialization that historically lived inside the constructor
-     * (body was at CairoEngine.java:281-300 prior to Phase 3 Plan A). MUST be called after
+     * Runs the post-restore engine initialization that historically lived inside the constructor.
+     * MUST be called after
      * BackupRestoreEnvelope.start() reaches READY when the orchestrator boots the engine envelope.
      * Ordering is now enforced by the lifecycle DAG (engine.hardDeps includes "backup-restore"),
      * not by sequential statement ordering as it used to be inside the constructor.

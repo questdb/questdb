@@ -1,7 +1,7 @@
 package io.questdb.lifecycle;
 
 /**
- * Component lifecycle states (LIFE-05).
+ * Component lifecycle states.
  * <p>
  * Constants are listed in lifecycle order (INIT through FAILED) rather than
  * alphabetical because the readability of the lifecycle progression outweighs

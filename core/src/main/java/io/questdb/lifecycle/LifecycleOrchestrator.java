@@ -466,9 +466,9 @@ public class LifecycleOrchestrator implements QuietCloseable {
     }
 
     private void startAllInTopologicalOrder() {
-        // Walk topo order serially. Phase 2's hard-required chain degenerates
+        // Walk topo order serially. The hard-required chain degenerates
         // to serial-but-via-executor execution; the executor is constructed and
-        // available for Phase 4+ parallel exploitation.
+        // available for future parallel exploitation.
         assert topoOrder != null;
         for (int i = 0, n = topoOrder.size(); i < n; i++) {
             Component c = topoOrder.getQuick(i);
@@ -521,7 +521,7 @@ public class LifecycleOrchestrator implements QuietCloseable {
                 }
             }
         }
-        // Kahn's algorithm for topological sort. V <= 6 in Phase 2.
+        // Kahn's algorithm for topological sort.
         IntList inDegree = new IntList();
         for (int i = 0, n = registry.size(); i < n; i++) {
             inDegree.add(registry.getQuick(i).hardRequiredDependencies().size());

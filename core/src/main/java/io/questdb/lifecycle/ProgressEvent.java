@@ -4,8 +4,8 @@ package io.questdb.lifecycle;
  * Marker for component-emitted progress events surfaced via
  * {@link LifecycleSnapshot.ComponentSnapshot#latestProgress()}.
  * <p>
- * Phase 2 ships the wiring with a placeholder permitted record. Phase 3
- * extends the {@code permits} clause to include {@code RestoreProgress}.
+ * The {@code permits} clause includes {@code RestoreProgress} for
+ * backup-restore progress events, plus a placeholder no-op record.
  * <p>
  * Test code may create custom progress events by implementing the
  * {@link TestOnly} non-sealed escape hatch, which satisfies the sealed
@@ -17,7 +17,7 @@ public sealed interface ProgressEvent
 
     /**
      * Placeholder permitted record so the sealed file compiles. No production
-     * component emits this in Phase 2.
+     * component emits this.
      */
     record NoOpProgress() implements ProgressEvent {
     }
@@ -26,8 +26,8 @@ public sealed interface ProgressEvent
      * Non-sealed escape hatch for test-only progress event implementations.
      * Test code implements this interface (not {@code ProgressEvent} directly)
      * to avoid requiring test source roots on the main compilation classpath.
-     * Phase 3 does NOT use this; it adds a top-level {@code RestoreProgress}
-     * record to the {@code permits} clause instead.
+     * Production progress types (such as {@code RestoreProgress}) are added
+     * directly to the {@code permits} clause instead.
      */
     non-sealed interface TestOnly extends ProgressEvent {
     }

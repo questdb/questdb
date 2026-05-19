@@ -94,7 +94,7 @@ public class ServerMain implements Closeable {
         this.bootstrap = bootstrap;
         // bootstrap.newCairoEngine() returns a full-init engine in OSS (back-compat for tests).
         // Enterprise subclasses override newCairoEngine() to return a partial-init engine so that
-        // completeInit() + load() are deferred to EngineEnvelope.start() (Phase 3 D3-01).
+        // completeInit() + load() are deferred to EngineEnvelope.start().
         engine = freeOnExit(bootstrap.newCairoEngine());
         try {
             final ServerConfiguration config = bootstrap.getConfiguration();
@@ -313,7 +313,7 @@ public class ServerMain implements Closeable {
     }
 
     /**
-     * Test-only bootstrap for per-envelope lifecycle unit tests (D2 CR-01 regression tests).
+     * Test-only bootstrap for per-envelope lifecycle unit tests.
      * Initialises {@link #workerPoolManager} (so the protocol envelopes obtained via
      * {@link #testNewPgWireEnvelope()} et al. can wire jobs onto its pools) and stands up a
      * minimal {@link io.questdb.lifecycle.LifecycleOrchestrator} with a stub PgWireEnvelope
@@ -429,7 +429,7 @@ public class ServerMain implements Closeable {
      * Constructs and assigns the {@link WorkerPoolManager} including all engine-derived
      * job assignments. Called from {@link WorkerPoolManagerEnvelope#start(LifecycleContext)}.
      *
-     * @deprecated For new use, the lifecycle envelopes own this work as of Phase 2.
+     * @deprecated For new use, the lifecycle envelopes own this work.
      */
     private synchronized void constructAndAssignWorkerPoolManager(Log log) {
         final ServerConfiguration config = bootstrap.getConfiguration();
@@ -536,7 +536,7 @@ public class ServerMain implements Closeable {
     }
 
     /**
-     * Phase 4 D4-03: protocol bind paths moved to per-envelope start() methods.
+     * Protocol bind paths moved to per-envelope start() methods.
      * Residual: metadata hydrator + compile-views threads (not protocol-envelope work).
      *
      * @deprecated Use lifecycle envelopes; kept for tests that call initialize() directly.
@@ -566,7 +566,7 @@ public class ServerMain implements Closeable {
 
     /**
      * Backward-compatibility shim. Delegates to the envelope helper methods.
-     * Lifecycle envelopes own this work as of Phase 2.
+     * Lifecycle envelopes own this work.
      *
      * @deprecated Use lifecycle envelopes; kept for tests that call initialize() directly.
      */
@@ -754,7 +754,7 @@ public class ServerMain implements Closeable {
     /**
      * Look up an envelope by name from the live orchestrator registry and cast it to
      * the expected type. Used by WebHttpEnvelope to fetch the PgServer reference from
-     * PgWireEnvelope without introducing a direct field coupling (D4-06).
+     * PgWireEnvelope without introducing a direct field coupling.
      */
     protected <T extends Component> T findEnvelope(String name, Class<T> type) {
         Component c = orchestrator.getComponent(name);
@@ -870,7 +870,7 @@ public class ServerMain implements Closeable {
         @Override
         public void start(io.questdb.lifecycle.LifecycleContext ctx) {
             ctx.publish(io.questdb.lifecycle.State.STARTING);
-            // Phase 3 D3-01: run the post-restore engine initialization then load table state.
+            // Run the post-restore engine initialization then load table state.
             // completeInit() was historically called inside the CairoEngine constructor; it is
             // now deferred here so the orchestrator DAG can gate it on backup-restore READY.
             // Guard: back-compat ctors (used in test scaffolding) call completeInit=true, so
@@ -889,8 +889,8 @@ public class ServerMain implements Closeable {
     }
 
     /**
-     * ILP-TCP protocol envelope: binds the InfluxDB Line Protocol TCP and UDP receivers early
-     * (D4-05), then gates the accept loop on engine==READY via onDependencyState (D4-06/D4-07).
+     * ILP-TCP protocol envelope: binds the InfluxDB Line Protocol TCP and UDP receivers early,
+     * then gates the accept loop on engine==READY via onDependencyState.
      * Hard-dep on worker-pool-manager; soft-dep on engine.
      * Both LineTcpReceiver and LineUdpReceiver share one acceptOpen flag.
      * They are skipped when the instance is read-only or ILP-TCP is disabled.
@@ -958,7 +958,7 @@ public class ServerMain implements Closeable {
             }
             log.info().$("ilp-tcp envelope: bound, accept paused").$();
             ctx.publish(State.DEGRADED);
-            // CR-01 replay: if engine reached READY synchronously inside EngineEnvelope.start()
+            // Catch-up: if engine reached READY synchronously inside EngineEnvelope.start()
             // before our ctxRef was set, the onDependencyState dispatch was lost. Self-publish now.
             if (ctx.state("engine") == State.READY) {
                 acceptOpen.set(true);
@@ -980,11 +980,11 @@ public class ServerMain implements Closeable {
      * Lifecycle-owned mini HTTP server envelope serving /status, /health, /ping, and /lifecycle.
      * <p>
      * Binds before engine and backup-restore so that /status returns 200 throughout a
-     * multi-minute PITR restore (D3-04). Owns a dedicated WorkerPool named "http-min"
-     * sized by http.min.worker.count (D3-03/D3-05: values less than or equal to zero
+     * multi-minute PITR restore. Owns a dedicated WorkerPool named "http-min"
+     * sized by http.min.worker.count (values less than or equal to zero
      * remap to 1 with a WARN log). Hard-deps on factory-provider only.
      * <p>
-     * When http.min.enabled=false the envelope publishes READY without binding (D3-13).
+     * When http.min.enabled=false the envelope publishes READY without binding.
      */
     public class MinHttpEnvelope implements io.questdb.lifecycle.Component {
         private final ObjList<String> empty = new ObjList<>();
@@ -1064,7 +1064,7 @@ public class ServerMain implements Closeable {
     }
 
     /**
-     * WorkerPoolConfiguration for the dedicated http-min pool (D3-03).
+     * WorkerPoolConfiguration for the dedicated http-min pool.
      * Pool name is "http-min"; worker count is provided at construction time.
      */
     private static final class MinHttpPoolConfiguration implements io.questdb.mp.WorkerPoolConfiguration {
@@ -1086,8 +1086,8 @@ public class ServerMain implements Closeable {
     }
 
     /**
-     * PG-wire protocol envelope: binds the PostgreSQL wire protocol listener early (D4-05),
-     * then gates the accept loop on engine==READY via onDependencyState (D4-06/D4-07).
+     * PG-wire protocol envelope: binds the PostgreSQL wire protocol listener early,
+     * then gates the accept loop on engine==READY via onDependencyState.
      * Hard-dep on worker-pool-manager; soft-dep on engine.
      * When PG wire is disabled the envelope publishes DEGRADED and waits for engine READY.
      */
@@ -1149,7 +1149,7 @@ public class ServerMain implements Closeable {
                     acceptOpen);
             log.info().$("pg-wire envelope: bound, accept paused").$();
             ctx.publish(State.DEGRADED);
-            // CR-01 replay: if engine reached READY synchronously inside EngineEnvelope.start()
+            // Catch-up: if engine reached READY synchronously inside EngineEnvelope.start()
             // before our ctxRef was set, the onDependencyState dispatch was lost. Self-publish now.
             if (ctx.state("engine") == State.READY) {
                 acceptOpen.set(true);
@@ -1166,8 +1166,8 @@ public class ServerMain implements Closeable {
     }
 
     /**
-     * QWIP (QuestDB Wire Protocol UDP) envelope: binds the QWP UDP receiver early (D4-05),
-     * then gates the accept loop on engine==READY via onDependencyState (D4-06/D4-07).
+     * QWIP (QuestDB Wire Protocol UDP) envelope: binds the QWP UDP receiver early,
+     * then gates the accept loop on engine==READY via onDependencyState.
      * Hard-dep on worker-pool-manager; soft-dep on engine.
      * Skipped when the instance is read-only or QWIP is disabled.
      */
@@ -1241,7 +1241,7 @@ public class ServerMain implements Closeable {
             }
             log.info().$("qwip envelope: bound, accept paused").$();
             ctx.publish(State.DEGRADED);
-            // CR-01 replay: if engine reached READY before our ctxRef was set, the
+            // Catch-up: if engine reached READY before our ctxRef was set, the
             // onDependencyState dispatch was lost. Self-publish now.
             if (ctx.state("engine") == State.READY) {
                 acceptOpen.set(true);
@@ -1258,8 +1258,8 @@ public class ServerMain implements Closeable {
     }
 
     /**
-     * Web-HTTP protocol envelope: binds the full-fat HTTP server early (D4-05),
-     * then gates the accept loop on engine==READY via onDependencyState (D4-06/D4-07).
+     * Web-HTTP protocol envelope: binds the full-fat HTTP server early,
+     * then gates the accept loop on engine==READY via onDependencyState.
      * Hard-deps on worker-pool-manager AND pg-wire (RESEARCH Section 6: FlushQueryCacheJob
      * needs the PGServer reference from PgWireEnvelope). Soft-dep on engine.
      */
@@ -1323,7 +1323,7 @@ public class ServerMain implements Closeable {
                     new FlushQueryCacheJob(ServerMain.this.engine.getMessageBus(), this.server, pgServer));
             log.info().$("web-http envelope: bound, accept paused").$();
             ctx.publish(State.DEGRADED);
-            // CR-01 replay: if engine reached READY synchronously inside EngineEnvelope.start()
+            // Catch-up: if engine reached READY synchronously inside EngineEnvelope.start()
             // before our ctxRef was set, the onDependencyState dispatch was lost. Self-publish now.
             if (ctx.state("engine") == State.READY) {
                 acceptOpen.set(true);
@@ -1340,11 +1340,11 @@ public class ServerMain implements Closeable {
     }
 
     /**
-     * Two-phase worker-pool-manager envelope (D-16):
-     * Phase 1 -- configure pools (STARTING -> DEGRADED).
-     * Phase 2 -- start pool threads when network-services reaches READY (DEGRADED -> READY).
+     * Two-stage worker-pool-manager envelope:
+     * Stage 1 -- configure pools (STARTING -> DEGRADED).
+     * Stage 2 -- start pool threads when network-services reaches READY (DEGRADED -> READY).
      * <p>
-     * W6/W7: ctor concatenates {@code ["engine"]} with
+     * The ctor concatenates {@code ["engine"]} with
      * {@link ServerMain#workerPoolManagerExtraHardDeps()} so subclass overrides
      * participate via polymorphic dispatch on {@code ServerMain.this}.
      */
@@ -1355,7 +1355,7 @@ public class ServerMain implements Closeable {
 
         WorkerPoolManagerEnvelope(Log log) {
             this.log = log;
-            // W6/W7 fix: concatenate base ["engine"] with subclass-supplied extra deps via the
+            // Concatenate base ["engine"] with subclass-supplied extra deps via the
             // workerPoolManagerExtraHardDeps() hook. Polymorphic dispatch: ServerMain.this is the actual
             // concrete instance (EntServerMain when launched via EntServerMain.main), so the subclass
             // override fires and the envelope picks up enterprise-only deps like "ent-pre-services".
@@ -1386,14 +1386,14 @@ public class ServerMain implements Closeable {
         @Override
         public void start(io.questdb.lifecycle.LifecycleContext ctx) {
             ctx.publish(io.questdb.lifecycle.State.STARTING);
-            // Phase 1 -- verbatim lift of today's ServerMain.initialize() body lines :295-:398:
+            // Stage 1 -- verbatim lift of today's ServerMain.initialize() body lines :295-:398:
             // anonymous WorkerPoolManager subclass with configureWorkerPools override,
             // engine.buildViewGraphs(), setupDedicatedPools(), WAL apply on dedicated pool.
             // The 'workerPoolManager' field on ServerMain is assigned here.
             ServerMain.this.constructAndAssignWorkerPoolManager(log);
             ctx.publish(io.questdb.lifecycle.State.DEGRADED);
-            // Phase 2 fires when all hard-required dependents of worker-pool-manager are stable.
-            // In Phase 4 the dependents are the 4 protocol envelopes (pg-wire, ilp-tcp, web-http, qwip).
+            // Stage 2 fires when all hard-required dependents of worker-pool-manager are stable.
+            // The dependents are the 4 protocol envelopes (pg-wire, ilp-tcp, web-http, qwip).
             // When all 4 publish READY the orchestrator fires this onStableBelow callback.
             ctx.onStableBelow(name(), () -> {
                 ServerMain.this.workerPoolManager.start(log);
@@ -1401,7 +1401,7 @@ public class ServerMain implements Closeable {
                 // Boot-tail: logBannerAndEndpoints runs after workerPoolManager.start(log)
                 // to preserve original ordering where the banner fires after worker threads start.
                 ServerMain.this.bootstrap.logBannerAndEndpoints(ServerMain.this.webConsoleSchema());
-                // W4 boot-tail: DataID advisory, final GC, enjoy advisory.
+                // Boot-tail: DataID advisory, final GC, enjoy advisory.
                 final DataID dataID = ServerMain.this.engine.getDataID();
                 if (dataID.isInitialized()) {
                     final Uuid uuid = dataID.get();

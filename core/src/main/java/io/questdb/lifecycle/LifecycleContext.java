@@ -4,7 +4,7 @@ import io.questdb.WorkerPoolManager;
 import org.jetbrains.annotations.Nullable;
 
 /**
- * Per-component context surfaced to {@link Component#start(LifecycleContext)} (LIFE-03).
+ * Per-component context surfaced to {@link Component#start(LifecycleContext)}.
  * <p>
  * NOT given to {@link Component#stop()} -- stop's responsibility is local
  * resource teardown.
@@ -14,7 +14,7 @@ public interface LifecycleContext {
     /**
      * Register a callback that fires when every hard-required dependent of
      * {@code componentName} has reached a stable state ({READY, DEGRADED, FAILED}).
-     * Used by the worker-pool-manager envelope's two-phase start (D-16):
+     * Used by the worker-pool-manager envelope's two-stage start:
      * stage 1 publishes DEGRADED, then registers a callback that on stage-2
      * trigger calls {@code workerPoolManager.start(log)} and publishes READY.
      * Returns a watch ID for unregistration via {@link #unwatchStable(long)}.
@@ -28,7 +28,7 @@ public interface LifecycleContext {
     void progress(ProgressEvent event);
 
     /**
-     * Publish a state transition. Validates against the LIFE-05 transition
+     * Publish a state transition. Validates against the state transition
      * table; emits the single log line; runs failure cascade
      * if {@code next == FAILED}.
      */
