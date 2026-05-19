@@ -1040,6 +1040,47 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testStringToIpv4NullThroughConvertToNative() throws Exception {
+        assertMemoryLeak(() -> {
+            for (String source : new String[]{"STRING", "VARCHAR"}) {
+                try {
+                    execute("CREATE TABLE pt (val " + source + ", ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                    execute("""
+                            INSERT INTO pt VALUES
+                            ('192.168.1.1', '2024-01-01T00:00:01.000000Z'),
+                            ('10.0.0.1',    '2024-01-01T00:00:02.000000Z'),
+                            (NULL,          '2024-01-01T00:00:03.000000Z')""");
+                    drainWalQueue();
+                    execute("ALTER TABLE pt CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+                    drainWalQueue();
+                    execute("ALTER TABLE pt ALTER COLUMN val TYPE IPv4");
+                    drainWalQueue();
+                    // Materializes the var->fixed conversion through O3PartitionJob, so
+                    // the bytes on disk are whatever writeFixedNull wrote for the NULL row.
+                    execute("ALTER TABLE pt CONVERT PARTITION TO NATIVE LIST '2024-01-01'");
+                    drainWalQueue();
+
+                    assertSql(
+                            """
+                                    val\tts
+                                    192.168.1.1\t2024-01-01T00:00:01.000000Z
+                                    10.0.0.1\t2024-01-01T00:00:02.000000Z
+                                    \t2024-01-01T00:00:03.000000Z
+                                    """,
+                            "SELECT val, ts FROM pt"
+                    );
+                    assertSql(
+                            "c\n1\n",
+                            "SELECT count() c FROM pt WHERE val IS NULL"
+                    );
+                } finally {
+                    tryDrop("pt");
+                }
+            }
+        });
+    }
+
+    @Test
     public void testStringToSymbol() throws Exception {
         assertMemoryLeak(() -> {
             // →Symbol requires the pre-pass to convert parquet→native
@@ -1136,11 +1177,11 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
         assertMemoryLeak(() -> assertConversion("STRING", "VARCHAR", """
                 ('hello', '2024-01-01T00:00:01.000000Z'),
                 ('', '2024-01-01T00:00:02.000000Z'),
-                ('\u0442\u0435\u0441\u0442', '2024-01-01T00:00:03.000000Z'),
-                ('caf\u00e9 na\u00efve \u00fcber', '2024-01-01T00:00:04.000000Z'),
-                ('\u65e5\u672c\u8a9e \u4e2d\u6587 \ud55c\uae00', '2024-01-01T00:00:05.000000Z'),
+                ('тест', '2024-01-01T00:00:03.000000Z'),
+                ('café naïve über', '2024-01-01T00:00:04.000000Z'),
+                ('日本語 中文 한글', '2024-01-01T00:00:05.000000Z'),
                 ('emoji \ud83e\udd86 \ud83d\ude00 mixed', '2024-01-01T00:00:06.000000Z'),
-                ('ascii then \u00e9', '2024-01-01T00:00:07.000000Z'),
+                ('ascii then é', '2024-01-01T00:00:07.000000Z'),
                 (NULL, '2024-01-01T00:00:08.000000Z')"""));
     }
 
@@ -1438,11 +1479,11 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
         assertMemoryLeak(() -> assertConversion("VARCHAR", "STRING", """
                 ('hello', '2024-01-01T00:00:01.000000Z'),
                 ('', '2024-01-01T00:00:02.000000Z'),
-                ('\u0442\u0435\u0441\u0442', '2024-01-01T00:00:03.000000Z'),
-                ('caf\u00e9 na\u00efve \u00fcber', '2024-01-01T00:00:04.000000Z'),
-                ('\u65e5\u672c\u8a9e \u4e2d\u6587 \ud55c\uae00', '2024-01-01T00:00:05.000000Z'),
+                ('тест', '2024-01-01T00:00:03.000000Z'),
+                ('café naïve über', '2024-01-01T00:00:04.000000Z'),
+                ('日本語 中文 한글', '2024-01-01T00:00:05.000000Z'),
                 ('emoji \ud83e\udd86 \ud83d\ude00 mixed', '2024-01-01T00:00:06.000000Z'),
-                ('ascii then \u00e9', '2024-01-01T00:00:07.000000Z'),
+                ('ascii then é', '2024-01-01T00:00:07.000000Z'),
                 (NULL, '2024-01-01T00:00:08.000000Z')"""));
     }
 
@@ -1524,6 +1565,35 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
     public void testAsyncGroupByKeyedByFixedToVarcharParquetColumn() throws Exception {
         assertMemoryLeak(() -> assertAsyncFactoryFixedToVarParity(
                 "VARCHAR",
+                "SELECT val, count() c FROM $T WHERE other > 700 GROUP BY val ORDER BY val"
+        ));
+    }
+
+    /**
+     * Mirror of {@link #testAsyncGroupByKeyedByFixedToStrParquetColumn} in the reverse
+     * direction: var-to-fixed. {@code val} starts as STRING, the partition is converted to
+     * parquet, then {@code val} is ALTERed to INT. On {@code pt} the parquet keeps STRING
+     * storage so reads of {@code val} take the var-to-fixed lazy conversion path
+     * ({@code sourceColumnTypes[val] < -1}, {@code hasTypeCasts=true}).
+     * <p>
+     * The query groups by {@code val} and filters on a separate non-typecast column
+     * {@code other}, so {@code val} is a non-filter column in compacted layout under
+     * {@link io.questdb.cairo.sql.PageFrameFilteredMemoryRecord}. The map sink calls
+     * {@code getInt(val)} on the filtered record. The override delegates to
+     * {@code super.getInt}, which routes through {@code convertVarToInt} ->
+     * {@code readVarValueForConversion} -> {@code getStr0} / {@code getVarchar}. The
+     * latter pair is overridden on the filtered record to use {@code getRowIndex},
+     * so the compacted index reaches the read. This pins the routing: a future
+     * regression that adds a fall-through path inside a fixed-width lazy getter
+     * which reads {@code this.rowIndex} directly (mirroring the
+     * {@code convertFixedToStr}/{@code convertFixedToVarchar} path that
+     * {@code getStrA}/{@code getVarcharA} already wrap with save/restore of
+     * {@code rowIndex}) would break this query.
+     */
+    @Test
+    public void testAsyncGroupByKeyedByStrToIntParquetColumn() throws Exception {
+        assertMemoryLeak(() -> assertAsyncFactoryStrToFixedParity(
+                "INT",
                 "SELECT val, count() c FROM $T WHERE other > 700 GROUP BY val ORDER BY val"
         ));
     }
@@ -1781,16 +1851,6 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
     }
 
     /**
-     * Verifies that the parquet (Rust) conversion path matches the native (JNI) path.
-     * <ol>
-     *     <li>Creates two identical WAL tables: {@code nt} (native reference) and {@code pt} (parquet under test)</li>
-     *     <li>Inserts the same test data into both</li>
-     *     <li>Converts the {@code pt} partition to parquet</li>
-     *     <li>Alters the column type on both tables</li>
-     *     <li>Asserts both produce identical query results</li>
-     * </ol>
-     */
-    /**
      * Builds a native control table {@code nt} and a parquet-backed table {@code pt} with
      * identical data, then ALTERs {@code val} from STRING to INT on both. On {@code pt} the
      * parquet keeps the STRING storage so reads go through lazy var to fixed conversion,
@@ -1866,6 +1926,45 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
     }
 
     /**
+     * Mirror of {@link #assertAsyncFactoryFixedToVarParity(String, String)} for the reverse
+     * cast direction: {@code val} starts as STRING, the partition is converted to parquet,
+     * and {@code val} is ALTERed to a fixed-width type (e.g. {@code INT}). On {@code pt}
+     * the parquet keeps the STRING storage so reads go through lazy var-to-fixed conversion,
+     * setting {@code needsColumnTypeCast()=true} on every parquet frame. The extra
+     * {@code other LONG} column carries the WHERE predicate so {@code val} can remain
+     * a non-filter column (in compacted layout under
+     * {@link io.questdb.cairo.sql.PageFrameFilteredMemoryRecord}).
+     */
+    private void assertAsyncFactoryStrToFixedParity(String targetType, String queryTemplate) throws Exception {
+        try {
+            execute("CREATE TABLE nt (val STRING, other LONG, sym SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE pt (val STRING, other LONG, sym SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            String insert = """
+                    INSERT INTO $T
+                    SELECT x::STRING AS val,
+                           (x * 7)::LONG AS other,
+                           ('s' || (x % 5)::STRING)::SYMBOL AS sym,
+                           timestamp_sequence('2024-01-01T00:00:00.000000Z', 60_000_000) AS ts
+                    FROM long_sequence(200)""";
+            execute(insert.replace("$T", "nt"));
+            execute(insert.replace("$T", "pt"));
+            drainWalQueue();
+            execute("ALTER TABLE pt CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            drainWalQueue();
+            execute("ALTER TABLE nt ALTER COLUMN val TYPE " + targetType);
+            execute("ALTER TABLE pt ALTER COLUMN val TYPE " + targetType);
+            drainWalQueue();
+            assertSqlCursors(
+                    queryTemplate.replace("$T", "nt"),
+                    queryTemplate.replace("$T", "pt")
+            );
+        } finally {
+            tryDrop("nt");
+            tryDrop("pt");
+        }
+    }
+
+    /**
      * Same as {@link #assertAsyncFactoryParity(String)} but also builds a shared native
      * {@code prices} table used as the right side of HORIZON JOIN / WINDOW JOIN queries.
      */
@@ -1911,7 +2010,7 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
      * the {@code AsyncMultiHorizonJoin(NotKeyed)RecordCursorFactory} pair.
      * <p>
      * Spreads data across many daily partitions on the master side. The compiled-filter
-     * fallback under {@code needsColumnTypeCast()} only fires when {@link SelectivityStats}
+     * fallback under {@code needsColumnTypeCast()} only fires when SelectivityStats
      * decides against late materialization (selectivity above 20% with at least two
      * recorded samples). A single-partition setup keeps every frame on the late-material
      * path, where {@code hasColumnTops()} already routes around the compiled filter and

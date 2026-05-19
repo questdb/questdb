@@ -36,6 +36,8 @@ import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
+import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8StringSink;
 
 import java.io.Closeable;
 
@@ -58,6 +60,9 @@ public class O3ParquetMergeContext implements Closeable {
     private RowGroupBuffers rowGroupBuffers;
     private LongList srcPtrs;
     private IntList tableToParquetIdx;
+    private LongList tmpBufs;
+    private StringSink utf16Sink;
+    private Utf8StringSink utf8Sink;
 
     public O3ParquetMergeContext() {
         actionsBuf = new ObjList<>();
@@ -78,6 +83,9 @@ public class O3ParquetMergeContext implements Closeable {
         rowGroupBounds = new LongList();
         srcPtrs = new LongList();
         tableToParquetIdx = new IntList();
+        tmpBufs = new LongList();
+        utf16Sink = new StringSink();
+        utf8Sink = new Utf8StringSink();
     }
 
     public void clear() {
@@ -122,6 +130,9 @@ public class O3ParquetMergeContext implements Closeable {
         rowGroupBounds = null;
         srcPtrs = null;
         tableToParquetIdx = null;
+        tmpBufs = null;
+        utf16Sink = null;
+        utf8Sink = null;
     }
 
     public ObjList<O3ParquetMergeStrategy.MergeAction> getActionsBuf() {
@@ -207,6 +218,37 @@ public class O3ParquetMergeContext implements Closeable {
     public IntList getTableToParquetIdx(int columnCount) {
         tableToParquetIdx.setAll(columnCount, -1);
         return tableToParquetIdx;
+    }
+
+    /**
+     * Per-row-group temporary buffer table, sized for {@code activeColCount} columns.
+     * Layout: 4 longs per column = {@code [auxAddr, auxSize, dataAddr, dataSize]}.
+     * Returned list is zero-filled so callers can write-then-free without
+     * worrying about stale entries from earlier row groups.
+     */
+    public LongList getTmpBufs(int activeColCount) {
+        final int requiredLen = activeColCount * 4;
+        tmpBufs.setPos(requiredLen);
+        tmpBufs.fill(0, requiredLen, 0);
+        return tmpBufs;
+    }
+
+    /**
+     * Reusable UTF-16 sink for parquet rewrite / convert-to-native conversion
+     * passes. Caller is responsible for calling {@code clear()} before use; the
+     * loops in {@link O3PartitionJob#convertFixedColumnToString} and
+     * {@link O3PartitionJob#convertVarColumnToFixed} clear once per row anyway.
+     */
+    public StringSink getUtf16Sink() {
+        return utf16Sink;
+    }
+
+    /**
+     * Reusable UTF-8 sink for parquet rewrite / convert-to-native conversion
+     * passes. See {@link #getUtf16Sink()} for the clear-before-use contract.
+     */
+    public Utf8StringSink getUtf8Sink() {
+        return utf8Sink;
     }
 
     /**

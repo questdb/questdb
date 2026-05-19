@@ -29,20 +29,20 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.PartitionFormat;
+import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.engine.table.ParquetRowGroupFilter;
-import io.questdb.griffin.engine.table.parquet.ParquetPartitionDecoder;
 import io.questdb.griffin.engine.table.parquet.ParquetFileDecoder;
+import io.questdb.griffin.engine.table.parquet.ParquetPartitionDecoder;
 import io.questdb.griffin.engine.table.parquet.RowGroupBuffers;
 import io.questdb.std.DirectIntList;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Utf8s;
-import io.questdb.griffin.SqlCompiler;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
-import org.jetbrains.annotations.NotNull;
 import io.questdb.test.tools.TestUtils;
+import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -60,6 +60,2356 @@ import java.util.concurrent.atomic.AtomicInteger;
  * </ul>
  */
 public class ParquetWriteTest extends AbstractCairoTest {
+
+    @Test
+    public void testAlterColumnTypeAllFixedToStringWithParquetPartition() throws Exception {
+        testConvertFixedToVar("STRING");
+    }
+
+    @Test
+    public void testAlterColumnTypeAllFixedToVarcharWithParquetPartition() throws Exception {
+        testConvertFixedToVar("VARCHAR");
+    }
+
+    @Test
+    public void testAlterColumnTypeAllToByteWithParquetPartition() throws Exception {
+        testConvertAllToType("BYTE",
+                """
+                        rnd_short() v_short,
+                        rnd_int(0, 1_000_000, 4) v_int,
+                        rnd_long(0, 1_000_000_000L, 4) v_long,
+                        rnd_float(4) v_float,
+                        rnd_double(4) v_double""",
+                new String[]{"v_short", "v_int", "v_long", "v_float", "v_double"},
+                "42");
+    }
+
+    @Test
+    public void testAlterColumnTypeAllToDateWithParquetPartition() throws Exception {
+        testConvertAllToType("DATE",
+                """
+                        rnd_long(0, 1_000_000_000_000L, 4) v_long,
+                        rnd_timestamp(
+                            to_timestamp('2000', 'yyyy'),
+                            to_timestamp('2025', 'yyyy'), 4
+                        ) v_ts""",
+                new String[]{"v_long", "v_ts"},
+                "'2020-07-01T00:00:00.000Z'");
+    }
+
+    @Test
+    public void testAlterColumnTypeAllToDoubleWithParquetPartition() throws Exception {
+        testConvertAllToType("DOUBLE",
+                """
+                        rnd_byte() v_byte,
+                        rnd_short() v_short,
+                        rnd_int(0, 1_000_000, 4) v_int,
+                        rnd_long(0, 1_000_000_000L, 4) v_long,
+                        rnd_float(4) v_float""",
+                new String[]{"v_byte", "v_short", "v_int", "v_long", "v_float"},
+                "3.14");
+    }
+
+    @Test
+    public void testAlterColumnTypeAllToFloatWithParquetPartition() throws Exception {
+        testConvertAllToType("FLOAT",
+                """
+                        rnd_byte() v_byte,
+                        rnd_short() v_short,
+                        rnd_int(0, 1_000_000, 4) v_int,
+                        rnd_long(0, 1_000_000_000L, 4) v_long,
+                        rnd_double(4) v_double""",
+                new String[]{"v_byte", "v_short", "v_int", "v_long", "v_double"},
+                "1.5");
+    }
+
+    @Test
+    public void testAlterColumnTypeAllToIntWithParquetPartition() throws Exception {
+        testConvertAllToType("INT",
+                """
+                        rnd_boolean() v_bool,
+                        rnd_byte() v_byte,
+                        rnd_short() v_short,
+                        rnd_long(0, 1_000_000_000L, 4) v_long,
+                        rnd_float(4) v_float,
+                        rnd_double(4) v_double""",
+                new String[]{"v_bool", "v_byte", "v_short", "v_long", "v_float", "v_double"},
+                "12345");
+    }
+
+    @Test
+    public void testAlterColumnTypeAllToLongWithParquetPartition() throws Exception {
+        testConvertAllToType("LONG",
+                """
+                        rnd_byte() v_byte,
+                        rnd_short() v_short,
+                        rnd_int(0, 1_000_000, 4) v_int,
+                        rnd_float(4) v_float,
+                        rnd_double(4) v_double,
+                        rnd_date(
+                            to_date('2000', 'yyyy'),
+                            to_date('2025', 'yyyy'), 4
+                        ) v_date,
+                        rnd_timestamp(
+                            to_timestamp('2000', 'yyyy'),
+                            to_timestamp('2025', 'yyyy'), 4
+                        ) v_ts""",
+                new String[]{"v_byte", "v_short", "v_int", "v_float", "v_double", "v_date", "v_ts"},
+                "123456789");
+    }
+
+    @Test
+    public void testAlterColumnTypeAllToShortWithParquetPartition() throws Exception {
+        testConvertAllToType("SHORT",
+                """
+                        rnd_byte() v_byte,
+                        rnd_int(0, 1_000_000, 4) v_int,
+                        rnd_long(0, 1_000_000_000L, 4) v_long,
+                        rnd_float(4) v_float,
+                        rnd_double(4) v_double""",
+                new String[]{"v_byte", "v_int", "v_long", "v_float", "v_double"},
+                "999");
+    }
+
+    @Test
+    public void testAlterColumnTypeAllToTimestampWithParquetPartition() throws Exception {
+        testConvertAllToType("TIMESTAMP",
+                """
+                        rnd_long(0, 1_000_000_000_000L, 4) v_long,
+                        rnd_date(
+                            to_date('2000', 'yyyy'),
+                            to_date('2025', 'yyyy'), 4
+                        ) v_date""",
+                new String[]{"v_long", "v_date"},
+                "'2020-07-01T00:00:00.000000Z'");
+    }
+
+    @Test
+    public void testAlterColumnTypeBooleanToIntWithParquetPartition() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (v BOOLEAN, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute(
+                    """
+                            INSERT INTO x VALUES
+                            (true, '2020-01-01T00:00:00.000Z'),
+                            (false, '2020-01-01T06:00:00.000Z'),
+                            (NULL, '2020-01-01T12:00:00.000Z')
+                            """
+            );
+            execute("INSERT INTO x VALUES (true, '2020-01-02T00:00:00.000Z')");
+            drainWalQueue();
+
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
+            drainWalQueue();
+
+            execute("ALTER TABLE x ALTER COLUMN v TYPE INT");
+            drainWalQueue();
+
+            // Boolean has no distinct null (sentinel = 0 = false),
+            // so NULL boolean expands to INT 0, not INT null.
+            assertSql(
+                    """
+                            v\tts
+                            1\t2020-01-01T00:00:00.000000Z
+                            0\t2020-01-01T06:00:00.000000Z
+                            0\t2020-01-01T12:00:00.000000Z
+                            1\t2020-01-02T00:00:00.000000Z
+                            """,
+                    "SELECT * FROM x"
+            );
+        });
+    }
+
+    @Test
+    public void testAlterColumnTypeByteToDoubleWithParquetPartition() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (v BYTE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute(
+                    """
+                            INSERT INTO x VALUES
+                            (1, '2020-01-01T00:00:00.000Z'),
+                            (127, '2020-01-01T06:00:00.000Z'),
+                            (-1, '2020-01-01T12:00:00.000Z')
+                            """
+            );
+            execute("INSERT INTO x VALUES (42, '2020-01-02T00:00:00.000Z')");
+            drainWalQueue();
+
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
+            drainWalQueue();
+
+            execute("ALTER TABLE x ALTER COLUMN v TYPE DOUBLE");
+            drainWalQueue();
+
+            assertSql(
+                    """
+                            v\tts
+                            1.0\t2020-01-01T00:00:00.000000Z
+                            127.0\t2020-01-01T06:00:00.000000Z
+                            -1.0\t2020-01-01T12:00:00.000000Z
+                            42.0\t2020-01-02T00:00:00.000000Z
+                            """,
+                    "SELECT * FROM x"
+            );
+        });
+    }
+
+    @Test
+    public void testAlterColumnTypeChainedFixedToVarWithParquetPartition() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(
+                    """
+                            CREATE TABLE x (ts TIMESTAMP)
+                            TIMESTAMP(ts) PARTITION BY DAY WAL
+                            """
+            );
+            execute(
+                    """
+                            INSERT INTO x(ts) VALUES
+                            ('2020-01-01T00:00:00.000Z'),
+                            ('2020-01-01T04:00:00.000Z')
+                            """
+            );
+            execute("INSERT INTO x(ts) VALUES ('2020-01-02T00:00:00.000Z')");
+            drainWalQueue();
+
+            execute("ALTER TABLE x ADD COLUMN v INT");
+            drainWalQueue();
+
+            execute(
+                    """
+                            INSERT INTO x(v, ts) VALUES
+                            (10, '2020-01-01T08:00:00.000Z'),
+                            (NULL, '2020-01-01T12:00:00.000Z'),
+                            (30, '2020-01-01T16:00:00.000Z'),
+                            (40, '2020-01-01T20:00:00.000Z')
+                            """
+            );
+            execute("INSERT INTO x(v, ts) VALUES (50, '2020-01-02T12:00:00.000Z')");
+            drainWalQueue();
+
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
+            drainWalQueue();
+
+            // Three chained conversions: INT → LONG → DOUBLE → VARCHAR.
+            // The parquet file stores data under the original INT writer index.
+            // The read path and O3 merge must walk the full replacingIndex chain.
+            execute("ALTER TABLE x ALTER COLUMN v TYPE LONG");
+            drainWalQueue();
+            execute("ALTER TABLE x ALTER COLUMN v TYPE DOUBLE");
+            drainWalQueue();
+            execute("ALTER TABLE x ALTER COLUMN v TYPE VARCHAR");
+            drainWalQueue();
+
+            // The second ALTER TYPE eagerly converts the parquet partition to native so
+            // it goes through the same chain as the native one:
+            // INT → LONG → DOUBLE → VARCHAR, producing "10.0", "30.0", "40.0".
+            assertSql(
+                    """
+                            ts\tv
+                            2020-01-01T00:00:00.000000Z\t
+                            2020-01-01T04:00:00.000000Z\t
+                            2020-01-01T08:00:00.000000Z\t10.0
+                            2020-01-01T12:00:00.000000Z\t
+                            2020-01-01T16:00:00.000000Z\t30.0
+                            2020-01-01T20:00:00.000000Z\t40.0
+                            2020-01-02T00:00:00.000000Z\t
+                            2020-01-02T12:00:00.000000Z\t50.0
+                            """,
+                    "SELECT * FROM x"
+            );
+
+            // O3 merge into the (now native) partition.
+            execute("INSERT INTO x(v, ts) VALUES ('99', '2020-01-01T06:00:00.000Z')");
+            drainWalQueue();
+
+            Assert.assertFalse(
+                    engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("x"))
+            );
+
+            assertSql(
+                    """
+                            ts\tv
+                            2020-01-01T00:00:00.000000Z\t
+                            2020-01-01T04:00:00.000000Z\t
+                            2020-01-01T06:00:00.000000Z\t99
+                            2020-01-01T08:00:00.000000Z\t10.0
+                            2020-01-01T12:00:00.000000Z\t
+                            2020-01-01T16:00:00.000000Z\t30.0
+                            2020-01-01T20:00:00.000000Z\t40.0
+                            2020-01-02T00:00:00.000000Z\t
+                            2020-01-02T12:00:00.000000Z\t50.0
+                            """,
+                    "SELECT * FROM x"
+            );
+        });
+    }
+
+    @Test
+    public void testAlterColumnTypeChainedWithParquetPartition() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(
+                    """
+                            CREATE TABLE x (ts TIMESTAMP)
+                            TIMESTAMP(ts) PARTITION BY DAY WAL
+                            """
+            );
+            execute(
+                    """
+                            INSERT INTO x(ts) VALUES
+                            ('2020-01-01T00:00:00.000Z'),
+                            ('2020-01-01T04:00:00.000Z')
+                            """
+            );
+            execute("INSERT INTO x(ts) VALUES ('2020-01-02T00:00:00.000Z')");
+            drainWalQueue();
+
+            execute("ALTER TABLE x ADD COLUMN v INT");
+            drainWalQueue();
+
+            execute(
+                    """
+                            INSERT INTO x(v, ts) VALUES
+                            (10, '2020-01-01T08:00:00.000Z'),
+                            (NULL, '2020-01-01T12:00:00.000Z'),
+                            (30, '2020-01-01T16:00:00.000Z'),
+                            (40, '2020-01-01T20:00:00.000Z')
+                            """
+            );
+            execute("INSERT INTO x(v, ts) VALUES (50, '2020-01-02T12:00:00.000Z')");
+            drainWalQueue();
+
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
+            drainWalQueue();
+
+            // Two consecutive type changes: INT → LONG → DOUBLE.
+            // The parquet file stores data under the original INT writer index.
+            // The O3 merge must walk the full replacingIndex chain to find it.
+            execute("ALTER TABLE x ALTER COLUMN v TYPE LONG");
+            drainWalQueue();
+            execute("ALTER TABLE x ALTER COLUMN v TYPE DOUBLE");
+            drainWalQueue();
+
+            assertSql(
+                    """
+                            ts\tv
+                            2020-01-01T00:00:00.000000Z\tnull
+                            2020-01-01T04:00:00.000000Z\tnull
+                            2020-01-01T08:00:00.000000Z\t10.0
+                            2020-01-01T12:00:00.000000Z\tnull
+                            2020-01-01T16:00:00.000000Z\t30.0
+                            2020-01-01T20:00:00.000000Z\t40.0
+                            2020-01-02T00:00:00.000000Z\tnull
+                            2020-01-02T12:00:00.000000Z\t50.0
+                            """,
+                    "SELECT * FROM x"
+            );
+
+            // O3 merge into the parquet partition.
+            execute("INSERT INTO x(v, ts) VALUES (99, '2020-01-01T06:00:00.000Z')");
+            drainWalQueue();
+
+            Assert.assertFalse(
+                    engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("x"))
+            );
+
+            assertSql(
+                    """
+                            ts\tv
+                            2020-01-01T00:00:00.000000Z\tnull
+                            2020-01-01T04:00:00.000000Z\tnull
+                            2020-01-01T06:00:00.000000Z\t99.0
+                            2020-01-01T08:00:00.000000Z\t10.0
+                            2020-01-01T12:00:00.000000Z\tnull
+                            2020-01-01T16:00:00.000000Z\t30.0
+                            2020-01-01T20:00:00.000000Z\t40.0
+                            2020-01-02T00:00:00.000000Z\tnull
+                            2020-01-02T12:00:00.000000Z\t50.0
+                            """,
+                    "SELECT * FROM x"
+            );
+        });
+    }
+
+    @Test
+    public void testAlterColumnTypeDateToLongWithParquetPartition() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (v DATE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute(
+                    """
+                            INSERT INTO x VALUES
+                            (CAST('1970-01-01T00:00:01.000Z' AS DATE), '2020-01-01T00:00:00.000Z'),
+                            (NULL, '2020-01-01T06:00:00.000Z'),
+                            (CAST('1970-01-01T00:16:40.000Z' AS DATE), '2020-01-01T12:00:00.000Z')
+                            """
+            );
+            execute("INSERT INTO x VALUES (CAST('1970-01-01T00:00:00.100Z' AS DATE), '2020-01-02T00:00:00.000Z')");
+            drainWalQueue();
+
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
+            drainWalQueue();
+
+            execute("ALTER TABLE x ALTER COLUMN v TYPE LONG");
+            drainWalQueue();
+
+            // DATE and LONG share the same i64 representation (milliseconds)
+            // and null sentinel (Long.MIN_VALUE). Conversion is a no-op.
+            assertSql(
+                    """
+                            v\tts
+                            1000\t2020-01-01T00:00:00.000000Z
+                            null\t2020-01-01T06:00:00.000000Z
+                            1000000\t2020-01-01T12:00:00.000000Z
+                            100\t2020-01-02T00:00:00.000000Z
+                            """,
+                    "SELECT * FROM x"
+            );
+        });
+    }
+
+    @Test
+    public void testAlterColumnTypeDateToTimestampWithParquetPartition() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (v DATE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute(
+                    """
+                            INSERT INTO x VALUES
+                            (CAST('1970-01-01T00:00:01.000Z' AS DATE), '2020-01-01T00:00:00.000Z'),
+                            (NULL, '2020-01-01T06:00:00.000Z'),
+                            (CAST('1970-01-01T00:16:40.000Z' AS DATE), '2020-01-01T12:00:00.000Z')
+                            """
+            );
+            execute("INSERT INTO x VALUES (CAST('1970-01-01T00:00:00.500Z' AS DATE), '2020-01-02T00:00:00.000Z')");
+            drainWalQueue();
+
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
+            drainWalQueue();
+
+            execute("ALTER TABLE x ALTER COLUMN v TYPE TIMESTAMP");
+            drainWalQueue();
+
+            // DATE (ms) → TIMESTAMP (µs): values are scaled ×1000.
+            assertSql(
+                    """
+                            v\tts
+                            1970-01-01T00:00:01.000000Z\t2020-01-01T00:00:00.000000Z
+                            \t2020-01-01T06:00:00.000000Z
+                            1970-01-01T00:16:40.000000Z\t2020-01-01T12:00:00.000000Z
+                            1970-01-01T00:00:00.500000Z\t2020-01-02T00:00:00.000000Z
+                            """,
+                    "SELECT * FROM x"
+            );
+        });
+    }
+
+    @Test
+    public void testAlterColumnTypeDoubleToByteWithParquetPartition() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute(
+                    """
+                            INSERT INTO x VALUES
+                            (10.5, '2020-01-01T00:00:00.000Z'),
+                            (NULL, '2020-01-01T06:00:00.000Z'),
+                            (-3.9, '2020-01-01T12:00:00.000Z'),
+                            (1e10, '2020-01-01T18:00:00.000Z')
+                            """
+            );
+            execute("INSERT INTO x VALUES (7.1, '2020-01-02T00:00:00.000Z')");
+            drainWalQueue();
+
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
+            drainWalQueue();
+
+            execute("ALTER TABLE x ALTER COLUMN v TYPE BYTE");
+            drainWalQueue();
+
+            // Out-of-range 1e10 should become BYTE null (0).
+            assertSql(
+                    """
+                            v\tts
+                            10\t2020-01-01T00:00:00.000000Z
+                            0\t2020-01-01T06:00:00.000000Z
+                            -3\t2020-01-01T12:00:00.000000Z
+                            0\t2020-01-01T18:00:00.000000Z
+                            7\t2020-01-02T00:00:00.000000Z
+                            """,
+                    "SELECT * FROM x"
+            );
+        });
+    }
+
+    @Test
+    public void testAlterColumnTypeDoubleToDateWithParquetPartition() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute(
+                    """
+                            INSERT INTO x VALUES
+                            (1.0, '2020-01-01T00:00:00.000Z'),
+                            (-1.0, '2020-01-01T04:00:00.000Z'),
+                            (NULL, '2020-01-01T08:00:00.000Z'),
+                            (0.0, '2020-01-01T12:00:00.000Z'),
+                            (86400000.0, '2020-01-01T16:00:00.000Z')
+                            """
+            );
+            execute(
+                    """
+                            INSERT INTO x VALUES
+                            (1.0, '2020-01-02T00:00:00.000Z'),
+                            (-1.0, '2020-01-02T04:00:00.000Z'),
+                            (NULL, '2020-01-02T08:00:00.000Z'),
+                            (0.0, '2020-01-02T12:00:00.000Z'),
+                            (86400000.0, '2020-01-02T16:00:00.000Z')
+                            """
+            );
+            drainWalQueue();
+
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
+            drainWalQueue();
+
+            execute("ALTER TABLE x ALTER COLUMN v TYPE DATE");
+            drainWalQueue();
+
+            // DOUBLE→DATE is a range-checked f64→i64 cast. NaN→null.
+            // Both partitions must produce identical results.
+            assertSql(
+                    """
+                            v\tts
+                            1970-01-01T00:00:00.001Z\t2020-01-01T00:00:00.000000Z
+                            1969-12-31T23:59:59.999Z\t2020-01-01T04:00:00.000000Z
+                            \t2020-01-01T08:00:00.000000Z
+                            1970-01-01T00:00:00.000Z\t2020-01-01T12:00:00.000000Z
+                            1970-01-02T00:00:00.000Z\t2020-01-01T16:00:00.000000Z
+                            1970-01-01T00:00:00.001Z\t2020-01-02T00:00:00.000000Z
+                            1969-12-31T23:59:59.999Z\t2020-01-02T04:00:00.000000Z
+                            \t2020-01-02T08:00:00.000000Z
+                            1970-01-01T00:00:00.000Z\t2020-01-02T12:00:00.000000Z
+                            1970-01-02T00:00:00.000Z\t2020-01-02T16:00:00.000000Z
+                            """,
+                    "SELECT * FROM x"
+            );
+        });
+    }
+
+    @Test
+    public void testAlterColumnTypeDoubleToIntOutOfRangeWithParquetPartition() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute(
+                    """
+                            INSERT INTO x VALUES
+                            (42.5, '2020-01-01T00:00:00.000Z'),
+                            (1e15, '2020-01-01T06:00:00.000Z'),
+                            (-1e15, '2020-01-01T12:00:00.000Z'),
+                            (NULL, '2020-01-01T18:00:00.000Z')
+                            """
+            );
+            execute("INSERT INTO x VALUES (3.7, '2020-01-02T00:00:00.000Z')");
+            drainWalQueue();
+
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
+            drainWalQueue();
+
+            execute("ALTER TABLE x ALTER COLUMN v TYPE INT");
+            drainWalQueue();
+
+            // C++ converts out-of-range doubles to INT null. The Rust parquet
+            // decoder must do the same: values outside [INT_MIN+1, INT_MAX]
+            // should become null, and fractional parts are truncated toward zero.
+            assertSql(
+                    """
+                            v\tts
+                            42\t2020-01-01T00:00:00.000000Z
+                            null\t2020-01-01T06:00:00.000000Z
+                            null\t2020-01-01T12:00:00.000000Z
+                            null\t2020-01-01T18:00:00.000000Z
+                            3\t2020-01-02T00:00:00.000000Z
+                            """,
+                    "SELECT * FROM x"
+            );
+        });
+    }
+
+    @Test
+    public void testAlterColumnTypeDoubleToShortWithParquetPartition() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute(
+                    """
+                            INSERT INTO x VALUES
+                            (10.5, '2020-01-01T00:00:00.000Z'),
+                            (NULL, '2020-01-01T06:00:00.000Z'),
+                            (-3.9, '2020-01-01T12:00:00.000Z'),
+                            (1e10, '2020-01-01T18:00:00.000Z')
+                            """
+            );
+            execute("INSERT INTO x VALUES (7.1, '2020-01-02T00:00:00.000Z')");
+            drainWalQueue();
+
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
+            drainWalQueue();
+
+            execute("ALTER TABLE x ALTER COLUMN v TYPE SHORT");
+            drainWalQueue();
+
+            // Out-of-range 1e10 should become SHORT null (0).
+            assertSql(
+                    """
+                            v\tts
+                            10\t2020-01-01T00:00:00.000000Z
+                            0\t2020-01-01T06:00:00.000000Z
+                            -3\t2020-01-01T12:00:00.000000Z
+                            0\t2020-01-01T18:00:00.000000Z
+                            7\t2020-01-02T00:00:00.000000Z
+                            """,
+                    "SELECT * FROM x"
+            );
+        });
+    }
+
+    @Test
+    public void testAlterColumnTypeDoubleToTimestampWithParquetPartition() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute(
+                    """
+                            INSERT INTO x VALUES
+                            (1.0, '2020-01-01T00:00:00.000Z'),
+                            (-1.0, '2020-01-01T04:00:00.000Z'),
+                            (NULL, '2020-01-01T08:00:00.000Z'),
+                            (0.0, '2020-01-01T12:00:00.000Z'),
+                            (1000000.0, '2020-01-01T16:00:00.000Z')
+                            """
+            );
+            execute(
+                    """
+                            INSERT INTO x VALUES
+                            (1.0, '2020-01-02T00:00:00.000Z'),
+                            (-1.0, '2020-01-02T04:00:00.000Z'),
+                            (NULL, '2020-01-02T08:00:00.000Z'),
+                            (0.0, '2020-01-02T12:00:00.000Z'),
+                            (1000000.0, '2020-01-02T16:00:00.000Z')
+                            """
+            );
+            drainWalQueue();
+
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
+            drainWalQueue();
+
+            execute("ALTER TABLE x ALTER COLUMN v TYPE TIMESTAMP");
+            drainWalQueue();
+
+            // DOUBLE→TIMESTAMP is a range-checked f64→i64 cast. NaN��null.
+            // Both partitions must produce identical results.
+            assertSql(
+                    """
+                            v\tts
+                            1970-01-01T00:00:00.000001Z\t2020-01-01T00:00:00.000000Z
+                            1969-12-31T23:59:59.999999Z\t2020-01-01T04:00:00.000000Z
+                            \t2020-01-01T08:00:00.000000Z
+                            1970-01-01T00:00:00.000000Z\t2020-01-01T12:00:00.000000Z
+                            1970-01-01T00:00:01.000000Z\t2020-01-01T16:00:00.000000Z
+                            1970-01-01T00:00:00.000001Z\t2020-01-02T00:00:00.000000Z
+                            1969-12-31T23:59:59.999999Z\t2020-01-02T04:00:00.000000Z
+                            \t2020-01-02T08:00:00.000000Z
+                            1970-01-01T00:00:00.000000Z\t2020-01-02T12:00:00.000000Z
+                            1970-01-01T00:00:01.000000Z\t2020-01-02T16:00:00.000000Z
+                            """,
+                    "SELECT * FROM x"
+            );
+        });
+    }
+
+    @Test
+    public void testAlterColumnTypeDoubleToVarcharWithParquetPartition() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(
+                    """
+                            CREATE TABLE x (ts TIMESTAMP)
+                            TIMESTAMP(ts) PARTITION BY DAY WAL
+                            """
+            );
+            execute(
+                    """
+                            INSERT INTO x(ts) VALUES
+                            ('2020-01-01T00:00:00.000Z'),
+                            ('2020-01-01T04:00:00.000Z')
+                            """
+            );
+            execute("INSERT INTO x(ts) VALUES ('2020-01-02T00:00:00.000Z')");
+            drainWalQueue();
+
+            execute("ALTER TABLE x ADD COLUMN v DOUBLE");
+            drainWalQueue();
+
+            execute(
+                    """
+                            INSERT INTO x(v, ts) VALUES
+                            (3.14, '2020-01-01T08:00:00.000Z'),
+                            (NULL, '2020-01-01T12:00:00.000Z'),
+                            (-0.5, '2020-01-01T16:00:00.000Z'),
+                            (1000000.123, '2020-01-01T20:00:00.000Z')
+                            """
+            );
+            execute("INSERT INTO x(v, ts) VALUES (42.0, '2020-01-02T12:00:00.000Z')");
+            drainWalQueue();
+
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
+            drainWalQueue();
+
+            execute("ALTER TABLE x ALTER COLUMN v TYPE VARCHAR");
+            drainWalQueue();
+
+            assertSql(
+                    """
+                            ts\tv
+                            2020-01-01T00:00:00.000000Z\t
+                            2020-01-01T04:00:00.000000Z\t
+                            2020-01-01T08:00:00.000000Z\t3.14
+                            2020-01-01T12:00:00.000000Z\t
+                            2020-01-01T16:00:00.000000Z\t-0.5
+                            2020-01-01T20:00:00.000000Z\t1000000.123
+                            2020-01-02T00:00:00.000000Z\t
+                            2020-01-02T12:00:00.000000Z\t42.0
+                            """,
+                    "SELECT * FROM x"
+            );
+
+            // O3 merge into the parquet partition.
+            execute("INSERT INTO x(v, ts) VALUES ('99.9', '2020-01-01T06:00:00.000Z')");
+            drainWalQueue();
+
+            Assert.assertFalse(
+                    engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("x"))
+            );
+
+            assertSql(
+                    """
+                            ts\tv
+                            2020-01-01T00:00:00.000000Z\t
+                            2020-01-01T04:00:00.000000Z\t
+                            2020-01-01T06:00:00.000000Z\t99.9
+                            2020-01-01T08:00:00.000000Z\t3.14
+                            2020-01-01T12:00:00.000000Z\t
+                            2020-01-01T16:00:00.000000Z\t-0.5
+                            2020-01-01T20:00:00.000000Z\t1000000.123
+                            2020-01-02T00:00:00.000000Z\t
+                            2020-01-02T12:00:00.000000Z\t42.0
+                            """,
+                    "SELECT * FROM x"
+            );
+        });
+    }
+
+    @Test
+    public void testAlterColumnTypeFloatToByteWithParquetPartition() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (v FLOAT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute(
+                    """
+                            INSERT INTO x VALUES
+                            (10.5, '2020-01-01T00:00:00.000Z'),
+                            (NULL, '2020-01-01T06:00:00.000Z'),
+                            (-3.9, '2020-01-01T12:00:00.000Z')
+                            """
+            );
+            execute("INSERT INTO x VALUES (7.1, '2020-01-02T00:00:00.000Z')");
+            drainWalQueue();
+
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
+            drainWalQueue();
+
+            execute("ALTER TABLE x ALTER COLUMN v TYPE BYTE");
+            drainWalQueue();
+
+            assertSql(
+                    """
+                            v\tts
+                            10\t2020-01-01T00:00:00.000000Z
+                            0\t2020-01-01T06:00:00.000000Z
+                            -3\t2020-01-01T12:00:00.000000Z
+                            7\t2020-01-02T00:00:00.000000Z
+                            """,
+                    "SELECT * FROM x"
+            );
+        });
+    }
+
+    @Test
+    public void testAlterColumnTypeFloatToDateWithParquetPartition() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (v FLOAT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute(
+                    """
+                            INSERT INTO x VALUES
+                            (1.0::FLOAT, '2020-01-01T00:00:00.000Z'),
+                            (-1.0::FLOAT, '2020-01-01T04:00:00.000Z'),
+                            (NULL, '2020-01-01T08:00:00.000Z'),
+                            (0.0::FLOAT, '2020-01-01T12:00:00.000Z'),
+                            (86400000.0::FLOAT, '2020-01-01T16:00:00.000Z')
+                            """
+            );
+            execute(
+                    """
+                            INSERT INTO x VALUES
+                            (1.0::FLOAT, '2020-01-02T00:00:00.000Z'),
+                            (-1.0::FLOAT, '2020-01-02T04:00:00.000Z'),
+                            (NULL, '2020-01-02T08:00:00.000Z'),
+                            (0.0::FLOAT, '2020-01-02T12:00:00.000Z'),
+                            (86400000.0::FLOAT, '2020-01-02T16:00:00.000Z')
+                            """
+            );
+            drainWalQueue();
+
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
+            drainWalQueue();
+
+            execute("ALTER TABLE x ALTER COLUMN v TYPE DATE");
+            drainWalQueue();
+
+            // FLOAT→DATE is a range-checked f32→i64 cast. NaN→null.
+            // Both partitions must produce identical results.
+            assertSql(
+                    """
+                            v\tts
+                            1970-01-01T00:00:00.001Z\t2020-01-01T00:00:00.000000Z
+                            1969-12-31T23:59:59.999Z\t2020-01-01T04:00:00.000000Z
+                            \t2020-01-01T08:00:00.000000Z
+                            1970-01-01T00:00:00.000Z\t2020-01-01T12:00:00.000000Z
+                            1970-01-02T00:00:00.000Z\t2020-01-01T16:00:00.000000Z
+                            1970-01-01T00:00:00.001Z\t2020-01-02T00:00:00.000000Z
+                            1969-12-31T23:59:59.999Z\t2020-01-02T04:00:00.000000Z
+                            \t2020-01-02T08:00:00.000000Z
+                            1970-01-01T00:00:00.000Z\t2020-01-02T12:00:00.000000Z
+                            1970-01-02T00:00:00.000Z\t2020-01-02T16:00:00.000000Z
+                            """,
+                    "SELECT * FROM x"
+            );
+        });
+    }
+
+    @Test
+    public void testAlterColumnTypeFloatToDoubleWithParquetPartition() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(
+                    """
+                            CREATE TABLE x (ts TIMESTAMP)
+                            TIMESTAMP(ts) PARTITION BY DAY WAL
+                            """
+            );
+            execute(
+                    """
+                            INSERT INTO x(ts) VALUES
+                            ('2020-01-01T00:00:00.000Z'),
+                            ('2020-01-01T04:00:00.000Z')
+                            """
+            );
+            execute("INSERT INTO x(ts) VALUES ('2020-01-02T00:00:00.000Z')");
+            drainWalQueue();
+
+            execute("ALTER TABLE x ADD COLUMN v FLOAT");
+            drainWalQueue();
+
+            execute(
+                    """
+                            INSERT INTO x(v, ts) VALUES
+                            (1.5, '2020-01-01T08:00:00.000Z'),
+                            (NULL, '2020-01-01T12:00:00.000Z'),
+                            (3.5, '2020-01-01T16:00:00.000Z'),
+                            (4.5, '2020-01-01T20:00:00.000Z')
+                            """
+            );
+            execute("INSERT INTO x(v, ts) VALUES (5.5, '2020-01-02T12:00:00.000Z')");
+            drainWalQueue();
+
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
+            drainWalQueue();
+
+            execute("ALTER TABLE x ALTER COLUMN v TYPE DOUBLE");
+            drainWalQueue();
+
+            assertSql(
+                    """
+                            ts\tv
+                            2020-01-01T00:00:00.000000Z\tnull
+                            2020-01-01T04:00:00.000000Z\tnull
+                            2020-01-01T08:00:00.000000Z\t1.5
+                            2020-01-01T12:00:00.000000Z\tnull
+                            2020-01-01T16:00:00.000000Z\t3.5
+                            2020-01-01T20:00:00.000000Z\t4.5
+                            2020-01-02T00:00:00.000000Z\tnull
+                            2020-01-02T12:00:00.000000Z\t5.5
+                            """,
+                    "SELECT * FROM x"
+            );
+
+            // O3 merge into the parquet partition.
+            execute("INSERT INTO x(v, ts) VALUES (9.5, '2020-01-01T06:00:00.000Z')");
+            drainWalQueue();
+
+            Assert.assertFalse(
+                    engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("x"))
+            );
+
+            assertSql(
+                    """
+                            ts\tv
+                            2020-01-01T00:00:00.000000Z\tnull
+                            2020-01-01T04:00:00.000000Z\tnull
+                            2020-01-01T06:00:00.000000Z\t9.5
+                            2020-01-01T08:00:00.000000Z\t1.5
+                            2020-01-01T12:00:00.000000Z\tnull
+                            2020-01-01T16:00:00.000000Z\t3.5
+                            2020-01-01T20:00:00.000000Z\t4.5
+                            2020-01-02T00:00:00.000000Z\tnull
+                            2020-01-02T12:00:00.000000Z\t5.5
+                            """,
+                    "SELECT * FROM x"
+            );
+        });
+    }
+
+    @Test
+    public void testAlterColumnTypeFloatToIntOutOfRangeWithParquetPartition() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (v FLOAT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute(
+                    """
+                            INSERT INTO x VALUES
+                            (42.5, '2020-01-01T00:00:00.000Z'),
+                            (1e15, '2020-01-01T06:00:00.000Z'),
+                            (-1e15, '2020-01-01T12:00:00.000Z'),
+                            (NULL, '2020-01-01T18:00:00.000Z')
+                            """
+            );
+            execute("INSERT INTO x VALUES (7.9, '2020-01-02T00:00:00.000Z')");
+            drainWalQueue();
+
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
+            drainWalQueue();
+
+            execute("ALTER TABLE x ALTER COLUMN v TYPE INT");
+            drainWalQueue();
+
+            assertSql(
+                    """
+                            v\tts
+                            42\t2020-01-01T00:00:00.000000Z
+                            null\t2020-01-01T06:00:00.000000Z
+                            null\t2020-01-01T12:00:00.000000Z
+                            null\t2020-01-01T18:00:00.000000Z
+                            7\t2020-01-02T00:00:00.000000Z
+                            """,
+                    "SELECT * FROM x"
+            );
+        });
+    }
+
+    @Test
+    public void testAlterColumnTypeFloatToLongWithParquetPartition() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (v FLOAT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute(
+                    """
+                            INSERT INTO x VALUES
+                            (10.5, '2020-01-01T00:00:00.000Z'),
+                            (NULL, '2020-01-01T06:00:00.000Z'),
+                            (-3.9, '2020-01-01T12:00:00.000Z')
+                            """
+            );
+            execute("INSERT INTO x VALUES (7.1, '2020-01-02T00:00:00.000Z')");
+            drainWalQueue();
+
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
+            drainWalQueue();
+
+            execute("ALTER TABLE x ALTER COLUMN v TYPE LONG");
+            drainWalQueue();
+
+            assertSql(
+                    """
+                            v\tts
+                            10\t2020-01-01T00:00:00.000000Z
+                            null\t2020-01-01T06:00:00.000000Z
+                            -3\t2020-01-01T12:00:00.000000Z
+                            7\t2020-01-02T00:00:00.000000Z
+                            """,
+                    "SELECT * FROM x"
+            );
+        });
+    }
+
+    @Test
+    public void testAlterColumnTypeFloatToShortWithParquetPartition() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (v FLOAT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute(
+                    """
+                            INSERT INTO x VALUES
+                            (10.5, '2020-01-01T00:00:00.000Z'),
+                            (NULL, '2020-01-01T06:00:00.000Z'),
+                            (-3.9, '2020-01-01T12:00:00.000Z')
+                            """
+            );
+            execute("INSERT INTO x VALUES (7.1, '2020-01-02T00:00:00.000Z')");
+            drainWalQueue();
+
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
+            drainWalQueue();
+
+            execute("ALTER TABLE x ALTER COLUMN v TYPE SHORT");
+            drainWalQueue();
+
+            assertSql(
+                    """
+                            v\tts
+                            10\t2020-01-01T00:00:00.000000Z
+                            0\t2020-01-01T06:00:00.000000Z
+                            -3\t2020-01-01T12:00:00.000000Z
+                            7\t2020-01-02T00:00:00.000000Z
+                            """,
+                    "SELECT * FROM x"
+            );
+        });
+    }
+
+    @Test
+    public void testAlterColumnTypeFloatToTimestampWithParquetPartition() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (v FLOAT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute(
+                    """
+                            INSERT INTO x VALUES
+                            (1.0::FLOAT, '2020-01-01T00:00:00.000Z'),
+                            (-1.0::FLOAT, '2020-01-01T04:00:00.000Z'),
+                            (NULL, '2020-01-01T08:00:00.000Z'),
+                            (0.0::FLOAT, '2020-01-01T12:00:00.000Z'),
+                            (1000000.0::FLOAT, '2020-01-01T16:00:00.000Z')
+                            """
+            );
+            execute(
+                    """
+                            INSERT INTO x VALUES
+                            (1.0::FLOAT, '2020-01-02T00:00:00.000Z'),
+                            (-1.0::FLOAT, '2020-01-02T04:00:00.000Z'),
+                            (NULL, '2020-01-02T08:00:00.000Z'),
+                            (0.0::FLOAT, '2020-01-02T12:00:00.000Z'),
+                            (1000000.0::FLOAT, '2020-01-02T16:00:00.000Z')
+                            """
+            );
+            drainWalQueue();
+
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
+            drainWalQueue();
+
+            execute("ALTER TABLE x ALTER COLUMN v TYPE TIMESTAMP");
+            drainWalQueue();
+
+            // FLOAT→TIMESTAMP is a range-checked f32→i64 cast. NaN→null.
+            // Both partitions must produce identical results.
+            assertSql(
+                    """
+                            v\tts
+                            1970-01-01T00:00:00.000001Z\t2020-01-01T00:00:00.000000Z
+                            1969-12-31T23:59:59.999999Z\t2020-01-01T04:00:00.000000Z
+                            \t2020-01-01T08:00:00.000000Z
+                            1970-01-01T00:00:00.000000Z\t2020-01-01T12:00:00.000000Z
+                            1970-01-01T00:00:01.000000Z\t2020-01-01T16:00:00.000000Z
+                            1970-01-01T00:00:00.000001Z\t2020-01-02T00:00:00.000000Z
+                            1969-12-31T23:59:59.999999Z\t2020-01-02T04:00:00.000000Z
+                            \t2020-01-02T08:00:00.000000Z
+                            1970-01-01T00:00:00.000000Z\t2020-01-02T12:00:00.000000Z
+                            1970-01-01T00:00:01.000000Z\t2020-01-02T16:00:00.000000Z
+                            """,
+                    "SELECT * FROM x"
+            );
+        });
+    }
+
+    @Test
+    public void testAlterColumnTypeIntToBooleanWithParquetPartition() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute(
+                    """
+                            INSERT INTO x VALUES
+                            (1, '2020-01-01T00:00:00.000Z'),
+                            (0, '2020-01-01T06:00:00.000Z'),
+                            (NULL, '2020-01-01T12:00:00.000Z'),
+                            (42, '2020-01-01T18:00:00.000Z')
+                            """
+            );
+            execute("INSERT INTO x VALUES (0, '2020-01-02T00:00:00.000Z')");
+            drainWalQueue();
+
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
+            drainWalQueue();
+
+            execute("ALTER TABLE x ALTER COLUMN v TYPE BOOLEAN");
+            drainWalQueue();
+
+            // INT→BOOLEAN: non-zero → true, zero → false, NULL → false.
+            // The Rust decoder normalizes via contract_to_bool (not truncation).
+            assertSql(
+                    """
+                            v\tts
+                            true\t2020-01-01T00:00:00.000000Z
+                            false\t2020-01-01T06:00:00.000000Z
+                            false\t2020-01-01T12:00:00.000000Z
+                            true\t2020-01-01T18:00:00.000000Z
+                            false\t2020-01-02T00:00:00.000000Z
+                            """,
+                    "SELECT * FROM x"
+            );
+        });
+    }
+
+    @Test
+    public void testAlterColumnTypeIntToDateWithParquetPartition() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute(
+                    """
+                            INSERT INTO x VALUES
+                            (1, '2020-01-01T00:00:00.000Z'),
+                            (-1, '2020-01-01T04:00:00.000Z'),
+                            (2_147_483_647, '2020-01-01T08:00:00.000Z'),
+                            (NULL, '2020-01-01T12:00:00.000Z'),
+                            (0, '2020-01-01T16:00:00.000Z')
+                            """
+            );
+            // Native partition for comparison.
+            execute(
+                    """
+                            INSERT INTO x VALUES
+                            (1, '2020-01-02T00:00:00.000Z'),
+                            (-1, '2020-01-02T04:00:00.000Z'),
+                            (2_147_483_647, '2020-01-02T08:00:00.000Z'),
+                            (NULL, '2020-01-02T12:00:00.000Z'),
+                            (0, '2020-01-02T16:00:00.000Z')
+                            """
+            );
+            drainWalQueue();
+
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
+            drainWalQueue();
+
+            execute("ALTER TABLE x ALTER COLUMN v TYPE DATE");
+            drainWalQueue();
+
+            // INT→DATE is a plain i32→i64 widening. The int value becomes
+            // the DATE millisecond value. INT NULL (Integer.MIN_VALUE) maps
+            // to DATE NULL. Both partitions must produce identical results.
+            assertSql(
+                    """
+                            v\tts
+                            1970-01-01T00:00:00.001Z\t2020-01-01T00:00:00.000000Z
+                            1969-12-31T23:59:59.999Z\t2020-01-01T04:00:00.000000Z
+                            1970-01-25T20:31:23.647Z\t2020-01-01T08:00:00.000000Z
+                            \t2020-01-01T12:00:00.000000Z
+                            1970-01-01T00:00:00.000Z\t2020-01-01T16:00:00.000000Z
+                            1970-01-01T00:00:00.001Z\t2020-01-02T00:00:00.000000Z
+                            1969-12-31T23:59:59.999Z\t2020-01-02T04:00:00.000000Z
+                            1970-01-25T20:31:23.647Z\t2020-01-02T08:00:00.000000Z
+                            \t2020-01-02T12:00:00.000000Z
+                            1970-01-01T00:00:00.000Z\t2020-01-02T16:00:00.000000Z
+                            """,
+                    "SELECT * FROM x"
+            );
+        });
+    }
+
+    @Test
+    public void testAlterColumnTypeIntToDoubleWithParquetPartition() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(
+                    """
+                            CREATE TABLE x (ts TIMESTAMP)
+                            TIMESTAMP(ts) PARTITION BY DAY WAL
+                            """
+            );
+            execute(
+                    """
+                            INSERT INTO x(ts) VALUES
+                            ('2020-01-01T00:00:00.000Z'),
+                            ('2020-01-01T04:00:00.000Z')
+                            """
+            );
+            execute("INSERT INTO x(ts) VALUES ('2020-01-02T00:00:00.000Z')");
+            drainWalQueue();
+
+            execute("ALTER TABLE x ADD COLUMN v INT");
+            drainWalQueue();
+
+            execute(
+                    """
+                            INSERT INTO x(v, ts) VALUES
+                            (10, '2020-01-01T08:00:00.000Z'),
+                            (NULL, '2020-01-01T12:00:00.000Z'),
+                            (30, '2020-01-01T16:00:00.000Z'),
+                            (40, '2020-01-01T20:00:00.000Z')
+                            """
+            );
+            execute("INSERT INTO x(v, ts) VALUES (50, '2020-01-02T12:00:00.000Z')");
+            drainWalQueue();
+
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
+            drainWalQueue();
+
+            execute("ALTER TABLE x ALTER COLUMN v TYPE DOUBLE");
+            drainWalQueue();
+
+            assertSql(
+                    """
+                            ts\tv
+                            2020-01-01T00:00:00.000000Z\tnull
+                            2020-01-01T04:00:00.000000Z\tnull
+                            2020-01-01T08:00:00.000000Z\t10.0
+                            2020-01-01T12:00:00.000000Z\tnull
+                            2020-01-01T16:00:00.000000Z\t30.0
+                            2020-01-01T20:00:00.000000Z\t40.0
+                            2020-01-02T00:00:00.000000Z\tnull
+                            2020-01-02T12:00:00.000000Z\t50.0
+                            """,
+                    "SELECT * FROM x"
+            );
+
+            // O3 merge into the parquet partition.
+            execute("INSERT INTO x(v, ts) VALUES (99, '2020-01-01T06:00:00.000Z')");
+            drainWalQueue();
+
+            Assert.assertFalse(
+                    engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("x"))
+            );
+
+            assertSql(
+                    """
+                            ts\tv
+                            2020-01-01T00:00:00.000000Z\tnull
+                            2020-01-01T04:00:00.000000Z\tnull
+                            2020-01-01T06:00:00.000000Z\t99.0
+                            2020-01-01T08:00:00.000000Z\t10.0
+                            2020-01-01T12:00:00.000000Z\tnull
+                            2020-01-01T16:00:00.000000Z\t30.0
+                            2020-01-01T20:00:00.000000Z\t40.0
+                            2020-01-02T00:00:00.000000Z\tnull
+                            2020-01-02T12:00:00.000000Z\t50.0
+                            """,
+                    "SELECT * FROM x"
+            );
+        });
+    }
+
+    @Test
+    public void testAlterColumnTypeIntToStringWithParquetPartition() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(
+                    """
+                            CREATE TABLE x (ts TIMESTAMP)
+                            TIMESTAMP(ts) PARTITION BY DAY WAL
+                            """
+            );
+            execute(
+                    """
+                            INSERT INTO x(ts) VALUES
+                            ('2020-01-01T00:00:00.000Z'),
+                            ('2020-01-01T04:00:00.000Z')
+                            """
+            );
+            execute("INSERT INTO x(ts) VALUES ('2020-01-02T00:00:00.000Z')");
+            drainWalQueue();
+
+            execute("ALTER TABLE x ADD COLUMN v INT");
+            drainWalQueue();
+
+            execute(
+                    """
+                            INSERT INTO x(v, ts) VALUES
+                            (10, '2020-01-01T08:00:00.000Z'),
+                            (NULL, '2020-01-01T12:00:00.000Z'),
+                            (30, '2020-01-01T16:00:00.000Z'),
+                            (40, '2020-01-01T20:00:00.000Z')
+                            """
+            );
+            execute("INSERT INTO x(v, ts) VALUES (50, '2020-01-02T12:00:00.000Z')");
+            drainWalQueue();
+
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
+            drainWalQueue();
+
+            execute("ALTER TABLE x ALTER COLUMN v TYPE STRING");
+            drainWalQueue();
+
+            assertSql(
+                    """
+                            ts\tv
+                            2020-01-01T00:00:00.000000Z\t
+                            2020-01-01T04:00:00.000000Z\t
+                            2020-01-01T08:00:00.000000Z\t10
+                            2020-01-01T12:00:00.000000Z\t
+                            2020-01-01T16:00:00.000000Z\t30
+                            2020-01-01T20:00:00.000000Z\t40
+                            2020-01-02T00:00:00.000000Z\t
+                            2020-01-02T12:00:00.000000Z\t50
+                            """,
+                    "SELECT * FROM x"
+            );
+
+            // O3 merge into the parquet partition.
+            execute("INSERT INTO x(v, ts) VALUES ('99', '2020-01-01T06:00:00.000Z')");
+            drainWalQueue();
+
+            Assert.assertFalse(
+                    engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("x"))
+            );
+
+            assertSql(
+                    """
+                            ts\tv
+                            2020-01-01T00:00:00.000000Z\t
+                            2020-01-01T04:00:00.000000Z\t
+                            2020-01-01T06:00:00.000000Z\t99
+                            2020-01-01T08:00:00.000000Z\t10
+                            2020-01-01T12:00:00.000000Z\t
+                            2020-01-01T16:00:00.000000Z\t30
+                            2020-01-01T20:00:00.000000Z\t40
+                            2020-01-02T00:00:00.000000Z\t
+                            2020-01-02T12:00:00.000000Z\t50
+                            """,
+                    "SELECT * FROM x"
+            );
+        });
+    }
+
+    @Test
+    public void testAlterColumnTypeIntToTimestampWithParquetPartition() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute(
+                    """
+                            INSERT INTO x VALUES
+                            (1, '2020-01-01T00:00:00.000Z'),
+                            (-1, '2020-01-01T04:00:00.000Z'),
+                            (2_147_483_647, '2020-01-01T08:00:00.000Z'),
+                            (NULL, '2020-01-01T12:00:00.000Z'),
+                            (0, '2020-01-01T16:00:00.000Z')
+                            """
+            );
+            execute(
+                    """
+                            INSERT INTO x VALUES
+                            (1, '2020-01-02T00:00:00.000Z'),
+                            (-1, '2020-01-02T04:00:00.000Z'),
+                            (2_147_483_647, '2020-01-02T08:00:00.000Z'),
+                            (NULL, '2020-01-02T12:00:00.000Z'),
+                            (0, '2020-01-02T16:00:00.000Z')
+                            """
+            );
+            drainWalQueue();
+
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
+            drainWalQueue();
+
+            execute("ALTER TABLE x ALTER COLUMN v TYPE TIMESTAMP");
+            drainWalQueue();
+
+            // INT→TIMESTAMP is a plain i32→i64 widening. The int value becomes
+            // the TIMESTAMP microsecond value. Both partitions must match.
+            assertSql(
+                    """
+                            v\tts
+                            1970-01-01T00:00:00.000001Z\t2020-01-01T00:00:00.000000Z
+                            1969-12-31T23:59:59.999999Z\t2020-01-01T04:00:00.000000Z
+                            1970-01-01T00:35:47.483647Z\t2020-01-01T08:00:00.000000Z
+                            \t2020-01-01T12:00:00.000000Z
+                            1970-01-01T00:00:00.000000Z\t2020-01-01T16:00:00.000000Z
+                            1970-01-01T00:00:00.000001Z\t2020-01-02T00:00:00.000000Z
+                            1969-12-31T23:59:59.999999Z\t2020-01-02T04:00:00.000000Z
+                            1970-01-01T00:35:47.483647Z\t2020-01-02T08:00:00.000000Z
+                            \t2020-01-02T12:00:00.000000Z
+                            1970-01-01T00:00:00.000000Z\t2020-01-02T16:00:00.000000Z
+                            """,
+                    "SELECT * FROM x"
+            );
+        });
+    }
+
+    @Test
+    public void testAlterColumnTypeIntToVarcharWithParquetPartition() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(
+                    """
+                            CREATE TABLE x (ts TIMESTAMP)
+                            TIMESTAMP(ts) PARTITION BY DAY WAL
+                            """
+            );
+            execute(
+                    """
+                            INSERT INTO x(ts) VALUES
+                            ('2020-01-01T00:00:00.000Z'),
+                            ('2020-01-01T04:00:00.000Z')
+                            """
+            );
+            execute("INSERT INTO x(ts) VALUES ('2020-01-02T00:00:00.000Z')");
+            drainWalQueue();
+
+            execute("ALTER TABLE x ADD COLUMN v INT");
+            drainWalQueue();
+
+            execute(
+                    """
+                            INSERT INTO x(v, ts) VALUES
+                            (10, '2020-01-01T08:00:00.000Z'),
+                            (NULL, '2020-01-01T12:00:00.000Z'),
+                            (30, '2020-01-01T16:00:00.000Z'),
+                            (40, '2020-01-01T20:00:00.000Z')
+                            """
+            );
+            execute("INSERT INTO x(v, ts) VALUES (50, '2020-01-02T12:00:00.000Z')");
+            drainWalQueue();
+
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
+            drainWalQueue();
+
+            try (TableReader reader = getReader("x")) {
+                Assert.assertEquals(PartitionFormat.PARQUET, reader.getPartitionFormatFromMetadata(0));
+                Assert.assertEquals(PartitionFormat.NATIVE, reader.getPartitionFormatFromMetadata(1));
+            }
+
+            // INT → VARCHAR. Parquet partition has column_top=2 for v.
+            execute("ALTER TABLE x ALTER COLUMN v TYPE VARCHAR");
+            drainWalQueue();
+
+            // Read path: lazy conversion in PageFrameMemoryRecord.
+            // column_top rows → null (empty), explicit NULL → null, values → string representation.
+            assertSql(
+                    """
+                            ts\tv
+                            2020-01-01T00:00:00.000000Z\t
+                            2020-01-01T04:00:00.000000Z\t
+                            2020-01-01T08:00:00.000000Z\t10
+                            2020-01-01T12:00:00.000000Z\t
+                            2020-01-01T16:00:00.000000Z\t30
+                            2020-01-01T20:00:00.000000Z\t40
+                            2020-01-02T00:00:00.000000Z\t
+                            2020-01-02T12:00:00.000000Z\t50
+                            """,
+                    "SELECT * FROM x"
+            );
+
+            try (TableReader reader = getReader("x")) {
+                Assert.assertEquals(PartitionFormat.PARQUET, reader.getPartitionFormatFromMetadata(0));
+                Assert.assertEquals(PartitionFormat.NATIVE, reader.getPartitionFormatFromMetadata(1));
+            }
+
+            // O3 merge: Rust post_convert eagerly converts INT → VARCHAR.
+            execute("INSERT INTO x(v, ts) VALUES ('99', '2020-01-01T06:00:00.000Z')");
+            drainWalQueue();
+
+            Assert.assertFalse(
+                    engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("x"))
+            );
+
+            assertSql(
+                    """
+                            ts\tv
+                            2020-01-01T00:00:00.000000Z\t
+                            2020-01-01T04:00:00.000000Z\t
+                            2020-01-01T06:00:00.000000Z\t99
+                            2020-01-01T08:00:00.000000Z\t10
+                            2020-01-01T12:00:00.000000Z\t
+                            2020-01-01T16:00:00.000000Z\t30
+                            2020-01-01T20:00:00.000000Z\t40
+                            2020-01-02T00:00:00.000000Z\t
+                            2020-01-02T12:00:00.000000Z\t50
+                            """,
+                    "SELECT * FROM x"
+            );
+        });
+    }
+
+    @Test
+    public void testAlterColumnTypeLongToDateWithParquetPartition() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute(
+                    """
+                            INSERT INTO x VALUES
+                            (1000, '2020-01-01T00:00:00.000Z'),
+                            (NULL, '2020-01-01T06:00:00.000Z'),
+                            (1000000, '2020-01-01T12:00:00.000Z')
+                            """
+            );
+            execute("INSERT INTO x VALUES (100, '2020-01-02T00:00:00.000Z')");
+            drainWalQueue();
+
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
+            drainWalQueue();
+
+            execute("ALTER TABLE x ALTER COLUMN v TYPE DATE");
+            drainWalQueue();
+
+            assertSql(
+                    """
+                            v\tts
+                            1970-01-01T00:00:01.000Z\t2020-01-01T00:00:00.000000Z
+                            \t2020-01-01T06:00:00.000000Z
+                            1970-01-01T00:16:40.000Z\t2020-01-01T12:00:00.000000Z
+                            1970-01-01T00:00:00.100Z\t2020-01-02T00:00:00.000000Z
+                            """,
+                    "SELECT * FROM x"
+            );
+        });
+    }
+
+    @Test
+    public void testAlterColumnTypeLongToFloatWithParquetPartition() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute(
+                    """
+                            INSERT INTO x VALUES
+                            (100, '2020-01-01T00:00:00.000Z'),
+                            (NULL, '2020-01-01T06:00:00.000Z'),
+                            (-42, '2020-01-01T12:00:00.000Z')
+                            """
+            );
+            execute("INSERT INTO x VALUES (7, '2020-01-02T00:00:00.000Z')");
+            drainWalQueue();
+
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
+            drainWalQueue();
+
+            execute("ALTER TABLE x ALTER COLUMN v TYPE FLOAT");
+            drainWalQueue();
+
+            assertSql(
+                    """
+                            v\tts
+                            100.0\t2020-01-01T00:00:00.000000Z
+                            null\t2020-01-01T06:00:00.000000Z
+                            -42.0\t2020-01-01T12:00:00.000000Z
+                            7.0\t2020-01-02T00:00:00.000000Z
+                            """,
+                    "SELECT * FROM x"
+            );
+        });
+    }
+
+    @Test
+    public void testAlterColumnTypeLongToIntWithParquetPartition() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(
+                    """
+                            CREATE TABLE x (ts TIMESTAMP)
+                            TIMESTAMP(ts) PARTITION BY DAY WAL
+                            """
+            );
+            execute(
+                    """
+                            INSERT INTO x(ts) VALUES
+                            ('2020-01-01T00:00:00.000Z'),
+                            ('2020-01-01T04:00:00.000Z')
+                            """
+            );
+            execute("INSERT INTO x(ts) VALUES ('2020-01-02T00:00:00.000Z')");
+            drainWalQueue();
+
+            execute("ALTER TABLE x ADD COLUMN v LONG");
+            drainWalQueue();
+
+            execute(
+                    """
+                            INSERT INTO x(v, ts) VALUES
+                            (10, '2020-01-01T08:00:00.000Z'),
+                            (NULL, '2020-01-01T12:00:00.000Z'),
+                            (30, '2020-01-01T16:00:00.000Z'),
+                            (40, '2020-01-01T20:00:00.000Z')
+                            """
+            );
+            execute("INSERT INTO x(v, ts) VALUES (50, '2020-01-02T12:00:00.000Z')");
+            drainWalQueue();
+
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
+            drainWalQueue();
+
+            // LONG narrowed to INT — small values are preserved.
+            execute("ALTER TABLE x ALTER COLUMN v TYPE INT");
+            drainWalQueue();
+
+            assertSql(
+                    """
+                            ts\tv
+                            2020-01-01T00:00:00.000000Z\tnull
+                            2020-01-01T04:00:00.000000Z\tnull
+                            2020-01-01T08:00:00.000000Z\t10
+                            2020-01-01T12:00:00.000000Z\tnull
+                            2020-01-01T16:00:00.000000Z\t30
+                            2020-01-01T20:00:00.000000Z\t40
+                            2020-01-02T00:00:00.000000Z\tnull
+                            2020-01-02T12:00:00.000000Z\t50
+                            """,
+                    "SELECT * FROM x"
+            );
+
+            // O3 merge into the parquet partition.
+            execute("INSERT INTO x(v, ts) VALUES (99, '2020-01-01T06:00:00.000Z')");
+            drainWalQueue();
+
+            Assert.assertFalse(
+                    engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("x"))
+            );
+
+            assertSql(
+                    """
+                            ts\tv
+                            2020-01-01T00:00:00.000000Z\tnull
+                            2020-01-01T04:00:00.000000Z\tnull
+                            2020-01-01T06:00:00.000000Z\t99
+                            2020-01-01T08:00:00.000000Z\t10
+                            2020-01-01T12:00:00.000000Z\tnull
+                            2020-01-01T16:00:00.000000Z\t30
+                            2020-01-01T20:00:00.000000Z\t40
+                            2020-01-02T00:00:00.000000Z\tnull
+                            2020-01-02T12:00:00.000000Z\t50
+                            """,
+                    "SELECT * FROM x"
+            );
+        });
+    }
+
+    @Test
+    public void testAlterColumnTypeLongToTimestampWithParquetPartition() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute(
+                    """
+                            INSERT INTO x VALUES
+                            (1000000, '2020-01-01T00:00:00.000Z'),
+                            (NULL, '2020-01-01T06:00:00.000Z'),
+                            (1000000000, '2020-01-01T12:00:00.000Z')
+                            """
+            );
+            execute("INSERT INTO x VALUES (100000, '2020-01-02T00:00:00.000Z')");
+            drainWalQueue();
+
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
+            drainWalQueue();
+
+            execute("ALTER TABLE x ALTER COLUMN v TYPE TIMESTAMP");
+            drainWalQueue();
+
+            assertSql(
+                    """
+                            v\tts
+                            1970-01-01T00:00:01.000000Z\t2020-01-01T00:00:00.000000Z
+                            \t2020-01-01T06:00:00.000000Z
+                            1970-01-01T00:16:40.000000Z\t2020-01-01T12:00:00.000000Z
+                            1970-01-01T00:00:00.100000Z\t2020-01-02T00:00:00.000000Z
+                            """,
+                    "SELECT * FROM x"
+            );
+        });
+    }
+
+    @Test
+    public void testAlterColumnTypeLongToVarcharWithParquetPartition() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(
+                    """
+                            CREATE TABLE x (ts TIMESTAMP)
+                            TIMESTAMP(ts) PARTITION BY DAY WAL
+                            """
+            );
+            execute(
+                    """
+                            INSERT INTO x(ts) VALUES
+                            ('2020-01-01T00:00:00.000Z'),
+                            ('2020-01-01T04:00:00.000Z')
+                            """
+            );
+            execute("INSERT INTO x(ts) VALUES ('2020-01-02T00:00:00.000Z')");
+            drainWalQueue();
+
+            execute("ALTER TABLE x ADD COLUMN v LONG");
+            drainWalQueue();
+
+            execute(
+                    """
+                            INSERT INTO x(v, ts) VALUES
+                            (100_000, '2020-01-01T08:00:00.000Z'),
+                            (NULL, '2020-01-01T12:00:00.000Z'),
+                            (-42, '2020-01-01T16:00:00.000Z'),
+                            (9_999_999_999, '2020-01-01T20:00:00.000Z')
+                            """
+            );
+            execute("INSERT INTO x(v, ts) VALUES (7, '2020-01-02T12:00:00.000Z')");
+            drainWalQueue();
+
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
+            drainWalQueue();
+
+            execute("ALTER TABLE x ALTER COLUMN v TYPE VARCHAR");
+            drainWalQueue();
+
+            assertSql(
+                    """
+                            ts\tv
+                            2020-01-01T00:00:00.000000Z\t
+                            2020-01-01T04:00:00.000000Z\t
+                            2020-01-01T08:00:00.000000Z\t100000
+                            2020-01-01T12:00:00.000000Z\t
+                            2020-01-01T16:00:00.000000Z\t-42
+                            2020-01-01T20:00:00.000000Z\t9999999999
+                            2020-01-02T00:00:00.000000Z\t
+                            2020-01-02T12:00:00.000000Z\t7
+                            """,
+                    "SELECT * FROM x"
+            );
+
+            // O3 merge into the parquet partition.
+            execute("INSERT INTO x(v, ts) VALUES ('123', '2020-01-01T06:00:00.000Z')");
+            drainWalQueue();
+
+            Assert.assertFalse(
+                    engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("x"))
+            );
+
+            assertSql(
+                    """
+                            ts\tv
+                            2020-01-01T00:00:00.000000Z\t
+                            2020-01-01T04:00:00.000000Z\t
+                            2020-01-01T06:00:00.000000Z\t123
+                            2020-01-01T08:00:00.000000Z\t100000
+                            2020-01-01T12:00:00.000000Z\t
+                            2020-01-01T16:00:00.000000Z\t-42
+                            2020-01-01T20:00:00.000000Z\t9999999999
+                            2020-01-02T00:00:00.000000Z\t
+                            2020-01-02T12:00:00.000000Z\t7
+                            """,
+                    "SELECT * FROM x"
+            );
+        });
+    }
+
+    @Test
+    public void testAlterColumnTypeShortToDoubleWithParquetPartition() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (v SHORT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute(
+                    """
+                            INSERT INTO x VALUES
+                            (100, '2020-01-01T00:00:00.000Z'),
+                            (-32768, '2020-01-01T06:00:00.000Z'),
+                            (0, '2020-01-01T12:00:00.000Z')
+                            """
+            );
+            execute("INSERT INTO x VALUES (1, '2020-01-02T00:00:00.000Z')");
+            drainWalQueue();
+
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
+            drainWalQueue();
+
+            execute("ALTER TABLE x ALTER COLUMN v TYPE DOUBLE");
+            drainWalQueue();
+
+            assertSql(
+                    """
+                            v\tts
+                            100.0\t2020-01-01T00:00:00.000000Z
+                            -32768.0\t2020-01-01T06:00:00.000000Z
+                            0.0\t2020-01-01T12:00:00.000000Z
+                            1.0\t2020-01-02T00:00:00.000000Z
+                            """,
+                    "SELECT * FROM x"
+            );
+        });
+    }
+
+    @Test
+    public void testAlterColumnTypeShortToFloatWithParquetPartition() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (v SHORT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute(
+                    """
+                            INSERT INTO x VALUES
+                            (100, '2020-01-01T00:00:00.000Z'),
+                            (32767, '2020-01-01T06:00:00.000Z'),
+                            (-100, '2020-01-01T12:00:00.000Z')
+                            """
+            );
+            execute("INSERT INTO x VALUES (7, '2020-01-02T00:00:00.000Z')");
+            drainWalQueue();
+
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
+            drainWalQueue();
+
+            execute("ALTER TABLE x ALTER COLUMN v TYPE FLOAT");
+            drainWalQueue();
+
+            assertSql(
+                    """
+                            v\tts
+                            100.0\t2020-01-01T00:00:00.000000Z
+                            32767.0\t2020-01-01T06:00:00.000000Z
+                            -100.0\t2020-01-01T12:00:00.000000Z
+                            7.0\t2020-01-02T00:00:00.000000Z
+                            """,
+                    "SELECT * FROM x"
+            );
+        });
+    }
+
+    @Test
+    public void testAlterColumnTypeShortToIntWithParquetPartition() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(
+                    """
+                            CREATE TABLE x (ts TIMESTAMP)
+                            TIMESTAMP(ts) PARTITION BY DAY WAL
+                            """
+            );
+            execute(
+                    """
+                            INSERT INTO x(ts) VALUES
+                            ('2020-01-01T00:00:00.000Z'),
+                            ('2020-01-01T04:00:00.000Z')
+                            """
+            );
+            execute("INSERT INTO x(ts) VALUES ('2020-01-02T00:00:00.000Z')");
+            drainWalQueue();
+
+            execute("ALTER TABLE x ADD COLUMN v SHORT");
+            drainWalQueue();
+
+            execute(
+                    """
+                            INSERT INTO x(v, ts) VALUES
+                            (5, '2020-01-01T08:00:00.000Z'),
+                            (NULL, '2020-01-01T12:00:00.000Z'),
+                            (7, '2020-01-01T16:00:00.000Z'),
+                            (8, '2020-01-01T20:00:00.000Z')
+                            """
+            );
+            execute("INSERT INTO x(v, ts) VALUES (9, '2020-01-02T12:00:00.000Z')");
+            drainWalQueue();
+
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
+            drainWalQueue();
+
+            execute("ALTER TABLE x ALTER COLUMN v TYPE INT");
+            drainWalQueue();
+
+            // The 00:00 and 04:00 rows were inserted before ADD COLUMN v -- they are
+            // column_top rows and read back as INT null on both native and parquet
+            // (parquet stores them as def-level=0 since SHORT/BYTE/CHAR are now
+            // declared OPTIONAL in the parquet schema). Explicit NULL inserted into
+            // SHORT becomes 0 because SHORT has no null sentinel; that 0 stays 0
+            // after SHORT->INT on both paths.
+            assertSql(
+                    """
+                            ts\tv
+                            2020-01-01T00:00:00.000000Z\tnull
+                            2020-01-01T04:00:00.000000Z\tnull
+                            2020-01-01T08:00:00.000000Z\t5
+                            2020-01-01T12:00:00.000000Z\t0
+                            2020-01-01T16:00:00.000000Z\t7
+                            2020-01-01T20:00:00.000000Z\t8
+                            2020-01-02T00:00:00.000000Z\tnull
+                            2020-01-02T12:00:00.000000Z\t9
+                            """,
+                    "SELECT * FROM x"
+            );
+
+            // O3 merge into the parquet partition.
+            execute("INSERT INTO x(v, ts) VALUES (99, '2020-01-01T06:00:00.000Z')");
+            drainWalQueue();
+
+            Assert.assertFalse(
+                    engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("x"))
+            );
+
+            assertSql(
+                    """
+                            ts\tv
+                            2020-01-01T00:00:00.000000Z\tnull
+                            2020-01-01T04:00:00.000000Z\tnull
+                            2020-01-01T06:00:00.000000Z\t99
+                            2020-01-01T08:00:00.000000Z\t5
+                            2020-01-01T12:00:00.000000Z\t0
+                            2020-01-01T16:00:00.000000Z\t7
+                            2020-01-01T20:00:00.000000Z\t8
+                            2020-01-02T00:00:00.000000Z\tnull
+                            2020-01-02T12:00:00.000000Z\t9
+                            """,
+                    "SELECT * FROM x"
+            );
+        });
+    }
+
+    // ---------------------------------------------------------------
+    //  Range-checking: float/double → integer with out-of-range values
+    // ---------------------------------------------------------------
+
+    @Test
+    public void testAlterColumnTypeStringToAllFixedWithParquetPartition() throws Exception {
+        testConvertVarToAllFixed("STRING");
+    }
+
+    @Test
+    public void testAlterColumnTypeTimestampToDateWithParquetPartition() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (v TIMESTAMP, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute(
+                    """
+                            INSERT INTO x VALUES
+                            ('1970-01-01T00:00:01.000000Z', '2020-01-01T00:00:00.000Z'),
+                            (NULL, '2020-01-01T06:00:00.000Z'),
+                            ('1970-01-01T00:16:40.123456Z', '2020-01-01T12:00:00.000Z')
+                            """
+            );
+            execute("INSERT INTO x VALUES ('1970-01-01T00:00:00.500999Z', '2020-01-02T00:00:00.000Z')");
+            drainWalQueue();
+
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
+            drainWalQueue();
+
+            execute("ALTER TABLE x ALTER COLUMN v TYPE DATE");
+            drainWalQueue();
+
+            // TIMESTAMP (µs) → DATE (ms): values are divided by 1000, truncating
+            // sub-millisecond precision.
+            assertSql(
+                    """
+                            v\tts
+                            1970-01-01T00:00:01.000Z\t2020-01-01T00:00:00.000000Z
+                            \t2020-01-01T06:00:00.000000Z
+                            1970-01-01T00:16:40.123Z\t2020-01-01T12:00:00.000000Z
+                            1970-01-01T00:00:00.500Z\t2020-01-02T00:00:00.000000Z
+                            """,
+                    "SELECT * FROM x"
+            );
+        });
+    }
+
+    // ---------------------------------------------------------------
+    //  Missing widening pairs: byte/short → float/double, long → float
+    // ---------------------------------------------------------------
+
+    @Test
+    public void testAlterColumnTypeTimestampToLongWithParquetPartition() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (v TIMESTAMP, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute(
+                    """
+                            INSERT INTO x VALUES
+                            ('1970-01-01T00:00:01.000000Z', '2020-01-01T00:00:00.000Z'),
+                            (NULL, '2020-01-01T06:00:00.000Z'),
+                            ('1970-01-01T00:16:40.000000Z', '2020-01-01T12:00:00.000Z')
+                            """
+            );
+            execute("INSERT INTO x VALUES ('1970-01-01T00:00:00.100000Z', '2020-01-02T00:00:00.000Z')");
+            drainWalQueue();
+
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
+            drainWalQueue();
+
+            execute("ALTER TABLE x ALTER COLUMN v TYPE LONG");
+            drainWalQueue();
+
+            // TIMESTAMP and LONG share the same i64 representation (microseconds)
+            // and null sentinel (Long.MIN_VALUE). Conversion is a no-op.
+            assertSql(
+                    """
+                            v\tts
+                            1000000\t2020-01-01T00:00:00.000000Z
+                            null\t2020-01-01T06:00:00.000000Z
+                            1000000000\t2020-01-01T12:00:00.000000Z
+                            100000\t2020-01-02T00:00:00.000000Z
+                            """,
+                    "SELECT * FROM x"
+            );
+        });
+    }
+
+    @Test
+    public void testAlterColumnTypeToSymbolWithUndefinedParquetColumn() throws Exception {
+        // When a column is added after a partition is converted to parquet,
+        // the parquet file has no data for that column (UNDEFINED). Converting
+        // that column to SYMBOL must set the null flag on the symbol map,
+        // because all rows in the parquet partition are NULL for that column.
+        assertMemoryLeak(() -> {
+            execute(
+                    """
+                            CREATE TABLE x (v INT, ts TIMESTAMP)
+                            TIMESTAMP(ts) PARTITION BY DAY WAL
+                            """
+            );
+            execute(
+                    """
+                            INSERT INTO x VALUES
+                            (1, '2020-01-01T00:00:00.000Z'),
+                            (2, '2020-01-01T04:00:00.000Z'),
+                            (3, '2020-01-01T08:00:00.000Z')
+                            """
+            );
+            drainWalQueue();
+
+            // Convert to parquet before adding the new column.
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
+            drainWalQueue();
+
+            try (TableReader reader = getReader("x")) {
+                Assert.assertEquals(PartitionFormat.PARQUET, reader.getPartitionFormatFromMetadata(0));
+            }
+
+            // Add a STRING column — it won't exist in the parquet file.
+            execute("ALTER TABLE x ADD COLUMN s STRING");
+            drainWalQueue();
+
+            // Insert rows with non-null values for the new column in a new partition.
+            execute(
+                    """
+                            INSERT INTO x VALUES
+                            (4, '2020-01-02T00:00:00.000Z', 'abc'),
+                            (5, '2020-01-02T04:00:00.000Z', 'def')
+                            """
+            );
+            drainWalQueue();
+
+            // Convert s from STRING to SYMBOL. The parquet partition has
+            // UNDEFINED for s, so the pre-pass should set the null flag.
+            execute("ALTER TABLE x ALTER COLUMN s TYPE SYMBOL");
+            drainWalQueue();
+
+            Assert.assertFalse(
+                    engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("x"))
+            );
+
+            // Verify: parquet partition rows have NULL for 's',
+            // native partition rows have the symbol values.
+            assertSql(
+                    """
+                            v\tts\ts
+                            1\t2020-01-01T00:00:00.000000Z\t
+                            2\t2020-01-01T04:00:00.000000Z\t
+                            3\t2020-01-01T08:00:00.000000Z\t
+                            4\t2020-01-02T00:00:00.000000Z\tabc
+                            5\t2020-01-02T04:00:00.000000Z\tdef
+                            """,
+                    "SELECT * FROM x"
+            );
+
+            // Re-convert to parquet. If the null flag was not set on the symbol
+            // map, the encoder would use Required encoding for 's', which fails
+            // to encode the NULL rows from the old parquet partition.
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
+            drainWalQueue();
+
+            Assert.assertFalse(
+                    engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("x"))
+            );
+
+            assertSql(
+                    """
+                            v\tts\ts
+                            1\t2020-01-01T00:00:00.000000Z\t
+                            2\t2020-01-01T04:00:00.000000Z\t
+                            3\t2020-01-01T08:00:00.000000Z\t
+                            4\t2020-01-02T00:00:00.000000Z\tabc
+                            5\t2020-01-02T04:00:00.000000Z\tdef
+                            """,
+                    "SELECT * FROM x"
+            );
+        });
+    }
+
+    @Test
+    public void testAlterColumnTypeVarcharToAllFixedWithParquetPartition() throws Exception {
+        testConvertVarToAllFixed("VARCHAR");
+    }
+
+    @Test
+    public void testAlterColumnTypeWithDecimalInParquetPartition() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(
+                    """
+                            CREATE TABLE x (
+                                d DECIMAL(8,2),
+                                ts TIMESTAMP
+                            ) TIMESTAMP(ts) PARTITION BY DAY WAL
+                            """
+            );
+            // Initial rows — column_top = 2 for 'v' after ADD COLUMN.
+            execute(
+                    """
+                            INSERT INTO x(d, ts) VALUES
+                            ('100.50', '2020-01-01T00:00:00.000Z'),
+                            ('200.75', '2020-01-01T04:00:00.000Z')
+                            """
+            );
+            execute("INSERT INTO x(d, ts) VALUES ('600.00', '2020-01-02T00:00:00.000Z')");
+            drainWalQueue();
+
+            execute("ALTER TABLE x ADD COLUMN v INT");
+            drainWalQueue();
+
+            execute(
+                    """
+                            INSERT INTO x(d, v, ts) VALUES
+                            ('300.25', 10, '2020-01-01T08:00:00.000Z'),
+                            ('350.00', NULL, '2020-01-01T12:00:00.000Z'),
+                            ('400.99', 30, '2020-01-01T16:00:00.000Z')
+                            """
+            );
+            execute("INSERT INTO x(d, v, ts) VALUES ('700.50', 50, '2020-01-02T12:00:00.000Z')");
+            drainWalQueue();
+
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
+            drainWalQueue();
+
+            execute("ALTER TABLE x ALTER COLUMN v TYPE LONG");
+            drainWalQueue();
+
+            assertSql(
+                    """
+                            d\tts\tv
+                            100.50\t2020-01-01T00:00:00.000000Z\tnull
+                            200.75\t2020-01-01T04:00:00.000000Z\tnull
+                            300.25\t2020-01-01T08:00:00.000000Z\t10
+                            350.00\t2020-01-01T12:00:00.000000Z\tnull
+                            400.99\t2020-01-01T16:00:00.000000Z\t30
+                            600.00\t2020-01-02T00:00:00.000000Z\tnull
+                            700.50\t2020-01-02T12:00:00.000000Z\t50
+                            """,
+                    "SELECT * FROM x"
+            );
+
+            // O3 merge into the parquet partition.
+            execute("INSERT INTO x(d, v, ts) VALUES ('999.99', 99, '2020-01-01T06:00:00.000Z')");
+            drainWalQueue();
+
+            Assert.assertFalse(
+                    engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("x"))
+            );
+
+            assertSql(
+                    """
+                            d\tts\tv
+                            100.50\t2020-01-01T00:00:00.000000Z\tnull
+                            200.75\t2020-01-01T04:00:00.000000Z\tnull
+                            999.99\t2020-01-01T06:00:00.000000Z\t99
+                            300.25\t2020-01-01T08:00:00.000000Z\t10
+                            350.00\t2020-01-01T12:00:00.000000Z\tnull
+                            400.99\t2020-01-01T16:00:00.000000Z\t30
+                            600.00\t2020-01-02T00:00:00.000000Z\tnull
+                            700.50\t2020-01-02T12:00:00.000000Z\t50
+                            """,
+                    "SELECT * FROM x"
+            );
+        });
+    }
+
+    // ---------------------------------------------------------------
+    //  Missing narrowing pairs: float/double → long/short/byte
+    // ---------------------------------------------------------------
+
+    @Test
+    public void testAlterColumnTypeWithExoticColumnsInParquetPartition() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(
+                    """
+                            CREATE TABLE x (
+                                ip IPv4,
+                                uu UUID,
+                                gh GEOHASH(4c),
+                                l2 LONG256,
+                                ts TIMESTAMP
+                            ) TIMESTAMP(ts) PARTITION BY DAY WAL
+                            """
+            );
+            // Initial rows — column_top = 2 for 'v' after ADD COLUMN.
+            execute(
+                    """
+                            INSERT INTO x(ip, uu, gh, l2, ts) VALUES
+                            ('10.0.0.1', '11111111-1111-1111-1111-111111111111', #u33d, CAST('0x01' AS LONG256), '2020-01-01T00:00:00.000Z'),
+                            ('10.0.0.2', '22222222-2222-2222-2222-222222222222', #u33e, CAST('0x02' AS LONG256), '2020-01-01T04:00:00.000Z')
+                            """
+            );
+            execute(
+                    """
+                            INSERT INTO x(ip, uu, gh, l2, ts) VALUES
+                            ('10.0.0.6', '66666666-6666-6666-6666-666666666666', #u33k, CAST('0x06' AS LONG256), '2020-01-02T00:00:00.000Z')
+                            """
+            );
+            drainWalQueue();
+
+            execute("ALTER TABLE x ADD COLUMN v INT");
+            drainWalQueue();
+
+            execute(
+                    """
+                            INSERT INTO x(ip, uu, gh, l2, v, ts) VALUES
+                            ('10.0.0.3', '33333333-3333-3333-3333-333333333333', #u33f, CAST('0x03' AS LONG256), 10, '2020-01-01T08:00:00.000Z'),
+                            ('10.0.0.4', '44444444-4444-4444-4444-444444444444', #u33g, CAST('0x04' AS LONG256), NULL, '2020-01-01T12:00:00.000Z'),
+                            ('10.0.0.5', '55555555-5555-5555-5555-555555555555', #u33h, CAST('0x05' AS LONG256), 30, '2020-01-01T16:00:00.000Z')
+                            """
+            );
+            execute(
+                    """
+                            INSERT INTO x(ip, uu, gh, l2, v, ts) VALUES
+                            ('10.0.0.7', '77777777-7777-7777-7777-777777777777', #u33m, CAST('0x07' AS LONG256), 50, '2020-01-02T12:00:00.000Z')
+                            """
+            );
+            drainWalQueue();
+
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
+            drainWalQueue();
+
+            // INT → LONG with column_top, NULLs, and exotic columns.
+            execute("ALTER TABLE x ALTER COLUMN v TYPE LONG");
+            drainWalQueue();
+
+            assertSql(
+                    """
+                            ip\tuu\tgh\tl2\tts\tv
+                            10.0.0.1\t11111111-1111-1111-1111-111111111111\tu33d\t0x01\t2020-01-01T00:00:00.000000Z\tnull
+                            10.0.0.2\t22222222-2222-2222-2222-222222222222\tu33e\t0x02\t2020-01-01T04:00:00.000000Z\tnull
+                            10.0.0.3\t33333333-3333-3333-3333-333333333333\tu33f\t0x03\t2020-01-01T08:00:00.000000Z\t10
+                            10.0.0.4\t44444444-4444-4444-4444-444444444444\tu33g\t0x04\t2020-01-01T12:00:00.000000Z\tnull
+                            10.0.0.5\t55555555-5555-5555-5555-555555555555\tu33h\t0x05\t2020-01-01T16:00:00.000000Z\t30
+                            10.0.0.6\t66666666-6666-6666-6666-666666666666\tu33k\t0x06\t2020-01-02T00:00:00.000000Z\tnull
+                            10.0.0.7\t77777777-7777-7777-7777-777777777777\tu33m\t0x07\t2020-01-02T12:00:00.000000Z\t50
+                            """,
+                    "SELECT * FROM x"
+            );
+
+            // O3 merge into the parquet partition.
+            execute(
+                    """
+                            INSERT INTO x(ip, uu, gh, l2, v, ts) VALUES
+                            ('10.0.0.9', '99999999-9999-9999-9999-999999999999', #u33z, CAST('0x09' AS LONG256), 99, '2020-01-01T06:00:00.000Z')
+                            """
+            );
+            drainWalQueue();
+
+            Assert.assertFalse(
+                    engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("x"))
+            );
+
+            assertSql(
+                    """
+                            ip\tuu\tgh\tl2\tts\tv
+                            10.0.0.1\t11111111-1111-1111-1111-111111111111\tu33d\t0x01\t2020-01-01T00:00:00.000000Z\tnull
+                            10.0.0.2\t22222222-2222-2222-2222-222222222222\tu33e\t0x02\t2020-01-01T04:00:00.000000Z\tnull
+                            10.0.0.9\t99999999-9999-9999-9999-999999999999\tu33z\t0x09\t2020-01-01T06:00:00.000000Z\t99
+                            10.0.0.3\t33333333-3333-3333-3333-333333333333\tu33f\t0x03\t2020-01-01T08:00:00.000000Z\t10
+                            10.0.0.4\t44444444-4444-4444-4444-444444444444\tu33g\t0x04\t2020-01-01T12:00:00.000000Z\tnull
+                            10.0.0.5\t55555555-5555-5555-5555-555555555555\tu33h\t0x05\t2020-01-01T16:00:00.000000Z\t30
+                            10.0.0.6\t66666666-6666-6666-6666-666666666666\tu33k\t0x06\t2020-01-02T00:00:00.000000Z\tnull
+                            10.0.0.7\t77777777-7777-7777-7777-777777777777\tu33m\t0x07\t2020-01-02T12:00:00.000000Z\t50
+                            """,
+                    "SELECT * FROM x"
+            );
+        });
+    }
+
+    @Test
+    public void testAlterColumnTypeWithParquetPartition() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(
+                    """
+                            CREATE TABLE x (ts TIMESTAMP)
+                            TIMESTAMP(ts) PARTITION BY DAY WAL
+                            """
+            );
+            // Initial rows — column_top = 2 for 'v' after ADD COLUMN.
+            execute(
+                    """
+                            INSERT INTO x(ts) VALUES
+                            ('2020-01-01T00:00:00.000Z'),
+                            ('2020-01-01T04:00:00.000Z')
+                            """
+            );
+            execute("INSERT INTO x(ts) VALUES ('2020-01-02T00:00:00.000Z')");
+            drainWalQueue();
+
+            execute("ALTER TABLE x ADD COLUMN v INT");
+            drainWalQueue();
+
+            // More rows with v, including an explicit NULL.
+            execute(
+                    """
+                            INSERT INTO x(v, ts) VALUES
+                            (10, '2020-01-01T08:00:00.000Z'),
+                            (NULL, '2020-01-01T12:00:00.000Z'),
+                            (30, '2020-01-01T16:00:00.000Z'),
+                            (40, '2020-01-01T20:00:00.000Z')
+                            """
+            );
+            execute("INSERT INTO x(v, ts) VALUES (50, '2020-01-02T12:00:00.000Z')");
+            drainWalQueue();
+
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
+            drainWalQueue();
+
+            try (TableReader reader = getReader("x")) {
+                Assert.assertEquals(PartitionFormat.PARQUET, reader.getPartitionFormatFromMetadata(0));
+                Assert.assertEquals(PartitionFormat.NATIVE, reader.getPartitionFormatFromMetadata(1));
+            }
+
+            // INT → LONG. Parquet partition has column_top=2 for v.
+            execute("ALTER TABLE x ALTER COLUMN v TYPE LONG");
+            drainWalQueue();
+
+            // column_top rows → null, explicit NULL preserved, values converted.
+            assertSql(
+                    """
+                            ts\tv
+                            2020-01-01T00:00:00.000000Z\tnull
+                            2020-01-01T04:00:00.000000Z\tnull
+                            2020-01-01T08:00:00.000000Z\t10
+                            2020-01-01T12:00:00.000000Z\tnull
+                            2020-01-01T16:00:00.000000Z\t30
+                            2020-01-01T20:00:00.000000Z\t40
+                            2020-01-02T00:00:00.000000Z\tnull
+                            2020-01-02T12:00:00.000000Z\t50
+                            """,
+                    "SELECT * FROM x"
+            );
+
+            try (TableReader reader = getReader("x")) {
+                Assert.assertEquals(PartitionFormat.PARQUET, reader.getPartitionFormatFromMetadata(0));
+                Assert.assertEquals(PartitionFormat.NATIVE, reader.getPartitionFormatFromMetadata(1));
+            }
+
+            // O3 merge into the parquet partition.
+            execute("INSERT INTO x(v, ts) VALUES (99, '2020-01-01T06:00:00.000Z')");
+            drainWalQueue();
+
+            Assert.assertFalse(
+                    engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("x"))
+            );
+
+            assertSql(
+                    """
+                            ts\tv
+                            2020-01-01T00:00:00.000000Z\tnull
+                            2020-01-01T04:00:00.000000Z\tnull
+                            2020-01-01T06:00:00.000000Z\t99
+                            2020-01-01T08:00:00.000000Z\t10
+                            2020-01-01T12:00:00.000000Z\tnull
+                            2020-01-01T16:00:00.000000Z\t30
+                            2020-01-01T20:00:00.000000Z\t40
+                            2020-01-02T00:00:00.000000Z\tnull
+                            2020-01-02T12:00:00.000000Z\t50
+                            """,
+                    "SELECT * FROM x"
+            );
+        });
+    }
 
     @Test
     public void testArrayCorruptionAfterWriterReopenBeforeParquetConversion() throws Exception {
@@ -889,6 +3239,10 @@ public class ParquetWriteTest extends AbstractCairoTest {
         });
     }
 
+    // ---------------------------------------------------------------
+    //  Timestamp / Date conversions
+    // ---------------------------------------------------------------
+
     @Test
     public void testNativeToParquetRoundTripNonExistentColumn() throws Exception {
         // When a column is added on a later partition, earlier partitions have
@@ -1273,6 +3627,10 @@ public class ParquetWriteTest extends AbstractCairoTest {
             );
         });
     }
+
+    // ---------------------------------------------------------------
+    //  Boolean conversions
+    // ---------------------------------------------------------------
 
     @Test
     public void testO3AfterAddDedupKeyColumn() throws Exception {
@@ -3150,2361 +5508,132 @@ public class ParquetWriteTest extends AbstractCairoTest {
         });
     }
 
-    @Test
-    public void testAlterColumnTypeWithParquetPartition() throws Exception {
+    private static int countPartitionDirs(File tableDir) {
+        String[] dirs = tableDir.list((dir, name) -> name.startsWith("2020-01-01"));
+        return dirs != null ? dirs.length : 0;
+    }
+
+    private static @NotNull FilesFacade getFilesFacade(AtomicBoolean armed) {
+        AtomicInteger openROCount = new AtomicInteger(0);
+
+        return new TestFilesFacadeImpl() {
+            @Override
+            public long openRO(LPSZ name) {
+                if (armed.get() && Utf8s.endsWithAscii(name, "data.parquet")) {
+                    // 1st openRO on data.parquet: reading original parquet (line 119) → succeed
+                    // 2nd openRO on data.parquet: updateParquetIndexes (line 2949) → fail
+                    if (openROCount.incrementAndGet() == 2) {
+                        return -1;
+                    }
+                }
+                return super.openRO(name);
+            }
+        };
+    }
+
+    private void assertPmAllNullChunkUsesZeroPointers(
+            String tableName,
+            String fixedColumnName,
+            int fixedColumnType,
+            String varColumnName,
+            int varColumnType
+    ) {
+        try (TableReader reader = getReader(tableName)) {
+            for (int i = 0, n = reader.getPartitionCount(); i < n; i++) {
+                if (reader.getPartitionFormat(i) != PartitionFormat.PARQUET) {
+                    continue;
+                }
+
+                reader.openPartition(i);
+                ParquetPartitionDecoder decoder = reader.getAndInitParquetPartitionDecoder(i);
+                try (
+                        RowGroupBuffers rowGroupBuffers = new RowGroupBuffers(MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
+                        DirectIntList parquetColumns = new DirectIntList(4, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER)
+                ) {
+                    final int fixedColumnIndex = decoder.metadata().getColumnIndex(fixedColumnName);
+                    final int varColumnIndex = decoder.metadata().getColumnIndex(varColumnName);
+                    Assert.assertTrue(fixedColumnName + " should exist in parquet metadata", fixedColumnIndex >= 0);
+                    Assert.assertTrue(varColumnName + " should exist in parquet metadata", varColumnIndex >= 0);
+
+                    parquetColumns.add(fixedColumnIndex);
+                    parquetColumns.add(fixedColumnType);
+                    parquetColumns.add(varColumnIndex);
+                    parquetColumns.add(varColumnType);
+
+                    final int rowGroupSize = (int) decoder.metadata().getRowGroupSize(0);
+                    decoder.decodeRowGroup(rowGroupBuffers, parquetColumns, 0, 0, rowGroupSize);
+
+                    Assert.assertEquals(0, rowGroupBuffers.getChunkDataPtr(0));
+                    Assert.assertEquals(0, rowGroupBuffers.getChunkDataSize(0));
+                    Assert.assertEquals(0, rowGroupBuffers.getChunkDataPtr(1));
+                    Assert.assertEquals(0, rowGroupBuffers.getChunkDataSize(1));
+                    Assert.assertEquals(0, rowGroupBuffers.getChunkAuxPtr(1));
+                    Assert.assertEquals(0, rowGroupBuffers.getChunkAuxSize(1));
+                }
+                return;
+            }
+        }
+        Assert.fail("should find parquet partition");
+    }
+
+    private long getPartitionNameTxn(long partitionTimestamp) {
+        try (TableReader reader = getReader("x")) {
+            return reader.getTxFile().getPartitionNameTxnByPartitionTimestamp(partitionTimestamp);
+        }
+    }
+
+    private void testConvertAllToType(String targetType, String columnDefsSql, String[] cols, String mergeValue) throws Exception {
         assertMemoryLeak(() -> {
             execute(
-                    """
-                            CREATE TABLE x (ts TIMESTAMP)
-                            TIMESTAMP(ts) PARTITION BY DAY WAL
-                            """
+                    "CREATE TABLE x AS (SELECT\n" + columnDefsSql
+                            + ",\ntimestamp_sequence('2020-01-01', 3_600_000_000L) ts"
+                            + "\nFROM long_sequence(1000)) TIMESTAMP(ts) PARTITION BY MONTH WAL"
             );
-            // Initial rows — column_top = 2 for 'v' after ADD COLUMN.
-            execute(
-                    """
-                            INSERT INTO x(ts) VALUES
-                            ('2020-01-01T00:00:00.000Z'),
-                            ('2020-01-01T04:00:00.000Z')
-                            """
-            );
-            execute("INSERT INTO x(ts) VALUES ('2020-01-02T00:00:00.000Z')");
             drainWalQueue();
 
-            execute("ALTER TABLE x ADD COLUMN v INT");
+            execute("CREATE TABLE y AS (SELECT * FROM x) TIMESTAMP(ts) PARTITION BY MONTH WAL");
             drainWalQueue();
 
-            // More rows with v, including an explicit NULL.
-            execute(
-                    """
-                            INSERT INTO x(v, ts) VALUES
-                            (10, '2020-01-01T08:00:00.000Z'),
-                            (NULL, '2020-01-01T12:00:00.000Z'),
-                            (30, '2020-01-01T16:00:00.000Z'),
-                            (40, '2020-01-01T20:00:00.000Z')
-                            """
-            );
-            execute("INSERT INTO x(v, ts) VALUES (50, '2020-01-02T12:00:00.000Z')");
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01'");
             drainWalQueue();
 
-            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
+            for (String col : cols) {
+                execute("ALTER TABLE x ALTER COLUMN " + col + " TYPE " + targetType);
+                execute("ALTER TABLE y ALTER COLUMN " + col + " TYPE " + targetType);
+            }
             drainWalQueue();
 
-            try (TableReader reader = getReader("x")) {
-                Assert.assertEquals(PartitionFormat.PARQUET, reader.getPartitionFormatFromMetadata(0));
-                Assert.assertEquals(PartitionFormat.NATIVE, reader.getPartitionFormatFromMetadata(1));
+            // Read path: compare parquet-backed table x against native reference table y.
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                TestUtils.assertEquals(compiler, sqlExecutionContext, "y", "x");
             }
 
-            // INT → LONG. Parquet partition has column_top=2 for v.
-            execute("ALTER TABLE x ALTER COLUMN v TYPE LONG");
-            drainWalQueue();
-
-            // column_top rows → null, explicit NULL preserved, values converted.
-            assertSql(
-                    """
-                            ts\tv
-                            2020-01-01T00:00:00.000000Z\tnull
-                            2020-01-01T04:00:00.000000Z\tnull
-                            2020-01-01T08:00:00.000000Z\t10
-                            2020-01-01T12:00:00.000000Z\tnull
-                            2020-01-01T16:00:00.000000Z\t30
-                            2020-01-01T20:00:00.000000Z\t40
-                            2020-01-02T00:00:00.000000Z\tnull
-                            2020-01-02T12:00:00.000000Z\t50
-                            """,
-                    "SELECT * FROM x"
-            );
-
-            try (TableReader reader = getReader("x")) {
-                Assert.assertEquals(PartitionFormat.PARQUET, reader.getPartitionFormatFromMetadata(0));
-                Assert.assertEquals(PartitionFormat.NATIVE, reader.getPartitionFormatFromMetadata(1));
+            // O3 merge: insert a row into the parquet partition to trigger merge.
+            StringBuilder sb = new StringBuilder("INSERT INTO %s(");
+            for (int i = 0; i < cols.length; i++) {
+                if (i > 0) sb.append(", ");
+                sb.append(cols[i]);
             }
-
-            // O3 merge into the parquet partition.
-            execute("INSERT INTO x(v, ts) VALUES (99, '2020-01-01T06:00:00.000Z')");
-            drainWalQueue();
-
-            Assert.assertFalse(
-                    engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("x"))
-            );
-
-            assertSql(
-                    """
-                            ts\tv
-                            2020-01-01T00:00:00.000000Z\tnull
-                            2020-01-01T04:00:00.000000Z\tnull
-                            2020-01-01T06:00:00.000000Z\t99
-                            2020-01-01T08:00:00.000000Z\t10
-                            2020-01-01T12:00:00.000000Z\tnull
-                            2020-01-01T16:00:00.000000Z\t30
-                            2020-01-01T20:00:00.000000Z\t40
-                            2020-01-02T00:00:00.000000Z\tnull
-                            2020-01-02T12:00:00.000000Z\t50
-                            """,
-                    "SELECT * FROM x"
-            );
-        });
-    }
-
-    @Test
-    public void testAlterColumnTypeChainedWithParquetPartition() throws Exception {
-        assertMemoryLeak(() -> {
-            execute(
-                    """
-                            CREATE TABLE x (ts TIMESTAMP)
-                            TIMESTAMP(ts) PARTITION BY DAY WAL
-                            """
-            );
-            execute(
-                    """
-                            INSERT INTO x(ts) VALUES
-                            ('2020-01-01T00:00:00.000Z'),
-                            ('2020-01-01T04:00:00.000Z')
-                            """
-            );
-            execute("INSERT INTO x(ts) VALUES ('2020-01-02T00:00:00.000Z')");
-            drainWalQueue();
-
-            execute("ALTER TABLE x ADD COLUMN v INT");
-            drainWalQueue();
-
-            execute(
-                    """
-                            INSERT INTO x(v, ts) VALUES
-                            (10, '2020-01-01T08:00:00.000Z'),
-                            (NULL, '2020-01-01T12:00:00.000Z'),
-                            (30, '2020-01-01T16:00:00.000Z'),
-                            (40, '2020-01-01T20:00:00.000Z')
-                            """
-            );
-            execute("INSERT INTO x(v, ts) VALUES (50, '2020-01-02T12:00:00.000Z')");
-            drainWalQueue();
-
-            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
-            drainWalQueue();
-
-            // Two consecutive type changes: INT → LONG → DOUBLE.
-            // The parquet file stores data under the original INT writer index.
-            // The O3 merge must walk the full replacingIndex chain to find it.
-            execute("ALTER TABLE x ALTER COLUMN v TYPE LONG");
-            drainWalQueue();
-            execute("ALTER TABLE x ALTER COLUMN v TYPE DOUBLE");
-            drainWalQueue();
-
-            assertSql(
-                    """
-                            ts\tv
-                            2020-01-01T00:00:00.000000Z\tnull
-                            2020-01-01T04:00:00.000000Z\tnull
-                            2020-01-01T08:00:00.000000Z\t10.0
-                            2020-01-01T12:00:00.000000Z\tnull
-                            2020-01-01T16:00:00.000000Z\t30.0
-                            2020-01-01T20:00:00.000000Z\t40.0
-                            2020-01-02T00:00:00.000000Z\tnull
-                            2020-01-02T12:00:00.000000Z\t50.0
-                            """,
-                    "SELECT * FROM x"
-            );
-
-            // O3 merge into the parquet partition.
-            execute("INSERT INTO x(v, ts) VALUES (99, '2020-01-01T06:00:00.000Z')");
-            drainWalQueue();
-
-            Assert.assertFalse(
-                    engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("x"))
-            );
-
-            assertSql(
-                    """
-                            ts\tv
-                            2020-01-01T00:00:00.000000Z\tnull
-                            2020-01-01T04:00:00.000000Z\tnull
-                            2020-01-01T06:00:00.000000Z\t99.0
-                            2020-01-01T08:00:00.000000Z\t10.0
-                            2020-01-01T12:00:00.000000Z\tnull
-                            2020-01-01T16:00:00.000000Z\t30.0
-                            2020-01-01T20:00:00.000000Z\t40.0
-                            2020-01-02T00:00:00.000000Z\tnull
-                            2020-01-02T12:00:00.000000Z\t50.0
-                            """,
-                    "SELECT * FROM x"
-            );
-        });
-    }
-
-    @Test
-    public void testAlterColumnTypeIntToDateWithParquetPartition() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute(
-                    """
-                            INSERT INTO x VALUES
-                            (1, '2020-01-01T00:00:00.000Z'),
-                            (-1, '2020-01-01T04:00:00.000Z'),
-                            (2_147_483_647, '2020-01-01T08:00:00.000Z'),
-                            (NULL, '2020-01-01T12:00:00.000Z'),
-                            (0, '2020-01-01T16:00:00.000Z')
-                            """
-            );
-            // Native partition for comparison.
-            execute(
-                    """
-                            INSERT INTO x VALUES
-                            (1, '2020-01-02T00:00:00.000Z'),
-                            (-1, '2020-01-02T04:00:00.000Z'),
-                            (2_147_483_647, '2020-01-02T08:00:00.000Z'),
-                            (NULL, '2020-01-02T12:00:00.000Z'),
-                            (0, '2020-01-02T16:00:00.000Z')
-                            """
-            );
-            drainWalQueue();
-
-            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
-            drainWalQueue();
-
-            execute("ALTER TABLE x ALTER COLUMN v TYPE DATE");
-            drainWalQueue();
-
-            // INT→DATE is a plain i32→i64 widening. The int value becomes
-            // the DATE millisecond value. INT NULL (Integer.MIN_VALUE) maps
-            // to DATE NULL. Both partitions must produce identical results.
-            assertSql(
-                    """
-                            v\tts
-                            1970-01-01T00:00:00.001Z\t2020-01-01T00:00:00.000000Z
-                            1969-12-31T23:59:59.999Z\t2020-01-01T04:00:00.000000Z
-                            1970-01-25T20:31:23.647Z\t2020-01-01T08:00:00.000000Z
-                            \t2020-01-01T12:00:00.000000Z
-                            1970-01-01T00:00:00.000Z\t2020-01-01T16:00:00.000000Z
-                            1970-01-01T00:00:00.001Z\t2020-01-02T00:00:00.000000Z
-                            1969-12-31T23:59:59.999Z\t2020-01-02T04:00:00.000000Z
-                            1970-01-25T20:31:23.647Z\t2020-01-02T08:00:00.000000Z
-                            \t2020-01-02T12:00:00.000000Z
-                            1970-01-01T00:00:00.000Z\t2020-01-02T16:00:00.000000Z
-                            """,
-                    "SELECT * FROM x"
-            );
-        });
-    }
-
-    @Test
-    public void testAlterColumnTypeIntToDoubleWithParquetPartition() throws Exception {
-        assertMemoryLeak(() -> {
-            execute(
-                    """
-                            CREATE TABLE x (ts TIMESTAMP)
-                            TIMESTAMP(ts) PARTITION BY DAY WAL
-                            """
-            );
-            execute(
-                    """
-                            INSERT INTO x(ts) VALUES
-                            ('2020-01-01T00:00:00.000Z'),
-                            ('2020-01-01T04:00:00.000Z')
-                            """
-            );
-            execute("INSERT INTO x(ts) VALUES ('2020-01-02T00:00:00.000Z')");
-            drainWalQueue();
-
-            execute("ALTER TABLE x ADD COLUMN v INT");
-            drainWalQueue();
-
-            execute(
-                    """
-                            INSERT INTO x(v, ts) VALUES
-                            (10, '2020-01-01T08:00:00.000Z'),
-                            (NULL, '2020-01-01T12:00:00.000Z'),
-                            (30, '2020-01-01T16:00:00.000Z'),
-                            (40, '2020-01-01T20:00:00.000Z')
-                            """
-            );
-            execute("INSERT INTO x(v, ts) VALUES (50, '2020-01-02T12:00:00.000Z')");
-            drainWalQueue();
-
-            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
-            drainWalQueue();
-
-            execute("ALTER TABLE x ALTER COLUMN v TYPE DOUBLE");
-            drainWalQueue();
-
-            assertSql(
-                    """
-                            ts\tv
-                            2020-01-01T00:00:00.000000Z\tnull
-                            2020-01-01T04:00:00.000000Z\tnull
-                            2020-01-01T08:00:00.000000Z\t10.0
-                            2020-01-01T12:00:00.000000Z\tnull
-                            2020-01-01T16:00:00.000000Z\t30.0
-                            2020-01-01T20:00:00.000000Z\t40.0
-                            2020-01-02T00:00:00.000000Z\tnull
-                            2020-01-02T12:00:00.000000Z\t50.0
-                            """,
-                    "SELECT * FROM x"
-            );
-
-            // O3 merge into the parquet partition.
-            execute("INSERT INTO x(v, ts) VALUES (99, '2020-01-01T06:00:00.000Z')");
-            drainWalQueue();
-
-            Assert.assertFalse(
-                    engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("x"))
-            );
-
-            assertSql(
-                    """
-                            ts\tv
-                            2020-01-01T00:00:00.000000Z\tnull
-                            2020-01-01T04:00:00.000000Z\tnull
-                            2020-01-01T06:00:00.000000Z\t99.0
-                            2020-01-01T08:00:00.000000Z\t10.0
-                            2020-01-01T12:00:00.000000Z\tnull
-                            2020-01-01T16:00:00.000000Z\t30.0
-                            2020-01-01T20:00:00.000000Z\t40.0
-                            2020-01-02T00:00:00.000000Z\tnull
-                            2020-01-02T12:00:00.000000Z\t50.0
-                            """,
-                    "SELECT * FROM x"
-            );
-        });
-    }
-
-    @Test
-    public void testAlterColumnTypeFloatToDoubleWithParquetPartition() throws Exception {
-        assertMemoryLeak(() -> {
-            execute(
-                    """
-                            CREATE TABLE x (ts TIMESTAMP)
-                            TIMESTAMP(ts) PARTITION BY DAY WAL
-                            """
-            );
-            execute(
-                    """
-                            INSERT INTO x(ts) VALUES
-                            ('2020-01-01T00:00:00.000Z'),
-                            ('2020-01-01T04:00:00.000Z')
-                            """
-            );
-            execute("INSERT INTO x(ts) VALUES ('2020-01-02T00:00:00.000Z')");
-            drainWalQueue();
-
-            execute("ALTER TABLE x ADD COLUMN v FLOAT");
-            drainWalQueue();
-
-            execute(
-                    """
-                            INSERT INTO x(v, ts) VALUES
-                            (1.5, '2020-01-01T08:00:00.000Z'),
-                            (NULL, '2020-01-01T12:00:00.000Z'),
-                            (3.5, '2020-01-01T16:00:00.000Z'),
-                            (4.5, '2020-01-01T20:00:00.000Z')
-                            """
-            );
-            execute("INSERT INTO x(v, ts) VALUES (5.5, '2020-01-02T12:00:00.000Z')");
-            drainWalQueue();
-
-            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
-            drainWalQueue();
-
-            execute("ALTER TABLE x ALTER COLUMN v TYPE DOUBLE");
-            drainWalQueue();
-
-            assertSql(
-                    """
-                            ts\tv
-                            2020-01-01T00:00:00.000000Z\tnull
-                            2020-01-01T04:00:00.000000Z\tnull
-                            2020-01-01T08:00:00.000000Z\t1.5
-                            2020-01-01T12:00:00.000000Z\tnull
-                            2020-01-01T16:00:00.000000Z\t3.5
-                            2020-01-01T20:00:00.000000Z\t4.5
-                            2020-01-02T00:00:00.000000Z\tnull
-                            2020-01-02T12:00:00.000000Z\t5.5
-                            """,
-                    "SELECT * FROM x"
-            );
-
-            // O3 merge into the parquet partition.
-            execute("INSERT INTO x(v, ts) VALUES (9.5, '2020-01-01T06:00:00.000Z')");
-            drainWalQueue();
-
-            Assert.assertFalse(
-                    engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("x"))
-            );
-
-            assertSql(
-                    """
-                            ts\tv
-                            2020-01-01T00:00:00.000000Z\tnull
-                            2020-01-01T04:00:00.000000Z\tnull
-                            2020-01-01T06:00:00.000000Z\t9.5
-                            2020-01-01T08:00:00.000000Z\t1.5
-                            2020-01-01T12:00:00.000000Z\tnull
-                            2020-01-01T16:00:00.000000Z\t3.5
-                            2020-01-01T20:00:00.000000Z\t4.5
-                            2020-01-02T00:00:00.000000Z\tnull
-                            2020-01-02T12:00:00.000000Z\t5.5
-                            """,
-                    "SELECT * FROM x"
-            );
-        });
-    }
-
-    @Test
-    public void testAlterColumnTypeLongToIntWithParquetPartition() throws Exception {
-        assertMemoryLeak(() -> {
-            execute(
-                    """
-                            CREATE TABLE x (ts TIMESTAMP)
-                            TIMESTAMP(ts) PARTITION BY DAY WAL
-                            """
-            );
-            execute(
-                    """
-                            INSERT INTO x(ts) VALUES
-                            ('2020-01-01T00:00:00.000Z'),
-                            ('2020-01-01T04:00:00.000Z')
-                            """
-            );
-            execute("INSERT INTO x(ts) VALUES ('2020-01-02T00:00:00.000Z')");
-            drainWalQueue();
-
-            execute("ALTER TABLE x ADD COLUMN v LONG");
-            drainWalQueue();
-
-            execute(
-                    """
-                            INSERT INTO x(v, ts) VALUES
-                            (10, '2020-01-01T08:00:00.000Z'),
-                            (NULL, '2020-01-01T12:00:00.000Z'),
-                            (30, '2020-01-01T16:00:00.000Z'),
-                            (40, '2020-01-01T20:00:00.000Z')
-                            """
-            );
-            execute("INSERT INTO x(v, ts) VALUES (50, '2020-01-02T12:00:00.000Z')");
-            drainWalQueue();
-
-            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
-            drainWalQueue();
-
-            // LONG narrowed to INT — small values are preserved.
-            execute("ALTER TABLE x ALTER COLUMN v TYPE INT");
-            drainWalQueue();
-
-            assertSql(
-                    """
-                            ts\tv
-                            2020-01-01T00:00:00.000000Z\tnull
-                            2020-01-01T04:00:00.000000Z\tnull
-                            2020-01-01T08:00:00.000000Z\t10
-                            2020-01-01T12:00:00.000000Z\tnull
-                            2020-01-01T16:00:00.000000Z\t30
-                            2020-01-01T20:00:00.000000Z\t40
-                            2020-01-02T00:00:00.000000Z\tnull
-                            2020-01-02T12:00:00.000000Z\t50
-                            """,
-                    "SELECT * FROM x"
-            );
-
-            // O3 merge into the parquet partition.
-            execute("INSERT INTO x(v, ts) VALUES (99, '2020-01-01T06:00:00.000Z')");
-            drainWalQueue();
-
-            Assert.assertFalse(
-                    engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("x"))
-            );
-
-            assertSql(
-                    """
-                            ts\tv
-                            2020-01-01T00:00:00.000000Z\tnull
-                            2020-01-01T04:00:00.000000Z\tnull
-                            2020-01-01T06:00:00.000000Z\t99
-                            2020-01-01T08:00:00.000000Z\t10
-                            2020-01-01T12:00:00.000000Z\tnull
-                            2020-01-01T16:00:00.000000Z\t30
-                            2020-01-01T20:00:00.000000Z\t40
-                            2020-01-02T00:00:00.000000Z\tnull
-                            2020-01-02T12:00:00.000000Z\t50
-                            """,
-                    "SELECT * FROM x"
-            );
-        });
-    }
-
-    @Test
-    public void testAlterColumnTypeShortToIntWithParquetPartition() throws Exception {
-        assertMemoryLeak(() -> {
-            execute(
-                    """
-                            CREATE TABLE x (ts TIMESTAMP)
-                            TIMESTAMP(ts) PARTITION BY DAY WAL
-                            """
-            );
-            execute(
-                    """
-                            INSERT INTO x(ts) VALUES
-                            ('2020-01-01T00:00:00.000Z'),
-                            ('2020-01-01T04:00:00.000Z')
-                            """
-            );
-            execute("INSERT INTO x(ts) VALUES ('2020-01-02T00:00:00.000Z')");
-            drainWalQueue();
-
-            execute("ALTER TABLE x ADD COLUMN v SHORT");
-            drainWalQueue();
-
-            execute(
-                    """
-                            INSERT INTO x(v, ts) VALUES
-                            (5, '2020-01-01T08:00:00.000Z'),
-                            (NULL, '2020-01-01T12:00:00.000Z'),
-                            (7, '2020-01-01T16:00:00.000Z'),
-                            (8, '2020-01-01T20:00:00.000Z')
-                            """
-            );
-            execute("INSERT INTO x(v, ts) VALUES (9, '2020-01-02T12:00:00.000Z')");
-            drainWalQueue();
-
-            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
-            drainWalQueue();
-
-            execute("ALTER TABLE x ALTER COLUMN v TYPE INT");
-            drainWalQueue();
-
-            // The 00:00 and 04:00 rows were inserted before ADD COLUMN v -- they are
-            // column_top rows and read back as INT null on both native and parquet
-            // (parquet stores them as def-level=0 since SHORT/BYTE/CHAR are now
-            // declared OPTIONAL in the parquet schema). Explicit NULL inserted into
-            // SHORT becomes 0 because SHORT has no null sentinel; that 0 stays 0
-            // after SHORT->INT on both paths.
-            assertSql(
-                    """
-                            ts\tv
-                            2020-01-01T00:00:00.000000Z\tnull
-                            2020-01-01T04:00:00.000000Z\tnull
-                            2020-01-01T08:00:00.000000Z\t5
-                            2020-01-01T12:00:00.000000Z\t0
-                            2020-01-01T16:00:00.000000Z\t7
-                            2020-01-01T20:00:00.000000Z\t8
-                            2020-01-02T00:00:00.000000Z\tnull
-                            2020-01-02T12:00:00.000000Z\t9
-                            """,
-                    "SELECT * FROM x"
-            );
-
-            // O3 merge into the parquet partition.
-            execute("INSERT INTO x(v, ts) VALUES (99, '2020-01-01T06:00:00.000Z')");
-            drainWalQueue();
-
-            Assert.assertFalse(
-                    engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("x"))
-            );
-
-            assertSql(
-                    """
-                            ts\tv
-                            2020-01-01T00:00:00.000000Z\tnull
-                            2020-01-01T04:00:00.000000Z\tnull
-                            2020-01-01T06:00:00.000000Z\t99
-                            2020-01-01T08:00:00.000000Z\t5
-                            2020-01-01T12:00:00.000000Z\t0
-                            2020-01-01T16:00:00.000000Z\t7
-                            2020-01-01T20:00:00.000000Z\t8
-                            2020-01-02T00:00:00.000000Z\tnull
-                            2020-01-02T12:00:00.000000Z\t9
-                            """,
-                    "SELECT * FROM x"
-            );
-        });
-    }
-
-    @Test
-    public void testAlterColumnTypeWithExoticColumnsInParquetPartition() throws Exception {
-        assertMemoryLeak(() -> {
-            execute(
-                    """
-                            CREATE TABLE x (
-                                ip IPv4,
-                                uu UUID,
-                                gh GEOHASH(4c),
-                                l2 LONG256,
-                                ts TIMESTAMP
-                            ) TIMESTAMP(ts) PARTITION BY DAY WAL
-                            """
-            );
-            // Initial rows — column_top = 2 for 'v' after ADD COLUMN.
-            execute(
-                    """
-                            INSERT INTO x(ip, uu, gh, l2, ts) VALUES
-                            ('10.0.0.1', '11111111-1111-1111-1111-111111111111', #u33d, CAST('0x01' AS LONG256), '2020-01-01T00:00:00.000Z'),
-                            ('10.0.0.2', '22222222-2222-2222-2222-222222222222', #u33e, CAST('0x02' AS LONG256), '2020-01-01T04:00:00.000Z')
-                            """
-            );
-            execute(
-                    """
-                            INSERT INTO x(ip, uu, gh, l2, ts) VALUES
-                            ('10.0.0.6', '66666666-6666-6666-6666-666666666666', #u33k, CAST('0x06' AS LONG256), '2020-01-02T00:00:00.000Z')
-                            """
-            );
-            drainWalQueue();
-
-            execute("ALTER TABLE x ADD COLUMN v INT");
-            drainWalQueue();
-
-            execute(
-                    """
-                            INSERT INTO x(ip, uu, gh, l2, v, ts) VALUES
-                            ('10.0.0.3', '33333333-3333-3333-3333-333333333333', #u33f, CAST('0x03' AS LONG256), 10, '2020-01-01T08:00:00.000Z'),
-                            ('10.0.0.4', '44444444-4444-4444-4444-444444444444', #u33g, CAST('0x04' AS LONG256), NULL, '2020-01-01T12:00:00.000Z'),
-                            ('10.0.0.5', '55555555-5555-5555-5555-555555555555', #u33h, CAST('0x05' AS LONG256), 30, '2020-01-01T16:00:00.000Z')
-                            """
-            );
-            execute(
-                    """
-                            INSERT INTO x(ip, uu, gh, l2, v, ts) VALUES
-                            ('10.0.0.7', '77777777-7777-7777-7777-777777777777', #u33m, CAST('0x07' AS LONG256), 50, '2020-01-02T12:00:00.000Z')
-                            """
-            );
-            drainWalQueue();
-
-            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
-            drainWalQueue();
-
-            // INT → LONG with column_top, NULLs, and exotic columns.
-            execute("ALTER TABLE x ALTER COLUMN v TYPE LONG");
-            drainWalQueue();
-
-            assertSql(
-                    """
-                            ip\tuu\tgh\tl2\tts\tv
-                            10.0.0.1\t11111111-1111-1111-1111-111111111111\tu33d\t0x01\t2020-01-01T00:00:00.000000Z\tnull
-                            10.0.0.2\t22222222-2222-2222-2222-222222222222\tu33e\t0x02\t2020-01-01T04:00:00.000000Z\tnull
-                            10.0.0.3\t33333333-3333-3333-3333-333333333333\tu33f\t0x03\t2020-01-01T08:00:00.000000Z\t10
-                            10.0.0.4\t44444444-4444-4444-4444-444444444444\tu33g\t0x04\t2020-01-01T12:00:00.000000Z\tnull
-                            10.0.0.5\t55555555-5555-5555-5555-555555555555\tu33h\t0x05\t2020-01-01T16:00:00.000000Z\t30
-                            10.0.0.6\t66666666-6666-6666-6666-666666666666\tu33k\t0x06\t2020-01-02T00:00:00.000000Z\tnull
-                            10.0.0.7\t77777777-7777-7777-7777-777777777777\tu33m\t0x07\t2020-01-02T12:00:00.000000Z\t50
-                            """,
-                    "SELECT * FROM x"
-            );
-
-            // O3 merge into the parquet partition.
-            execute(
-                    """
-                            INSERT INTO x(ip, uu, gh, l2, v, ts) VALUES
-                            ('10.0.0.9', '99999999-9999-9999-9999-999999999999', #u33z, CAST('0x09' AS LONG256), 99, '2020-01-01T06:00:00.000Z')
-                            """
-            );
-            drainWalQueue();
-
-            Assert.assertFalse(
-                    engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("x"))
-            );
-
-            assertSql(
-                    """
-                            ip\tuu\tgh\tl2\tts\tv
-                            10.0.0.1\t11111111-1111-1111-1111-111111111111\tu33d\t0x01\t2020-01-01T00:00:00.000000Z\tnull
-                            10.0.0.2\t22222222-2222-2222-2222-222222222222\tu33e\t0x02\t2020-01-01T04:00:00.000000Z\tnull
-                            10.0.0.9\t99999999-9999-9999-9999-999999999999\tu33z\t0x09\t2020-01-01T06:00:00.000000Z\t99
-                            10.0.0.3\t33333333-3333-3333-3333-333333333333\tu33f\t0x03\t2020-01-01T08:00:00.000000Z\t10
-                            10.0.0.4\t44444444-4444-4444-4444-444444444444\tu33g\t0x04\t2020-01-01T12:00:00.000000Z\tnull
-                            10.0.0.5\t55555555-5555-5555-5555-555555555555\tu33h\t0x05\t2020-01-01T16:00:00.000000Z\t30
-                            10.0.0.6\t66666666-6666-6666-6666-666666666666\tu33k\t0x06\t2020-01-02T00:00:00.000000Z\tnull
-                            10.0.0.7\t77777777-7777-7777-7777-777777777777\tu33m\t0x07\t2020-01-02T12:00:00.000000Z\t50
-                            """,
-                    "SELECT * FROM x"
-            );
-        });
-    }
-
-    @Test
-    public void testAlterColumnTypeWithDecimalInParquetPartition() throws Exception {
-        assertMemoryLeak(() -> {
-            execute(
-                    """
-                            CREATE TABLE x (
-                                d DECIMAL(8,2),
-                                ts TIMESTAMP
-                            ) TIMESTAMP(ts) PARTITION BY DAY WAL
-                            """
-            );
-            // Initial rows — column_top = 2 for 'v' after ADD COLUMN.
-            execute(
-                    """
-                            INSERT INTO x(d, ts) VALUES
-                            ('100.50', '2020-01-01T00:00:00.000Z'),
-                            ('200.75', '2020-01-01T04:00:00.000Z')
-                            """
-            );
-            execute("INSERT INTO x(d, ts) VALUES ('600.00', '2020-01-02T00:00:00.000Z')");
-            drainWalQueue();
-
-            execute("ALTER TABLE x ADD COLUMN v INT");
-            drainWalQueue();
-
-            execute(
-                    """
-                            INSERT INTO x(d, v, ts) VALUES
-                            ('300.25', 10, '2020-01-01T08:00:00.000Z'),
-                            ('350.00', NULL, '2020-01-01T12:00:00.000Z'),
-                            ('400.99', 30, '2020-01-01T16:00:00.000Z')
-                            """
-            );
-            execute("INSERT INTO x(d, v, ts) VALUES ('700.50', 50, '2020-01-02T12:00:00.000Z')");
-            drainWalQueue();
-
-            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
-            drainWalQueue();
-
-            execute("ALTER TABLE x ALTER COLUMN v TYPE LONG");
-            drainWalQueue();
-
-            assertSql(
-                    """
-                            d\tts\tv
-                            100.50\t2020-01-01T00:00:00.000000Z\tnull
-                            200.75\t2020-01-01T04:00:00.000000Z\tnull
-                            300.25\t2020-01-01T08:00:00.000000Z\t10
-                            350.00\t2020-01-01T12:00:00.000000Z\tnull
-                            400.99\t2020-01-01T16:00:00.000000Z\t30
-                            600.00\t2020-01-02T00:00:00.000000Z\tnull
-                            700.50\t2020-01-02T12:00:00.000000Z\t50
-                            """,
-                    "SELECT * FROM x"
-            );
-
-            // O3 merge into the parquet partition.
-            execute("INSERT INTO x(d, v, ts) VALUES ('999.99', 99, '2020-01-01T06:00:00.000Z')");
-            drainWalQueue();
-
-            Assert.assertFalse(
-                    engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("x"))
-            );
-
-            assertSql(
-                    """
-                            d\tts\tv
-                            100.50\t2020-01-01T00:00:00.000000Z\tnull
-                            200.75\t2020-01-01T04:00:00.000000Z\tnull
-                            999.99\t2020-01-01T06:00:00.000000Z\t99
-                            300.25\t2020-01-01T08:00:00.000000Z\t10
-                            350.00\t2020-01-01T12:00:00.000000Z\tnull
-                            400.99\t2020-01-01T16:00:00.000000Z\t30
-                            600.00\t2020-01-02T00:00:00.000000Z\tnull
-                            700.50\t2020-01-02T12:00:00.000000Z\t50
-                            """,
-                    "SELECT * FROM x"
-            );
-        });
-    }
-
-    // ---------------------------------------------------------------
-    //  Range-checking: float/double → integer with out-of-range values
-    // ---------------------------------------------------------------
-
-    @Test
-    public void testAlterColumnTypeDoubleToIntOutOfRangeWithParquetPartition() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute(
-                    """
-                            INSERT INTO x VALUES
-                            (42.5, '2020-01-01T00:00:00.000Z'),
-                            (1e15, '2020-01-01T06:00:00.000Z'),
-                            (-1e15, '2020-01-01T12:00:00.000Z'),
-                            (NULL, '2020-01-01T18:00:00.000Z')
-                            """
-            );
-            execute("INSERT INTO x VALUES (3.7, '2020-01-02T00:00:00.000Z')");
-            drainWalQueue();
-
-            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
-            drainWalQueue();
-
-            execute("ALTER TABLE x ALTER COLUMN v TYPE INT");
-            drainWalQueue();
-
-            // C++ converts out-of-range doubles to INT null. The Rust parquet
-            // decoder must do the same: values outside [INT_MIN+1, INT_MAX]
-            // should become null, and fractional parts are truncated toward zero.
-            assertSql(
-                    """
-                            v\tts
-                            42\t2020-01-01T00:00:00.000000Z
-                            null\t2020-01-01T06:00:00.000000Z
-                            null\t2020-01-01T12:00:00.000000Z
-                            null\t2020-01-01T18:00:00.000000Z
-                            3\t2020-01-02T00:00:00.000000Z
-                            """,
-                    "SELECT * FROM x"
-            );
-        });
-    }
-
-    @Test
-    public void testAlterColumnTypeFloatToIntOutOfRangeWithParquetPartition() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (v FLOAT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute(
-                    """
-                            INSERT INTO x VALUES
-                            (42.5, '2020-01-01T00:00:00.000Z'),
-                            (1e15, '2020-01-01T06:00:00.000Z'),
-                            (-1e15, '2020-01-01T12:00:00.000Z'),
-                            (NULL, '2020-01-01T18:00:00.000Z')
-                            """
-            );
-            execute("INSERT INTO x VALUES (7.9, '2020-01-02T00:00:00.000Z')");
-            drainWalQueue();
-
-            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
-            drainWalQueue();
-
-            execute("ALTER TABLE x ALTER COLUMN v TYPE INT");
-            drainWalQueue();
-
-            assertSql(
-                    """
-                            v\tts
-                            42\t2020-01-01T00:00:00.000000Z
-                            null\t2020-01-01T06:00:00.000000Z
-                            null\t2020-01-01T12:00:00.000000Z
-                            null\t2020-01-01T18:00:00.000000Z
-                            7\t2020-01-02T00:00:00.000000Z
-                            """,
-                    "SELECT * FROM x"
-            );
-        });
-    }
-
-    // ---------------------------------------------------------------
-    //  Missing widening pairs: byte/short → float/double, long → float
-    // ---------------------------------------------------------------
-
-    @Test
-    public void testAlterColumnTypeByteToDoubleWithParquetPartition() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (v BYTE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute(
-                    """
-                            INSERT INTO x VALUES
-                            (1, '2020-01-01T00:00:00.000Z'),
-                            (127, '2020-01-01T06:00:00.000Z'),
-                            (-1, '2020-01-01T12:00:00.000Z')
-                            """
-            );
-            execute("INSERT INTO x VALUES (42, '2020-01-02T00:00:00.000Z')");
-            drainWalQueue();
-
-            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
-            drainWalQueue();
-
-            execute("ALTER TABLE x ALTER COLUMN v TYPE DOUBLE");
-            drainWalQueue();
-
-            assertSql(
-                    """
-                            v\tts
-                            1.0\t2020-01-01T00:00:00.000000Z
-                            127.0\t2020-01-01T06:00:00.000000Z
-                            -1.0\t2020-01-01T12:00:00.000000Z
-                            42.0\t2020-01-02T00:00:00.000000Z
-                            """,
-                    "SELECT * FROM x"
-            );
-        });
-    }
-
-    @Test
-    public void testAlterColumnTypeShortToFloatWithParquetPartition() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (v SHORT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute(
-                    """
-                            INSERT INTO x VALUES
-                            (100, '2020-01-01T00:00:00.000Z'),
-                            (32767, '2020-01-01T06:00:00.000Z'),
-                            (-100, '2020-01-01T12:00:00.000Z')
-                            """
-            );
-            execute("INSERT INTO x VALUES (7, '2020-01-02T00:00:00.000Z')");
-            drainWalQueue();
-
-            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
-            drainWalQueue();
-
-            execute("ALTER TABLE x ALTER COLUMN v TYPE FLOAT");
-            drainWalQueue();
-
-            assertSql(
-                    """
-                            v\tts
-                            100.0\t2020-01-01T00:00:00.000000Z
-                            32767.0\t2020-01-01T06:00:00.000000Z
-                            -100.0\t2020-01-01T12:00:00.000000Z
-                            7.0\t2020-01-02T00:00:00.000000Z
-                            """,
-                    "SELECT * FROM x"
-            );
-        });
-    }
-
-    @Test
-    public void testAlterColumnTypeShortToDoubleWithParquetPartition() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (v SHORT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute(
-                    """
-                            INSERT INTO x VALUES
-                            (100, '2020-01-01T00:00:00.000Z'),
-                            (-32768, '2020-01-01T06:00:00.000Z'),
-                            (0, '2020-01-01T12:00:00.000Z')
-                            """
-            );
-            execute("INSERT INTO x VALUES (1, '2020-01-02T00:00:00.000Z')");
-            drainWalQueue();
-
-            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
-            drainWalQueue();
-
-            execute("ALTER TABLE x ALTER COLUMN v TYPE DOUBLE");
-            drainWalQueue();
-
-            assertSql(
-                    """
-                            v\tts
-                            100.0\t2020-01-01T00:00:00.000000Z
-                            -32768.0\t2020-01-01T06:00:00.000000Z
-                            0.0\t2020-01-01T12:00:00.000000Z
-                            1.0\t2020-01-02T00:00:00.000000Z
-                            """,
-                    "SELECT * FROM x"
-            );
-        });
-    }
-
-    @Test
-    public void testAlterColumnTypeLongToFloatWithParquetPartition() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute(
-                    """
-                            INSERT INTO x VALUES
-                            (100, '2020-01-01T00:00:00.000Z'),
-                            (NULL, '2020-01-01T06:00:00.000Z'),
-                            (-42, '2020-01-01T12:00:00.000Z')
-                            """
-            );
-            execute("INSERT INTO x VALUES (7, '2020-01-02T00:00:00.000Z')");
-            drainWalQueue();
-
-            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
-            drainWalQueue();
-
-            execute("ALTER TABLE x ALTER COLUMN v TYPE FLOAT");
-            drainWalQueue();
-
-            assertSql(
-                    """
-                            v\tts
-                            100.0\t2020-01-01T00:00:00.000000Z
-                            null\t2020-01-01T06:00:00.000000Z
-                            -42.0\t2020-01-01T12:00:00.000000Z
-                            7.0\t2020-01-02T00:00:00.000000Z
-                            """,
-                    "SELECT * FROM x"
-            );
-        });
-    }
-
-    // ---------------------------------------------------------------
-    //  Missing narrowing pairs: float/double → long/short/byte
-    // ---------------------------------------------------------------
-
-    @Test
-    public void testAlterColumnTypeFloatToLongWithParquetPartition() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (v FLOAT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute(
-                    """
-                            INSERT INTO x VALUES
-                            (10.5, '2020-01-01T00:00:00.000Z'),
-                            (NULL, '2020-01-01T06:00:00.000Z'),
-                            (-3.9, '2020-01-01T12:00:00.000Z')
-                            """
-            );
-            execute("INSERT INTO x VALUES (7.1, '2020-01-02T00:00:00.000Z')");
-            drainWalQueue();
-
-            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
-            drainWalQueue();
-
-            execute("ALTER TABLE x ALTER COLUMN v TYPE LONG");
-            drainWalQueue();
-
-            assertSql(
-                    """
-                            v\tts
-                            10\t2020-01-01T00:00:00.000000Z
-                            null\t2020-01-01T06:00:00.000000Z
-                            -3\t2020-01-01T12:00:00.000000Z
-                            7\t2020-01-02T00:00:00.000000Z
-                            """,
-                    "SELECT * FROM x"
-            );
-        });
-    }
-
-    @Test
-    public void testAlterColumnTypeFloatToShortWithParquetPartition() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (v FLOAT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute(
-                    """
-                            INSERT INTO x VALUES
-                            (10.5, '2020-01-01T00:00:00.000Z'),
-                            (NULL, '2020-01-01T06:00:00.000Z'),
-                            (-3.9, '2020-01-01T12:00:00.000Z')
-                            """
-            );
-            execute("INSERT INTO x VALUES (7.1, '2020-01-02T00:00:00.000Z')");
-            drainWalQueue();
-
-            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
-            drainWalQueue();
-
-            execute("ALTER TABLE x ALTER COLUMN v TYPE SHORT");
-            drainWalQueue();
-
-            assertSql(
-                    """
-                            v\tts
-                            10\t2020-01-01T00:00:00.000000Z
-                            0\t2020-01-01T06:00:00.000000Z
-                            -3\t2020-01-01T12:00:00.000000Z
-                            7\t2020-01-02T00:00:00.000000Z
-                            """,
-                    "SELECT * FROM x"
-            );
-        });
-    }
-
-    @Test
-    public void testAlterColumnTypeFloatToByteWithParquetPartition() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (v FLOAT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute(
-                    """
-                            INSERT INTO x VALUES
-                            (10.5, '2020-01-01T00:00:00.000Z'),
-                            (NULL, '2020-01-01T06:00:00.000Z'),
-                            (-3.9, '2020-01-01T12:00:00.000Z')
-                            """
-            );
-            execute("INSERT INTO x VALUES (7.1, '2020-01-02T00:00:00.000Z')");
-            drainWalQueue();
-
-            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
-            drainWalQueue();
-
-            execute("ALTER TABLE x ALTER COLUMN v TYPE BYTE");
-            drainWalQueue();
-
-            assertSql(
-                    """
-                            v\tts
-                            10\t2020-01-01T00:00:00.000000Z
-                            0\t2020-01-01T06:00:00.000000Z
-                            -3\t2020-01-01T12:00:00.000000Z
-                            7\t2020-01-02T00:00:00.000000Z
-                            """,
-                    "SELECT * FROM x"
-            );
-        });
-    }
-
-    @Test
-    public void testAlterColumnTypeDoubleToShortWithParquetPartition() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute(
-                    """
-                            INSERT INTO x VALUES
-                            (10.5, '2020-01-01T00:00:00.000Z'),
-                            (NULL, '2020-01-01T06:00:00.000Z'),
-                            (-3.9, '2020-01-01T12:00:00.000Z'),
-                            (1e10, '2020-01-01T18:00:00.000Z')
-                            """
-            );
-            execute("INSERT INTO x VALUES (7.1, '2020-01-02T00:00:00.000Z')");
-            drainWalQueue();
-
-            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
-            drainWalQueue();
-
-            execute("ALTER TABLE x ALTER COLUMN v TYPE SHORT");
-            drainWalQueue();
-
-            // Out-of-range 1e10 should become SHORT null (0).
-            assertSql(
-                    """
-                            v\tts
-                            10\t2020-01-01T00:00:00.000000Z
-                            0\t2020-01-01T06:00:00.000000Z
-                            -3\t2020-01-01T12:00:00.000000Z
-                            0\t2020-01-01T18:00:00.000000Z
-                            7\t2020-01-02T00:00:00.000000Z
-                            """,
-                    "SELECT * FROM x"
-            );
-        });
-    }
-
-    @Test
-    public void testAlterColumnTypeDoubleToByteWithParquetPartition() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute(
-                    """
-                            INSERT INTO x VALUES
-                            (10.5, '2020-01-01T00:00:00.000Z'),
-                            (NULL, '2020-01-01T06:00:00.000Z'),
-                            (-3.9, '2020-01-01T12:00:00.000Z'),
-                            (1e10, '2020-01-01T18:00:00.000Z')
-                            """
-            );
-            execute("INSERT INTO x VALUES (7.1, '2020-01-02T00:00:00.000Z')");
-            drainWalQueue();
-
-            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
-            drainWalQueue();
-
-            execute("ALTER TABLE x ALTER COLUMN v TYPE BYTE");
-            drainWalQueue();
-
-            // Out-of-range 1e10 should become BYTE null (0).
-            assertSql(
-                    """
-                            v\tts
-                            10\t2020-01-01T00:00:00.000000Z
-                            0\t2020-01-01T06:00:00.000000Z
-                            -3\t2020-01-01T12:00:00.000000Z
-                            0\t2020-01-01T18:00:00.000000Z
-                            7\t2020-01-02T00:00:00.000000Z
-                            """,
-                    "SELECT * FROM x"
-            );
-        });
-    }
-
-    @Test
-    public void testAlterColumnTypeDoubleToDateWithParquetPartition() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute(
-                    """
-                            INSERT INTO x VALUES
-                            (1.0, '2020-01-01T00:00:00.000Z'),
-                            (-1.0, '2020-01-01T04:00:00.000Z'),
-                            (NULL, '2020-01-01T08:00:00.000Z'),
-                            (0.0, '2020-01-01T12:00:00.000Z'),
-                            (86400000.0, '2020-01-01T16:00:00.000Z')
-                            """
-            );
-            execute(
-                    """
-                            INSERT INTO x VALUES
-                            (1.0, '2020-01-02T00:00:00.000Z'),
-                            (-1.0, '2020-01-02T04:00:00.000Z'),
-                            (NULL, '2020-01-02T08:00:00.000Z'),
-                            (0.0, '2020-01-02T12:00:00.000Z'),
-                            (86400000.0, '2020-01-02T16:00:00.000Z')
-                            """
-            );
-            drainWalQueue();
-
-            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
-            drainWalQueue();
-
-            execute("ALTER TABLE x ALTER COLUMN v TYPE DATE");
-            drainWalQueue();
-
-            // DOUBLE→DATE is a range-checked f64→i64 cast. NaN→null.
-            // Both partitions must produce identical results.
-            assertSql(
-                    """
-                            v\tts
-                            1970-01-01T00:00:00.001Z\t2020-01-01T00:00:00.000000Z
-                            1969-12-31T23:59:59.999Z\t2020-01-01T04:00:00.000000Z
-                            \t2020-01-01T08:00:00.000000Z
-                            1970-01-01T00:00:00.000Z\t2020-01-01T12:00:00.000000Z
-                            1970-01-02T00:00:00.000Z\t2020-01-01T16:00:00.000000Z
-                            1970-01-01T00:00:00.001Z\t2020-01-02T00:00:00.000000Z
-                            1969-12-31T23:59:59.999Z\t2020-01-02T04:00:00.000000Z
-                            \t2020-01-02T08:00:00.000000Z
-                            1970-01-01T00:00:00.000Z\t2020-01-02T12:00:00.000000Z
-                            1970-01-02T00:00:00.000Z\t2020-01-02T16:00:00.000000Z
-                            """,
-                    "SELECT * FROM x"
-            );
-        });
-    }
-
-    @Test
-    public void testAlterColumnTypeDoubleToTimestampWithParquetPartition() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute(
-                    """
-                            INSERT INTO x VALUES
-                            (1.0, '2020-01-01T00:00:00.000Z'),
-                            (-1.0, '2020-01-01T04:00:00.000Z'),
-                            (NULL, '2020-01-01T08:00:00.000Z'),
-                            (0.0, '2020-01-01T12:00:00.000Z'),
-                            (1000000.0, '2020-01-01T16:00:00.000Z')
-                            """
-            );
-            execute(
-                    """
-                            INSERT INTO x VALUES
-                            (1.0, '2020-01-02T00:00:00.000Z'),
-                            (-1.0, '2020-01-02T04:00:00.000Z'),
-                            (NULL, '2020-01-02T08:00:00.000Z'),
-                            (0.0, '2020-01-02T12:00:00.000Z'),
-                            (1000000.0, '2020-01-02T16:00:00.000Z')
-                            """
-            );
-            drainWalQueue();
-
-            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
-            drainWalQueue();
-
-            execute("ALTER TABLE x ALTER COLUMN v TYPE TIMESTAMP");
-            drainWalQueue();
-
-            // DOUBLE→TIMESTAMP is a range-checked f64→i64 cast. NaN��null.
-            // Both partitions must produce identical results.
-            assertSql(
-                    """
-                            v\tts
-                            1970-01-01T00:00:00.000001Z\t2020-01-01T00:00:00.000000Z
-                            1969-12-31T23:59:59.999999Z\t2020-01-01T04:00:00.000000Z
-                            \t2020-01-01T08:00:00.000000Z
-                            1970-01-01T00:00:00.000000Z\t2020-01-01T12:00:00.000000Z
-                            1970-01-01T00:00:01.000000Z\t2020-01-01T16:00:00.000000Z
-                            1970-01-01T00:00:00.000001Z\t2020-01-02T00:00:00.000000Z
-                            1969-12-31T23:59:59.999999Z\t2020-01-02T04:00:00.000000Z
-                            \t2020-01-02T08:00:00.000000Z
-                            1970-01-01T00:00:00.000000Z\t2020-01-02T12:00:00.000000Z
-                            1970-01-01T00:00:01.000000Z\t2020-01-02T16:00:00.000000Z
-                            """,
-                    "SELECT * FROM x"
-            );
-        });
-    }
-
-    @Test
-    public void testAlterColumnTypeFloatToDateWithParquetPartition() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (v FLOAT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute(
-                    """
-                            INSERT INTO x VALUES
-                            (1.0::FLOAT, '2020-01-01T00:00:00.000Z'),
-                            (-1.0::FLOAT, '2020-01-01T04:00:00.000Z'),
-                            (NULL, '2020-01-01T08:00:00.000Z'),
-                            (0.0::FLOAT, '2020-01-01T12:00:00.000Z'),
-                            (86400000.0::FLOAT, '2020-01-01T16:00:00.000Z')
-                            """
-            );
-            execute(
-                    """
-                            INSERT INTO x VALUES
-                            (1.0::FLOAT, '2020-01-02T00:00:00.000Z'),
-                            (-1.0::FLOAT, '2020-01-02T04:00:00.000Z'),
-                            (NULL, '2020-01-02T08:00:00.000Z'),
-                            (0.0::FLOAT, '2020-01-02T12:00:00.000Z'),
-                            (86400000.0::FLOAT, '2020-01-02T16:00:00.000Z')
-                            """
-            );
-            drainWalQueue();
-
-            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
-            drainWalQueue();
-
-            execute("ALTER TABLE x ALTER COLUMN v TYPE DATE");
-            drainWalQueue();
-
-            // FLOAT→DATE is a range-checked f32→i64 cast. NaN→null.
-            // Both partitions must produce identical results.
-            assertSql(
-                    """
-                            v\tts
-                            1970-01-01T00:00:00.001Z\t2020-01-01T00:00:00.000000Z
-                            1969-12-31T23:59:59.999Z\t2020-01-01T04:00:00.000000Z
-                            \t2020-01-01T08:00:00.000000Z
-                            1970-01-01T00:00:00.000Z\t2020-01-01T12:00:00.000000Z
-                            1970-01-02T00:00:00.000Z\t2020-01-01T16:00:00.000000Z
-                            1970-01-01T00:00:00.001Z\t2020-01-02T00:00:00.000000Z
-                            1969-12-31T23:59:59.999Z\t2020-01-02T04:00:00.000000Z
-                            \t2020-01-02T08:00:00.000000Z
-                            1970-01-01T00:00:00.000Z\t2020-01-02T12:00:00.000000Z
-                            1970-01-02T00:00:00.000Z\t2020-01-02T16:00:00.000000Z
-                            """,
-                    "SELECT * FROM x"
-            );
-        });
-    }
-
-    @Test
-    public void testAlterColumnTypeFloatToTimestampWithParquetPartition() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (v FLOAT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute(
-                    """
-                            INSERT INTO x VALUES
-                            (1.0::FLOAT, '2020-01-01T00:00:00.000Z'),
-                            (-1.0::FLOAT, '2020-01-01T04:00:00.000Z'),
-                            (NULL, '2020-01-01T08:00:00.000Z'),
-                            (0.0::FLOAT, '2020-01-01T12:00:00.000Z'),
-                            (1000000.0::FLOAT, '2020-01-01T16:00:00.000Z')
-                            """
-            );
-            execute(
-                    """
-                            INSERT INTO x VALUES
-                            (1.0::FLOAT, '2020-01-02T00:00:00.000Z'),
-                            (-1.0::FLOAT, '2020-01-02T04:00:00.000Z'),
-                            (NULL, '2020-01-02T08:00:00.000Z'),
-                            (0.0::FLOAT, '2020-01-02T12:00:00.000Z'),
-                            (1000000.0::FLOAT, '2020-01-02T16:00:00.000Z')
-                            """
-            );
-            drainWalQueue();
-
-            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
-            drainWalQueue();
-
-            execute("ALTER TABLE x ALTER COLUMN v TYPE TIMESTAMP");
-            drainWalQueue();
-
-            // FLOAT→TIMESTAMP is a range-checked f32→i64 cast. NaN→null.
-            // Both partitions must produce identical results.
-            assertSql(
-                    """
-                            v\tts
-                            1970-01-01T00:00:00.000001Z\t2020-01-01T00:00:00.000000Z
-                            1969-12-31T23:59:59.999999Z\t2020-01-01T04:00:00.000000Z
-                            \t2020-01-01T08:00:00.000000Z
-                            1970-01-01T00:00:00.000000Z\t2020-01-01T12:00:00.000000Z
-                            1970-01-01T00:00:01.000000Z\t2020-01-01T16:00:00.000000Z
-                            1970-01-01T00:00:00.000001Z\t2020-01-02T00:00:00.000000Z
-                            1969-12-31T23:59:59.999999Z\t2020-01-02T04:00:00.000000Z
-                            \t2020-01-02T08:00:00.000000Z
-                            1970-01-01T00:00:00.000000Z\t2020-01-02T12:00:00.000000Z
-                            1970-01-01T00:00:01.000000Z\t2020-01-02T16:00:00.000000Z
-                            """,
-                    "SELECT * FROM x"
-            );
-        });
-    }
-
-    // ---------------------------------------------------------------
-    //  Timestamp / Date conversions
-    // ---------------------------------------------------------------
-
-    @Test
-    public void testAlterColumnTypeTimestampToLongWithParquetPartition() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (v TIMESTAMP, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute(
-                    """
-                            INSERT INTO x VALUES
-                            ('1970-01-01T00:00:01.000000Z', '2020-01-01T00:00:00.000Z'),
-                            (NULL, '2020-01-01T06:00:00.000Z'),
-                            ('1970-01-01T00:16:40.000000Z', '2020-01-01T12:00:00.000Z')
-                            """
-            );
-            execute("INSERT INTO x VALUES ('1970-01-01T00:00:00.100000Z', '2020-01-02T00:00:00.000Z')");
-            drainWalQueue();
-
-            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
-            drainWalQueue();
-
-            execute("ALTER TABLE x ALTER COLUMN v TYPE LONG");
-            drainWalQueue();
-
-            // TIMESTAMP and LONG share the same i64 representation (microseconds)
-            // and null sentinel (Long.MIN_VALUE). Conversion is a no-op.
-            assertSql(
-                    """
-                            v\tts
-                            1000000\t2020-01-01T00:00:00.000000Z
-                            null\t2020-01-01T06:00:00.000000Z
-                            1000000000\t2020-01-01T12:00:00.000000Z
-                            100000\t2020-01-02T00:00:00.000000Z
-                            """,
-                    "SELECT * FROM x"
-            );
-        });
-    }
-
-    @Test
-    public void testAlterColumnTypeLongToTimestampWithParquetPartition() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute(
-                    """
-                            INSERT INTO x VALUES
-                            (1000000, '2020-01-01T00:00:00.000Z'),
-                            (NULL, '2020-01-01T06:00:00.000Z'),
-                            (1000000000, '2020-01-01T12:00:00.000Z')
-                            """
-            );
-            execute("INSERT INTO x VALUES (100000, '2020-01-02T00:00:00.000Z')");
-            drainWalQueue();
-
-            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
-            drainWalQueue();
-
-            execute("ALTER TABLE x ALTER COLUMN v TYPE TIMESTAMP");
-            drainWalQueue();
-
-            assertSql(
-                    """
-                            v\tts
-                            1970-01-01T00:00:01.000000Z\t2020-01-01T00:00:00.000000Z
-                            \t2020-01-01T06:00:00.000000Z
-                            1970-01-01T00:16:40.000000Z\t2020-01-01T12:00:00.000000Z
-                            1970-01-01T00:00:00.100000Z\t2020-01-02T00:00:00.000000Z
-                            """,
-                    "SELECT * FROM x"
-            );
-        });
-    }
-
-    @Test
-    public void testAlterColumnTypeDateToLongWithParquetPartition() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (v DATE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute(
-                    """
-                            INSERT INTO x VALUES
-                            (CAST('1970-01-01T00:00:01.000Z' AS DATE), '2020-01-01T00:00:00.000Z'),
-                            (NULL, '2020-01-01T06:00:00.000Z'),
-                            (CAST('1970-01-01T00:16:40.000Z' AS DATE), '2020-01-01T12:00:00.000Z')
-                            """
-            );
-            execute("INSERT INTO x VALUES (CAST('1970-01-01T00:00:00.100Z' AS DATE), '2020-01-02T00:00:00.000Z')");
-            drainWalQueue();
-
-            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
-            drainWalQueue();
-
-            execute("ALTER TABLE x ALTER COLUMN v TYPE LONG");
-            drainWalQueue();
-
-            // DATE and LONG share the same i64 representation (milliseconds)
-            // and null sentinel (Long.MIN_VALUE). Conversion is a no-op.
-            assertSql(
-                    """
-                            v\tts
-                            1000\t2020-01-01T00:00:00.000000Z
-                            null\t2020-01-01T06:00:00.000000Z
-                            1000000\t2020-01-01T12:00:00.000000Z
-                            100\t2020-01-02T00:00:00.000000Z
-                            """,
-                    "SELECT * FROM x"
-            );
-        });
-    }
-
-    @Test
-    public void testAlterColumnTypeLongToDateWithParquetPartition() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute(
-                    """
-                            INSERT INTO x VALUES
-                            (1000, '2020-01-01T00:00:00.000Z'),
-                            (NULL, '2020-01-01T06:00:00.000Z'),
-                            (1000000, '2020-01-01T12:00:00.000Z')
-                            """
-            );
-            execute("INSERT INTO x VALUES (100, '2020-01-02T00:00:00.000Z')");
-            drainWalQueue();
-
-            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
-            drainWalQueue();
-
-            execute("ALTER TABLE x ALTER COLUMN v TYPE DATE");
-            drainWalQueue();
-
-            assertSql(
-                    """
-                            v\tts
-                            1970-01-01T00:00:01.000Z\t2020-01-01T00:00:00.000000Z
-                            \t2020-01-01T06:00:00.000000Z
-                            1970-01-01T00:16:40.000Z\t2020-01-01T12:00:00.000000Z
-                            1970-01-01T00:00:00.100Z\t2020-01-02T00:00:00.000000Z
-                            """,
-                    "SELECT * FROM x"
-            );
-        });
-    }
-
-    @Test
-    public void testAlterColumnTypeDateToTimestampWithParquetPartition() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (v DATE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute(
-                    """
-                            INSERT INTO x VALUES
-                            (CAST('1970-01-01T00:00:01.000Z' AS DATE), '2020-01-01T00:00:00.000Z'),
-                            (NULL, '2020-01-01T06:00:00.000Z'),
-                            (CAST('1970-01-01T00:16:40.000Z' AS DATE), '2020-01-01T12:00:00.000Z')
-                            """
-            );
-            execute("INSERT INTO x VALUES (CAST('1970-01-01T00:00:00.500Z' AS DATE), '2020-01-02T00:00:00.000Z')");
-            drainWalQueue();
-
-            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
-            drainWalQueue();
-
-            execute("ALTER TABLE x ALTER COLUMN v TYPE TIMESTAMP");
-            drainWalQueue();
-
-            // DATE (ms) → TIMESTAMP (µs): values are scaled ×1000.
-            assertSql(
-                    """
-                            v\tts
-                            1970-01-01T00:00:01.000000Z\t2020-01-01T00:00:00.000000Z
-                            \t2020-01-01T06:00:00.000000Z
-                            1970-01-01T00:16:40.000000Z\t2020-01-01T12:00:00.000000Z
-                            1970-01-01T00:00:00.500000Z\t2020-01-02T00:00:00.000000Z
-                            """,
-                    "SELECT * FROM x"
-            );
-        });
-    }
-
-    @Test
-    public void testAlterColumnTypeTimestampToDateWithParquetPartition() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (v TIMESTAMP, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute(
-                    """
-                            INSERT INTO x VALUES
-                            ('1970-01-01T00:00:01.000000Z', '2020-01-01T00:00:00.000Z'),
-                            (NULL, '2020-01-01T06:00:00.000Z'),
-                            ('1970-01-01T00:16:40.123456Z', '2020-01-01T12:00:00.000Z')
-                            """
-            );
-            execute("INSERT INTO x VALUES ('1970-01-01T00:00:00.500999Z', '2020-01-02T00:00:00.000Z')");
-            drainWalQueue();
-
-            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
-            drainWalQueue();
-
-            execute("ALTER TABLE x ALTER COLUMN v TYPE DATE");
-            drainWalQueue();
-
-            // TIMESTAMP (µs) → DATE (ms): values are divided by 1000, truncating
-            // sub-millisecond precision.
-            assertSql(
-                    """
-                            v\tts
-                            1970-01-01T00:00:01.000Z\t2020-01-01T00:00:00.000000Z
-                            \t2020-01-01T06:00:00.000000Z
-                            1970-01-01T00:16:40.123Z\t2020-01-01T12:00:00.000000Z
-                            1970-01-01T00:00:00.500Z\t2020-01-02T00:00:00.000000Z
-                            """,
-                    "SELECT * FROM x"
-            );
-        });
-    }
-
-    // ---------------------------------------------------------------
-    //  Boolean conversions
-    // ---------------------------------------------------------------
-
-    @Test
-    public void testAlterColumnTypeBooleanToIntWithParquetPartition() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (v BOOLEAN, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute(
-                    """
-                            INSERT INTO x VALUES
-                            (true, '2020-01-01T00:00:00.000Z'),
-                            (false, '2020-01-01T06:00:00.000Z'),
-                            (NULL, '2020-01-01T12:00:00.000Z')
-                            """
-            );
-            execute("INSERT INTO x VALUES (true, '2020-01-02T00:00:00.000Z')");
-            drainWalQueue();
-
-            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
-            drainWalQueue();
-
-            execute("ALTER TABLE x ALTER COLUMN v TYPE INT");
-            drainWalQueue();
-
-            // Boolean has no distinct null (sentinel = 0 = false),
-            // so NULL boolean expands to INT 0, not INT null.
-            assertSql(
-                    """
-                            v\tts
-                            1\t2020-01-01T00:00:00.000000Z
-                            0\t2020-01-01T06:00:00.000000Z
-                            0\t2020-01-01T12:00:00.000000Z
-                            1\t2020-01-02T00:00:00.000000Z
-                            """,
-                    "SELECT * FROM x"
-            );
-        });
-    }
-
-    @Test
-    public void testAlterColumnTypeIntToBooleanWithParquetPartition() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute(
-                    """
-                            INSERT INTO x VALUES
-                            (1, '2020-01-01T00:00:00.000Z'),
-                            (0, '2020-01-01T06:00:00.000Z'),
-                            (NULL, '2020-01-01T12:00:00.000Z'),
-                            (42, '2020-01-01T18:00:00.000Z')
-                            """
-            );
-            execute("INSERT INTO x VALUES (0, '2020-01-02T00:00:00.000Z')");
-            drainWalQueue();
-
-            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
-            drainWalQueue();
-
-            execute("ALTER TABLE x ALTER COLUMN v TYPE BOOLEAN");
-            drainWalQueue();
-
-            // INT→BOOLEAN: non-zero → true, zero → false, NULL → false.
-            // The Rust decoder normalizes via contract_to_bool (not truncation).
-            assertSql(
-                    """
-                            v\tts
-                            true\t2020-01-01T00:00:00.000000Z
-                            false\t2020-01-01T06:00:00.000000Z
-                            false\t2020-01-01T12:00:00.000000Z
-                            true\t2020-01-01T18:00:00.000000Z
-                            false\t2020-01-02T00:00:00.000000Z
-                            """,
-                    "SELECT * FROM x"
-            );
-        });
-    }
-
-    @Test
-    public void testAlterColumnTypeChainedFixedToVarWithParquetPartition() throws Exception {
-        assertMemoryLeak(() -> {
-            execute(
-                    """
-                            CREATE TABLE x (ts TIMESTAMP)
-                            TIMESTAMP(ts) PARTITION BY DAY WAL
-                            """
-            );
-            execute(
-                    """
-                            INSERT INTO x(ts) VALUES
-                            ('2020-01-01T00:00:00.000Z'),
-                            ('2020-01-01T04:00:00.000Z')
-                            """
-            );
-            execute("INSERT INTO x(ts) VALUES ('2020-01-02T00:00:00.000Z')");
-            drainWalQueue();
-
-            execute("ALTER TABLE x ADD COLUMN v INT");
-            drainWalQueue();
-
-            execute(
-                    """
-                            INSERT INTO x(v, ts) VALUES
-                            (10, '2020-01-01T08:00:00.000Z'),
-                            (NULL, '2020-01-01T12:00:00.000Z'),
-                            (30, '2020-01-01T16:00:00.000Z'),
-                            (40, '2020-01-01T20:00:00.000Z')
-                            """
-            );
-            execute("INSERT INTO x(v, ts) VALUES (50, '2020-01-02T12:00:00.000Z')");
-            drainWalQueue();
-
-            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
-            drainWalQueue();
-
-            // Three chained conversions: INT → LONG → DOUBLE → VARCHAR.
-            // The parquet file stores data under the original INT writer index.
-            // The read path and O3 merge must walk the full replacingIndex chain.
-            execute("ALTER TABLE x ALTER COLUMN v TYPE LONG");
-            drainWalQueue();
-            execute("ALTER TABLE x ALTER COLUMN v TYPE DOUBLE");
-            drainWalQueue();
-            execute("ALTER TABLE x ALTER COLUMN v TYPE VARCHAR");
-            drainWalQueue();
-
-            // The second ALTER TYPE eagerly converts the parquet partition to native so
-            // it goes through the same chain as the native one:
-            // INT → LONG → DOUBLE → VARCHAR, producing "10.0", "30.0", "40.0".
-            assertSql(
-                    """
-                            ts\tv
-                            2020-01-01T00:00:00.000000Z\t
-                            2020-01-01T04:00:00.000000Z\t
-                            2020-01-01T08:00:00.000000Z\t10.0
-                            2020-01-01T12:00:00.000000Z\t
-                            2020-01-01T16:00:00.000000Z\t30.0
-                            2020-01-01T20:00:00.000000Z\t40.0
-                            2020-01-02T00:00:00.000000Z\t
-                            2020-01-02T12:00:00.000000Z\t50.0
-                            """,
-                    "SELECT * FROM x"
-            );
-
-            // O3 merge into the (now native) partition.
-            execute("INSERT INTO x(v, ts) VALUES ('99', '2020-01-01T06:00:00.000Z')");
-            drainWalQueue();
-
-            Assert.assertFalse(
-                    engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("x"))
-            );
-
-            assertSql(
-                    """
-                            ts\tv
-                            2020-01-01T00:00:00.000000Z\t
-                            2020-01-01T04:00:00.000000Z\t
-                            2020-01-01T06:00:00.000000Z\t99
-                            2020-01-01T08:00:00.000000Z\t10.0
-                            2020-01-01T12:00:00.000000Z\t
-                            2020-01-01T16:00:00.000000Z\t30.0
-                            2020-01-01T20:00:00.000000Z\t40.0
-                            2020-01-02T00:00:00.000000Z\t
-                            2020-01-02T12:00:00.000000Z\t50.0
-                            """,
-                    "SELECT * FROM x"
-            );
-        });
-    }
-
-    @Test
-    public void testAlterColumnTypeDoubleToVarcharWithParquetPartition() throws Exception {
-        assertMemoryLeak(() -> {
-            execute(
-                    """
-                            CREATE TABLE x (ts TIMESTAMP)
-                            TIMESTAMP(ts) PARTITION BY DAY WAL
-                            """
-            );
-            execute(
-                    """
-                            INSERT INTO x(ts) VALUES
-                            ('2020-01-01T00:00:00.000Z'),
-                            ('2020-01-01T04:00:00.000Z')
-                            """
-            );
-            execute("INSERT INTO x(ts) VALUES ('2020-01-02T00:00:00.000Z')");
-            drainWalQueue();
-
-            execute("ALTER TABLE x ADD COLUMN v DOUBLE");
-            drainWalQueue();
-
-            execute(
-                    """
-                            INSERT INTO x(v, ts) VALUES
-                            (3.14, '2020-01-01T08:00:00.000Z'),
-                            (NULL, '2020-01-01T12:00:00.000Z'),
-                            (-0.5, '2020-01-01T16:00:00.000Z'),
-                            (1000000.123, '2020-01-01T20:00:00.000Z')
-                            """
-            );
-            execute("INSERT INTO x(v, ts) VALUES (42.0, '2020-01-02T12:00:00.000Z')");
-            drainWalQueue();
-
-            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
-            drainWalQueue();
-
-            execute("ALTER TABLE x ALTER COLUMN v TYPE VARCHAR");
-            drainWalQueue();
-
-            assertSql(
-                    """
-                            ts\tv
-                            2020-01-01T00:00:00.000000Z\t
-                            2020-01-01T04:00:00.000000Z\t
-                            2020-01-01T08:00:00.000000Z\t3.14
-                            2020-01-01T12:00:00.000000Z\t
-                            2020-01-01T16:00:00.000000Z\t-0.5
-                            2020-01-01T20:00:00.000000Z\t1000000.123
-                            2020-01-02T00:00:00.000000Z\t
-                            2020-01-02T12:00:00.000000Z\t42.0
-                            """,
-                    "SELECT * FROM x"
-            );
-
-            // O3 merge into the parquet partition.
-            execute("INSERT INTO x(v, ts) VALUES ('99.9', '2020-01-01T06:00:00.000Z')");
-            drainWalQueue();
-
-            Assert.assertFalse(
-                    engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("x"))
-            );
-
-            assertSql(
-                    """
-                            ts\tv
-                            2020-01-01T00:00:00.000000Z\t
-                            2020-01-01T04:00:00.000000Z\t
-                            2020-01-01T06:00:00.000000Z\t99.9
-                            2020-01-01T08:00:00.000000Z\t3.14
-                            2020-01-01T12:00:00.000000Z\t
-                            2020-01-01T16:00:00.000000Z\t-0.5
-                            2020-01-01T20:00:00.000000Z\t1000000.123
-                            2020-01-02T00:00:00.000000Z\t
-                            2020-01-02T12:00:00.000000Z\t42.0
-                            """,
-                    "SELECT * FROM x"
-            );
-        });
-    }
-
-    @Test
-    public void testAlterColumnTypeIntToStringWithParquetPartition() throws Exception {
-        assertMemoryLeak(() -> {
-            execute(
-                    """
-                            CREATE TABLE x (ts TIMESTAMP)
-                            TIMESTAMP(ts) PARTITION BY DAY WAL
-                            """
-            );
-            execute(
-                    """
-                            INSERT INTO x(ts) VALUES
-                            ('2020-01-01T00:00:00.000Z'),
-                            ('2020-01-01T04:00:00.000Z')
-                            """
-            );
-            execute("INSERT INTO x(ts) VALUES ('2020-01-02T00:00:00.000Z')");
-            drainWalQueue();
-
-            execute("ALTER TABLE x ADD COLUMN v INT");
-            drainWalQueue();
-
-            execute(
-                    """
-                            INSERT INTO x(v, ts) VALUES
-                            (10, '2020-01-01T08:00:00.000Z'),
-                            (NULL, '2020-01-01T12:00:00.000Z'),
-                            (30, '2020-01-01T16:00:00.000Z'),
-                            (40, '2020-01-01T20:00:00.000Z')
-                            """
-            );
-            execute("INSERT INTO x(v, ts) VALUES (50, '2020-01-02T12:00:00.000Z')");
-            drainWalQueue();
-
-            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
-            drainWalQueue();
-
-            execute("ALTER TABLE x ALTER COLUMN v TYPE STRING");
-            drainWalQueue();
-
-            assertSql(
-                    """
-                            ts\tv
-                            2020-01-01T00:00:00.000000Z\t
-                            2020-01-01T04:00:00.000000Z\t
-                            2020-01-01T08:00:00.000000Z\t10
-                            2020-01-01T12:00:00.000000Z\t
-                            2020-01-01T16:00:00.000000Z\t30
-                            2020-01-01T20:00:00.000000Z\t40
-                            2020-01-02T00:00:00.000000Z\t
-                            2020-01-02T12:00:00.000000Z\t50
-                            """,
-                    "SELECT * FROM x"
-            );
-
-            // O3 merge into the parquet partition.
-            execute("INSERT INTO x(v, ts) VALUES ('99', '2020-01-01T06:00:00.000Z')");
-            drainWalQueue();
-
-            Assert.assertFalse(
-                    engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("x"))
-            );
-
-            assertSql(
-                    """
-                            ts\tv
-                            2020-01-01T00:00:00.000000Z\t
-                            2020-01-01T04:00:00.000000Z\t
-                            2020-01-01T06:00:00.000000Z\t99
-                            2020-01-01T08:00:00.000000Z\t10
-                            2020-01-01T12:00:00.000000Z\t
-                            2020-01-01T16:00:00.000000Z\t30
-                            2020-01-01T20:00:00.000000Z\t40
-                            2020-01-02T00:00:00.000000Z\t
-                            2020-01-02T12:00:00.000000Z\t50
-                            """,
-                    "SELECT * FROM x"
-            );
-        });
-    }
-
-    @Test
-    public void testAlterColumnTypeIntToTimestampWithParquetPartition() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute(
-                    """
-                            INSERT INTO x VALUES
-                            (1, '2020-01-01T00:00:00.000Z'),
-                            (-1, '2020-01-01T04:00:00.000Z'),
-                            (2_147_483_647, '2020-01-01T08:00:00.000Z'),
-                            (NULL, '2020-01-01T12:00:00.000Z'),
-                            (0, '2020-01-01T16:00:00.000Z')
-                            """
-            );
-            execute(
-                    """
-                            INSERT INTO x VALUES
-                            (1, '2020-01-02T00:00:00.000Z'),
-                            (-1, '2020-01-02T04:00:00.000Z'),
-                            (2_147_483_647, '2020-01-02T08:00:00.000Z'),
-                            (NULL, '2020-01-02T12:00:00.000Z'),
-                            (0, '2020-01-02T16:00:00.000Z')
-                            """
-            );
-            drainWalQueue();
-
-            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
-            drainWalQueue();
-
-            execute("ALTER TABLE x ALTER COLUMN v TYPE TIMESTAMP");
-            drainWalQueue();
-
-            // INT→TIMESTAMP is a plain i32→i64 widening. The int value becomes
-            // the TIMESTAMP microsecond value. Both partitions must match.
-            assertSql(
-                    """
-                            v\tts
-                            1970-01-01T00:00:00.000001Z\t2020-01-01T00:00:00.000000Z
-                            1969-12-31T23:59:59.999999Z\t2020-01-01T04:00:00.000000Z
-                            1970-01-01T00:35:47.483647Z\t2020-01-01T08:00:00.000000Z
-                            \t2020-01-01T12:00:00.000000Z
-                            1970-01-01T00:00:00.000000Z\t2020-01-01T16:00:00.000000Z
-                            1970-01-01T00:00:00.000001Z\t2020-01-02T00:00:00.000000Z
-                            1969-12-31T23:59:59.999999Z\t2020-01-02T04:00:00.000000Z
-                            1970-01-01T00:35:47.483647Z\t2020-01-02T08:00:00.000000Z
-                            \t2020-01-02T12:00:00.000000Z
-                            1970-01-01T00:00:00.000000Z\t2020-01-02T16:00:00.000000Z
-                            """,
-                    "SELECT * FROM x"
-            );
-        });
-    }
-
-    @Test
-    public void testAlterColumnTypeIntToVarcharWithParquetPartition() throws Exception {
-        assertMemoryLeak(() -> {
-            execute(
-                    """
-                            CREATE TABLE x (ts TIMESTAMP)
-                            TIMESTAMP(ts) PARTITION BY DAY WAL
-                            """
-            );
-            execute(
-                    """
-                            INSERT INTO x(ts) VALUES
-                            ('2020-01-01T00:00:00.000Z'),
-                            ('2020-01-01T04:00:00.000Z')
-                            """
-            );
-            execute("INSERT INTO x(ts) VALUES ('2020-01-02T00:00:00.000Z')");
-            drainWalQueue();
-
-            execute("ALTER TABLE x ADD COLUMN v INT");
-            drainWalQueue();
-
-            execute(
-                    """
-                            INSERT INTO x(v, ts) VALUES
-                            (10, '2020-01-01T08:00:00.000Z'),
-                            (NULL, '2020-01-01T12:00:00.000Z'),
-                            (30, '2020-01-01T16:00:00.000Z'),
-                            (40, '2020-01-01T20:00:00.000Z')
-                            """
-            );
-            execute("INSERT INTO x(v, ts) VALUES (50, '2020-01-02T12:00:00.000Z')");
-            drainWalQueue();
-
-            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
-            drainWalQueue();
-
-            try (TableReader reader = getReader("x")) {
-                Assert.assertEquals(PartitionFormat.PARQUET, reader.getPartitionFormatFromMetadata(0));
-                Assert.assertEquals(PartitionFormat.NATIVE, reader.getPartitionFormatFromMetadata(1));
+            sb.append(", ts) VALUES (");
+            for (int i = 0; i < cols.length; i++) {
+                if (i > 0) sb.append(", ");
+                sb.append(mergeValue);
             }
+            sb.append(", '2020-01-15T12:00:00.000Z')");
+            String mergeInsert = sb.toString();
 
-            // INT → VARCHAR. Parquet partition has column_top=2 for v.
-            execute("ALTER TABLE x ALTER COLUMN v TYPE VARCHAR");
+            execute(String.format(mergeInsert, "x"));
+            execute(String.format(mergeInsert, "y"));
             drainWalQueue();
 
-            // Read path: lazy conversion in PageFrameMemoryRecord.
-            // column_top rows → null (empty), explicit NULL → null, values → string representation.
-            assertSql(
-                    """
-                            ts\tv
-                            2020-01-01T00:00:00.000000Z\t
-                            2020-01-01T04:00:00.000000Z\t
-                            2020-01-01T08:00:00.000000Z\t10
-                            2020-01-01T12:00:00.000000Z\t
-                            2020-01-01T16:00:00.000000Z\t30
-                            2020-01-01T20:00:00.000000Z\t40
-                            2020-01-02T00:00:00.000000Z\t
-                            2020-01-02T12:00:00.000000Z\t50
-                            """,
-                    "SELECT * FROM x"
+            Assert.assertFalse(
+                    engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("x"))
             );
 
-            try (TableReader reader = getReader("x")) {
-                Assert.assertEquals(PartitionFormat.PARQUET, reader.getPartitionFormatFromMetadata(0));
-                Assert.assertEquals(PartitionFormat.NATIVE, reader.getPartitionFormatFromMetadata(1));
+            // Compare after O3 merge.
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                TestUtils.assertEquals(compiler, sqlExecutionContext, "y", "x");
             }
-
-            // O3 merge: Rust post_convert eagerly converts INT → VARCHAR.
-            execute("INSERT INTO x(v, ts) VALUES ('99', '2020-01-01T06:00:00.000Z')");
-            drainWalQueue();
-
-            Assert.assertFalse(
-                    engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("x"))
-            );
-
-            assertSql(
-                    """
-                            ts\tv
-                            2020-01-01T00:00:00.000000Z\t
-                            2020-01-01T04:00:00.000000Z\t
-                            2020-01-01T06:00:00.000000Z\t99
-                            2020-01-01T08:00:00.000000Z\t10
-                            2020-01-01T12:00:00.000000Z\t
-                            2020-01-01T16:00:00.000000Z\t30
-                            2020-01-01T20:00:00.000000Z\t40
-                            2020-01-02T00:00:00.000000Z\t
-                            2020-01-02T12:00:00.000000Z\t50
-                            """,
-                    "SELECT * FROM x"
-            );
-        });
-    }
-
-    @Test
-    public void testAlterColumnTypeLongToVarcharWithParquetPartition() throws Exception {
-        assertMemoryLeak(() -> {
-            execute(
-                    """
-                            CREATE TABLE x (ts TIMESTAMP)
-                            TIMESTAMP(ts) PARTITION BY DAY WAL
-                            """
-            );
-            execute(
-                    """
-                            INSERT INTO x(ts) VALUES
-                            ('2020-01-01T00:00:00.000Z'),
-                            ('2020-01-01T04:00:00.000Z')
-                            """
-            );
-            execute("INSERT INTO x(ts) VALUES ('2020-01-02T00:00:00.000Z')");
-            drainWalQueue();
-
-            execute("ALTER TABLE x ADD COLUMN v LONG");
-            drainWalQueue();
-
-            execute(
-                    """
-                            INSERT INTO x(v, ts) VALUES
-                            (100_000, '2020-01-01T08:00:00.000Z'),
-                            (NULL, '2020-01-01T12:00:00.000Z'),
-                            (-42, '2020-01-01T16:00:00.000Z'),
-                            (9_999_999_999, '2020-01-01T20:00:00.000Z')
-                            """
-            );
-            execute("INSERT INTO x(v, ts) VALUES (7, '2020-01-02T12:00:00.000Z')");
-            drainWalQueue();
-
-            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
-            drainWalQueue();
-
-            execute("ALTER TABLE x ALTER COLUMN v TYPE VARCHAR");
-            drainWalQueue();
-
-            assertSql(
-                    """
-                            ts\tv
-                            2020-01-01T00:00:00.000000Z\t
-                            2020-01-01T04:00:00.000000Z\t
-                            2020-01-01T08:00:00.000000Z\t100000
-                            2020-01-01T12:00:00.000000Z\t
-                            2020-01-01T16:00:00.000000Z\t-42
-                            2020-01-01T20:00:00.000000Z\t9999999999
-                            2020-01-02T00:00:00.000000Z\t
-                            2020-01-02T12:00:00.000000Z\t7
-                            """,
-                    "SELECT * FROM x"
-            );
-
-            // O3 merge into the parquet partition.
-            execute("INSERT INTO x(v, ts) VALUES ('123', '2020-01-01T06:00:00.000Z')");
-            drainWalQueue();
-
-            Assert.assertFalse(
-                    engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("x"))
-            );
-
-            assertSql(
-                    """
-                            ts\tv
-                            2020-01-01T00:00:00.000000Z\t
-                            2020-01-01T04:00:00.000000Z\t
-                            2020-01-01T06:00:00.000000Z\t123
-                            2020-01-01T08:00:00.000000Z\t100000
-                            2020-01-01T12:00:00.000000Z\t
-                            2020-01-01T16:00:00.000000Z\t-42
-                            2020-01-01T20:00:00.000000Z\t9999999999
-                            2020-01-02T00:00:00.000000Z\t
-                            2020-01-02T12:00:00.000000Z\t7
-                            """,
-                    "SELECT * FROM x"
-            );
-        });
-    }
-
-    @Test
-    public void testAlterColumnTypeAllFixedToVarcharWithParquetPartition() throws Exception {
-        testConvertFixedToVar("VARCHAR");
-    }
-
-    @Test
-    public void testAlterColumnTypeAllFixedToStringWithParquetPartition() throws Exception {
-        testConvertFixedToVar("STRING");
-    }
-
-    @Test
-    public void testAlterColumnTypeStringToAllFixedWithParquetPartition() throws Exception {
-        testConvertVarToAllFixed("STRING");
-    }
-
-    @Test
-    public void testAlterColumnTypeVarcharToAllFixedWithParquetPartition() throws Exception {
-        testConvertVarToAllFixed("VARCHAR");
-    }
-
-    @Test
-    public void testAlterColumnTypeAllToByteWithParquetPartition() throws Exception {
-        testConvertAllToType("BYTE",
-                """
-                        rnd_short() v_short,
-                        rnd_int(0, 1_000_000, 4) v_int,
-                        rnd_long(0, 1_000_000_000L, 4) v_long,
-                        rnd_float(4) v_float,
-                        rnd_double(4) v_double""",
-                new String[]{"v_short", "v_int", "v_long", "v_float", "v_double"},
-                "42");
-    }
-
-    @Test
-    public void testAlterColumnTypeAllToDateWithParquetPartition() throws Exception {
-        testConvertAllToType("DATE",
-                """
-                        rnd_long(0, 1_000_000_000_000L, 4) v_long,
-                        rnd_timestamp(
-                            to_timestamp('2000', 'yyyy'),
-                            to_timestamp('2025', 'yyyy'), 4
-                        ) v_ts""",
-                new String[]{"v_long", "v_ts"},
-                "'2020-07-01T00:00:00.000Z'");
-    }
-
-    @Test
-    public void testAlterColumnTypeAllToDoubleWithParquetPartition() throws Exception {
-        testConvertAllToType("DOUBLE",
-                """
-                        rnd_byte() v_byte,
-                        rnd_short() v_short,
-                        rnd_int(0, 1_000_000, 4) v_int,
-                        rnd_long(0, 1_000_000_000L, 4) v_long,
-                        rnd_float(4) v_float""",
-                new String[]{"v_byte", "v_short", "v_int", "v_long", "v_float"},
-                "3.14");
-    }
-
-    @Test
-    public void testAlterColumnTypeAllToFloatWithParquetPartition() throws Exception {
-        testConvertAllToType("FLOAT",
-                """
-                        rnd_byte() v_byte,
-                        rnd_short() v_short,
-                        rnd_int(0, 1_000_000, 4) v_int,
-                        rnd_long(0, 1_000_000_000L, 4) v_long,
-                        rnd_double(4) v_double""",
-                new String[]{"v_byte", "v_short", "v_int", "v_long", "v_double"},
-                "1.5");
-    }
-
-    @Test
-    public void testAlterColumnTypeAllToIntWithParquetPartition() throws Exception {
-        testConvertAllToType("INT",
-                """
-                        rnd_boolean() v_bool,
-                        rnd_byte() v_byte,
-                        rnd_short() v_short,
-                        rnd_long(0, 1_000_000_000L, 4) v_long,
-                        rnd_float(4) v_float,
-                        rnd_double(4) v_double""",
-                new String[]{"v_bool", "v_byte", "v_short", "v_long", "v_float", "v_double"},
-                "12345");
-    }
-
-    @Test
-    public void testAlterColumnTypeAllToLongWithParquetPartition() throws Exception {
-        testConvertAllToType("LONG",
-                """
-                        rnd_byte() v_byte,
-                        rnd_short() v_short,
-                        rnd_int(0, 1_000_000, 4) v_int,
-                        rnd_float(4) v_float,
-                        rnd_double(4) v_double,
-                        rnd_date(
-                            to_date('2000', 'yyyy'),
-                            to_date('2025', 'yyyy'), 4
-                        ) v_date,
-                        rnd_timestamp(
-                            to_timestamp('2000', 'yyyy'),
-                            to_timestamp('2025', 'yyyy'), 4
-                        ) v_ts""",
-                new String[]{"v_byte", "v_short", "v_int", "v_float", "v_double", "v_date", "v_ts"},
-                "123456789");
-    }
-
-    @Test
-    public void testAlterColumnTypeAllToShortWithParquetPartition() throws Exception {
-        testConvertAllToType("SHORT",
-                """
-                        rnd_byte() v_byte,
-                        rnd_int(0, 1_000_000, 4) v_int,
-                        rnd_long(0, 1_000_000_000L, 4) v_long,
-                        rnd_float(4) v_float,
-                        rnd_double(4) v_double""",
-                new String[]{"v_byte", "v_int", "v_long", "v_float", "v_double"},
-                "999");
-    }
-
-    @Test
-    public void testAlterColumnTypeAllToTimestampWithParquetPartition() throws Exception {
-        testConvertAllToType("TIMESTAMP",
-                """
-                        rnd_long(0, 1_000_000_000_000L, 4) v_long,
-                        rnd_date(
-                            to_date('2000', 'yyyy'),
-                            to_date('2025', 'yyyy'), 4
-                        ) v_date""",
-                new String[]{"v_long", "v_date"},
-                "'2020-07-01T00:00:00.000000Z'");
-    }
-
-    @Test
-    public void testAlterColumnTypeToSymbolWithUndefinedParquetColumn() throws Exception {
-        // When a column is added after a partition is converted to parquet,
-        // the parquet file has no data for that column (UNDEFINED). Converting
-        // that column to SYMBOL must set the null flag on the symbol map,
-        // because all rows in the parquet partition are NULL for that column.
-        assertMemoryLeak(() -> {
-            execute(
-                    """
-                            CREATE TABLE x (v INT, ts TIMESTAMP)
-                            TIMESTAMP(ts) PARTITION BY DAY WAL
-                            """
-            );
-            execute(
-                    """
-                            INSERT INTO x VALUES
-                            (1, '2020-01-01T00:00:00.000Z'),
-                            (2, '2020-01-01T04:00:00.000Z'),
-                            (3, '2020-01-01T08:00:00.000Z')
-                            """
-            );
-            drainWalQueue();
-
-            // Convert to parquet before adding the new column.
-            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
-            drainWalQueue();
-
-            try (TableReader reader = getReader("x")) {
-                Assert.assertEquals(PartitionFormat.PARQUET, reader.getPartitionFormatFromMetadata(0));
-            }
-
-            // Add a STRING column — it won't exist in the parquet file.
-            execute("ALTER TABLE x ADD COLUMN s STRING");
-            drainWalQueue();
-
-            // Insert rows with non-null values for the new column in a new partition.
-            execute(
-                    """
-                            INSERT INTO x VALUES
-                            (4, '2020-01-02T00:00:00.000Z', 'abc'),
-                            (5, '2020-01-02T04:00:00.000Z', 'def')
-                            """
-            );
-            drainWalQueue();
-
-            // Convert s from STRING to SYMBOL. The parquet partition has
-            // UNDEFINED for s, so the pre-pass should set the null flag.
-            execute("ALTER TABLE x ALTER COLUMN s TYPE SYMBOL");
-            drainWalQueue();
-
-            Assert.assertFalse(
-                    engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("x"))
-            );
-
-            // Verify: parquet partition rows have NULL for 's',
-            // native partition rows have the symbol values.
-            assertSql(
-                    """
-                            v\tts\ts
-                            1\t2020-01-01T00:00:00.000000Z\t
-                            2\t2020-01-01T04:00:00.000000Z\t
-                            3\t2020-01-01T08:00:00.000000Z\t
-                            4\t2020-01-02T00:00:00.000000Z\tabc
-                            5\t2020-01-02T04:00:00.000000Z\tdef
-                            """,
-                    "SELECT * FROM x"
-            );
-
-            // Re-convert to parquet. If the null flag was not set on the symbol
-            // map, the encoder would use Required encoding for 's', which fails
-            // to encode the NULL rows from the old parquet partition.
-            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
-            drainWalQueue();
-
-            Assert.assertFalse(
-                    engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("x"))
-            );
-
-            assertSql(
-                    """
-                            v\tts\ts
-                            1\t2020-01-01T00:00:00.000000Z\t
-                            2\t2020-01-01T04:00:00.000000Z\t
-                            3\t2020-01-01T08:00:00.000000Z\t
-                            4\t2020-01-02T00:00:00.000000Z\tabc
-                            5\t2020-01-02T04:00:00.000000Z\tdef
-                            """,
-                    "SELECT * FROM x"
-            );
         });
     }
 
@@ -5664,134 +5793,5 @@ public class ParquetWriteTest extends AbstractCairoTest {
                 TestUtils.assertEquals(compiler, sqlExecutionContext, "y", "x");
             }
         });
-    }
-
-    private void testConvertAllToType(String targetType, String columnDefsSql, String[] cols, String mergeValue) throws Exception {
-        assertMemoryLeak(() -> {
-            execute(
-                    "CREATE TABLE x AS (SELECT\n" + columnDefsSql
-                            + ",\ntimestamp_sequence('2020-01-01', 3_600_000_000L) ts"
-                            + "\nFROM long_sequence(1000)) TIMESTAMP(ts) PARTITION BY MONTH WAL"
-            );
-            drainWalQueue();
-
-            execute("CREATE TABLE y AS (SELECT * FROM x) TIMESTAMP(ts) PARTITION BY MONTH WAL");
-            drainWalQueue();
-
-            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01'");
-            drainWalQueue();
-
-            for (String col : cols) {
-                execute("ALTER TABLE x ALTER COLUMN " + col + " TYPE " + targetType);
-                execute("ALTER TABLE y ALTER COLUMN " + col + " TYPE " + targetType);
-            }
-            drainWalQueue();
-
-            // Read path: compare parquet-backed table x against native reference table y.
-            try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                TestUtils.assertEquals(compiler, sqlExecutionContext, "y", "x");
-            }
-
-            // O3 merge: insert a row into the parquet partition to trigger merge.
-            StringBuilder sb = new StringBuilder("INSERT INTO %s(");
-            for (int i = 0; i < cols.length; i++) {
-                if (i > 0) sb.append(", ");
-                sb.append(cols[i]);
-            }
-            sb.append(", ts) VALUES (");
-            for (int i = 0; i < cols.length; i++) {
-                if (i > 0) sb.append(", ");
-                sb.append(mergeValue);
-            }
-            sb.append(", '2020-01-15T12:00:00.000Z')");
-            String mergeInsert = sb.toString();
-
-            execute(String.format(mergeInsert, "x"));
-            execute(String.format(mergeInsert, "y"));
-            drainWalQueue();
-
-            Assert.assertFalse(
-                    engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("x"))
-            );
-
-            // Compare after O3 merge.
-            try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                TestUtils.assertEquals(compiler, sqlExecutionContext, "y", "x");
-            }
-        });
-    }
-
-    private static int countPartitionDirs(File tableDir) {
-        String[] dirs = tableDir.list((dir, name) -> name.startsWith("2020-01-01"));
-        return dirs != null ? dirs.length : 0;
-    }
-
-    private static @NotNull FilesFacade getFilesFacade(AtomicBoolean armed) {
-        AtomicInteger openROCount = new AtomicInteger(0);
-
-        return new TestFilesFacadeImpl() {
-            @Override
-            public long openRO(LPSZ name) {
-                if (armed.get() && Utf8s.endsWithAscii(name, "data.parquet")) {
-                    // 1st openRO on data.parquet: reading original parquet (line 119) → succeed
-                    // 2nd openRO on data.parquet: updateParquetIndexes (line 2949) → fail
-                    if (openROCount.incrementAndGet() == 2) {
-                        return -1;
-                    }
-                }
-                return super.openRO(name);
-            }
-        };
-    }
-
-    private void assertPmAllNullChunkUsesZeroPointers(
-            String tableName,
-            String fixedColumnName,
-            int fixedColumnType,
-            String varColumnName,
-            int varColumnType
-    ) {
-        try (TableReader reader = getReader(tableName)) {
-            for (int i = 0, n = reader.getPartitionCount(); i < n; i++) {
-                if (reader.getPartitionFormat(i) != PartitionFormat.PARQUET) {
-                    continue;
-                }
-
-                reader.openPartition(i);
-                ParquetPartitionDecoder decoder = reader.getAndInitParquetPartitionDecoder(i);
-                try (
-                        RowGroupBuffers rowGroupBuffers = new RowGroupBuffers(MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
-                        DirectIntList parquetColumns = new DirectIntList(4, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER)
-                ) {
-                    final int fixedColumnIndex = decoder.metadata().getColumnIndex(fixedColumnName);
-                    final int varColumnIndex = decoder.metadata().getColumnIndex(varColumnName);
-                    Assert.assertTrue(fixedColumnName + " should exist in parquet metadata", fixedColumnIndex >= 0);
-                    Assert.assertTrue(varColumnName + " should exist in parquet metadata", varColumnIndex >= 0);
-
-                    parquetColumns.add(fixedColumnIndex);
-                    parquetColumns.add(fixedColumnType);
-                    parquetColumns.add(varColumnIndex);
-                    parquetColumns.add(varColumnType);
-
-                    final int rowGroupSize = (int) decoder.metadata().getRowGroupSize(0);
-                    decoder.decodeRowGroup(rowGroupBuffers, parquetColumns, 0, 0, rowGroupSize);
-
-                    Assert.assertEquals(0, rowGroupBuffers.getChunkDataPtr(0));
-                    Assert.assertEquals(0, rowGroupBuffers.getChunkDataSize(0));
-                    Assert.assertEquals(0, rowGroupBuffers.getChunkDataPtr(1));
-                    Assert.assertEquals(0, rowGroupBuffers.getChunkDataSize(1));
-                    Assert.assertEquals(0, rowGroupBuffers.getChunkAuxPtr(1));
-                    Assert.assertEquals(0, rowGroupBuffers.getChunkAuxSize(1));
-                }
-                return;
-            }
-        }
-        Assert.fail("should find parquet partition");
-    }
-
-    private long getPartitionNameTxn(long partitionTimestamp) {
-        try (TableReader reader = getReader("x")) {
-            return reader.getTxFile().getPartitionNameTxnByPartitionTimestamp(partitionTimestamp);
-        }
     }
 }

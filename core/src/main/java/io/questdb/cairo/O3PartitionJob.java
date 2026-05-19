@@ -451,7 +451,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                         nullBufs,
                                         srcPtrs,
                                         ctx.getActiveToDecodeIdx(columnCount),
-                                        ctx.getActiveColIndices(columnCount)
+                                        ctx.getActiveColIndices(columnCount),
+                                        ctx
                                 );
                                 final int numOutputRGs = (int) (mergeResult >>> 32);
                                 final long mergeDuplicates = mergeResult & 0xFFFFFFFFL;
@@ -493,7 +494,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                                 timestampIndex,
                                                 metadataPosition,
                                                 ctx.getActiveToDecodeIdx(columnCount),
-                                                ctx.getActiveColIndices(columnCount)
+                                                ctx.getActiveColIndices(columnCount),
+                                                ctx
                                         );
                                     } else if (hasSchemaChange) {
                                         copyRowGroupWithNullColumns(
@@ -2149,7 +2151,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             LongList nullBufs,
             LongList srcPtrs,
             IntList activeToDecodeIdx,
-            IntList activeColIndices
+            IntList activeColIndices,
+            O3ParquetMergeContext ctx
     ) {
         // Build the decode list: only columns present in the parquet file.
         // Also build activeToDecodeIdx mapping: for each active column position,
@@ -2393,7 +2396,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                     nullBufs.setQuick(bi4 + 2, dataBuf);
                                     nullBufs.setQuick(bi4 + 3, dataSize);
                                 }
-                                convertFixedColumnToVarchar(srcType, columnDataPtr, rowGroupSize, auxBuf, dataBuf);
+                                convertFixedColumnToVarchar(srcType, columnDataPtr, rowGroupSize, auxBuf, dataBuf, ctx.getUtf8Sink());
                                 columnAuxPtr = auxBuf;
                                 columnDataPtr = dataBuf;
                             } else {
@@ -2402,7 +2405,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                 long dataBuf = Unsafe.malloc(dataSize, MemoryTag.NATIVE_O3);
                                 nullBufs.setQuick(bi4 + 2, dataBuf);
                                 nullBufs.setQuick(bi4 + 3, dataSize);
-                                convertFixedColumnToString(srcType, columnDataPtr, rowGroupSize, auxBuf, dataBuf);
+                                convertFixedColumnToString(srcType, columnDataPtr, rowGroupSize, auxBuf, dataBuf, ctx.getUtf16Sink());
                                 columnAuxPtr = auxBuf;
                                 columnDataPtr = dataBuf;
                             }
@@ -2474,7 +2477,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         long fixBuf = Unsafe.malloc(fixSize, MemoryTag.NATIVE_O3);
                         nullBufs.setQuick(bi4, fixBuf);
                         nullBufs.setQuick(bi4 + 1, fixSize);
-                        convertVarColumnToFixed(srcType, columnType, columnDataPtr, columnAuxPtr, rowGroupSize, fixBuf);
+                        convertVarColumnToFixed(srcType, columnType, columnDataPtr, columnAuxPtr, rowGroupSize, fixBuf, ctx.getUtf8Sink(), ctx.getUtf16Sink());
                         columnDataPtr = fixBuf;
                     } else if (columnDataPtr == 0) {
                         // Column top or missing from parquet: create null source buffer.
@@ -3379,7 +3382,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             int timestampIndex,
             int metadataPosition,
             IntList activeToDecodeIdx,
-            IntList activeColIndices
+            IntList activeColIndices,
+            O3ParquetMergeContext ctx
     ) {
         // Phase 1: Build the decode list with correct decode types for each column.
         parquetColumns.clear();
@@ -3445,7 +3449,11 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         partitionDescriptor.of(tableName, rowGroupSize, timestampIndex);
 
         // Track temporary buffers that need to be freed after addRowGroup.
-        final long[] tmpBufs = new long[activeColCount * 4]; // [addr, size] pairs, 2 per column (data + aux)
+        // Layout: 4 longs per column = [auxAddr, auxSize, dataAddr, dataSize].
+        // Pulled from the thread-local context so we don't allocate per row group.
+        final LongList tmpBufs = ctx.getTmpBufs(activeColCount);
+        final StringSink utf16Sink = ctx.getUtf16Sink();
+        final Utf8StringSink utf8Sink = ctx.getUtf8Sink();
 
         try {
             for (int ai = 0; ai < activeColCount; ai++) {
@@ -3471,17 +3479,17 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
 
                             long auxSize = ctd.getAuxVectorSize(rowGroupSize);
                             long auxBuf = Unsafe.malloc(auxSize, MemoryTag.NATIVE_O3);
-                            tmpBufs[ai * 4] = auxBuf;
-                            tmpBufs[ai * 4 + 1] = auxSize;
+                            tmpBufs.setQuick(ai * 4, auxBuf);
+                            tmpBufs.setQuick(ai * 4 + 1, auxSize);
 
                             if (ColumnType.isVarchar(columnType)) {
                                 long dataSize = estimateVarcharDataSize(srcType, rowGroupSize);
                                 long dataBuf = dataSize > 0 ? Unsafe.malloc(dataSize, MemoryTag.NATIVE_O3) : 0;
                                 if (dataBuf != 0) {
-                                    tmpBufs[ai * 4 + 2] = dataBuf;
-                                    tmpBufs[ai * 4 + 3] = dataSize;
+                                    tmpBufs.setQuick(ai * 4 + 2, dataBuf);
+                                    tmpBufs.setQuick(ai * 4 + 3, dataSize);
                                 }
-                                convertFixedColumnToVarchar(srcType, columnDataPtr, rowGroupSize, auxBuf, dataBuf);
+                                convertFixedColumnToVarchar(srcType, columnDataPtr, rowGroupSize, auxBuf, dataBuf, utf8Sink);
                                 columnAuxPtr = auxBuf;
                                 columnAuxSize = auxSize;
                                 columnDataPtr = dataBuf;
@@ -3489,9 +3497,9 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                             } else {
                                 long dataSize = estimateStringDataSize(srcType, rowGroupSize);
                                 long dataBuf = Unsafe.malloc(dataSize, MemoryTag.NATIVE_O3);
-                                tmpBufs[ai * 4 + 2] = dataBuf;
-                                tmpBufs[ai * 4 + 3] = dataSize;
-                                convertFixedColumnToString(srcType, columnDataPtr, rowGroupSize, auxBuf, dataBuf);
+                                tmpBufs.setQuick(ai * 4 + 2, dataBuf);
+                                tmpBufs.setQuick(ai * 4 + 3, dataSize);
+                                convertFixedColumnToString(srcType, columnDataPtr, rowGroupSize, auxBuf, dataBuf, utf16Sink);
                                 columnAuxPtr = auxBuf;
                                 columnAuxSize = auxSize;
                                 columnDataPtr = dataBuf;
@@ -3504,8 +3512,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                             ctd.setFullAuxVectorNull(nullAuxBuf, rowGroupSize);
                             columnAuxPtr = nullAuxBuf;
                             columnAuxSize = nullAuxSize;
-                            tmpBufs[ai * 4] = nullAuxBuf;
-                            tmpBufs[ai * 4 + 1] = nullAuxSize;
+                            tmpBufs.setQuick(ai * 4, nullAuxBuf);
+                            tmpBufs.setQuick(ai * 4 + 1, nullAuxSize);
 
                             long nullDataSize = ctd.getDataVectorSizeAt(nullAuxBuf, rowGroupSize - 1);
                             if (nullDataSize > 0) {
@@ -3513,8 +3521,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                 ctd.setDataVectorEntriesToNull(nullDataBuf, rowGroupSize);
                                 columnDataPtr = nullDataBuf;
                                 columnDataSize = nullDataSize;
-                                tmpBufs[ai * 4 + 2] = nullDataBuf;
-                                tmpBufs[ai * 4 + 3] = nullDataSize;
+                                tmpBufs.setQuick(ai * 4 + 2, nullDataBuf);
+                                tmpBufs.setQuick(ai * 4 + 3, nullDataSize);
                             }
                         }
                     }
@@ -3547,9 +3555,9 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
 
                         long fixSize = (long) rowGroupSize * ColumnType.sizeOf(columnType);
                         long fixBuf = Unsafe.malloc(fixSize, MemoryTag.NATIVE_O3);
-                        tmpBufs[ai * 4] = fixBuf;
-                        tmpBufs[ai * 4 + 1] = fixSize;
-                        convertVarColumnToFixed(srcType, columnType, columnDataPtr, columnAuxPtr, rowGroupSize, fixBuf);
+                        tmpBufs.setQuick(ai * 4, fixBuf);
+                        tmpBufs.setQuick(ai * 4 + 1, fixSize);
+                        convertVarColumnToFixed(srcType, columnType, columnDataPtr, columnAuxPtr, rowGroupSize, fixBuf, utf8Sink, utf16Sink);
                         columnDataPtr = fixBuf;
                     } else if (columnDataPtr == 0) {
                         // Column missing from parquet: null fixed data.
@@ -3557,8 +3565,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         long nullFixBuf = Unsafe.malloc(nullFixSize, MemoryTag.NATIVE_O3);
                         TableUtils.setNull(columnType, nullFixBuf, rowGroupSize);
                         columnDataPtr = nullFixBuf;
-                        tmpBufs[ai * 4] = nullFixBuf;
-                        tmpBufs[ai * 4 + 1] = nullFixSize;
+                        tmpBufs.setQuick(ai * 4, nullFixBuf);
+                        tmpBufs.setQuick(ai * 4 + 1, nullFixSize);
                     }
 
                     if (ColumnType.isSymbol(columnType)) {
@@ -3606,8 +3614,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         } finally {
             for (int i = 0; i < activeColCount; i++) {
                 for (int slot = 0; slot < 4; slot += 2) {
-                    long addr = tmpBufs[i * 4 + slot];
-                    long size = tmpBufs[i * 4 + slot + 1];
+                    long addr = tmpBufs.getQuick(i * 4 + slot);
+                    long size = tmpBufs.getQuick(i * 4 + slot + 1);
                     if (addr != 0) {
                         Unsafe.free(addr, size, MemoryTag.NATIVE_O3);
                     }
@@ -3813,7 +3821,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             case ColumnType.BOOLEAN, ColumnType.BYTE -> Unsafe.putByte(dstPtr + rowIndex, (byte) 0);
             case ColumnType.SHORT -> Unsafe.putShort(dstPtr + ((long) rowIndex << 1), (short) 0);
             case ColumnType.CHAR -> Unsafe.putChar(dstPtr + ((long) rowIndex << 1), (char) 0);
-            case ColumnType.INT, ColumnType.IPv4 -> Unsafe.putInt(dstPtr + ((long) rowIndex << 2), Numbers.INT_NULL);
+            case ColumnType.INT -> Unsafe.putInt(dstPtr + ((long) rowIndex << 2), Numbers.INT_NULL);
+            case ColumnType.IPv4 -> Unsafe.putInt(dstPtr + ((long) rowIndex << 2), Numbers.IPv4_NULL);
             case ColumnType.LONG, ColumnType.DATE, ColumnType.TIMESTAMP ->
                     Unsafe.putLong(dstPtr + ((long) rowIndex << 3), Numbers.LONG_NULL);
             case ColumnType.FLOAT -> Unsafe.putFloat(dstPtr + ((long) rowIndex << 2), Float.NaN);
@@ -3870,9 +3879,9 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             long srcDataPtr,
             int rowCount,
             long auxAddr,
-            long dataAddr
+            long dataAddr,
+            StringSink sink
     ) {
-        StringSink sink = new StringSink();
         long dataOffset = 0;
 
         // STRING aux starts with initial offset 0.
@@ -3910,9 +3919,9 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             long srcDataPtr,
             int rowCount,
             long auxAddr,
-            long dataAddr
+            long dataAddr,
+            Utf8StringSink sink
     ) {
-        Utf8StringSink sink = new Utf8StringSink();
         long dataOffset = 0;
 
         // Resolve the per-type formatter once so the inner loop is a direct virtual
@@ -3976,14 +3985,18 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             long dataPtr,
             long auxPtr,
             int rowCount,
-            long dstPtr
+            long dstPtr,
+            Utf8StringSink utf8Sink,
+            StringSink utf16Sink
     ) {
         boolean isVarchar = ColumnType.isVarchar(srcType);
-        Utf8StringSink utf8Sink = isVarchar ? new Utf8StringSink() : null;
-        // utf16Sink is the fallback decode buffer for non-ASCII varchar values.
-        // utf8ToUtf16OrView returns a zero-alloc view on the ASCII fast path.
-        StringSink utf16Sink = isVarchar ? new StringSink() : null;
-        StringSink strSink = !isVarchar ? new StringSink() : null;
+        // utf16Sink plays two non-overlapping roles depending on srcType:
+        //   - varchar source: fallback UTF-16 decode buffer for non-ASCII values
+        //     passed into Utf8s.utf8ToUtf16OrView (returns a zero-alloc view on
+        //     the ASCII fast path).
+        //   - string source: per-row UTF-16 accumulator. Both clear() per row,
+        //     so a single sink covers both paths.
+        final StringSink strSink = utf16Sink;
 
         for (int i = 0; i < rowCount; i++) {
             CharSequence value;

@@ -54,7 +54,6 @@ public class FuzzChangeColumnTypeOperation implements FuzzTransactionOperation {
             ColumnType.UUID, ColumnType.IPv4,
             ColumnType.STRING, ColumnType.SYMBOL, ColumnType.VARCHAR
     };
-    public static boolean CONVERT_TO_SYMBOL_ALLOWED = true;
     private final boolean cacheSymbolMap;
     private final String columName;
     private final byte indexType;
@@ -205,7 +204,6 @@ public class FuzzChangeColumnTypeOperation implements FuzzTransactionOperation {
     }
 
     private static int generateNextType(int columnType, int[] numericConvertableColumnTypes, Rnd rnd, boolean symbolsAllowed) {
-        symbolsAllowed &= CONVERT_TO_SYMBOL_ALLOWED;
         int nextColType = columnType;
         // disallow noop conversion
         // disallow conversions from non-nullable to nullable

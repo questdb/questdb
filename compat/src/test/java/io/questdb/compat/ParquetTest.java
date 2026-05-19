@@ -138,7 +138,7 @@ public class ParquetTest extends AbstractTest {
     }
 
     @Test
-    public void testAllTypesColTopNext1Partition_rawArrayEncoding() throws Exception {
+    public void testAllTypesColTopNextPartition_rawArrayEncoding() throws Exception {
         // column tops added to the next partition
         testPartitionDataConsistency("x", PartitionBy.DAY, "timestamp_ns", true);
     }

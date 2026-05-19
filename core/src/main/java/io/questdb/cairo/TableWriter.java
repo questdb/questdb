@@ -10125,9 +10125,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                 }
                                 try {
                                     if (ColumnType.isVarchar(tableColumnType)) {
-                                        O3PartitionJob.convertFixedColumnToVarchar(parquetColumnType, srcDataPtr, (int) rowGroupRowCount, auxBuf, dataBuf);
+                                        O3PartitionJob.convertFixedColumnToVarchar(parquetColumnType, srcDataPtr, (int) rowGroupRowCount, auxBuf, dataBuf, utf8Sink);
                                     } else {
-                                        O3PartitionJob.convertFixedColumnToString(parquetColumnType, srcDataPtr, (int) rowGroupRowCount, auxBuf, dataBuf);
+                                        O3PartitionJob.convertFixedColumnToString(parquetColumnType, srcDataPtr, (int) rowGroupRowCount, auxBuf, dataBuf, utf16Sink);
                                     }
 
                                     // Compute actual bytes from the aux vector *before* shifting,
@@ -10198,7 +10198,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                 O3PartitionJob.convertVarColumnToFixed(
                                         effectiveSrcType, tableColumnType,
                                         srcDataPtr, srcAuxPtr,
-                                        (int) rowGroupRowCount, fixBuf
+                                        (int) rowGroupRowCount, fixBuf,
+                                        utf8Sink, utf16Sink
                                 );
                                 appendBuffer(dstFixFd, fixBuf, fixSize);
                             } finally {

@@ -2688,22 +2688,18 @@ public final class TableUtils {
             if (replacingColumnIndex > -1 && replacingColumnIndex < columnCount - 1) {
                 // Find the slot where the replaced column currently lives.
                 // For a chain A→B→C, when C replaces B, B may already have been
-                // moved into A's slot by a prior replacement. Follow the chain
-                // of negative markers to find the actual slot.
+                // moved into A's slot by a prior replacement, and slot B holds a
+                // dead marker of the form (-prevReplacingIndex - 1). Decode the
+                // marker to hop directly to the next slot in the chain: the
+                // column that ended up at slot prevReplacingIndex is the one we
+                // need to follow. Continue until the slot is live (non-negative
+                // writer index); that slot holds the column we want to overwrite.
+                // This is O(chain length) instead of O(N) scan per replacement.
                 int targetSlot = replacingColumnIndex;
                 int marker = targetList.getQuick(3 * targetSlot);
-                if (marker < 0) {
-                    // Slot holds a dead marker — the column that was here was itself
-                    // replaced into an earlier slot. Decode the marker to find the
-                    // original slot: marker = -(originalReplacingIndex) - 1.
-                    // But we need to find where 'replacingColumnIndex' actually lives.
-                    // Search for it among all slots.
-                    for (int s = 0, sn = targetList.size() / 3; s < sn; s++) {
-                        if (targetList.getQuick(3 * s) == replacingColumnIndex) {
-                            targetSlot = s;
-                            break;
-                        }
-                    }
+                while (marker < 0) {
+                    targetSlot = -marker - 1;
+                    marker = targetList.getQuick(3 * targetSlot);
                 }
 
                 // Replace the column index at the found slot
