@@ -629,21 +629,36 @@ public class ServerMain implements Closeable {
     }
 
     /**
+     * Factory hook returning the base envelopes this {@code ServerMain} contributes to the
+     * lifecycle DAG. Subclasses (e.g. enterprise overlays) override to wrap or replace
+     * individual envelopes without forking the {@link #registerComponents} body. Mirrors
+     * the existing {@link #setupMatViewJobs}, {@link #webConsoleSchema} hook conventions.
+     */
+    protected ObjList<io.questdb.lifecycle.Component> baseComponents() {
+        final ObjList<io.questdb.lifecycle.Component> components = new ObjList<>();
+        components.add(new FactoryProviderEnvelope());
+        components.add(new EngineEnvelope());
+        components.add(new MinHttpEnvelope(bootstrap.getLog()));
+        components.add(new WorkerPoolManagerEnvelope(bootstrap.getLog()));
+        components.add(new PgWireEnvelope(bootstrap.getLog()));
+        components.add(new IlpTcpEnvelope(bootstrap.getLog()));
+        components.add(new WebHttpEnvelope(bootstrap.getLog()));
+        components.add(new QwipEnvelope(bootstrap.getLog()));
+        return components;
+    }
+
+    /**
      * Register lifecycle components with the orchestrator. Called by
      * {@link #start(boolean)} after orchestrator construction. Subclasses
-     * (e.g. {@code EntServerMain}) override and call {@code super.registerComponents(orch)}
-     * before adding their own envelopes -- mirrors the existing
-     * {@link #setupMatViewJobs}, {@link #webConsoleSchema} hook conventions (D-03).
+     * (e.g. {@code EntServerMain}) override {@link #baseComponents()} to wrap or
+     * replace individual envelopes, and override {@link #registerComponents} to
+     * add their own envelopes after invoking {@code super.registerComponents(orch)}.
      */
     protected void registerComponents(io.questdb.lifecycle.LifecycleOrchestrator orch) {
-        orch.register(new FactoryProviderEnvelope());
-        orch.register(new EngineEnvelope());
-        orch.register(new MinHttpEnvelope(bootstrap.getLog()));
-        orch.register(new WorkerPoolManagerEnvelope(bootstrap.getLog()));
-        orch.register(new PgWireEnvelope(bootstrap.getLog()));
-        orch.register(new IlpTcpEnvelope(bootstrap.getLog()));
-        orch.register(new WebHttpEnvelope(bootstrap.getLog()));
-        orch.register(new QwipEnvelope(bootstrap.getLog()));
+        final ObjList<io.questdb.lifecycle.Component> components = baseComponents();
+        for (int i = 0, n = components.size(); i < n; i++) {
+            orch.register(components.getQuick(i));
+        }
     }
 
     protected Services services() {
@@ -971,12 +986,12 @@ public class ServerMain implements Closeable {
      * <p>
      * When http.min.enabled=false the envelope publishes READY without binding (D3-13).
      */
-    private final class MinHttpEnvelope implements io.questdb.lifecycle.Component {
+    protected class MinHttpEnvelope implements io.questdb.lifecycle.Component {
         private final ObjList<String> empty = new ObjList<>();
         private final ObjList<String> hardDeps;
         private final Log log;
-        private io.questdb.cutlass.http.HttpServer server;
         private WorkerPool pool;
+        protected io.questdb.cutlass.http.HttpServer server;
 
         MinHttpEnvelope(Log log) {
             this.log = log;
@@ -1156,12 +1171,12 @@ public class ServerMain implements Closeable {
      * Hard-dep on worker-pool-manager; soft-dep on engine.
      * Skipped when the instance is read-only or QWIP is disabled.
      */
-    private final class QwipEnvelope implements io.questdb.lifecycle.Component {
-        private final AtomicBoolean acceptOpen = new AtomicBoolean(false);
-        private volatile LifecycleContext ctxRef;
+    protected class QwipEnvelope implements io.questdb.lifecycle.Component {
+        protected final AtomicBoolean acceptOpen = new AtomicBoolean(false);
+        protected volatile LifecycleContext ctxRef;
+        protected final Log log;
+        protected QwpUdpReceiver receiver;
         private final ObjList<String> hardDeps;
-        private final Log log;
-        private QwpUdpReceiver receiver;
         private final ObjList<String> softDeps;
 
         QwipEnvelope(Log log) {
