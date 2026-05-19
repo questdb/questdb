@@ -882,6 +882,14 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
 
                     long commitTarget = batchSize;
                     long rowCount = 0;
+                    // Pending scan metrics accumulate across iterations and fold
+                    // into the EMA only after a successful REPLACE_RANGE commit.
+                    // Deferring keeps rolled-back work (retries on oversized
+                    // batches, OOM, commit failure) out of the cost model: the
+                    // EMA must reflect committed work, not wasted scans that
+                    // get discarded with walWriter.rollback().
+                    long pendingScanSampleNanos = 0L;
+                    long pendingScanRangeTsUnits = 0L;
 
                     intervalIterator.toTop(intervalStep);
                     long replacementTimestampLo = Long.MIN_VALUE;
@@ -904,6 +912,11 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                                         WAL_DEDUP_MODE_REPLACE_RANGE
                                 );
                                 viewState.recordCommitNanos(System.nanoTime() - commitStart);
+                                if (pendingScanRangeTsUnits > 0) {
+                                    viewState.recordScanMetrics(pendingScanSampleNanos, pendingScanRangeTsUnits);
+                                    pendingScanSampleNanos = 0L;
+                                    pendingScanRangeTsUnits = 0L;
+                                }
                                 commitTarget = rowCount + batchSize;
                             }
                             replacementTimestampLo = intervalIterator.getTimestampLo();
@@ -931,15 +944,8 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                                 row.append();
                                 insertedRows++;
                             }
-                            // Record the per-microsecond scan rate using the actual
-                            // cursor filter range that was passed to setRange above.
-                            // The cost model wants "how long does a gap-of-N-micros
-                            // take to scan", which this timestamp range directly
-                            // answers regardless of the SAMPLE BY aggregation ratio.
-                            viewState.recordScanMetrics(
-                                    System.nanoTime() - scanStart,
-                                    intervalIterator.getTimestampHi() - intervalIterator.getTimestampLo()
-                            );
+                            final long scanNanos = System.nanoTime() - scanStart;
+                            final long scanRangeTsUnits = intervalIterator.getTimestampHi() - intervalIterator.getTimestampLo();
 
                             // Check if we've inserted a lot of rows in a single iteration.
                             if (insertedRows > batchSize && i < maxRetries && intervalStep > 1) {
@@ -954,6 +960,14 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                                         .I$();
                                 continue OUTER;
                             }
+
+                            // Iteration is past the retry gate -- accumulate its
+                            // scan metrics. They fold into the EMA only when the
+                            // next commit succeeds; any subsequent rollback (OOM,
+                            // commit failure) discards them via the for-loop
+                            // restart, which re-declares these locals at zero.
+                            pendingScanSampleNanos += scanNanos;
+                            pendingScanRangeTsUnits += scanRangeTsUnits;
 
                             rowCount += insertedRows;
                             if (rowCount >= commitTarget) {
@@ -977,6 +991,9 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                                     );
                                 }
                                 viewState.recordCommitNanos(System.nanoTime() - commitStart);
+                                viewState.recordScanMetrics(pendingScanSampleNanos, pendingScanRangeTsUnits);
+                                pendingScanSampleNanos = 0L;
+                                pendingScanRangeTsUnits = 0L;
 
                                 replacementTimestampLo = replacementTimestampHi;
                                 commitTarget = rowCount + batchSize;
@@ -997,6 +1014,11 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                                 replacementTimestampHi
                         );
                         viewState.recordCommitNanos(System.nanoTime() - commitStart);
+                        if (pendingScanRangeTsUnits > 0) {
+                            viewState.recordScanMetrics(pendingScanSampleNanos, pendingScanRangeTsUnits);
+                            pendingScanSampleNanos = 0L;
+                            pendingScanRangeTsUnits = 0L;
+                        }
                     }
                     break;
                 } catch (TableReferenceOutOfDateException e) {
