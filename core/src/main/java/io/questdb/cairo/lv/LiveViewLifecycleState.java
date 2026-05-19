@@ -50,45 +50,39 @@ public enum LiveViewLifecycleState {
     /**
      * Restart load saw an on-disk format version this build cannot read.
      * The LV's row data is intact but its definition / state cannot be
-     * deserialised; the refresh worker skips it and the catalogue surfaces
-     * the view so operators can DROP + CREATE to recover.
+     * deserialised. Set externally by the catalogue load path when it fails
+     * to deserialise {@code _lv} / {@code _lv.s}; not reachable from
+     * {@link #derive}, since the caller of {@code derive} holds a live
+     * {@link LiveViewInstance} (the deserialisation already succeeded).
      */
     VERSION_UNSUPPORTED;
 
     /**
-     * Derives the lifecycle state from durable signals. Mirrors the RFC's "single
-     * source of truth" rule.
+     * Derives the lifecycle state of a registered {@link LiveViewInstance}
+     * from its durable signals.
+     * <p>
+     * Only callable for instances that have completed CREATE and not yet been
+     * fully torn down, so {@link #CREATING} is unreachable here. {@code !registryVisible}
+     * therefore means "the instance has been marked dropped" and resolves to
+     * {@link #DROPPING}.
      *
-     * @param registryVisible {@code true} iff the registry has a committed entry
-     *                        for this view (not locked, not marked-dropped)
-     * @param markedDropped   {@code true} iff the registry entry is marked for drop
-     * @param locked          {@code true} iff the registry entry is locked (CREATE
-     *                        in flight)
+     * @param registryVisible {@code true} iff the live view has a committed
+     *                        registry entry not marked for drop
      * @param invalid         {@code _lv.s.invalid}
      * @param backfilling     {@code _lv.s.backfillState == BACKFILLING}
      */
     public static LiveViewLifecycleState derive(
             boolean registryVisible,
-            boolean markedDropped,
-            boolean locked,
             boolean invalid,
             boolean backfilling
     ) {
-        if (markedDropped) {
+        if (!registryVisible) {
             return DROPPING;
         }
-        if (locked && !registryVisible) {
-            return CREATING;
+        if (invalid) {
+            return INVALID;
         }
-        if (registryVisible) {
-            if (invalid) {
-                return INVALID;
-            }
-            return backfilling ? BACKFILLING : ACTIVE;
-        }
-        // Defensive default: registry has no entry and no other signal — treat as
-        // CREATING so callers don't spuriously hand out queries.
-        return CREATING;
+        return backfilling ? BACKFILLING : ACTIVE;
     }
 
     /** Lower-case label suitable for {@code live_views().view_status}. */

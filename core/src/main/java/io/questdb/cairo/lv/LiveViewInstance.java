@@ -359,15 +359,12 @@ public class LiveViewInstance implements QuietCloseable {
     }
 
     public LiveViewLifecycleState getLifecycleState() {
-        // A registered LiveViewInstance has, by definition, completed CREATE; the
-        // CREATE-locked phase happens before registerView() is reached, and
-        // registry-locked entries are in-memory only (no durable signal survives a
-        // crash). So we never observe CREATING here and pass false for `locked` to
-        // avoid conflating it with the unrelated refresh latch.
+        // A registered LiveViewInstance has, by definition, completed CREATE,
+        // so CREATING is unreachable here. close() always flips `dropped` before
+        // `isClosed`, so `!dropped && !isClosed` collapses to "not yet dropped"
+        // and feeds the registryVisible signal.
         return LiveViewLifecycleState.derive(
                 !dropped && !isClosed,
-                dropped,
-                false,
                 stateReader.isInvalid(),
                 stateReader.getBackfillState() == LiveViewState.BACKFILL_STATE_BACKFILLING
         );
