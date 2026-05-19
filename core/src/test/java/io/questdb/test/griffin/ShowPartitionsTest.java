@@ -29,6 +29,8 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.TxWriter;
 import io.questdb.cairo.pool.PoolListener;
 import io.questdb.griffin.SqlException;
 import io.questdb.mp.SOCountDownLatch;
@@ -428,6 +430,64 @@ public class ShowPartitionsTest extends AbstractCairoTest {
             // column returns the populated values without exploding on the
             // all-NULL chunk.
             assertSql("sum\n35\n", "SELECT sum(v) FROM " + tableName);
+        });
+    }
+
+    @Test
+    public void testShowPartitionsParquetFormatWithoutGeneratedFlag() throws Exception {
+        // A partition can be in parquet FORMAT while its parquet-generated bit is
+        // cleared. Cold-storage conversions go through
+        // switchNativePartitionWithParquet and recovery paths can reset the
+        // generated bit independently, so isParquet ends up true while the raw
+        // parquetGenerated bit is false. SHOW PARTITIONS must report
+        // hasParquetGenerated as true whenever the partition is parquet: a parquet
+        // partition implies a parquet file was generated for it.
+        String tableName = testTableName(testName.getMethodName());
+        assertMemoryLeak(() -> {
+            execute(
+                    "CREATE TABLE " + tableName + " AS (" +
+                            "    SELECT x::INT id," +
+                            "        timestamp_sequence('2023-01-01', 24 * 3600 * 1_000_000L) ts" +
+                            "    FROM long_sequence(3)" +
+                            ") TIMESTAMP(ts) PARTITION BY DAY" + (isWal ? " WAL" : "")
+            );
+            if (isWal) {
+                drainWalQueue();
+            }
+            execute("ALTER TABLE " + tableName + " CONVERT PARTITION TO PARQUET LIST '2023-01-01'");
+            if (isWal) {
+                drainWalQueue();
+            }
+
+            // Clear the parquet-generated bit while leaving the partition in
+            // parquet format, mimicking the divergent state described above.
+            TableToken token = engine.verifyTableName(tableName);
+            try (TableWriter writer = engine.getWriter(token, "test")) {
+                TxWriter tx = writer.getTxWriter();
+                Assert.assertTrue("partition must be parquet format", tx.isPartitionParquet(0));
+                Assert.assertTrue("partition must be parquet generated", tx.isPartitionParquetGenerated(0));
+                // Clear only the generated bit, preserving the parquet file size so the
+                // partition stays a valid parquet-format partition.
+                tx.setPartitionParquetGeneratedByRawIndex(0, false);
+                tx.bumpPartitionTableVersion();
+                tx.commit(writer.getDenseSymbolMapWriters());
+                Assert.assertFalse("raw parquet-generated bit must be cleared", tx.isPartitionParquetGenerated(0));
+                Assert.assertTrue("partition must remain parquet format", tx.isPartitionParquet(0));
+            }
+
+            // Despite the cleared raw bit, the parquet partition reports
+            // hasParquetGenerated as true.
+            assertQueryNoLeakCheck(
+                    "name\thasParquetGenerated\tisParquet\n" +
+                            "2023-01-01\ttrue\ttrue\n" +
+                            "2023-01-02\tfalse\tfalse\n" +
+                            "2023-01-03\tfalse\tfalse\n",
+                    "SELECT name, hasParquetGenerated, isParquet" +
+                            " FROM table_partitions('" + tableName + "')" +
+                            " WHERE attached" +
+                            " ORDER BY name",
+                    null, true, true, true
+            );
         });
     }
 

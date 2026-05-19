@@ -463,7 +463,7 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
                     case 10 -> isReadOnly || !isDetached;
                     case 11 -> isDetached;
                     case 12 -> isAttachable;
-                    case 13 -> hasParquetGenerated;
+                    case 13 -> hasParquetGenerated || isParquet;
                     case 14 -> isParquet;
                     default -> throw new UnsupportedOperationException();
                 };
