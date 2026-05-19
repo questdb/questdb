@@ -5561,6 +5561,24 @@ public class AsOfJoinTest extends AbstractCairoTest {
         assertAlgoAndResult(queryBody, hint, expectedAlgo, expectedResult, false);
     }
 
+    private void assertAlgoAndResult(String queryBody, String hint, String expectedAlgo, String expectedResult, boolean expectSymbolKeyJoin) throws SqlException {
+        String hintedQuery;
+        if (!hint.isEmpty()) {
+            hintedQuery = "SELECT /*+ " + hint + "*/ " + queryBody;
+        } else {
+            hintedQuery = "SELECT " + queryBody;
+        }
+        printSql("EXPLAIN " + hintedQuery);
+        TestUtils.assertContains(sink, "AsOf Join " + expectedAlgo);
+        if (hint.contains("asof_driveby_cache(t q)")) {
+            TestUtils.assertContains(sink, "driveByCache: true");
+        }
+        if (expectSymbolKeyJoin) {
+            TestUtils.assertContains(sink, "symbolKeyJoin: true");
+        }
+        assertSql(expectedResult, hintedQuery);
+    }
+
     private void assertAsOfJoinSymbolAndDecimalKey(String tableSuffix, String decimalType, String id1, String id2) throws Exception {
         final String masterTableName = "master_" + tableSuffix;
         final String slaveTableName = "slave_" + tableSuffix;
@@ -5617,24 +5635,6 @@ public class AsOfJoinTest extends AbstractCairoTest {
         assertAlgoAndResult(queryBody, "", "Fast", expected, true);
         assertAlgoAndResult(queryBody, "asof_dense(m s)", "Dense", expected, true);
         assertAlgoAndResult(queryBody, "asof_linear(m s)", "Light", expected, true);
-    }
-
-    private void assertAlgoAndResult(String queryBody, String hint, String expectedAlgo, String expectedResult, boolean expectSymbolKeyJoin) throws SqlException {
-        String hintedQuery;
-        if (!hint.isEmpty()) {
-            hintedQuery = "SELECT /*+ " + hint + "*/ " + queryBody;
-        } else {
-            hintedQuery = "SELECT " + queryBody;
-        }
-        printSql("EXPLAIN " + hintedQuery);
-        TestUtils.assertContains(sink, "AsOf Join " + expectedAlgo);
-        if (hint.contains("asof_driveby_cache(t q)")) {
-            TestUtils.assertContains(sink, "driveByCache: true");
-        }
-        if (expectSymbolKeyJoin) {
-            TestUtils.assertContains(sink, "symbolKeyJoin: true");
-        }
-        assertSql(expectedResult, hintedQuery);
     }
 
     private void assertResultSetsMatch(String leftTable, String rightTable) throws Exception {

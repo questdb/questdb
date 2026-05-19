@@ -356,7 +356,6 @@ public interface Record {
      * @param col numeric index of the column
      * @return 64-bit integer
      */
-    @SuppressWarnings("unused")
     default long getLongIPv4(int col) {
         return Numbers.ipv4ToLong(getIPv4(col));
     }

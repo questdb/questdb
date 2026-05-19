@@ -123,6 +123,66 @@ public class HashJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testHashJoinSymbolAndDecimalKeys() throws Exception {
+        assertMemoryLeak(() -> {
+            assertHashJoinSymbolAndDecimalKey("dec8", "DECIMAL(2,1)", "1.2", "2.3", "3.4");
+            assertHashJoinSymbolAndDecimalKey("dec16", "DECIMAL(4,2)", "12.34", "23.45", "34.56");
+            assertHashJoinSymbolAndDecimalKey("dec32", "DECIMAL(9,4)", "12345.6789", "23456.7890", "34567.8901");
+            assertHashJoinSymbolAndDecimalKey("dec64", "DECIMAL(18,6)", "123456789012.345678", "234567890123.456789", "345678901234.567890");
+            assertHashJoinSymbolAndDecimalKey(
+                    "dec128",
+                    "DECIMAL(38,10)",
+                    "1234567890123456789012345678.9012345678",
+                    "2345678901234567890123456789.0123456789",
+                    "3456789012345678901234567890.1234567890"
+            );
+            assertHashJoinSymbolAndDecimalKey(
+                    "dec256",
+                    "DECIMAL(76,20)",
+                    "12345678901234567890123456789012345678901234567890123456.78901234567890123456",
+                    "23456789012345678901234567890123456789012345678901234567.89012345678901234567",
+                    "34567890123456789012345678901234567890123456789012345678.90123456789012345678"
+            );
+        });
+    }
+
+    @Test
+    public void testHashJoinSymbolAndUuidKeys() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE m (id UUID, sym SYMBOL, v INT)");
+            execute("CREATE TABLE s (id UUID, sym SYMBOL, v INT)");
+            execute("""
+                    INSERT INTO m VALUES
+                        ('11111111-1111-1111-1111-111111111111', 'A', 1),
+                        ('22222222-2222-2222-2222-222222222222', 'B', 2),
+                        ('33333333-3333-3333-3333-333333333333', 'C', 3),
+                        (cast(null as UUID), 'N', 4),
+                        ('44444444-4444-4444-4444-444444444444', null, 5)""");
+            execute("""
+                    INSERT INTO s VALUES
+                        ('11111111-1111-1111-1111-111111111111', 'A', 10),
+                        ('22222222-2222-2222-2222-222222222222', 'X', 20),
+                        ('33333333-3333-3333-3333-333333333333', 'C', 30),
+                        (cast(null as UUID), 'N', 40),
+                        ('44444444-4444-4444-4444-444444444444', null, 50)""");
+
+            assertQueryNoLeakCheck(
+                    """
+                            id\tsym\tv\tv1
+                            11111111-1111-1111-1111-111111111111\tA\t1\t10
+                            33333333-3333-3333-3333-333333333333\tC\t3\t30
+                            \tN\t4\t40
+                            44444444-4444-4444-4444-444444444444\t\t5\t50
+                            """,
+                    "SELECT m.id, m.sym, m.v, s.v FROM m JOIN s ON m.id = s.id AND m.sym = s.sym ORDER BY m.v",
+                    null,
+                    true,
+                    false
+            );
+        });
+    }
+
+    @Test
     public void testHashJoinSymbolKeysSwap() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE m (sym1 SYMBOL, sym2 SYMBOL, v INT)");
@@ -255,66 +315,6 @@ public class HashJoinTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testHashJoinSymbolAndDecimalKeys() throws Exception {
-        assertMemoryLeak(() -> {
-            assertHashJoinSymbolAndDecimalKey("dec8", "DECIMAL(2,1)", "1.2", "2.3", "3.4");
-            assertHashJoinSymbolAndDecimalKey("dec16", "DECIMAL(4,2)", "12.34", "23.45", "34.56");
-            assertHashJoinSymbolAndDecimalKey("dec32", "DECIMAL(9,4)", "12345.6789", "23456.7890", "34567.8901");
-            assertHashJoinSymbolAndDecimalKey("dec64", "DECIMAL(18,6)", "123456789012.345678", "234567890123.456789", "345678901234.567890");
-            assertHashJoinSymbolAndDecimalKey(
-                    "dec128",
-                    "DECIMAL(38,10)",
-                    "1234567890123456789012345678.9012345678",
-                    "2345678901234567890123456789.0123456789",
-                    "3456789012345678901234567890.1234567890"
-            );
-            assertHashJoinSymbolAndDecimalKey(
-                    "dec256",
-                    "DECIMAL(76,20)",
-                    "12345678901234567890123456789012345678901234567890123456.78901234567890123456",
-                    "23456789012345678901234567890123456789012345678901234567.89012345678901234567",
-                    "34567890123456789012345678901234567890123456789012345678.90123456789012345678"
-            );
-        });
-    }
-
-    @Test
-    public void testHashJoinSymbolAndUuidKeys() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE m (id UUID, sym SYMBOL, v INT)");
-            execute("CREATE TABLE s (id UUID, sym SYMBOL, v INT)");
-            execute("""
-                    INSERT INTO m VALUES
-                        ('11111111-1111-1111-1111-111111111111', 'A', 1),
-                        ('22222222-2222-2222-2222-222222222222', 'B', 2),
-                        ('33333333-3333-3333-3333-333333333333', 'C', 3),
-                        (cast(null as UUID), 'N', 4),
-                        ('44444444-4444-4444-4444-444444444444', null, 5)""");
-            execute("""
-                    INSERT INTO s VALUES
-                        ('11111111-1111-1111-1111-111111111111', 'A', 10),
-                        ('22222222-2222-2222-2222-222222222222', 'X', 20),
-                        ('33333333-3333-3333-3333-333333333333', 'C', 30),
-                        (cast(null as UUID), 'N', 40),
-                        ('44444444-4444-4444-4444-444444444444', null, 50)""");
-
-            assertQueryNoLeakCheck(
-                    """
-                            id\tsym\tv\tv1
-                            11111111-1111-1111-1111-111111111111\tA\t1\t10
-                            33333333-3333-3333-3333-333333333333\tC\t3\t30
-                            \tN\t4\t40
-                            44444444-4444-4444-4444-444444444444\t\t5\t50
-                            """,
-                    "SELECT m.id, m.sym, m.v, s.v FROM m JOIN s ON m.id = s.id AND m.sym = s.sym ORDER BY m.v",
-                    null,
-                    true,
-                    false
-            );
-        });
-    }
-
-    @Test
     public void testHashOuterJoinSymbolAndDecimalKeys() throws Exception {
         assertMemoryLeak(() -> {
             assertHashOuterJoinSymbolAndDecimalKey("dec8", "DECIMAL(2,1)", "1.2", "2.3", "3.4");
@@ -372,6 +372,67 @@ public class HashJoinTest extends AbstractCairoTest {
                     true,
                     false
             );
+        });
+    }
+
+    @Test
+    public void testHashOuterJoinSymbolKeysSwapFullOuter() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE m (sym1 SYMBOL, sym2 SYMBOL, v INT)");
+            execute("CREATE TABLE s (sym1 SYMBOL, sym2 SYMBOL, v INT)");
+            execute("""
+                    INSERT INTO m VALUES
+                        ('A', 'X', 1),
+                        ('C', 'Z', 3)""");
+            execute("""
+                    INSERT INTO s VALUES
+                        ('A', 'X', 10),
+                        ('B', 'Y', 20),
+                        ('D', 'W', 30),
+                        ('E', 'V', 40),
+                        ('F', 'U', 50)""");
+
+            assertQueryNoLeakCheck(
+                    """
+                            sym1	sym2	v	sym11	sym21	v1
+                            		null	B	Y	20
+                            		null	D	W	30
+                            		null	E	V	40
+                            		null	F	U	50
+                            A	X	1	A	X	10
+                            C	Z	3			null
+                            """,
+                    "SELECT * FROM m FULL JOIN s ON m.sym1 = s.sym1 AND m.sym2 = s.sym2 ORDER BY m.v, s.v",
+                    null,
+                    true,
+                    false
+            );
+        });
+    }
+
+    @Test
+    public void testHashOuterJoinWithFilter() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table taba (i long, locale_name symbol )");
+            execute("create table tabb (i long, state symbol, city symbol)");
+            execute("insert into taba values (1, 'pl')");
+            execute("insert into tabb values (1, 'a', 'pl')");
+            execute("insert into tabb values (1, 'b', 'b')");
+
+            assertQueryNoLeakCheck("""
+                    i\tlocale_name\ti1\tstate\tcity
+                    1\tpl\t1\ta\tpl
+                    """, "select * from taba left join tabb on taba.i = tabb.i and (locale_name = state OR locale_name=city)", null);
+            assertQueryNoLeakCheck("""
+                    i\tlocale_name\ti1\tstate\tcity
+                    1\tpl\t1\ta\tpl
+                    null\t\t1\tb\tb
+                    """, "select * from taba right join tabb on taba.i = tabb.i and (locale_name = state OR locale_name=city)", null);
+            assertQueryNoLeakCheck("""
+                    i\tlocale_name\ti1\tstate\tcity
+                    1\tpl\t1\ta\tpl
+                    null\t\t1\tb\tb
+                    """, "select * from taba full join tabb on taba.i = tabb.i and (locale_name = state OR locale_name=city)", null);
         });
     }
 
@@ -476,67 +537,6 @@ public class HashJoinTest extends AbstractCairoTest {
                 true,
                 false
         );
-    }
-
-    @Test
-    public void testHashOuterJoinSymbolKeysSwapFullOuter() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE m (sym1 SYMBOL, sym2 SYMBOL, v INT)");
-            execute("CREATE TABLE s (sym1 SYMBOL, sym2 SYMBOL, v INT)");
-            execute("""
-                    INSERT INTO m VALUES
-                        ('A', 'X', 1),
-                        ('C', 'Z', 3)""");
-            execute("""
-                    INSERT INTO s VALUES
-                        ('A', 'X', 10),
-                        ('B', 'Y', 20),
-                        ('D', 'W', 30),
-                        ('E', 'V', 40),
-                        ('F', 'U', 50)""");
-
-            assertQueryNoLeakCheck(
-                    """
-                            sym1	sym2	v	sym11	sym21	v1
-                            		null	B	Y	20
-                            		null	D	W	30
-                            		null	E	V	40
-                            		null	F	U	50
-                            A	X	1	A	X	10
-                            C	Z	3			null
-                            """,
-                    "SELECT * FROM m FULL JOIN s ON m.sym1 = s.sym1 AND m.sym2 = s.sym2 ORDER BY m.v, s.v",
-                    null,
-                    true,
-                    false
-            );
-        });
-    }
-
-    @Test
-    public void testHashOuterJoinWithFilter() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("create table taba (i long, locale_name symbol )");
-            execute("create table tabb (i long, state symbol, city symbol)");
-            execute("insert into taba values (1, 'pl')");
-            execute("insert into tabb values (1, 'a', 'pl')");
-            execute("insert into tabb values (1, 'b', 'b')");
-
-            assertQueryNoLeakCheck("""
-                    i\tlocale_name\ti1\tstate\tcity
-                    1\tpl\t1\ta\tpl
-                    """, "select * from taba left join tabb on taba.i = tabb.i and (locale_name = state OR locale_name=city)", null);
-            assertQueryNoLeakCheck("""
-                    i\tlocale_name\ti1\tstate\tcity
-                    1\tpl\t1\ta\tpl
-                    null\t\t1\tb\tb
-                    """, "select * from taba right join tabb on taba.i = tabb.i and (locale_name = state OR locale_name=city)", null);
-            assertQueryNoLeakCheck("""
-                    i\tlocale_name\ti1\tstate\tcity
-                    1\tpl\t1\ta\tpl
-                    null\t\t1\tb\tb
-                    """, "select * from taba full join tabb on taba.i = tabb.i and (locale_name = state OR locale_name=city)", null);
-        });
     }
 
 }
