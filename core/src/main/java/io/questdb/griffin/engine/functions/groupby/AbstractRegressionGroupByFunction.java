@@ -40,12 +40,17 @@ import org.jetbrains.annotations.NotNull;
  * six Welford state slots required to derive any standard regression function:
  * <pre>
  *   slot 0  meanY     running mean of Y
- *   slot 1  sumY      Syy = sum((y - meanY)^2)
+ *   slot 1  sumY      Syy = sum((y - meanY)^2)   // Welford M2 for Y
  *   slot 2  meanX     running mean of X
- *   slot 3  sumX      Sxx = sum((x - meanX)^2)
+ *   slot 3  sumX      Sxx = sum((x - meanX)^2)   // Welford M2 for X
  *   slot 4  sumXY     Sxy = sum((x - meanX)(y - meanY))
  *   slot 5  count     number of finite (y, x) pairs
  * </pre>
+ * Note: the slot names {@code sumY} / {@code sumX} are kept for parity with
+ * {@code CorrGroupByFunction}, but they hold Welford's second moments (sum of
+ * squared deviations from the running mean), not arithmetic sums of {@code y}
+ * / {@code x}.
+ * <p>
  * Subclasses implement {@link #getDouble(Record)} to project the desired final
  * value (slope, intercept, r-squared, etc.) from this state.
  * <p>
@@ -126,7 +131,9 @@ public abstract class AbstractRegressionGroupByFunction extends DoubleFunction i
         return false;
     }
 
-    // Chan et al. [CGL82; CGL83]
+    // Parallel pairwise merge per Chan, Golub & LeVeque (1982),
+    // "Updating Formulae and a Pairwise Algorithm for Computing Sample Variances".
+    // See https://en.wikipedia.org/wiki/Algorithms_for_calculating_variance#Parallel_algorithm
     @Override
     public void merge(MapValue destValue, MapValue srcValue) {
         long srcCount = srcValue.getLong(valueIndex + 5);
@@ -161,6 +168,11 @@ public abstract class AbstractRegressionGroupByFunction extends DoubleFunction i
         double destSumX = destValue.getDouble(valueIndex + 3);
         double destSumXY = destValue.getDouble(valueIndex + 4);
 
+        // The simpler Welford-pairwise mean update,
+        //   double mergedMean = srcMean + delta * ((double) destCount / mergedCount);
+        // is only valid when srcCount is much larger than destCount. When both
+        // partials are comparable the delta is not scaled down enough and the
+        // mean drifts, so we use the explicit Chan pairwise form below.
         long mergedCount = srcCount + destCount;
         double deltaY = destMeanY - srcMeanY;
         double deltaX = destMeanX - srcMeanX;

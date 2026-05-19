@@ -1388,6 +1388,21 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParallelGroupByRegrR2() throws Exception {
+        // Anchors the parallel-merge result for regr_r2. regr_r2 is the only
+        // aggregate that reads the Syy state slot, so without this test the
+        // mergedSumY branch in AbstractRegressionGroupByFunction.merge() has
+        // no end-to-end coverage on a multi-worker path. Expected value
+        // captured from a single stable run; refresh if the rnd_*() seeds
+        // change.
+        Assume.assumeTrue(enableParallelGroupBy);
+        testParallelGroupByAllTypes("SELECT round(regr_r2(adouble, along), 14) FROM tab", """
+                round
+                2.2694313961E-4
+                """);
+    }
+
+    @Test
     public void testParallelGroupByStdDev() throws Exception {
         Assume.assumeTrue(enableParallelGroupBy);
         testParallelGroupByAllTypes(
