@@ -234,6 +234,90 @@ public class StringAggGroupByFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testMultiCharStringSeparator() throws Exception {
+        assertQuery(
+                """
+                        string_agg
+                        abc -> bbb -> aaa -> ccc -> aaa
+                        """,
+                "select string_agg(s, ' -> ') from x",
+                "create table x as (select * from (select rnd_str('abc', 'aaa', 'bbb', 'ccc') s, timestamp_sequence(0, 100000) ts from long_sequence(5)) timestamp(ts))",
+                null,
+                false,
+                true
+        );
+    }
+
+    @Test
+    public void testMultiCharStringSeparatorGroupKeyed() throws Exception {
+        assertQuery(
+                """
+                        a\tstring_agg
+                        a\tbbb // abc // aaa
+                        b\tccc // abc
+                        c\tccc
+                        d\tbbb
+                        e\tabc // ccc
+                        f\tccc
+                        """,
+                "select a, string_agg(s, ' // ') from x order by a",
+                "create table x as (" +
+                        "select * from (" +
+                        "   select " +
+                        "       rnd_symbol('a','b','c','d','e','f') a," +
+                        "       rnd_str('abc', 'aaa', 'bbb', 'ccc') s, " +
+                        "       timestamp_sequence(0, 100000) ts " +
+                        "   from long_sequence(10)" +
+                        ") timestamp(ts))",
+                null,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testMultiCharStringSeparatorVarchar() throws Exception {
+        assertQuery(
+                """
+                        string_agg
+                        abc -> bbb -> aaa -> ccc -> aaa
+                        """,
+                "select string_agg(s::varchar, ' -> ') from x",
+                "create table x as (select * from (select rnd_str('abc', 'aaa', 'bbb', 'ccc') s, timestamp_sequence(0, 100000) ts from long_sequence(5)) timestamp(ts))",
+                null,
+                false,
+                true
+        );
+    }
+
+    @Test
+    public void testNewlineStringSeparator() throws Exception {
+        assertQuery(
+                "string_agg\nCREATE TABLE foo_1 LIKE (foo);\nCREATE TABLE foo_2 LIKE (foo);\nCREATE TABLE foo_3 LIKE (foo);\n",
+                "SELECT string_agg('CREATE TABLE foo_' || x || ' LIKE (foo);', (10::char)::string) FROM long_sequence(3)",
+                null,
+                null,
+                false,
+                true
+        );
+    }
+
+    @Test
+    public void testNullStringSeparator() throws Exception {
+        assertQuery(
+                """
+                        string_agg
+                        abcbbbaaacccaaa
+                        """,
+                "select string_agg(s, cast(null as string)) from x",
+                "create table x as (select * from (select rnd_str('abc', 'aaa', 'bbb', 'ccc') s, timestamp_sequence(0, 100000) ts from long_sequence(5)) timestamp(ts))",
+                null,
+                false,
+                true
+        );
+    }
+
+    @Test
     public void testSkipNull() throws Exception {
         assertQuery(
                 """
