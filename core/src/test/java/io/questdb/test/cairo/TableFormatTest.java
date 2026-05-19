@@ -32,7 +32,11 @@ import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
+import io.questdb.test.tools.TestUtils;
+import org.junit.Assert;
 import org.junit.Test;
+
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.fail;
@@ -65,6 +69,44 @@ public class TableFormatTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAlterTableSetFormatNativeSilentlyAcceptedOnIneligibleTables() throws Exception {
+        // SqlCompilerImpl.alterTableSetFormat gates the partitioned/WAL/matview
+        // checks behind `if (format == TABLE_FORMAT_PARQUET)`, and
+        // TableWriter.setMetaTableFormat has the same asymmetry. Setting FORMAT
+        // NATIVE on tables that could never have accepted FORMAT PARQUET in the
+        // first place succeeds silently. This test pins that surprising behavior
+        // so any future fix (rejecting it, or making it a no-op early-return)
+        // has to come through this test.
+        assertMemoryLeak(() -> {
+            // Non-partitioned table.
+            execute("CREATE TABLE no_partition (ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("ALTER TABLE no_partition SET FORMAT NATIVE");
+            assertTableFormat("no_partition", TableUtils.TABLE_FORMAT_NATIVE);
+
+            // BYPASS WAL table.
+            execute("CREATE TABLE no_wal (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("ALTER TABLE no_wal SET FORMAT NATIVE");
+            assertTableFormat("no_wal", TableUtils.TABLE_FORMAT_NATIVE);
+
+            // Contrast: the same tables reject FORMAT PARQUET with a clear error.
+            try {
+                execute("ALTER TABLE no_partition SET FORMAT PARQUET");
+                fail("FORMAT PARQUET should be rejected on non-partitioned table");
+            } catch (SqlException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(),
+                        "FORMAT PARQUET is only supported on partitioned tables");
+            }
+            try {
+                execute("ALTER TABLE no_wal SET FORMAT PARQUET");
+                fail("FORMAT PARQUET should be rejected on non-WAL table");
+            } catch (SqlException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(),
+                        "FORMAT PARQUET is only supported on WAL tables");
+            }
+        });
+    }
+
+    @Test
     public void testAlterTableSetFormatParquet() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
@@ -85,6 +127,29 @@ public class TableFormatTest extends AbstractCairoTest {
                 fail("FORMAT PARQUET should be rejected on non-partitioned table");
             } catch (SqlException e) {
                 assertEquals("[29] FORMAT PARQUET is only supported on partitioned tables", e.getMessage());
+            }
+        });
+    }
+
+    @Test
+    public void testAlterTableSetFormatParquetRejectedOnMatView() throws Exception {
+        // compileAlterTable runs checkMatViewModification before dispatching to
+        // alterTableSetFormat, so ALTER TABLE on a matview never reaches the
+        // FORMAT-specific "not supported on materialized views" branch in
+        // SqlCompilerImpl.alterTableSetFormat or in TableWriter.setMetaTableFormat.
+        // The user-visible rejection comes from the generic guard. Lock that in
+        // so anyone removing the generic check is forced to look at this test.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            drainWalQueue();
+            execute("CREATE MATERIALIZED VIEW mv AS (SELECT ts, avg(x) FROM base SAMPLE BY 1m) PARTITION BY DAY");
+            drainWalQueue();
+            try {
+                execute("ALTER TABLE mv SET FORMAT PARQUET");
+                fail("FORMAT PARQUET should be rejected on materialized views");
+            } catch (SqlException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(),
+                        "cannot modify materialized view [view=mv]");
             }
         });
     }
@@ -161,21 +226,46 @@ public class TableFormatTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCreateTableUnpartitionedWithFormatParquetRejected() throws Exception {
+        // FORMAT is parsed inside the PARTITION BY branch in parseCreateTable,
+        // so on a non-partitioned table the FORMAT token is never consumed and
+        // falls through to the generic "unexpected token" handler. This is the
+        // current behavior, not the ideal one: a dedicated message ("FORMAT
+        // PARQUET is only supported on partitioned tables", mirroring ALTER
+        // TABLE) would be clearer. Lock down the existing surface so silent
+        // acceptance or a different generic message is caught.
+        assertMemoryLeak(() -> {
+            try {
+                execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) FORMAT PARQUET");
+                fail("FORMAT clause on a non-partitioned table should be rejected");
+            } catch (SqlException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "unexpected token [FORMAT]");
+            }
+        });
+    }
+
+    @Test
     public void testNewPartitionLandsAsParquetWithVarSizeColumns() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tango (ts TIMESTAMP, s STRING, v VARCHAR, b BINARY) TIMESTAMP(ts) PARTITION BY DAY FORMAT PARQUET WAL");
-            execute("INSERT INTO tango VALUES " +
-                    "('2024-01-01T00:00:00.000000Z', 'hello', 'world', cast('aa' as varchar)::varchar::binary), " +
-                    "('2024-01-02T00:00:00.000000Z', 'foo', 'bar', cast('bb' as varchar)::varchar::binary)");
+            // rnd_bin(lo, hi, nullRate=0) guarantees non-null binary values of
+            // length in [lo, hi]; pinning lo == hi == 4 gives a deterministic
+            // round-tripped length to assert.
+            execute("INSERT INTO tango " +
+                    "SELECT '2024-01-01T00:00:00.000000Z'::timestamp, 'hello', 'world'::varchar, rnd_bin(4, 4, 0) " +
+                    "UNION ALL " +
+                    "SELECT '2024-01-02T00:00:00.000000Z'::timestamp, 'foo', 'bar'::varchar, rnd_bin(4, 4, 0)");
             drainWalQueue();
             assertSql("name\tisParquet\n" +
                             "2024-01-01\ttrue\n" +
                             "2024-01-02\ttrue\n",
                     "SELECT name, isParquet FROM table_partitions('tango')");
-            assertSql("ts\ts\tv\n" +
-                            "2024-01-01T00:00:00.000000Z\thello\tworld\n" +
-                            "2024-01-02T00:00:00.000000Z\tfoo\tbar\n",
-                    "SELECT ts, s, v FROM tango");
+            // BINARY prints as empty in the text sink, so round-trip is asserted
+            // via length(): non-null bytes survive the parquet write/read path.
+            assertSql("ts\ts\tv\tlen\n" +
+                            "2024-01-01T00:00:00.000000Z\thello\tworld\t4\n" +
+                            "2024-01-02T00:00:00.000000Z\tfoo\tbar\t4\n",
+                    "SELECT ts, s, v, length(b) AS len FROM tango");
         });
     }
 
@@ -222,8 +312,9 @@ public class TableFormatTest extends AbstractCairoTest {
 
     /**
      * Inject a failure in writeFreshParquetFromO3 by failing the _pm file open
-     * and assert (a) the partition is not registered, (b) no malloc'd buffers
-     * are leaked (assertMemoryLeak guards this).
+     * and assert (a) the WAL apply surfaces the error by suspending the table,
+     * (b) the partition is not registered, (c) no malloc'd buffers are leaked
+     * (assertMemoryLeak guards this).
      */
     @Test
     public void testFreshParquetWriteFailureCleansUp() throws Exception {
@@ -240,10 +331,55 @@ public class TableFormatTest extends AbstractCairoTest {
             execute("CREATE TABLE tango (ts TIMESTAMP, n LONG) TIMESTAMP(ts) PARTITION BY DAY FORMAT PARQUET WAL");
             execute("INSERT INTO tango VALUES ('2024-01-01T00:00:00.000000Z', 1)");
             // The drain hits the failure: writer goes distressed, malloc'd
-            // buffers are freed in the finally block.
+            // buffers are freed in the finally block, and the WAL apply error
+            // is surfaced by suspending the table.
             drainWalQueue();
+            TableToken token = engine.verifyTableName("tango");
+            Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(token));
             // After failure, the partition is not registered.
             assertSql("name\tisParquet\n", "SELECT name, isParquet FROM table_partitions('tango')");
+        });
+    }
+
+    /**
+     * Fail the first _pm open on a FORMAT PARQUET table that has no committed
+     * rows yet, then let the retry succeed. The first apply attempt should
+     * leave the table suspended with no partition registered; after RESUME WAL
+     * the same WAL transaction must replay and produce a parquet partition
+     * with the original row. Exercises the empty-placeholder branch in
+     * processWalCommit: the inbound row is forced into a full commit (no LAG),
+     * the parquet write aborts before the native placeholder is replaced, and
+     * the WAL retry recovers the data.
+     */
+    @Test
+    public void testFreshParquetWriteFailureResumeRecovers() throws Exception {
+        AtomicInteger attempt = new AtomicInteger();
+        ff = new TestFilesFacadeImpl() {
+            @Override
+            public long openRW(LPSZ name, int opts) {
+                if (Utf8s.endsWithAscii(name, TableUtils.PARQUET_METADATA_FILE_NAME)
+                        && attempt.getAndIncrement() == 0) {
+                    return -1;
+                }
+                return super.openRW(name, opts);
+            }
+        };
+        assertMemoryLeak(ff, () -> {
+            execute("CREATE TABLE tango (ts TIMESTAMP, n LONG) TIMESTAMP(ts) PARTITION BY DAY FORMAT PARQUET WAL");
+            execute("INSERT INTO tango VALUES ('2024-01-01T00:00:00.000000Z', 1)");
+            drainWalQueue();
+
+            TableToken token = engine.verifyTableName("tango");
+            Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(token));
+            assertSql("name\tisParquet\n", "SELECT name, isParquet FROM table_partitions('tango')");
+
+            execute("ALTER TABLE tango RESUME WAL");
+            drainWalQueue();
+
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(token));
+            assertSql("name\tisParquet\n2024-01-01\ttrue\n",
+                    "SELECT name, isParquet FROM table_partitions('tango')");
+            assertSql("ts\tn\n2024-01-01T00:00:00.000000Z\t1\n", "tango");
         });
     }
 
@@ -334,6 +470,39 @@ public class TableFormatTest extends AbstractCairoTest {
                             ) timestamp(ts) PARTITION BY DAY;
                             """,
                     "SHOW CREATE TABLE tango");
+        });
+    }
+
+    @Test
+    public void testTruncateThenFormatChangeProducesParquetPartition() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango (ts TIMESTAMP, n LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO tango VALUES " +
+                    "('2024-01-01T00:00:00.000000Z', 1), " +
+                    "('2024-01-02T00:00:00.000000Z', 2)");
+            drainWalQueue();
+            assertSql("name\tisParquet\n" +
+                            "2024-01-01\tfalse\n" +
+                            "2024-01-02\tfalse\n",
+                    "SELECT name, isParquet FROM table_partitions('tango')");
+
+            // Wipe all rows. After this txWriter.getRowCount() == 0 and
+            // partitionCount == 0, the same state as a fresh table.
+            execute("TRUNCATE TABLE tango");
+            drainWalQueue();
+            assertSql("name\tisParquet\n", "SELECT name, isParquet FROM table_partitions('tango')");
+
+            execute("ALTER TABLE tango SET FORMAT PARQUET");
+            drainWalQueue();
+            assertTableFormat("tango", TableUtils.TABLE_FORMAT_PARQUET);
+
+            // The next insert exercises the empty-placeholder branch in
+            // processWalCommit. The new partition must be written as parquet.
+            execute("INSERT INTO tango VALUES ('2024-01-03T00:00:00.000000Z', 3)");
+            drainWalQueue();
+            assertSql("name\tisParquet\n2024-01-03\ttrue\n",
+                    "SELECT name, isParquet FROM table_partitions('tango')");
+            assertSql("ts\tn\n2024-01-03T00:00:00.000000Z\t3\n", "tango");
         });
     }
 
