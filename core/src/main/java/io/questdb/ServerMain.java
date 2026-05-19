@@ -592,6 +592,19 @@ public class ServerMain implements Closeable {
     }
 
     /**
+     * Factory hook for binding additional handlers on the min-http server. Default no-op;
+     * enterprise overrides to bind {@code POST /lifecycle/switch} via SwitchProcessor on the
+     * same min-http listening socket.
+     */
+    protected void bindAdditionalMinHttpHandlers(
+            io.questdb.cutlass.http.HttpServer server,
+            io.questdb.cutlass.http.HttpServerConfiguration httpMinConfig,
+            io.questdb.lifecycle.LifecycleOrchestrator orch
+    ) {
+        // OSS default: no additional handlers.
+    }
+
+    /**
      * Factory hook for the {@code GET /lifecycle} HTTP processor. Enterprise overrides
      * to return {@code EntLifecycleProcessor} which emits role-aware JSON fields.
      */
@@ -1018,6 +1031,7 @@ public class ServerMain implements Closeable {
                         return ServerMain.this.newLifecycleProcessor(httpMinConfig, orch);
                     }
                 });
+                ServerMain.this.bindAdditionalMinHttpHandlers(server, httpMinConfig, orch);
             }
             pool.start(log);
             ctx.publish(io.questdb.lifecycle.State.READY);
