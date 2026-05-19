@@ -31,6 +31,7 @@ import io.questdb.std.Decimal256;
 import io.questdb.std.Interval;
 import io.questdb.std.Long256;
 import io.questdb.std.str.CharSink;
+import io.questdb.std.str.Utf16Sink;
 import io.questdb.std.str.Utf8Sequence;
 
 public class DelegatingRecord implements Record {
@@ -39,6 +40,11 @@ public class DelegatingRecord implements Record {
     @Override
     public ArrayView getArray(int col, int columnType) {
         return base.getArray(col, columnType);
+    }
+
+    @Override
+    public double getArrayDouble1d2d(int col, int columnType, int idx0, int idx1) {
+        return base.getArrayDouble1d2d(col, columnType, idx0, idx1);
     }
 
     @Override
@@ -177,6 +183,11 @@ public class DelegatingRecord implements Record {
     }
 
     @Override
+    public long getLongIPv4(int col) {
+        return base.getLongIPv4(col);
+    }
+
+    @Override
     public Record getRecord(int col) {
         return base.getRecord(col);
     }
@@ -224,6 +235,11 @@ public class DelegatingRecord implements Record {
     @Override
     public long getUpdateRowId() {
         return base.getUpdateRowId();
+    }
+
+    @Override
+    public void getVarchar(int col, Utf16Sink utf16Sink) {
+        base.getVarchar(col, utf16Sink);
     }
 
     @Override
