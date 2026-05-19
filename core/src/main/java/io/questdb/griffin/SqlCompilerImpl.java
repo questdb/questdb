@@ -4150,10 +4150,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         // validate base table exists and is WAL
         final TableToken baseTableToken = executionContext.getTableTokenIfExists(op.getBaseTableName());
         if (baseTableToken == null) {
-            throw SqlException.$(op.getViewNamePosition(), "base table does not exist [name=").put(op.getBaseTableName()).put(']');
+            throw SqlException.$(op.getBaseTableNamePosition(), "base table does not exist [name=").put(op.getBaseTableName()).put(']');
         }
         if (!engine.isWalTable(baseTableToken)) {
-            throw SqlException.$(op.getViewNamePosition(), "base table must be a WAL table [name=").put(op.getBaseTableName()).put(']');
+            throw SqlException.$(op.getBaseTableNamePosition(), "base table must be a WAL table [name=").put(op.getBaseTableName()).put(']');
         }
         if (baseTableToken.isLiveView()) {
             // Live-on-live composition is not supported; live views may

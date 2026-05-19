@@ -238,16 +238,41 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRejectLiveViewOverMissingBase() throws Exception {
+        assertMemoryLeak(() -> {
+            final String sql = "CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM does_not_exist";
+            try {
+                execute(sql);
+                Assert.fail("expected missing-base reject");
+            } catch (SqlException e) {
+                Assert.assertTrue(e.getMessage(), e.getMessage().contains("base table does not exist"));
+                Assert.assertEquals(
+                        "position must point at the base table name",
+                        sql.lastIndexOf("does_not_exist"),
+                        e.getPosition()
+                );
+            }
+        });
+    }
+
+    @Test
     public void testRejectLiveViewOverNonWalBase() throws Exception {
         assertMemoryLeak(() -> {
             // No WAL — bypass-WAL is the default for non-partitioned plain tables.
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts)");
+            final String sql = "CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base";
             try {
-                execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
-                        "SELECT ts, x, row_number() OVER () AS rn FROM base");
+                execute(sql);
                 Assert.fail("expected non-WAL-base reject");
             } catch (SqlException e) {
                 Assert.assertTrue(e.getMessage(), e.getMessage().contains("must be a WAL table"));
+                Assert.assertEquals(
+                        "position must point at the base table name",
+                        sql.lastIndexOf("base"),
+                        e.getPosition()
+                );
             }
         });
     }
