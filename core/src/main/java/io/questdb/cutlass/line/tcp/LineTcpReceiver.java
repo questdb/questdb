@@ -25,17 +25,21 @@
 package io.questdb.cutlass.line.tcp;
 
 import io.questdb.cairo.CairoEngine;
+import io.questdb.mp.Job;
 import io.questdb.mp.WorkerPool;
 import io.questdb.network.IOContextFactoryImpl;
 import io.questdb.network.IODispatcher;
 import io.questdb.network.IODispatchers;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjectFactory;
+import org.jetbrains.annotations.NotNull;
 
 import java.io.Closeable;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 
 public class LineTcpReceiver implements Closeable {
+    private final AtomicBoolean acceptOpen;
     private final IODispatcher<LineTcpConnectionContext> dispatcher;
     private LineTcpMeasurementScheduler scheduler;
 
@@ -45,6 +49,17 @@ public class LineTcpReceiver implements Closeable {
             WorkerPool sharedPoolNetwork,
             WorkerPool sharedPoolWrite
     ) {
+        this(configuration, engine, sharedPoolNetwork, sharedPoolWrite, new AtomicBoolean(true));
+    }
+
+    public LineTcpReceiver(
+            LineTcpReceiverConfiguration configuration,
+            CairoEngine engine,
+            WorkerPool sharedPoolNetwork,
+            WorkerPool sharedPoolWrite,
+            AtomicBoolean acceptOpen
+    ) {
+        this.acceptOpen = acceptOpen;
         try {
             this.scheduler = null;
             ObjectFactory<LineTcpConnectionContext> factory;
@@ -55,7 +70,15 @@ public class LineTcpReceiver implements Closeable {
                     configuration.getConnectionPoolInitialCapacity()
             );
             this.dispatcher = IODispatchers.create(configuration, contextFactory);
-            sharedPoolNetwork.assign(dispatcher);
+            sharedPoolNetwork.assign(new Job() {
+                @Override
+                public boolean run(int workerId, @NotNull RunStatus runStatus) {
+                    if (!acceptOpen.get()) {
+                        return false;
+                    }
+                    return dispatcher.run(workerId, runStatus);
+                }
+            });
             this.scheduler = new LineTcpMeasurementScheduler(configuration, engine, sharedPoolNetwork, dispatcher, sharedPoolWrite);
 
             for (int i = 0, n = sharedPoolNetwork.getWorkerCount(); i < n; i++) {

@@ -31,6 +31,18 @@ import io.questdb.std.ObjHashSet;
 
 public interface HttpServerConfiguration extends IODispatcherConfiguration, WorkerPoolConfiguration {
 
+    default ObjHashSet<String> getContextPathLifecycle() {
+        return new ObjHashSet<>() {{
+            add("/lifecycle");
+        }};
+    }
+
+    default ObjHashSet<String> getContextPathLifecycleSwitch() {
+        return new ObjHashSet<>() {{
+            add("/lifecycle/switch");
+        }};
+    }
+
     default ObjHashSet<String> getContextPathMetrics() {
         return new ObjHashSet<>() {{
             add("/metrics");

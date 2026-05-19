@@ -37,13 +37,21 @@ import io.questdb.cairo.wal.ApplyWal2TableJob;
 import io.questdb.cairo.wal.WalPurgeJob;
 import io.questdb.cutlass.Services;
 import io.questdb.cutlass.http.HttpServer;
+import io.questdb.cutlass.line.tcp.LineTcpReceiver;
+import io.questdb.cutlass.line.udp.AbstractLineProtoUdpReceiver;
 import io.questdb.cutlass.parquet.CopyExportRequestJob;
 import io.questdb.cutlass.pgwire.PGServer;
+import io.questdb.cutlass.qwp.server.QwpUdpReceiver;
 import io.questdb.cutlass.qwp.server.QwpUdpReceiverConfiguration;
+import io.questdb.lifecycle.Component;
 import io.questdb.cutlass.text.CopyImportJob;
 import io.questdb.cutlass.text.CopyImportRequestJob;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.table.AsyncFilterAtom;
+import io.questdb.lifecycle.LifecycleContext;
+import io.questdb.lifecycle.LifecycleOrchestrator;
+import io.questdb.lifecycle.Role;
+import io.questdb.lifecycle.State;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.metrics.QueryTracingJob;
@@ -75,10 +83,9 @@ public class ServerMain implements Closeable {
     private final AtomicBoolean running = new AtomicBoolean();
     private WorkerPoolManager workerPoolManager;
     private Thread compileViewsThread;
-    private HttpServer httpServer;
     private Thread hydrateMetadataThread;
     private boolean initialized;
-    private PGServer pgServer;
+    private io.questdb.lifecycle.LifecycleOrchestrator orchestrator;
 
     public ServerMain(String... args) {
         this(new Bootstrap(args));
@@ -86,13 +93,16 @@ public class ServerMain implements Closeable {
 
     public ServerMain(final Bootstrap bootstrap) {
         this.bootstrap = bootstrap;
-        // create cairo engine
+        // bootstrap.newCairoEngine() returns a full-init engine in OSS (back-compat for tests).
+        // Enterprise subclasses override newCairoEngine() to return a partial-init engine so that
+        // completeInit() + load() are deferred to EngineEnvelope.start() (Phase 3 D3-01).
         engine = freeOnExit(bootstrap.newCairoEngine());
         try {
             final ServerConfiguration config = bootstrap.getConfiguration();
             config.init(engine, freeOnExit);
             freeOnExit(config.getFactoryProvider());
-            engine.load();
+            // engine.load() is called by EngineEnvelope.start(); completeInit() is called there
+            // too (or skipped if the engine was already fully initialised at construction time).
         } catch (Throwable th) {
             Misc.free(freeOnExit);
             throw th;
@@ -190,18 +200,23 @@ public class ServerMain implements Closeable {
             }
             // Signal long-running task to exit ASAP
             engine.signalClose();
-            if (initialized) {
-                workerPoolManager.halt();
-            }
+            // workerPoolManager.halt() removed -- orchestrator's worker-pool-manager.stop() owns this.
             freeOnExit.close();
         }
     }
 
     public long getActiveConnectionCount(String processorName) {
-        if (httpServer == null) {
+        if (orchestrator == null) {
             return 0;
         }
-        return httpServer.getActiveConnectionTracker().get(processorName);
+        Component webHttpComp = orchestrator.getComponent("web-http");
+        if (webHttpComp instanceof WebHttpEnvelope) {
+            HttpServer s = ((WebHttpEnvelope) webHttpComp).server;
+            if (s != null) {
+                return s.getActiveConnectionTracker().get(processorName);
+            }
+        }
+        return 0;
     }
 
     public ServerConfiguration getConfiguration() {
@@ -216,15 +231,57 @@ public class ServerMain implements Closeable {
     }
 
     public int getHttpServerPort() {
-        if (httpServer != null) {
-            return httpServer.getPort();
+        if (orchestrator != null) {
+            Component c = orchestrator.getComponent("web-http");
+            if (c instanceof WebHttpEnvelope) {
+                HttpServer s = ((WebHttpEnvelope) c).server;
+                if (s != null) {
+                    return s.getPort();
+                }
+            }
         }
         throw CairoException.nonCritical().put("http server is not running");
     }
 
+    /**
+     * Returns the port the min-http listener is bound to, or -1 if not yet bound (envelope
+     * still in INIT/STARTING) or if min-http is disabled via config. Test seam for Phase 6
+     * Plan C integration tests that drive POST /lifecycle/switch via java.net.http.HttpClient
+     * against the in-process server. Mirrors {@link #getHttpServerPort()} but targets the
+     * min-http envelope's HttpServer.
+     */
+    public int getMinHttpPort() {
+        if (orchestrator != null) {
+            Component c = orchestrator.getComponent("min-http");
+            if (c instanceof MinHttpEnvelope) {
+                HttpServer s = ((MinHttpEnvelope) c).server;
+                if (s != null) {
+                    return s.getPort();
+                }
+            }
+        }
+        return -1;
+    }
+
+    /**
+     * Returns the live {@link LifecycleOrchestrator} reference, or null if the server has
+     * not yet started (orchestrator is constructed in {@link #start(boolean)}). Test seam
+     * for Phase 6 Plan C integration tests that drive role switches directly via
+     * {@code orchestrator.submitSwitch(Role)} bypassing the HTTP path.
+     */
+    public LifecycleOrchestrator getOrchestrator() {
+        return orchestrator;
+    }
+
     public int getPgWireServerPort() {
-        if (pgServer != null) {
-            return pgServer.getPort();
+        if (orchestrator != null) {
+            Component c = orchestrator.getComponent("pg-wire");
+            if (c instanceof PgWireEnvelope) {
+                PGServer s = ((PgWireEnvelope) c).server;
+                if (s != null) {
+                    return s.getPort();
+                }
+            }
         }
         throw CairoException.nonCritical().put("pgwire server is not running");
     }
@@ -246,7 +303,90 @@ public class ServerMain implements Closeable {
 
     @TestOnly
     public void resetQueryCache() {
-        pgServer.resetQueryCache();
+        if (orchestrator != null) {
+            Component c = orchestrator.getComponent("pg-wire");
+            if (c instanceof PgWireEnvelope) {
+                PGServer s = ((PgWireEnvelope) c).server;
+                if (s != null) {
+                    s.resetQueryCache();
+                }
+            }
+        }
+    }
+
+    /**
+     * Test-only bootstrap for per-envelope lifecycle unit tests (D2 CR-01 regression tests).
+     * Initialises {@link #workerPoolManager} (so the protocol envelopes obtained via
+     * {@link #testNewPgWireEnvelope()} et al. can wire jobs onto its pools) and stands up a
+     * minimal {@link io.questdb.lifecycle.LifecycleOrchestrator} with a stub PgWireEnvelope
+     * registered (so {@link #findEnvelope(String, Class)} succeeds when WebHttpEnvelope.start()
+     * looks up the cross-envelope PGServer reference).
+     * <p>
+     * The pools are NOT started -- assign() calls inside envelope.start() bodies remain
+     * legal because WorkerPool's running flag stays false. The internal orchestrator is
+     * never run; the registered PgWireEnvelope stays in INIT state, its server reference
+     * stays null, and the FlushQueryCacheJob in WebHttpEnvelope.start() receives a null
+     * pgServer (which is safe -- FlushQueryCacheJob handles null pg/http servers).
+     * <p>
+     * Production server.start() callers MUST NOT invoke this method -- it is exclusively
+     * for the in-process test harness that drives individual production envelopes via
+     * an external {@link io.questdb.lifecycle.LifecycleOrchestrator}.
+     */
+    @TestOnly
+    public void testInitForEnvelopeTests() {
+        if (!engine.isCompleteInitDone()) {
+            engine.completeInit();
+        }
+        if (workerPoolManager == null) {
+            constructAndAssignWorkerPoolManager(bootstrap.getLog());
+        }
+        if (orchestrator == null) {
+            orchestrator = new io.questdb.lifecycle.LifecycleOrchestrator(
+                    getInitialRole(),
+                    bootstrap.getLog(),
+                    null,
+                    null
+            );
+            freeOnExit(orchestrator);
+            // Register a stub PgWireEnvelope so findEnvelope("pg-wire", PgWireEnvelope.class)
+            // succeeds for tests that drive WebHttpEnvelope through start(). The envelope stays
+            // in INIT state because orchestrator.run() is intentionally not invoked here.
+            orchestrator.register(new PgWireEnvelope(bootstrap.getLog()));
+        }
+    }
+
+    /**
+     * Test-only factory: create an IlpTcpEnvelope bound to this ServerMain instance.
+     * Used by per-envelope lifecycle unit tests that register envelopes directly into a
+     * LifecycleTestHarness instead of going through the full bootstrap path.
+     */
+    @TestOnly
+    public Component testNewIlpTcpEnvelope() {
+        return new IlpTcpEnvelope(bootstrap.getLog());
+    }
+
+    /**
+     * Test-only factory: create a PgWireEnvelope bound to this ServerMain instance.
+     */
+    @TestOnly
+    public Component testNewPgWireEnvelope() {
+        return new PgWireEnvelope(bootstrap.getLog());
+    }
+
+    /**
+     * Test-only factory: create a QwipEnvelope bound to this ServerMain instance.
+     */
+    @TestOnly
+    public Component testNewQwipEnvelope() {
+        return new QwipEnvelope(bootstrap.getLog());
+    }
+
+    /**
+     * Test-only factory: create a WebHttpEnvelope bound to this ServerMain instance.
+     */
+    @TestOnly
+    public Component testNewWebHttpEnvelope() {
+        return new WebHttpEnvelope(bootstrap.getLog());
     }
 
     public void start() {
@@ -255,20 +395,20 @@ public class ServerMain implements Closeable {
 
     public synchronized void start(boolean addShutdownHook) {
         if (!closed.get() && running.compareAndSet(false, true)) {
-            initialize(bootstrap.getLog());
-
+            orchestrator = new io.questdb.lifecycle.LifecycleOrchestrator(
+                    getInitialRole(),
+                    bootstrap.getLog(),
+                    null,   // workerPoolManager exposed lazily after WPM envelope reaches DEGRADED
+                    null    // tokio runtime -- enterprise plans (Plan 04) override registerComponents to provide
+            );
+            freeOnExit(orchestrator);
             if (addShutdownHook) {
                 addShutdownHook();
             }
-            workerPoolManager.start(bootstrap.getLog());
-            bootstrap.logBannerAndEndpoints(webConsoleSchema());
-            final DataID dataID = engine.getDataID();
-            if (dataID.isInitialized()) {
-                final Uuid uuid = dataID.get();
-                bootstrap.getLog().advisoryW().$("data id: ").$(uuid).$();
-            }
-            System.gc(); // final GC
-            bootstrap.getLog().advisoryW().$("enjoy").$();
+            registerComponents(orchestrator);
+            orchestrator.run();   // BLOCKS until graph stable; throws LifecycleStartupException on boot-essential failure
+            // Banner, DataID log, System.gc, 'enjoy' advisory all emit from the network-services envelope tail
+            // (W4 -- moved verbatim from this method's :263-:272 region).
         }
     }
 
@@ -292,11 +432,16 @@ public class ServerMain implements Closeable {
         }));
     }
 
-    private synchronized void initialize(Log log) {
-        initialized = true;
+    /**
+     * Verbatim lift of today's {@code ServerMain.initialize()} body lines :295-:398.
+     * Constructs and assigns the {@link WorkerPoolManager} including all engine-derived
+     * job assignments. Called from {@link WorkerPoolManagerEnvelope#start(LifecycleContext)}.
+     *
+     * @deprecated For new use, the lifecycle envelopes own this work as of Phase 2.
+     */
+    private synchronized void constructAndAssignWorkerPoolManager(Log log) {
         final ServerConfiguration config = bootstrap.getConfiguration();
         final CairoConfiguration cairoConfig = config.getCairoConfiguration();
-        // create the worker pool manager, and configure the shared pool
         final boolean walSupported = cairoConfig.isWalSupported();
         final boolean isReadOnly = cairoConfig.isReadOnlyInstance();
         final boolean walApplyEnabled = cairoConfig.isWalApplyEnabled();
@@ -396,59 +541,15 @@ public class ServerMain implements Closeable {
             );
             setupWalApplyJob(walApplyWorkerPool, engine, workerPoolManager.getSharedQueryWorkerCount());
         }
+    }
 
-        // http
-        freeOnExit(httpServer = services().createHttpServer(
-                config,
-                engine,
-                workerPoolManager
-        ));
-
-        // http min
-        freeOnExit(services().createMinHttpServer(
-                config.getHttpMinServerConfiguration(),
-                workerPoolManager
-        ));
-
-        // pg wire
-        freeOnExit(pgServer = services().createPGWireServer(
-                config.getPGWireConfiguration(),
-                engine,
-                workerPoolManager
-        ));
-
-        workerPoolManager.getSharedPoolNetwork().assign(new FlushQueryCacheJob(
-                engine.getMessageBus(),
-                httpServer,
-                pgServer
-        ));
-
-        if (!isReadOnly && config.getLineTcpReceiverConfiguration().isEnabled()) {
-            // ilp/tcp
-            freeOnExit(services().createLineTcpReceiver(
-                    config.getLineTcpReceiverConfiguration(),
-                    engine,
-                    workerPoolManager
-            ));
-
-            // ilp/udp
-            freeOnExit(services().createLineUdpReceiver(
-                    config.getLineUdpReceiverConfiguration(),
-                    engine,
-                    workerPoolManager
-            ));
-        }
-
-        QwpUdpReceiverConfiguration qwpUdpConfig = config.getQwpUdpReceiverConfiguration();
-        if (!isReadOnly && qwpUdpConfig != null && qwpUdpConfig.isEnabled()) {
-            // qwp/udp
-            freeOnExit(services().createQwpUdpReceiver(
-                    qwpUdpConfig,
-                    engine,
-                    workerPoolManager
-            ));
-        }
-
+    /**
+     * Phase 4 D4-03: protocol bind paths moved to per-envelope start() methods.
+     * Residual: metadata hydrator + compile-views threads (not protocol-envelope work).
+     *
+     * @deprecated Use lifecycle envelopes; kept for tests that call initialize() directly.
+     */
+    private void bindAndStartNetworkServices(Log log) {
         // metadata and write tracker hydration
         hydrateMetadataThread = new Thread(() -> {
             engine.getMetadataCache().onStartupAsyncHydrator();
@@ -468,6 +569,18 @@ public class ServerMain implements Closeable {
 
         System.gc(); // GC 1
         bootstrap.getLog().advisoryW().$("server is ready to be started").$();
+        initialized = true;
+    }
+
+    /**
+     * Backward-compatibility shim. Delegates to the envelope helper methods.
+     * Lifecycle envelopes own this work as of Phase 2.
+     *
+     * @deprecated Use lifecycle envelopes; kept for tests that call initialize() directly.
+     */
+    private synchronized void initialize(Log log) {
+        constructAndAssignWorkerPoolManager(log);
+        bindAndStartNetworkServices(log);
     }
 
     private void joinThread(Thread thread, boolean ignoreInterrupt) {
@@ -484,6 +597,28 @@ public class ServerMain implements Closeable {
 
     protected <T extends Closeable> T freeOnExit(T closeable) {
         return freeOnExit.register(closeable);
+    }
+
+    protected io.questdb.lifecycle.Role getInitialRole() {
+        return io.questdb.lifecycle.Role.PRIMARY;
+    }
+
+    /**
+     * Register lifecycle components with the orchestrator. Called by
+     * {@link #start(boolean)} after orchestrator construction. Subclasses
+     * (e.g. {@code EntServerMain}) override and call {@code super.registerComponents(orch)}
+     * before adding their own envelopes -- mirrors the existing
+     * {@link #setupMatViewJobs}, {@link #webConsoleSchema} hook conventions (D-03).
+     */
+    protected void registerComponents(io.questdb.lifecycle.LifecycleOrchestrator orch) {
+        orch.register(new FactoryProviderEnvelope());
+        orch.register(new EngineEnvelope());
+        orch.register(new MinHttpEnvelope(bootstrap.getLog()));
+        orch.register(new WorkerPoolManagerEnvelope(bootstrap.getLog()));
+        orch.register(new PgWireEnvelope(bootstrap.getLog()));
+        orch.register(new IlpTcpEnvelope(bootstrap.getLog()));
+        orch.register(new WebHttpEnvelope(bootstrap.getLog()));
+        orch.register(new QwipEnvelope(bootstrap.getLog()));
     }
 
     protected Services services() {
@@ -565,6 +700,38 @@ public class ServerMain implements Closeable {
         return "http";
     }
 
+    /**
+     * Extra hard-dep names injected into the engine envelope's dependency list.
+     * Default empty. Subclasses (e.g. {@code EntServerMain}) override to add
+     * envelopes (e.g. {@code backup-restore}) that must reach READY before the
+     * engine envelope calls {@link CairoEngine#completeInit()}. Called once from
+     * {@link EngineEnvelope}'s constructor.
+     */
+    protected ObjList<String> engineExtraHardDeps() {
+        return new ObjList<>();
+    }
+
+    /**
+     * Look up an envelope by name from the live orchestrator registry and cast it to
+     * the expected type. Used by WebHttpEnvelope to fetch the PgServer reference from
+     * PgWireEnvelope without introducing a direct field coupling (D4-06).
+     */
+    protected <T extends Component> T findEnvelope(String name, Class<T> type) {
+        Component c = orchestrator.getComponent(name);
+        return type.cast(c);
+    }
+
+    /**
+     * Extra hard-dep names injected into the worker-pool-manager envelope's
+     * dependency list. Default empty. Subclasses (e.g. {@code EntServerMain})
+     * override to insert envelopes (e.g. {@code ent-pre-services}) that must
+     * reach READY/DEGRADED before WPM begins. Called once from
+     * {@link WorkerPoolManagerEnvelope}'s constructor.
+     */
+    protected ObjList<String> workerPoolManagerExtraHardDeps() {
+        return new ObjList<>();
+    }
+
     public static class EngineMaintenanceJob extends SynchronizedJob {
         private final long checkInterval;
         private final Clock clock;
@@ -588,4 +755,726 @@ public class ServerMain implements Closeable {
             return false;
         }
     }
+
+    /**
+     * D-04: FactoryProvider already built in the ServerMain constructor at line :93.
+     * This envelope performs a no-op state transition (INIT -> STARTING -> READY)
+     * and has no hard deps.
+     */
+    private final class FactoryProviderEnvelope implements io.questdb.lifecycle.Component {
+        private final ObjList<String> empty = new ObjList<>();
+
+        @Override
+        public ObjList<String> hardRequiredDependencies() {
+            return empty;
+        }
+
+        @Override
+        public String name() {
+            return "factory-provider";
+        }
+
+        @Override
+        public ObjList<String> softDependencies() {
+            return empty;
+        }
+
+        @Override
+        public void start(io.questdb.lifecycle.LifecycleContext ctx) {
+            // D-04: FactoryProvider built in ServerMain ctor at line :93. No-op state transition.
+            ctx.publish(io.questdb.lifecycle.State.STARTING);
+            ctx.publish(io.questdb.lifecycle.State.READY);
+        }
+
+        @Override
+        public void stop() {
+            // FactoryProvider closed by FreeOnExit chain registered at ServerMain.java:94. No-op here.
+        }
+
+        @Override
+        public void switchRole(io.questdb.lifecycle.LifecycleContext ctx, io.questdb.lifecycle.Role newRole) {
+            // D6-08 NO-OP: DispatchingSecurityContextFactory's AtomicReference flip happens inside EntCairoEngine.switchRole (Phase 5 D5-06); envelope must survive.
+            ctx.publish(io.questdb.lifecycle.State.SWITCHING);
+            ctx.publish(io.questdb.lifecycle.State.READY);
+        }
+    }
+
+    /**
+     * D-04: CairoEngine already built in the ServerMain constructor at line :90.
+     * This envelope performs a no-op state transition (INIT -> STARTING -> READY)
+     * and hard-deps on factory-provider.
+     */
+    private final class EngineEnvelope implements io.questdb.lifecycle.Component {
+        private final ObjList<String> empty = new ObjList<>();
+        private final ObjList<String> hardDeps;
+
+        EngineEnvelope() {
+            hardDeps = new ObjList<>();
+            hardDeps.add("factory-provider");
+            // engineExtraHardDeps() hook: enterprise override injects ["backup-restore"] so
+            // the orchestrator gates engine.completeInit() on BackupRestoreEnvelope reaching READY.
+            ObjList<String> extras = ServerMain.this.engineExtraHardDeps();
+            for (int i = 0, n = extras.size(); i < n; i++) {
+                hardDeps.add(extras.getQuick(i));
+            }
+        }
+
+        @Override
+        public ObjList<String> hardRequiredDependencies() {
+            return hardDeps;
+        }
+
+        @Override
+        public String name() {
+            return "engine";
+        }
+
+        @Override
+        public ObjList<String> softDependencies() {
+            return empty;
+        }
+
+        @Override
+        public void start(io.questdb.lifecycle.LifecycleContext ctx) {
+            ctx.publish(io.questdb.lifecycle.State.STARTING);
+            // Phase 3 D3-01: run the post-restore engine initialization then load table state.
+            // completeInit() was historically called inside the CairoEngine constructor; it is
+            // now deferred here so the orchestrator DAG can gate it on backup-restore READY.
+            // Guard: back-compat ctors (used in test scaffolding) call completeInit=true, so
+            // the engine arrives here already fully initialised -- skip to avoid double-init.
+            if (!ServerMain.this.engine.isCompleteInitDone()) {
+                ServerMain.this.engine.completeInit();
+            }
+            ServerMain.this.engine.load();
+            ctx.publish(io.questdb.lifecycle.State.READY);
+        }
+
+        @Override
+        public void stop() {
+            // engine closed by FreeOnExit registered in ServerMain ctor. signalClose() handled by ServerMain.close().
+        }
+
+        @Override
+        public void switchRole(io.questdb.lifecycle.LifecycleContext ctx, io.questdb.lifecycle.Role newRole) {
+            // D6-08 NO-OP: ent-engine-init owns engine.switchRole; engine envelope must not stop+start (would tear down construction-time refs held by other components).
+            ctx.publish(io.questdb.lifecycle.State.SWITCHING);
+            ctx.publish(io.questdb.lifecycle.State.READY);
+        }
+    }
+
+    /**
+     * ILP-TCP protocol envelope: binds the InfluxDB Line Protocol TCP and UDP receivers early
+     * (D4-05), then gates the accept loop on engine==READY via onDependencyState (D4-06/D4-07).
+     * Hard-dep on worker-pool-manager; soft-dep on engine. switchRole is a NO-OP per D4-08.
+     * Both LineTcpReceiver and LineUdpReceiver share one acceptOpen flag.
+     * They are skipped when the instance is read-only or ILP-TCP is disabled.
+     */
+    private final class IlpTcpEnvelope implements io.questdb.lifecycle.Component {
+        private final AtomicBoolean acceptOpen = new AtomicBoolean(false);
+        private volatile LifecycleContext ctxRef;
+        private final ObjList<String> hardDeps;
+        private AbstractLineProtoUdpReceiver lineUdpReceiver;
+        private LineTcpReceiver lineTcpReceiver;
+        private final Log log;
+        private final ObjList<String> softDeps;
+
+        IlpTcpEnvelope(Log log) {
+            this.log = log;
+            this.hardDeps = new ObjList<>();
+            this.hardDeps.add("worker-pool-manager");
+            this.softDeps = new ObjList<>();
+            this.softDeps.add("engine");
+        }
+
+        @Override
+        public ObjList<String> hardRequiredDependencies() {
+            return hardDeps;
+        }
+
+        @Override
+        public String name() {
+            return "ilp-tcp";
+        }
+
+        @Override
+        public void onDependencyState(String depName, State previous, State current) {
+            if ("engine".equals(depName) && current == State.READY) {
+                acceptOpen.set(true);
+                log.info().$("ilp-tcp envelope: accept loop open").$();
+                if (ctxRef != null) {
+                    ctxRef.publish(State.READY);
+                }
+            }
+        }
+
+        @Override
+        public ObjList<String> softDependencies() {
+            return softDeps;
+        }
+
+        @Override
+        public void start(LifecycleContext ctx) {
+            this.ctxRef = ctx;
+            ctx.publish(State.STARTING);
+            final ServerConfiguration cfg = ServerMain.this.bootstrap.getConfiguration();
+            final boolean isReadOnly = cfg.getCairoConfiguration().isReadOnlyInstance();
+            if (!isReadOnly && cfg.getLineTcpReceiverConfiguration().isEnabled()) {
+                this.lineTcpReceiver = ServerMain.this.services().createLineTcpReceiver(
+                        cfg.getLineTcpReceiverConfiguration(),
+                        ServerMain.this.engine,
+                        ServerMain.this.workerPoolManager,
+                        acceptOpen);
+                this.lineUdpReceiver = ServerMain.this.services().createLineUdpReceiver(
+                        cfg.getLineUdpReceiverConfiguration(),
+                        ServerMain.this.engine,
+                        ServerMain.this.workerPoolManager,
+                        acceptOpen);
+            }
+            log.info().$("ilp-tcp envelope: bound, accept paused").$();
+            ctx.publish(State.DEGRADED);
+            // CR-01 replay: if engine reached READY synchronously inside EngineEnvelope.start()
+            // before our ctxRef was set, the onDependencyState dispatch was lost. Self-publish now.
+            if (ctx.state("engine") == State.READY) {
+                acceptOpen.set(true);
+                log.info().$("ilp-tcp envelope: accept loop open (catch-up)").$();
+                ctx.publish(State.READY);
+            }
+        }
+
+        @Override
+        public void stop() {
+            Misc.free(lineTcpReceiver);
+            lineTcpReceiver = null;
+            Misc.free(lineUdpReceiver);
+            lineUdpReceiver = null;
+        }
+
+        @Override
+        public void switchRole(LifecycleContext ctx, Role newRole) {
+            // D4-08 NO-OP: socket stays bound; accept loop stays running.
+            // Per-connection write-rejection re-resolution is Phase 5 RECONFIG-03/04.
+            ctx.publish(State.SWITCHING);
+            ctx.publish(State.READY);
+        }
+    }
+
+    /**
+     * Lifecycle-owned mini HTTP server envelope serving /status, /health, /ping, and /lifecycle.
+     * <p>
+     * Binds before engine and backup-restore so that /status returns 200 throughout a
+     * multi-minute PITR restore (D3-04). Owns a dedicated WorkerPool named "http-min"
+     * sized by http.min.worker.count (D3-03/D3-05: values less than or equal to zero
+     * remap to 1 with a WARN log). Hard-deps on factory-provider only.
+     * <p>
+     * When http.min.enabled=false the envelope publishes READY without binding (D3-13).
+     */
+    private final class MinHttpEnvelope implements io.questdb.lifecycle.Component {
+        private final ObjList<String> empty = new ObjList<>();
+        private final ObjList<String> hardDeps;
+        private final Log log;
+        private io.questdb.cutlass.http.HttpServer server;
+        private WorkerPool pool;
+
+        MinHttpEnvelope(Log log) {
+            this.log = log;
+            this.hardDeps = new ObjList<>();
+            this.hardDeps.add("factory-provider");
+        }
+
+        @Override
+        public ObjList<String> hardRequiredDependencies() {
+            return hardDeps;
+        }
+
+        @Override
+        public String name() {
+            return "min-http";
+        }
+
+        @Override
+        public ObjList<String> softDependencies() {
+            return empty;
+        }
+
+        @Override
+        public void start(io.questdb.lifecycle.LifecycleContext ctx) {
+            ctx.publish(io.questdb.lifecycle.State.STARTING);
+            final io.questdb.cutlass.http.HttpServerConfiguration httpMinConfig =
+                    ServerMain.this.bootstrap.getConfiguration().getHttpMinServerConfiguration();
+            if (!httpMinConfig.isEnabled()) {
+                log.info().$("min-http envelope: http.min.enabled=false, skipping bind").$();
+                ctx.publish(io.questdb.lifecycle.State.READY);
+                return;
+            }
+            int workerCount = httpMinConfig.getWorkerCount();
+            if (workerCount <= 0) {
+                log.advisoryW().$("min-http envelope: http.min.worker.count=").$(workerCount).$(" is <= 0, remapping to 1").$();
+                workerCount = 1;
+            }
+            pool = new WorkerPool(new MinHttpPoolConfiguration(workerCount));
+            // createMinHttpServer() calls pool.assign() on the dispatcher and reschedule jobs.
+            // The pool must NOT be started yet -- assign() asserts !running. Start after bind.
+            server = ServerMain.this.services().createMinHttpServer(httpMinConfig, pool);
+            if (server != null) {
+                final io.questdb.lifecycle.LifecycleOrchestrator orch = ServerMain.this.orchestrator;
+                server.bind(new io.questdb.cutlass.http.HttpRequestHandlerFactory() {
+                    @Override
+                    public io.questdb.std.ObjHashSet<String> getUrls() {
+                        return httpMinConfig.getContextPathLifecycle();
+                    }
+
+                    @Override
+                    public io.questdb.cutlass.http.HttpRequestHandler newInstance() {
+                        return new io.questdb.cutlass.http.processors.LifecycleProcessor(httpMinConfig, orch::snapshot);
+                    }
+                });
+                // D6-02 / Plan B Task 2: bind SwitchProcessor on POST /lifecycle/switch alongside
+                // the GET /lifecycle handler above. The two factories share the same min-http
+                // listening socket so PROBE-04 (min-http survives the switch) holds.
+                server.bind(new io.questdb.cutlass.http.HttpRequestHandlerFactory() {
+                    @Override
+                    public io.questdb.std.ObjHashSet<String> getUrls() {
+                        return httpMinConfig.getContextPathLifecycleSwitch();
+                    }
+
+                    @Override
+                    public io.questdb.cutlass.http.HttpRequestHandler newInstance() {
+                        return new io.questdb.cutlass.http.processors.SwitchProcessor(httpMinConfig, orch);
+                    }
+                });
+            }
+            pool.start(log);
+            ctx.publish(io.questdb.lifecycle.State.READY);
+        }
+
+        @Override
+        public void stop() {
+            Misc.free(server);
+            server = null;
+            if (pool != null) {
+                pool.halt();
+                pool = null;
+            }
+        }
+
+        @Override
+        public void switchRole(io.questdb.lifecycle.LifecycleContext ctx, io.questdb.lifecycle.Role newRole) {
+            // D6-08 NO-OP: PROBE-04 same socket, no rebind, no I/O loop restart.
+            ctx.publish(io.questdb.lifecycle.State.SWITCHING);
+            ctx.publish(io.questdb.lifecycle.State.READY);
+        }
+    }
+
+    /**
+     * WorkerPoolConfiguration for the dedicated http-min pool (D3-03).
+     * Pool name is "http-min"; worker count is provided at construction time.
+     */
+    private static final class MinHttpPoolConfiguration implements io.questdb.mp.WorkerPoolConfiguration {
+        private final int workerCount;
+
+        MinHttpPoolConfiguration(int workerCount) {
+            this.workerCount = workerCount;
+        }
+
+        @Override
+        public String getPoolName() {
+            return "http-min";
+        }
+
+        @Override
+        public int getWorkerCount() {
+            return workerCount;
+        }
+    }
+
+    /**
+     * PG-wire protocol envelope: binds the PostgreSQL wire protocol listener early (D4-05),
+     * then gates the accept loop on engine==READY via onDependencyState (D4-06/D4-07).
+     * Hard-dep on worker-pool-manager; soft-dep on engine. switchRole is a NO-OP per D4-08.
+     * When PG wire is disabled the envelope publishes DEGRADED and waits for engine READY.
+     */
+    private final class PgWireEnvelope implements io.questdb.lifecycle.Component {
+        private final AtomicBoolean acceptOpen = new AtomicBoolean(false);
+        private volatile LifecycleContext ctxRef;
+        private final ObjList<String> hardDeps;
+        private final Log log;
+        private PGServer server;
+        private final ObjList<String> softDeps;
+
+        PgWireEnvelope(Log log) {
+            this.log = log;
+            this.hardDeps = new ObjList<>();
+            this.hardDeps.add("worker-pool-manager");
+            this.softDeps = new ObjList<>();
+            this.softDeps.add("engine");
+        }
+
+        PGServer getPgServer() {
+            return server;
+        }
+
+        @Override
+        public ObjList<String> hardRequiredDependencies() {
+            return hardDeps;
+        }
+
+        @Override
+        public String name() {
+            return "pg-wire";
+        }
+
+        @Override
+        public void onDependencyState(String depName, State previous, State current) {
+            if ("engine".equals(depName) && current == State.READY) {
+                acceptOpen.set(true);
+                log.info().$("pg-wire envelope: accept loop open").$();
+                if (ctxRef != null) {
+                    ctxRef.publish(State.READY);
+                }
+            }
+        }
+
+        @Override
+        public ObjList<String> softDependencies() {
+            return softDeps;
+        }
+
+        @Override
+        public void start(LifecycleContext ctx) {
+            this.ctxRef = ctx;
+            ctx.publish(State.STARTING);
+            final ServerConfiguration cfg = ServerMain.this.bootstrap.getConfiguration();
+            this.server = ServerMain.this.services().createPGWireServer(
+                    cfg.getPGWireConfiguration(),
+                    ServerMain.this.engine,
+                    ServerMain.this.workerPoolManager,
+                    acceptOpen);
+            log.info().$("pg-wire envelope: bound, accept paused").$();
+            ctx.publish(State.DEGRADED);
+            // CR-01 replay: if engine reached READY synchronously inside EngineEnvelope.start()
+            // before our ctxRef was set, the onDependencyState dispatch was lost. Self-publish now.
+            if (ctx.state("engine") == State.READY) {
+                acceptOpen.set(true);
+                log.info().$("pg-wire envelope: accept loop open (catch-up)").$();
+                ctx.publish(State.READY);
+            }
+        }
+
+        @Override
+        public void stop() {
+            Misc.free(server);
+            server = null;
+        }
+
+        @Override
+        public void switchRole(LifecycleContext ctx, Role newRole) {
+            // D4-08 NO-OP: socket stays bound; accept loop stays running.
+            // Per-connection write-rejection re-resolution is Phase 5 RECONFIG-03/04.
+            ctx.publish(State.SWITCHING);
+            ctx.publish(State.READY);
+        }
+    }
+
+    /**
+     * QWIP (QuestDB Wire Protocol UDP) envelope: binds the QWP UDP receiver early (D4-05),
+     * then gates the accept loop on engine==READY via onDependencyState (D4-06/D4-07).
+     * Hard-dep on worker-pool-manager; soft-dep on engine. switchRole is a NO-OP per D4-08.
+     * Skipped when the instance is read-only or QWIP is disabled.
+     */
+    private final class QwipEnvelope implements io.questdb.lifecycle.Component {
+        private final AtomicBoolean acceptOpen = new AtomicBoolean(false);
+        private volatile LifecycleContext ctxRef;
+        private final ObjList<String> hardDeps;
+        private final Log log;
+        private QwpUdpReceiver receiver;
+        private final ObjList<String> softDeps;
+
+        QwipEnvelope(Log log) {
+            this.log = log;
+            this.hardDeps = new ObjList<>();
+            this.hardDeps.add("worker-pool-manager");
+            this.softDeps = new ObjList<>();
+            this.softDeps.add("engine");
+        }
+
+        @Override
+        public ObjList<String> hardRequiredDependencies() {
+            return hardDeps;
+        }
+
+        @Override
+        public String name() {
+            return "qwip";
+        }
+
+        @Override
+        public void onDependencyState(String depName, State previous, State current) {
+            if ("engine".equals(depName) && current == State.READY) {
+                // D4-10 role-aware gate: qwip is primary-only per SVCS-05 / RESEARCH Section 12.
+                // On a primary boot, open the accept loop when engine reaches READY.
+                // On a replica boot, leave acceptOpen=false (socket stays bound but accept paused).
+                if (ctxRef != null && ctxRef.role() == Role.PRIMARY) {
+                    acceptOpen.set(true);
+                    log.info().$("qwip envelope: accept loop open (primary)").$();
+                } else {
+                    log.info().$("qwip envelope: accept loop stays paused (replica)").$();
+                }
+                if (ctxRef != null) {
+                    ctxRef.publish(State.READY);
+                }
+            }
+        }
+
+        @TestOnly
+        public boolean isAcceptOpen() {
+            return acceptOpen.get();
+        }
+
+        @TestOnly
+        public QwpUdpReceiver getReceiver() {
+            return receiver;
+        }
+
+        @Override
+        public ObjList<String> softDependencies() {
+            return softDeps;
+        }
+
+        @Override
+        public void start(LifecycleContext ctx) {
+            this.ctxRef = ctx;
+            ctx.publish(State.STARTING);
+            final ServerConfiguration cfg = ServerMain.this.bootstrap.getConfiguration();
+            final boolean isReadOnly = cfg.getCairoConfiguration().isReadOnlyInstance();
+            final QwpUdpReceiverConfiguration qwpCfg = cfg.getQwpUdpReceiverConfiguration();
+            if (!isReadOnly && qwpCfg != null && qwpCfg.isEnabled()) {
+                this.receiver = ServerMain.this.services().createQwpUdpReceiver(
+                        qwpCfg,
+                        ServerMain.this.engine,
+                        ServerMain.this.workerPoolManager,
+                        acceptOpen);
+            }
+            log.info().$("qwip envelope: bound, accept paused").$();
+            ctx.publish(State.DEGRADED);
+            // CR-01 replay: if engine reached READY before our ctxRef was set, the
+            // onDependencyState dispatch was lost. Self-publish now. Qwip is primary-only
+            // per D4-10; on REPLICA we publish READY but leave acceptOpen false.
+            if (ctx.state("engine") == State.READY) {
+                if (ctx.role() == Role.PRIMARY) {
+                    acceptOpen.set(true);
+                    log.info().$("qwip envelope: accept loop open (catch-up)").$();
+                } else {
+                    log.info().$("qwip envelope: engine ready on REPLICA; accept stays paused (catch-up)").$();
+                }
+                ctx.publish(State.READY);
+            }
+        }
+
+        @Override
+        public void stop() {
+            Misc.free(receiver);
+            receiver = null;
+        }
+
+        /**
+         * D4-10 pause-the-job pattern for qwip (RESEARCH Section 12): the QwpUdpReceiver
+         * socket stays bound; the accept-job's run() body parks on !acceptOpen.get()
+         * (substrate added in Plan A Task A1). qwip is treated as primary-only:
+         * PRIMARY -&gt; REPLICA pauses (acceptOpen=false); REPLICA -&gt; PRIMARY resumes (acceptOpen=true).
+         * No EntQwipEnvelope overlay -- qwip role logic lives in OSS per RESEARCH Section 12 / PATTERNS.md.
+         */
+        @Override
+        public void switchRole(LifecycleContext ctx, Role newRole) {
+            ctx.publish(State.SWITCHING);
+            if (newRole == Role.REPLICA) {
+                acceptOpen.set(false);
+                log.info().$("qwip envelope: paused on switch to REPLICA").$();
+            } else {
+                acceptOpen.set(true);
+                log.info().$("qwip envelope: resumed on switch to PRIMARY").$();
+            }
+            ctx.publish(State.READY);
+        }
+    }
+
+    /**
+     * Web-HTTP protocol envelope: binds the full-fat HTTP server early (D4-05),
+     * then gates the accept loop on engine==READY via onDependencyState (D4-06/D4-07).
+     * Hard-deps on worker-pool-manager AND pg-wire (RESEARCH Section 6: FlushQueryCacheJob
+     * needs the PGServer reference from PgWireEnvelope). Soft-dep on engine.
+     * switchRole is a NO-OP per D4-08.
+     */
+    private final class WebHttpEnvelope implements io.questdb.lifecycle.Component {
+        private final AtomicBoolean acceptOpen = new AtomicBoolean(false);
+        private volatile LifecycleContext ctxRef;
+        private final ObjList<String> hardDeps;
+        private final Log log;
+        private HttpServer server;
+        private final ObjList<String> softDeps;
+
+        WebHttpEnvelope(Log log) {
+            this.log = log;
+            this.hardDeps = new ObjList<>();
+            this.hardDeps.add("worker-pool-manager");
+            this.hardDeps.add("pg-wire");
+            this.softDeps = new ObjList<>();
+            this.softDeps.add("engine");
+        }
+
+        @Override
+        public ObjList<String> hardRequiredDependencies() {
+            return hardDeps;
+        }
+
+        @Override
+        public String name() {
+            return "web-http";
+        }
+
+        @Override
+        public void onDependencyState(String depName, State previous, State current) {
+            if ("engine".equals(depName) && current == State.READY) {
+                acceptOpen.set(true);
+                log.info().$("web-http envelope: accept loop open").$();
+                if (ctxRef != null) {
+                    ctxRef.publish(State.READY);
+                }
+            }
+        }
+
+        @Override
+        public ObjList<String> softDependencies() {
+            return softDeps;
+        }
+
+        @Override
+        public void start(LifecycleContext ctx) {
+            this.ctxRef = ctx;
+            ctx.publish(State.STARTING);
+            final ServerConfiguration cfg = ServerMain.this.bootstrap.getConfiguration();
+            this.server = ServerMain.this.services().createHttpServer(
+                    cfg,
+                    ServerMain.this.engine,
+                    ServerMain.this.workerPoolManager,
+                    acceptOpen);
+            // FlushQueryCacheJob per RESEARCH Section 6: owned by web-http;
+            // reads the PGServer reference from PgWireEnvelope via cross-envelope lookup.
+            final PGServer pgServer = ServerMain.this.findEnvelope("pg-wire", PgWireEnvelope.class).getPgServer();
+            ServerMain.this.workerPoolManager.getSharedPoolNetwork().assign(
+                    new FlushQueryCacheJob(ServerMain.this.engine.getMessageBus(), this.server, pgServer));
+            log.info().$("web-http envelope: bound, accept paused").$();
+            ctx.publish(State.DEGRADED);
+            // CR-01 replay: if engine reached READY synchronously inside EngineEnvelope.start()
+            // before our ctxRef was set, the onDependencyState dispatch was lost. Self-publish now.
+            if (ctx.state("engine") == State.READY) {
+                acceptOpen.set(true);
+                log.info().$("web-http envelope: accept loop open (catch-up)").$();
+                ctx.publish(State.READY);
+            }
+        }
+
+        @Override
+        public void stop() {
+            Misc.free(server);
+            server = null;
+        }
+
+        @Override
+        public void switchRole(LifecycleContext ctx, Role newRole) {
+            // D4-08 NO-OP: socket stays bound; accept loop stays running.
+            // Per-connection write-rejection re-resolution is Phase 5 RECONFIG-03/04.
+            ctx.publish(State.SWITCHING);
+            ctx.publish(State.READY);
+        }
+    }
+
+    /**
+     * Two-phase worker-pool-manager envelope (D-16):
+     * Phase 1 -- configure pools (STARTING -> DEGRADED).
+     * Phase 2 -- start pool threads when network-services reaches READY (DEGRADED -> READY).
+     * <p>
+     * W6/W7: ctor concatenates {@code ["engine"]} with
+     * {@link ServerMain#workerPoolManagerExtraHardDeps()} so subclass overrides
+     * participate via polymorphic dispatch on {@code ServerMain.this}.
+     */
+    private final class WorkerPoolManagerEnvelope implements io.questdb.lifecycle.Component {
+        private final ObjList<String> empty = new ObjList<>();
+        private final ObjList<String> hardDeps;
+        private final Log log;
+
+        WorkerPoolManagerEnvelope(Log log) {
+            this.log = log;
+            // W6/W7 fix: concatenate base ["engine"] with subclass-supplied extra deps via the
+            // workerPoolManagerExtraHardDeps() hook. Polymorphic dispatch: ServerMain.this is the actual
+            // concrete instance (EntServerMain when launched via EntServerMain.main), so the subclass
+            // override fires and the envelope picks up enterprise-only deps like "ent-pre-services".
+            ObjList<String> deps = new ObjList<>();
+            deps.add("engine");
+            ObjList<String> extras = ServerMain.this.workerPoolManagerExtraHardDeps();
+            for (int i = 0, n = extras.size(); i < n; i++) {
+                deps.add(extras.getQuick(i));
+            }
+            this.hardDeps = deps;
+        }
+
+        @Override
+        public ObjList<String> hardRequiredDependencies() {
+            return hardDeps;
+        }
+
+        @Override
+        public String name() {
+            return "worker-pool-manager";
+        }
+
+        @Override
+        public ObjList<String> softDependencies() {
+            return empty;
+        }
+
+        @Override
+        public void start(io.questdb.lifecycle.LifecycleContext ctx) {
+            ctx.publish(io.questdb.lifecycle.State.STARTING);
+            // Phase 1 -- verbatim lift of today's ServerMain.initialize() body lines :295-:398:
+            // anonymous WorkerPoolManager subclass with configureWorkerPools override,
+            // engine.buildViewGraphs(), setupDedicatedPools(), WAL apply on dedicated pool.
+            // The 'workerPoolManager' field on ServerMain is assigned here.
+            ServerMain.this.constructAndAssignWorkerPoolManager(log);
+            ctx.publish(io.questdb.lifecycle.State.DEGRADED);
+            // Phase 2 fires when all hard-required dependents of worker-pool-manager are stable.
+            // In Phase 4 the dependents are the 4 protocol envelopes (pg-wire, ilp-tcp, web-http, qwip).
+            // When all 4 publish READY the orchestrator fires this onStableBelow callback.
+            ctx.onStableBelow(name(), () -> {
+                ServerMain.this.workerPoolManager.start(log);
+                ctx.publish(io.questdb.lifecycle.State.READY);
+                // Boot-tail: logBannerAndEndpoints runs after workerPoolManager.start(log)
+                // to preserve original ordering where the banner fires after worker threads start.
+                ServerMain.this.bootstrap.logBannerAndEndpoints(ServerMain.this.webConsoleSchema());
+                // W4 boot-tail: DataID advisory, final GC, enjoy advisory.
+                final DataID dataID = ServerMain.this.engine.getDataID();
+                if (dataID.isInitialized()) {
+                    final Uuid uuid = dataID.get();
+                    ServerMain.this.bootstrap.getLog().advisoryW().$("data id: ").$(uuid).$();
+                }
+                System.gc();
+                ServerMain.this.bootstrap.getLog().advisoryW().$("enjoy").$();
+            });
+        }
+
+        @Override
+        public void stop() {
+            // Replaces ServerMain.close() line :194 -- workerPoolManager.halt().
+            if (ServerMain.this.workerPoolManager != null) {
+                ServerMain.this.workerPoolManager.halt();
+            }
+        }
+
+        @Override
+        public void switchRole(io.questdb.lifecycle.LifecycleContext ctx, io.questdb.lifecycle.Role newRole) {
+            // D6-08 NO-OP: worker threads are role-agnostic; pool MUST survive (default stop+start would halt all worker threads).
+            ctx.publish(io.questdb.lifecycle.State.SWITCHING);
+            ctx.publish(io.questdb.lifecycle.State.READY);
+        }
+    }
+
 }

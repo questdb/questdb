@@ -52,12 +52,14 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import static io.questdb.network.IODispatcher.*;
 
 public class PGServer implements Closeable {
     private static final Log LOG = LogFactory.getLog(PGServer.class);
     private static final NoOpAssociativeCache<TypesAndSelect> NO_OP_CACHE = new NoOpAssociativeCache<>();
+    private final AtomicBoolean acceptOpen;
     private final PGConnectionContextFactory contextFactory;
     private final IODispatcher<PGConnectionContext> dispatcher;
     private final Metrics metrics;
@@ -72,6 +74,18 @@ public class PGServer implements Closeable {
             PGCircuitBreakerRegistry registry,
             ObjectFactory<SqlExecutionContextImpl> executionContextObjectFactory
     ) {
+        this(configuration, engine, sharedPoolNetwork, registry, executionContextObjectFactory, new AtomicBoolean(true));
+    }
+
+    public PGServer(
+            PGConfiguration configuration,
+            CairoEngine engine,
+            WorkerPool sharedPoolNetwork,
+            PGCircuitBreakerRegistry registry,
+            ObjectFactory<SqlExecutionContextImpl> executionContextObjectFactory,
+            AtomicBoolean acceptOpen
+    ) {
+        this.acceptOpen = acceptOpen;
         this.metrics = engine.getMetrics();
         if (configuration.isSelectCacheEnabled()) {
             this.typesAndSelectCache = new ConcurrentAssociativeCache<>(configuration.getConcurrentCacheConfiguration());
@@ -89,7 +103,15 @@ public class PGServer implements Closeable {
         this.sharedPoolNetwork = sharedPoolNetwork;
         this.registry = registry;
 
-        sharedPoolNetwork.assign(dispatcher);
+        sharedPoolNetwork.assign(new Job() {
+            @Override
+            public boolean run(int workerId, @NotNull RunStatus runStatus) {
+                if (!acceptOpen.get()) {
+                    return false;
+                }
+                return dispatcher.run(workerId, runStatus);
+            }
+        });
 
         for (int i = 0, n = sharedPoolNetwork.getWorkerCount(); i < n; i++) {
             sharedPoolNetwork.assign(i, new Job() {
@@ -127,6 +149,9 @@ public class PGServer implements Closeable {
 
                 @Override
                 public boolean run(int workerId, @NotNull RunStatus runStatus) {
+                    if (!acceptOpen.get()) {
+                        return false;
+                    }
                     return dispatcher.processIOQueue(processor);
                 }
             });

@@ -29,6 +29,8 @@ import io.questdb.mp.WorkerPool;
 import io.questdb.network.Net;
 import org.jetbrains.annotations.Nullable;
 
+import java.util.concurrent.atomic.AtomicBoolean;
+
 public class LinuxMMQwpUdpReceiver extends QwpUdpReceiver {
     private final int msgCount;
     private long msgVec;
@@ -38,7 +40,11 @@ public class LinuxMMQwpUdpReceiver extends QwpUdpReceiver {
     }
 
     public LinuxMMQwpUdpReceiver(QwpUdpReceiverConfiguration configuration, CairoEngine engine, @Nullable WorkerPool workerPool) {
-        super(configuration, engine, workerPool);
+        this(configuration, engine, workerPool, new AtomicBoolean(true));
+    }
+
+    public LinuxMMQwpUdpReceiver(QwpUdpReceiverConfiguration configuration, CairoEngine engine, @Nullable WorkerPool workerPool, AtomicBoolean acceptOpen) {
+        super(configuration, engine, workerPool, acceptOpen);
         this.msgCount = configuration.getMsgCount();
         try {
             this.msgVec = nf.msgHeaders(bufLen, msgCount);

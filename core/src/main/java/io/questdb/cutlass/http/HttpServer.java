@@ -63,9 +63,11 @@ import io.questdb.std.str.Utf8String;
 import org.jetbrains.annotations.NotNull;
 
 import java.io.Closeable;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 public class HttpServer implements Closeable {
     static final NoOpAssociativeCache<RecordCursorFactory> NO_OP_CACHE = new NoOpAssociativeCache<>();
+    private final AtomicBoolean acceptOpen;
     private final ActiveConnectionTracker activeConnectionTracker;
     private final ObjList<Closeable> closeables = new ObjList<>();
     private final IODispatcher<HttpConnectionContext> dispatcher;
@@ -81,6 +83,16 @@ public class HttpServer implements Closeable {
             WorkerPool networkSharedPool,
             SocketFactory socketFactory
     ) {
+        this(configuration, networkSharedPool, socketFactory, new AtomicBoolean(true));
+    }
+
+    public HttpServer(
+            HttpServerConfiguration configuration,
+            WorkerPool networkSharedPool,
+            SocketFactory socketFactory,
+            AtomicBoolean acceptOpen
+    ) {
+        this.acceptOpen = acceptOpen;
         this.workerCount = networkSharedPool.getWorkerCount();
         this.selectors = new ObjList<>(workerCount);
 
@@ -102,9 +114,25 @@ public class HttpServer implements Closeable {
         this.activeConnectionTracker = new ActiveConnectionTracker(configuration.getHttpContextConfiguration());
         this.httpContextFactory = new HttpContextFactory(configuration, socketFactory, selectCache, activeConnectionTracker);
         this.dispatcher = IODispatchers.create(configuration, httpContextFactory);
-        networkSharedPool.assign(dispatcher);
+        networkSharedPool.assign(new Job() {
+            @Override
+            public boolean run(int workerId, @NotNull RunStatus runStatus) {
+                if (!acceptOpen.get()) {
+                    return false;
+                }
+                return dispatcher.run(workerId, runStatus);
+            }
+        });
         this.rescheduleContext = new WaitProcessor(configuration.getWaitProcessorConfiguration(), dispatcher);
-        networkSharedPool.assign(rescheduleContext);
+        networkSharedPool.assign(new Job() {
+            @Override
+            public boolean run(int workerId, @NotNull RunStatus runStatus) {
+                if (!acceptOpen.get()) {
+                    return false;
+                }
+                return rescheduleContext.run(workerId, runStatus);
+            }
+        });
 
         for (int i = 0; i < workerCount; i++) {
             final int index = i;
@@ -118,6 +146,9 @@ public class HttpServer implements Closeable {
 
                 @Override
                 public boolean run(int workerId, @NotNull RunStatus runStatus) {
+                    if (!acceptOpen.get()) {
+                        return false;
+                    }
                     boolean useful = dispatcher.processIOQueue(processor);
                     useful |= rescheduleContext.runReruns(selector);
                     return useful;

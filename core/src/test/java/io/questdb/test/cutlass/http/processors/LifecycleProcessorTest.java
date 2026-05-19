@@ -1,0 +1,175 @@
+package io.questdb.test.cutlass.http.processors;
+
+import io.questdb.cutlass.http.HttpChunkedResponse;
+import io.questdb.cutlass.http.HttpResponseHeader;
+import io.questdb.cutlass.http.processors.LifecycleProcessor;
+import io.questdb.std.str.Utf8Sequence;
+import io.questdb.lifecycle.LifecycleSnapshot;
+import io.questdb.lifecycle.RestoreProgress;
+import io.questdb.lifecycle.Role;
+import io.questdb.lifecycle.State;
+import io.questdb.network.PeerDisconnectedException;
+import io.questdb.network.PeerIsSlowToReadException;
+import io.questdb.std.ObjList;
+import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
+import org.junit.Assert;
+import org.junit.Test;
+
+public class LifecycleProcessorTest {
+
+    @Test
+    public void testCurrentRoleAndSwitchInFlightSerialization() throws Exception {
+        LifecycleSnapshot snap = new LifecycleSnapshot(2000L, Role.REPLICA, true, new ObjList<>());
+        String body = captureResponseBody(snap);
+        Assert.assertEquals("{\"capturedAtMicros\":2000,\"currentRole\":\"REPLICA\",\"switchInFlight\":true,\"components\":[]}", body);
+    }
+
+    @Test
+    public void testEmptyComponentsArray() throws Exception {
+        LifecycleSnapshot snap = new LifecycleSnapshot(1000L, Role.PRIMARY, false, new ObjList<>());
+        String body = captureResponseBody(snap);
+        Assert.assertEquals("{\"capturedAtMicros\":1000,\"currentRole\":\"PRIMARY\",\"switchInFlight\":false,\"components\":[]}", body);
+    }
+
+    @Test
+    public void testHardDepsArrayShape() throws Exception {
+        ObjList<LifecycleSnapshot.ComponentSnapshot> components = new ObjList<>();
+        ObjList<String> hardDeps = new ObjList<>();
+        hardDeps.add("factory-provider");
+        hardDeps.add("backup-restore");
+        components.add(new LifecycleSnapshot.ComponentSnapshot("engine", State.READY, 100L, null, hardDeps, new ObjList<>()));
+        LifecycleSnapshot snap = new LifecycleSnapshot(1000L, Role.PRIMARY, false, components);
+        String body = captureResponseBody(snap);
+        Assert.assertTrue("body must contain hardRequiredDependencies factory-provider + backup-restore",
+                body.contains("\"hardRequiredDependencies\":[\"factory-provider\",\"backup-restore\"]"));
+    }
+
+    @Test
+    public void testMultipleComponentsHaveCommaSeparator() throws Exception {
+        ObjList<LifecycleSnapshot.ComponentSnapshot> components = new ObjList<>();
+        components.add(new LifecycleSnapshot.ComponentSnapshot("min-http", State.READY, 100L, null, new ObjList<>(), new ObjList<>()));
+        components.add(new LifecycleSnapshot.ComponentSnapshot("engine", State.READY, 200L, null, listOf("backup-restore"), new ObjList<>()));
+        LifecycleSnapshot snap = new LifecycleSnapshot(1000L, Role.PRIMARY, false, components);
+        String body = captureResponseBody(snap);
+        int firstCompEnd = body.indexOf("},");
+        int secondCompStart = body.indexOf("{\"name\":\"engine\"");
+        Assert.assertTrue(firstCompEnd > 0 && secondCompStart > firstCompEnd);
+        Assert.assertFalse("no trailing comma before ]}", body.contains(",]"));
+    }
+
+    @Test
+    public void testSingleComponentWithNullProgress() throws Exception {
+        ObjList<LifecycleSnapshot.ComponentSnapshot> components = new ObjList<>();
+        components.add(new LifecycleSnapshot.ComponentSnapshot("min-http", State.READY, 500L, null, listOf("factory-provider"), new ObjList<>()));
+        LifecycleSnapshot snap = new LifecycleSnapshot(1000L, Role.PRIMARY, false, components);
+        String body = captureResponseBody(snap);
+        Assert.assertTrue("body must contain latestProgress:null literal", body.contains("\"latestProgress\":null"));
+        Assert.assertTrue("body must contain min-http name", body.contains("\"name\":\"min-http\""));
+        Assert.assertTrue("body must contain state READY (uppercase)", body.contains("\"state\":\"READY\""));
+        Assert.assertTrue("body must contain lastTransitionMicros 500", body.contains("\"lastTransitionMicros\":500"));
+        Assert.assertTrue("body must contain hardRequiredDependencies factory-provider",
+                body.contains("\"hardRequiredDependencies\":[\"factory-provider\"]"));
+    }
+
+    @Test
+    public void testSingleComponentWithRestoreProgress() throws Exception {
+        ObjList<LifecycleSnapshot.ComponentSnapshot> components = new ObjList<>();
+        components.add(new LifecycleSnapshot.ComponentSnapshot("backup-restore", State.STARTING, 600L,
+                new RestoreProgress(3, 7, 0L, 0L), listOf("factory-provider"), new ObjList<>()));
+        LifecycleSnapshot snap = new LifecycleSnapshot(1000L, Role.PRIMARY, false, components);
+        String body = captureResponseBody(snap);
+        Assert.assertTrue("body must contain restore progress payload",
+                body.contains("\"latestProgress\":{\"type\":\"restore\",\"tablesDone\":3,\"tablesTotal\":7,\"bytesDone\":0,\"bytesTotal\":0}"));
+    }
+
+    @Test
+    public void testStateNameUppercase() throws Exception {
+        ObjList<LifecycleSnapshot.ComponentSnapshot> components = new ObjList<>();
+        components.add(new LifecycleSnapshot.ComponentSnapshot("min-http", State.READY, 100L, null, new ObjList<>(), new ObjList<>()));
+        LifecycleSnapshot snap = new LifecycleSnapshot(2000L, Role.PRIMARY, false, components);
+        String body = captureResponseBody(snap);
+        Assert.assertTrue("state must be uppercase READY", body.contains("\"state\":\"READY\""));
+    }
+
+    private static String captureResponseBody(LifecycleSnapshot snap) throws Exception {
+        StringBuilder buf = new StringBuilder();
+        LifecycleProcessor.writeSnapshot(new FakeHttpChunkedResponse(buf), snap);
+        return buf.toString();
+    }
+
+    private static ObjList<String> listOf(String... items) {
+        ObjList<String> list = new ObjList<>();
+        for (String s : items) {
+            list.add(s);
+        }
+        return list;
+    }
+
+    private static final class FakeHttpChunkedResponse implements HttpChunkedResponse {
+        private final StringBuilder buf;
+
+        FakeHttpChunkedResponse(StringBuilder buf) {
+            this.buf = buf;
+        }
+
+        @Override
+        public void bookmark() {
+        }
+
+        @Override
+        public void done() throws PeerDisconnectedException, PeerIsSlowToReadException {
+        }
+
+        @Override
+        public HttpResponseHeader headers() {
+            return null;
+        }
+
+        @Override
+        public @NotNull FakeHttpChunkedResponse put(byte b) {
+            buf.append((char) (b & 0xFF));
+            return this;
+        }
+
+        @Override
+        public @NotNull FakeHttpChunkedResponse put(@Nullable Utf8Sequence us) {
+            if (us != null) {
+                buf.append(us.toString());
+            }
+            return this;
+        }
+
+        @Override
+        public @NotNull FakeHttpChunkedResponse putNonAscii(long lo, long hi) {
+            // not needed in tests; all strings in JSON output are ASCII
+            return this;
+        }
+
+        @Override
+        public boolean resetToBookmark() {
+            return false;
+        }
+
+        @Override
+        public void sendChunk(boolean done) throws PeerDisconnectedException, PeerIsSlowToReadException {
+        }
+
+        @Override
+        public void sendHeader() throws PeerDisconnectedException, PeerIsSlowToReadException {
+        }
+
+        @Override
+        public void shutdownWrite() {
+        }
+
+        @Override
+        public void status(int status, CharSequence contentType) {
+        }
+
+        @Override
+        public int writeBytes(long srcAddr, int len) {
+            return len;
+        }
+    }
+}

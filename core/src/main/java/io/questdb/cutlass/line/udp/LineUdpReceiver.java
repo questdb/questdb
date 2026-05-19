@@ -29,6 +29,8 @@ import io.questdb.mp.WorkerPool;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
 
+import java.util.concurrent.atomic.AtomicBoolean;
+
 public class LineUdpReceiver extends AbstractLineProtoUdpReceiver {
     private final int bufLen;
     private long buf;
@@ -38,7 +40,16 @@ public class LineUdpReceiver extends AbstractLineProtoUdpReceiver {
             CairoEngine engine,
             WorkerPool workerPool
     ) {
-        super(configuration, engine, workerPool);
+        this(configuration, engine, workerPool, new AtomicBoolean(true));
+    }
+
+    public LineUdpReceiver(
+            LineUdpReceiverConfiguration configuration,
+            CairoEngine engine,
+            WorkerPool workerPool,
+            AtomicBoolean acceptOpen
+    ) {
+        super(configuration, engine, workerPool, acceptOpen);
         this.buf = Unsafe.malloc(this.bufLen = configuration.getMsgBufferSize(), MemoryTag.NATIVE_ILP_RSS);
         start();
     }

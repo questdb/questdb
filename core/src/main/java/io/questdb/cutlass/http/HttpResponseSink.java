@@ -880,6 +880,10 @@ public class HttpResponseSink implements Closeable, Mutable {
 
     static {
         httpStatusMap.put(HTTP_OK, new Utf8String("OK"));
+        // HTTP_ACCEPTED (202) - SwitchProcessor returns this on POST /lifecycle/switch
+        // to indicate the role-switch task has been queued on the orchestrator. The
+        // coordinator polls GET /lifecycle for terminal state (Phase 6 D6-01).
+        httpStatusMap.put(HTTP_ACCEPTED, new Utf8String("Accepted"));
         httpStatusMap.put(HTTP_NO_CONTENT, new Utf8String("OK"));
         httpStatusMap.put(HTTP_PARTIAL, new Utf8String("Partial content"));
         httpStatusMap.put(HTTP_MOVED_PERM, new Utf8String("Moved Permanently"));

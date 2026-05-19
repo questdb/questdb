@@ -28,6 +28,8 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.mp.WorkerPool;
 import io.questdb.network.Net;
 
+import java.util.concurrent.atomic.AtomicBoolean;
+
 public class LinuxMMLineUdpReceiver extends AbstractLineProtoUdpReceiver {
     private final int msgCount;
     private long msgVec;
@@ -37,7 +39,16 @@ public class LinuxMMLineUdpReceiver extends AbstractLineProtoUdpReceiver {
             CairoEngine engine,
             WorkerPool workerPool
     ) {
-        super(configuration, engine, workerPool);
+        this(configuration, engine, workerPool, new AtomicBoolean(true));
+    }
+
+    public LinuxMMLineUdpReceiver(
+            LineUdpReceiverConfiguration configuration,
+            CairoEngine engine,
+            WorkerPool workerPool,
+            AtomicBoolean acceptOpen
+    ) {
+        super(configuration, engine, workerPool, acceptOpen);
         this.msgCount = configuration.getMsgCount();
         msgVec = nf.msgHeaders(configuration.getMsgBufferSize(), msgCount);
         start();

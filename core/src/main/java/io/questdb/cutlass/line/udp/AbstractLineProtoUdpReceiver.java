@@ -36,11 +36,14 @@ import io.questdb.std.Misc;
 import io.questdb.std.Os;
 import io.questdb.std.str.Path;
 
+import org.jetbrains.annotations.NotNull;
+
 import java.io.Closeable;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public abstract class AbstractLineProtoUdpReceiver extends SynchronizedJob implements Closeable {
     private static final Log LOG = LogFactory.getLog(AbstractLineProtoUdpReceiver.class);
+    protected final AtomicBoolean acceptOpen;
     protected final LineUdpLexer lexer;
     protected final NetworkFacade nf;
     protected final LineUdpParserImpl parser;
@@ -57,6 +60,16 @@ public abstract class AbstractLineProtoUdpReceiver extends SynchronizedJob imple
             CairoEngine engine,
             WorkerPool workerPool
     ) {
+        this(configuration, engine, workerPool, new AtomicBoolean(true));
+    }
+
+    public AbstractLineProtoUdpReceiver(
+            LineUdpReceiverConfiguration configuration,
+            CairoEngine engine,
+            WorkerPool workerPool,
+            AtomicBoolean acceptOpen
+    ) {
+        this.acceptOpen = acceptOpen;
         this.configuration = configuration;
         nf = configuration.getNetworkFacade();
         fd = nf.socketUdp();
@@ -91,6 +104,14 @@ public abstract class AbstractLineProtoUdpReceiver extends SynchronizedJob imple
             close();
             throw e;
         }
+    }
+
+    @Override
+    public boolean run(int workerId, @NotNull RunStatus runStatus) {
+        if (!acceptOpen.get()) {
+            return false;
+        }
+        return super.run(workerId, runStatus);
     }
 
     @Override

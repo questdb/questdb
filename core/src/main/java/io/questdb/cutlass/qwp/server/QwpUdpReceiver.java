@@ -39,6 +39,7 @@ import io.questdb.cutlass.qwp.protocol.QwpParseException;
 import io.questdb.cutlass.qwp.protocol.QwpTableBlockCursor;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.mp.Job;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.mp.SynchronizedJob;
 import io.questdb.mp.WorkerPool;
@@ -51,6 +52,7 @@ import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.MicrosecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.Path;
+import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
@@ -63,6 +65,7 @@ public class QwpUdpReceiver extends SynchronizedJob implements Closeable {
     protected static final int DATAGRAM_LEFT_UNCOMMITTED_ROWS = 1;
     protected static final int DATAGRAM_TRIGGERED_COMMIT = 2;
 
+    protected final AtomicBoolean acceptOpen;
     protected final int bufLen;
     protected final long commitInterval;
     protected final int maxUncommittedDatagrams;
@@ -95,6 +98,11 @@ public class QwpUdpReceiver extends SynchronizedJob implements Closeable {
     }
 
     public QwpUdpReceiver(QwpUdpReceiverConfiguration configuration, CairoEngine engine, @Nullable WorkerPool workerPool) {
+        this(configuration, engine, workerPool, new AtomicBoolean(true));
+    }
+
+    public QwpUdpReceiver(QwpUdpReceiverConfiguration configuration, CairoEngine engine, @Nullable WorkerPool workerPool, AtomicBoolean acceptOpen) {
+        this.acceptOpen = acceptOpen;
         this.configuration = configuration;
         this.nf = configuration.getNetworkFacade();
         this.bufLen = configuration.getMsgBufferSize();
@@ -246,6 +254,14 @@ public class QwpUdpReceiver extends SynchronizedJob implements Closeable {
     public long getTotalDroppedCount() {
         return droppedBadMagicCount + droppedBadVersionCount + droppedParseErrorCount
                 + droppedTooShortCount + droppedTruncatedCount;
+    }
+
+    @Override
+    public boolean run(int workerId, @NotNull RunStatus runStatus) {
+        if (!acceptOpen.get()) {
+            return false;
+        }
+        return super.run(workerId, runStatus);
     }
 
     @Override

@@ -175,7 +175,7 @@ public class CairoEngine implements Closeable, WriterSource {
     private final MatViewGraph matViewGraph;
     private final Queue<MatViewTimerTask> matViewTimerQueue;
     private final MessageBusImpl messageBus;
-    private final MetadataCache metadataCache;
+    private MetadataCache metadataCache;
     private final Metrics metrics;
     private final PartitionOverwriteControl partitionOverwriteControl = new PartitionOverwriteControl();
     private final QueryRegistry queryRegistry;
@@ -184,12 +184,12 @@ public class CairoEngine implements Closeable, WriterSource {
     private final SqlExecutionContext rootExecutionContext;
     private final TxnScoreboardPool scoreboardPool;
     private final SequencerMetadataPool sequencerMetadataPool;
-    private final SettingsStore settingsStore;
-    private final SqlCompilerPool sqlCompilerPool;
+    private SettingsStore settingsStore;
+    private SqlCompilerPool sqlCompilerPool;
     private final TableFlagResolver tableFlagResolver;
     private final IDGenerator tableIdGenerator;
     private final TableMetadataPool tableMetadataPool;
-    private final TableNameRegistry tableNameRegistry;
+    private TableNameRegistry tableNameRegistry;
     private final TableSequencerAPI tableSequencerAPI;
     private final ObjList<Telemetry<? extends AbstractTelemetryTask>> telemetries;
     private final Telemetry<TelemetryTask> telemetry;
@@ -203,6 +203,7 @@ public class CairoEngine implements Closeable, WriterSource {
     private final WalWriterPool walWriterPool;
     private final WriterPool writerPool;
     private volatile boolean closing;
+    private volatile boolean isCompleteInitDone;
     private @NotNull ConfigReloader configReloader = new ConfigReloader() {
         @Override
         public boolean reload() {
@@ -234,7 +235,27 @@ public class CairoEngine implements Closeable, WriterSource {
         this(configuration, new QdbrWalLocker());
     }
 
+    public CairoEngine(CairoConfiguration configuration, boolean completeInit) {
+        this(configuration, new QdbrWalLocker(), completeInit);
+    }
+
     public CairoEngine(CairoConfiguration configuration, @NotNull WalLocker walLocker) {
+        this(configuration, walLocker, true);
+    }
+
+    /**
+     * Three-argument constructor that holds the substantive initialization body.
+     * <p>
+     * When {@code completeInit} is {@code false}, construction stops after
+     * {@link DataID#open(CairoConfiguration)} -- the fields
+     * {@code tableNameRegistry}, {@code metadataCache}, {@code sqlCompilerPool},
+     * and {@code settingsStore} are {@code null}. The caller MUST invoke
+     * {@link #completeInit()} before using those fields.
+     * <p>
+     * The back-compat one-arg and two-arg constructors delegate here with
+     * {@code completeInit=true} so all existing call sites are unaffected.
+     */
+    public CairoEngine(CairoConfiguration configuration, @NotNull WalLocker walLocker, boolean completeInit) {
         try {
             this.walLocker = walLocker;
             this.ffCache = new FunctionFactoryCache(configuration, getFunctionFactories());
@@ -272,32 +293,9 @@ public class CairoEngine implements Closeable, WriterSource {
             this.frameFactory = new FrameFactory(configuration);
             this.dataID = DataID.open(configuration);
 
-            // IMPORTANT: Do not reorder statements!
-            // The backup recovery process needs the `dataID` (since it will set it),
-            // but it's important that's not initialized yet.
-            // The `recoverBackup()` logic also needs to run before any table registry loading.
-            restoreBackup();
-
-            initDataID();
-
-            settingsStore = new SettingsStore(configuration);
-
-            tableIdGenerator.open();
-            checkpointRecover();
-
-            // Initialize settings store after checkpoint recovery so it reads the restored file
-            settingsStore.init();
-
-            // Migrate database files.
-            EngineMigration.migrateEngineTo(this, ColumnType.VERSION, ColumnType.MIGRATION_VERSION, false);
-            tableNameRegistry = createTableNameRegistry(configuration, tableFlagResolver);
-            tableNameRegistry.reload();
-
-            this.sqlCompilerPool = new SqlCompilerPool(this);
-            if (configuration.isPartitionO3OverwriteControlEnabled()) {
-                enablePartitionOverwriteControl();
+            if (completeInit) {
+                completeInit();
             }
-            this.metadataCache = new MetadataCache(this);
         } catch (Throwable th) {
             close();
             throw th;
@@ -608,6 +606,41 @@ public class CairoEngine implements Closeable, WriterSource {
     @TestOnly
     public void closeNameRegistry() {
         tableNameRegistry.close();
+    }
+
+    /**
+     * Runs the post-restore engine initialization that historically lived inside the constructor
+     * (body was at CairoEngine.java:281-300 prior to Phase 3 Plan A). MUST be called after
+     * BackupRestoreEnvelope.start() reaches READY when the orchestrator boots the engine envelope.
+     * Ordering is now enforced by the lifecycle DAG (engine.hardDeps includes "backup-restore"),
+     * not by sequential statement ordering as it used to be inside the constructor.
+     * <p>
+     * Calling twice on the same instance has undefined behavior -- fields like tableNameRegistry
+     * and metadataCache would be re-assigned, leaking the previous instances. Production code
+     * (the orchestrator EngineEnvelope.start() and the back-compat constructors) invoke it
+     * exactly once.
+     */
+    public void completeInit() {
+        initDataID();
+        settingsStore = new SettingsStore(configuration);
+        tableIdGenerator.open();
+        checkpointRecover();
+        // Initialize settings store after checkpoint recovery so it reads the restored file
+        settingsStore.init();
+        // Migrate database files.
+        EngineMigration.migrateEngineTo(this, ColumnType.VERSION, ColumnType.MIGRATION_VERSION, false);
+        tableNameRegistry = createTableNameRegistry(configuration, tableFlagResolver);
+        tableNameRegistry.reload();
+        this.sqlCompilerPool = new SqlCompilerPool(this);
+        if (configuration.isPartitionO3OverwriteControlEnabled()) {
+            enablePartitionOverwriteControl();
+        }
+        this.metadataCache = new MetadataCache(this);
+        this.isCompleteInitDone = true;
+    }
+
+    public boolean isCompleteInitDone() {
+        return isCompleteInitDone;
     }
 
     public void configureThreadLocalReaderPoolSupervisor(@NotNull ResourcePoolSupervisor<ReaderPool.R> supervisor) {
@@ -1034,6 +1067,10 @@ public class CairoEngine implements Closeable, WriterSource {
         return SqlCompilerFactoryImpl.INSTANCE;
     }
 
+    public SqlCompilerPool getSqlCompilerPool() {
+        return sqlCompilerPool;
+    }
+
     public TableFlagResolver getTableFlagResolver() {
         return tableFlagResolver;
     }
@@ -1086,6 +1123,10 @@ public class CairoEngine implements Closeable, WriterSource {
         TableMetadata metadata = tableMetadataPool.get(tableToken);
         validateDesiredMetadataVersion(tableToken, metadata, desiredVersion);
         return metadata;
+    }
+
+    public TableNameRegistry getTableNameRegistry() {
+        return tableNameRegistry;
     }
 
     public TableSequencerAPI getTableSequencerAPI() {
@@ -2360,7 +2401,5 @@ public class CairoEngine implements Closeable, WriterSource {
         return new TableFlagResolverImpl(configuration.getSystemTableNamePrefix().toString());
     }
 
-    protected void restoreBackup() {
-        // Hook for backup functionality. See enterprise subclass.
-    }
 }
+
