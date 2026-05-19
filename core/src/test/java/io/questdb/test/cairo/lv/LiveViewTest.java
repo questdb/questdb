@@ -297,18 +297,18 @@ public class LiveViewTest extends AbstractCairoTest {
 
     @Test
     public void testRejectNonSnapshotCapableWindowFunction() throws Exception {
-        // nth_value()'s ZERO_PASS variants pass the incremental-refresh gate but do
-        // not implement the snapshot/restore contract. Pre-fix, the LV CREATE
-        // succeeded and the refresh worker silently skipped every checkpoint write,
-        // routing each restart and every O3 through a full head-miss replay from
-        // viewLowerBoundTimestamp. The reject surfaces the unsupported function by
-        // name so the operator can swap it out or wait for the migration.
+        // nth_value()'s anchored unbounded variant is snapshot-capable as of the
+        // OverUnboundedPartitionFrameFunction migration. The bounded ROWS variant
+        // (OverPartitionRowsFrameFunction) is not yet migrated and still trips
+        // the snapshot-capable gate — keep the asserted-wording check pinned
+        // against a known-unsupported variant so future migrations either remove
+        // this test or repoint it at the next unsupported variant.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (val LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR WAL");
             try {
                 execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
-                        "SELECT val, ts, nth_value(val, 1) OVER w AS first FROM base " +
-                        "WINDOW w AS (PARTITION BY val ORDER BY ts ANCHOR DAILY '00:00')");
+                        "SELECT val, ts, nth_value(val, 3) OVER w AS third FROM base " +
+                        "WINDOW w AS (PARTITION BY val ORDER BY ts ROWS BETWEEN 5 PRECEDING AND CURRENT ROW)");
                 Assert.fail("expected SqlException for non-snapshot-capable window function");
             } catch (SqlException e) {
                 Assert.assertTrue(
