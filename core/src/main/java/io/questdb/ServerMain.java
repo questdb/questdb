@@ -593,8 +593,8 @@ public class ServerMain implements Closeable {
 
     /**
      * Factory hook for binding additional handlers on the min-http server. Default no-op;
-     * enterprise overrides to bind {@code POST /lifecycle/switch} via SwitchProcessor on the
-     * same min-http listening socket.
+     * subclasses override to bind extra handlers (for example, downstream may register
+     * additional endpoints) on the same min-http listening socket.
      */
     protected void bindAdditionalMinHttpHandlers(
             io.questdb.cutlass.http.HttpServer server,

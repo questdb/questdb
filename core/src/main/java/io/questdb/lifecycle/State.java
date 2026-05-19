@@ -10,7 +10,8 @@ package io.questdb.lifecycle;
  * <p>
  * Valid transitions are enforced inside {@link LifecycleContext#publish(State)}.
  * FAILED is reachable from any non-terminal state. STOPPED is reachable only
- * from STOPPING. SWITCHING is published only by LifecycleOrchestrator.switchRole.
+ * from STOPPING. SWITCHING is reserved for reconfiguration cycles driven by
+ * subclasses.
  */
 public enum State {
     INIT,
