@@ -3,7 +3,6 @@ package io.questdb.test.lifecycle.envelopes;
 import io.questdb.PropertyKey;
 import io.questdb.ServerMain;
 import io.questdb.lifecycle.Component;
-import io.questdb.lifecycle.Role;
 import io.questdb.lifecycle.State;
 import io.questdb.test.AbstractBootstrapTest;
 import io.questdb.test.lifecycle.LifecycleTestHarness;
@@ -60,7 +59,7 @@ public class ProtocolEnvelopeEngineReadyRaceTest extends AbstractBootstrapTest {
     public void ilpTcpReachesReadyWhenEnginePublishesReadySynchronously() throws Exception {
         try (final ServerMain server = new ServerMain(getServerMainArgs())) {
             server.testInitForEnvelopeTests();
-            try (LifecycleTestHarness h = new LifecycleTestHarness(Role.PRIMARY)) {
+            try (LifecycleTestHarness h = new LifecycleTestHarness()) {
                 h.register(new SynchronousReadyEngine());
                 h.registerFakeReady("worker-pool-manager", "engine");
                 h.register(server.testNewIlpTcpEnvelope());
@@ -74,7 +73,7 @@ public class ProtocolEnvelopeEngineReadyRaceTest extends AbstractBootstrapTest {
     public void pgWireReachesReadyWhenEnginePublishesReadySynchronously() throws Exception {
         try (final ServerMain server = new ServerMain(getServerMainArgs())) {
             server.testInitForEnvelopeTests();
-            try (LifecycleTestHarness h = new LifecycleTestHarness(Role.PRIMARY)) {
+            try (LifecycleTestHarness h = new LifecycleTestHarness()) {
                 h.register(new SynchronousReadyEngine());
                 h.registerFakeReady("worker-pool-manager", "engine");
                 h.register(server.testNewPgWireEnvelope());
@@ -88,7 +87,7 @@ public class ProtocolEnvelopeEngineReadyRaceTest extends AbstractBootstrapTest {
     public void qwipReachesReadyWhenEnginePublishesReadySynchronously() throws Exception {
         try (final ServerMain server = new ServerMain(getServerMainArgs())) {
             server.testInitForEnvelopeTests();
-            try (LifecycleTestHarness h = new LifecycleTestHarness(Role.PRIMARY)) {
+            try (LifecycleTestHarness h = new LifecycleTestHarness()) {
                 h.register(new SynchronousReadyEngine());
                 h.registerFakeReady("worker-pool-manager", "engine");
                 final Component qwip = server.testNewQwipEnvelope();
@@ -106,7 +105,7 @@ public class ProtocolEnvelopeEngineReadyRaceTest extends AbstractBootstrapTest {
     public void webHttpReachesReadyWhenEnginePublishesReadySynchronously() throws Exception {
         try (final ServerMain server = new ServerMain(getServerMainArgs())) {
             server.testInitForEnvelopeTests();
-            try (LifecycleTestHarness h = new LifecycleTestHarness(Role.PRIMARY)) {
+            try (LifecycleTestHarness h = new LifecycleTestHarness()) {
                 h.register(new SynchronousReadyEngine());
                 h.registerFakeReady("worker-pool-manager", "engine");
                 // web-http hard-deps on pg-wire (RESEARCH Section 6: FlushQueryCacheJob needs the

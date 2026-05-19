@@ -2,7 +2,6 @@ package io.questdb.test.lifecycle.envelopes;
 
 import io.questdb.lifecycle.Component;
 import io.questdb.lifecycle.LifecycleContext;
-import io.questdb.lifecycle.Role;
 import io.questdb.lifecycle.State;
 import io.questdb.std.ObjList;
 import io.questdb.test.lifecycle.LifecycleTestHarness;
@@ -68,19 +67,12 @@ public class WebHttpEnvelopeTest {
 
             @Override
             public void stop() {}
-
-            @Override
-            public void switchRole(LifecycleContext ctx, Role newRole) {
-                // D4-08 NO-OP
-                ctx.publish(State.SWITCHING);
-                ctx.publish(State.READY);
-            }
         };
     }
 
     @Test
     public void testStartsToReadyViaOnDependencyState() {
-        try (LifecycleTestHarness h = new LifecycleTestHarness(Role.PRIMARY)) {
+        try (LifecycleTestHarness h = new LifecycleTestHarness()) {
             h.registerFakeReady("factory-provider");
             ProbeComponent engineFake = new ProbeComponent("engine", new ObjList<>(), new ObjList<>());
             engineFake.holdInDegraded();
@@ -93,26 +85,6 @@ public class WebHttpEnvelopeTest {
             engineFake.advanceTo(State.READY);
             h.awaitState("web-http", State.READY, 5_000L);
             h.assertState("web-http", State.READY);
-        }
-    }
-
-    @Test
-    public void testNoOpSwitchRolePublishesSwitchingThenReady() {
-        try (LifecycleTestHarness h = new LifecycleTestHarness(Role.PRIMARY)) {
-            h.registerFakeReady("factory-provider");
-            ProbeComponent engineFake = new ProbeComponent("engine", new ObjList<>(), new ObjList<>());
-            engineFake.holdInDegraded();
-            h.register(engineFake);
-            h.registerFakeReady("worker-pool-manager", "engine");
-            h.registerFakeReady("pg-wire", "worker-pool-manager");
-            h.register(newWebHttpShapedComponent());
-            h.start();
-            engineFake.advanceTo(State.READY);
-            h.awaitState("web-http", State.READY, 5_000L);
-            h.switchRole(Role.REPLICA);
-            Assert.assertEquals("web-http must reach READY after switchRole(REPLICA)", State.READY, h.stateOf("web-http"));
-            h.switchRole(Role.PRIMARY);
-            Assert.assertEquals("web-http must reach READY after switchRole(PRIMARY)", State.READY, h.stateOf("web-http"));
         }
     }
 

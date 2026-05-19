@@ -4,9 +4,8 @@ import io.questdb.lifecycle.LifecycleContext;
 import io.questdb.lifecycle.LifecycleOrchestrator;
 import io.questdb.lifecycle.LifecycleSnapshot;
 import io.questdb.lifecycle.LifecycleStartupException;
-import io.questdb.lifecycle.Role;
+import io.questdb.lifecycle.ProgressEvent;
 import io.questdb.lifecycle.State;
-import io.questdb.lifecycle.SwitchInFlightException;
 import io.questdb.std.ObjList;
 import io.questdb.test.lifecycle.fakes.BarrierComponent;
 import io.questdb.test.lifecycle.fakes.CapturingLog;
@@ -18,10 +17,7 @@ import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.Timeout;
 
-import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
 public class LifecycleOrchestratorTest {
@@ -31,7 +27,7 @@ public class LifecycleOrchestratorTest {
 
     @Test
     public void testEnvelopeExtraDepsInjection() {
-        // B6 fix -- verify polymorphic dispatch through workerPoolManagerExtraHardDeps()-style hook.
+        // Verify polymorphic dispatch through workerPoolManagerExtraHardDeps()-style hook.
         // We model it abstractly here: an "envelope" component whose hardDeps are concatenated from
         // a base list ["base"] + an extra list supplied by an overridden hook. The override is on
         // a subclass; the polymorphic call must invoke the subclass override even though construction
@@ -84,8 +80,6 @@ public class LifecycleOrchestratorTest {
 
     @Test
     public void testFailureCascadeHardDeps() {
-        // WR-02: close() in finally so the orchestrator's ThreadPoolExecutor + SynchronousQueue
-        // are released even on the validation-failure path.
         LifecycleOrchestrator orch = newOrchestrator();
         try {
             ThrowingComponent a = new ThrowingComponent("a", () -> new RuntimeException("a-boom"));
@@ -113,13 +107,13 @@ public class LifecycleOrchestratorTest {
 
     @Test
     public void testInFlightStartNotInterrupted() throws Exception {
-        // WR-06: the runner thread blocks inside BarrierComponent.start() until releaseBarrier()
+        // The runner thread blocks inside BarrierComponent.start() until releaseBarrier()
         // is called. If the STARTING-state assertion below were to fail (or any unexpected throw),
         // the runner would leak until JUnit's 30s @Rule Timeout fires. Wrap in try/finally so
         // releaseBarrier() + runner.join() + orch.close() always run.
-        // WR-07: replace Thread.sleep(100) with BarrierComponent.awaitEntered(). The entered latch
-        // flips before start()'s blocking await, so a successful awaitEntered() guarantees the
-        // runner has actually reached the barrier and the orchestrator has published STARTING.
+        // The entered latch flips before start()'s blocking await, so a successful awaitEntered()
+        // guarantees the runner has actually reached the barrier and the orchestrator has
+        // published STARTING.
         LifecycleOrchestrator orch = newOrchestrator();
         BarrierComponent x = new BarrierComponent("x");
         orch.register(x);
@@ -210,8 +204,6 @@ public class LifecycleOrchestratorTest {
 
     @Test
     public void testRejectsUnknownDependency() {
-        // WR-02: close() in finally so the orchestrator's ThreadPoolExecutor + SynchronousQueue
-        // are released even on the validation-failure path.
         LifecycleOrchestrator orch = newOrchestrator();
         try {
             ProbeComponent a = new ProbeComponent("a", listOf("nonexistent"), new ObjList<>());
@@ -228,8 +220,23 @@ public class LifecycleOrchestratorTest {
     }
 
     @Test
+    public void testReverseTopologicalShutdown() {
+        LifecycleOrchestrator orch = newOrchestrator();
+        ProbeComponent a = new ProbeComponent("a");
+        ProbeComponent b = new ProbeComponent("b", listOf("a"), new ObjList<>());
+        ProbeComponent c = new ProbeComponent("c", listOf("b"), new ObjList<>());
+        orch.register(a);
+        orch.register(b);
+        orch.register(c);
+        orch.run();
+        orch.close();
+        Assert.assertTrue(c.getStopSeq() < b.getStopSeq());
+        Assert.assertTrue(b.getStopSeq() < a.getStopSeq());
+    }
+
+    @Test
     public void testRunIsRetryableAfterValidationFailure() {
-        // WR-05: a validation failure (unknown dep) must NOT lock the orchestrator into a
+        // A validation failure (unknown dep) must NOT lock the orchestrator into a
         // permanent "run may only be called once" state. After fixing the registry, run()
         // should proceed normally on the retry.
         LifecycleOrchestrator orch = newOrchestrator();
@@ -250,21 +257,6 @@ public class LifecycleOrchestratorTest {
         } finally {
             orch.close();
         }
-    }
-
-    @Test
-    public void testReverseTopologicalShutdown() {
-        LifecycleOrchestrator orch = newOrchestrator();
-        ProbeComponent a = new ProbeComponent("a");
-        ProbeComponent b = new ProbeComponent("b", listOf("a"), new ObjList<>());
-        ProbeComponent c = new ProbeComponent("c", listOf("b"), new ObjList<>());
-        orch.register(a);
-        orch.register(b);
-        orch.register(c);
-        orch.run();
-        orch.close();
-        Assert.assertTrue(c.getStopSeq() < b.getStopSeq());
-        Assert.assertTrue(b.getStopSeq() < a.getStopSeq());
     }
 
     @Test
@@ -318,264 +310,9 @@ public class LifecycleOrchestratorTest {
     }
 
     @Test
-    public void testSubmitSwitchCASSerialization() throws Exception {
-        // D6-04: a second submitSwitch while the first is in flight throws SwitchInFlightException
-        // with currentRole + targetRole reflecting the live orchestrator state.
-        LifecycleOrchestrator orch = newOrchestrator();
-        CountDownLatch firstSwitchEntered = new CountDownLatch(1);
-        CountDownLatch firstSwitchRelease = new CountDownLatch(1);
-        ProbeComponent blocking = new ProbeComponent("a") {
-            @Override
-            public void switchRole(LifecycleContext ctx, Role newRole) {
-                firstSwitchEntered.countDown();
-                try {
-                    firstSwitchRelease.await();
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                }
-            }
-        };
-        orch.register(blocking);
-        orch.run();
-        try {
-            orch.submitSwitch(Role.REPLICA);
-            Assert.assertTrue("first switch did not enter within 5s", firstSwitchEntered.await(5, TimeUnit.SECONDS));
-            try {
-                orch.submitSwitch(Role.PRIMARY);
-                Assert.fail("expected SwitchInFlightException");
-            } catch (SwitchInFlightException expected) {
-                // WR-03: role.set(newRole) now runs AFTER the cascade completes, so the
-                // orchestrator's currentRole during an in-flight switch is the OLD role.
-                // The first submitSwitch(REPLICA) entered switchRole but is blocked before the
-                // cascade returns, so role.get() still reports the boot-time PRIMARY.
-                Assert.assertEquals(Role.PRIMARY, expected.currentRole());
-                Assert.assertEquals(Role.PRIMARY, expected.targetRole());
-            }
-            firstSwitchRelease.countDown();
-            // Wait for the in-flight flag to clear.
-            long deadline = System.currentTimeMillis() + 5_000L;
-            while (orch.isSwitchInFlight() && System.currentTimeMillis() < deadline) {
-                Thread.sleep(10);
-            }
-            Assert.assertFalse("switchInFlight did not clear after first switch", orch.isSwitchInFlight());
-            // A third submitSwitch succeeds.
-            orch.submitSwitch(Role.PRIMARY);
-            deadline = System.currentTimeMillis() + 5_000L;
-            while (orch.isSwitchInFlight() && System.currentTimeMillis() < deadline) {
-                Thread.sleep(10);
-            }
-            Assert.assertFalse(orch.isSwitchInFlight());
-            Assert.assertEquals(Role.PRIMARY, orch.currentRole());
-        } finally {
-            // Ensure the blocking switch is released so close() can shut down the executor cleanly.
-            firstSwitchRelease.countDown();
-            orch.close();
-        }
-    }
-
-    @Test
-    public void testSubmitSwitchClearsFlagOnFailure() throws Exception {
-        // D6-06: when switchRole throws, the executor's UncaughtExceptionHandler fires
-        // System.exit(55) via exitOnSwitchFailure(). The finally block in submitSwitch's lambda
-        // clears switchInFlight BEFORE the exception escapes to the UEH. Use the package-private
-        // exitOnSwitchFailure() seam to capture the exit code without terminating the JVM.
-        AtomicInteger capturedExit = new AtomicInteger(-1);
-        CountDownLatch exitCalled = new CountDownLatch(1);
-        LifecycleOrchestrator orch = new LifecycleOrchestrator(Role.PRIMARY, null, null, null) {
-            @Override
-            protected void closeLogAndExit(int code) {
-                capturedExit.set(code);
-                exitCalled.countDown();
-            }
-        };
-        try {
-            ProbeComponent throwingOnSwitch = new ProbeComponent("a") {
-                @Override
-                public void switchRole(LifecycleContext ctx, Role newRole) {
-                    throw new RuntimeException("simulated switch failure");
-                }
-            };
-            orch.register(throwingOnSwitch);
-            orch.run();
-            orch.submitSwitch(Role.REPLICA);
-            // Wait for the UEH to fire.
-            Assert.assertTrue("exit hook did not fire within 5s", exitCalled.await(5, TimeUnit.SECONDS));
-            Assert.assertEquals(55, capturedExit.get());
-            Assert.assertFalse("switchInFlight must clear before exit hook fires", orch.isSwitchInFlight());
-        } finally {
-            // close() was already invoked by the UEH; call again is a no-op (closed CAS guard).
-            orch.close();
-        }
-    }
-
-    @Test
-    public void testSubmitSwitchClearsFlagOnSuccess() throws Exception {
-        LifecycleOrchestrator orch = newOrchestrator();
-        try {
-            ProbeComponent a = new ProbeComponent("a");
-            orch.register(a);
-            orch.run();
-            orch.submitSwitch(Role.REPLICA);
-            long deadline = System.currentTimeMillis() + 5_000L;
-            while (orch.isSwitchInFlight() && System.currentTimeMillis() < deadline) {
-                Thread.sleep(10);
-            }
-            Assert.assertFalse(orch.isSwitchInFlight());
-            Assert.assertEquals(Role.REPLICA, orch.currentRole());
-            orch.submitSwitch(Role.PRIMARY);
-            deadline = System.currentTimeMillis() + 5_000L;
-            while (orch.isSwitchInFlight() && System.currentTimeMillis() < deadline) {
-                Thread.sleep(10);
-            }
-            Assert.assertFalse(orch.isSwitchInFlight());
-            Assert.assertEquals(Role.PRIMARY, orch.currentRole());
-        } finally {
-            orch.close();
-        }
-    }
-
-    @Test
-    public void testSubmitSwitchExecutorRunsTask() throws Exception {
-        LifecycleOrchestrator orch = newOrchestrator();
-        try {
-            AtomicReference<String> threadName = new AtomicReference<>();
-            CountDownLatch ran = new CountDownLatch(1);
-            ProbeComponent capture = new ProbeComponent("a") {
-                @Override
-                public void switchRole(LifecycleContext ctx, Role newRole) {
-                    threadName.set(Thread.currentThread().getName());
-                    ran.countDown();
-                }
-            };
-            orch.register(capture);
-            orch.run();
-            orch.submitSwitch(Role.REPLICA);
-            Assert.assertTrue("switch task did not run within 5s", ran.await(5, TimeUnit.SECONDS));
-            String name = threadName.get();
-            Assert.assertNotNull(name);
-            Assert.assertTrue("expected lifecycle-N thread name, got " + name, name.matches("lifecycle-\\d+"));
-        } finally {
-            orch.close();
-        }
-    }
-
-    @Test
-    public void testSwitchRoleCascadeFailedThroughHardDeps() {
-        // D6-06: on switchRole failure, FAILED cascades to hard-dependents BEFORE the exception
-        // propagates. The throw still happens; the cascade is a side effect.
-        LifecycleOrchestrator orch = newOrchestrator();
-        try {
-            ProbeComponent a = new ProbeComponent("a");
-            ProbeComponent b = new ProbeComponent("b", listOf("a"), new ObjList<>()) {
-                @Override
-                public void switchRole(LifecycleContext ctx, Role newRole) {
-                    throw new RuntimeException("b-switch-boom");
-                }
-            };
-            ProbeComponent c = new ProbeComponent("c", listOf("b"), new ObjList<>());
-            orch.register(a);
-            orch.register(b);
-            orch.register(c);
-            orch.run();
-            try {
-                orch.switchRole(Role.REPLICA);
-                Assert.fail("expected LifecycleStartupException");
-            } catch (LifecycleStartupException expected) {
-                TestUtils.assertContains(expected.getMessage(), "switch failed at component b");
-            }
-            Assert.assertEquals(State.FAILED, orch.stateOf("b"));
-            // c hard-deps on b -- cascade marked it FAILED before the throw propagated.
-            Assert.assertEquals(State.FAILED, orch.stateOf("c"));
-        } finally {
-            orch.close();
-        }
-    }
-
-    @Test
-    public void testSwitchRoleDefaultStopStart() {
-        LifecycleOrchestrator orch = newOrchestrator();
-        ProbeComponent a = new ProbeComponent("a");
-        orch.register(a);
-        orch.run();
-        long startBefore = a.getStartSeq();
-        orch.switchRole(Role.REPLICA);
-        // Default switchRole = stop(); start(ctx).
-        Assert.assertTrue("stop seq must be after initial start", a.getStopSeq() > startBefore);
-        // B5 fix: orchestrator auto-publishes READY after dispatch.
-        Assert.assertEquals(State.READY, orch.stateOf("a"));
-        orch.close();
-    }
-
-    @Test
-    public void testSwitchRoleDispatchOrder() {
-        LifecycleOrchestrator orch = newOrchestrator();
-        ProbeComponent a = new ProbeComponent("a");
-        ProbeComponent b = new ProbeComponent("b", listOf("a"), new ObjList<>());
-        ProbeComponent c = new ProbeComponent("c", listOf("b"), new ObjList<>());
-        orch.register(a);
-        orch.register(b);
-        orch.register(c);
-        orch.run();
-        orch.switchRole(Role.REPLICA);
-        // Dispatch order: a's stop < b's stop < c's stop (topo order).
-        Assert.assertTrue(a.getStopSeq() < b.getStopSeq());
-        Assert.assertTrue(b.getStopSeq() < c.getStopSeq());
-        // B5 fix: orchestrator auto-publishes READY after each component's switchRole returns,
-        // mirroring the auto-publish-after-start pattern.
-        Assert.assertEquals(State.READY, orch.stateOf("a"));
-        Assert.assertEquals(State.READY, orch.stateOf("b"));
-        Assert.assertEquals(State.READY, orch.stateOf("c"));
-        orch.close();
-    }
-
-    @Test
-    public void testSwitchRoleFailFastThrowsOnFirstThrow() {
-        // D6-06: on the first throw from c.switchRole, orchestrator publishes FAILED on the
-        // offending component, cascades through hard-deps, throws LifecycleStartupException.
-        // Subsequent components in topoOrder are NOT invoked.
-        LifecycleOrchestrator orch = newOrchestrator();
-        try {
-            ProbeComponent a = new ProbeComponent("a");
-            AtomicBoolean bSwitchInvoked = new AtomicBoolean(false);
-            ProbeComponent b = new ProbeComponent("b", listOf("a"), new ObjList<>()) {
-                @Override
-                public void switchRole(LifecycleContext ctx, Role newRole) {
-                    bSwitchInvoked.set(true);
-                    throw new RuntimeException("b-switch-boom");
-                }
-            };
-            AtomicBoolean cSwitchInvoked = new AtomicBoolean(false);
-            ProbeComponent c = new ProbeComponent("c", listOf("b"), new ObjList<>()) {
-                @Override
-                public void switchRole(LifecycleContext ctx, Role newRole) {
-                    cSwitchInvoked.set(true);
-                    super.switchRole(ctx, newRole);
-                }
-            };
-            orch.register(a);
-            orch.register(b);
-            orch.register(c);
-            orch.run();
-            try {
-                orch.switchRole(Role.REPLICA);
-                Assert.fail("expected LifecycleStartupException");
-            } catch (LifecycleStartupException expected) {
-                TestUtils.assertContains(expected.getMessage(), "switch failed at component b");
-            }
-            Assert.assertTrue("b.switchRole must have been invoked", bSwitchInvoked.get());
-            Assert.assertFalse("c.switchRole must NOT have been invoked (fail-fast)", cSwitchInvoked.get());
-            Assert.assertEquals(State.FAILED, orch.stateOf("b"));
-            // c was cascaded to FAILED via hard-dep BFS, not via its own switchRole.
-            Assert.assertEquals(State.FAILED, orch.stateOf("c"));
-        } finally {
-            orch.close();
-        }
-    }
-
-    @Test
     public void testTransitionLogShape() {
         CapturingLog capture = new CapturingLog();
-        LifecycleOrchestrator orch = new LifecycleOrchestrator(Role.PRIMARY, capture, null, null);
+        LifecycleOrchestrator orch = new LifecycleOrchestrator(capture, null, null);
         ProbeComponent a = new ProbeComponent("a");
         orch.register(a);
         orch.run();
@@ -587,7 +324,7 @@ public class LifecycleOrchestratorTest {
         TestUtils.assertContains(text, " since=");
         // FAILED transition includes reason.
         capture.sink.clear();
-        LifecycleOrchestrator orch2 = new LifecycleOrchestrator(Role.PRIMARY, capture, null, null);
+        LifecycleOrchestrator orch2 = new LifecycleOrchestrator(capture, null, null);
         ThrowingComponent t = new ThrowingComponent("t", () -> new RuntimeException("kaboom"));
         orch2.register(t);
         try {
@@ -602,11 +339,11 @@ public class LifecycleOrchestratorTest {
 
     @Test
     public void testValidateBeforeRunningFlag() {
-        // B3 fix -- orchestrator validates the DAG BEFORE flipping running=true.
+        // Orchestrator validates the DAG BEFORE flipping running=true.
         // A cycle in the registered components must throw LifecycleStartupException
         // from run(). After that throw, register() is closed off (single-shot lifecycle),
         // and close() must run cleanly without NPE on reverseTopoOrder.
-        LifecycleOrchestrator orch = new LifecycleOrchestrator(Role.PRIMARY, null, null, null);
+        LifecycleOrchestrator orch = new LifecycleOrchestrator(null, null, null);
         ProbeComponent a = new ProbeComponent("a", listOf("b"), new ObjList<>());
         ProbeComponent b = new ProbeComponent("b", listOf("a"), new ObjList<>());
         orch.register(a);
@@ -624,7 +361,7 @@ public class LifecycleOrchestratorTest {
         orch.close();
 
         // A fresh orchestrator with a valid DAG works after the failed one was closed.
-        LifecycleOrchestrator fresh = new LifecycleOrchestrator(Role.PRIMARY, null, null, null);
+        LifecycleOrchestrator fresh = new LifecycleOrchestrator(null, null, null);
         ProbeComponent c = new ProbeComponent("c");
         fresh.register(c);
         fresh.run();
@@ -634,8 +371,6 @@ public class LifecycleOrchestratorTest {
 
     @Test
     public void testValidatesDagAcyclic() {
-        // WR-02: close() in finally so the orchestrator's ThreadPoolExecutor + SynchronousQueue
-        // are released even on the validation-failure path.
         LifecycleOrchestrator orch = newOrchestrator();
         try {
             ProbeComponent a = new ProbeComponent("a", listOf("b"), new ObjList<>());
@@ -679,12 +414,15 @@ public class LifecycleOrchestratorTest {
     }
 
     private static ObjList<String> listOf(String... names) {
-        ObjList<String> l = new ObjList<>();
-        for (String n : names) l.add(n);
-        return l;
+        ObjList<String> out = new ObjList<>();
+        for (String n : names) out.add(n);
+        return out;
     }
 
     private static LifecycleOrchestrator newOrchestrator() {
-        return new LifecycleOrchestrator(Role.PRIMARY, null, null, null);
+        return new LifecycleOrchestrator(null, null, null);
+    }
+
+    record TestProgressEvent(String tag) implements ProgressEvent.TestOnly {
     }
 }

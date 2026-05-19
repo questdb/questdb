@@ -3,7 +3,6 @@ package io.questdb.test.lifecycle;
 import io.questdb.lifecycle.Component;
 import io.questdb.lifecycle.LifecycleOrchestrator;
 import io.questdb.lifecycle.LifecycleSnapshot;
-import io.questdb.lifecycle.Role;
 import io.questdb.lifecycle.State;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -17,7 +16,7 @@ import io.questdb.test.lifecycle.fakes.ProbeComponent;
  * <p>
  * Usage:
  * <pre>{@code
- * try (LifecycleTestHarness h = new LifecycleTestHarness(Role.PRIMARY)) {
+ * try (LifecycleTestHarness h = new LifecycleTestHarness()) {
  *     h.registerFakeReady("factory-provider");
  *     h.registerFakeReady("engine");
  *     h.registerFakeReady("worker-pool-manager", "engine");
@@ -34,8 +33,8 @@ public final class LifecycleTestHarness implements AutoCloseable {
     private final LifecycleOrchestrator orchestrator;
     private boolean started;
 
-    public LifecycleTestHarness(Role initialRole) {
-        this.orchestrator = new LifecycleOrchestrator(initialRole, LOG, null, null);
+    public LifecycleTestHarness() {
+        this.orchestrator = new LifecycleOrchestrator(LOG, null, null);
     }
 
     public void assertState(String name, State expected) {
@@ -71,8 +70,7 @@ public final class LifecycleTestHarness implements AutoCloseable {
     /**
      * Returns a fresh {@link io.questdb.lifecycle.LifecycleContext} bound to {@code name}.
      * Used by stop()/start() round-trip tests that re-invoke start(ctx) on a single component
-     * without re-registering it with the orchestrator. The underlying
-     * {@link LifecycleOrchestrator#contextFor(String)} hook is itself test-only.
+     * without re-registering it with the orchestrator.
      */
     public io.questdb.lifecycle.LifecycleContext contextFor(String name) {
         return orchestrator.contextFor(name);
@@ -116,9 +114,5 @@ public final class LifecycleTestHarness implements AutoCloseable {
 
     public State stateOf(String name) {
         return orchestrator.stateOf(name);
-    }
-
-    public void switchRole(Role newRole) {
-        orchestrator.switchRole(newRole);
     }
 }

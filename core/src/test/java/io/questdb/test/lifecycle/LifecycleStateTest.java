@@ -2,7 +2,6 @@ package io.questdb.test.lifecycle;
 
 import io.questdb.lifecycle.LifecycleContext;
 import io.questdb.lifecycle.LifecycleOrchestrator;
-import io.questdb.lifecycle.Role;
 import io.questdb.lifecycle.State;
 import io.questdb.test.lifecycle.fakes.ProbeComponent;
 import org.junit.Assert;
@@ -58,6 +57,6 @@ public class LifecycleStateTest {
     }
 
     private static LifecycleOrchestrator newOrchestrator() {
-        return new LifecycleOrchestrator(Role.PRIMARY, null, null, null);
+        return new LifecycleOrchestrator(null, null, null);
     }
 }

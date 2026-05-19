@@ -2,7 +2,6 @@ package io.questdb.test.lifecycle;
 
 import io.questdb.lifecycle.LifecycleContext;
 import io.questdb.lifecycle.LifecycleOrchestrator;
-import io.questdb.lifecycle.Role;
 import io.questdb.lifecycle.State;
 import io.questdb.test.lifecycle.fakes.ProbeComponent;
 import org.junit.Assert;
@@ -93,7 +92,7 @@ public class LifecycleTransitionTableTest {
 
     @Test
     public void testTransition() {
-        LifecycleOrchestrator orch = new LifecycleOrchestrator(Role.PRIMARY, null, null, null);
+        LifecycleOrchestrator orch = new LifecycleOrchestrator(null, null, null);
         ProbeComponent p = new ProbeComponent("a");
         orch.register(p);
         LifecycleContext ctx = orch.contextFor("a");

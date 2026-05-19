@@ -3,7 +3,6 @@ package io.questdb.test.lifecycle.envelopes;
 import io.questdb.cairo.FlushQueryCacheJob;
 import io.questdb.lifecycle.Component;
 import io.questdb.lifecycle.LifecycleContext;
-import io.questdb.lifecycle.Role;
 import io.questdb.lifecycle.State;
 import io.questdb.mp.Job;
 import io.questdb.std.ObjList;
@@ -79,12 +78,6 @@ public class FlushQueryCacheJobWiringTest {
 
             @Override
             public void stop() {}
-
-            @Override
-            public void switchRole(LifecycleContext ctx, Role newRole) {
-                ctx.publish(State.SWITCHING);
-                ctx.publish(State.READY);
-            }
         };
     }
 
@@ -92,7 +85,7 @@ public class FlushQueryCacheJobWiringTest {
     public void testFlushQueryCacheJobAssignedByWebHttp() {
         List<Class<?>> assignedJobTypes = new ArrayList<>();
 
-        try (LifecycleTestHarness h = new LifecycleTestHarness(Role.PRIMARY)) {
+        try (LifecycleTestHarness h = new LifecycleTestHarness()) {
             h.registerFakeReady("factory-provider");
             h.registerFakeReady("engine");
             h.registerFakeReady("worker-pool-manager", "engine");

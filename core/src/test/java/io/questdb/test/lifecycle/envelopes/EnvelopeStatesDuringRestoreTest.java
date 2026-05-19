@@ -2,7 +2,6 @@ package io.questdb.test.lifecycle.envelopes;
 
 import io.questdb.lifecycle.Component;
 import io.questdb.lifecycle.LifecycleContext;
-import io.questdb.lifecycle.Role;
 import io.questdb.lifecycle.State;
 import io.questdb.std.ObjList;
 import io.questdb.test.lifecycle.LifecycleTestHarness;
@@ -75,12 +74,6 @@ public class EnvelopeStatesDuringRestoreTest {
 
             @Override
             public void stop() {}
-
-            @Override
-            public void switchRole(LifecycleContext ctx, Role newRole) {
-                ctx.publish(State.SWITCHING);
-                ctx.publish(State.READY);
-            }
         };
     }
 
@@ -88,7 +81,7 @@ public class EnvelopeStatesDuringRestoreTest {
     public void testSocketBoundDuringDegraded() {
         // Model: engine held in DEGRADED (simulating PITR restore).
         // All 4 protocol envelopes should reach DEGRADED (socket bound) while engine is still DEGRADED.
-        try (LifecycleTestHarness h = new LifecycleTestHarness(Role.PRIMARY)) {
+        try (LifecycleTestHarness h = new LifecycleTestHarness()) {
             h.registerFakeReady("factory-provider");
 
             // Engine is held in DEGRADED -- simulates a long-running PITR restore.
@@ -129,7 +122,7 @@ public class EnvelopeStatesDuringRestoreTest {
     public void testEngineReachesReadyAfterAllProtocolsDegraded() {
         // Verify ordering: all protocol envelopes reach DEGRADED (startSeq recorded)
         // before engine.advanceTo(READY) is called. This proves the early-bind contract (D4-05).
-        try (LifecycleTestHarness h = new LifecycleTestHarness(Role.PRIMARY)) {
+        try (LifecycleTestHarness h = new LifecycleTestHarness()) {
             h.registerFakeReady("factory-provider");
 
             ProbeComponent engineFake = new ProbeComponent("engine", new ObjList<>(), new ObjList<>());
