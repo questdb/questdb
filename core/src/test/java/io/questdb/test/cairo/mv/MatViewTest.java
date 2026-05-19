@@ -6354,6 +6354,118 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRefreshIntervalsO3RandomFuzz() throws Exception {
+        // Fuzz: random batches of inserts at random offsets relative to the
+        // current watermark, with random batch widths. Some batches land
+        // behind the watermark (O3), some at it, some past it. The mat view
+        // is refreshed incrementally on a random subset of iterations and
+        // once at the end. We then assert the view content matches a fresh
+        // SAMPLE BY query on the base table -- the strongest invariant: if
+        // per-cluster stepping or the cluster-boundary snap has any
+        // off-by-one or boundary bug, the mat view drifts from the SAMPLE
+        // BY ground truth and the cursor diff surfaces it.
+        setProperty(PropertyKey.CAIRO_MAT_VIEW_ROWS_PER_QUERY_ESTIMATE, 1_000_000);
+        final Rnd rnd = generateRandom(LOG);
+        final int batchCount = 8 + rnd.nextInt(25);
+        final int maxBatchWidth = 1 + rnd.nextInt(30);
+        final int maxLagMinutes = 60 + rnd.nextInt(2000);
+        final double midDrainProb = 0.2 + rnd.nextDouble() * 0.6;
+        LOG.info().$("fuzz seed run: batches=").$(batchCount)
+                .$(", maxBatchWidth=").$(maxBatchWidth)
+                .$(", maxLagMinutes=").$(maxLagMinutes)
+                .$(", midDrainProb=").$(midDrainProb)
+                .$();
+
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table base_price (" +
+                            "  price double, ts #TIMESTAMP" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            execute(
+                    "create materialized view price_1m refresh manual as " +
+                            "select ts, last(price) as price, min(price) as low, max(price) as high " +
+                            "from base_price sample by 1m"
+            );
+
+            final long anchorMicros = MicrosTimestampDriver.INSTANCE.parseFloorLiteral("2024-09-10T12:00:00.000000Z");
+            final long oneMinuteMicros = 60_000_000L;
+            final StringSink tsSink = new StringSink();
+
+            // Anchor with a single row so the SAMPLE BY ground truth has a
+            // stable origin; refresh once to flush the initial commit
+            // through the EMA cost model.
+            tsSink.clear();
+            MicrosFormatUtils.appendDateTime(tsSink, anchorMicros);
+            execute("insert into base_price(price, ts) values (0.0, '" + tsSink + "')");
+            execute("refresh materialized view price_1m incremental;");
+            drainQueues();
+
+            long highMicros = anchorMicros;
+            for (int batch = 0; batch < batchCount; batch++) {
+                // Lag in [-maxLagMinutes, +maxLagMinutes]. Negative = O3
+                // (behind watermark). Bias toward O3 by skewing the sign.
+                final long lagMagnitude = (rnd.nextLong() & Long.MAX_VALUE) % (maxLagMinutes + 1L);
+                final long signedLag = rnd.nextDouble() < 0.7 ? -lagMagnitude : lagMagnitude;
+                final int width = 1 + rnd.nextInt(maxBatchWidth);
+                final long batchBaseMicros = highMicros + signedLag * oneMinuteMicros;
+
+                final StringBuilder sql = new StringBuilder("insert into base_price(price, ts) values ");
+                for (int k = 0; k < width; k++) {
+                    if (k > 0) sql.append(',');
+                    final long ts = batchBaseMicros + k * oneMinuteMicros;
+                    tsSink.clear();
+                    MicrosFormatUtils.appendDateTime(tsSink, ts);
+                    sql.append("(").append(rnd.nextDouble()).append("::double, '").append(tsSink).append("')");
+                }
+                execute(sql.toString());
+
+                // Update watermark.
+                final long batchEndMicros = batchBaseMicros + (width - 1L) * oneMinuteMicros;
+                if (batchEndMicros > highMicros) {
+                    highMicros = batchEndMicros;
+                }
+
+                // Randomly refresh mid-stream so we exercise both the
+                // "many small refreshes" and "one big refresh" code paths.
+                // The cached refresh intervals accumulate between refreshes,
+                // which is what we want -- it drives cluster shapes
+                // through the per-cluster step path.
+                if (rnd.nextDouble() < midDrainProb) {
+                    execute("refresh materialized view price_1m incremental;");
+                    drainQueues();
+                }
+            }
+
+            // Final refresh to flush any remaining cached intervals.
+            execute("refresh materialized view price_1m incremental;");
+            drainQueues();
+
+            // The view must still be valid -- O3 writes must not have
+            // invalidated it.
+            assertSql(
+                    "count\n1\n",
+                    "select count() from materialized_views where view_name = 'price_1m' and view_status = 'valid'"
+            );
+
+            // Strongest invariant: mat view content == direct SAMPLE BY of
+            // the base table. assertSqlCursors diffs row-by-row so any
+            // bucket-level divergence surfaces immediately, with the
+            // failing seed logged above so we can reproduce.
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                TestUtils.assertSqlCursors(
+                        compiler,
+                        sqlExecutionContext,
+                        "select ts, last(price) as price, min(price) as low, max(price) as high " +
+                                "from base_price sample by 1m order by ts",
+                        "select ts, price, low, high from price_1m order by ts",
+                        LOG
+                );
+            }
+        });
+    }
+
+    @Test
     public void testRefreshSkipsUnchangedBuckets() throws Exception {
         // Verify that incremental refresh skips unchanged SAMPLE BY buckets.
         assertMemoryLeak(() -> {
