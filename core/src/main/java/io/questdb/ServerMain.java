@@ -50,7 +50,6 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.table.AsyncFilterAtom;
 import io.questdb.lifecycle.LifecycleContext;
 import io.questdb.lifecycle.LifecycleOrchestrator;
-import io.questdb.lifecycle.Role;
 import io.questdb.lifecycle.State;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -266,8 +265,7 @@ public class ServerMain implements Closeable {
     /**
      * Returns the live {@link LifecycleOrchestrator} reference, or null if the server has
      * not yet started (orchestrator is constructed in {@link #start(boolean)}). Test seam
-     * for Phase 6 Plan C integration tests that drive role switches directly via
-     * {@code orchestrator.submitSwitch(Role)} bypassing the HTTP path.
+     * for in-process JVM integration tests that need to introspect lifecycle state.
      */
     public LifecycleOrchestrator getOrchestrator() {
         return orchestrator;
@@ -341,12 +339,7 @@ public class ServerMain implements Closeable {
             constructAndAssignWorkerPoolManager(bootstrap.getLog());
         }
         if (orchestrator == null) {
-            orchestrator = new io.questdb.lifecycle.LifecycleOrchestrator(
-                    getInitialRole(),
-                    bootstrap.getLog(),
-                    null,
-                    null
-            );
+            orchestrator = newOrchestrator(bootstrap.getLog(), null, null);
             freeOnExit(orchestrator);
             // Register a stub PgWireEnvelope so findEnvelope("pg-wire", PgWireEnvelope.class)
             // succeeds for tests that drive WebHttpEnvelope through start(). The envelope stays
@@ -395,8 +388,7 @@ public class ServerMain implements Closeable {
 
     public synchronized void start(boolean addShutdownHook) {
         if (!closed.get() && running.compareAndSet(false, true)) {
-            orchestrator = new io.questdb.lifecycle.LifecycleOrchestrator(
-                    getInitialRole(),
+            orchestrator = newOrchestrator(
                     bootstrap.getLog(),
                     null,   // workerPoolManager exposed lazily after WPM envelope reaches DEGRADED
                     null    // tokio runtime -- enterprise plans (Plan 04) override registerComponents to provide
@@ -599,8 +591,28 @@ public class ServerMain implements Closeable {
         return freeOnExit.register(closeable);
     }
 
-    protected io.questdb.lifecycle.Role getInitialRole() {
-        return io.questdb.lifecycle.Role.PRIMARY;
+    /**
+     * Factory hook for the {@code GET /lifecycle} HTTP processor. Enterprise overrides
+     * to return {@code EntLifecycleProcessor} which emits role-aware JSON fields.
+     */
+    protected io.questdb.cutlass.http.processors.LifecycleProcessor newLifecycleProcessor(
+            io.questdb.cutlass.http.HttpServerConfiguration httpMinConfig,
+            io.questdb.lifecycle.LifecycleOrchestrator orch
+    ) {
+        return new io.questdb.cutlass.http.processors.LifecycleProcessor(httpMinConfig, orch::snapshot);
+    }
+
+    /**
+     * Factory hook for the lifecycle orchestrator. Enterprise subclasses override to construct
+     * an enterprise overlay (e.g. {@code EntLifecycleOrchestrator}) that carries the role-aware
+     * surface absent from this OSS base.
+     */
+    protected io.questdb.lifecycle.LifecycleOrchestrator newOrchestrator(
+            @org.jetbrains.annotations.Nullable io.questdb.log.Log log,
+            @org.jetbrains.annotations.Nullable io.questdb.WorkerPoolManager workerPoolManager,
+            @org.jetbrains.annotations.Nullable Object tokioRuntime
+    ) {
+        return new io.questdb.lifecycle.LifecycleOrchestrator(log, workerPoolManager, tokioRuntime);
     }
 
     /**
@@ -790,13 +802,6 @@ public class ServerMain implements Closeable {
         public void stop() {
             // FactoryProvider closed by FreeOnExit chain registered at ServerMain.java:94. No-op here.
         }
-
-        @Override
-        public void switchRole(io.questdb.lifecycle.LifecycleContext ctx, io.questdb.lifecycle.Role newRole) {
-            // D6-08 NO-OP: DispatchingSecurityContextFactory's AtomicReference flip happens inside EntCairoEngine.switchRole (Phase 5 D5-06); envelope must survive.
-            ctx.publish(io.questdb.lifecycle.State.SWITCHING);
-            ctx.publish(io.questdb.lifecycle.State.READY);
-        }
     }
 
     /**
@@ -853,19 +858,12 @@ public class ServerMain implements Closeable {
         public void stop() {
             // engine closed by FreeOnExit registered in ServerMain ctor. signalClose() handled by ServerMain.close().
         }
-
-        @Override
-        public void switchRole(io.questdb.lifecycle.LifecycleContext ctx, io.questdb.lifecycle.Role newRole) {
-            // D6-08 NO-OP: ent-engine-init owns engine.switchRole; engine envelope must not stop+start (would tear down construction-time refs held by other components).
-            ctx.publish(io.questdb.lifecycle.State.SWITCHING);
-            ctx.publish(io.questdb.lifecycle.State.READY);
-        }
     }
 
     /**
      * ILP-TCP protocol envelope: binds the InfluxDB Line Protocol TCP and UDP receivers early
      * (D4-05), then gates the accept loop on engine==READY via onDependencyState (D4-06/D4-07).
-     * Hard-dep on worker-pool-manager; soft-dep on engine. switchRole is a NO-OP per D4-08.
+     * Hard-dep on worker-pool-manager; soft-dep on engine.
      * Both LineTcpReceiver and LineUdpReceiver share one acceptOpen flag.
      * They are skipped when the instance is read-only or ILP-TCP is disabled.
      */
@@ -948,14 +946,6 @@ public class ServerMain implements Closeable {
             Misc.free(lineUdpReceiver);
             lineUdpReceiver = null;
         }
-
-        @Override
-        public void switchRole(LifecycleContext ctx, Role newRole) {
-            // D4-08 NO-OP: socket stays bound; accept loop stays running.
-            // Per-connection write-rejection re-resolution is Phase 5 RECONFIG-03/04.
-            ctx.publish(State.SWITCHING);
-            ctx.publish(State.READY);
-        }
     }
 
     /**
@@ -1025,21 +1015,7 @@ public class ServerMain implements Closeable {
 
                     @Override
                     public io.questdb.cutlass.http.HttpRequestHandler newInstance() {
-                        return new io.questdb.cutlass.http.processors.LifecycleProcessor(httpMinConfig, orch::snapshot);
-                    }
-                });
-                // D6-02 / Plan B Task 2: bind SwitchProcessor on POST /lifecycle/switch alongside
-                // the GET /lifecycle handler above. The two factories share the same min-http
-                // listening socket so PROBE-04 (min-http survives the switch) holds.
-                server.bind(new io.questdb.cutlass.http.HttpRequestHandlerFactory() {
-                    @Override
-                    public io.questdb.std.ObjHashSet<String> getUrls() {
-                        return httpMinConfig.getContextPathLifecycleSwitch();
-                    }
-
-                    @Override
-                    public io.questdb.cutlass.http.HttpRequestHandler newInstance() {
-                        return new io.questdb.cutlass.http.processors.SwitchProcessor(httpMinConfig, orch);
+                        return ServerMain.this.newLifecycleProcessor(httpMinConfig, orch);
                     }
                 });
             }
@@ -1055,13 +1031,6 @@ public class ServerMain implements Closeable {
                 pool.halt();
                 pool = null;
             }
-        }
-
-        @Override
-        public void switchRole(io.questdb.lifecycle.LifecycleContext ctx, io.questdb.lifecycle.Role newRole) {
-            // D6-08 NO-OP: PROBE-04 same socket, no rebind, no I/O loop restart.
-            ctx.publish(io.questdb.lifecycle.State.SWITCHING);
-            ctx.publish(io.questdb.lifecycle.State.READY);
         }
     }
 
@@ -1090,7 +1059,7 @@ public class ServerMain implements Closeable {
     /**
      * PG-wire protocol envelope: binds the PostgreSQL wire protocol listener early (D4-05),
      * then gates the accept loop on engine==READY via onDependencyState (D4-06/D4-07).
-     * Hard-dep on worker-pool-manager; soft-dep on engine. switchRole is a NO-OP per D4-08.
+     * Hard-dep on worker-pool-manager; soft-dep on engine.
      * When PG wire is disabled the envelope publishes DEGRADED and waits for engine READY.
      */
     private final class PgWireEnvelope implements io.questdb.lifecycle.Component {
@@ -1165,20 +1134,12 @@ public class ServerMain implements Closeable {
             Misc.free(server);
             server = null;
         }
-
-        @Override
-        public void switchRole(LifecycleContext ctx, Role newRole) {
-            // D4-08 NO-OP: socket stays bound; accept loop stays running.
-            // Per-connection write-rejection re-resolution is Phase 5 RECONFIG-03/04.
-            ctx.publish(State.SWITCHING);
-            ctx.publish(State.READY);
-        }
     }
 
     /**
      * QWIP (QuestDB Wire Protocol UDP) envelope: binds the QWP UDP receiver early (D4-05),
      * then gates the accept loop on engine==READY via onDependencyState (D4-06/D4-07).
-     * Hard-dep on worker-pool-manager; soft-dep on engine. switchRole is a NO-OP per D4-08.
+     * Hard-dep on worker-pool-manager; soft-dep on engine.
      * Skipped when the instance is read-only or QWIP is disabled.
      */
     private final class QwipEnvelope implements io.questdb.lifecycle.Component {
@@ -1210,15 +1171,10 @@ public class ServerMain implements Closeable {
         @Override
         public void onDependencyState(String depName, State previous, State current) {
             if ("engine".equals(depName) && current == State.READY) {
-                // D4-10 role-aware gate: qwip is primary-only per SVCS-05 / RESEARCH Section 12.
-                // On a primary boot, open the accept loop when engine reaches READY.
-                // On a replica boot, leave acceptOpen=false (socket stays bound but accept paused).
-                if (ctxRef != null && ctxRef.role() == Role.PRIMARY) {
-                    acceptOpen.set(true);
-                    log.info().$("qwip envelope: accept loop open (primary)").$();
-                } else {
-                    log.info().$("qwip envelope: accept loop stays paused (replica)").$();
-                }
+                // OSS standalone: qwip accepts whenever engine is READY. Enterprise overlays the
+                // role-aware gate (primary-only) via an envelope override.
+                acceptOpen.set(true);
+                log.info().$("qwip envelope: accept loop open").$();
                 if (ctxRef != null) {
                     ctxRef.publish(State.READY);
                 }
@@ -1257,15 +1213,10 @@ public class ServerMain implements Closeable {
             log.info().$("qwip envelope: bound, accept paused").$();
             ctx.publish(State.DEGRADED);
             // CR-01 replay: if engine reached READY before our ctxRef was set, the
-            // onDependencyState dispatch was lost. Self-publish now. Qwip is primary-only
-            // per D4-10; on REPLICA we publish READY but leave acceptOpen false.
+            // onDependencyState dispatch was lost. Self-publish now.
             if (ctx.state("engine") == State.READY) {
-                if (ctx.role() == Role.PRIMARY) {
-                    acceptOpen.set(true);
-                    log.info().$("qwip envelope: accept loop open (catch-up)").$();
-                } else {
-                    log.info().$("qwip envelope: engine ready on REPLICA; accept stays paused (catch-up)").$();
-                }
+                acceptOpen.set(true);
+                log.info().$("qwip envelope: accept loop open (catch-up)").$();
                 ctx.publish(State.READY);
             }
         }
@@ -1275,26 +1226,6 @@ public class ServerMain implements Closeable {
             Misc.free(receiver);
             receiver = null;
         }
-
-        /**
-         * D4-10 pause-the-job pattern for qwip (RESEARCH Section 12): the QwpUdpReceiver
-         * socket stays bound; the accept-job's run() body parks on !acceptOpen.get()
-         * (substrate added in Plan A Task A1). qwip is treated as primary-only:
-         * PRIMARY -&gt; REPLICA pauses (acceptOpen=false); REPLICA -&gt; PRIMARY resumes (acceptOpen=true).
-         * No EntQwipEnvelope overlay -- qwip role logic lives in OSS per RESEARCH Section 12 / PATTERNS.md.
-         */
-        @Override
-        public void switchRole(LifecycleContext ctx, Role newRole) {
-            ctx.publish(State.SWITCHING);
-            if (newRole == Role.REPLICA) {
-                acceptOpen.set(false);
-                log.info().$("qwip envelope: paused on switch to REPLICA").$();
-            } else {
-                acceptOpen.set(true);
-                log.info().$("qwip envelope: resumed on switch to PRIMARY").$();
-            }
-            ctx.publish(State.READY);
-        }
     }
 
     /**
@@ -1302,7 +1233,6 @@ public class ServerMain implements Closeable {
      * then gates the accept loop on engine==READY via onDependencyState (D4-06/D4-07).
      * Hard-deps on worker-pool-manager AND pg-wire (RESEARCH Section 6: FlushQueryCacheJob
      * needs the PGServer reference from PgWireEnvelope). Soft-dep on engine.
-     * switchRole is a NO-OP per D4-08.
      */
     private final class WebHttpEnvelope implements io.questdb.lifecycle.Component {
         private final AtomicBoolean acceptOpen = new AtomicBoolean(false);
@@ -1377,14 +1307,6 @@ public class ServerMain implements Closeable {
         public void stop() {
             Misc.free(server);
             server = null;
-        }
-
-        @Override
-        public void switchRole(LifecycleContext ctx, Role newRole) {
-            // D4-08 NO-OP: socket stays bound; accept loop stays running.
-            // Per-connection write-rejection re-resolution is Phase 5 RECONFIG-03/04.
-            ctx.publish(State.SWITCHING);
-            ctx.publish(State.READY);
         }
     }
 
@@ -1467,13 +1389,6 @@ public class ServerMain implements Closeable {
             if (ServerMain.this.workerPoolManager != null) {
                 ServerMain.this.workerPoolManager.halt();
             }
-        }
-
-        @Override
-        public void switchRole(io.questdb.lifecycle.LifecycleContext ctx, io.questdb.lifecycle.Role newRole) {
-            // D6-08 NO-OP: worker threads are role-agnostic; pool MUST survive (default stop+start would halt all worker threads).
-            ctx.publish(io.questdb.lifecycle.State.SWITCHING);
-            ctx.publish(io.questdb.lifecycle.State.READY);
         }
     }
 
