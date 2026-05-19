@@ -62,6 +62,12 @@ public class LiveViewDefinition {
     public static final String LIVE_VIEW_DEFINITION_FILE_NAME = "_lv";
     public static final int LIVE_VIEW_DEFINITION_ANCHOR_MSG_TYPE = 1;
     public static final int LIVE_VIEW_DEFINITION_CORE_MSG_TYPE = 0;
+    // _lv.drop is the durable "DROP in progress" sentinel. dropLiveView creates
+    // it (and fsyncs it) before any in-memory or on-disk teardown so a crash
+    // mid-drop leaves an unambiguous signal for the startup loader to reap.
+    // Sits in the LV directory alongside _lv and _lv.s; its mere existence is
+    // the signal, the file contents are unused.
+    public static final String LIVE_VIEW_DROP_SENTINEL_FILE_NAME = "_lv.drop";
 
     private final @Nullable LvAnchorSpec anchorSpec;
     // BACKFILL was specified at CREATE.

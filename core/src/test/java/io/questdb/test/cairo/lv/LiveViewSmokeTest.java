@@ -2102,6 +2102,84 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDropLiveViewWritesDropSentinelDurably() throws Exception {
+        // dropLiveView's first durable step writes _lv.drop and fsyncs it
+        // before any in-memory or on-disk teardown, so a crash mid-drop leaves
+        // an unambiguous signal for the startup loader to reap. We verify the
+        // ordering at the FilesFacade layer: the sentinel openRW must run
+        // before liveViewRegistry.removeView mutates the in-memory state,
+        // and an fsync against the same fd must run before the file closes.
+        final AtomicBoolean sentinelOpened = new AtomicBoolean(false);
+        final AtomicBoolean sentinelFsynced = new AtomicBoolean(false);
+        final long[] sentinelFd = {-1L};
+        FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public long openRW(LPSZ name, int opts) {
+                final long fd = super.openRW(name, opts);
+                if (fd > 0 && Utf8s.endsWithAscii(name, LiveViewDefinition.LIVE_VIEW_DROP_SENTINEL_FILE_NAME)) {
+                    sentinelOpened.set(true);
+                    sentinelFd[0] = fd;
+                }
+                return fd;
+            }
+
+            @Override
+            public void fsync(long fd) {
+                if (sentinelFd[0] == fd) {
+                    sentinelFsynced.set(true);
+                }
+                super.fsync(fd);
+            }
+        };
+        assertMemoryLeak(ff, () -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base");
+            execute("DROP LIVE VIEW lv");
+            Assert.assertTrue("_lv.drop sentinel must be created during DROP",
+                    sentinelOpened.get());
+            Assert.assertTrue("_lv.drop sentinel must be fsynced during DROP",
+                    sentinelFsynced.get());
+        });
+    }
+
+    @Test
+    public void testLoaderReapsLiveViewWhenDropSentinelExists() throws Exception {
+        // Simulates a crash mid-DROP: the durable _lv.drop sentinel landed on
+        // disk but the rest of the drop (sequencer mark + FS unlink) never
+        // ran. On restart, buildViewGraphs must finish the drop instead of
+        // re-registering a healthy-looking LV. Without the sentinel-reap
+        // branch the loader would replay the LV as if DROP had never been
+        // issued.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base WHERE x > 0");
+
+            TableToken token = engine.getLiveViewRegistry().getViewInstance("lv").getLiveViewToken();
+            FilesFacade ff = engine.getConfiguration().getFilesFacade();
+            try (Path path = new Path()) {
+                path.of(engine.getConfiguration().getDbRoot())
+                        .concat(token)
+                        .concat(LiveViewDefinition.LIVE_VIEW_DROP_SENTINEL_FILE_NAME);
+                Assert.assertTrue("sentinel touch must succeed", ff.touch(path.$()));
+            }
+
+            engine.getLiveViewRegistry().clear();
+            engine.buildViewGraphs();
+
+            Assert.assertNull(
+                    "LV must not be re-registered when _lv.drop is present",
+                    engine.getLiveViewRegistry().getViewInstance("lv")
+            );
+            Assert.assertNull(
+                    "loader must mark the dropped token as dropped",
+                    engine.getTableTokenIfExists("lv")
+            );
+        });
+    }
+
+    @Test
     public void testLoaderReapsOrphanLiveViewDirectory() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");

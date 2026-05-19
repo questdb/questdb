@@ -632,6 +632,22 @@ public class CairoEngine implements Closeable, WriterSource {
                     }
                 }
                 if (tableToken.isLiveView()) {
+                    if (TableUtils.isLiveViewDropSentinelFileExists(configuration, path, tableToken.getDirName())) {
+                        // dropLiveView wrote the durable _lv.drop sentinel before
+                        // any in-memory or on-disk teardown, then crashed.
+                        // Finish the drop now so the directory does not survive
+                        // and re-register as a healthy LV. Best-effort: a
+                        // failure here only delays cleanup; the sentinel stays
+                        // and the next start retries.
+                        LOG.info().$("reaping live view with _lv.drop sentinel [view=").$(tableToken).I$();
+                        try {
+                            dropTableOrViewOrMatView(path, tableToken);
+                        } catch (Throwable th) {
+                            LOG.error().$("could not reap dropped live view [view=").$(tableToken)
+                                    .$(", msg=").$safe(th.getMessage()).I$();
+                        }
+                        continue;
+                    }
                     if (!TableUtils.isLiveViewDefinitionFileExists(configuration, path, tableToken.getDirName())) {
                         // Orphan LV directory: createLiveView writes _lv last as the
                         // atomic commit marker, so a missing _lv means CREATE crashed
@@ -1193,6 +1209,17 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     public void dropLiveView(CharSequence name) {
+        // Stamp the durable _lv.drop sentinel before tearing anything down.
+        // A crash between any of the steps below leaves a queryable-but-no-
+        // longer-registered LV directory; the sentinel lets the startup loader
+        // tell that case apart from a healthy LV and finish the drop on the
+        // next start (see buildViewGraphs LV branch). The sentinel write runs
+        // first so the signal is durable before any in-memory state or on-disk
+        // file mutates.
+        final TableToken token = tableNameRegistry.getTableToken(name);
+        if (token != null && token.isLiveView()) {
+            writeLiveViewDropSentinel(token);
+        }
         LiveViewInstance instance = liveViewRegistry.removeView(name);
         if (instance != null) {
             // Drop the LV from the dependents graph too so a multi-LV chain's
@@ -1204,7 +1231,6 @@ public class CairoEngine implements Closeable, WriterSource {
             instance.markAsDropped();
             instance.tryCloseIfDropped();
         }
-        TableToken token = tableNameRegistry.getTableToken(name);
         if (token != null) {
             try (Path path = new Path()) {
                 dropTableOrViewOrMatView(path, token);
@@ -3182,6 +3208,25 @@ public class CairoEngine implements Closeable, WriterSource {
             throw CairoException.tableDoesNotExist(tableName);
         }
         return token;
+    }
+
+    // Writes the durable _lv.drop sentinel into the live view's directory and
+    // fsyncs it before returning. Idempotent: a repeated DROP that finds an
+    // existing sentinel re-opens, fsyncs and closes - the file's existence is
+    // the signal, not its contents. Failure throws CairoException with the
+    // path; the caller's DROP aborts before any teardown so the LV remains
+    // queryable.
+    private void writeLiveViewDropSentinel(TableToken token) {
+        final FilesFacade ff = configuration.getFilesFacade();
+        try (Path path = new Path()) {
+            path.of(configuration.getDbRoot()).concat(token).concat(LiveViewDefinition.LIVE_VIEW_DROP_SENTINEL_FILE_NAME).$();
+            long fd = TableUtils.openFileRWOrFail(ff, path.$(), configuration.getWriterFileOpenOpts());
+            try {
+                ff.fsync(fd);
+            } finally {
+                ff.close(fd);
+            }
+        }
     }
 
     protected void clearDdlListener() {
