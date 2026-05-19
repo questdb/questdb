@@ -942,7 +942,13 @@ public class CairoEngine implements Closeable, WriterSource {
                             } finally {
                                 executionContext.setLiveViewCompile(false);
                             }
-                            validateAnchorPurity(anchorFn, anchorNode.position, true);
+                            // Anchor the reject position in the user's CREATE SQL (the
+                            // ANCHOR keyword) rather than in the re-parsed desugared
+                            // expression. anchorNode.position is an offset into the
+                            // synthesized timestamp_floor* text for DAILY, and into a
+                            // toSink-roundtripped expression for ANCHOR EXPRESSION; in
+                            // both cases it diverges from what the user typed.
+                            validateAnchorPurity(anchorFn, anchor.anchorPosition, true);
                         } finally {
                             Misc.free(anchorFn);
                         }

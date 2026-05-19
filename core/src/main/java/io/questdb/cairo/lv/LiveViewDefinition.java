@@ -347,6 +347,7 @@ public class LiveViewDefinition {
                         anchorExpressionSql,
                         anchorDailyTimeUs,
                         anchorDailyTimeZone,
+                        0,
                         partitionColumnNames
                 );
             }
@@ -474,6 +475,13 @@ public class LiveViewDefinition {
         public final @Nullable String anchorDailyTimeZone;
         public final String anchorExpressionSql;
         public final byte anchorKind;
+        // CREATE-time-only: offset of the ANCHOR keyword in the user's
+        // original CREATE SQL. Used by validateAnchorPurity to anchor reject
+        // positions in the source the user typed rather than in the
+        // re-parsed desugared expression. Not persisted - reset to 0 when an
+        // LvAnchorSpec is rehydrated from disk, which is harmless because
+        // validateAnchorPurity runs at CREATE only and never at restart.
+        public final int anchorPosition;
         public final ObjList<String> partitionColumnNames;
         public final String windowName;
 
@@ -483,6 +491,7 @@ public class LiveViewDefinition {
                 String anchorExpressionSql,
                 long anchorDailyTimeUs,
                 @Nullable String anchorDailyTimeZone,
+                int anchorPosition,
                 ObjList<String> partitionColumnNames
         ) {
             this.windowName = windowName;
@@ -490,6 +499,7 @@ public class LiveViewDefinition {
             this.anchorExpressionSql = anchorExpressionSql;
             this.anchorDailyTimeUs = anchorDailyTimeUs;
             this.anchorDailyTimeZone = anchorDailyTimeZone;
+            this.anchorPosition = anchorPosition;
             this.partitionColumnNames = partitionColumnNames;
         }
     }

@@ -7687,16 +7687,25 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
         // Pass-2 fold case the RFC explicitly calls out alongside 1+2+3 and
         // date_trunc-of-literal: length('hello') folds to the constant 5
         // before the validator walks it, so the top-level isConstant() check
-        // is the surface that fires the reject.
+        // is the surface that fires the reject. Position must land on the
+        // ANCHOR keyword in the user's CREATE SQL - validateAnchorPurity walks
+        // a re-parsed expression tree, so the rootPosition has to come from
+        // the captured LvAnchorSpec rather than the re-parse.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            final String sql = "CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                    "SELECT ts, x, sum(x) OVER w AS s FROM base " +
+                    "WINDOW w AS (PARTITION BY x ORDER BY ts ANCHOR EXPRESSION length('hello'))";
             try {
-                execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
-                        "SELECT ts, x, sum(x) OVER w AS s FROM base " +
-                        "WINDOW w AS (PARTITION BY x ORDER BY ts ANCHOR EXPRESSION length('hello'))");
+                execute(sql);
                 Assert.fail("expected length-folded-constant anchor reject");
             } catch (SqlException e) {
                 Assert.assertTrue(e.getMessage(), e.getMessage().contains("must not be a constant"));
+                Assert.assertEquals(
+                        "position must point at the ANCHOR keyword in CREATE SQL",
+                        sql.indexOf("ANCHOR"),
+                        e.getPosition()
+                );
             }
         });
     }
@@ -7725,18 +7734,26 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
         // TIMESTAMP, LONG, or INT. SYMBOL is rejected because base_id vs.
         // lv_id translation lands after window evaluation - equality
         // semantics on the raw base symbol id don't compose with the runtime
-        // symbol-table maintenance.
+        // symbol-table maintenance. The return-type check is strictly
+        // Pass-2 (parser-side Pass-1 walks tokens and AST shapes only), so
+        // this case is the cleanest place to pin the CREATE-SQL position.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            final String sql = "CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                    "SELECT ts, sym, x, sum(x) OVER w AS s FROM base " +
+                    "WINDOW w AS (PARTITION BY x ORDER BY ts ANCHOR EXPRESSION sym)";
             try {
-                execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
-                        "SELECT ts, sym, x, sum(x) OVER w AS s FROM base " +
-                        "WINDOW w AS (PARTITION BY x ORDER BY ts ANCHOR EXPRESSION sym)");
+                execute(sql);
                 Assert.fail("expected SYMBOL anchor return type reject");
             } catch (SqlException e) {
                 Assert.assertTrue(
                         e.getMessage(),
                         e.getMessage().contains("must return TIMESTAMP, LONG, or INT")
+                );
+                Assert.assertEquals(
+                        "position must point at the ANCHOR keyword in CREATE SQL",
+                        sql.indexOf("ANCHOR"),
+                        e.getPosition()
                 );
             }
         });

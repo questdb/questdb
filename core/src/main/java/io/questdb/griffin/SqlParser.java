@@ -1493,6 +1493,7 @@ public class SqlParser {
                     anchorExpressionSql,
                     w.getAnchorDailyTimeUs(),
                     w.getAnchorDailyTimeZone() == null ? null : Chars.toString(w.getAnchorDailyTimeZone()),
+                    w.getAnchorPosition(),
                     partitionColumnNames
             );
         }
