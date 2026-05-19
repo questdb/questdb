@@ -63,6 +63,11 @@ All items in this list are net-new work; everything below is already landed on
   per-column native-keyed dedup map.
 - Gorilla delta-of-delta encoding (`FLAG_GORILLA`) for TIMESTAMP /
   TIMESTAMP_NANOS / DATE columns, with per-column raw-vs-encoded fallback.
+  **Note:** `DATE` is timestamp-ish (encoding discriminator + Gorilla) on
+  **egress only**; on the **ingress** wire `DATE` is a plain `int64`
+  column like `LONG`. This in/out asymmetry is deliberate and a known
+  implementor trap — see the prominent warnings in `wire-egress.md` and
+  `wire-ingress.md`.
 - Whole-batch-body zstd compression (`FLAG_ZSTD`) negotiated via
   `X-QWP-Accept-Encoding` / `X-QWP-Content-Encoding`, with a reused
   `ZSTD_CCtx` per connection and per-batch raw fallback when the compressed

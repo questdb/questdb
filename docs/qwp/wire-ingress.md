@@ -347,6 +347,29 @@ senders should use VARCHAR (`0x0F`) for text columns.
 TIMESTAMP and TIMESTAMP_NANOS may use Gorilla encoding when `FLAG_GORILLA` is
 set (see [Column Data Encoding](#12-column-data-encoding)).
 
+> **⚠️ DATE is NOT a timestamp-ish column on ingress — and this is
+> DELIBERATELY ASYMMETRIC with egress. Implementors get this wrong.**
+>
+> On the **ingress** wire, `DATE` (`0x0B`) is a plain fixed-width `int64`
+> column: written exactly like `LONG`, with **no** per-column
+> encoding-discriminator byte and **never** Gorilla-encoded — even when
+> `FLAG_GORILLA` is set. Only `TIMESTAMP` (`0x0A`) and `TIMESTAMP_NANOS`
+> (`0x10`) carry the encoding flag on ingress.
+>
+> On the **egress** wire it is the opposite: `DATE` *is* grouped with
+> `TIMESTAMP`/`TIMESTAMP_NANOS` and *does* carry the 1-byte encoding
+> discriminator (+ optional Gorilla). See `wire-egress.md` (FLAG_GORILLA /
+> encoding-discriminator paragraph).
+>
+> Reusing one direction's DATE rule for the other shifts every DATE value
+> one byte (a clean ×256) and breaks Gorilla-encoded DATE entirely.
+> Server references — ingress: `QwpTableBlockCursor` puts `DATE` in the
+> generic fixed-width arm (`case … TYPE_DATE … `), distinct from the
+> `TYPE_TIMESTAMP, TYPE_TIMESTAMP_NANOS -> tsCursor` arm, and
+> `QwpFixedWidthColumnCursor` reads it with a plain `Unsafe.getLong`;
+> egress: `QwpResultBatchBuffer.emitTimestampColumn` includes `DATE`
+> alongside the timestamp types.
+
 ## 11. Null Handling
 
 Each column's data section begins with a 1-byte **null flag**. The flag tells
@@ -556,10 +579,20 @@ mode exclusively.
 
 ### Timestamp Type (`0x0A`, `0x10`)
 
-When `FLAG_GORILLA` (0x04) is set in the message header flags, timestamp columns
-include a 1-byte encoding flag after the null bitmap. When `FLAG_GORILLA` is
-**not** set, there is no encoding flag -- timestamps are written as plain
-uncompressed int64 arrays.
+> **⚠️ This section applies ONLY to `TIMESTAMP` (`0x0A`) and
+> `TIMESTAMP_NANOS` (`0x10`). `DATE` (`0x0B`) is EXCLUDED on ingress.**
+> Despite "milliseconds since epoch" looking timestamp-like, `DATE` is a
+> plain `int64` column on the ingress wire (written like `LONG`: no
+> encoding flag, never Gorilla), regardless of `FLAG_GORILLA`. Do **not**
+> apply the rule below to `DATE`. This is the opposite of the egress wire,
+> where `DATE` *is* timestamp-ish — see the prominent DATE asymmetry
+> warning in §10 (Column Types).
+
+When `FLAG_GORILLA` (0x04) is set in the message header flags, the
+`TIMESTAMP` (`0x0A`) and `TIMESTAMP_NANOS` (`0x10`) columns include a 1-byte
+encoding flag after the null bitmap. When `FLAG_GORILLA` is **not** set,
+there is no encoding flag -- they are written as plain uncompressed int64
+arrays. (`DATE`, `0x0B`, is never in scope here — see the warning above.)
 
 #### Without FLAG_GORILLA (no encoding flag)
 

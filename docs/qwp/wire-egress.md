@@ -276,6 +276,24 @@ Gorilla when the column has at least three non-null values and the
 delta-of-delta bitstream is smaller than `nonNull * 8` bytes; unordered or
 jumpy columns fall back to raw.
 
+> **⚠️ `DATE` is timestamp-ish on EGRESS ONLY. Do NOT assume symmetry with
+> ingress — implementors get this wrong.**
+>
+> The rule above (encoding discriminator + optional Gorilla) applies to
+> `DATE` (`0x0B`) **only on the egress wire**. On the **ingress** wire
+> `DATE` is a plain `int64` column written exactly like `LONG`: no
+> discriminator byte, never Gorilla-encoded, even under `FLAG_GORILLA`
+> (see `wire-ingress.md` §10 Column Types — the DATE asymmetry warning,
+> and §"Timestamp Type (`0x0A`, `0x10`)" which excludes `DATE`).
+>
+> A codec that reuses its egress DATE path for ingress (or vice-versa)
+> shifts every DATE value one byte (a clean ×256) and breaks Gorilla
+> DATE entirely. Server: egress
+> `QwpResultBatchBuffer.emitTimestampColumn` groups `DATE` with the
+> timestamp types; ingress `QwpTableBlockCursor` /
+> `QwpFixedWidthColumnCursor` treat `DATE` as generic fixed-width
+> `int64`.
+
 The schema section inside the table block follows the standard rules:
 
 - **First batch for a query**: schema mode `0x00` (full), with a new
