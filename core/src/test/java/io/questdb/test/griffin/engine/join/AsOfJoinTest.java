@@ -1344,6 +1344,28 @@ public class AsOfJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAsOfJoinSymbolAndDecimalKeys() throws Exception {
+        assertMemoryLeak(() -> {
+            assertAsOfJoinSymbolAndDecimalKey("dec8", "DECIMAL(2,1)", "1.2", "2.3");
+            assertAsOfJoinSymbolAndDecimalKey("dec16", "DECIMAL(4,2)", "12.34", "23.45");
+            assertAsOfJoinSymbolAndDecimalKey("dec32", "DECIMAL(9,4)", "12345.6789", "23456.7890");
+            assertAsOfJoinSymbolAndDecimalKey("dec64", "DECIMAL(18,6)", "123456789012.345678", "234567890123.456789");
+            assertAsOfJoinSymbolAndDecimalKey(
+                    "dec128",
+                    "DECIMAL(38,10)",
+                    "1234567890123456789012345678.9012345678",
+                    "2345678901234567890123456789.0123456789"
+            );
+            assertAsOfJoinSymbolAndDecimalKey(
+                    "dec256",
+                    "DECIMAL(76,20)",
+                    "12345678901234567890123456789012345678901234567890123456.78901234567890123456",
+                    "23456789012345678901234567890123456789012345678901234567.89012345678901234567"
+            );
+        });
+    }
+
+    @Test
     public void testAsOfJoinSymbolAndIntKeys() throws Exception {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp(
@@ -1391,6 +1413,59 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     """;
 
             String queryBody = "m.sym, m.id, m.val, s.price FROM master m ASOF JOIN slave s ON (m.sym = s.sym AND m.id = s.id)";
+            assertAlgoAndResult(queryBody, "", "Fast", expected, true);
+            assertAlgoAndResult(queryBody, "asof_dense(m s)", "Dense", expected, true);
+            assertAlgoAndResult(queryBody, "asof_linear(m s)", "Light", expected, true);
+        });
+    }
+
+    @Test
+    public void testAsOfJoinSymbolAndUuidKeys() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    """
+                            CREATE TABLE master (
+                                sym SYMBOL,
+                                id UUID,
+                                val DOUBLE,
+                                ts #TIMESTAMP
+                            ) TIMESTAMP(ts) PARTITION BY DAY""",
+                    leftTableTimestampType.getTypeName()
+            );
+
+            executeWithRewriteTimestamp(
+                    """
+                            CREATE TABLE slave (
+                                sym SYMBOL,
+                                id UUID,
+                                price DOUBLE,
+                                ts #TIMESTAMP
+                            ) TIMESTAMP(ts) PARTITION BY DAY""",
+                    rightTableTimestampType.getTypeName()
+            );
+
+            execute("""
+                    INSERT INTO master VALUES
+                        ('A', '11111111-1111-1111-1111-111111111111', 1.0, '2024-01-01T10:00:00.000000Z'),
+                        ('A', '22222222-2222-2222-2222-222222222222', 2.0, '2024-01-01T10:01:00.000000Z'),
+                        ('B', '11111111-1111-1111-1111-111111111111', 3.0, '2024-01-01T10:02:00.000000Z')
+                    """);
+
+            execute("""
+                    INSERT INTO slave VALUES
+                        ('A', '11111111-1111-1111-1111-111111111111', 10.0, '2024-01-01T09:00:00.000000Z'),
+                        ('A', '22222222-2222-2222-2222-222222222222', 20.0, '2024-01-01T09:30:00.000000Z'),
+                        ('B', '22222222-2222-2222-2222-222222222222', 30.0, '2024-01-01T09:45:00.000000Z')
+                    """);
+
+            String expected = """
+                    val\tprice
+                    1.0\t10.0
+                    2.0\t20.0
+                    3.0\tnull
+                    """;
+
+            String queryBody = "m.val, s.price FROM master m ASOF JOIN slave s ON (m.sym = s.sym AND m.id = s.id)";
             assertAlgoAndResult(queryBody, "", "Fast", expected, true);
             assertAlgoAndResult(queryBody, "asof_dense(m s)", "Dense", expected, true);
             assertAlgoAndResult(queryBody, "asof_linear(m s)", "Light", expected, true);
@@ -5478,6 +5553,58 @@ public class AsOfJoinTest extends AbstractCairoTest {
 
     private void assertAlgoAndResult(String queryBody, String hint, String expectedAlgo, String expectedResult) throws SqlException {
         assertAlgoAndResult(queryBody, hint, expectedAlgo, expectedResult, false);
+    }
+
+    private void assertAsOfJoinSymbolAndDecimalKey(String tableSuffix, String decimalType, String id1, String id2) throws Exception {
+        final String masterTableName = "master_" + tableSuffix;
+        final String slaveTableName = "slave_" + tableSuffix;
+        executeWithRewriteTimestamp(
+                """
+                        CREATE TABLE %s (
+                            sym SYMBOL,
+                            id %s,
+                            val DOUBLE,
+                            ts #TIMESTAMP
+                        ) TIMESTAMP(ts) PARTITION BY DAY""".formatted(masterTableName, decimalType),
+                leftTableTimestampType.getTypeName()
+        );
+
+        executeWithRewriteTimestamp(
+                """
+                        CREATE TABLE %s (
+                            sym SYMBOL,
+                            id %s,
+                            price DOUBLE,
+                            ts #TIMESTAMP
+                        ) TIMESTAMP(ts) PARTITION BY DAY""".formatted(slaveTableName, decimalType),
+                rightTableTimestampType.getTypeName()
+        );
+
+        execute("""
+                INSERT INTO %s VALUES
+                    ('A', %s::%s, 1.0, '2024-01-01T10:00:00.000000Z'),
+                    ('A', %s::%s, 2.0, '2024-01-01T10:01:00.000000Z'),
+                    ('B', %s::%s, 3.0, '2024-01-01T10:02:00.000000Z')
+                """.formatted(masterTableName, id1, decimalType, id2, decimalType, id1, decimalType));
+
+        execute("""
+                INSERT INTO %s VALUES
+                    ('A', %s::%s, 10.0, '2024-01-01T09:00:00.000000Z'),
+                    ('A', %s::%s, 20.0, '2024-01-01T09:30:00.000000Z'),
+                    ('B', %s::%s, 30.0, '2024-01-01T09:45:00.000000Z')
+                """.formatted(slaveTableName, id1, decimalType, id2, decimalType, id2, decimalType));
+
+        String expected = """
+                val\tprice
+                1.0\t10.0
+                2.0\t20.0
+                3.0\tnull
+                """;
+
+        String queryBody = "m.val, s.price FROM " + masterTableName + " m ASOF JOIN " + slaveTableName + " s ON (m.sym = s.sym AND m.id = s.id)";
+        assertAlgoAndResult(queryBody, "", "Fast", expected, true);
+        assertAlgoAndResult(queryBody, "asof_dense(m s)", "Dense", expected, true);
+        assertAlgoAndResult(queryBody, "asof_linear(m s)", "Light", expected, true);
     }
 
     private void assertAlgoAndResult(String queryBody, String hint, String expectedAlgo, String expectedResult, boolean expectSymbolKeyJoin) throws SqlException {
