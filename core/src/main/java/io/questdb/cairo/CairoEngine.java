@@ -850,13 +850,19 @@ public class CairoEngine implements Closeable, WriterSource {
             baseTimestampType = baseMetadata.getColumnType(tsIndex);
         }
         // viewLowerBoundTimestamp is the floor for O3 reachability and is compared
-        // against late_row.ts in base-table units. Phase 1 (no BACKFILL) takes the
+        // against late_row.ts in base-table units. The non-BACKFILL path takes the
         // wall-clock CREATE moment, scaled into base units via the base's driver
         // so MICRO and NANO bases both produce a comparable value. The catalogue
         // converts back to TIMESTAMP_MICRO at display time per RFC 123 §"Catalogue
         // function live_views()".
-        viewLowerBoundTimestamp = ColumnType.getTimestampDriver(baseTimestampType)
-                .fromMicros(configuration.getMicrosecondClock().getTicks());
+        //
+        // BACKFILL views capture the full base history, so the floor sits at zero
+        // (epoch): every historical row is admissible during the sweep, and any
+        // later O3 row drives the standard replay path after backfill completes.
+        viewLowerBoundTimestamp = op.getBackfillRequested()
+                ? 0L
+                : ColumnType.getTimestampDriver(baseTimestampType)
+                        .fromMicros(configuration.getMicrosecondClock().getTicks());
 
         // compile the SELECT to validate and get metadata. The live-view-compile flag
         // suppresses indexed-symbol key extraction in WhereClauseParser so the planner
@@ -932,9 +938,19 @@ public class CairoEngine implements Closeable, WriterSource {
         // Resolve PARTITION BY: PartitionBy.NONE is the "inherit" sentinel.
         final int partitionBy = LiveViewTableStructure.resolvePartitionBy(op.getPartitionBy(), basePartitionBy);
 
-        // capture base sequencer head as subscribeFromSeqTxn — Phase 1 starts empty
-        // and consumes commits with seqTxn >= subscribeFromSeqTxn.
-        final long subscribeFromSeqTxn = tableSequencerAPI.getTxnTracker(baseTableToken).getWriterTxn() + 1;
+        // Capture base sequencer head. Non-BACKFILL views start empty and consume
+        // commits with seqTxn >= subscribeFromSeqTxn. BACKFILL views capture the
+        // same head as backfillTargetSeqTxn (the upper bound the sweep covers)
+        // and start incremental consumption at head + 1 once the sweep completes.
+        final long baseHeadSeqTxn = tableSequencerAPI.getTxnTracker(baseTableToken).getWriterTxn();
+        final long subscribeFromSeqTxn = baseHeadSeqTxn + 1;
+        final boolean backfillRequested = op.getBackfillRequested();
+        final byte backfillState = backfillRequested
+                ? LiveViewState.BACKFILL_STATE_BACKFILLING
+                : LiveViewState.BACKFILL_STATE_ACTIVE;
+        final long backfillTargetSeqTxn = backfillRequested
+                ? baseHeadSeqTxn
+                : Numbers.LONG_NULL;
 
         LiveViewTableStructure struct = new LiveViewTableStructure(configuration, op.getViewName(), partitionBy, metadata);
         try (
@@ -984,10 +1000,7 @@ public class CairoEngine implements Closeable, WriterSource {
                         op.getInMemoryIntervalUnit(),
                         partitionBy,
                         viewLowerBoundTimestamp,
-                        // Phase 1a rejects BACKFILL at the parser, so always false on disk.
-                        // Preallocated in CORE_DEFINITION so Phase 3 can land BACKFILL
-                        // semantics without a _lv schema bump.
-                        false,
+                        backfillRequested,
                         op.getAnchorSpec(),
                         dependencyColumnNames,
                         metadata
@@ -1009,9 +1022,8 @@ public class CairoEngine implements Closeable, WriterSource {
                 }
 
                 // write _lv.s state file with subscribeFromSeqTxn captured above.
-                // Phase 1a always writes BACKFILL_STATE_ACTIVE / Numbers.LONG_NULL — BACKFILL
-                // is rejected at CREATE; the fields are preallocated for Phase 3 (RFC 123
-                // §"Persistent formats / _lv.s").
+                // BACKFILL views land BACKFILL_STATE_BACKFILLING plus the target
+                // seqTxn the sweep must cover.
                 path.of(configuration.getDbRoot()).concat(liveViewToken);
                 blockFileWriter.of(path.concat(LiveViewState.LIVE_VIEW_STATE_FILE_NAME).$());
                 LiveViewState.append(
@@ -1022,8 +1034,8 @@ public class CairoEngine implements Closeable, WriterSource {
                         subscribeFromSeqTxn - 1,
                         -1L,
                         subscribeFromSeqTxn - 1,
-                        LiveViewState.BACKFILL_STATE_ACTIVE,
-                        Numbers.LONG_NULL,
+                        backfillState,
+                        backfillTargetSeqTxn,
                         blockFileWriter
                 );
 
@@ -1037,6 +1049,8 @@ public class CairoEngine implements Closeable, WriterSource {
                 instance.setLastProcessedSeqTxn(subscribeFromSeqTxn - 1);
                 instance.setAppliedWatermark(-1L);
                 instance.setLvConsumedSeqTxn(subscribeFromSeqTxn - 1);
+                instance.setBackfillState(backfillState);
+                instance.setBackfillTargetSeqTxn(backfillTargetSeqTxn);
                 liveViewRegistry.registerView(instance);
                 dependentViewGraph.addLiveView(liveViewToken, definition.getBaseTableName());
                 liveViewStateStore.registerBaseTable(definition.getBaseTableName());

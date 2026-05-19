@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
+import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.file.BlockFileReader;
@@ -84,6 +85,7 @@ public class ShowCreateLiveViewRecordCursorFactory extends AbstractRecordCursorF
         private final Path path;
         private final ShowCreateLiveViewRecord record = new ShowCreateLiveViewRecord();
         private final Utf8StringSink sink = new Utf8StringSink();
+        private boolean backfillRequested;
         private char flushEveryUnit;
         private long flushEveryValue;
         private boolean hasRun;
@@ -153,6 +155,7 @@ public class ShowCreateLiveViewRecordCursorFactory extends AbstractRecordCursorF
                 inMemoryValue = def.getInMemoryInterval();
                 inMemoryUnit = def.getInMemoryIntervalUnit();
                 partitionBy = def.getPartitionBy();
+                backfillRequested = def.getBackfillRequested();
             } catch (CairoException e) {
                 throw SqlException.$(tokenPosition, "could not read live view definition [view=").put(viewToken)
                         .put(", msg=").put(e)
@@ -198,7 +201,10 @@ public class ShowCreateLiveViewRecordCursorFactory extends AbstractRecordCursorF
             // whatever the LV actually has on disk. Includes the explicit
             // PARTITION BY NONE case, which would otherwise round-trip to base's
             // scheme if the clause were omitted from SHOW CREATE.
-            sink.putAscii(" PARTITION BY ").put(io.questdb.cairo.PartitionBy.toString(partitionBy));
+            sink.putAscii(" PARTITION BY ").put(PartitionBy.toString(partitionBy));
+            if (backfillRequested) {
+                sink.putAscii(" BACKFILL");
+            }
             sink.putAscii(" AS (\n")
                     .put(viewSql)
                     .putAscii('\n');

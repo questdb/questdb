@@ -35,6 +35,7 @@ import org.jetbrains.annotations.Nullable;
 
 public class CreateLiveViewOperation implements Operation {
     private final @Nullable LiveViewDefinition.LvAnchorSpec anchorSpec;
+    private final boolean backfillRequested;
     private final String baseTableName;
     private final int baseTableNamePosition;
     private final long flushEveryInterval;
@@ -59,6 +60,7 @@ public class CreateLiveViewOperation implements Operation {
             char inMemoryIntervalUnit,
             int partitionBy,
             boolean ignoreIfExists,
+            boolean backfillRequested,
             @Nullable LiveViewDefinition.LvAnchorSpec anchorSpec
     ) {
         this.viewName = viewName;
@@ -72,6 +74,7 @@ public class CreateLiveViewOperation implements Operation {
         this.inMemoryIntervalUnit = inMemoryIntervalUnit;
         this.partitionBy = partitionBy;
         this.ignoreIfExists = ignoreIfExists;
+        this.backfillRequested = backfillRequested;
         this.anchorSpec = anchorSpec;
     }
 
@@ -90,6 +93,10 @@ public class CreateLiveViewOperation implements Operation {
 
     public @Nullable LiveViewDefinition.LvAnchorSpec getAnchorSpec() {
         return anchorSpec;
+    }
+
+    public boolean getBackfillRequested() {
+        return backfillRequested;
     }
 
     public String getBaseTableName() {

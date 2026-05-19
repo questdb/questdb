@@ -1218,6 +1218,137 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     }
 
     /**
+     * Drives the BACKFILL sweep for a freshly-created live view. Mirrors the
+     * o3HeadMissReplay shape: waits for {@code ApplyWal2TableJob} to catch up
+     * to {@code backfillTargetSeqTxn}, opens the compiled SELECT's filter /
+     * anchor / window cursor stack over a base-table {@code TableReader}
+     * snapshot, emits a single LV WAL commit covering everything observed,
+     * applies inline, and flips {@code _lv.s.backfillState} to ACTIVE.
+     * <p>
+     * V1 limitations: the sweep runs in a single turn (no mid-sweep budget
+     * yield). A crash before the LV WAL commit re-runs the sweep on restart;
+     * a crash between the commit and the ACTIVE flip re-runs the sweep and
+     * may emit duplicate rows. Resumable mid-sweep checkpoints are a deferred
+     * Phase 3b extension.
+     */
+    private void runBackfillSweep(LiveViewInstance instance) throws SqlException {
+        final long backfillTargetSeqTxn = instance.getStateReader().getBackfillTargetSeqTxn();
+        final String viewName = instance.getDefinition().getViewName();
+        final TableToken baseToken = instance.getDefinition().getBaseTableToken();
+        WindowRecordCursorFactory windowFactory = getWindowFactory(instance);
+        final LiveViewWindow anchorWindow = instance.getAnchorWindow();
+        long appendedRows = 0;
+        long batchMaxTs = Numbers.LONG_NULL;
+
+        // Empty base or pre-CREATE base with no committed seqTxn: nothing to
+        // sweep. Skip straight to the ACTIVE flip so incremental drain takes
+        // over on the next refresh tick.
+        if (backfillTargetSeqTxn < 0) {
+            instance.setBackfillState(LiveViewState.BACKFILL_STATE_ACTIVE);
+            instance.setBackfillTargetSeqTxn(Numbers.LONG_NULL);
+            persistState(instance);
+            LOG.info().$("live view backfill sweep skipped on empty base [view=")
+                    .$(viewName).I$();
+            return;
+        }
+
+        TableReader reader = waitForApply(baseToken, backfillTargetSeqTxn);
+        // The reader may sit at a seqTxn strictly greater than the target if
+        // ApplyWal2TableJob caught up further while waitForApply was running.
+        // Pin lastProcessedSeqTxn to the reader's actual seqTxn so the
+        // subsequent incremental drain resumes from after the snapshot rather
+        // than re-emitting rows the sweep already saw.
+        final long sweepSeqTxn = Math.max(backfillTargetSeqTxn, reader.getSeqTxn());
+        boolean readerAttached = false;
+        try {
+            engine.detachReader(reader);
+            executionContext.of(reader);
+            readerAttached = true;
+
+            RecordCursorFactory filterFactory = windowFactory.getBaseFactory();
+            final Function filter = filterFactory.getFilter();
+            RecordCursorFactory pageFrameFactory = filter != null ? filterFactory.getBaseFactory() : filterFactory;
+            RecordMetadata outMetadata = windowFactory.getMetadata();
+            final int cursorTimestampIndex = outMetadata.getTimestampIndex();
+            if (cursorTimestampIndex < 0) {
+                throw CairoException.nonCritical()
+                        .put("live view requires a designated timestamp [view=")
+                        .put(viewName).put(']');
+            }
+
+            try (WalWriter walWriter = engine.getWalWriter(instance.getLiveViewToken())) {
+                RecordToRowCopier copier = ensureCopier(instance, windowFactory, walWriter);
+                try (RecordCursor pageCursor = pageFrameFactory.getCursor(executionContext)) {
+                    RecordCursor source = pageCursor;
+                    if (filter != null) {
+                        filteringCursor.of(source, filter, executionContext);
+                        source = filteringCursor;
+                    }
+                    if (anchorWindow != null) {
+                        anchorDispatchingCursor.of(source, anchorWindow, executionContext);
+                        source = anchorDispatchingCursor;
+                    }
+                    try (RecordCursor windowCursor = windowFactory.getIncrementalCursor(source, executionContext)) {
+                        Record outRecord = windowCursor.getRecord();
+                        while (windowCursor.hasNext()) {
+                            long ts = outRecord.getTimestamp(cursorTimestampIndex);
+                            if (batchMaxTs == Numbers.LONG_NULL || ts > batchMaxTs) {
+                                batchMaxTs = ts;
+                            }
+                            instance.setLatestSeenTs(ts);
+                            TableWriter.Row row = walWriter.newRow(ts);
+                            copier.copy(executionContext, outRecord, row);
+                            row.append();
+                            appendedRows++;
+                        }
+                    }
+                }
+
+                if (appendedRows > 0) {
+                    walWriter.commitLiveView(sweepSeqTxn);
+                }
+            }
+        } finally {
+            if (readerAttached) {
+                executionContext.clearReader();
+                engine.attachReader(reader);
+            }
+            reader.close();
+        }
+
+        if (appendedRows > 0) {
+            applyJob.applyWalDirect(instance.getLiveViewToken(), Job.RUNNING_STATUS);
+        }
+        instance.setLastProcessedSeqTxn(sweepSeqTxn);
+        instance.setAppliedWatermark(sweepSeqTxn);
+        // Flip backfill state to ACTIVE in memory; the _lv.s rewrite below
+        // makes the transition durable. A crash between this in-memory flip
+        // and the rewrite is recovered on restart from the on-disk
+        // BACKFILLING state - the sweep simply re-runs.
+        instance.setBackfillState(LiveViewState.BACKFILL_STATE_ACTIVE);
+        instance.setBackfillTargetSeqTxn(Numbers.LONG_NULL);
+        try {
+            engine.advanceLiveViewConsumedSeqTxn(
+                    instance.getLiveViewToken(),
+                    sweepSeqTxn,
+                    blockFileWriter,
+                    path
+            );
+        } catch (CairoException e) {
+            LOG.critical().$("could not advance live view consumed seqTxn after backfill sweep [view=")
+                    .$(viewName)
+                    .$(", sweepSeqTxn=").$(sweepSeqTxn)
+                    .$(", error=").$safe(e.getFlyweightMessage()).I$();
+            persistState(instance);
+        }
+        LOG.info().$("live view backfill sweep completed [view=")
+                .$(viewName)
+                .$(", backfillTargetSeqTxn=").$(backfillTargetSeqTxn)
+                .$(", sweepSeqTxn=").$(sweepSeqTxn)
+                .$(", rowsEmitted=").$(appendedRows).I$();
+    }
+
+    /**
      * Returns a base-table {@code TableReader} whose {@code getSeqTxn() >=
      * targetSeqTxn}, polling the reader pool until {@code ApplyWal2TableJob}
      * has caught up. Bounded by
@@ -1930,7 +2061,12 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // which for a quiescent base could be hours away.
             final boolean needsRestore = !instance.isCheckpointRestoreAttempted()
                     && instance.getHeadCheckpointLvSeqTxn() != Numbers.LONG_NULL;
-            if (head > instance.getLastProcessedSeqTxn() || needsRestore) {
+            // BACKFILL views need a refresh tick to drive the sweep even when
+            // no new base commits have arrived since CREATE - the sweep
+            // covers existing history, not future commits.
+            final boolean needsBackfill = instance.getStateReader().getBackfillState()
+                    == LiveViewState.BACKFILL_STATE_BACKFILLING;
+            if (head > instance.getLastProcessedSeqTxn() || needsRestore || needsBackfill) {
                 refreshInstance(instance, head);
                 didWork = true;
             }
@@ -1971,6 +2107,24 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     if (instance.getHeadCheckpointLvSeqTxn() != Numbers.LONG_NULL) {
                         tryRestoreFromHead(instance, getWindowFactory(instance));
                     }
+                }
+                // BACKFILL phase: a view created with the BACKFILL clause sits
+                // in BACKFILLING state until the sweep covers everything <=
+                // backfillTargetSeqTxn. The sweep takes priority over
+                // incremental drain; once it completes, the next refresh tick
+                // resumes normal incremental processing from
+                // backfillTargetSeqTxn + 1.
+                //
+                // The sweep does not bump lastFlushTimeUs - the FLUSH EVERY
+                // rate limit governs steady-state publish cadence, and a
+                // BACKFILL view should resume incremental drain immediately
+                // after the sweep without an artificial 100ms+ stall.
+                if (instance.getStateReader().getBackfillState() == LiveViewState.BACKFILL_STATE_BACKFILLING) {
+                    attempted = true;
+                    runBackfillSweep(instance);
+                    instance.setLastRefreshTimeUs(engine.getConfiguration().getMicrosecondClock().getTicks());
+                    instance.recordRefreshSuccess();
+                    return;
                 }
                 long lastSeqTxn = instance.getLastProcessedSeqTxn();
                 if (seqTxn > lastSeqTxn) {

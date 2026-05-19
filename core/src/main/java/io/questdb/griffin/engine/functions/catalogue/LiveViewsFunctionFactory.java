@@ -267,10 +267,10 @@ public class LiveViewsFunctionFactory implements FunctionFactory {
                             long nowUs = engine.getConfiguration().getMicrosecondClock().getTicks();
                             yield Math.max(0, nowUs - stallStart);
                         }
-                        // V1: BACKFILL is rejected at CREATE, so the target
-                        // seqtxn never gets populated; surface LONG_NULL until
-                        // Phase 3 lands.
-                        case COLUMN_BACKFILL_TARGET_SEQTXN -> Numbers.LONG_NULL;
+                        // Real target while the sweep is in progress; LONG_NULL
+                        // once the sweep completes and the state flips to ACTIVE
+                        // (the field is wiped on the BACKFILLING -> ACTIVE flip).
+                        case COLUMN_BACKFILL_TARGET_SEQTXN -> instance.getStateReader().getBackfillTargetSeqTxn();
                         // V1: the per-view symbol-id translation table T and
                         // the O3-rejected-row counter land in later phases;
                         // surface zero so the catalogue column shape is stable

@@ -370,7 +370,8 @@ public class LiveViewInstance implements QuietCloseable {
                 !dropped && !isClosed,
                 dropped,
                 false,
-                stateReader.isInvalid()
+                stateReader.isInvalid(),
+                stateReader.getBackfillState() == LiveViewState.BACKFILL_STATE_BACKFILLING
         );
     }
 
@@ -505,10 +506,6 @@ public class LiveViewInstance implements QuietCloseable {
         flushRetryStartUs = Numbers.LONG_NULL;
     }
 
-    public void setAppliedWatermark(long appliedWatermark) {
-        stateReader.setAppliedWatermark(appliedWatermark);
-    }
-
     public void setAnchorFunction(Function function) {
         if (anchorFunction != function) {
             Misc.free(anchorFunction);
@@ -521,6 +518,18 @@ public class LiveViewInstance implements QuietCloseable {
             Misc.free(anchorWindow);
             anchorWindow = window;
         }
+    }
+
+    public void setAppliedWatermark(long appliedWatermark) {
+        stateReader.setAppliedWatermark(appliedWatermark);
+    }
+
+    public void setBackfillState(byte backfillState) {
+        stateReader.setBackfillState(backfillState);
+    }
+
+    public void setBackfillTargetSeqTxn(long backfillTargetSeqTxn) {
+        stateReader.setBackfillTargetSeqTxn(backfillTargetSeqTxn);
     }
 
     /**

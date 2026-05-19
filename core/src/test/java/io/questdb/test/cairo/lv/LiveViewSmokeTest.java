@@ -179,16 +179,218 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testRejectBackfill() throws Exception {
+    public void testBackfillSweepEmitsHistoricalRows() throws Exception {
+        // CREATE LIVE VIEW ... BACKFILL captures the base table's pre-CREATE
+        // history. Without BACKFILL the LV is empty until new commits arrive;
+        // with BACKFILL the sweep covers everything <= backfillTargetSeqTxn
+        // and the lifecycle flips to ACTIVE on completion.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            try {
-                execute("CREATE LIVE VIEW lv FLUSH EVERY 500ms BACKFILL AS " +
-                        "SELECT ts, x, row_number() OVER () AS rn FROM base");
-                Assert.fail("expected BACKFILL reject");
-            } catch (SqlException e) {
-                Assert.assertTrue(e.getMessage(), e.getMessage().contains("BACKFILL not yet supported"));
+            execute("INSERT INTO base (ts, x) VALUES " +
+                    "('2026-04-01T00:00:00.000000Z', 1), " +
+                    "('2026-04-01T00:00:01.000000Z', 2), " +
+                    "('2026-04-01T00:00:02.000000Z', 3)");
+            drainWalQueue();
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 200ms BACKFILL AS " +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base");
+
+            LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(instance);
+            Assert.assertEquals(
+                    "view must start in BACKFILLING",
+                    LiveViewState.BACKFILL_STATE_BACKFILLING,
+                    instance.getStateReader().getBackfillState()
+            );
+
+            // Drive the sweep through the refresh worker.
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
             }
+            drainWalQueue();
+
+            Assert.assertEquals(
+                    "sweep must flip backfillState to ACTIVE",
+                    LiveViewState.BACKFILL_STATE_ACTIVE,
+                    instance.getStateReader().getBackfillState()
+            );
+            Assert.assertEquals(
+                    "ACTIVE flip must clear backfillTargetSeqTxn",
+                    Numbers.LONG_NULL,
+                    instance.getStateReader().getBackfillTargetSeqTxn()
+            );
+            assertSql("count\n3\n", "SELECT count() FROM lv");
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testBackfillSweepOnEmptyBaseFlipsToActive() throws Exception {
+        // CREATE LIVE VIEW ... BACKFILL on an empty base must still flip to
+        // ACTIVE on the first refresh tick; the sweep walks zero rows and
+        // the lifecycle advances immediately.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 200ms BACKFILL AS " +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base");
+
+            LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(instance);
+            Assert.assertEquals(
+                    LiveViewState.BACKFILL_STATE_BACKFILLING,
+                    instance.getStateReader().getBackfillState()
+            );
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+            }
+
+            Assert.assertEquals(
+                    "empty-base sweep must still flip to ACTIVE",
+                    LiveViewState.BACKFILL_STATE_ACTIVE,
+                    instance.getStateReader().getBackfillState()
+            );
+            assertSql("count\n0\n", "SELECT count() FROM lv");
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testBackfillCoexistsWithFollowOnInserts() throws Exception {
+        // After BACKFILL completes, subsequent inserts go through the normal
+        // incremental refresh path. End-to-end row count must include both
+        // the backfilled history and the post-CREATE inserts.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO base (ts, x) VALUES " +
+                    "('2026-04-01T00:00:00.000000Z', 1), " +
+                    "('2026-04-01T00:00:01.000000Z', 2)");
+            drainWalQueue();
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 200ms BACKFILL AS " +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base");
+
+            LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(instance);
+
+            // Drive the backfill sweep.
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+            }
+            drainWalQueue();
+            Assert.assertEquals(
+                    LiveViewState.BACKFILL_STATE_ACTIVE,
+                    instance.getStateReader().getBackfillState()
+            );
+            assertSql("count\n2\n", "SELECT count() FROM lv");
+
+            // Insert more rows post-CREATE; the incremental drain handles them.
+            execute("INSERT INTO base (ts, x) VALUES " +
+                    "('2026-04-01T00:00:10.000000Z', 10), " +
+                    "('2026-04-01T00:00:11.000000Z', 11)");
+            drainWalQueue();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+            }
+            drainWalQueue();
+            assertSql("count\n4\n", "SELECT count() FROM lv");
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testBackfillStatusVisibleInCatalogue() throws Exception {
+        // live_views().view_status reads "backfilling" while the sweep is in
+        // progress; backfill_target_seqtxn surfaces the captured target.
+        // After the sweep, the status flips to "active" and the target column
+        // returns to LONG_NULL.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO base (ts, x) VALUES ('2026-04-01T00:00:00.000000Z', 1)");
+            drainWalQueue();
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 200ms BACKFILL AS " +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base");
+
+            LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(instance);
+            assertSql(
+                    "view_status\nbackfilling\n",
+                    "SELECT view_status FROM live_views() WHERE view_name = 'lv'"
+            );
+            Assert.assertTrue(
+                    "backfill_target_seqtxn must be non-NULL while BACKFILLING",
+                    instance.getStateReader().getBackfillTargetSeqTxn() >= 0
+            );
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+            }
+            drainWalQueue();
+
+            assertSql(
+                    "view_status\tbackfill_target_seqtxn\n" +
+                            "active\tnull\n",
+                    "SELECT view_status, backfill_target_seqtxn FROM live_views() WHERE view_name = 'lv'"
+            );
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testShowCreateEmitsBackfillClause() throws Exception {
+        // SHOW CREATE LIVE VIEW round-trips the BACKFILL clause so the emitted
+        // DDL re-creates an equivalent view.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 200ms BACKFILL AS " +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base");
+            assertSql(
+                    "ddl\n" +
+                            "CREATE LIVE VIEW 'lv' FLUSH EVERY 200ms IN MEMORY 200ms PARTITION BY DAY BACKFILL AS (\n" +
+                            "SELECT ts, x, row_number() OVER () AS rn FROM base\n" +
+                            ");\n",
+                    "SHOW CREATE LIVE VIEW lv"
+            );
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testBackfillAcceptedAtCreate() throws Exception {
+        // Phase 3b: BACKFILL parses, the CORE_DEFINITION block stores
+        // backfillRequested=true, and the CORE_STATE block stores
+        // BACKFILL_STATE_BACKFILLING plus the captured target seqTxn.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO base (ts, x) VALUES " +
+                    "('2026-04-01T00:00:00.000000Z', 1), " +
+                    "('2026-04-01T00:00:01.000000Z', 2)");
+            drainWalQueue();
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 500ms BACKFILL AS " +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base");
+
+            LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(instance);
+            Assert.assertTrue(
+                    "BACKFILL clause must round-trip to definition",
+                    instance.getDefinition().getBackfillRequested()
+            );
+            Assert.assertEquals(
+                    "BACKFILL CREATE must persist BACKFILLING state",
+                    LiveViewState.BACKFILL_STATE_BACKFILLING,
+                    instance.getStateReader().getBackfillState()
+            );
+            // backfillTargetSeqTxn captures base.head at CREATE; with the two
+            // inserts above (one commit), head must be >= 0 and equal to the
+            // sequencer's writer txn.
+            Assert.assertTrue(
+                    "backfillTargetSeqTxn must be set",
+                    instance.getStateReader().getBackfillTargetSeqTxn() >= 0
+            );
+
+            execute("DROP LIVE VIEW lv");
         });
     }
 
@@ -1245,13 +1447,10 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
 
     @Test
     public void testBackfillFieldsRoundTripAsActiveDefault() throws Exception {
-        // Phase 1a rejects BACKFILL at the parser, so backfillRequested in _lv and
-        // backfillState / backfillTargetSeqTxn in _lv.s are always written as the
-        // ACTIVE / LONG_NULL defaults. Preallocated in CORE_DEFINITION / CORE_STATE
-        // so Phase 3 can land BACKFILL semantics without a schema bump (RFC 123
-        // §"Persistent formats / _lv" and §"Persistent formats / _lv.s"). This test
-        // pins the round-trip across restart so a future writer that drops the fields
-        // breaks visibly.
+        // Without the BACKFILL clause the CORE_DEFINITION / CORE_STATE blocks
+        // persist the ACTIVE / LONG_NULL defaults. Round-trips across a
+        // simulated restart so a regression that drops these fields breaks
+        // visibly.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
@@ -1260,16 +1459,16 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
             LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
             Assert.assertNotNull(instance);
             Assert.assertFalse(
-                    "backfillRequested must default to false in Phase 1a",
+                    "backfillRequested defaults to false when BACKFILL is omitted",
                     instance.getDefinition().getBackfillRequested()
             );
             Assert.assertEquals(
-                    "backfillState must default to ACTIVE in Phase 1a",
+                    "backfillState defaults to ACTIVE when BACKFILL is omitted",
                     LiveViewState.BACKFILL_STATE_ACTIVE,
                     instance.getStateReader().getBackfillState()
             );
             Assert.assertEquals(
-                    "backfillTargetSeqTxn must default to LONG_NULL in Phase 1a",
+                    "backfillTargetSeqTxn defaults to LONG_NULL when BACKFILL is omitted",
                     Numbers.LONG_NULL,
                     instance.getStateReader().getBackfillTargetSeqTxn()
             );

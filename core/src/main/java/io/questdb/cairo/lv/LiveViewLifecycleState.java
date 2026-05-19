@@ -28,15 +28,21 @@ package io.questdb.cairo.lv;
  * Logical lifecycle state of a live view.
  * <p>
  * Per RFC 123: this is derived state, not a persisted field. The combination of
- * registry visibility (locked / committed / marked-dropped) and {@code _lv.s.invalid}
- * uniquely determines the state. Phase 1 omits {@code BACKFILLING} because
- * {@code BACKFILL} is rejected at CREATE.
+ * registry visibility (locked / committed / marked-dropped), {@code _lv.s.invalid},
+ * and {@code _lv.s.backfillState} uniquely determines the state.
  */
 public enum LiveViewLifecycleState {
     /** Registry entry is locked but not yet committed. View is not visible to readers. */
     CREATING,
     /** Registry committed, refresh worker running, queryable. */
     ACTIVE,
+    /**
+     * Registry committed, {@code _lv.s.backfillState=BACKFILLING}; the backfill
+     * sweep is in progress. The view is queryable (rows materialise incrementally
+     * through the sweep) but incremental drain is parked until the sweep
+     * completes and flips to ACTIVE.
+     */
+    BACKFILLING,
     /** Registry committed, {@code _lv.s.invalid=true}; refresh stopped, last persisted state remains queryable. */
     INVALID,
     /** Registry entry marked-dropped; draining, not visible to new readers. */
@@ -59,12 +65,14 @@ public enum LiveViewLifecycleState {
      * @param locked          {@code true} iff the registry entry is locked (CREATE
      *                        in flight)
      * @param invalid         {@code _lv.s.invalid}
+     * @param backfilling     {@code _lv.s.backfillState == BACKFILLING}
      */
     public static LiveViewLifecycleState derive(
             boolean registryVisible,
             boolean markedDropped,
             boolean locked,
-            boolean invalid
+            boolean invalid,
+            boolean backfilling
     ) {
         if (markedDropped) {
             return DROPPING;
@@ -73,7 +81,10 @@ public enum LiveViewLifecycleState {
             return CREATING;
         }
         if (registryVisible) {
-            return invalid ? INVALID : ACTIVE;
+            if (invalid) {
+                return INVALID;
+            }
+            return backfilling ? BACKFILLING : ACTIVE;
         }
         // Defensive default: registry has no entry and no other signal — treat as
         // CREATING so callers don't spuriously hand out queries.
@@ -85,6 +96,7 @@ public enum LiveViewLifecycleState {
         return switch (this) {
             case CREATING -> "creating";
             case ACTIVE -> "active";
+            case BACKFILLING -> "backfilling";
             case INVALID -> "invalid";
             case DROPPING -> "dropping";
             case VERSION_UNSUPPORTED -> "version_unsupported";

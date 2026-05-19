@@ -1378,8 +1378,8 @@ public class SqlParser {
                 builder.setPartitionBy(partitionBy);
                 tok = tok(lexer, "next clause or 'as'");
             } else if (isBackfillKeyword(tok)) {
-                throw SqlException.$(lexer.lastTokenPosition(),
-                        "BACKFILL not yet supported; deferred to a later phase");
+                builder.setBackfillRequested(true);
+                tok = tok(lexer, "next clause or 'as'");
             } else {
                 break;
             }
