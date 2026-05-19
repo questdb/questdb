@@ -1505,8 +1505,8 @@ public class SqlParser {
      * side feeds this through the same {@code ensureAnchorFunction} path that
      * {@code ANCHOR EXPRESSION} uses, so the actual reset dispatch is identical.
      * <ul>
-     *     <li>UTC midnight: {@code timestamp_floor('1d', <ts>)}.</li>
-     *     <li>UTC non-midnight: {@code timestamp_floor('1d', <ts>, '1970-01-01THH:MM:00.000000Z'::timestamp)}.</li>
+     *     <li>UTC midnight (no tz or {@code 'UTC'}): {@code timestamp_floor('1d', <ts>)} — RFC table lines 802-803 collapse together since a UTC tz at zero offset adds no information.</li>
+     *     <li>No-tz non-midnight: {@code timestamp_floor('1d', <ts>, '1970-01-01THH:MM:00.000000Z'::timestamp)}.</li>
      *     <li>Tz-aware: {@code timestamp_floor_utc('1d', <ts>, '1970-01-01THH:MM:00.000000Z'::timestamp, '+00:00', '<tz>')}
      *     using the UTC-encoded variant so DST fall-back keeps bucket distinctness.</li>
      * </ul>
@@ -1522,8 +1522,13 @@ public class SqlParser {
         }
         long timeUs = w.getAnchorDailyTimeUs();
         CharSequence tz = w.getAnchorDailyTimeZone();
+        // A 'UTC' tz at zero offset is a no-op: tz='UTC' and tz=null produce
+        // the same buckets and the same desugared form (RFC 123 §"DAILY sugar"
+        // line 803). Collapse it to the no-tz branch so the persisted anchor
+        // expression matches the table verbatim.
+        final boolean tzIsUtc = tz != null && Chars.equalsIgnoreCase("UTC", tz);
         StringSink sink = Misc.getThreadLocalSink();
-        if (tz == null && timeUs == 0) {
+        if ((tz == null || tzIsUtc) && timeUs == 0) {
             sink.put("timestamp_floor('1d', ").put(tsNode.token).put(')');
         } else if (tz == null) {
             sink.put("timestamp_floor('1d', ").put(tsNode.token).put(", '1970-01-01T");

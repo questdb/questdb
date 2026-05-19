@@ -7804,6 +7804,55 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDailyUtcMidnightDesugarsToTimestampFloor() throws Exception {
+        // RFC 123 §"DAILY sugar" line 803: ANCHOR DAILY '00:00' 'UTC'
+        // desugars to the same expression as the no-tz form (line 802),
+        // since a 'UTC' tz at zero offset contributes nothing. Persisting
+        // the verbatim line-805 form would diverge from the RFC table and
+        // pin a needless timestamp_floor_utc call on the hot anchor path.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv_utc FLUSH EVERY 1s AS " +
+                    "SELECT ts, x, sum(x) OVER w AS s FROM base " +
+                    "WINDOW w AS (PARTITION BY x ORDER BY ts ANCHOR DAILY '00:00' 'UTC')");
+            execute("CREATE LIVE VIEW lv_no_tz FLUSH EVERY 1s AS " +
+                    "SELECT ts, x, sum(x) OVER w AS s FROM base " +
+                    "WINDOW w AS (PARTITION BY x ORDER BY ts ANCHOR DAILY '00:00')");
+            execute("CREATE LIVE VIEW lv_london FLUSH EVERY 1s AS " +
+                    "SELECT ts, x, sum(x) OVER w AS s FROM base " +
+                    "WINDOW w AS (PARTITION BY x ORDER BY ts ANCHOR DAILY '00:00' 'Europe/London')");
+
+            LiveViewInstance utc = engine.getLiveViewRegistry().getViewInstance("lv_utc");
+            LiveViewInstance noTz = engine.getLiveViewRegistry().getViewInstance("lv_no_tz");
+            LiveViewInstance london = engine.getLiveViewRegistry().getViewInstance("lv_london");
+            Assert.assertNotNull(utc);
+            Assert.assertNotNull(noTz);
+            Assert.assertNotNull(london);
+            Assert.assertEquals(
+                    "DAILY '00:00' 'UTC' must collapse to the no-tz form",
+                    "timestamp_floor('1d', ts)",
+                    utc.getDefinition().getAnchorSpec().anchorExpressionSql
+            );
+            Assert.assertEquals(
+                    "DAILY '00:00' (no tz) must also produce the no-tz form",
+                    "timestamp_floor('1d', ts)",
+                    noTz.getDefinition().getAnchorSpec().anchorExpressionSql
+            );
+            // Non-UTC tz keeps the timestamp_floor_utc form. The collapse
+            // applies only to the UTC special case where the tz argument
+            // contributes no offset.
+            Assert.assertEquals(
+                    "DAILY '00:00' 'Europe/London' must keep the tz-aware form",
+                    "timestamp_floor_utc('1d', ts, '1970-01-01T00:00:00.000000Z'::timestamp, '+00:00', 'Europe/London')",
+                    london.getDefinition().getAnchorSpec().anchorExpressionSql
+            );
+            execute("DROP LIVE VIEW lv_utc");
+            execute("DROP LIVE VIEW lv_no_tz");
+            execute("DROP LIVE VIEW lv_london");
+        });
+    }
+
+    @Test
     public void testShowCreateRoundTripsDailyUtc() throws Exception {
         // RFC 123 §"DAILY sugar" line 803: ANCHOR DAILY '00:00' 'UTC' and the
         // unqualified ANCHOR DAILY '00:00' desugar to the same expression
