@@ -24,6 +24,7 @@
 
 package io.questdb.cairo.mv;
 
+import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.file.AppendableBlock;
 import io.questdb.cairo.file.BlockFileWriter;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -49,14 +50,15 @@ import static io.questdb.TelemetryEvent.*;
  * string as that field is not needed for refresh jobs.
  */
 public class MatViewState implements QuietCloseable {
-    // Cold-start gap-width threshold used when no scan/commit samples have been
-    // observed yet. Units match the base table's timestamp column (us for
-    // TIMESTAMP, ns for TIMESTAMP_NS). The value 2_000_000 corresponds to 2
-    // seconds in microseconds and 2 milliseconds in nanoseconds -- both are
-    // mild defaults that bias toward minimum merging until measured cost data
-    // arrives. Subsequent refreshes will override via the EMA-derived
-    // threshold computed from observed commit and scan latencies.
-    public static final long COLD_START_GAP_THRESHOLD_TS_UNITS = 2_000_000L;
+    // Cold-start gap-width threshold used when no scan/commit samples have
+    // been observed yet. Expressed as a wall-clock duration in microseconds
+    // and converted to the base table's timestamp unit at read time, so a
+    // fresh us-base view and a fresh ns-base view both bias toward merging
+    // gaps under the same wall-clock equivalent -- avoiding the 1000x
+    // behavioural gap that a single ts-unit-valued constant would create
+    // between us and ns bases for the one-refresh warmup window before the
+    // EMA-derived threshold takes over.
+    public static final long COLD_START_GAP_THRESHOLD_MICROS = 2_000_000L;
     public static final String MAT_VIEW_STATE_FILE_NAME = "_mv.s";
     public static final int MAT_VIEW_STATE_FORMAT_EXTRA_INTERVALS_MSG_TYPE = 3;
     public static final int MAT_VIEW_STATE_FORMAT_EXTRA_PERIOD_MSG_TYPE = 2;
@@ -85,19 +87,26 @@ public class MatViewState implements QuietCloseable {
     private final AtomicLong refreshSeq = new AtomicLong();
     private final MatViewTelemetryFacade telemetryFacade;
     // Exponential moving average of one REPLACE_RANGE commit, in nanoseconds.
-    // Used together with avgScanNanosPerTsUnit to derive a timestamp-width
-    // threshold below which clustering two adjacent cached refresh intervals
-    // is cheaper than paying for an extra commit.
+    // Used together with the scan-sample/scan-range EMAs to derive a
+    // timestamp-width threshold below which clustering two adjacent cached
+    // refresh intervals is cheaper than paying for an extra commit.
     // Writes protected by this.latch; reads may be racy (used for display
     // and cost-model decisions, never for correctness).
     private volatile long avgCommitNanos;
-    // Exponential moving average of base-table scan latency per unit of the
-    // base table's timestamp column (us for TIMESTAMP, ns for TIMESTAMP_NS).
-    // This is the rate at which the refresh cursor processes wall-clock time
-    // width regardless of underlying row density -- the cost model wants
-    // "how long to scan a gap of N ts-units", which this directly answers.
-    // Same locking discipline as avgCommitNanos.
-    private volatile long avgScanNanosPerTsUnit;
+    // Exponential moving average of the timestamp range width covered by a
+    // single refresh iteration, in the base table's timestamp unit (us for
+    // TIMESTAMP, ns for TIMESTAMP_NS). Paired with avgScanSampleNanos: the
+    // cost model derives a scan-ns-per-ts-unit rate at read time
+    // (avgScanSampleNanos / avgScanRangeTsUnits) rather than smoothing the
+    // per-sample ratio, so a fast scan over a wide range (the common case
+    // on TIMESTAMP_NS bases, where the two share magnitude) keeps its full
+    // precision instead of flooring to zero. Same locking discipline as
+    // avgCommitNanos.
+    private volatile long avgScanRangeTsUnits;
+    // Exponential moving average of the wall-clock duration of a single
+    // refresh iteration's base-table scan, in nanoseconds. See
+    // avgScanRangeTsUnits.
+    private volatile long avgScanSampleNanos;
     // Protected by this.latch.
     private RecordCursorFactory cursorFactory;
     private volatile boolean dropped;
@@ -223,11 +232,20 @@ public class MatViewState implements QuietCloseable {
      * Folds a positive sample into a positive EMA, applying the outlier
      * multiplier cap and recovering safely from arithmetic overflow.
      * <p>
-     * The pre-overflow form is {@code (prev*(N-1) + min(sample, prev*K)) / N}.
+     * The pre-overflow form is
+     * {@code (prev*(N-1) + min(sample, prev*K) + N/2) / N}. The {@code + N/2}
+     * is a round-half-up bias: plain integer-floor division creates a fixed
+     * point at {@code prev = 1} (cap is 5, so {@code (7 + capped)/8} is
+     * always 0 or 1 and the EMA cannot grow regardless of sample size).
+     * Rounding half-up lets a single large sample escape the trap and
+     * leaves larger EMA values effectively unchanged (the half-unit bias
+     * is negligible against typical six- and seven-digit averages).
+     * <p>
      * For values near {@code Long.MAX_VALUE / 7} the {@code prev*(N-1)} step
-     * wraps -- in that case we fall back to a 50/50 blend of {@code prev} and
-     * the capped sample, which keeps the EMA monotonic in sign and prevents
-     * a single outlier from latching the average to a corrupted value.
+     * wraps -- in that case we fall back to a 50/50 blend of {@code prev}
+     * and the capped sample, which keeps the EMA monotonic in sign and
+     * prevents a single outlier from latching the average to a corrupted
+     * value.
      */
     private static long foldEma(long prev, long sample) {
         if (prev == 0) {
@@ -244,14 +262,48 @@ public class MatViewState implements QuietCloseable {
             cap = Long.MAX_VALUE;
         }
         final long capped = Math.min(sample, cap);
-        // Standard EMA: (prev * (N-1) + capped) / N. Guard the multiply and
-        // addition; on overflow fall back to a 50/50 blend.
+        // Standard EMA with round-half-up: (prev*(N-1) + capped + N/2) / N.
+        // Guard multiply and additions; on overflow fall back to a 50/50
+        // blend so a single outlier doesn't corrupt the average.
         try {
             final long weighted = Math.multiplyExact(prev, (long) (EMA_ALPHA_INV - 1));
-            final long sum = Math.addExact(weighted, capped);
+            final long sum = Math.addExact(Math.addExact(weighted, capped), (long) (EMA_ALPHA_INV / 2));
             return sum / EMA_ALPHA_INV;
         } catch (ArithmeticException overflow) {
             return (prev / 2) + (capped / 2);
+        }
+    }
+
+    /**
+     * Computes {@code a * b / c} for positive operands, saturating to
+     * {@code Long.MAX_VALUE / 2} on long overflow rather than wrapping.
+     * Lossy on the divide-first paths but bounded; used to derive the
+     * gap-merge threshold from the two scan EMAs.
+     */
+    private static long mulDivSaturating(long a, long b, long c) {
+        try {
+            return Math.multiplyExact(a, b) / c;
+        } catch (ArithmeticException overflow) {
+            if (b >= c) {
+                try {
+                    return Math.multiplyExact(a, b / c);
+                } catch (ArithmeticException overflow2) {
+                    return Long.MAX_VALUE / 2;
+                }
+            }
+            final long ratio = a / c;
+            if (ratio == 0) {
+                // a < c and a * b still overflowed -- b is huge. True
+                // answer is a * b / c < b but we can't reach it without
+                // 128-bit math. Return 0 (the "merging disabled" sentinel)
+                // rather than a wrong-by-orders-of-magnitude value.
+                return 0L;
+            }
+            try {
+                return Math.multiplyExact(ratio, b);
+            } catch (ArithmeticException overflow2) {
+                return Long.MAX_VALUE / 2;
+            }
         }
     }
 
@@ -271,8 +323,12 @@ public class MatViewState implements QuietCloseable {
         return avgCommitNanos;
     }
 
-    public long getAvgScanNanosPerTsUnit() {
-        return avgScanNanosPerTsUnit;
+    public long getAvgScanRangeTsUnits() {
+        return avgScanRangeTsUnits;
+    }
+
+    public long getAvgScanSampleNanos() {
+        return avgScanSampleNanos;
     }
 
     /**
@@ -284,11 +340,12 @@ public class MatViewState implements QuietCloseable {
      * cost equals one extra REPLACE_RANGE commit -- below it, merging beats
      * splitting.
      * <p>
-     * Returns the cold-start default ({@value #COLD_START_GAP_THRESHOLD_TS_UNITS}
-     * ts-units) when no samples have been recorded yet. Returns 0 when the cost
-     * model says merging is never worth it (commit cheaper than scanning one
-     * ts unit of gap); {@link MatViewRefreshJob#clusterIntervals} interprets a
-     * zero threshold as "gap-based merging disabled" because
+     * Returns the cold-start default ({@link #COLD_START_GAP_THRESHOLD_MICROS}
+     * converted to the base table's ts-unit) when no samples have been
+     * recorded yet. Returns 0 when the cost model says merging is never
+     * worth it (commit cheaper than scanning one ts unit of gap);
+     * {@link MatViewRefreshJob#clusterIntervals} interprets a zero threshold
+     * as "gap-based merging disabled" because
      * {@link io.questdb.griffin.model.IntervalUtils#unionInPlace} already
      * guarantees adjacent intervals are at least one ts unit apart, so no gap
      * can satisfy {@code gap < 0}. Operators reading the catalogue see 0
@@ -296,11 +353,21 @@ public class MatViewState implements QuietCloseable {
      */
     public long getCommitGapThresholdTsUnits() {
         final long commit = avgCommitNanos;
-        final long scanPerTsUnit = avgScanNanosPerTsUnit;
-        if (commit <= 0 || scanPerTsUnit <= 0) {
-            return COLD_START_GAP_THRESHOLD_TS_UNITS;
+        final long sample = avgScanSampleNanos;
+        final long range = avgScanRangeTsUnits;
+        if (commit <= 0 || sample <= 0 || range <= 0) {
+            // Cold-start: convert the micros-valued constant into the base
+            // table's ts-unit. The driver is null only in test fixtures
+            // that construct a bare MatViewDefinition; production callers
+            // always have a bound driver. Fall back to the raw micros
+            // value when absent so the catalogue stays deterministic.
+            final TimestampDriver driver = viewDefinition.getBaseTableTimestampDriver();
+            return driver != null
+                    ? driver.fromMicros(COLD_START_GAP_THRESHOLD_MICROS)
+                    : COLD_START_GAP_THRESHOLD_MICROS;
         }
-        return commit / scanPerTsUnit;
+        // threshold = commit_ns * range_ts_units / sample_ns
+        return mulDivSaturating(commit, range, sample);
     }
 
     /**
@@ -464,28 +531,27 @@ public class MatViewState implements QuietCloseable {
     }
 
     /**
-     * Folds a sampled base-table scan into the rolling per-ts-unit scan
-     * latency. {@code rangeTsUnits} is the timestamp range width that the cursor
-     * scanned (i.e. {@code iteratorHi - iteratorLo}) in the base table's
-     * timestamp unit (us for TIMESTAMP, ns for TIMESTAMP_NS), not row counts.
-     * Ignores zero-range samples so the rate isn't pulled to infinity, and
-     * ignores sub-resolution samples (where {@code sampleNanos < rangeTsUnits})
-     * because integer division would floor the per-ts-unit rate to zero and the
-     * subsequent {@code Math.max(1, ...)} clamp would lock the EMA into a
-     * regime orders of magnitude above the true rate -- which would in turn
-     * collapse {@link #getCommitGapThresholdTsUnits()} below the cold-start
-     * default. Letting the cold-start guard keep firing is preferable to
-     * folding in a sample with no usable signal.
+     * Folds a sampled base-table scan into the two rolling scan averages
+     * (wall-clock duration and timestamp range width) used by the gap-merge
+     * cost model. {@code rangeTsUnits} is the timestamp range width that
+     * the cursor scanned (i.e. {@code iteratorHi - iteratorLo}) in the base
+     * table's timestamp unit (us for TIMESTAMP, ns for TIMESTAMP_NS), not
+     * row counts. Ignores zero/negative inputs but folds every other
+     * sample: storing each EMA in its natural unit lets the threshold
+     * derivation recover the rate at read time without losing precision to
+     * the per-sample integer division that bites fast-scan-wide-range
+     * workloads (the common case on TIMESTAMP_NS bases).
      * <p>
-     * Samples larger than {@value #EMA_OUTLIER_MULTIPLIER}x the current average
-     * are capped before folding.
+     * Samples larger than {@value #EMA_OUTLIER_MULTIPLIER}x the current
+     * average are capped before folding.
      */
     public void recordScanMetrics(long sampleNanos, long rangeTsUnits) {
         assert latch.get();
-        if (sampleNanos <= 0 || rangeTsUnits <= 0 || sampleNanos < rangeTsUnits) {
+        if (sampleNanos <= 0 || rangeTsUnits <= 0) {
             return;
         }
-        avgScanNanosPerTsUnit = foldEma(avgScanNanosPerTsUnit, sampleNanos / rangeTsUnits);
+        avgScanSampleNanos = foldEma(avgScanSampleNanos, sampleNanos);
+        avgScanRangeTsUnits = foldEma(avgScanRangeTsUnits, rangeTsUnits);
     }
 
     public void refreshFail(long refreshTimestamp, CharSequence errorMessage) {
@@ -504,7 +570,8 @@ public class MatViewState implements QuietCloseable {
     public void refreshStats() {
         assert latch.get();
         this.avgCommitNanos = 0;
-        this.avgScanNanosPerTsUnit = 0;
+        this.avgScanSampleNanos = 0;
+        this.avgScanRangeTsUnits = 0;
     }
 
     public void refreshSuccess(
@@ -590,10 +657,11 @@ public class MatViewState implements QuietCloseable {
      * pair instead.
      */
     @TestOnly
-    public void setRefreshMetricsForTesting(long commitNanos, long scanNanosPerTsUnit) {
+    public void setRefreshMetricsForTesting(long commitNanos, long scanSampleNanos, long scanRangeTsUnits) {
         assert latch.get();
         this.avgCommitNanos = Math.max(0, commitNanos);
-        this.avgScanNanosPerTsUnit = Math.max(0, scanNanosPerTsUnit);
+        this.avgScanSampleNanos = Math.max(0, scanSampleNanos);
+        this.avgScanRangeTsUnits = Math.max(0, scanRangeTsUnits);
     }
 
     public void setViewDefinition(MatViewDefinition viewDefinition) {

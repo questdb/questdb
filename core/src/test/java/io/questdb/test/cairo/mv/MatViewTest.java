@@ -29,6 +29,7 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.MicrosTimestampDriver;
+import io.questdb.cairo.NanosTimestampDriver;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
@@ -5810,10 +5811,15 @@ public class MatViewTest extends AbstractCairoTest {
 
     @Test
     public void testRefreshIntervalsMaxClustersConfigCapsClusterCount() throws Exception {
-        // Sanity-check the config plumbing: cairo.mat.view.refresh.max.clusters
-        // is read by findRefreshIntervals and passed to clusterIntervals. With
-        // 5 disjoint inserts and the cap forced down to 2, clustering must
-        // collapse the 5 intervals into exactly 2 clusters.
+        // End-to-end test for cairo.mat.view.refresh.max.clusters: with 5
+        // disjoint inserts and the cap forced down to 2, clustering must
+        // collapse the 5 intervals into 2 clusters, producing exactly 2
+        // REPLACE_RANGE commits on the mat-view table instead of 5. Reading
+        // the mat-view's writer txn before and after the refresh is the
+        // only observable that distinguishes "cap took effect" from
+        // "clustering ran but didn't merge anything" -- intervals are
+        // cleared post-refresh regardless of cluster count, so the cache
+        // size assertion alone is cap-independent.
         setProperty(PropertyKey.CAIRO_MAT_VIEW_ROWS_PER_QUERY_ESTIMATE, 1_000_000);
         setProperty(PropertyKey.CAIRO_MAT_VIEW_REFRESH_INTERVALS_UPDATE_PERIOD, "5s");
         setProperty(PropertyKey.CAIRO_MAT_VIEW_REFRESH_MAX_CLUSTERS, 2);
@@ -5834,8 +5840,7 @@ public class MatViewTest extends AbstractCairoTest {
             drainQueues();
 
             // 5 disjoint inserts widely apart -- each becomes its own cached
-            // interval at refresh-intervals-update time, and the cluster cap
-            // forces them down to 2.
+            // interval at refresh-intervals-update time.
             execute("insert into base_price(price, ts) values (2.0, '2024-02-01T00:01')");
             execute("insert into base_price(price, ts) values (3.0, '2024-03-01T00:01')");
             execute("insert into base_price(price, ts) values (4.0, '2024-04-01T00:01')");
@@ -5846,20 +5851,30 @@ public class MatViewTest extends AbstractCairoTest {
             drainMatViewTimerQueue(timerJob);
             drainQueues();
 
-            // Before clustering the cache has 5 intervals; clustering happens
-            // inside findRefreshIntervals during the refresh, so we observe the
-            // pre-refresh state here.
+            // Pre-refresh: 5 cached interval pairs (10 longs). Clustering
+            // happens inside findRefreshIntervals during the refresh itself,
+            // so this snapshot is taken before the cap kicks in.
             final TableToken viewToken = engine.getTableTokenIfExists("price_1h");
             final MatViewState viewState = engine.getMatViewStateStore().getViewState(viewToken);
             Assert.assertEquals(10, viewState.getRefreshIntervals().size());
 
-            // After refresh: 5 inserts produce 5 dirty buckets, and the cluster
-            // cap doesn't change that -- it changes the COMMIT count, not the
-            // emitted-bucket count. We verify the cap took effect by reading
-            // the post-refresh state where intervals are cleared.
+            final long txnBefore = engine.getTableSequencerAPI()
+                    .getTxnTracker(viewToken).getWriterTxn();
             execute("refresh materialized view price_1h incremental;");
             drainMatViewTimerQueue(timerJob);
             drainQueues();
+            final long txnAfter = engine.getTableSequencerAPI()
+                    .getTxnTracker(viewToken).getWriterTxn();
+
+            // Cap of 2 must produce exactly 2 REPLACE_RANGE commits.
+            // Without the cap (or with cap >= 5) the same workload produces
+            // 5 commits -- this delta is the observable that proves the
+            // config knob is doing work.
+            Assert.assertEquals(
+                    "max-clusters cap of 2 must collapse 5 intervals into 2 commits",
+                    2L,
+                    txnAfter - txnBefore
+            );
             Assert.assertEquals(0, viewState.getRefreshIntervals().size());
             Assert.assertEquals(-1, viewState.getRefreshIntervalsBaseTxn());
         });
@@ -5882,14 +5897,9 @@ public class MatViewTest extends AbstractCairoTest {
                             "select ts, last(price) as price from base_price sample by 1h"
             );
 
-            // Drive at least one refresh through so the commit EMA holds a real
-            // sample. The scan EMA may legitimately stay at zero in this
-            // scenario: recordScanMetrics rejects samples where the scan time
-            // falls below the timestamp range scanned (a one-row refresh over
-            // a one-hour partition produces a few microseconds of scan time
-            // against thousands of microseconds of range width), so seed it
-            // explicitly so the STATS reset assertions below have something
-            // non-trivial to clear.
+            // Drive at least one refresh through so both EMAs hold real
+            // samples. The scaled per-ts-unit storage now folds every
+            // positive sample, so neither average stays at zero here.
             execute("insert into base_price(price, ts) values (1.0, '2024-09-10T12:01')");
             currentMicros = parseFloorPartialTimestamp("2024-09-10T13:00:00.000000Z");
             drainWalAndMatViewQueues();
@@ -5898,41 +5908,60 @@ public class MatViewTest extends AbstractCairoTest {
             final MatViewState viewState = engine.getMatViewStateStore().getViewState(viewToken);
             Assert.assertNotNull(viewState);
             Assert.assertTrue("Expected commit EMA after refresh", viewState.getAvgCommitNanos() > 0);
-            Assert.assertTrue("Could not acquire refresh latch to seed scan EMA", viewState.tryLock());
-            try {
-                viewState.setRefreshMetricsForTesting(viewState.getAvgCommitNanos(), 7L);
-            } finally {
-                viewState.unlock();
-            }
-            Assert.assertTrue("Seeded scan EMA must be non-zero", viewState.getAvgScanNanosPerTsUnit() > 0);
+            Assert.assertTrue(
+                    "Expected scan-sample EMA after refresh",
+                    viewState.getAvgScanSampleNanos() > 0
+            );
+            Assert.assertTrue(
+                    "Expected scan-range EMA after refresh",
+                    viewState.getAvgScanRangeTsUnits() > 0
+            );
 
             execute("refresh materialized view price_1h stats");
 
             Assert.assertEquals("Stats reset should zero avgCommitNanos", 0L, viewState.getAvgCommitNanos());
-            Assert.assertEquals("Stats reset should zero avgScanNanosPerTsUnit", 0L, viewState.getAvgScanNanosPerTsUnit());
+            Assert.assertEquals(
+                    "Stats reset should zero avgScanSampleNanos",
+                    0L,
+                    viewState.getAvgScanSampleNanos()
+            );
+            Assert.assertEquals(
+                    "Stats reset should zero avgScanRangeTsUnits",
+                    0L,
+                    viewState.getAvgScanRangeTsUnits()
+            );
+            final long coldStartGap = timestampType.getDriver()
+                    .fromMicros(MatViewState.COLD_START_GAP_THRESHOLD_MICROS);
             Assert.assertEquals(
                     "Threshold should fall back to cold-start default after reset",
-                    MatViewState.COLD_START_GAP_THRESHOLD_TS_UNITS,
+                    coldStartGap,
                     viewState.getCommitGapThresholdTsUnits()
             );
 
             // The catalogue function must surface the same EMA values via SQL.
             assertSql(
-                    "refresh_avg_commit_nanos\trefresh_avg_scan_nanos_per_ts_unit\trefresh_gap_threshold_ts_units\n" +
-                            "0\t0\t" + MatViewState.COLD_START_GAP_THRESHOLD_TS_UNITS + "\n",
-                    "select refresh_avg_commit_nanos, refresh_avg_scan_nanos_per_ts_unit, refresh_gap_threshold_ts_units " +
+                    "refresh_avg_commit_nanos\trefresh_avg_scan_sample_nanos\trefresh_avg_scan_range_ts_units\trefresh_gap_threshold_ts_units\n" +
+                            "0\t0\t0\t" + coldStartGap + "\n",
+                    "select refresh_avg_commit_nanos, refresh_avg_scan_sample_nanos, refresh_avg_scan_range_ts_units, refresh_gap_threshold_ts_units " +
                             "from materialized_views() where view_name = 'price_1h'"
             );
 
-            // Drive another refresh and verify the commit EMA recovers. Scan
-            // EMA may stay at zero (same sub-resolution rejection as above),
-            // in which case the threshold falls back to the cold-start
-            // default; both outcomes are catalogued correctly.
+            // Drive another refresh and verify all three EMAs recover. The
+            // two-EMA storage folds every positive sample, so the threshold
+            // leaves the cold-start sentinel as soon as one refresh runs.
             execute("insert into base_price(price, ts) values (2.0, '2024-09-10T14:01')");
             drainWalAndMatViewQueues();
             Assert.assertTrue(
                     "Catalogue must surface non-zero avg_commit_nanos after refresh",
                     viewState.getAvgCommitNanos() > 0
+            );
+            Assert.assertTrue(
+                    "Catalogue must surface non-zero avg_scan_sample_nanos after refresh",
+                    viewState.getAvgScanSampleNanos() > 0
+            );
+            Assert.assertTrue(
+                    "Catalogue must surface non-zero avg_scan_range_ts_units after refresh",
+                    viewState.getAvgScanRangeTsUnits() > 0
             );
             try (RecordCursorFactory factory = engine.select(
                     "select refresh_avg_commit_nanos > 0, refresh_gap_threshold_ts_units > 0 " +
@@ -5944,6 +5973,54 @@ public class MatViewTest extends AbstractCairoTest {
                 Assert.assertTrue("avg_commit_nanos > 0 via SQL", record.getBool(0));
                 Assert.assertTrue("gap_threshold_ts_units > 0 via SQL", record.getBool(1));
             }
+        });
+    }
+
+    @Test
+    public void testRefreshScanEmaFoldsOnNsBaseTable() throws Exception {
+        // Regression gate for the scan-rate EMA: wall-clock ns and ts-unit ns
+        // share the same magnitude on TIMESTAMP_NS bases, so the natural
+        // per-sample ratio (sampleNanos / rangeTsUnits) is sub-1 and integer
+        // division would floor it to zero. The scaled per-giga-ts-unit
+        // storage preserves the signal -- a real refresh must populate both
+        // EMAs and the derived gap threshold must leave the cold-start
+        // sentinel.
+        assertMemoryLeak(() -> {
+            execute(
+                    "create table base_price (" +
+                            "  price double, ts timestamp_ns" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            execute(
+                    "create materialized view price_1h refresh immediate as " +
+                            "select ts, last(price) as price from base_price sample by 1h"
+            );
+
+            execute("insert into base_price(price, ts) values (1.0, '2024-09-10T12:01')");
+            currentMicros = parseFloorPartialTimestamp("2024-09-10T13:00:00.000000Z");
+            drainWalAndMatViewQueues();
+
+            final TableToken viewToken = engine.getTableTokenIfExists("price_1h");
+            final MatViewState viewState = engine.getMatViewStateStore().getViewState(viewToken);
+            Assert.assertNotNull(viewState);
+            Assert.assertTrue(
+                    "Commit EMA must populate after a real refresh",
+                    viewState.getAvgCommitNanos() > 0
+            );
+            Assert.assertTrue(
+                    "Scan-sample EMA must fold every positive sample on ns bases",
+                    viewState.getAvgScanSampleNanos() > 0
+            );
+            Assert.assertTrue(
+                    "Scan-range EMA must fold every positive sample on ns bases",
+                    viewState.getAvgScanRangeTsUnits() > 0
+            );
+            // ns base: cold-start is 2 s expressed in ns = 2_000_000_000.
+            Assert.assertNotEquals(
+                    "Gap threshold must leave the cold-start sentinel once scan samples accrue",
+                    NanosTimestampDriver.INSTANCE.fromMicros(MatViewState.COLD_START_GAP_THRESHOLD_MICROS),
+                    viewState.getCommitGapThresholdTsUnits()
+            );
         });
     }
 
@@ -6250,9 +6327,10 @@ public class MatViewTest extends AbstractCairoTest {
             final long fiveSecondsInTsUnits = timestampType.getDriver().fromMicros(5_000_000L);
             Assert.assertTrue(viewState.tryLock());
             try {
-                // commitNanos / scanNanosPerTsUnit = threshold (in ts-units),
-                // so set commitNanos = N * scanRate to land threshold at N.
-                viewState.setRefreshMetricsForTesting(fiveSecondsInTsUnits, 1L);
+                // threshold = commit * range / sample. Seed sample = range
+                // = 1 so the formula reduces to threshold = commit, then
+                // pick commit to land threshold at fiveSecondsInTsUnits.
+                viewState.setRefreshMetricsForTesting(fiveSecondsInTsUnits, 1L, 1L);
             } finally {
                 viewState.unlock();
             }

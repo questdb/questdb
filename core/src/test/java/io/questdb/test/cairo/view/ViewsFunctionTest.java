@@ -144,11 +144,12 @@ public class ViewsFunctionTest extends AbstractViewTest {
                             """
             );
 
-            // The refresh_avg_commit_nanos / refresh_avg_scan_nanos_per_ts_unit /
-            // refresh_gap_threshold_ts_units columns hold timing-derived EMA
-            // values populated by the immediate refresh that happens in this
-            // test setup, so they are not stable across runs. Project the
-            // deterministic columns only.
+            // The refresh_avg_commit_nanos / refresh_avg_scan_sample_nanos /
+            // refresh_avg_scan_range_ts_units / refresh_gap_threshold_ts_units
+            // columns hold timing-derived EMA values populated by the
+            // immediate refresh that happens in this test setup, so they
+            // are not stable across runs. Project the deterministic columns
+            // only.
             assertQueryAndPlan(
                     """
                             view_name\trefresh_type\tbase_table_name\tlast_refresh_start_timestamp\tlast_refresh_finish_timestamp\tview_sql\tview_table_dir_name\tinvalidation_reason\tview_status\trefresh_period_hi\trefresh_base_table_txn\tbase_table_txn\trefresh_limit\trefresh_limit_unit\ttimer_time_zone\ttimer_start\ttimer_interval\ttimer_interval_unit\tperiod_length\tperiod_length_unit\tperiod_delay\tperiod_delay_unit
