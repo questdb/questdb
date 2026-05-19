@@ -1448,14 +1448,18 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     INSERT INTO master VALUES
                         ('A', '11111111-1111-1111-1111-111111111111', 1.0, '2024-01-01T10:00:00.000000Z'),
                         ('A', '22222222-2222-2222-2222-222222222222', 2.0, '2024-01-01T10:01:00.000000Z'),
-                        ('B', '11111111-1111-1111-1111-111111111111', 3.0, '2024-01-01T10:02:00.000000Z')
+                        ('B', '11111111-1111-1111-1111-111111111111', 3.0, '2024-01-01T10:02:00.000000Z'),
+                        ('N', cast(null as UUID), 4.0, '2024-01-01T10:03:00.000000Z'),
+                        (null, '11111111-1111-1111-1111-111111111111', 5.0, '2024-01-01T10:04:00.000000Z')
                     """);
 
             execute("""
                     INSERT INTO slave VALUES
                         ('A', '11111111-1111-1111-1111-111111111111', 10.0, '2024-01-01T09:00:00.000000Z'),
                         ('A', '22222222-2222-2222-2222-222222222222', 20.0, '2024-01-01T09:30:00.000000Z'),
-                        ('B', '22222222-2222-2222-2222-222222222222', 30.0, '2024-01-01T09:45:00.000000Z')
+                        ('B', '22222222-2222-2222-2222-222222222222', 30.0, '2024-01-01T09:45:00.000000Z'),
+                        ('N', cast(null as UUID), 40.0, '2024-01-01T09:40:00.000000Z'),
+                        (null, '11111111-1111-1111-1111-111111111111', 50.0, '2024-01-01T09:50:00.000000Z')
                     """);
 
             String expected = """
@@ -1463,6 +1467,8 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     1.0\t10.0
                     2.0\t20.0
                     3.0\tnull
+                    4.0\t40.0
+                    5.0\t50.0
                     """;
 
             String queryBody = "m.val, s.price FROM master m ASOF JOIN slave s ON (m.sym = s.sym AND m.id = s.id)";
@@ -5584,21 +5590,27 @@ public class AsOfJoinTest extends AbstractCairoTest {
                 INSERT INTO %s VALUES
                     ('A', %s::%s, 1.0, '2024-01-01T10:00:00.000000Z'),
                     ('A', %s::%s, 2.0, '2024-01-01T10:01:00.000000Z'),
-                    ('B', %s::%s, 3.0, '2024-01-01T10:02:00.000000Z')
-                """.formatted(masterTableName, id1, decimalType, id2, decimalType, id1, decimalType));
+                    ('B', %s::%s, 3.0, '2024-01-01T10:02:00.000000Z'),
+                    ('N', cast(null as %s), 4.0, '2024-01-01T10:03:00.000000Z'),
+                    (null, %s::%s, 5.0, '2024-01-01T10:04:00.000000Z')
+                """.formatted(masterTableName, id1, decimalType, id2, decimalType, id1, decimalType, decimalType, id1, decimalType));
 
         execute("""
                 INSERT INTO %s VALUES
                     ('A', %s::%s, 10.0, '2024-01-01T09:00:00.000000Z'),
                     ('A', %s::%s, 20.0, '2024-01-01T09:30:00.000000Z'),
-                    ('B', %s::%s, 30.0, '2024-01-01T09:45:00.000000Z')
-                """.formatted(slaveTableName, id1, decimalType, id2, decimalType, id2, decimalType));
+                    ('B', %s::%s, 30.0, '2024-01-01T09:45:00.000000Z'),
+                    ('N', cast(null as %s), 40.0, '2024-01-01T09:40:00.000000Z'),
+                    (null, %s::%s, 50.0, '2024-01-01T09:50:00.000000Z')
+                """.formatted(slaveTableName, id1, decimalType, id2, decimalType, id2, decimalType, decimalType, id1, decimalType));
 
         String expected = """
                 val\tprice
                 1.0\t10.0
                 2.0\t20.0
                 3.0\tnull
+                4.0\t40.0
+                5.0\t50.0
                 """;
 
         String queryBody = "m.val, s.price FROM " + masterTableName + " m ASOF JOIN " + slaveTableName + " s ON (m.sym = s.sym AND m.id = s.id)";

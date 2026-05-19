@@ -287,18 +287,24 @@ public class HashJoinTest extends AbstractCairoTest {
                     INSERT INTO m VALUES
                         ('11111111-1111-1111-1111-111111111111', 'A', 1),
                         ('22222222-2222-2222-2222-222222222222', 'B', 2),
-                        ('33333333-3333-3333-3333-333333333333', 'C', 3)""");
+                        ('33333333-3333-3333-3333-333333333333', 'C', 3),
+                        (cast(null as UUID), 'N', 4),
+                        ('44444444-4444-4444-4444-444444444444', null, 5)""");
             execute("""
                     INSERT INTO s VALUES
                         ('11111111-1111-1111-1111-111111111111', 'A', 10),
                         ('22222222-2222-2222-2222-222222222222', 'X', 20),
-                        ('33333333-3333-3333-3333-333333333333', 'C', 30)""");
+                        ('33333333-3333-3333-3333-333333333333', 'C', 30),
+                        (cast(null as UUID), 'N', 40),
+                        ('44444444-4444-4444-4444-444444444444', null, 50)""");
 
             assertQueryNoLeakCheck(
                     """
                             id\tsym\tv\tv1
                             11111111-1111-1111-1111-111111111111\tA\t1\t10
                             33333333-3333-3333-3333-333333333333\tC\t3\t30
+                            \tN\t4\t40
+                            44444444-4444-4444-4444-444444444444\t\t5\t50
                             """,
                     "SELECT m.id, m.sym, m.v, s.v FROM m JOIN s ON m.id = s.id AND m.sym = s.sym ORDER BY m.v",
                     null,
@@ -341,12 +347,16 @@ public class HashJoinTest extends AbstractCairoTest {
                     INSERT INTO m VALUES
                         ('11111111-1111-1111-1111-111111111111', 'A', 1),
                         ('22222222-2222-2222-2222-222222222222', 'B', 2),
-                        ('33333333-3333-3333-3333-333333333333', 'C', 3)""");
+                        ('33333333-3333-3333-3333-333333333333', 'C', 3),
+                        (cast(null as UUID), 'N', 4),
+                        ('44444444-4444-4444-4444-444444444444', null, 5)""");
             execute("""
                     INSERT INTO s VALUES
                         ('11111111-1111-1111-1111-111111111111', 'A', 10),
                         ('22222222-2222-2222-2222-222222222222', 'X', 20),
-                        ('33333333-3333-3333-3333-333333333333', 'C', 30)""");
+                        ('33333333-3333-3333-3333-333333333333', 'C', 30),
+                        (cast(null as UUID), 'N', 40),
+                        ('44444444-4444-4444-4444-444444444444', null, 50)""");
 
             assertQueryNoLeakCheck(
                     """
@@ -354,6 +364,8 @@ public class HashJoinTest extends AbstractCairoTest {
                             11111111-1111-1111-1111-111111111111\tA\t1\t10
                             22222222-2222-2222-2222-222222222222\tB\t2\tnull
                             33333333-3333-3333-3333-333333333333\tC\t3\t30
+                            \tN\t4\t40
+                            44444444-4444-4444-4444-444444444444\t\t5\t50
                             """,
                     "SELECT m.id, m.sym, m.v, s.v FROM m LEFT JOIN s ON m.id = s.id AND m.sym = s.sym ORDER BY m.v",
                     null,
@@ -372,12 +384,16 @@ public class HashJoinTest extends AbstractCairoTest {
                 INSERT INTO %s VALUES
                     (%s::%s, 'A', 1),
                     (%s::%s, 'B', 2),
-                    (%s::%s, 'C', 3)""".formatted(mTableName, id1, decimalType, id2, decimalType, id3, decimalType));
+                    (%s::%s, 'C', 3),
+                    (cast(null as %s), 'N', 4),
+                    (%s::%s, null, 5)""".formatted(mTableName, id1, decimalType, id2, decimalType, id3, decimalType, decimalType, id1, decimalType));
         execute("""
                 INSERT INTO %s VALUES
                     (%s::%s, 'A', 10),
                     (%s::%s, 'X', 20),
-                    (%s::%s, 'C', 30)""".formatted(sTableName, id1, decimalType, id2, decimalType, id3, decimalType));
+                    (%s::%s, 'C', 30),
+                    (cast(null as %s), 'N', 40),
+                    (%s::%s, null, 50)""".formatted(sTableName, id1, decimalType, id2, decimalType, id3, decimalType, decimalType, id1, decimalType));
         final String query = """
                 SELECT %s.v, %s.v
                 FROM %s
@@ -400,6 +416,8 @@ public class HashJoinTest extends AbstractCairoTest {
                         v\tv1
                         1\t10
                         3\t30
+                        4\t40
+                        5\t50
                         """,
                 query,
                 null,
@@ -417,12 +435,16 @@ public class HashJoinTest extends AbstractCairoTest {
                 INSERT INTO %s VALUES
                     (%s::%s, 'A', 1),
                     (%s::%s, 'B', 2),
-                    (%s::%s, 'C', 3)""".formatted(mTableName, id1, decimalType, id2, decimalType, id3, decimalType));
+                    (%s::%s, 'C', 3),
+                    (cast(null as %s), 'N', 4),
+                    (%s::%s, null, 5)""".formatted(mTableName, id1, decimalType, id2, decimalType, id3, decimalType, decimalType, id1, decimalType));
         execute("""
                 INSERT INTO %s VALUES
                     (%s::%s, 'A', 10),
                     (%s::%s, 'X', 20),
-                    (%s::%s, 'C', 30)""".formatted(sTableName, id1, decimalType, id2, decimalType, id3, decimalType));
+                    (%s::%s, 'C', 30),
+                    (cast(null as %s), 'N', 40),
+                    (%s::%s, null, 50)""".formatted(sTableName, id1, decimalType, id2, decimalType, id3, decimalType, decimalType, id1, decimalType));
         final String query = """
                 SELECT %s.v, %s.v
                 FROM %s
@@ -446,6 +468,8 @@ public class HashJoinTest extends AbstractCairoTest {
                         1\t10
                         2\tnull
                         3\t30
+                        4\t40
+                        5\t50
                         """,
                 query,
                 null,
