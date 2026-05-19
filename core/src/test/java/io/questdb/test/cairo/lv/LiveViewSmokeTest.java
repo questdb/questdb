@@ -25,12 +25,14 @@
 package io.questdb.test.cairo.lv;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.file.BlockFileWriter;
 import io.questdb.cairo.lv.LiveViewCheckpointBlockType;
 import io.questdb.cairo.lv.LiveViewCheckpointManifest;
+import io.questdb.cairo.lv.LiveViewCheckpointReader;
 import io.questdb.cairo.lv.LiveViewCheckpointWriter;
 import io.questdb.cairo.lv.LiveViewDefinition;
 import io.questdb.cairo.lv.LiveViewWindow;
@@ -48,6 +50,7 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCARW;
+import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.griffin.engine.QueryProgress;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.window.WindowFunction;
@@ -5051,6 +5054,101 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                     preFunctionMapSize,
                     reloaded.getAnchorWindow().getFunctions().getQuick(0).getPartitionMap().size()
             );
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testRestoreFileVersionMismatchInvalidatesView() throws Exception {
+        // File-level formatVersion mismatch in the head .cp is a real
+        // compatibility break (not corruption); the restore path must mark
+        // the LV INVALID and leave the .cp on disk. Mirrors
+        // testRestoreVersionMismatchInvalidatesView for the per-function
+        // snapshot version branch.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x INT) " +
+                    "TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+                    "SELECT ts, sym, x, row_number() OVER w AS rn FROM base " +
+                    "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR DAILY '00:00')");
+
+            // Drive a refresh so a real .cp is written.
+            execute("INSERT INTO base (ts, sym, x) VALUES ('2026-06-01T00:00:00.000000Z', 'a', 1)");
+            drainWalQueue();
+            final long headLvSeqTxn;
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+                drainWalQueue();
+                final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull(instance);
+                headLvSeqTxn = instance.getHeadCheckpointLvSeqTxn();
+                Assert.assertNotEquals(Numbers.LONG_NULL, headLvSeqTxn);
+            }
+
+            // Mutate the file-level formatVersion field (4-byte int at
+            // offset 4, right after the magic). The reader checks the
+            // version before the CRC trailer, so the broken CRC after the
+            // overwrite is unreached.
+            try (Path cpPath = new Path()) {
+                final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                cpPath.of(engine.getConfiguration().getDbRoot())
+                        .concat(instance.getLiveViewToken())
+                        .concat(LiveViewCheckpointWriter.CHECKPOINT_DIR_NAME)
+                        .slash();
+                LiveViewCheckpointWriter.appendCpFileName(cpPath, headLvSeqTxn);
+                try (MemoryCMARW mem = Vm.getCMARWInstance()) {
+                    mem.of(
+                            engine.getConfiguration().getFilesFacade(),
+                            cpPath.$(),
+                            engine.getConfiguration().getFilesFacade().getPageSize(),
+                            8L,
+                            MemoryTag.MMAP_DEFAULT,
+                            CairoConfiguration.O_NONE
+                    );
+                    mem.putInt(4L, LiveViewCheckpointReader.SUPPORTED_VERSION_MAX + 1);
+                    mem.sync(false);
+                }
+            }
+
+            // Restart: clear the registry and rebuild from on-disk. The
+            // startup sweep re-stamps the head lvSeqTxn from the filename.
+            engine.getLiveViewRegistry().clear();
+            engine.buildViewGraphs();
+            final LiveViewInstance reloaded = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(reloaded);
+            Assert.assertEquals(headLvSeqTxn, reloaded.getHeadCheckpointLvSeqTxn());
+            Assert.assertFalse("LV must still be valid pre-refresh", reloaded.isInvalid());
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+            }
+
+            Assert.assertTrue(
+                    "file-level version mismatch in the head .cp must invalidate the LV",
+                    reloaded.isInvalid()
+            );
+            final CharSequence reason = reloaded.getStateReader().getInvalidationReason();
+            Assert.assertNotNull(reason);
+            Assert.assertTrue(
+                    "invalidation reason mentions format version [reason=" + reason + ']',
+                    Chars.contains(reason, "format version")
+            );
+
+            // The .cp file must survive: unlike the corruption branch, the
+            // version-mismatch route does not unlink derived state, so an
+            // operator can inspect it before DROP+CREATE.
+            try (Path cpPath = new Path()) {
+                cpPath.of(engine.getConfiguration().getDbRoot())
+                        .concat(reloaded.getLiveViewToken())
+                        .concat(LiveViewCheckpointWriter.CHECKPOINT_DIR_NAME)
+                        .slash();
+                LiveViewCheckpointWriter.appendCpFileName(cpPath, headLvSeqTxn);
+                Assert.assertTrue(
+                        "head .cp must be preserved across the version-mismatch invalidation",
+                        engine.getConfiguration().getFilesFacade().exists(cpPath.$())
+                );
+            }
 
             execute("DROP LIVE VIEW lv");
         });

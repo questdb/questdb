@@ -62,6 +62,11 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
     // Signals a real compatibility break (not a structural corruption); the
     // caller invalidates the LV instead of falling into head-miss replay.
     public static final int LV_FUNCTION_SNAPSHOT_VERSION_TOO_OLD = TXN_BLOCK_APPLY_FAILED - 1;
+    // Live-view head .cp open found a file-level formatVersion outside the
+    // reader's supported range. Like LV_FUNCTION_SNAPSHOT_VERSION_TOO_OLD,
+    // this signals a real compatibility break; the caller invalidates the
+    // LV rather than unlinking the .cp and replaying.
+    public static final int LV_CHECKPOINT_FILE_VERSION_MISMATCH = LV_FUNCTION_SNAPSHOT_VERSION_TOO_OLD - 1;
     public static final int NON_CRITICAL = -1;
     private static final StackTraceElement[] EMPTY_STACK_TRACE = {};
     private static final ThreadLocal<CairoException> tlException = new ThreadLocal<>(CairoException::new);

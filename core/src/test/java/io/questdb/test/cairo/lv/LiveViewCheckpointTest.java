@@ -211,6 +211,86 @@ public class LiveViewCheckpointTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRejectsFileWithFormatVersionTooNew() throws Exception {
+        // The file's formatVersion lives at byte offset 4 (after magic). A
+        // value above SUPPORTED_VERSION_MAX means the file was written by a
+        // newer server; the reader signals it with the dedicated errno so
+        // the caller invalidates the LV rather than treating the file as
+        // corrupt. The version check fires before the CRC check, so the
+        // post-overwrite CRC mismatch never gets evaluated.
+        assertMemoryLeak(() -> {
+            final long lvSeqTxn = 17;
+            try (Path liveViewDir = newLiveViewDir()) {
+                try (LiveViewCheckpointWriter writer = new LiveViewCheckpointWriter(configuration)) {
+                    writer.of(liveViewDir.$(), lvSeqTxn);
+                    writer.writeManifestBlock(new LiveViewCheckpointManifest()
+                            .setLvSeqTxn(lvSeqTxn)
+                            .setLvRowPosition(0)
+                            .setBaseSeqTxn(0)
+                            .setMaxTimestamp(0)
+                            .setKind(LiveViewCheckpointManifest.KIND_STEADY));
+                    writer.commit(Long.MIN_VALUE);
+                }
+                try (Path cpPath = openHeadPath(liveViewDir, lvSeqTxn)) {
+                    overwriteIntInFile(configuration, cpPath, 4, LiveViewCheckpointReader.SUPPORTED_VERSION_MAX + 1);
+                    try (LiveViewCheckpointReader reader = new LiveViewCheckpointReader(configuration)) {
+                        try {
+                            reader.of(cpPath.$());
+                            Assert.fail("expected format version too new");
+                        } catch (CairoException e) {
+                            Assert.assertEquals(
+                                    "version mismatch must be tagged so the LV gets invalidated, not unlinked",
+                                    CairoException.LV_CHECKPOINT_FILE_VERSION_MISMATCH,
+                                    e.getErrno()
+                            );
+                            Assert.assertTrue(e.getFlyweightMessage().toString(),
+                                    e.getFlyweightMessage().toString().contains("format version too new"));
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testRejectsFileWithFormatVersionTooOld() throws Exception {
+        // Symmetric case: formatVersion below SUPPORTED_VERSION_MIN signals a
+        // file too old for this server to read.
+        assertMemoryLeak(() -> {
+            final long lvSeqTxn = 19;
+            try (Path liveViewDir = newLiveViewDir()) {
+                try (LiveViewCheckpointWriter writer = new LiveViewCheckpointWriter(configuration)) {
+                    writer.of(liveViewDir.$(), lvSeqTxn);
+                    writer.writeManifestBlock(new LiveViewCheckpointManifest()
+                            .setLvSeqTxn(lvSeqTxn)
+                            .setLvRowPosition(0)
+                            .setBaseSeqTxn(0)
+                            .setMaxTimestamp(0)
+                            .setKind(LiveViewCheckpointManifest.KIND_STEADY));
+                    writer.commit(Long.MIN_VALUE);
+                }
+                try (Path cpPath = openHeadPath(liveViewDir, lvSeqTxn)) {
+                    overwriteIntInFile(configuration, cpPath, 4, LiveViewCheckpointReader.SUPPORTED_VERSION_MIN - 1);
+                    try (LiveViewCheckpointReader reader = new LiveViewCheckpointReader(configuration)) {
+                        try {
+                            reader.of(cpPath.$());
+                            Assert.fail("expected format version too old");
+                        } catch (CairoException e) {
+                            Assert.assertEquals(
+                                    "version mismatch must be tagged so the LV gets invalidated, not unlinked",
+                                    CairoException.LV_CHECKPOINT_FILE_VERSION_MISMATCH,
+                                    e.getErrno()
+                            );
+                            Assert.assertTrue(e.getFlyweightMessage().toString(),
+                                    e.getFlyweightMessage().toString().contains("format version too old"));
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
     public void testSweepEmptyDirReturnsLongNull() throws Exception {
         assertMemoryLeak(() -> {
             try (Path liveViewDir = newLiveViewDir();

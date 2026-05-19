@@ -69,17 +69,18 @@ import static io.questdb.cairo.lv.LiveViewCheckpointWriter.FILE_TRAILER_SIZE;
  * <p>
  * {@link #of(LPSZ)} validates the file's magic value and format version, and
  * verifies the CRC32 trailer over header + blocks. A CRC mismatch or magic
- * mismatch makes {@code of} throw {@link CairoException}; the caller in
- * {@code LiveViewRefreshJob} catches it, unlinks the head, and falls back to
- * the {@code viewLowerBoundTimestamp} replay path. The live view is not
+ * mismatch makes {@code of} throw a plain {@link CairoException}; the caller
+ * in {@code LiveViewRefreshJob} catches it, unlinks the head, and falls back
+ * to the {@code viewLowerBoundTimestamp} replay path. The live view is not
  * invalidated by corruption - the {@code .cp} is derived state, recoverable
  * by re-running the refresh from the last applied watermark.
  * <p>
- * A {@code formatVersion} strictly greater than {@link #SUPPORTED_VERSION_MAX}
- * means the file was written by a newer server; the reader throws
- * {@link CairoException} with a clear message. A
- * {@code formatVersion} strictly less than {@link #SUPPORTED_VERSION_MIN}
- * means the file is older than this server can read; reader throws.
+ * A {@code formatVersion} outside the supported range is treated separately.
+ * It is not corruption but a real compatibility break, so {@code of} throws
+ * with {@link CairoException#LV_CHECKPOINT_FILE_VERSION_MISMATCH} and the
+ * caller invalidates the live view rather than unlinking the {@code .cp}.
+ * The same rule applies to the per-function snapshot version check at the
+ * function-block read path.
  */
 public class LiveViewCheckpointReader implements Closeable {
 
@@ -157,14 +158,14 @@ public class LiveViewCheckpointReader implements Closeable {
             }
             final int formatVersion = mem.getInt(4);
             if (formatVersion < SUPPORTED_VERSION_MIN) {
-                throw CairoException.critical(0)
+                throw CairoException.critical(CairoException.LV_CHECKPOINT_FILE_VERSION_MISMATCH)
                         .put("live view checkpoint format version too old, version=")
                         .put(formatVersion)
                         .put(", supportedMin=")
                         .put(SUPPORTED_VERSION_MIN);
             }
             if (formatVersion > SUPPORTED_VERSION_MAX) {
-                throw CairoException.critical(0)
+                throw CairoException.critical(CairoException.LV_CHECKPOINT_FILE_VERSION_MISMATCH)
                         .put("live view checkpoint format version too new, version=")
                         .put(formatVersion)
                         .put(", supportedMax=")

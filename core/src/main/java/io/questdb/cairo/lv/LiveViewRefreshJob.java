@@ -1588,7 +1588,9 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             }
             return true;
         } catch (CairoException ce) {
-            if (ce.getErrno() == CairoException.LV_FUNCTION_SNAPSHOT_VERSION_TOO_OLD) {
+            final int errno = ce.getErrno();
+            if (errno == CairoException.LV_FUNCTION_SNAPSHOT_VERSION_TOO_OLD
+                    || errno == CairoException.LV_CHECKPOINT_FILE_VERSION_MISMATCH) {
                 // Version mismatch is a real compatibility break, not
                 // corruption. Stash the reason on the instance so the caller
                 // drives invalidation outside the refresh latch
@@ -1596,7 +1598,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 // when a checkpoint freeze is active, and the agent's
                 // startCheckpoint cannot complete its latch handshake while
                 // the worker still holds the refresh latch).
-                LOG.critical().$("live view function snapshot version mismatch [view=")
+                LOG.critical().$("live view checkpoint version mismatch [view=")
                         .$(instance.getDefinition().getViewName())
                         .$(", lvSeqTxn=").$(headLvSeqTxn)
                         .$(", error=").$safe(ce.getFlyweightMessage()).I$();
