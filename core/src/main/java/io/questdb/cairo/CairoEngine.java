@@ -958,7 +958,16 @@ public class CairoEngine implements Closeable, WriterSource {
                 BlockFileWriter blockFileWriter = new BlockFileWriter(configuration.getFilesFacade(), configuration.getCommitMode());
                 Path path = new Path()
         ) {
-            TableToken liveViewToken = createTableOrViewOrMatViewUnsecure(
+            // Reserve the table name and create the WAL-backed FS skeleton, but
+            // hold the name lock + create lock until _lv.s and _lv land durably
+            // below. The registry commit is the LV's atomic CREATE point - a
+            // concurrent reader that resolves the name will get
+            // "table does not exist" until commitDeferredTableNameAndRelease
+            // runs, so it cannot see a half-built LV. A null return signals
+            // that no deferred handoff happened: IF NOT EXISTS hit the
+            // pre-existing token path, or lockAll lost the race to a concurrent
+            // CREATE. Either way the caller has nothing left to finalise.
+            final TableToken liveViewToken = createTableOrViewOrMatViewUnsecure(
                     executionContext.getSecurityContext(),
                     mem,
                     blockFileWriter,
@@ -967,17 +976,13 @@ public class CairoEngine implements Closeable, WriterSource {
                     struct,
                     false,
                     false,
-                    TableUtils.TABLE_KIND_REGULAR_TABLE
+                    TableUtils.TABLE_KIND_REGULAR_TABLE,
+                    true
             );
+            if (liveViewToken == null) {
+                return;
+            }
 
-            // Narrow CREATE visibility window: the helper above registers the
-            // LV's name with the registry before the _lv.s / _lv files land
-            // below, so a concurrent reader that resolves the name in this
-            // window can see a half-built LV. Closing the window cleanly
-            // requires a deferred-register variant of the helper; until that
-            // lands the gap is bounded by the file writes below and the
-            // rollback path drops the LV on any failure.
-            //
             // From here on, any failure must roll back the table to avoid orphan
             // LV-typed directories the startup loader skips and never reclaims.
             try {
@@ -1054,6 +1059,11 @@ public class CairoEngine implements Closeable, WriterSource {
                 liveViewRegistry.registerView(instance);
                 dependentViewGraph.addLiveView(liveViewToken, definition.getBaseTableName());
                 liveViewStateStore.registerBaseTable(definition.getBaseTableName());
+
+                // _lv.s and _lv are now durable; in-memory registries are populated.
+                // Flip the registry name as the last step so concurrent readers
+                // either see a fully-built LV or no LV at all.
+                commitDeferredTableNameAndRelease(liveViewToken);
             } catch (Throwable t) {
                 // Best-effort rollback. Failures here just leave the orphan in place;
                 // the original cause is what the operator needs to see.
@@ -1071,7 +1081,7 @@ public class CairoEngine implements Closeable, WriterSource {
                             .$(", error=").$(rollbackErr).I$();
                 }
                 try {
-                    dropTableOrViewOrMatView(path, liveViewToken);
+                    rollbackDeferredLiveViewCreate(path, liveViewToken);
                 } catch (Throwable rollbackErr) {
                     LOG.error().$("could not roll back partially-created live view [view=").$(liveViewToken)
                             .$(", error=").$(rollbackErr).I$();
@@ -1092,7 +1102,7 @@ public class CairoEngine implements Closeable, WriterSource {
             boolean inVolume
     ) {
         securityContext.authorizeMatViewCreate();
-        final TableToken matViewToken = createTableOrViewOrMatViewUnsecure(securityContext, mem, blockFileWriter, path, ifNotExists, operation, keepLock, inVolume, TableUtils.TABLE_KIND_REGULAR_TABLE);
+        final TableToken matViewToken = createTableOrViewOrMatViewUnsecure(securityContext, mem, blockFileWriter, path, ifNotExists, operation, keepLock, inVolume, TableUtils.TABLE_KIND_REGULAR_TABLE, false);
         final MatViewDefinition matViewDefinition = operation.getMatViewDefinition();
         try {
             if (dependentViewGraph.addView(matViewDefinition)) {
@@ -1147,7 +1157,7 @@ public class CairoEngine implements Closeable, WriterSource {
                     .put(']');
         }
         securityContext.authorizeTableCreate(tableKind);
-        return createTableOrViewOrMatViewUnsecure(securityContext, mem, null, path, ifNotExists, struct, keepLock, inVolume, tableKind);
+        return createTableOrViewOrMatViewUnsecure(securityContext, mem, null, path, ifNotExists, struct, keepLock, inVolume, tableKind, false);
     }
 
     public @NotNull ViewDefinition createView(
@@ -1160,7 +1170,7 @@ public class CairoEngine implements Closeable, WriterSource {
             @Nullable RecordMetadata metadata
     ) {
         securityContext.authorizeViewCreate();
-        final TableToken viewToken = createTableOrViewOrMatViewUnsecure(securityContext, mem, blockFileWriter, path, ifNotExists, operation, false, false, TableUtils.TABLE_KIND_REGULAR_TABLE);
+        final TableToken viewToken = createTableOrViewOrMatViewUnsecure(securityContext, mem, blockFileWriter, path, ifNotExists, operation, false, false, TableUtils.TABLE_KIND_REGULAR_TABLE, false);
         final ViewDefinition viewDefinition = operation.getViewDefinition();
         try {
             if (viewGraph.addView(viewDefinition)) {
@@ -2772,6 +2782,22 @@ public class CairoEngine implements Closeable, WriterSource {
         }
     }
 
+    // Commits the registry name for a table created via the deferred-register
+    // path (createTableOrViewOrMatViewUnsecure with deferRegisterName=true) and
+    // releases the per-token name and create locks the deferred helper handed
+    // off to the caller. The registry commit is the atomic visibility cut:
+    // before this returns, concurrent name lookups fail with
+    // "table does not exist"; after it returns the table is queryable.
+    private void commitDeferredTableNameAndRelease(TableToken tableToken) {
+        try {
+            tableNameRegistry.registerName(tableToken);
+        } finally {
+            tableNameRegistry.unlockTableName(tableToken);
+            unlockTableCreate(tableToken);
+        }
+        enqueueCompileView(tableToken);
+    }
+
     // caller has to acquire the lock before this method is called and release the lock after the call
     private void createTableOrMatViewInVolumeUnsafe(MemoryMARW mem, @Nullable BlockFileWriter blockFileWriter, Path path, TableStructure struct, TableToken tableToken) {
         if (TableUtils.TABLE_DOES_NOT_EXIST != TableUtils.existsInVolume(configuration.getFilesFacade(), path, tableToken.getDirName())) {
@@ -2816,7 +2842,22 @@ public class CairoEngine implements Closeable, WriterSource {
         );
     }
 
-    private @NotNull TableToken createTableOrViewOrMatViewUnsecure(
+    /**
+     * Creates the on-disk filesystem skeleton for a table / view / mat view /
+     * live view and reserves the registry name. When deferRegisterName is
+     * false (the default for CREATE TABLE / VIEW / MAT VIEW), the registry
+     * commit is the last step before return and the result is always non-null.
+     * <p>
+     * When deferRegisterName is true (CREATE LIVE VIEW), the registry commit
+     * is held back: the caller now owns the name + create locks and must
+     * invoke {@link #commitDeferredTableNameAndRelease} after fsyncing any
+     * follow-up artifacts (e.g. {@code _lv.s} / {@code _lv}), or
+     * {@link #rollbackDeferredLiveViewCreate} on failure. In deferred mode the
+     * result is null when no deferred handoff took place - the IF NOT EXISTS
+     * pre-existing path or the IF NOT EXISTS lock-race-lost path - so the
+     * caller has no follow-up work in that case.
+     */
+    private TableToken createTableOrViewOrMatViewUnsecure(
             SecurityContext securityContext,
             MemoryMARW mem,
             @Nullable BlockFileWriter blockFileWriter,
@@ -2825,7 +2866,8 @@ public class CairoEngine implements Closeable, WriterSource {
             TableStructure struct,
             boolean keepLock,
             boolean inVolume,
-            int tableKind
+            int tableKind,
+            boolean deferRegisterName
     ) {
         assert !struct.isWalEnabled() || PartitionBy.isPartitioned(struct.getPartitionBy()) : "WAL is only supported for partitioned tables";
         final CharSequence tableName = struct.getTableName();
@@ -2840,7 +2882,10 @@ public class CairoEngine implements Closeable, WriterSource {
                     tableToken = getTableTokenIfExists(tableName);
                     if (tableToken != null) {
                         struct.init(tableToken);
-                        return tableToken;
+                        // Deferred mode: the LV already exists - no handoff,
+                        // no follow-up. Returning null tells the caller to
+                        // skip the FS writes and the commit step.
+                        return deferRegisterName ? null : tableToken;
                     }
                     Os.pause();
                     continue;
@@ -2852,6 +2897,13 @@ public class CairoEngine implements Closeable, WriterSource {
                 Os.pause();
             }
             boolean filesystemCreated = false;
+            // Tracks whether the deferred caller now owns the name lock and the
+            // per-token create lock. Stays false on every error path so the
+            // outer finally unwinds the locks the same way as a non-deferred
+            // create, and stays false on the lockedReason+ifNotExists fall-
+            // through path so deferred callers see a null return instead of a
+            // token whose name was never registered.
+            boolean deferredHandoff = false;
             try {
                 String lockedReason = lockAll(tableToken, "createTable", true);
                 boolean locked = true;
@@ -2877,7 +2929,11 @@ public class CairoEngine implements Closeable, WriterSource {
                             LOG.info().$("unlocked [table=").$(tableToken).$("]").$();
                         }
                         onTableOrViewOrMatViewCreated(securityContext, struct, tableToken, tableKind);
-                        tableNameRegistry.registerName(tableToken);
+                        if (deferRegisterName) {
+                            deferredHandoff = true;
+                        } else {
+                            tableNameRegistry.registerName(tableToken);
+                        }
                     } catch (Throwable e) {
                         keepLock = false;
                         throw e;
@@ -2922,11 +2978,20 @@ public class CairoEngine implements Closeable, WriterSource {
                 }
                 throw th;
             } finally {
-                tableNameRegistry.unlockTableName(tableToken);
-                unlockTableCreate(tableToken);
+                if (!deferredHandoff) {
+                    tableNameRegistry.unlockTableName(tableToken);
+                    unlockTableCreate(tableToken);
+                }
             }
 
-            enqueueCompileView(tableToken);
+            if (!deferredHandoff) {
+                if (deferRegisterName) {
+                    // IF NOT EXISTS lost the lockAll race - the helper did no
+                    // work the deferred caller can finalise.
+                    return null;
+                }
+                enqueueCompileView(tableToken);
+            }
             return tableToken;
         }
     }
@@ -3009,6 +3074,47 @@ public class CairoEngine implements Closeable, WriterSource {
         } finally {
             tableNameRegistry.unlockTableName(toTableToken);
             unlockTableCreate(toTableToken);
+        }
+    }
+
+    // Best-effort cleanup for a live view CREATE that failed between
+    // createTableOrViewOrMatViewUnsecure(deferRegisterName=true) and
+    // commitDeferredTableNameAndRelease. dropTableOrViewOrMatView cannot run
+    // yet because the token is not committed to the registry, so this method
+    // drops the sequencer entry, removes the on-disk directory, and releases
+    // the per-token name and create locks. All steps swallow failures and log,
+    // because the caller's outer throw carries the original cause.
+    private void rollbackDeferredLiveViewCreate(Path path, TableToken tableToken) {
+        try {
+            try {
+                tableSequencerAPI.dropTable(tableToken, true);
+            } catch (Throwable th) {
+                LOG.error().$("could not drop sequencer entry for partial live view [view=").$(tableToken)
+                        .$(", err=").$(th).I$();
+            }
+            try {
+                final FilesFacade ff = configuration.getFilesFacade();
+                path.of(configuration.getDbRoot()).concat(tableToken).$();
+                if (ff.exists(path.$()) && !ff.unlinkOrRemove(path, LOG)) {
+                    LOG.error().$("could not clean up partial live view fs [view=").$(tableToken)
+                            .$(", errno=").$(ff.errno()).I$();
+                }
+            } catch (Throwable th) {
+                LOG.error().$("could not clean up partial live view fs [view=").$(tableToken)
+                        .$(", err=").$(th).I$();
+            }
+        } finally {
+            // Both unlocks are safe to call after commitDeferredTableNameAndRelease
+            // already released them: unlockTableName is remove(name, LOCKED_TOKEN),
+            // unlockTableCreate is remove(name, token) - both no-op when absent.
+            try {
+                tableNameRegistry.unlockTableName(tableToken);
+            } catch (Throwable ignored) {
+            }
+            try {
+                unlockTableCreate(tableToken);
+            } catch (Throwable ignored) {
+            }
         }
     }
 

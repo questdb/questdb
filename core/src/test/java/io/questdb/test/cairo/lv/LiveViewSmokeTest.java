@@ -136,6 +136,84 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCreateLiveViewNameVisibleOnlyAfterFilesDurable() throws Exception {
+        // RFC 123 §"CREATE LIVE VIEW" step 7: registry name commit must follow
+        // the durable _lv.s + _lv writes. A concurrent name lookup that races
+        // with CREATE must therefore resolve nothing until both files are on
+        // disk - never a half-built LV. The hook below observes the registry
+        // state at the moment the _lv block file opens for writing.
+        final AtomicBoolean observedDuringLvWrite = new AtomicBoolean(false);
+        final AtomicBoolean nameMissingDuringLvWrite = new AtomicBoolean(true);
+        FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public long openRW(LPSZ name, int opts) {
+                if (Utf8s.endsWithAscii(name, LiveViewDefinition.LIVE_VIEW_DEFINITION_FILE_NAME)) {
+                    observedDuringLvWrite.set(true);
+                    if (engine.getTableTokenIfExists("lv") != null) {
+                        nameMissingDuringLvWrite.set(false);
+                    }
+                }
+                return super.openRW(name, opts);
+            }
+        };
+        assertMemoryLeak(ff, () -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base");
+            Assert.assertTrue("expected _lv write to be observed during CREATE",
+                    observedDuringLvWrite.get());
+            Assert.assertTrue("registry name must not resolve while _lv is being written",
+                    nameMissingDuringLvWrite.get());
+            Assert.assertNotNull("name must resolve after CREATE returns",
+                    engine.getTableTokenIfExists("lv"));
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testCreateLiveViewRollsBackOnDefinitionWriteFailure() throws Exception {
+        // _lv is the atomic CREATE marker; if the write fails, the rollback
+        // must leave neither a registered name, an on-disk LV directory, nor a
+        // sequencer entry, so a retry with the same name succeeds cleanly.
+        // Pre-fix the registry committed before _lv landed and a failure left
+        // a phantom registered-but-half-built LV.
+        final AtomicBoolean failLvWrite = new AtomicBoolean(false);
+        FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public long openRW(LPSZ name, int opts) {
+                if (failLvWrite.get() && Utf8s.endsWithAscii(name, LiveViewDefinition.LIVE_VIEW_DEFINITION_FILE_NAME)) {
+                    return -1;
+                }
+                return super.openRW(name, opts);
+            }
+        };
+        assertMemoryLeak(ff, () -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            failLvWrite.set(true);
+            try {
+                execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                        "SELECT ts, x, row_number() OVER () AS rn FROM base");
+                Assert.fail("expected _lv write failure to abort CREATE");
+            } catch (CairoException expected) {
+                // expected
+            } finally {
+                failLvWrite.set(false);
+            }
+            Assert.assertNull("LV name must not resolve after a failed _lv write",
+                    engine.getTableTokenIfExists("lv"));
+            Assert.assertNull("LV instance must not be in the in-memory registry",
+                    engine.getLiveViewRegistry().getViewInstance("lv"));
+
+            // Retry CREATE with the same name; rollback must have cleared
+            // sequencer + FS state so the retry succeeds and the LV is queryable.
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base");
+            Assert.assertNotNull(engine.getTableTokenIfExists("lv"));
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
     public void testRejectLiveViewOverNonWalBase() throws Exception {
         assertMemoryLeak(() -> {
             // No WAL — bypass-WAL is the default for non-partitioned plain tables.
