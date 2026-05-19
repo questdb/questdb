@@ -158,6 +158,14 @@ public class LiveViewInstance implements QuietCloseable {
     private volatile long latestSeenTs = Numbers.LONG_NULL;
     // Live-view's own table token. Populated at construction.
     private final TableToken liveViewToken;
+    // Cumulative count of live-view rows produced over the LV's lifetime,
+    // matching the MANIFEST.lvRowPosition field on every head checkpoint.
+    // Initialised to 0 on construction. tryRestoreFromHead and the O3 head-hit
+    // replay path stamp this from the manifest after a successful restore;
+    // every subsequent {@link #addRowsSinceLastCheckpointWritten(long)} bumps
+    // both this and the cadence counter so writes and restores stay aligned.
+    // Mutated under the refresh latch only.
+    private long lvRowsTotal;
     // Reason string the refresh worker stashes here when a head-restore step
     // surfaces a "version too old" function snapshot. The worker holds the
     // refresh latch when populating this field; the same worker drains it
@@ -198,13 +206,16 @@ public class LiveViewInstance implements QuietCloseable {
     }
 
     /**
-     * Accumulates {@code n} into {@link #rowsSinceLastCheckpointWritten}. Called
-     * from the refresh worker after each successful LV WAL apply commit; the
-     * counter resets when {@link #setHeadCheckpoint(long, long, long, long)}
-     * stamps a fresh head.
+     * Accumulates {@code n} into both {@link #rowsSinceLastCheckpointWritten}
+     * (the cadence counter, which resets on each fresh head via
+     * {@link #setHeadCheckpoint(long, long, long, long)}) and
+     * {@link #lvRowsTotal} (the lifetime counter, which mirrors
+     * {@code MANIFEST.lvRowPosition} and persists across restarts). Called
+     * from the refresh worker after each successful LV WAL apply commit.
      */
     public void addRowsSinceLastCheckpointWritten(long n) {
         rowsSinceLastCheckpointWritten += n;
+        lvRowsTotal += n;
     }
 
     @Override
@@ -372,6 +383,14 @@ public class LiveViewInstance implements QuietCloseable {
 
     public TableToken getLiveViewToken() {
         return liveViewToken;
+    }
+
+    /**
+     * @return cumulative LV row count, matching the value persisted as
+     * {@code MANIFEST.lvRowPosition} on the most recent head checkpoint.
+     */
+    public long getLvRowsTotal() {
+        return lvRowsTotal;
     }
 
     public long getRecordRowCopierMetadataVersion() {
@@ -609,6 +628,15 @@ public class LiveViewInstance implements QuietCloseable {
 
     public void setLvConsumedSeqTxn(long lvConsumedSeqTxn) {
         stateReader.setLvConsumedSeqTxn(lvConsumedSeqTxn);
+    }
+
+    /**
+     * Re-stamps the cumulative LV row counter, used by the head-checkpoint
+     * restore path to load the manifest's {@code lvRowPosition} so subsequent
+     * incremental appends stack on top of the restored value.
+     */
+    public void setLvRowsTotal(long lvRowsTotal) {
+        this.lvRowsTotal = lvRowsTotal;
     }
 
     /**

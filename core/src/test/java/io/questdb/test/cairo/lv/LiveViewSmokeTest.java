@@ -1395,6 +1395,129 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLvRowsTotalSurvivesRestart() throws Exception {
+        // Per the MANIFEST schema, lvRowPosition is the cumulative live-view
+        // row count through the checkpointed lvSeqTxn. Drive a refresh that
+        // writes N rows, confirm the in-memory counter and the persisted
+        // manifest both read N, restart, confirm the counter restored from
+        // the head .cp, then write M more rows and confirm the next head
+        // records N + M.
+        //
+        // Force the row-trigger cadence to 1 so each batch produces a
+        // dedicated head .cp under test; default cadence is too high for a
+        // few-row check.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x INT) " +
+                    "TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+                    "SELECT ts, sym, x, row_number() OVER w AS rn FROM base " +
+                    "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR DAILY '00:00')");
+
+            final long firstBatch = 4;
+            execute("INSERT INTO base (ts, sym, x) VALUES " +
+                    "('2026-06-01T00:00:00.000000Z', 'a', 1), " +
+                    "('2026-06-01T00:00:01.000000Z', 'a', 2), " +
+                    "('2026-06-01T00:00:02.000000Z', 'b', 3), " +
+                    "('2026-06-01T00:00:03.000000Z', 'b', 4)");
+            drainWalQueue();
+
+            final long firstHeadLvSeqTxn;
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+                drainWalQueue();
+                final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull(instance);
+                firstHeadLvSeqTxn = instance.getHeadCheckpointLvSeqTxn();
+                Assert.assertNotEquals(Numbers.LONG_NULL, firstHeadLvSeqTxn);
+                Assert.assertEquals(
+                        "in-memory counter matches the rows produced this cycle",
+                        firstBatch,
+                        instance.getLvRowsTotal()
+                );
+            }
+
+            // Read the manifest off disk and assert lvRowPosition matches.
+            try (Path cpPath = new Path()) {
+                final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                cpPath.of(engine.getConfiguration().getDbRoot())
+                        .concat(instance.getLiveViewToken())
+                        .concat(LiveViewCheckpointWriter.CHECKPOINT_DIR_NAME)
+                        .slash();
+                LiveViewCheckpointWriter.appendCpFileName(cpPath, firstHeadLvSeqTxn);
+                try (LiveViewCheckpointReader reader = new LiveViewCheckpointReader(engine.getConfiguration())) {
+                    reader.of(cpPath.$());
+                    LiveViewCheckpointManifest manifest = new LiveViewCheckpointManifest();
+                    reader.readManifestInto(manifest);
+                    Assert.assertEquals(
+                            "manifest.lvRowPosition reflects the rows the head covers",
+                            firstBatch,
+                            manifest.getLvRowPosition()
+                    );
+                }
+            }
+
+            // Simulated restart re-seeds the counter from the head manifest
+            // on the first post-restart refresh cycle.
+            engine.getLiveViewRegistry().clear();
+            engine.buildViewGraphs();
+            final LiveViewInstance reloaded = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(reloaded);
+            Assert.assertEquals(0L, reloaded.getLvRowsTotal()); // fresh in-mem state pre-restore
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+            }
+            Assert.assertEquals(
+                    "post-restart counter restored from the head manifest",
+                    firstBatch,
+                    reloaded.getLvRowsTotal()
+            );
+
+            // A follow-up commit advances the counter; the next head .cp
+            // records the cumulative total.
+            final long secondBatch = 3;
+            execute("INSERT INTO base (ts, sym, x) VALUES " +
+                    "('2026-06-02T00:00:00.000000Z', 'a', 5), " +
+                    "('2026-06-02T00:00:01.000000Z', 'a', 6), " +
+                    "('2026-06-02T00:00:02.000000Z', 'b', 7)");
+            drainWalQueue();
+
+            final long secondHeadLvSeqTxn;
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+                drainWalQueue();
+                secondHeadLvSeqTxn = reloaded.getHeadCheckpointLvSeqTxn();
+                Assert.assertNotEquals("a follow-up head .cp must be written", firstHeadLvSeqTxn, secondHeadLvSeqTxn);
+                Assert.assertEquals(
+                        "counter accumulates against the restored total",
+                        firstBatch + secondBatch,
+                        reloaded.getLvRowsTotal()
+                );
+            }
+
+            try (Path cpPath = new Path()) {
+                cpPath.of(engine.getConfiguration().getDbRoot())
+                        .concat(reloaded.getLiveViewToken())
+                        .concat(LiveViewCheckpointWriter.CHECKPOINT_DIR_NAME)
+                        .slash();
+                LiveViewCheckpointWriter.appendCpFileName(cpPath, secondHeadLvSeqTxn);
+                try (LiveViewCheckpointReader reader = new LiveViewCheckpointReader(engine.getConfiguration())) {
+                    reader.of(cpPath.$());
+                    LiveViewCheckpointManifest manifest = new LiveViewCheckpointManifest();
+                    reader.readManifestInto(manifest);
+                    Assert.assertEquals(
+                            "follow-up manifest records the post-restart cumulative total",
+                            firstBatch + secondBatch,
+                            manifest.getLvRowPosition()
+                    );
+                }
+            }
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
     public void testTruncateOnBaseIsTransparentToLiveView() throws Exception {
         // TRUNCATE on the base is transparent to the LV: the view stays
         // ACTIVE, its derived rows on disk are preserved byte-for-byte, the

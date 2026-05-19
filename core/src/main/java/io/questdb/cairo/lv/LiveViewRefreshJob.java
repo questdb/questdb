@@ -968,6 +968,11 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                             // try-with-resources closes the cursor on return.
                             return;
                         }
+                        // Snap the lifetime row counter back to the head's
+                        // recorded value: the upcoming REPLACE_RANGE commit
+                        // logically truncates rows above replayLowTs, so the
+                        // counter rewinds in step with the table.
+                        instance.setLvRowsTotal(restoredHeadState.lvRowsTotal);
                         restoredOk = true;
                         Record outRecord = windowCursor.getRecord();
                         while (windowCursor.hasNext()) {
@@ -1454,7 +1459,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             checkpointManifest.setLvSeqTxn(lvSeqTxn);
             checkpointManifest.setBaseSeqTxn(instance.getLastProcessedSeqTxn());
             checkpointManifest.setMaxTimestamp(batchMaxTs);
-            checkpointManifest.setLvRowPosition(0L);
+            checkpointManifest.setLvRowPosition(instance.getLvRowsTotal());
             checkpointManifest.setKind(LiveViewCheckpointManifest.KIND_STEADY);
             final LiveViewWindow anchorWindow = instance.getAnchorWindow();
             if (anchorWindow != null) {
@@ -1551,6 +1556,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             checkpointReader.readManifestInto(checkpointManifest);
             out.manifestBaseSeqTxn = checkpointManifest.getBaseSeqTxn();
             out.maxTimestamp = checkpointManifest.getMaxTimestamp();
+            out.lvRowsTotal = checkpointManifest.getLvRowPosition();
             out.stateBytes = engine.getConfiguration().getFilesFacade().length(path.$());
 
             final LiveViewWindow anchorWindow = instance.getAnchorWindow();
@@ -1672,12 +1678,16 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         // see incrementalRefresh).
         instance.setLastProcessedSeqTxn(restoredHeadState.manifestBaseSeqTxn);
         instance.setAppliedWatermark(restoredHeadState.manifestBaseSeqTxn);
+        // Re-seed the lifetime row counter from the manifest so subsequent
+        // addRowsSinceLastCheckpointWritten calls accumulate against the
+        // restored total rather than resetting to zero.
+        instance.setLvRowsTotal(restoredHeadState.lvRowsTotal);
         // Refresh the head metadata trio with the real maxTs + stateBytes
         // we just read; the startup sweep stamped placeholder values.
         // writtenUs stays LONG_NULL so the next cycle's cadence check
         // treats this as "first commit" and writes a fresh head soon
-        // after - RFC 123 §"Restart recovery": re-emit a fresh .cp after
-        // the first post-restart refresh cycle.
+        // after - re-emit a fresh .cp after the first post-restart refresh
+        // cycle.
         instance.setHeadCheckpoint(
                 headLvSeqTxn,
                 restoredHeadState.maxTimestamp,
@@ -2276,11 +2286,13 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * each successful call and the caller reads them immediately.
      */
     private static final class RestoredHeadState {
+        long lvRowsTotal;
         long manifestBaseSeqTxn;
         long maxTimestamp;
         long stateBytes;
 
         void reset() {
+            lvRowsTotal = 0L;
             manifestBaseSeqTxn = Numbers.LONG_NULL;
             maxTimestamp = Numbers.LONG_NULL;
             stateBytes = 0L;
