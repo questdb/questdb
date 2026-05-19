@@ -7981,6 +7981,41 @@ public class ExplainPlanTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testExplainTruncatesLargeIntervalLists() throws Exception {
+        // 65 intervals: 64 render verbatim then "...(1 more)" trails. Catches the
+        // response-buffer overflow on EXPLAIN of `IN '...;70000'` from issue #5661.
+        // The 64-interval companion check guards the off-by-one at the cap.
+        assertMemoryLeak(() -> {
+            execute("create table trades (timestamp timestamp) timestamp(timestamp)");
+            assertPlanNoLeakCheck(
+                    "select * from trades where timestamp in '2005-01-01T12:55:00;2m;1d;64'",
+                    "PageFrame\n    Row forward scan\n    Interval forward scan on: trades\n      intervals: " + buildIntervalPlanList(64, false) + "\n"
+            );
+            assertPlanNoLeakCheck(
+                    "select * from trades where timestamp in '2005-01-01T12:55:00;2m;1d;65'",
+                    "PageFrame\n    Row forward scan\n    Interval forward scan on: trades\n      intervals: " + buildIntervalPlanList(64, true) + "\n"
+            );
+        });
+    }
+
+    private static String buildIntervalPlanList(int firstN, boolean withOneMore) {
+        StringBuilder sb = new StringBuilder("[");
+        java.time.LocalDate start = java.time.LocalDate.of(2005, 1, 1);
+        for (int i = 0; i < firstN; i++) {
+            if (i > 0) sb.append(',');
+            java.time.LocalDate day = start.plusDays(i);
+            String ymd = day.toString();
+            sb.append("(\"").append(ymd).append("T12:55:00.000000Z\",\"")
+                    .append(ymd).append("T12:56:59.999999Z\")");
+        }
+        if (withOneMore) {
+            sb.append(",...(1 more)");
+        }
+        sb.append(']');
+        return sb.toString();
+    }
+
+    @Test
     public void testSelectDynamicTsInterval3() throws Exception {
         assertPlan("create table tab ( l long, ts timestamp) timestamp(ts);", "select * from tab where ts > now()", """
                 PageFrame
