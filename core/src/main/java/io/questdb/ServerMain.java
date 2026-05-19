@@ -986,14 +986,14 @@ public class ServerMain implements Closeable {
      * <p>
      * When http.min.enabled=false the envelope publishes READY without binding (D3-13).
      */
-    protected class MinHttpEnvelope implements io.questdb.lifecycle.Component {
+    public class MinHttpEnvelope implements io.questdb.lifecycle.Component {
         private final ObjList<String> empty = new ObjList<>();
         private final ObjList<String> hardDeps;
         private final Log log;
         private WorkerPool pool;
         protected io.questdb.cutlass.http.HttpServer server;
 
-        MinHttpEnvelope(Log log) {
+        public MinHttpEnvelope(Log log) {
             this.log = log;
             this.hardDeps = new ObjList<>();
             this.hardDeps.add("factory-provider");
@@ -1171,7 +1171,7 @@ public class ServerMain implements Closeable {
      * Hard-dep on worker-pool-manager; soft-dep on engine.
      * Skipped when the instance is read-only or QWIP is disabled.
      */
-    protected class QwipEnvelope implements io.questdb.lifecycle.Component {
+    public class QwipEnvelope implements io.questdb.lifecycle.Component {
         protected final AtomicBoolean acceptOpen = new AtomicBoolean(false);
         protected volatile LifecycleContext ctxRef;
         protected final Log log;
@@ -1179,7 +1179,7 @@ public class ServerMain implements Closeable {
         private final ObjList<String> hardDeps;
         private final ObjList<String> softDeps;
 
-        QwipEnvelope(Log log) {
+        public QwipEnvelope(Log log) {
             this.log = log;
             this.hardDeps = new ObjList<>();
             this.hardDeps.add("worker-pool-manager");
