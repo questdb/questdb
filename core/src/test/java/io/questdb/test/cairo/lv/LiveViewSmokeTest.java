@@ -1001,12 +1001,17 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, sym VARCHAR, x INT) " +
                     "TIMESTAMP(ts) PARTITION BY DAY WAL");
+            // The LV projects a var-length column (sym VARCHAR), so the
+            // in-mem tier allocation is skipped. PARTITION BY uses a fixed-
+            // width INT key so the LV-side snapshot/restore contract applies
+            // (variable-length partition keys are not yet supported by the
+            // codec used to serialise key bytes into checkpoint blocks).
             execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
-                    "SELECT ts, sym, x, row_number() OVER (PARTITION BY sym ORDER BY ts ANCHOR DAILY '00:00') AS rn FROM base");
+                    "SELECT ts, sym, x, row_number() OVER (PARTITION BY x ORDER BY ts ANCHOR DAILY '00:00') AS rn FROM base");
             execute("INSERT INTO base (ts, sym, x) VALUES " +
-                    "('2026-05-12T00:00:00.000001Z', 'a', 10), " +
-                    "('2026-05-12T00:00:00.000002Z', 'b', 20), " +
-                    "('2026-05-12T00:00:00.000003Z', 'a', 30)");
+                    "('2026-05-12T00:00:00.000001Z', 'a', 1), " +
+                    "('2026-05-12T00:00:00.000002Z', 'b', 2), " +
+                    "('2026-05-12T00:00:00.000003Z', 'a', 1)");
             drainWalQueue();
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 drainJob(job);
@@ -1023,9 +1028,9 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
             // Reads still return correct results from disk.
             assertSql(
                     "ts\tsym\tx\trn\n" +
-                            "2026-05-12T00:00:00.000001Z\ta\t10\t1\n" +
-                            "2026-05-12T00:00:00.000002Z\tb\t20\t1\n" +
-                            "2026-05-12T00:00:00.000003Z\ta\t30\t2\n",
+                            "2026-05-12T00:00:00.000001Z\ta\t1\t1\n" +
+                            "2026-05-12T00:00:00.000002Z\tb\t2\t1\n" +
+                            "2026-05-12T00:00:00.000003Z\ta\t1\t2\n",
                     "SELECT ts, sym, x, rn FROM lv ORDER BY ts"
             );
 
@@ -1216,6 +1221,78 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                     instance.getLastProcessedSeqTxn(),
                     postFloor
             );
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testTruncateOnBaseIsTransparentToLiveView() throws Exception {
+        // TRUNCATE on the base is transparent to the LV: the view stays
+        // ACTIVE, its derived rows on disk are preserved byte-for-byte, the
+        // in-memory tier is unchanged, and the refresh worker walks past the
+        // TRUNCATE seqTxn (advancing last_processed_seqTxn and
+        // lv_consumed_seqTxn) without rewriting LV state. Pre-fix,
+        // ApplyWal2TableJob's TRUNCATE branch invalidated dependent LVs,
+        // flipping the view to INVALID on every base TRUNCATE.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 200ms AS " +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base");
+
+            execute(
+                    "INSERT INTO base (ts, x) VALUES " +
+                            "('2026-04-01T00:00:00.000000Z', 1)," +
+                            "('2026-04-02T00:00:00.000000Z', 2)"
+            );
+            drainWalQueue();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+            }
+            drainWalQueue();
+
+            LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(instance);
+            assertSql("count\n2\n", "SELECT count() FROM lv");
+            long preFloor = instance.getStateReader().getLvConsumedSeqTxn();
+
+            execute("TRUNCATE TABLE base");
+            drainWalQueue();
+            // FLUSH EVERY 200ms would otherwise rate-limit the back-to-back
+            // refresh cycle and the walk-past would not run until 200ms later.
+            instance.setLastFlushTimeUs(Numbers.LONG_NULL);
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+            }
+            drainWalQueue();
+
+            Assert.assertFalse(
+                    "LV must stay valid after TRUNCATE on base",
+                    instance.isInvalid()
+            );
+            assertSql(
+                    "view_status\nactive\n",
+                    "SELECT view_status FROM live_views() WHERE view_name = 'lv'"
+            );
+            assertSql("count\n2\n", "SELECT count() FROM lv");
+
+            long postFloor = instance.getStateReader().getLvConsumedSeqTxn();
+            Assert.assertTrue(
+                    "lv_consumed_seqTxn must advance past the TRUNCATE seqTxn [pre=" + preFloor
+                            + ", post=" + postFloor + ']',
+                    postFloor > preFloor
+            );
+
+            // Forward inserts past the LV's latestSeenTs continue to flow
+            // through the normal path; the TRUNCATE did not reset state.
+            execute("INSERT INTO base (ts, x) VALUES ('2026-04-03T00:00:00.000000Z', 3)");
+            drainWalQueue();
+            instance.setLastFlushTimeUs(Numbers.LONG_NULL);
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+            }
+            drainWalQueue();
+            assertSql("count\n3\n", "SELECT count() FROM lv");
 
             execute("DROP LIVE VIEW lv");
         });

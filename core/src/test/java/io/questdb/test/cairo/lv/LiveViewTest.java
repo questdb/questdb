@@ -295,6 +295,31 @@ public class LiveViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRejectNonSnapshotCapableWindowFunction() throws Exception {
+        // nth_value()'s ZERO_PASS variants pass the incremental-refresh gate but do
+        // not implement the snapshot/restore contract. Pre-fix, the LV CREATE
+        // succeeded and the refresh worker silently skipped every checkpoint write,
+        // routing each restart and every O3 through a full head-miss replay from
+        // viewLowerBoundTimestamp. The reject surfaces the unsupported function by
+        // name so the operator can swap it out or wait for the migration.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (val LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR WAL");
+            try {
+                execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                        "SELECT val, ts, nth_value(val, 1) OVER w AS first FROM base " +
+                        "WINDOW w AS (PARTITION BY val ORDER BY ts ANCHOR DAILY '00:00')");
+                Assert.fail("expected SqlException for non-snapshot-capable window function");
+            } catch (SqlException e) {
+                Assert.assertTrue(
+                        e.getMessage(),
+                        e.getMessage().contains("live view select cannot use window function nth_value(); " +
+                                "incremental snapshot is not supported for this function yet")
+                );
+            }
+        });
+    }
+
+    @Test
     public void testRejectJoinInLiveViewSelect() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base1 (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR WAL");

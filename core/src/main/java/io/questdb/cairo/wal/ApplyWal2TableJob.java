@@ -735,10 +735,12 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                     writer.markSeqTxnCommitted(seqTxn);
                 }
                 lastCommittedRows = 0;
-                // Invalidate dependent views on truncate.
+                // Invalidate dependent materialized views on truncate. Live views
+                // own a private copy of derived rows and stay valid: the LV
+                // refresh worker walks past the TRUNCATE seqTxn and advances its
+                // own lv_consumed_seqTxn floor without rewriting LV state.
                 mvRefreshTask.operation = MatViewRefreshTask.INVALIDATE;
                 mvRefreshTask.invalidationReason = "truncate operation";
-                engine.invalidateLiveViewsForBaseTable(writer.getTableToken(), "truncate operation");
                 return 1;
             case MAT_VIEW_INVALIDATE:
                 try (WalEventReader eventReader = walEventReader) {

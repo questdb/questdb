@@ -2702,8 +2702,19 @@ public class CairoEngine implements Closeable, WriterSource {
         ObjList<WindowFunction> fns = wf.getWindowFunctions();
         rejectLeadIfPresent(fns, position);
         for (int i = 0, n = fns.size(); i < n; i++) {
-            if (fns.getQuick(i).getPassCount() != WindowFunction.ZERO_PASS) {
+            WindowFunction f = fns.getQuick(i);
+            if (f.getPassCount() != WindowFunction.ZERO_PASS) {
                 throw SqlException.$(position, "live view select may only use window functions that support incremental refresh");
+            }
+            // Every window function in the LV select must also be checkpoint-capable.
+            // Without snapshot support, the refresh worker would silently skip checkpoint
+            // writes for the whole view, routing every restart and every O3 through full
+            // head-miss replay from viewLowerBoundTimestamp. Surfacing the gap here keeps
+            // operator surprise out of the steady-state hot path.
+            if (!f.supportsSnapshot()) {
+                throw SqlException.$(position, "live view select cannot use window function ")
+                        .put(f.getName())
+                        .put("(); incremental snapshot is not supported for this function yet");
             }
         }
 

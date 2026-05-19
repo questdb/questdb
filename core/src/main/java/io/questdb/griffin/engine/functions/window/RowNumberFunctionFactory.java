@@ -477,8 +477,33 @@ public class RowNumberFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public void restore(MemoryR source, int formatVersion) {
+            rowNumber = source.getLong(0);
+        }
+
+        @Override
         public void setColumnIndex(int columnIndex) {
             this.columnIndex = columnIndex;
+        }
+
+        @Override
+        public void snapshot(MemoryA sink) {
+            sink.putLong(rowNumber);
+        }
+
+        @Override
+        public int snapshotFormatVersion() {
+            return 1;
+        }
+
+        @Override
+        public int snapshotMinSupportedVersion() {
+            return 1;
+        }
+
+        @Override
+        public boolean supportsSnapshot() {
+            return true;
         }
 
         @Override
