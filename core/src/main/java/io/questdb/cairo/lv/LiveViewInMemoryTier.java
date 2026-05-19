@@ -35,7 +35,7 @@ import org.jetbrains.annotations.TestOnly;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
- * N=2 double-buffered in-memory tier for a live view (RFC 123 §"In-memory tier").
+ * N=2 double-buffered in-memory tier for a live view.
  * One slot is published for readers; the other is available for the writer to
  * fill during a slow-path copy + append cycle. Readers pin a slot via a CAS
  * refcount; the writer takes a slot with a {@code 0 -> -1} sentinel CAS that
@@ -72,9 +72,9 @@ import java.util.concurrent.atomic.AtomicInteger;
  * Close is <strong>deferred</strong>: a {@link #close()} call only marks the
  * tier closed and prevents new {@link #acquireRead()} pins; native memory
  * frees on the last {@link #releaseRead(int)} that returns the live pin
- * count to zero. This is the RFC 123 §"DROP LIVE VIEW" step 4 "modulo cursor
- * pins" clause — a cursor holding a slot pin can outlive the LV's DROP and
- * still call {@code releaseRead} safely.
+ * count to zero. This is the DROP LIVE VIEW "modulo cursor pins" clause — a
+ * cursor holding a slot pin can outlive the LV's DROP and still call
+ * {@code releaseRead} safely.
  */
 public class LiveViewInMemoryTier implements QuietCloseable {
 

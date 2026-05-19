@@ -238,12 +238,18 @@ public class LiveViewCheckpointWriter implements Closeable {
         final int renameResult = ff.rename(tmpPath.$(), finalPath.$());
         if (renameResult != Files.FILES_RENAME_OK) {
             // Try to keep operator visibility into the tmp leftover -
-            // recovery sweep will clean it on next start.
+            // recovery sweep will clean it on next start. Reset all
+            // resumable state so a follow-on of() on this writer instance
+            // starts from a clean slate.
             final int errno = ff.errno();
+            final long failedLvSeqTxn = activeLvSeqTxn;
             isOpen = false;
+            currentBlockHeaderOffset = -1;
+            blockCount = 0;
+            activeLvSeqTxn = Numbers.LONG_NULL;
             throw CairoException.critical(errno)
                     .put("could not rename live view checkpoint tmp file, lvSeqTxn=")
-                    .put(activeLvSeqTxn)
+                    .put(failedLvSeqTxn)
                     .put(", renameResult=")
                     .put(renameResult);
         }

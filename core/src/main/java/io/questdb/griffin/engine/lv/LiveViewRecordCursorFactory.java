@@ -37,11 +37,12 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Misc;
 
 /**
- * Live-view read path (RFC 123 Phase 1b Commit 4). Wraps the standard
+ * Live-view read path. Wraps the standard
  * {@code PageFrameRecordCursorFactory} that {@code SqlCodeGenerator} builds
  * for the LV's WAL-backed table, and pins the LV's in-memory tier slot for
  * the cursor's lifetime so the refresh worker's slow-path
- * {@code tryAcquireWrite} sees the reader (RFC 123 §"Stall behavior").
+ * {@code tryAcquireWrite} sees the reader and trails rather than progressing
+ * past it.
  * <p>
  * Phase 3a wires seam_ts routing in the returned cursor: disk rows are
  * served first, then in-mem rows whose timestamp exceeds the disk's maximum.
@@ -88,7 +89,7 @@ public class LiveViewRecordCursorFactory extends AbstractRecordCursorFactory {
 
     @Override
     public TimeFrameCursor getTimeFrameCursor(SqlExecutionContext executionContext) throws SqlException {
-        // RFC 123 Phase 1b: every in-mem row is also durable on disk after the
+        // Phase 1b: every in-mem row is also durable on disk after the
         // inline apply, so ASOF JOIN-as-RHS reading via the base factory's
         // time-frame cursor sees the full dataset. Future phases (when in-mem
         // outpaces disk via the hand-off ring) will need a dedicated

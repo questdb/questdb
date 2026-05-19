@@ -109,7 +109,7 @@ import static io.questdb.cairo.wal.WalUtils.WAL_NAME_BASE;
  *     <li>The LV's WAL block carries {@code maxBaseSeqTxnInBlock} on a dedicated
  *     {@code WalTxnType#LIVE_VIEW_DATA} event; the inline apply on this worker
  *     reads it back and bumps {@code lvConsumedSeqTxn} after the rows are durable
- *     in the LV's own table (RFC 123 §Flush).</li>
+ *     in the LV's own table.</li>
  * </ul>
  */
 public class LiveViewRefreshJob implements Job, QuietCloseable {
@@ -427,7 +427,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         RecordMetadata baseMetadata = pageFrameFactory.getMetadata();
         buildColumnMappings(baseMetadata, baseToken);
 
-        // RFC 123 Phase 1b: decide whether the in-memory tier can be populated
+        // Phase 1b: decide whether the in-memory tier can be populated
         // for this LV. Only LVs whose output schema is fully fixed-width are
         // supported in this phase; var-length columns fall back to disk-only.
         // The staging buffer is reshaped on schema-mismatch; the LV's tier is
@@ -625,7 +625,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             }
 
             if (appendedRows > 0) {
-                // RFC 123 Phase 1b: the LV WAL block carries advanceTo as
+                // Phase 1b: the LV WAL block carries advanceTo as
                 // maxBaseSeqTxnInBlock. The inline apply below makes the rows
                 // durable in the LV's on-disk table; only then do we advance
                 // lvConsumedSeqTxn so base WAL retention releases.
@@ -663,7 +663,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             instance.setAppliedWatermark(advanceTo);
             boolean lvConsumedPersisted = false;
             if (appendedRows > 0) {
-                // RFC 123 Phase 1b: LV apply runs inline on this thread. The
+                // Phase 1b: LV apply runs inline on this thread. The
                 // global ApplyWal2TableJob.doRun skips LV tokens, so without
                 // applyWalDirect here the LIVE_VIEW_DATA block would sit
                 // unapplied and the on-disk tier would not catch up.
@@ -691,8 +691,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 // schema change, DROP PARTITION, TRUNCATE, base TTL — or every row was
                 // rejected by the WHERE filter). There is nothing to apply, but
                 // lvConsumedSeqTxn must still advance or base WAL retention would
-                // stall forever (RFC 123 §"Lifecycle / Invalidation - Base-table
-                // data removal").
+                // stall forever; non-DATA seqTxns still walk the watermark forward.
                 try {
                     engine.advanceLiveViewConsumedSeqTxn(
                             instance.getLiveViewToken(),
@@ -713,8 +712,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 // floor. Persist lastProcessed + appliedWatermark anyway so the
                 // next cycle does not redo the walked-past seqTxns. If this also
                 // fails, the exception propagates to refreshInstance's
-                // handleRefreshFailure which ticks the flush-retry budget
-                // (RFC 123 §Flush).
+                // handleRefreshFailure which ticks the flush-retry budget.
                 persistState(instance);
             }
             if (lvConsumedPersisted && populateTier && appendedRows > 0) {
@@ -724,7 +722,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 // advanced, the in-mem tier just trails for this cycle.
                 // advanceTo is this cycle's highest base seqTxn — stamped on
                 // the resulting slot so the durability clamp at slow-path
-                // eviction (RFC 123 §"In-memory tier" line 848) can compare
+                // eviction can compare
                 // against applied_watermark.
                 publishToInMemoryTier(instance, stagingMaxTs, advanceTo);
             }
@@ -733,7 +731,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 // _txn advance and the lvConsumedSeqTxn publish so the .cp on
                 // disk reflects state that is also durably committed in the
                 // LV's own table. A failure here does not invalidate the view
-                // (RFC 123 "Flush" step 4): the prior head remains addressable
+                // (.cp is a derived artifact): the prior head remains addressable
                 // and the next eligible cycle retries.
                 //
                 // O3 cycles never reach this branch: detect rolls back the
@@ -1413,7 +1411,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      *     bounding, with the duration trigger floor active from then on.</li>
      * </ul>
      * <p>
-     * A failure here does not invalidate the view (RFC 123 "Flush" step 4).
+     * A failure here does not invalidate the view (.cp is a derived artifact).
      * The prior head, if any, remains addressable; we log critical and
      * continue. The writer is closed defensively so the next cycle reopens
      * cleanly.
@@ -1524,8 +1522,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * function class, anchor type mismatch) is best-effort cleaned up here -
      * the helper logs critical, unlinks the corrupt {@code .cp}, clears the
      * head metadata on the instance, and returns {@code false}. The LV is not
-     * invalidated; the caller falls through to the head-miss replay path
-     * (RFC 123 §"Checkpoint stream", §"Corruption handling").
+     * invalidated; the caller falls through to the head-miss replay path.
      */
     private boolean restoreFromHead(
             LiveViewInstance instance,
@@ -1660,9 +1657,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * missing function class, anchor type mismatch) unlinks the head .cp
      * and clears the head metadata on the instance. The LV is not
      * invalidated - {@code .cp} is derived state, and the upcoming refresh
-     * cycle falls through to the head-miss replay path
-     * (RFC 123 §"Checkpoint stream", §"Corruption handling"). A fresh head
-     * is written by the same cycle once it lands rows.
+     * cycle falls through to the head-miss replay path. A fresh head is
+     * written by the same cycle once it lands rows.
      */
     private void tryRestoreFromHead(LiveViewInstance instance, WindowRecordCursorFactory windowFactory) {
         final long headLvSeqTxn = instance.getHeadCheckpointLvSeqTxn();
@@ -1845,7 +1841,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
 
     /**
      * Publishes this cycle's staging rows into the LV's in-memory tier
-     * (RFC 123 Phase 3a).
+     * (Phase 3a fast-path + slow-path swap).
      * <p>
      * Two paths share the same {@code 0 -> -1} CAS primitive on a slot's
      * refcount:
@@ -1876,7 +1872,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * the writer stalls: the in-mem tier trails for this cycle, the disk
      * tier is still up to date, and {@code writerStallStartUs} is set so
      * {@code live_views().writer_stall_micros} surfaces the stall duration
-     * (RFC 123 §"Stall behavior").
+     * so operators can observe the trail.
      */
     private void publishToInMemoryTier(LiveViewInstance instance, long stagingMaxTs, long cycleSeqTxn) {
         LiveViewInMemoryTier tier = instance.getInMemoryTier();
@@ -1902,8 +1898,10 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 } catch (Throwable t) {
                     // Fast-path append cannot leave the slot partially
                     // populated visibly to readers: rowCount only advances
-                    // after each row's column writes succeed. Drop the
-                    // sentinel and let the flush-retry budget tick.
+                    // once at the end of appendStagingInPlace, after all
+                    // column writes have completed, and the writer sentinel
+                    // (rc = -1) keeps readers spinning until release. Drop
+                    // the sentinel and let the flush-retry budget tick.
                     tier.releaseWriteWithoutPublish(publishedIdx);
                     throw t;
                 }
@@ -1937,7 +1935,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             long inMemoryInBaseUnits = driver.fromMicros(instance.getDefinition().getInMemoryMicros());
             long retainThreshold = stagingMaxTs - inMemoryInBaseUnits;
 
-            // Durability clamp (RFC 123 §"In-memory tier" line 848): a row may
+            // Durability clamp: a row may
             // only age out when both (a) ts < latest - IN_MEMORY and (b) its
             // seqTxn is covered by applied_watermark — otherwise the gap-free
             // invariant between tiers can break when the disk side is behind.
@@ -1949,8 +1947,9 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // The slot does not carry per-row seqTxn metadata, so the clamp
             // is enforced at slot granularity: when the published slot's
             // maxSeqTxn outruns applied_watermark, retain every row (no
-            // age-out this cycle). The RFC accepts that under stalled apply
-            // the in-mem footprint can temporarily exceed 2 x per_buffer_size.
+            // age-out this cycle). Under stalled apply the in-mem footprint
+            // can temporarily exceed 2 x per_buffer_size, bounded by the
+            // retry budget.
             long pubMaxSeqTxn = pubSlot.maxSeqTxn();
             long appliedWatermark = instance.getStateReader().getAppliedWatermark();
             boolean pubSlotDurable = pubMaxSeqTxn == Numbers.LONG_NULL || pubMaxSeqTxn <= appliedWatermark;
@@ -1993,7 +1992,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // here would expose a half-populated slot (rowCount=0 since
             // setRowCount runs only on the success path) and silently regress
             // queries that previously saw N rows to seeing 0 rows. Propagate
-            // the failure so the flush-retry budget ticks (RFC 123 §Flush).
+            // the failure so the flush-retry budget ticks.
             tier.releaseWriteWithoutPublish(writeIdx);
             throw t;
         }
@@ -2209,7 +2208,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     }
 
     /**
-     * RFC 123 §"Flush" retry budget: count consecutive failures and the elapsed
+     * Flush retry budget: count consecutive failures and the elapsed
      * wall-clock time since the streak began. On budget exhaustion, returns
      * the reason string so the caller can drive the invalidation outside the
      * refresh latch; otherwise returns null. The view stops refreshing but

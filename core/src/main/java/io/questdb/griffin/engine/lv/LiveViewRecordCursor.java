@@ -36,10 +36,9 @@ import io.questdb.std.Numbers;
 
 /**
  * The cursor returned by {@link LiveViewRecordCursorFactory}. Pins the LV's
- * in-memory tier slot at open and releases it on close — RFC 123 §"Stall
- * behavior" relies on this to keep readers visible to the refresh worker's
- * slow-path {@code tryAcquireWrite} so the writer trails rather than
- * progressing past a slow reader.
+ * in-memory tier slot at open and releases it on close. Keeping the reader
+ * visible to the refresh worker's slow-path {@code tryAcquireWrite} ensures
+ * the writer trails rather than progressing past a slow reader.
  * <p>
  * Phase 3a wires seam_ts routing: after the disk cursor exhausts, the cursor
  * iterates the pinned in-mem buffer rows whose timestamp is strictly greater
@@ -191,8 +190,7 @@ public class LiveViewRecordCursor implements RecordCursor {
         if (tier != null && slotIdx >= 0) {
             // Safe even after the LV's DROP marked the tier closed: the deferred-
             // close protocol on LiveViewInMemoryTier keeps native memory alive
-            // until the last pin drains (RFC 123 §"DROP LIVE VIEW" step 4
-            // "modulo cursor pins").
+            // until the last pin drains (DROP LIVE VIEW "modulo cursor pins").
             tier.releaseRead(slotIdx);
         }
         tier = null;

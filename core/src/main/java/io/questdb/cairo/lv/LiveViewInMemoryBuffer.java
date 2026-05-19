@@ -35,7 +35,7 @@ import io.questdb.std.ObjList;
 import io.questdb.std.QuietCloseable;
 
 /**
- * One slot of the N=2 live-view in-memory tier (RFC 123 §"In-memory tier").
+ * One slot of the N=2 live-view in-memory tier.
  * Holds a column-major slab of fixed-width values; one
  * {@link MemoryCARWImpl} per column, primary buffer only.
  * <p>
@@ -69,9 +69,9 @@ public class LiveViewInMemoryBuffer implements QuietCloseable {
     private final IntList columnTypes;
     private final ObjList<MemoryCARWImpl> columns;
     private final int timestampColumnIndex;
-    // Highest base seqTxn whose rows the slot reflects. Eviction (RFC 123
-    // §"In-memory tier" line 848) only ages out rows when this value is
-    // covered by the LV's applied_watermark — protects unflushed rows from
+    // Highest base seqTxn whose rows the slot reflects. Eviction only ages
+    // out rows when this value is covered by the LV's applied_watermark —
+    // protects unflushed rows from
     // being dropped before they reach disk. Phase 1b always advances this
     // after a successful apply, so the clamp is vacuous today; Phase 4
     // (hand-off ring) is the regime where the clamp does real work.

@@ -39,7 +39,7 @@ import org.jetbrains.annotations.Nullable;
  * Phase 1 holds CORE_STATE only. {@code backfillState} / {@code backfillTargetSeqTxn}
  * are preallocated as {@code ACTIVE} / {@code Numbers.LONG_NULL} (BACKFILL is
  * rejected at CREATE in 1a) so Phase 3 can land BACKFILL semantics without a
- * {@code _lv.s} schema bump (RFC 123 §"Persistent formats / _lv.s").
+ * {@code _lv.s} schema bump.
  */
 public class LiveViewState {
     public static final String LIVE_VIEW_STATE_FILE_NAME = "_lv.s";

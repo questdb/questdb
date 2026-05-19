@@ -42,14 +42,14 @@ import java.util.concurrent.atomic.AtomicBoolean;
 /**
  * Runtime representation of a Phase 1 live view.
  * <p>
- * Replaces the prototype's merge-buffer / cold-path state with the
- * disk-only RFC 123 Phase 1 surface:
+ * Replaces the prototype's merge-buffer / cold-path state with the disk-only
+ * Phase 1 surface:
  * <ul>
  *     <li>Lifecycle is derived from registry visibility + {@link #stateReader}.invalid;
  *         see {@link LiveViewLifecycleState}.</li>
  *     <li>Reads route through the LV's own WAL-backed table via the standard
  *         {@code TableReader} machinery. A seam_ts in-memory tier for sub-FLUSH-cycle
- *         freshness is deferred to a later phase per RFC 123.</li>
+ *         freshness is deferred to a later phase.</li>
  *     <li>{@link LiveViewStateReader} mirrors the durable contents of {@code _lv.s} —
  *         {@code invalid}, {@code subscribeFromSeqTxn}, {@code lastProcessedSeqTxn},
  *         {@code appliedWatermark}, {@code lvConsumedSeqTxn}. The instance exposes the
@@ -84,8 +84,8 @@ public class LiveViewInstance implements QuietCloseable {
     private LiveViewWindow anchorWindow;
     private RecordCursorFactory compiledFactory;
     private volatile boolean dropped;
-    // Consecutive refresh-cycle failures since the last success. RFC 123 §"Flush"
-    // budgets retries by both count (cairo.live.view.flush.retry.max) and elapsed
+    // Consecutive refresh-cycle failures since the last success. The flush retry
+    // budget caps retries by both count (cairo.live.view.flush.retry.max) and elapsed
     // time (cairo.live.view.flush.retry.max.duration); on budget exhaustion the
     // refresh worker invalidates the view via the unified path. Mutated only on
     // the refresh-worker thread; not volatile because it isn't read elsewhere.
@@ -102,7 +102,7 @@ public class LiveViewInstance implements QuietCloseable {
     // asserted; the field is informational for tests and diagnostics.
     private volatile long freezeFrozenLvSeqTxn = Numbers.LONG_NULL;
     private volatile boolean freezeInProgress;
-    // N=2 in-memory tier (RFC 123 §"In-memory tier"); lazily allocated on the
+    // N=2 in-memory tier; lazily allocated on the
     // first refresh cycle after the LV's compiled factory + projected metadata
     // are known. Reads route through it via LiveViewRecordCursor (Phase 1b
     // Commit 4); the refresh worker drives the slow-path swap from
@@ -196,8 +196,7 @@ public class LiveViewInstance implements QuietCloseable {
     // Wall-clock (micros) when the in-mem tier's slow-path tryAcquireWrite first
     // observed both slots reader-pinned. Numbers.LONG_NULL when not stalled.
     // Cleared on the next successful acquire. Surfaces via
-    // live_views().writer_stall_micros for operator visibility per RFC 123
-    // §"Stall behavior".
+    // live_views().writer_stall_micros for operator visibility.
     private volatile long writerStallStartUs = Numbers.LONG_NULL;
 
     public LiveViewInstance(LiveViewDefinition definition, TableToken liveViewToken) {
@@ -513,7 +512,7 @@ public class LiveViewInstance implements QuietCloseable {
      * by a long-running reader the stall is still happening; clearing here
      * would understate it. The clear lives on the populate-tier success
      * path in {@link io.questdb.cairo.lv.LiveViewRefreshJob#publishToInMemoryTier}
-     * where we know the writer made tier progress (RFC 123 §"Stall behavior").
+     * where we know the writer made tier progress.
      */
     public void recordRefreshSuccess() {
         flushRetryCount = 0;
@@ -679,9 +678,9 @@ public class LiveViewInstance implements QuietCloseable {
 
     /**
      * Marks the view frozen for the duration of a {@code DatabaseCheckpointAgent}
-     * file copy. {@code frozenLvSeqTxn} is the {@code appliedWatermark} at the
-     * time of freeze; recorded for diagnostics. Refresh-worker turns that
-     * observe {@link #isFreezeInProgress()} short-circuit before mutating
+     * file copy. {@code frozenAppliedWatermark} is the {@code appliedWatermark}
+     * at the time of freeze; recorded for diagnostics. Refresh-worker turns
+     * that observe {@link #isFreezeInProgress()} short-circuit before mutating
      * {@code _lv.s} or advancing any LV watermark. The caller is responsible
      * for pairing this with a {@link #endCheckpoint()} after the copy completes.
      * <p>
@@ -692,13 +691,13 @@ public class LiveViewInstance implements QuietCloseable {
      * proceeds with its copy, and (b) the worker's next call to
      * {@link #tryLockForRefresh()} observes {@code freezeInProgress=true}.
      */
-    public void startCheckpoint(long frozenLvSeqTxn) {
+    public void startCheckpoint(long frozenAppliedWatermark) {
         // Synchronize on the instance monitor while publishing the flag so any
         // invalidator inside synchronized(instance) on another thread either
         // (a) commits its rewrite before the agent's file copy begins, or
         // (b) observes freezeInProgress=true and parks via waitForUnfrozen().
         synchronized (this) {
-            freezeFrozenLvSeqTxn = frozenLvSeqTxn;
+            freezeFrozenLvSeqTxn = frozenAppliedWatermark;
             freezeInProgress = true;
         }
         while (!refreshLatch.compareAndSet(false, true)) {

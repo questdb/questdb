@@ -63,7 +63,7 @@ public class LiveViewStateReader implements Mutable {
     private volatile long appliedWatermark = -1L;
     // Phase 1a always BACKFILL_STATE_ACTIVE / Numbers.LONG_NULL (BACKFILL rejected at
     // CREATE). Preallocated in CORE_STATE so Phase 3 can land BACKFILL semantics without
-    // an _lv.s schema bump (RFC 123 §"Persistent formats / _lv.s").
+    // an _lv.s schema bump.
     private byte backfillState = LiveViewState.BACKFILL_STATE_ACTIVE;
     private long backfillTargetSeqTxn = Numbers.LONG_NULL;
     private boolean invalid;

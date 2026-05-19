@@ -27,9 +27,9 @@ package io.questdb.cairo.lv;
 /**
  * Logical lifecycle state of a live view.
  * <p>
- * Per RFC 123: this is derived state, not a persisted field. The combination of
- * registry visibility (locked / committed / marked-dropped), {@code _lv.s.invalid},
- * and {@code _lv.s.backfillState} uniquely determines the state.
+ * Derived state, not a persisted field. The combination of registry visibility
+ * (locked / committed / marked-dropped), {@code _lv.s.invalid}, and
+ * {@code _lv.s.backfillState} uniquely determines the state.
  */
 public enum LiveViewLifecycleState {
     /** Registry entry is locked but not yet committed. View is not visible to readers. */
