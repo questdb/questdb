@@ -129,19 +129,37 @@ public abstract class AbstractRegressionGroupByFunction extends DoubleFunction i
     // Chan et al. [CGL82; CGL83]
     @Override
     public void merge(MapValue destValue, MapValue srcValue) {
+        long srcCount = srcValue.getLong(valueIndex + 5);
+        if (srcCount == 0) {
+            // Source partial has no finite (y, x) pairs; nothing to contribute.
+            // Skipping avoids 0/0 = NaN in the Chan formula when destCount is
+            // also 0, which would otherwise poison the destination doubles and
+            // leak NaN into the merged result once a real-data partial arrives.
+            return;
+        }
+        long destCount = destValue.getLong(valueIndex + 5);
+        if (destCount == 0) {
+            // Destination is empty; copy source state directly.
+            destValue.putDouble(valueIndex, srcValue.getDouble(valueIndex));
+            destValue.putDouble(valueIndex + 1, srcValue.getDouble(valueIndex + 1));
+            destValue.putDouble(valueIndex + 2, srcValue.getDouble(valueIndex + 2));
+            destValue.putDouble(valueIndex + 3, srcValue.getDouble(valueIndex + 3));
+            destValue.putDouble(valueIndex + 4, srcValue.getDouble(valueIndex + 4));
+            destValue.putLong(valueIndex + 5, srcCount);
+            return;
+        }
+
         double srcMeanY = srcValue.getDouble(valueIndex);
         double srcSumY = srcValue.getDouble(valueIndex + 1);
         double srcMeanX = srcValue.getDouble(valueIndex + 2);
         double srcSumX = srcValue.getDouble(valueIndex + 3);
         double srcSumXY = srcValue.getDouble(valueIndex + 4);
-        long srcCount = srcValue.getLong(valueIndex + 5);
 
         double destMeanY = destValue.getDouble(valueIndex);
         double destSumY = destValue.getDouble(valueIndex + 1);
         double destMeanX = destValue.getDouble(valueIndex + 2);
         double destSumX = destValue.getDouble(valueIndex + 3);
         double destSumXY = destValue.getDouble(valueIndex + 4);
-        long destCount = destValue.getLong(valueIndex + 5);
 
         long mergedCount = srcCount + destCount;
         double deltaY = destMeanY - srcMeanY;
