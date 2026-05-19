@@ -1167,6 +1167,18 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getSqlParquetHiveMaxOpenFiles() {
+        return 4096;
+    }
+
+    @Override
+    public long getSqlParquetHiveMaxCacheBytes() {
+        // 16 GiB - matches what an OLAP server can comfortably keep mapped without
+        // pressuring the OS file-cache reclaim. Lower this in sandboxed envs.
+        return 16L * 1024 * 1024 * 1024;
+    }
+
+    @Override
     public int getSqlPivotMaxProducedColumns() {
         return 5_000;
     }
@@ -1656,8 +1668,18 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public boolean isSqlParquetHiveParallelEnabled() {
+        return true;
+    }
+
+    @Override
     public boolean isSqlParquetRowGroupPruningEnabled() {
         return true;
+    }
+
+    @Override
+    public boolean isSqlParquetVerifySortClaimEnabled() {
+        return false;
     }
 
     @Override

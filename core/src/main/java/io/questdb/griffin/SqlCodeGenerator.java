@@ -321,6 +321,10 @@ import io.questdb.griffin.engine.table.SortedSymbolIndexRecordCursorFactory;
 import io.questdb.griffin.engine.table.SymbolIndexFilteredRowCursorFactory;
 import io.questdb.griffin.engine.table.SymbolIndexRowCursorFactory;
 import io.questdb.griffin.engine.table.VirtualRecordCursorFactory;
+import io.questdb.griffin.engine.functions.table.HivePartitionedFooterAggregateRecordCursorFactory;
+import io.questdb.griffin.engine.functions.table.HivePartitionedReadParquetRecordCursorFactory;
+import io.questdb.griffin.engine.functions.table.ParquetFooterAggregateRecordCursorFactory;
+import io.questdb.griffin.engine.functions.table.ReadParquetRecordCursorFactory;
 import io.questdb.griffin.engine.union.ExceptAllRecordCursorFactory;
 import io.questdb.griffin.engine.union.ExceptRecordCursorFactory;
 import io.questdb.griffin.engine.union.IntersectAllRecordCursorFactory;
@@ -1609,6 +1613,17 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     );
                     queryMeta.add(columnMetadata);
 
+                    // Propagate any sort-order claim the source carried for this
+                    // column. The optimiser's ORDER BY elision branch in
+                    // generateOrderBy reads getColumnOrderBy on the wrapping
+                    // factory's metadata, so the claim has to ride through the
+                    // projection rebuild here or it is lost on every projection
+                    // pushdown.
+                    final int orderBy = metadata.getColumnOrderBy(columnIndex);
+                    if (orderBy != 0) {
+                        queryMeta.setColumnOrderBy(queryMeta.getColumnCount() - 1, orderBy);
+                    }
+
                     if (columnIndex == readerTimestampIndex) {
                         queryMeta.setTimestampIndex(queryMeta.getColumnCount() - 1);
                     }
@@ -1627,6 +1642,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     );
                     queryMeta.add(timestampColumnMetadata);
                     queryMeta.setTimestampIndex(queryMeta.getColumnCount() - 1);
+                    final int tsOrderBy = metadata.getColumnOrderBy(readerTimestampIndex);
+                    if (tsOrderBy != 0) {
+                        queryMeta.setColumnOrderBy(queryMeta.getColumnCount() - 1, tsOrderBy);
+                    }
 
                     if (columnIndexes != null) {
                         columnIndexes.add(readerTimestampIndex);
@@ -4163,6 +4182,14 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             if (factory.mayHaveParquetPartitions(executionContext) && executionContext.isParquetRowGroupPruningEnabled()) {
                 factory.setPushdownFilterCondition(pushdownFilterExtractor.extractAndCompile(
                         sqlNodeStack, sqlNodeStack2, filterExpr, factory.getMetadata(), functionParser, executionContext));
+                // If the cursor's pushdown is precise enough to fully cover the WHERE
+                // (e.g. hive partition-column predicates that prune at file level), drop
+                // the row-level filter entirely. The row-level pass would otherwise
+                // re-evaluate a tautology against every emitted row.
+                if (factory.isFilterFullyConsumedByPushdown(filterExpr)) {
+                    filter.close();
+                    return factory;
+                }
             }
 
             final boolean enableParallelFilter = executionContext.isParallelFilterEnabled();
@@ -7305,6 +7332,42 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     }
                 }
 
+                // Parquet reverse-scan flip. Detect ORDER BY ts DESC on a
+                // ReadParquetRecordCursorFactory whose file claims the
+                // designated timestamp ASC-sorted via sorting_columns. Flip
+                // the factory's reverseScan flag BEFORE the existing
+                // designated-ts elision check below - that check returns the
+                // factory unchanged when getScanDirection() == BACKWARD
+                // matches the requested DESC, which is exactly what
+                // setReverseScan(true) achieves here.
+                //
+                // The same gates as the elision: single-column ORDER BY on
+                // the timestamp index, requested DESC, current scan direction
+                // FORWARD (so we don't double-flip if some upstream already
+                // arranged BACKWARD), and the file metadata claims ts ASC.
+                //
+                // Hive globs are intentionally NOT flipped here. The cursor's
+                // reverse capability iterates each file in DESC ts order, but
+                // the file walk only produces a globally DESC stream when
+                // files have disjoint, sorted ts ranges - a property that no
+                // standard parquet metadata expresses and that the planner
+                // cannot verify without walking every footer. Leaving the
+                // SORT operator in place is the safe default; a stricter
+                // gate (per-footer ts-range disjointness check) can be added
+                // once there is a clear use case.
+                if (orderByColumnCount == 1
+                        && timestampIndex != -1
+                        && recordCursorFactory instanceof ReadParquetRecordCursorFactory) {
+                    CharSequence orderColumn = orderByColumnNames.getQuick(0);
+                    int orderColumnIndex = metadata.getColumnIndexQuiet(orderColumn);
+                    if (orderColumnIndex == timestampIndex
+                            && orderByColumnNameToIndexMap.get(orderColumn) == IQueryModel.ORDER_DIRECTION_DESCENDING
+                            && recordCursorFactory.getScanDirection() == RecordCursorFactory.SCAN_DIRECTION_FORWARD
+                            && metadata.getColumnOrderBy(orderColumnIndex) == 1) {
+                        ((ReadParquetRecordCursorFactory) recordCursorFactory).setReverseScan(true);
+                    }
+                }
+
                 boolean preSortedByTs = false;
                 // if first column index is the same as timestamp of underlying record cursor factory
                 // we could have two possibilities:
@@ -7326,6 +7389,31 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         } else { // orderByColumnCount > 1
                             preSortedByTs = (orderByColumnNameToIndexMap.get(column) == IQueryModel.ORDER_DIRECTION_ASCENDING && recordCursorFactory.getScanDirection() == RecordCursorFactory.SCAN_DIRECTION_FORWARD)
                                     || (orderByColumnNameToIndexMap.get(column) == IQueryModel.ORDER_DIRECTION_DESCENDING && recordCursorFactory.getScanDirection() == RecordCursorFactory.SCAN_DIRECTION_BACKWARD);
+                        }
+                    }
+                }
+
+                // Non-timestamp sort key elision. Mirrors the designated-timestamp
+                // shortcut above for sources whose metadata declares a sort on a
+                // non-ts column (e.g. parquet files carrying `sorting_columns`).
+                // Only applies to single-column ORDER BY: a multi-column
+                // ORDER BY would need the entire prefix to match, which we don't
+                // currently track end-to-end.
+                //
+                // The forward-scan guard pairs with the metadata claim: a file
+                // sorted DESC on a non-ts column iterated FORWARD already emits
+                // DESC rows. We do not yet have a reverse-iteration parquet
+                // cursor, so we do not consider scan-direction inversion here.
+                if (orderByColumnCount == 1
+                        && recordCursorFactory.getScanDirection() == RecordCursorFactory.SCAN_DIRECTION_FORWARD) {
+                    CharSequence column = orderByColumnNames.getQuick(0);
+                    int index = metadata.getColumnIndexQuiet(column);
+                    if (index >= 0 && index != timestampIndex) {
+                        int fileSort = metadata.getColumnOrderBy(index);
+                        int requestedDir = orderByColumnNameToIndexMap.get(column);
+                        if ((fileSort == 1 && requestedDir == IQueryModel.ORDER_DIRECTION_ASCENDING)
+                                || (fileSort == -1 && requestedDir == IQueryModel.ORDER_DIRECTION_DESCENDING)) {
+                            return recordCursorFactory;
                         }
                     }
                 }
@@ -8377,6 +8465,110 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         }
     }
 
+    /**
+     * Recognises the {@code SELECT min(<col>), max(<col>) [, ...]} aggregate
+     * shape that the parquet footer-only shortcut can short-circuit. Returns
+     * the shared LITERAL column token across every aggregate in
+     * {@code columns}, or {@code null} when {@code columns} does not match
+     * the shape.
+     * <p>
+     * Match requires for every entry independently:
+     * <ul>
+     *   <li>{@code ast.type == FUNCTION}</li>
+     *   <li>{@code ast.paramCount == 1}</li>
+     *   <li>{@code ast.token} is {@code "min"} or {@code "max"}
+     *       (case-insensitive ASCII)</li>
+     *   <li>{@code ast.rhs.type == LITERAL} with a non-null token</li>
+     * </ul>
+     * Plus the cross-entry constraint that every entry's literal token
+     * references the same column. Empty input returns null; a single-column
+     * input is permitted (e.g. {@code SELECT min(ts)}).
+     * <p>
+     * Pure predicate, no side effects - the planner can call this before
+     * generating the subquery so non-matching shapes don't pay any
+     * additional cost. Callers that want per-column min/max kinds re-walk
+     * {@code columns} once the shared column is known.
+     */
+    /**
+     * Builds the per-output-column aggregate-kind array for the footer
+     * shortcut. Parallel to the columns list passed to
+     * {@link #tryGetMinMaxAggregateColumn}: {@code true} where the AST
+     * token is "max" (case-insensitive ASCII), {@code false} otherwise.
+     * Assumes the caller has already established every column matches the
+     * min/max shape via the predicate.
+     */
+    private static boolean[] buildFooterAggregateKinds(@NotNull ObjList<QueryColumn> columns) {
+        final boolean[] kinds = new boolean[columns.size()];
+        for (int i = 0, n = columns.size(); i < n; i++) {
+            kinds[i] = Chars.equalsLowerCaseAscii("max", columns.getQuick(i).getAst().token);
+        }
+        return kinds;
+    }
+
+    /**
+     * Builds the projected output metadata for the footer shortcut - one
+     * column per aggregate, each typed to match the aggregate column from
+     * the source. Column names preserve the user's aliases (e.g.
+     * {@code min(ts) AS min_ts}).
+     */
+    private static GenericRecordMetadata buildFooterAggregateOutMeta(
+            @NotNull ObjList<QueryColumn> columns, int columnType
+    ) {
+        final GenericRecordMetadata outMeta = new GenericRecordMetadata();
+        for (int i = 0, n = columns.size(); i < n; i++) {
+            outMeta.add(new TableColumnMetadata(Chars.toString(columns.getQuick(i).getName()), columnType));
+        }
+        return outMeta;
+    }
+
+    /**
+     * Storage tags whose min/max can be read from parquet column-chunk
+     * statistics via either the {@code rowGroupMin/MaxValueLong} natives
+     * (INT/LONG/DATE/TIMESTAMP, i32/i64 stat bytes) or the
+     * {@code rowGroupMin/MaxValueDouble} natives (DOUBLE, IEEE-754 f64
+     * stat bytes). Other types (STRING, VARCHAR, decimal, etc.) need
+     * their own native accessor and bit-pattern decode and are
+     * excluded here.
+     */
+    private static boolean isStatShortcutTypeSupported(int columnType) {
+        switch (ColumnType.tagOf(columnType)) {
+            case ColumnType.INT:
+            case ColumnType.LONG:
+            case ColumnType.DATE:
+            case ColumnType.TIMESTAMP:
+            case ColumnType.DOUBLE:
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    public static @Nullable CharSequence tryGetMinMaxAggregateColumn(@Nullable ObjList<QueryColumn> columns) {
+        if (columns == null || columns.size() == 0) {
+            return null;
+        }
+        CharSequence sharedColumn = null;
+        for (int i = 0, n = columns.size(); i < n; i++) {
+            final ExpressionNode ast = columns.getQuick(i).getAst();
+            if (ast == null || ast.type != FUNCTION || ast.paramCount != 1 || ast.token == null) {
+                return null;
+            }
+            if (!Chars.equalsLowerCaseAscii("min", ast.token) && !Chars.equalsLowerCaseAscii("max", ast.token)) {
+                return null;
+            }
+            final ExpressionNode arg = ast.rhs;
+            if (arg == null || arg.type != LITERAL || arg.token == null) {
+                return null;
+            }
+            if (sharedColumn == null) {
+                sharedColumn = arg.token;
+            } else if (!Chars.equals(sharedColumn, arg.token)) {
+                return null;
+            }
+        }
+        return sharedColumn;
+    }
+
     private RecordCursorFactory generateSelectGroupBy(IQueryModel model, SqlExecutionContext executionContext) throws SqlException {
         final ExpressionNode sampleByNode = model.getSampleBy();
         if (sampleByNode != null) {
@@ -8399,6 +8591,112 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             ? CountRecordCursorFactory.DEFAULT_COUNT_METADATA :
                             new GenericRecordMetadata().add(new TableColumnMetadata(Chars.toString(columnName), LONG));
                     return new CountRecordCursorFactory(metadata, generateSubQuery(model, executionContext));
+                }
+            }
+
+            // Footer-only MIN/MAX shortcut for read_parquet(<file>) and
+            // read_parquet('hive/day=*/file.parquet') where the file declares
+            // a sort claim on the designated timestamp via `sorting_columns`.
+            // Replaces what would normally be a full row decode + per-row
+            // scalar accumulation with two JNI calls per row group
+            // (rowGroupMinTimestamp / rowGroupMaxTimestamp), bypassing the
+            // cursor pipeline entirely.
+            //
+            // Pre-checks (cheap, no I/O):
+            //   1. AST shape matches min/max-on-same-column (the predicate)
+            //   2. No WHERE clause on the nested model - a filter would change
+            //      which rows contribute to min/max, and the footer-only
+            //      shortcut has no way to apply row-level filtering
+            //
+            // Late check (after subquery generation; the only path where we
+            // actually open a cursor factory):
+            //   3. The base is a ReadParquetRecordCursorFactory (single-file
+            //      read_parquet) OR a HivePartitionedReadParquetRecordCursorFactory
+            //      (hive glob)
+            //   4. The aggregate column is the designated timestamp AND the
+            //      file's sorting_columns metadata claims it sorted
+            //
+            // Ownership differs between the two paths:
+            //   - Single-file: result factory copies the path into its own
+            //     Path instance; the probe is freed.
+            //   - Hive: result factory WRAPS the probe and assumes ownership
+            //     (its _close cascades to the hive factory's _close so the
+            //     matched-files list and file cache tear down together).
+            //
+            // If the late check fails the probe factory is freed and the
+            // normal aggregation path runs (which re-generates the subquery -
+            // wasteful but only fires on the narrow case "AST matches but
+            // source isn't sorted parquet").
+            final CharSequence footerShortcutColumn = tryGetMinMaxAggregateColumn(columns);
+            if (footerShortcutColumn != null) {
+                final IQueryModel nestedModel = model.getNestedModel();
+                if (nestedModel != null && nestedModel.getWhereClause() == null) {
+                    RecordCursorFactory probe = generateSubQuery(model, executionContext);
+                    boolean probeOwnedByResult = false;
+                    try {
+                        final RecordMetadata probeMeta = probe.getMetadata();
+                        final int colIdx = probeMeta.getColumnIndexQuiet(footerShortcutColumn);
+                        final int tsIdx = probeMeta.getTimestampIndex();
+                        // The shortcut applies to any sorted column with a
+                        // typed-stat-readable storage tag. TIMESTAMP, LONG,
+                        // INT and DATE all serialise as i64/i32 stat bytes;
+                        // other tags (DOUBLE, STRING, etc.) need their own
+                        // native accessor and are intentionally excluded here.
+                        // The column-name path resolves the column per-file
+                        // at cursor-open time, so it works for both single
+                        // and multi-file globs.
+                        final int colType = colIdx >= 0
+                                ? probeMeta.getColumnType(colIdx)
+                                : 0;
+                        final boolean typedStatSupported = colIdx >= 0
+                                && isStatShortcutTypeSupported(colType);
+                        final boolean gatesPass = typedStatSupported
+                                && probeMeta.getColumnOrderBy(colIdx) != 0;
+                        // For the legacy designated-timestamp path, the cursor
+                        // uses rowGroupMin/MaxTimestamp natives that include
+                        // a single-row decode fallback when stats are absent.
+                        // For non-ts columns, we use the stats-only generic
+                        // path - so files lacking statistics will fail at
+                        // cursor open. Passing the column name explicitly
+                        // tells the cursor which native to use.
+                        final String aggregateColumnName = colIdx == tsIdx
+                                ? null
+                                : footerShortcutColumn.toString();
+                        if (gatesPass && probe instanceof ReadParquetRecordCursorFactory) {
+                            final ReadParquetRecordCursorFactory parquetBase = (ReadParquetRecordCursorFactory) probe;
+                            final GenericRecordMetadata outMeta = buildFooterAggregateOutMeta(
+                                    columns, colType);
+                            final boolean[] kinds = buildFooterAggregateKinds(columns);
+                            final ParquetFooterAggregateRecordCursorFactory result =
+                                    new ParquetFooterAggregateRecordCursorFactory(
+                                            parquetBase.getPath(), outMeta, kinds, aggregateColumnName
+                                    );
+                            Misc.free(probe);
+                            return result;
+                        }
+                        if (gatesPass && probe instanceof HivePartitionedReadParquetRecordCursorFactory) {
+                            final HivePartitionedReadParquetRecordCursorFactory hiveBase =
+                                    (HivePartitionedReadParquetRecordCursorFactory) probe;
+                            final GenericRecordMetadata outMeta = buildFooterAggregateOutMeta(
+                                    columns, colType);
+                            final boolean[] kinds = buildFooterAggregateKinds(columns);
+                            // The hive variant wraps the probe; its _close
+                            // cascades. Skip the explicit free below.
+                            probeOwnedByResult = true;
+                            return new HivePartitionedFooterAggregateRecordCursorFactory(
+                                    hiveBase, outMeta, kinds, aggregateColumnName);
+                        }
+                    } catch (Throwable th) {
+                        if (!probeOwnedByResult) {
+                            Misc.free(probe);
+                        }
+                        throw th;
+                    }
+                    if (!probeOwnedByResult) {
+                        Misc.free(probe);
+                    }
+                    // Fall through; the normal aggregation path below regenerates
+                    // the subquery and produces the standard plan.
                 }
             }
 

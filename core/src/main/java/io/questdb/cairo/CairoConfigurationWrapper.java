@@ -1168,6 +1168,16 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public long getSqlParquetHiveMaxCacheBytes() {
+        return getDelegate().getSqlParquetHiveMaxCacheBytes();
+    }
+
+    @Override
+    public int getSqlParquetHiveMaxOpenFiles() {
+        return getDelegate().getSqlParquetHiveMaxOpenFiles();
+    }
+
+    @Override
     public int getSqlPivotMaxProducedColumns() {
         return getDelegate().getSqlPivotMaxProducedColumns();
     }
@@ -1658,8 +1668,18 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public boolean isSqlParquetHiveParallelEnabled() {
+        return getDelegate().isSqlParquetHiveParallelEnabled();
+    }
+
+    @Override
     public boolean isSqlParquetRowGroupPruningEnabled() {
         return getDelegate().isSqlParquetRowGroupPruningEnabled();
+    }
+
+    @Override
+    public boolean isSqlParquetVerifySortClaimEnabled() {
+        return getDelegate().isSqlParquetVerifySortClaimEnabled();
     }
 
     @Override

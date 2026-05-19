@@ -7,6 +7,7 @@ use crate::parquet_read::jni::{validate_jni_column_types, DecodeMode};
 use crate::parquet_read::row_groups::ParquetColumnIndex;
 use crate::parquet_read::{
     ColumnFilterPacked, ColumnMeta, DecodeContext, ParquetDecoder, RowGroupBuffers,
+    SortingColumnMeta,
 };
 use jni::objects::JClass;
 use jni::JNIEnv;
@@ -504,6 +505,122 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_ParquetFileD
     }
 }
 
+#[no_mangle]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_ParquetFileDecoder_rowGroupMinValueLong(
+    mut env: JNIEnv,
+    _class: JClass,
+    decoder: *const ParquetDecoder,
+    row_group_index: u32,
+    column_index: u32,
+) -> i64 {
+    let env = &mut env;
+    let res = (|| -> ParquetResult<i64> {
+        if decoder.is_null() {
+            return Err(fmt_err!(InvalidLayout, "decoder pointer is null"));
+        }
+        let decoder = unsafe { &*decoder };
+        decoder.row_group_min_value(row_group_index, column_index)
+    })();
+    match res {
+        Ok(v) => v,
+        Err(mut err) => {
+            err.add_context(format!(
+                "could not get min value for row group {row_group_index} column {column_index}"
+            ));
+            err.add_context("error in PartitionDecoder.rowGroupMinValueLong");
+            err.into_cairo_exception().throw(env)
+        }
+    }
+}
+
+#[no_mangle]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_ParquetFileDecoder_rowGroupMaxValueLong(
+    mut env: JNIEnv,
+    _class: JClass,
+    decoder: *const ParquetDecoder,
+    row_group_index: u32,
+    column_index: u32,
+) -> i64 {
+    let env = &mut env;
+    let res = (|| -> ParquetResult<i64> {
+        if decoder.is_null() {
+            return Err(fmt_err!(InvalidLayout, "decoder pointer is null"));
+        }
+        let decoder = unsafe { &*decoder };
+        decoder.row_group_max_value(row_group_index, column_index)
+    })();
+    match res {
+        Ok(v) => v,
+        Err(mut err) => {
+            err.add_context(format!(
+                "could not get max value for row group {row_group_index} column {column_index}"
+            ));
+            err.add_context("error in PartitionDecoder.rowGroupMaxValueLong");
+            err.into_cairo_exception().throw(env)
+        }
+    }
+}
+
+#[no_mangle]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_ParquetFileDecoder_rowGroupMinValueDouble(
+    mut env: JNIEnv,
+    _class: JClass,
+    decoder: *const ParquetDecoder,
+    row_group_index: u32,
+    column_index: u32,
+) -> f64 {
+    let env = &mut env;
+    let res = (|| -> ParquetResult<f64> {
+        if decoder.is_null() {
+            return Err(fmt_err!(InvalidLayout, "decoder pointer is null"));
+        }
+        let decoder = unsafe { &*decoder };
+        decoder.row_group_min_value_double(row_group_index, column_index)
+    })();
+    match res {
+        Ok(v) => v,
+        Err(mut err) => {
+            err.add_context(format!(
+                "could not get min double value for row group {row_group_index} column {column_index}"
+            ));
+            err.add_context("error in PartitionDecoder.rowGroupMinValueDouble");
+            err.into_cairo_exception().throw(env)
+        }
+    }
+}
+
+#[no_mangle]
+#[allow(clippy::not_unsafe_ptr_arg_deref)]
+pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_ParquetFileDecoder_rowGroupMaxValueDouble(
+    mut env: JNIEnv,
+    _class: JClass,
+    decoder: *const ParquetDecoder,
+    row_group_index: u32,
+    column_index: u32,
+) -> f64 {
+    let env = &mut env;
+    let res = (|| -> ParquetResult<f64> {
+        if decoder.is_null() {
+            return Err(fmt_err!(InvalidLayout, "decoder pointer is null"));
+        }
+        let decoder = unsafe { &*decoder };
+        decoder.row_group_max_value_double(row_group_index, column_index)
+    })();
+    match res {
+        Ok(v) => v,
+        Err(mut err) => {
+            err.add_context(format!(
+                "could not get max double value for row group {row_group_index} column {column_index}"
+            ));
+            err.add_context("error in PartitionDecoder.rowGroupMaxValueDouble");
+            err.into_cairo_exception().throw(env)
+        }
+    }
+}
+
 // See PartitionDecoder for more info on the returned value format.
 #[no_mangle]
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
@@ -586,6 +703,46 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_ParquetFileD
     _class: JClass,
 ) -> usize {
     offset_of!(ParquetDecoder, timestamp_index)
+}
+
+#[no_mangle]
+pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_ParquetFileDecoder_sortedColumnsCountOffset(
+    _env: JNIEnv,
+    _class: JClass,
+) -> usize {
+    offset_of!(ParquetDecoder, sorted_columns_count)
+}
+
+#[no_mangle]
+pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_ParquetFileDecoder_sortedColumnsPtrOffset(
+    _env: JNIEnv,
+    _class: JClass,
+) -> usize {
+    offset_of!(ParquetDecoder, sorted_columns_ptr)
+}
+
+#[no_mangle]
+pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_ParquetFileDecoder_sortedColumnRecordSize(
+    _env: JNIEnv,
+    _class: JClass,
+) -> usize {
+    size_of::<SortingColumnMeta>()
+}
+
+#[no_mangle]
+pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_ParquetFileDecoder_sortedColumnIndexOffset(
+    _env: JNIEnv,
+    _class: JClass,
+) -> usize {
+    offset_of!(SortingColumnMeta, column_index)
+}
+
+#[no_mangle]
+pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_ParquetFileDecoder_sortedColumnDescendingOffset(
+    _env: JNIEnv,
+    _class: JClass,
+) -> usize {
+    offset_of!(SortingColumnMeta, descending)
 }
 
 #[no_mangle]

@@ -89,6 +89,24 @@ public interface SecurityContext extends Mutable {
 
     void authorizeDatabaseSnapshot();
 
+    /**
+     * Authorise reading parquet files via a remote URI scheme through
+     * read_parquet(). Required for any URI that an Enterprise
+     * RemoteParquetFsProvider claims (fs://, s3://, gcs://, azblob://).
+     * Local filesystem reads still gate on sql.copy.input.root and don't
+     * call this method.
+     * <p>
+     * Default implementation allows the operation - OSS distributions have
+     * no remote provider registered, so the call site only fires in
+     * Enterprise where the override enforces the READ_REMOTE_PARQUET
+     * permission.
+     *
+     * @param uri the user-supplied URI; included in any denial message for
+     *            auditability of which path the caller attempted to read.
+     */
+    default void authorizeReadRemoteParquet(@org.jetbrains.annotations.NotNull CharSequence uri) {
+    }
+
     void authorizeHttp();
 
     void authorizeInsert(TableToken tableToken);

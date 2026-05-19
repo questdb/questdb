@@ -147,6 +147,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
                 final int rowGroupLo = addressCache.getParquetRowGroupLo(frameIndex);
                 final int rowGroupHi = addressCache.getParquetRowGroupHi(frameIndex);
                 parquetBuffers.decode(activeDecoder, parquetColumns, rowGroupIndex, rowGroupLo, rowGroupHi);
+                overlayVirtualPages(parquetBuffers, frameIndex);
             }
 
             record.init(
@@ -193,6 +194,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
                 final int rowGroupLo = addressCache.getParquetRowGroupLo(frameIndex);
                 final int rowGroupHi = addressCache.getParquetRowGroupHi(frameIndex);
                 parquetBuffers.decode(activeDecoder, parquetColumns, rowGroupIndex, rowGroupLo, rowGroupHi);
+                overlayVirtualPages(parquetBuffers, frameIndex);
             }
 
             frameMemory.currentRowGroupBuffer = parquetBuffers;
@@ -230,6 +232,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
                 final int rowGroupLo = addressCache.getParquetRowGroupLo(frameIndex);
                 final int rowGroupHi = addressCache.getParquetRowGroupHi(frameIndex);
                 parquetBuffers.decode(activeDecoder, parquetColumns, rowGroupIndex, rowGroupLo, rowGroupHi);
+                overlayVirtualPages(parquetBuffers, frameIndex);
             }
 
             frameMemory.currentRowGroupBuffer = parquetBuffers;
@@ -406,6 +409,38 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         }
     }
 
+    /**
+     * Writes the frame's virtual page addresses into the parquet buffers for any
+     * column where the frame reported a non-zero virtual address. Called after
+     * {@link ParquetBuffers#decode} so the decoded parquet addresses are in place
+     * and this overlay can patch in extra addresses on top.
+     * <p>
+     * Contract: virtual columns must not overlap with parquet columns - producers
+     * are expected to report a non-zero virtual address only for columns the
+     * decoder leaves at zero (e.g. hive partition keys absent from the parquet
+     * schema). The overlay does not enforce this; a producer that violates the
+     * contract will silently see its parquet-decoded address overwritten.
+     * <p>
+     * No-op for frames without any non-zero virtual address.
+     */
+    private void overlayVirtualPages(ParquetBuffers buffers, int frameIndex) {
+        final int colCount = addressCache.getColumnCount();
+        final int offset = addressCache.toColumnOffset(frameIndex);
+        final DirectLongList virtAddrs = addressCache.getVirtualPageAddresses();
+        final DirectLongList virtSizes = addressCache.getVirtualPageSizes();
+        final DirectLongList virtAuxAddrs = addressCache.getVirtualAuxPageAddresses();
+        final DirectLongList virtAuxSizes = addressCache.getVirtualAuxPageSizes();
+        for (int i = 0; i < colCount; i++) {
+            final long addr = virtAddrs.get(offset + i);
+            if (addr != 0) {
+                buffers.pageAddresses.set(i, addr);
+                buffers.pageSizes.set(i, virtSizes.get(offset + i));
+                buffers.auxPageAddresses.set(i, virtAuxAddrs.get(offset + i));
+                buffers.auxPageSizes.set(i, virtAuxSizes.get(offset + i));
+            }
+        }
+    }
+
     private class PageFrameMemoryImpl implements PageFrameMemory, Mutable {
         private DirectLongList auxPageAddresses;
         private DirectLongList auxPageSizes;
@@ -563,6 +598,15 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             if (parquetColumns.size() > 0) {
                 decoder.decodeRowGroup(rowGroupBuffers, parquetColumns, rowGroup, rowLo, rowHi);
                 remapColumns(parquetColumns);
+            } else {
+                // Even with no parquet columns to decode (e.g. query references only virtual
+                // columns), size the address lists so the virtual page overlay has slots to
+                // write into.
+                final int columnCount = addressCache.getColumnCount();
+                ensureCapacityAndZero(pageAddresses, columnCount);
+                ensureCapacityAndZero(pageSizes, columnCount);
+                ensureCapacityAndZero(auxPageAddresses, columnCount);
+                ensureCapacityAndZero(auxPageSizes, columnCount);
             }
         }
 

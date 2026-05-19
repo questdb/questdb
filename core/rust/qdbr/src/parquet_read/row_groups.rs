@@ -9,8 +9,8 @@ use crate::parquet_read::decode::{
 use crate::parquet_read::page::{DataPage, DictPage};
 use crate::parquet_read::{
     ColumnChunkBuffers, ColumnFilterPacked, ColumnFilterValues, ColumnMeta, DecodeContext,
-    FILTER_OP_BETWEEN, FILTER_OP_EQ, FILTER_OP_GE, FILTER_OP_GT, FILTER_OP_IS_NOT_NULL,
-    FILTER_OP_IS_NULL, FILTER_OP_LE, FILTER_OP_LT, MILLIS_PER_DAY,
+    SortingColumnMeta, FILTER_OP_BETWEEN, FILTER_OP_EQ, FILTER_OP_GE, FILTER_OP_GT,
+    FILTER_OP_IS_NOT_NULL, FILTER_OP_IS_NULL, FILTER_OP_LE, FILTER_OP_LT, MILLIS_PER_DAY,
 };
 use nonmax::NonMaxU32;
 use parquet2::encoding::Encoding;
@@ -35,6 +35,14 @@ pub struct ParquetDecoder {
     pub timestamp_index: Option<NonMaxU32>,
     pub columns_ptr: *const ColumnMeta,
     pub columns: AcVec<ColumnMeta>,
+    // Per-column sort metadata derived from row group `sorting_columns`.
+    // Holds only those columns that the file claims as sorted CONSISTENTLY
+    // across every row group; see `extract_sorted_columns` in `meta.rs`.
+    // Empty when the file has no `sorting_columns` metadata or when sort is
+    // inconsistent across row groups.
+    pub sorted_columns_count: u32,
+    pub sorted_columns_ptr: *const SortingColumnMeta,
+    pub sorted_columns: AcVec<SortingColumnMeta>,
     pub metadata: FileMetaData,
     pub qdb_meta: Option<QdbMeta>,
     pub row_group_sizes_acc: AcVec<usize>,
@@ -2153,6 +2161,233 @@ impl ParquetDecoder {
 
         self.validate_timestamp_sorting_key(ts)?;
         self.decode_single_timestamp(file_ptr, file_size, rg, ts, 0, 1)
+    }
+
+    /// Read the min value of a typed column at a given row group, sourced
+    /// from the parquet column-chunk statistics. Supports columns stored
+    /// as i32 (Int) or i64 (Long, Date, Timestamp); 4-byte stats are
+    /// sign-extended to i64. Returns an error when statistics are absent
+    /// or the column type is not supported - the cursor is then expected
+    /// to fall back to the normal aggregate path. No row decode happens
+    /// here, which is the whole point of the shortcut: a single i64 read
+    /// per row group per file, vs the per-row scalar accumulation that
+    /// the standard aggregate cursor pays.
+    pub fn row_group_min_value(
+        &self,
+        row_group_index: u32,
+        column_index: u32,
+    ) -> ParquetResult<i64> {
+        self.row_group_typed_stat::<false>(row_group_index, column_index)
+    }
+
+    /// Max-side counterpart to {@link #row_group_min_value}.
+    pub fn row_group_max_value(
+        &self,
+        row_group_index: u32,
+        column_index: u32,
+    ) -> ParquetResult<i64> {
+        self.row_group_typed_stat::<true>(row_group_index, column_index)
+    }
+
+    /// DOUBLE-typed stat reader. Returns the f64 min value from the
+    /// column-chunk statistics, raw - the caller is expected to use
+    /// it directly as a double. Stats are stored as 8-byte little-endian
+    /// IEEE-754 doubles; any other byte length surfaces as an error.
+    /// Same trust model as {@link #row_group_min_value}: stats-only,
+    /// no decode fallback.
+    pub fn row_group_min_value_double(
+        &self,
+        row_group_index: u32,
+        column_index: u32,
+    ) -> ParquetResult<f64> {
+        self.row_group_double_stat::<false>(row_group_index, column_index)
+    }
+
+    /// Max-side counterpart to {@link #row_group_min_value_double}.
+    pub fn row_group_max_value_double(
+        &self,
+        row_group_index: u32,
+        column_index: u32,
+    ) -> ParquetResult<f64> {
+        self.row_group_double_stat::<true>(row_group_index, column_index)
+    }
+
+    fn row_group_double_stat<const IS_MAX: bool>(
+        &self,
+        row_group_index: u32,
+        column_index: u32,
+    ) -> ParquetResult<f64> {
+        if row_group_index >= self.row_group_count {
+            return Err(fmt_err!(
+                InvalidLayout,
+                "row group index {} out of range [0,{})",
+                row_group_index,
+                self.row_group_count
+            ));
+        }
+        if column_index >= self.col_count {
+            return Err(fmt_err!(
+                InvalidLayout,
+                "column index {} out of range [0,{})",
+                column_index,
+                self.col_count
+            ));
+        }
+        let rg = row_group_index as usize;
+        let col = column_index as usize;
+        let column_type = self.columns[col].column_type.ok_or_else(|| {
+            fmt_err!(InvalidType, "unknown column type, column index: {}", col)
+        })?;
+        if column_type.tag() != ColumnTypeTag::Double {
+            return Err(fmt_err!(
+                InvalidType,
+                "row_group_value_double stat shortcut only supports Double, \
+                 got {:?} at column index {}",
+                column_type.tag(),
+                col
+            ));
+        }
+        let columns_meta = self.metadata.row_groups[rg].columns();
+        let chunk_meta = &columns_meta[col];
+        let meta_data = chunk_meta.column_chunk().meta_data.as_ref().ok_or_else(|| {
+            fmt_err!(
+                InvalidLayout,
+                "no column chunk metadata for column {} in row group {}",
+                col,
+                rg
+            )
+        })?;
+        let statistics = meta_data.statistics.as_ref().ok_or_else(|| {
+            fmt_err!(
+                InvalidLayout,
+                "no statistics for column {} in row group {}",
+                col,
+                rg
+            )
+        })?;
+        let value = if IS_MAX {
+            &statistics.max_value
+        } else {
+            &statistics.min_value
+        };
+        let bytes = value.as_ref().ok_or_else(|| {
+            fmt_err!(
+                InvalidLayout,
+                "no {} stat for double column {} in row group {}",
+                if IS_MAX { "max" } else { "min" },
+                col,
+                rg
+            )
+        })?;
+        if bytes.len() != 8 {
+            return Err(fmt_err!(
+                InvalidLayout,
+                "unexpected double stat byte length {} for column {} in row group {}",
+                bytes.len(),
+                col,
+                rg
+            ));
+        }
+        Ok(f64::from_le_bytes(bytes[..8].try_into().expect("len 8")))
+    }
+
+    fn row_group_typed_stat<const IS_MAX: bool>(
+        &self,
+        row_group_index: u32,
+        column_index: u32,
+    ) -> ParquetResult<i64> {
+        if row_group_index >= self.row_group_count {
+            return Err(fmt_err!(
+                InvalidLayout,
+                "row group index {} out of range [0,{})",
+                row_group_index,
+                self.row_group_count
+            ));
+        }
+        if column_index >= self.col_count {
+            return Err(fmt_err!(
+                InvalidLayout,
+                "column index {} out of range [0,{})",
+                column_index,
+                self.col_count
+            ));
+        }
+        let rg = row_group_index as usize;
+        let col = column_index as usize;
+        // Validate the column type tag is one we know how to interpret
+        // from a flat byte buffer. Int/Long/Date/Timestamp all map to
+        // i64 storage on the Java side; other tags would need their own
+        // accessor and bit-pattern handling.
+        let column_type = self.columns[col].column_type.ok_or_else(|| {
+            fmt_err!(InvalidType, "unknown column type, column index: {}", col)
+        })?;
+        match column_type.tag() {
+            ColumnTypeTag::Int
+            | ColumnTypeTag::Long
+            | ColumnTypeTag::Date
+            | ColumnTypeTag::Timestamp => {}
+            other => {
+                return Err(fmt_err!(
+                    InvalidType,
+                    "row_group_value stat shortcut only supports Int/Long/Date/Timestamp, \
+                     got {:?} at column index {}",
+                    other,
+                    col
+                ));
+            }
+        }
+        // Walk straight to the column-chunk's statistics block. Missing
+        // metadata or missing stats both surface as an error so the
+        // planner-side gate sees a hard failure rather than silently
+        // producing zeros for one row group and stale values for the
+        // rest.
+        let columns_meta = self.metadata.row_groups[rg].columns();
+        let chunk_meta = &columns_meta[col];
+        let meta_data = chunk_meta.column_chunk().meta_data.as_ref().ok_or_else(|| {
+            fmt_err!(
+                InvalidLayout,
+                "no column chunk metadata for column {} in row group {}",
+                col,
+                rg
+            )
+        })?;
+        let statistics = meta_data.statistics.as_ref().ok_or_else(|| {
+            fmt_err!(
+                InvalidLayout,
+                "no statistics for column {} in row group {}",
+                col,
+                rg
+            )
+        })?;
+        let value = if IS_MAX {
+            &statistics.max_value
+        } else {
+            &statistics.min_value
+        };
+        let bytes = value.as_ref().ok_or_else(|| {
+            fmt_err!(
+                InvalidLayout,
+                "no {} stat for column {} in row group {}",
+                if IS_MAX { "max" } else { "min" },
+                col,
+                rg
+            )
+        })?;
+        match bytes.len() {
+            // INT32 parquet physical type: 4-byte little-endian. Sign-extend
+            // to i64 so the Java side can read it as a long without
+            // additional casts.
+            4 => Ok(i32::from_le_bytes(bytes[..4].try_into().expect("len 4")) as i64),
+            // INT64 parquet physical type: 8-byte little-endian.
+            8 => Ok(i64::from_le_bytes(bytes[..8].try_into().expect("len 8"))),
+            other => Err(fmt_err!(
+                InvalidLayout,
+                "unexpected stat byte length {} for column {} in row group {}",
+                other,
+                col,
+                rg
+            )),
+        }
     }
 
     pub fn row_group_max_timestamp(

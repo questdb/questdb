@@ -478,6 +478,15 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
     min_compression_ratio: jdouble,
     parquet_meta_fd: jint,
     squash_tracker: jlong,
+    // Optional override for the parquet `sorting_columns` metadata. When
+    // non_ts_sort_column_index >= 0, the file's sorting_columns claim is set
+    // to that column alone, replacing the default behaviour of "sort by
+    // designated timestamp if present, otherwise no claim". The caller MUST
+    // ensure the data is actually sorted on that column - the writer does
+    // not verify; an inaccurate claim would mislead the read-side optimiser.
+    // -1 (the default) preserves the existing behaviour.
+    non_ts_sort_column_index: jint,
+    non_ts_sort_descending: jboolean,
 ) -> jlong {
     let env = &mut env;
     let encode = || -> ParquetResult<i64> {
@@ -536,8 +545,19 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
                 None
             }
         });
-        let sorting_columns =
-            local_timestamp_index.map(|i| vec![SortingColumn::new(i, false, false)]);
+        // If the caller passed a non_ts_sort_column_index, that claim wins -
+        // it covers the case of a parquet file genuinely sorted on a column
+        // other than the designated timestamp. Otherwise fall through to the
+        // existing behaviour: claim the designated ts as ASC, or nothing.
+        let sorting_columns = if non_ts_sort_column_index >= 0 {
+            Some(vec![SortingColumn::new(
+                non_ts_sort_column_index,
+                non_ts_sort_descending != 0,
+                false,
+            )])
+        } else {
+            local_timestamp_index.map(|i| vec![SortingColumn::new(i, false, false)])
+        };
 
         // Break apart ParquetWriter::finish() to access row groups after writing.
         let writer = ParquetWriter::new(&mut file)
