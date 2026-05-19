@@ -296,32 +296,6 @@ public class LiveViewTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testRejectNonSnapshotCapableWindowFunction() throws Exception {
-        // nth_value()'s bounded RANGE variant (OverPartitionRangeFrameFunction)
-        // remains unmigrated and still trips the snapshot-capable gate. Earlier
-        // Step 1 / 2 / 3 migrations made the anchored unbounded, the
-        // non-anchored UNBOUNDED PRECEDING + K PRECEDING, and the bounded ROWS
-        // X-Y variants snapshot-capable. Keep the asserted-wording check pinned
-        // against the only remaining unsupported partitioned variant so future
-        // migrations either remove this test or repoint it.
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE base (val LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR WAL");
-            try {
-                execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
-                        "SELECT val, ts, nth_value(val, 3) OVER w AS third FROM base " +
-                        "WINDOW w AS (PARTITION BY val ORDER BY ts RANGE BETWEEN '5' MINUTE PRECEDING AND CURRENT ROW)");
-                Assert.fail("expected SqlException for non-snapshot-capable window function");
-            } catch (SqlException e) {
-                Assert.assertTrue(
-                        e.getMessage(),
-                        e.getMessage().contains("live view select cannot use window function nth_value(); " +
-                                "incremental snapshot is not supported for this function yet")
-                );
-            }
-        });
-    }
-
-    @Test
     public void testRejectJoinInLiveViewSelect() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base1 (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR WAL");

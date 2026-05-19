@@ -69,6 +69,8 @@ public class NthValueDoubleWindowFunctionFactory extends AbstractWindowFunctionF
     public static final String NAME = "nth_value";
     private static final ArrayColumnTypes NTH_VALUE_COLUMN_TYPES;
     private static final ArrayColumnTypes NTH_VALUE_COLUMN_TYPES_LV;
+    private static final ArrayColumnTypes NTH_VALUE_OVER_PARTITION_RANGE_COLUMN_TYPES;
+    private static final ArrayColumnTypes NTH_VALUE_OVER_PARTITION_RANGE_COLUMN_TYPES_LV;
     private static final ArrayColumnTypes NTH_VALUE_OVER_PARTITION_ROWS_COLUMN_TYPES;
     private static final ArrayColumnTypes NTH_VALUE_OVER_PARTITION_ROWS_COLUMN_TYPES_LV;
     private static final ArrayColumnTypes NTH_VALUE_OVER_PARTITION_ROWS_UNBOUNDED_COLUMN_TYPES;
@@ -186,18 +188,14 @@ public class NthValueDoubleWindowFunctionFactory extends AbstractWindowFunctionF
                     }
 
                     int timestampIndex = windowContext.getTimestampIndex();
-
-                    ArrayColumnTypes columnTypes = new ArrayColumnTypes();
-                    columnTypes.add(ColumnType.LONG);  // number of values in current frame
-                    columnTypes.add(ColumnType.LONG);  // native array start offset, requires updating on resize
-                    columnTypes.add(ColumnType.LONG);  // native buffer size
-                    columnTypes.add(ColumnType.LONG);  // native buffer capacity
-                    columnTypes.add(ColumnType.LONG);  // index of first buffered element
+                    final boolean liveView = windowContext.isLiveView();
 
                     Map map = MapFactory.createUnorderedMap(
                             configuration,
                             partitionByKeyTypes,
-                            columnTypes
+                            liveView
+                                    ? NTH_VALUE_OVER_PARTITION_RANGE_COLUMN_TYPES_LV
+                                    : NTH_VALUE_OVER_PARTITION_RANGE_COLUMN_TYPES
                     );
 
                     final int initialBufferSize = configuration.getSqlWindowInitialRangeBufferSize();
@@ -224,7 +222,10 @@ public class NthValueDoubleWindowFunctionFactory extends AbstractWindowFunctionF
                                 mem,
                                 initialBufferSize,
                                 timestampIndex,
-                                n
+                                n,
+                                partitionByKeyTypes,
+                                liveView,
+                                configuration
                         );
                     } catch (Throwable t) {
                         Misc.free(map);
@@ -536,10 +537,20 @@ public class NthValueDoubleWindowFunctionFactory extends AbstractWindowFunctionF
     public static class NthValueOverPartitionRangeFrameFunction extends BasePartitionedWindowFunction implements WindowDoubleFunction {
 
         protected static final int RECORD_SIZE = Long.BYTES + Double.BYTES;
+        protected final CairoConfiguration configuration;
         protected final boolean frameIncludesCurrentValue;
         protected final boolean frameLoBounded;
+        // list of [capacity, startOffset] pairs marking free space within memory.
+        // Populated both by expandRingBuffer (slab being grown out of) and by
+        // compactPartitionMap (slabs of tombstoned partitions). expandRingBuffer
+        // pops a pair whose capacity matches the target post-double capacity.
         protected final LongList freeList = new LongList();
         protected final int initialBufferSize;
+        protected final ArrayColumnTypes keyColumnTypes;
+        protected final boolean liveView;
+        // Full value layout (including tombstone slot) for the compactPartitionMap
+        // scratch Map. Null outside live-view mode.
+        protected final ArrayColumnTypes mapValueTypes;
         protected final long maxDiff;
         protected final MemoryARW memory;
         protected final RingBufferDesc memoryDesc = new RingBufferDesc();
@@ -558,7 +569,10 @@ public class NthValueDoubleWindowFunctionFactory extends AbstractWindowFunctionF
                 MemoryARW memory,
                 int initialBufferSize,
                 int timestampIdx,
-                int n
+                int n,
+                ColumnTypes partitionByKeyTypes,
+                boolean liveView,
+                CairoConfiguration configuration
         ) {
             super(map, partitionByRecord, partitionBySink, arg);
             frameLoBounded = rangeLo != Long.MIN_VALUE;
@@ -569,6 +583,25 @@ public class NthValueDoubleWindowFunctionFactory extends AbstractWindowFunctionF
             this.timestampIndex = timestampIdx;
             this.n = n;
             frameIncludesCurrentValue = rangeHi == 0;
+            this.liveView = liveView;
+            this.configuration = configuration;
+            if (liveView) {
+                ArrayColumnTypes keyTypesCopy = new ArrayColumnTypes();
+                for (int i = 0, len = partitionByKeyTypes.getColumnCount(); i < len; i++) {
+                    keyTypesCopy.add(partitionByKeyTypes.getColumnType(i));
+                }
+                this.keyColumnTypes = keyTypesCopy;
+                ArrayColumnTypes valueTypesCopy = new ArrayColumnTypes();
+                for (int i = 0, len = NTH_VALUE_OVER_PARTITION_RANGE_COLUMN_TYPES_LV.getColumnCount(); i < len; i++) {
+                    valueTypesCopy.add(NTH_VALUE_OVER_PARTITION_RANGE_COLUMN_TYPES_LV.getColumnType(i));
+                }
+                this.mapValueTypes = valueTypesCopy;
+                this.tombstoneValueIndex = 5;
+            } else {
+                this.keyColumnTypes = null;
+                this.mapValueTypes = null;
+                this.tombstoneValueIndex = -1;
+            }
         }
 
         @Override
@@ -576,6 +609,40 @@ public class NthValueDoubleWindowFunctionFactory extends AbstractWindowFunctionF
             super.close();
             memory.close();
             freeList.clear();
+        }
+
+        @Override
+        public void compactPartitionMap() {
+            if (tombstoneValueIndex < 0 || tombstoneCount == 0) {
+                return;
+            }
+            Map scratch = MapFactory.createUnorderedMap(configuration, keyColumnTypes, mapValueTypes);
+            try {
+                MapRecordCursor cursor = map.getCursor();
+                MapRecord record = map.getRecord();
+                while (cursor.hasNext()) {
+                    MapValue srcValue = record.getValue();
+                    if (srcValue.getByte(tombstoneValueIndex) == 1) {
+                        // Reclaim the tombstoned partition's ring slab so
+                        // expandRingBuffer can reuse it on a future grow. Slot
+                        // 3 is the per-partition capacity (bounded RANGE rings
+                        // grow on demand); slot 1 is the start offset.
+                        freeList.add(srcValue.getLong(3), srcValue.getLong(1));
+                        continue;
+                    }
+                    long srcKeyHash = record.keyHashCode();
+                    MapKey dstKey = scratch.withKey();
+                    record.copyToKey(dstKey);
+                    MapValue dstValue = dstKey.createValue(srcKeyHash);
+                    record.copyValue(dstValue);
+                }
+                Misc.free(map);
+                map = scratch;
+                scratch = null;
+                tombstoneCount = 0;
+            } finally {
+                Misc.free(scratch);
+            }
         }
 
         @Override
@@ -595,6 +662,9 @@ public class NthValueDoubleWindowFunctionFactory extends AbstractWindowFunctionF
             double d = arg.getDouble(record);
 
             if (mapValue.isNew()) {
+                if (tombstoneValueIndex >= 0) {
+                    mapValue.putByte(tombstoneValueIndex, (byte) 0);
+                }
                 capacity = initialBufferSize;
                 startOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
                 firstIdx = 0;
@@ -717,6 +787,11 @@ public class NthValueDoubleWindowFunctionFactory extends AbstractWindowFunctionF
         }
 
         @Override
+        public Map getPartitionMap() {
+            return map;
+        }
+
+        @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
             Unsafe.putDouble(spi.getAddress(recordOffset, columnIndex), nthValue);
@@ -727,6 +802,7 @@ public class NthValueDoubleWindowFunctionFactory extends AbstractWindowFunctionF
             super.reopen();
             freeList.clear();
             nthValue = Double.NaN;
+            tombstoneCount = 0;
             // memory will allocate on first use via MemoryCARWImpl.appendAddressFor
         }
 
@@ -738,6 +814,119 @@ public class NthValueDoubleWindowFunctionFactory extends AbstractWindowFunctionF
             // pageAddress=0. Same pattern as FirstValue/LastValue/Avg sibling factories.
             memory.close();
             freeList.clear();
+            tombstoneCount = 0;
+        }
+
+        @Override
+        public void resetPartition(Record record) {
+            partitionByRecord.of(record);
+            MapKey key = map.withKey();
+            key.put(partitionByRecord, partitionBySink);
+            MapValue value = key.findValue();
+            if (value != null) {
+                value.putLong(0, 0L);
+                value.putLong(2, 0L);
+                value.putLong(4, 0L);
+                if (!value.isNew() && tombstoneValueIndex >= 0 && value.getByte(tombstoneValueIndex) != 1) {
+                    value.putByte(tombstoneValueIndex, (byte) 1);
+                    tombstoneCount++;
+                }
+            }
+        }
+
+        @Override
+        public void restore(MemoryR source, int formatVersion) {
+            map.clear();
+            memory.truncate();
+            freeList.clear();
+            tombstoneCount = 0;
+            long srcOffset = 0;
+            final long partitionCount = source.getLong(srcOffset);
+            srcOffset += Long.BYTES;
+            for (long p = 0; p < partitionCount; p++) {
+                MapKey key = map.withKey();
+                srcOffset = LiveViewSnapshotKeyCodec.readKey(key, source, srcOffset, keyColumnTypes);
+                MapValue value = key.createValue();
+                final long frameSize = source.getLong(srcOffset);
+                srcOffset += Long.BYTES;
+                final long size = source.getLong(srcOffset);
+                srcOffset += Long.BYTES;
+                final long capacity = Math.max(size, initialBufferSize);
+                final long newStartOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
+                for (long i = 0; i < size; i++) {
+                    memory.putLong(newStartOffset + i * RECORD_SIZE, source.getLong(srcOffset));
+                    srcOffset += Long.BYTES;
+                    memory.putDouble(newStartOffset + i * RECORD_SIZE + Long.BYTES, source.getDouble(srcOffset));
+                    srcOffset += Double.BYTES;
+                }
+                value.putLong(0, frameSize);
+                value.putLong(1, newStartOffset);
+                value.putLong(2, size);
+                value.putLong(3, capacity);
+                value.putLong(4, 0L);
+                if (tombstoneValueIndex >= 0) {
+                    value.putByte(tombstoneValueIndex, (byte) 0);
+                }
+            }
+        }
+
+        @Override
+        public void snapshot(MemoryA sink) {
+            MapRecordCursor cursor = map.getCursor();
+            MapRecord record = map.getRecord();
+            final long liveCount;
+            if (tombstoneValueIndex < 0 || tombstoneCount == 0) {
+                liveCount = map.size();
+            } else {
+                long count = 0;
+                while (cursor.hasNext()) {
+                    if (record.getValue().getByte(tombstoneValueIndex) != 1) {
+                        count++;
+                    }
+                }
+                liveCount = count;
+            }
+            sink.putLong(liveCount);
+
+            cursor.toTop();
+            final int keyStartIndex = mapValueTypes != null
+                    ? mapValueTypes.getColumnCount()
+                    : NTH_VALUE_OVER_PARTITION_RANGE_COLUMN_TYPES.getColumnCount();
+            while (cursor.hasNext()) {
+                final MapValue value = record.getValue();
+                if (tombstoneValueIndex >= 0 && value.getByte(tombstoneValueIndex) == 1) {
+                    continue;
+                }
+                LiveViewSnapshotKeyCodec.writeKey(sink, record, keyColumnTypes, keyStartIndex);
+                sink.putLong(value.getLong(0));
+                final long startOffset = value.getLong(1);
+                final long size = value.getLong(2);
+                final long capacity = value.getLong(3);
+                final long firstIdx = value.getLong(4);
+                sink.putLong(size);
+                for (long i = 0; i < size; i++) {
+                    final long idx = (firstIdx + i) % capacity;
+                    sink.putLong(memory.getLong(startOffset + idx * RECORD_SIZE));
+                    sink.putDouble(memory.getDouble(startOffset + idx * RECORD_SIZE + Long.BYTES));
+                }
+            }
+        }
+
+        @Override
+        public int snapshotFormatVersion() {
+            return 1;
+        }
+
+        @Override
+        public int snapshotMinSupportedVersion() {
+            return 1;
+        }
+
+        @Override
+        public boolean supportsSnapshot() {
+            return liveView
+                    && keyColumnTypes != null
+                    && LiveViewSnapshotKeyCodec.isAllTypesSupported(keyColumnTypes);
         }
 
         @Override
@@ -767,6 +956,7 @@ public class NthValueDoubleWindowFunctionFactory extends AbstractWindowFunctionF
             super.toTop();
             memory.truncate();
             freeList.clear();
+            tombstoneCount = 0;
         }
     }
 
@@ -2222,6 +2412,21 @@ public class NthValueDoubleWindowFunctionFactory extends AbstractWindowFunctionF
         NTH_VALUE_COLUMN_TYPES_LV.add(ColumnType.DOUBLE); // captured value
         NTH_VALUE_COLUMN_TYPES_LV.add(ColumnType.LONG); // row count within partition
         NTH_VALUE_COLUMN_TYPES_LV.add(ColumnType.BYTE); // tombstone (anchor-driven compaction)
+
+        NTH_VALUE_OVER_PARTITION_RANGE_COLUMN_TYPES = new ArrayColumnTypes();
+        NTH_VALUE_OVER_PARTITION_RANGE_COLUMN_TYPES.add(ColumnType.LONG); // number of values in current frame
+        NTH_VALUE_OVER_PARTITION_RANGE_COLUMN_TYPES.add(ColumnType.LONG); // native array start offset, requires updating on resize
+        NTH_VALUE_OVER_PARTITION_RANGE_COLUMN_TYPES.add(ColumnType.LONG); // native buffer size
+        NTH_VALUE_OVER_PARTITION_RANGE_COLUMN_TYPES.add(ColumnType.LONG); // native buffer capacity
+        NTH_VALUE_OVER_PARTITION_RANGE_COLUMN_TYPES.add(ColumnType.LONG); // index of first buffered element
+
+        NTH_VALUE_OVER_PARTITION_RANGE_COLUMN_TYPES_LV = new ArrayColumnTypes();
+        NTH_VALUE_OVER_PARTITION_RANGE_COLUMN_TYPES_LV.add(ColumnType.LONG); // number of values in current frame
+        NTH_VALUE_OVER_PARTITION_RANGE_COLUMN_TYPES_LV.add(ColumnType.LONG); // native array start offset, requires updating on resize
+        NTH_VALUE_OVER_PARTITION_RANGE_COLUMN_TYPES_LV.add(ColumnType.LONG); // native buffer size
+        NTH_VALUE_OVER_PARTITION_RANGE_COLUMN_TYPES_LV.add(ColumnType.LONG); // native buffer capacity
+        NTH_VALUE_OVER_PARTITION_RANGE_COLUMN_TYPES_LV.add(ColumnType.LONG); // index of first buffered element
+        NTH_VALUE_OVER_PARTITION_RANGE_COLUMN_TYPES_LV.add(ColumnType.BYTE); // tombstone (anchor-driven compaction)
 
         NTH_VALUE_OVER_PARTITION_ROWS_UNBOUNDED_COLUMN_TYPES = new ArrayColumnTypes();
         NTH_VALUE_OVER_PARTITION_ROWS_UNBOUNDED_COLUMN_TYPES.add(ColumnType.LONG); // count
