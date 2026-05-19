@@ -22,14 +22,14 @@ import java.util.function.Supplier;
  * snapshot is fetched from the provided supplier on every request -- no
  * shared mutable state, zero GC on the data path.
  * <p>
- * WR-01: this serializer uses {@code putAsciiQuoted} which does NOT escape JSON
+ * This serializer uses {@code putAsciiQuoted} which does NOT escape JSON
  * strings. Correctness relies on the invariant that all component names match
  * {@code [a-z0-9-]+} -- enforced at registration in
  * {@code LifecycleOrchestrator.register}. State names and field labels are emitted
  * from compile-time literals / enum constants, so they are JSON-safe by construction.
  * Dependency-list entries are component names and therefore also satisfy the invariant.
  * <p>
- * JSON shape (stable from Phase 3; adding fields later is fine, renaming is not):
+ * JSON shape (stable; adding fields later is fine, renaming is not):
  * <pre>
  * {
  *   "capturedAtMicros": 1234567890,
@@ -83,8 +83,6 @@ public class LifecycleProcessor implements HttpRequestHandler, HttpRequestProces
     public static void writeSnapshot(HttpChunkedResponse r, LifecycleSnapshot snap) {
         r.putAscii('{')
                 .putAsciiQuoted("capturedAtMicros").putAscii(':').put(snap.capturedAtMicros()).putAscii(',')
-                .putAsciiQuoted("currentRole").putAscii(':').putAsciiQuoted(snap.currentRole().name()).putAscii(',')
-                .putAsciiQuoted("switchInFlight").putAscii(':').putAscii(snap.switchInFlight() ? "true" : "false").putAscii(',')
                 .putAsciiQuoted("components").putAscii(':').putAscii('[');
         final ObjList<LifecycleSnapshot.ComponentSnapshot> components = snap.components();
         for (int i = 0, n = components.size(); i < n; i++) {
@@ -96,7 +94,7 @@ public class LifecycleProcessor implements HttpRequestHandler, HttpRequestProces
         r.putAscii(']').putAscii('}');
     }
 
-    private static void encodeProgressEvent(HttpChunkedResponse r, ProgressEvent event) {
+    protected static void encodeProgressEvent(HttpChunkedResponse r, ProgressEvent event) {
         switch (event) {
             case RestoreProgress rp -> r.putAscii('{')
                     .putAsciiQuoted("type").putAscii(':').putAsciiQuoted("restore").putAscii(',')
@@ -110,7 +108,7 @@ public class LifecycleProcessor implements HttpRequestHandler, HttpRequestProces
         }
     }
 
-    private static void encodeStringList(HttpChunkedResponse r, ObjList<String> list) {
+    protected static void encodeStringList(HttpChunkedResponse r, ObjList<String> list) {
         r.putAscii('[');
         for (int i = 0, n = list.size(); i < n; i++) {
             if (i > 0) {
@@ -121,7 +119,7 @@ public class LifecycleProcessor implements HttpRequestHandler, HttpRequestProces
         r.putAscii(']');
     }
 
-    private static void writeComponent(HttpChunkedResponse r, LifecycleSnapshot.ComponentSnapshot c) {
+    protected static void writeComponent(HttpChunkedResponse r, LifecycleSnapshot.ComponentSnapshot c) {
         r.putAscii('{')
                 .putAsciiQuoted("name").putAscii(':').putAsciiQuoted(c.name()).putAscii(',')
                 .putAsciiQuoted("state").putAscii(':').putAsciiQuoted(c.state().name()).putAscii(',')

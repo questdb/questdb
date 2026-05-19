@@ -37,12 +37,6 @@ public interface HttpServerConfiguration extends IODispatcherConfiguration, Work
         }};
     }
 
-    default ObjHashSet<String> getContextPathLifecycleSwitch() {
-        return new ObjHashSet<>() {{
-            add("/lifecycle/switch");
-        }};
-    }
-
     default ObjHashSet<String> getContextPathMetrics() {
         return new ObjHashSet<>() {{
             add("/metrics");
