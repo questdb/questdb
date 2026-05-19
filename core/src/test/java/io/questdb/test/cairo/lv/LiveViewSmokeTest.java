@@ -6604,4 +6604,168 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
             }
         });
     }
+
+    @Test
+    public void testRejectFlushEveryZero() throws Exception {
+        // RFC 123 §"CREATE-time validation" line 53: FLUSH EVERY 0 is rejected
+        // alongside any value below 100ms - no row would ever durably reach
+        // disk. The implementation collapses both branches into one message;
+        // this test pins that the zero case also fires the same wording so a
+        // future refactor that splits the branches keeps both visible.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            try {
+                execute("CREATE LIVE VIEW lv FLUSH EVERY 0s AS " +
+                        "SELECT ts, x, row_number() OVER () AS rn FROM base");
+                Assert.fail("expected FLUSH EVERY 0 reject");
+            } catch (SqlException e) {
+                Assert.assertTrue(e.getMessage(), e.getMessage().contains("FLUSH EVERY must be at least 100ms"));
+            }
+        });
+    }
+
+    @Test
+    public void testRejectLengthFoldedConstantAnchor() throws Exception {
+        // Pass-2 fold case the RFC explicitly calls out alongside 1+2+3 and
+        // date_trunc-of-literal: length('hello') folds to the constant 5
+        // before the validator walks it, so the top-level isConstant() check
+        // is the surface that fires the reject.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            try {
+                execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                        "SELECT ts, x, sum(x) OVER w AS s FROM base " +
+                        "WINDOW w AS (PARTITION BY x ORDER BY ts ANCHOR EXPRESSION length('hello'))");
+                Assert.fail("expected length-folded-constant anchor reject");
+            } catch (SqlException e) {
+                Assert.assertTrue(e.getMessage(), e.getMessage().contains("must not be a constant"));
+            }
+        });
+    }
+
+    @Test
+    public void testRejectAnchorWithSystimestamp() throws Exception {
+        // systimestamp() is the second runtime-state function the RFC names
+        // alongside now() / current_timestamp; the validator surfaces it via
+        // the same isRuntimeConstant branch.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            try {
+                execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                        "SELECT ts, x, sum(x) OVER w AS s FROM base " +
+                        "WINDOW w AS (PARTITION BY x ORDER BY ts ANCHOR EXPRESSION systimestamp())");
+                Assert.fail("expected systimestamp() anchor reject");
+            } catch (SqlException e) {
+                Assert.assertTrue(e.getMessage(), e.getMessage().contains("must be deterministic"));
+            }
+        });
+    }
+
+    @Test
+    public void testRejectSymbolAnchorReturnType() throws Exception {
+        // RFC 123 §"CREATE-time validation": ANCHOR EXPRESSION must return
+        // TIMESTAMP, LONG, or INT. SYMBOL is rejected because base_id vs.
+        // lv_id translation lands after window evaluation - equality
+        // semantics on the raw base symbol id don't compose with the runtime
+        // symbol-table maintenance.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            try {
+                execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                        "SELECT ts, sym, x, sum(x) OVER w AS s FROM base " +
+                        "WINDOW w AS (PARTITION BY x ORDER BY ts ANCHOR EXPRESSION sym)");
+                Assert.fail("expected SYMBOL anchor return type reject");
+            } catch (SqlException e) {
+                Assert.assertTrue(
+                        e.getMessage(),
+                        e.getMessage().contains("must return TIMESTAMP, LONG, or INT")
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testRejectStringAnchorReturnType() throws Exception {
+        // STRING anchor would route through the var-length codec on snapshot
+        // / restore; deferred to a future revision once the codec lands.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, s STRING, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            try {
+                execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                        "SELECT ts, s, x, sum(x) OVER w AS sm FROM base " +
+                        "WINDOW w AS (PARTITION BY x ORDER BY ts ANCHOR EXPRESSION s)");
+                Assert.fail("expected STRING anchor return type reject");
+            } catch (SqlException e) {
+                Assert.assertTrue(
+                        e.getMessage(),
+                        e.getMessage().contains("must return TIMESTAMP, LONG, or INT")
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testRejectBooleanAnchorReturnType() throws Exception {
+        // BOOLEAN anchors collapse to a two-bucket reset cadence; deliberately
+        // out of scope for V1 since the equality semantics on the encoded
+        // anchor value need an explicit choice.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, flag BOOLEAN, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            try {
+                execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                        "SELECT ts, flag, x, sum(x) OVER w AS s FROM base " +
+                        "WINDOW w AS (PARTITION BY x ORDER BY ts ANCHOR EXPRESSION flag)");
+                Assert.fail("expected BOOLEAN anchor return type reject");
+            } catch (SqlException e) {
+                Assert.assertTrue(
+                        e.getMessage(),
+                        e.getMessage().contains("must return TIMESTAMP, LONG, or INT")
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testRejectDoubleAnchorReturnType() throws Exception {
+        // DOUBLE anchors carry NaN-zero equivalence hazards that did not
+        // clear the cost / value bar for V1 inclusion.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, d DOUBLE, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            try {
+                execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                        "SELECT ts, d, x, sum(x) OVER w AS s FROM base " +
+                        "WINDOW w AS (PARTITION BY x ORDER BY ts ANCHOR EXPRESSION d)");
+                Assert.fail("expected DOUBLE anchor return type reject");
+            } catch (SqlException e) {
+                Assert.assertTrue(
+                        e.getMessage(),
+                        e.getMessage().contains("must return TIMESTAMP, LONG, or INT")
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testShowCreateRoundTripsDailyUtc() throws Exception {
+        // RFC 123 §"DAILY sugar" line 803: ANCHOR DAILY '00:00' 'UTC' and the
+        // unqualified ANCHOR DAILY '00:00' desugar to the same expression
+        // (timestamp_floor('1d', ts)). SHOW CREATE must round-trip the
+        // user-typed clause faithfully so re-executing the emitted DDL
+        // reproduces the original definition.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                    "SELECT ts, x, sum(x) OVER w AS s FROM base " +
+                    "WINDOW w AS (PARTITION BY x ORDER BY ts ANCHOR DAILY '00:00' 'UTC')");
+            assertSql(
+                    "ddl\n" +
+                            "CREATE LIVE VIEW 'lv' FLUSH EVERY 1s IN MEMORY 1s PARTITION BY DAY AS (\n" +
+                            "SELECT ts, x, sum(x) OVER w AS s FROM base " +
+                            "WINDOW w AS (PARTITION BY x ORDER BY ts ANCHOR DAILY '00:00' 'UTC')\n" +
+                            ");\n",
+                    "SHOW CREATE LIVE VIEW lv"
+            );
+            execute("DROP LIVE VIEW lv");
+        });
+    }
 }
