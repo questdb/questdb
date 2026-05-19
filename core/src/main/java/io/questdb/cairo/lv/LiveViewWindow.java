@@ -218,10 +218,10 @@ public class LiveViewWindow implements QuietCloseable {
         Map map = MapFactory.createOrderedMap(configuration, mapKeyTypes, anchorMapValueTypes());
         int returnType = anchorExpression.getType();
         int tag = ColumnType.tagOf(returnType);
-        if (tag != ColumnType.TIMESTAMP && tag != ColumnType.LONG) {
+        if (tag != ColumnType.TIMESTAMP && tag != ColumnType.LONG && tag != ColumnType.INT) {
             Misc.free(map);
             throw CairoException.nonCritical()
-                    .put("live-view ANCHOR EXPRESSION must return TIMESTAMP or LONG, got ")
+                    .put("live-view ANCHOR EXPRESSION must return TIMESTAMP, LONG, or INT, got ")
                     .put(ColumnType.nameOf(returnType));
         }
         return new LiveViewWindow(configuration, windowName, anchorExpression, returnType, mapKeyTypes, map, sink, functions);
@@ -267,9 +267,9 @@ public class LiveViewWindow implements QuietCloseable {
 
     /**
      * @return the user-facing name of the WINDOW clause this object drives.
-     * Phase 1 enforces a single anchored WINDOW per live view; the name is
-     * persisted into the WINDOW_ANCHOR checkpoint block so future restores
-     * can match by-name rather than by-position.
+     * At most one anchored WINDOW is allowed per live view (multi-anchored-window
+     * LVs are rejected at CREATE); the name is persisted into the WINDOW_ANCHOR
+     * checkpoint block so future restores can match by-name rather than by-position.
      */
     public String getWindowName() {
         return windowName;
@@ -575,22 +575,24 @@ public class LiveViewWindow implements QuietCloseable {
         }
         Misc.free(oldMap);
         // Dispatch through every function so per-function maps shed their own
-        // tombstoned entries in lockstep with the anchor map. Phase 2c.1
-        // retrofitted the previously unmigrated Group #2 functions with
-        // tombstone slots, so every function in a V1 LV now participates.
+        // tombstoned entries in lockstep with the anchor map. Every incrementally
+        // refreshable window function participates.
         for (int i = 0, n = functions.size(); i < n; i++) {
             functions.getQuick(i).compactPartitionMap();
         }
     }
 
     private long readAnchorValue(Record record) {
-        // Phase 1 supports TIMESTAMP and LONG anchor return types. Other primitive
-        // types (INT, BOOLEAN, STRING, SYMBOL, DOUBLE) land with the rest of the
-        // window-function migration; build() rejects them.
-        if (ColumnType.tagOf(anchorValueType) == ColumnType.TIMESTAMP) {
-            return anchorExpression.getTimestamp(record);
+        // build() restricts anchorValueType to TIMESTAMP, LONG, or INT; INT
+        // widens cleanly into the LONG slot via getInt's int-to-long promotion.
+        switch (ColumnType.tagOf(anchorValueType)) {
+            case ColumnType.TIMESTAMP:
+                return anchorExpression.getTimestamp(record);
+            case ColumnType.INT:
+                return anchorExpression.getInt(record);
+            default:
+                return anchorExpression.getLong(record);
         }
-        return anchorExpression.getLong(record);
     }
 
     /**

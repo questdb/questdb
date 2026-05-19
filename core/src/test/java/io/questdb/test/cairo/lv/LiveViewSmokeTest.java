@@ -164,7 +164,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
             } catch (SqlException e) {
                 Assert.assertTrue(
                         e.getMessage(),
-                        e.getMessage().contains("live views are not allowed as base tables in V1")
+                        e.getMessage().contains("live views are not allowed as base tables")
                 );
                 // Position must point at the base table name, not the view
                 // name.
@@ -2126,6 +2126,41 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                             "2026-08-01T01:00:00.000000Z\ta\t30.0\n" +
                             "2026-08-02T00:00:00.000000Z\ta\t5.0\n" +
                             "2026-08-02T01:00:00.000000Z\ta\t20.0\n",
+                    "SELECT ts, sym, s FROM lv ORDER BY ts"
+            );
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testAnchorResetsOnIntBucketChange() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT, sym SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            // hour(ts) returns INT; the anchor's LONG slot must absorb the
+            // INT-to-LONG widening cleanly. Two rows in hour 10 accumulate; the
+            // hour-11 row resets the running sum.
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                    "SELECT ts, sym, sum(x) OVER w AS s FROM base " +
+                    "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION hour(ts))");
+
+            execute("INSERT INTO base (ts, x, sym) VALUES " +
+                    "('2026-08-01T10:00:00.000000Z', 10, 'a'), " +
+                    "('2026-08-01T10:30:00.000000Z', 20, 'a'), " +
+                    "('2026-08-01T11:00:00.000000Z', 5, 'a'), " +
+                    "('2026-08-01T11:30:00.000000Z', 15, 'a')");
+            drainWalQueue();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+            }
+            drainWalQueue();
+
+            assertSql(
+                    "ts\tsym\ts\n" +
+                            "2026-08-01T10:00:00.000000Z\ta\t10.0\n" +
+                            "2026-08-01T10:30:00.000000Z\ta\t30.0\n" +
+                            "2026-08-01T11:00:00.000000Z\ta\t5.0\n" +
+                            "2026-08-01T11:30:00.000000Z\ta\t20.0\n",
                     "SELECT ts, sym, s FROM lv ORDER BY ts"
             );
 
@@ -6037,7 +6072,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
             } catch (SqlException e) {
                 Assert.assertTrue(
                         e.getMessage(),
-                        e.getMessage().contains("must return TIMESTAMP or LONG")
+                        e.getMessage().contains("must return TIMESTAMP, LONG, or INT")
                 );
             }
         });
@@ -6056,7 +6091,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
             } catch (SqlException e) {
                 Assert.assertTrue(
                         e.getMessage(),
-                        e.getMessage().contains("must return TIMESTAMP or LONG")
+                        e.getMessage().contains("must return TIMESTAMP, LONG, or INT")
                 );
             }
         });

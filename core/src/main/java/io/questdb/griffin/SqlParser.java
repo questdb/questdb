@@ -1431,7 +1431,7 @@ public class SqlParser {
         // Validate ANCHOR usage on each named window. Inline anchor expressions
         // attached to anonymous OVER (...) clauses inside SELECT columns are also
         // captured by the parser but live in the SELECT-column WindowExpressions;
-        // we walk the named-window map here as the V1 entry point.
+        // we walk the named-window map here.
         validateLiveViewAnchors(queryModel);
 
         // Defense-in-depth lead() reject. The factory-side check inside
@@ -1692,12 +1692,11 @@ public class SqlParser {
             }
             anchoredCount++;
             if (anchoredCount > 1) {
-                // Phase 1 limitation: the LiveViewWindow runtime supports a single
-                // anchored WINDOW per LV. Multi-window LVs with different anchors
-                // would need per-WINDOW dispatch of resetPartition, which lands
-                // alongside the runtime hookup.
+                // The LiveViewWindow runtime supports a single anchored WINDOW per
+                // LV. Multi-window LVs with different anchors would need per-WINDOW
+                // dispatch of resetPartition, which is not implemented yet.
                 throw SqlException.$(w.getAnchorPosition(),
-                        "live view supports at most one anchored WINDOW in V1");
+                        "live view supports at most one anchored WINDOW");
             }
             if (w.isNonDefaultFrame()) {
                 throw SqlException.$(w.getAnchorPosition(),

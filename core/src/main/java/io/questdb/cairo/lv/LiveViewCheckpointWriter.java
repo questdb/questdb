@@ -60,7 +60,7 @@ import java.io.Closeable;
  * <pre>
  *   File header (16 bytes):
  *     magic: INT          (0x4C56_4350 - "LVCP")
- *     formatVersion: INT  (1 for V1)
+ *     formatVersion: INT
  *     blockCount: INT     (patched at commit)
  *     reserved: INT
  *   Per block:
@@ -126,7 +126,7 @@ public class LiveViewCheckpointWriter implements Closeable {
     public LiveViewCheckpointWriter(@NotNull CairoConfiguration configuration) {
         this.commitMode = configuration.getCommitMode();
         this.ff = configuration.getFilesFacade();
-        // 64KB is plenty for a typical V1 checkpoint - manifest + a few small
+        // 64KB is plenty for a typical checkpoint - manifest + a few small
         // anchor blocks + per-function state. Mem grows on demand.
         this.extendSegmentSize = 64 * 1024;
         this.mem = Vm.getCMARWInstance();

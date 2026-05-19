@@ -47,15 +47,15 @@ import org.jetbrains.annotations.Nullable;
  * Immutable definition of a live view, persisted in the {@code _lv} block file.
  * <p>
  * Mirrors {@link io.questdb.cairo.mv.MatViewDefinition} — written once at CREATE,
- * never rewritten in V1 (ALTER LIVE VIEW is deferred). New schema bumps land as
- * new block types; old readers ignore unknown blocks.
+ * never rewritten (ALTER LIVE VIEW is deferred). New schema bumps land as new
+ * block types; old readers ignore unknown blocks.
  * <p>
  * Block types:
  * <ul>
- *     <li>{@code 0} — CORE_DEFINITION (V1, required).</li>
- *     <li>{@code 1} — ANCHOR_SPEC (V1, optional). Captures the single anchored
- *     named WINDOW the LV's SELECT defined, so the live-view runtime can compile
- *     the anchor expression at startup without re-parsing the SELECT.</li>
+ *     <li>{@code 0} — CORE_DEFINITION (required).</li>
+ *     <li>{@code 1} — ANCHOR_SPEC (optional). Captures the single anchored named
+ *     WINDOW the LV's SELECT defined, so the live-view runtime can compile the
+ *     anchor expression at startup without re-parsing the SELECT.</li>
  * </ul>
  */
 public class LiveViewDefinition {
@@ -64,10 +64,7 @@ public class LiveViewDefinition {
     public static final int LIVE_VIEW_DEFINITION_CORE_MSG_TYPE = 0;
 
     private final @Nullable LvAnchorSpec anchorSpec;
-    // BACKFILL was specified at CREATE. Phase 1a rejects the BACKFILL clause at
-    // the parser, so this is always false on disk today. The field is preallocated
-    // in CORE_DEFINITION so Phase 3 can land the backfill semantics without a _lv
-    // schema bump (RFC 123 §"Persistent formats / _lv").
+    // BACKFILL was specified at CREATE.
     private final boolean backfillRequested;
     private final String baseTableName;
     private final TableToken baseTableToken;
@@ -453,7 +450,7 @@ public class LiveViewDefinition {
     }
 
     /**
-     * Persisted shape of a single anchored named WINDOW. V1 captures at most one
+     * Persisted shape of a single anchored named WINDOW. At most one is captured
      * per LV (multi-anchored-window LVs are rejected at CREATE). The runtime side
      * — {@link LiveViewWindow} — uses this to compile the anchor expression and
      * build the partition machinery without re-parsing the SELECT.

@@ -61,10 +61,8 @@ import java.util.concurrent.atomic.AtomicBoolean;
  *         {@code markInvalid}. Populated at CREATE.</li>
  * </ul>
  * <p>
- * V1 omits BACKFILLING / per-window-state Maps / TableWriter ownership — those land
- * in later phases. The {@code WalWriter} for live-view-internal apply is acquired
- * from the engine's WAL writer pool per FLUSH cycle in V1 (Phase 1 keeps things
- * stateless on the instance side).
+ * The {@code WalWriter} for live-view-internal apply is acquired from the engine's
+ * WAL writer pool per FLUSH cycle rather than being owned by the instance.
  */
 public class LiveViewInstance implements QuietCloseable {
     private static final int HEAD_CHECKPOINT_LV_SEQ_TXN = 0;

@@ -2653,17 +2653,17 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     /**
-     * Rejects anchor expressions whose top-level return type is not TIMESTAMP
-     * or LONG. Other scalar primitives (INT, BOOLEAN, DOUBLE, STRING, ...) and
-     * composite types (ARRAY, GEOHASH, BINARY, INTERVAL, ...) cannot flow
-     * through the V1 anchor map's LONG slot. Catching the type mismatch at
+     * Rejects anchor expressions whose top-level return type is not TIMESTAMP,
+     * LONG, or INT. Other scalar primitives (BOOLEAN, DOUBLE, STRING, SYMBOL)
+     * and composite types (ARRAY, GEOHASH, BINARY, INTERVAL, ...) cannot flow
+     * through the anchor map's LONG slot. Catching the type mismatch at
      * CREATE keeps the failure visible to the operator instead of waiting for
      * the first refresh cycle to surface it.
      */
     private static void validateAnchorReturnType(Function fn, int position) throws SqlException {
         final int tag = ColumnType.tagOf(fn.getType());
-        if (tag != ColumnType.TIMESTAMP && tag != ColumnType.LONG) {
-            throw SqlException.$(position, "ANCHOR EXPRESSION must return TIMESTAMP or LONG in V1; got ")
+        if (tag != ColumnType.TIMESTAMP && tag != ColumnType.LONG && tag != ColumnType.INT) {
+            throw SqlException.$(position, "ANCHOR EXPRESSION must return TIMESTAMP, LONG, or INT; got ")
                     .put(ColumnType.nameOf(fn.getType()));
         }
     }
@@ -2718,7 +2718,7 @@ public class CairoEngine implements Closeable, WriterSource {
             }
         }
 
-        // V1 incremental refresh drives window functions manually over rows read directly
+        // Incremental refresh drives window functions manually over rows read directly
         // from WAL segments, so the factory tree must be exactly:
         //     WindowRecordCursorFactory -> [FilteredRecordCursorFactory?] -> PageFrameRecordCursorFactory
         // with no join, projection or grouping in between. See LiveViewRefreshJob.
@@ -2761,8 +2761,8 @@ public class CairoEngine implements Closeable, WriterSource {
 
     /**
      * Throws an asserted-wording reject if any function in {@code fns} is {@code lead()}.
-     * lead() needs rows the streaming append-only path has not yet seen; RFC 123 V1
-     * rejects it independently of the underlying factory shape.
+     * lead() needs rows the streaming append-only path has not yet seen; live views
+     * reject it independently of the underlying factory shape.
      */
     private static void rejectLeadIfPresent(ObjList<WindowFunction> fns, int position) throws SqlException {
         for (int i = 0, n = fns.size(); i < n; i++) {

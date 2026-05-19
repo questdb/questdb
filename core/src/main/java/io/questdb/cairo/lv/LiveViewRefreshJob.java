@@ -1225,11 +1225,10 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * snapshot, emits a single LV WAL commit covering everything observed,
      * applies inline, and flips {@code _lv.s.backfillState} to ACTIVE.
      * <p>
-     * V1 limitations: the sweep runs in a single turn (no mid-sweep budget
+     * Current limitations: the sweep runs in a single turn (no mid-sweep budget
      * yield). A crash before the LV WAL commit re-runs the sweep on restart;
      * a crash between the commit and the ACTIVE flip re-runs the sweep and
-     * may emit duplicate rows. Resumable mid-sweep checkpoints are a deferred
-     * Phase 3b extension.
+     * may emit duplicate rows. Resumable mid-sweep checkpoints are deferred.
      */
     private void runBackfillSweep(LiveViewInstance instance) throws SqlException {
         final long backfillTargetSeqTxn = instance.getStateReader().getBackfillTargetSeqTxn();
@@ -1820,9 +1819,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         stagingBuffer.reset();
         // Allocate the per-LV in-mem tier on first use; subsequent cycles reuse
         // it. The tier's shape is fixed at allocation — if a downstream commit
-        // changes the LV's _meta (not in V1, but reserved for ALTER LIVE VIEW
-        // later) the tier would need to be reshaped too. For Phase 1b _meta is
-        // immutable post-CREATE.
+        // changes the LV's _meta (reserved for ALTER LIVE VIEW later) the tier
+        // would need to be reshaped too. Today _meta is immutable post-CREATE.
         if (instance.getInMemoryTier() == null) {
             instance.setInMemoryTier(new LiveViewInMemoryTier(tierColumnTypes, tsColIdx, pageSize));
         }
