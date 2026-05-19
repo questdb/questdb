@@ -153,43 +153,54 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
     }
 
     /**
-     * Returns {@code step} capped at the narrowest entry width (in buckets) of
-     * the given intervals list. Returns {@code step} unchanged if the list is
-     * null, has fewer than one entry, or the bucket size is non-positive.
+     * Fills {@code out} with one step per cached interval (cluster): the
+     * smaller of {@code naturalStep} and the cluster's width in buckets.
      * <p>
      * Goes together with {@link #clusterIntervals}: each list entry is one
-     * cluster after auto-tuning, and we want a step-group to fit inside one
-     * cluster so the iterator's gap-skip can excise the gaps between them
-     * without dragging unchanged buckets into the cursor's scan range.
+     * cluster after auto-tuning. A per-cluster step lets the iterator fit
+     * each step-group inside a single cluster -- a narrow cluster does not
+     * shrink the step on wider clusters, and a wide cluster does not enlarge
+     * the step on narrow ones. The iterator's gap-skip then excises the gaps
+     * between clusters without dragging unchanged buckets into the cursor's
+     * scan range.
+     * <p>
+     * On overflow or malformed entries the per-cluster step falls back to
+     * {@code naturalStep} for that cluster.
      */
     // kept public for testing
-    public static long capStepByNarrowestInterval(@Nullable LongList intervals, long approxBucketSize, long step) {
-        if (intervals == null || intervals.size() < 2 || approxBucketSize <= 0) {
-            return step;
+    public static void computePerClusterSteps(
+            @Nullable LongList intervals,
+            long approxBucketSize,
+            long naturalStep,
+            @NotNull LongList out
+    ) {
+        out.clear();
+        if (intervals == null || intervals.size() < 2) {
+            return;
         }
-        long narrowestBuckets = Long.MAX_VALUE;
         for (int i = 0, n = intervals.size(); i < n; i += 2) {
+            if (approxBucketSize <= 0) {
+                out.add(naturalStep);
+                continue;
+            }
             final long widthTsUnits;
             try {
                 widthTsUnits = Math.subtractExact(intervals.getQuick(i + 1), intervals.getQuick(i));
             } catch (ArithmeticException overflow) {
-                // Pathological interval spans almost the full long range; the
-                // step cap can't say anything useful, leave it alone.
+                // Pathological interval spans almost the full long range; we
+                // can't say anything useful about its width, fall back to
+                // naturalStep so the iterator at least makes progress.
+                out.add(naturalStep);
                 continue;
             }
             if (widthTsUnits < 0) {
-                // Malformed (hi < lo) -- be defensive, skip.
+                // Malformed (hi < lo) -- be defensive, fall back to naturalStep.
+                out.add(naturalStep);
                 continue;
             }
             final long widthBuckets = Math.max(1, widthTsUnits / approxBucketSize + 1);
-            if (widthBuckets < narrowestBuckets) {
-                narrowestBuckets = widthBuckets;
-            }
+            out.add(Math.min(naturalStep, widthBuckets));
         }
-        if (narrowestBuckets > 0 && narrowestBuckets < step) {
-            return narrowestBuckets;
-        }
-        return step;
     }
 
     /**
@@ -602,19 +613,19 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 // that's to avoid overflows in the interval iterator
                 step = Math.max(1, step / 2);
             }
-            // Cap step at the narrowest entry remaining in refreshIntervals so
-            // that one step-group can never straddle two entries. The iterator's
-            // existing gap-skip then walks the gaps cheaply (no cursor call) and
-            // produces a tight cursor range inside each entry. Without this cap,
-            // one huge step-group can intersect multiple cached intervals and
-            // the cursor's range filter widens to the full step span -- exactly
-            // the wasted-scan problem this code is here to avoid.
+            // Compute one step per cluster so a narrow cluster does not pin
+            // the step on wider clusters (and vice versa). The iterator's
+            // gap-skip then excises gaps between clusters cheaply, and each
+            // step-group's cursor filter is tight to one cluster.
             //
             // Note: refreshIntervals may have been mutated since clustering by
             // the period-mat-view branch (unionIntervals/intersectIntervals
-            // above). We cap based on the current list, since that is what the
-            // iterator is about to receive.
-            step = capStepByNarrowestInterval(refreshIntervals, approxBucketSize, step);
+            // above). We compute per-cluster steps from the current list,
+            // since that is what the iterator is about to receive.
+            refreshContext.approxBucketSize = approxBucketSize;
+            refreshContext.refreshIntervals = refreshIntervals;
+            refreshContext.naturalStep = step;
+            computePerClusterSteps(refreshIntervals, approxBucketSize, step, refreshContext.stepPerInterval);
 
             // there are no concurrent accesses to the sampler at this point as we've locked the state
             final SampleByIntervalIterator intervalIterator = intervalIterator(
@@ -626,7 +637,8 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                     refreshIntervals,
                     minTs,
                     maxTs,
-                    step
+                    step,
+                    refreshContext.stepPerInterval
             );
 
             final long iteratorMinTs = intervalIterator.getMinTimestamp();
@@ -834,7 +846,6 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             return false;
         }
 
-        long intervalStep = intervalIterator.getStep();
         try {
             factory = viewState.acquireRecordFactory();
             copier = viewState.getRecordToRowCopier();
@@ -891,7 +902,11 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                     long pendingScanSampleNanos = 0L;
                     long pendingScanRangeTsUnits = 0L;
 
-                    intervalIterator.toTop(intervalStep);
+                    if (refreshContext.stepPerInterval.size() > 0) {
+                        intervalIterator.toTop(refreshContext.stepPerInterval);
+                    } else {
+                        intervalIterator.toTop(refreshContext.naturalStep);
+                    }
                     long replacementTimestampLo = Long.MIN_VALUE;
                     long replacementTimestampHi = Long.MIN_VALUE;
 
@@ -948,15 +963,21 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                             final long scanRangeTsUnits = intervalIterator.getTimestampHi() - intervalIterator.getTimestampLo();
 
                             // Check if we've inserted a lot of rows in a single iteration.
-                            if (insertedRows > batchSize && i < maxRetries && intervalStep > 1) {
+                            if (insertedRows > batchSize && i < maxRetries && refreshContext.naturalStep > 1) {
                                 // Yes, the transaction is large, thus try once again with a proportionally smaller step.
                                 final double transactionRatio = (double) batchSize / insertedRows;
-                                intervalStep = Math.max((long) (transactionRatio * intervalStep) - 1, 1);
+                                refreshContext.naturalStep = Math.max((long) (transactionRatio * refreshContext.naturalStep) - 1, 1);
+                                computePerClusterSteps(
+                                        refreshContext.refreshIntervals,
+                                        refreshContext.approxBucketSize,
+                                        refreshContext.naturalStep,
+                                        refreshContext.stepPerInterval
+                                );
                                 walWriter.rollback();
                                 LOG.info().$("inserted too many rows in a single iteration, retrying with a reduced step [view=").$(viewTableToken)
                                         .$(", insertedRows=").$(insertedRows)
                                         .$(", batchSize=").$(batchSize)
-                                        .$(", intervalStep=").$(intervalStep)
+                                        .$(", intervalStep=").$(refreshContext.naturalStep)
                                         .I$();
                                 continue OUTER;
                             }
@@ -1035,10 +1056,16 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 } catch (Throwable th) {
                     factory = Misc.free(factory);
                     walWriter.rollback();
-                    if (th instanceof CairoException && CairoException.isCairoOomError(th) && i < maxRetries && intervalStep > 1) {
-                        intervalStep /= 2;
+                    if (th instanceof CairoException && CairoException.isCairoOomError(th) && i < maxRetries && refreshContext.naturalStep > 1) {
+                        refreshContext.naturalStep /= 2;
+                        computePerClusterSteps(
+                                refreshContext.refreshIntervals,
+                                refreshContext.approxBucketSize,
+                                refreshContext.naturalStep,
+                                refreshContext.stepPerInterval
+                        );
                         LOG.info().$("query failed with out-of-memory, retrying with a reduced step [view=").$(viewTableToken)
-                                .$(", intervalStep=").$(intervalStep)
+                                .$(", intervalStep=").$(refreshContext.naturalStep)
                                 .$(", error=").$safe(((CairoException) th).getFlyweightMessage())
                                 .I$();
                         Os.sleep(oomRetryTimeout);
@@ -1087,17 +1114,32 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             @Nullable LongList refreshIntervals,
             long minTs,
             long maxTs,
-            long step
+            long naturalStep,
+            @NotNull LongList stepPerInterval
     ) {
+        // Per-cluster mode requires a non-null intervals list and a populated
+        // step list. When either is absent, fall back to the natural step --
+        // the iterator then walks a single envelope at one step.
+        final boolean perCluster = refreshIntervals != null && stepPerInterval.size() > 0;
         if (tzRules == null || tzRules.hasFixedOffset()) {
             long fixedTzOffset = tzRules != null ? tzRules.getOffset(0) : 0;
+            if (perCluster) {
+                return fixedOffsetIterator.of(
+                        sampler,
+                        fixedOffset - fixedTzOffset,
+                        refreshIntervals,
+                        minTs,
+                        maxTs,
+                        stepPerInterval
+                );
+            }
             return fixedOffsetIterator.of(
                     sampler,
                     fixedOffset - fixedTzOffset,
                     refreshIntervals,
                     minTs,
                     maxTs,
-                    step
+                    naturalStep
             );
         }
 
@@ -1107,16 +1149,38 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         // boundaries must include the user offset so they align with bucket keys.
         if (CommonUtils.isSubDayUnit(samplingIntervalUnit)) {
             long stdOff = CommonUtils.getFloorUtcTzOffset(tzRules, 0, samplingIntervalUnit);
+            if (perCluster) {
+                return fixedOffsetIterator.of(
+                        sampler,
+                        fixedOffset - stdOff,
+                        refreshIntervals,
+                        minTs,
+                        maxTs,
+                        stepPerInterval
+                );
+            }
             return fixedOffsetIterator.of(
                     sampler,
                     fixedOffset - stdOff,
                     refreshIntervals,
                     minTs,
                     maxTs,
-                    step
+                    naturalStep
             );
         }
 
+        if (perCluster) {
+            return timeZoneIterator.of(
+                    driver,
+                    sampler,
+                    tzRules,
+                    fixedOffset,
+                    refreshIntervals,
+                    minTs,
+                    maxTs,
+                    stepPerInterval
+            );
+        }
         return timeZoneIterator.of(
                 driver,
                 sampler,
@@ -1125,7 +1189,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 refreshIntervals,
                 minTs,
                 maxTs,
-                step
+                naturalStep
         );
     }
 
@@ -1711,14 +1775,26 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
     }
 
     private static class RefreshContext implements Mutable {
+        public final LongList stepPerInterval = new LongList();
+        public long approxBucketSize;
         public SampleByIntervalIterator intervalIterator;
+        public long naturalStep;
         public long periodHi = Numbers.LONG_NULL;
+        // Reference to the live refresh intervals list owned by the iterator.
+        // Held here so the retry path can recompute stepPerInterval after
+        // shrinking naturalStep, without needing to walk the iterator's
+        // internals.
+        public LongList refreshIntervals;
         public long toBaseTxn = -1;
 
         @Override
         public void clear() {
+            approxBucketSize = 0;
             intervalIterator = null;
+            naturalStep = 0;
             periodHi = Numbers.LONG_NULL;
+            refreshIntervals = null;
+            stepPerInterval.clear();
             toBaseTxn = -1;
         }
     }

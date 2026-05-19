@@ -63,12 +63,17 @@ import java.util.Arrays;
  * <p>
  * The benchmark builds a 1-minute OHLC mat view over NUM_SYMBOLS symbols, seeds
  * SEED_MINUTES of base data, and measures the cost of refreshing after a
- * (currentTick + O3 tick) WAL pair. Two sweeps:
+ * (wideRecent + O3) WAL pair. Three sweep dimensions:
  * <ul>
  *   <li>matViewRowsPerQueryEstimate -- 1M (close to production default) vs 1k
  *       (forces step to shrink toward a single bucket).</li>
  *   <li>o3LagMinutes -- how far back the O3 tick lands. 0 disables the O3
  *       insert (baseline).</li>
+ *   <li>wideRecentBuckets -- number of consecutive recent ticks written per
+ *       iteration in a single WAL txn. With o3LagMinutes large enough to keep
+ *       two clusters, this forms a narrow point + wide cluster pair and
+ *       exposes how much the global step-cap costs the wide cluster (one
+ *       cursor open per capped step-group).</li>
  * </ul>
  * <p>
  * Headline numbers on a 512-symbol, 1440-minute seed get filled in by the
@@ -84,18 +89,21 @@ public class MatViewO3RefreshBenchmark {
     private static final int WARMUP_ITERATIONS = 2;
     private static final long[] O3_LAG_MINUTES_SWEEP = {0, 30, 120, 720};
     private static final long[] ROWS_PER_QUERY_SWEEP = {1_000_000L, 1_000L};
+    private static final long[] WIDE_RECENT_BUCKETS_SWEEP = {1, 10, 100, 1000};
 
     public static void main(String[] args) throws Exception {
         System.out.printf("MatViewO3RefreshBenchmark: %d symbols, %d-minute seed, %d iterations/scenario%n",
                 NUM_SYMBOLS, SEED_MINUTES, ITERATIONS);
         System.out.println();
 
-        System.out.printf("%-18s %-14s %12s %12s %12s %12s %14s%n",
-                "rowsPerQuery", "o3LagMinutes", "avg_ms", "median_ms", "p99_ms", "min_ms", "rowsEmitted");
+        System.out.printf("%-18s %-14s %-14s %12s %12s %12s %12s %14s%n",
+                "rowsPerQuery", "o3LagMinutes", "wideBuckets", "avg_ms", "median_ms", "p99_ms", "min_ms", "rowsEmitted");
 
         for (long rowsPerQuery : ROWS_PER_QUERY_SWEEP) {
             for (long o3LagMinutes : O3_LAG_MINUTES_SWEEP) {
-                runScenario(rowsPerQuery, o3LagMinutes);
+                for (long wideBuckets : WIDE_RECENT_BUCKETS_SWEEP) {
+                    runScenario(rowsPerQuery, o3LagMinutes, wideBuckets);
+                }
             }
         }
 
@@ -164,7 +172,7 @@ public class MatViewO3RefreshBenchmark {
         return -1;
     }
 
-    private static void runScenario(long rowsPerQuery, long o3LagMinutes) throws Exception {
+    private static void runScenario(long rowsPerQuery, long o3LagMinutes, long wideRecentBuckets) throws Exception {
         final Path dbRoot = Files.createTempDirectory("mvO3bench-");
         try {
             final CairoConfiguration configuration = new ScenarioConfig(dbRoot.toString(), rowsPerQuery);
@@ -207,10 +215,13 @@ public class MatViewO3RefreshBenchmark {
                 // (optionally) 1 O3 tick at o3LagMinutes back, then drains WAL (so the
                 // base table catches up) and times the mat view refresh drain.
                 final long[] timings = new long[ITERATIONS];
+                final long wideTicks = Math.max(1L, wideRecentBuckets);
                 long iterTsMicros = SEED_EPOCH_MICROS + ((long) SEED_MINUTES) * oneMinuteMicros;
                 for (int i = 0; i < WARMUP_ITERATIONS + ITERATIONS; i++) {
-                    runIteration(engine, sqlCtx, iterTsMicros, o3LagMinutes, oneMinuteMicros, timings, i - WARMUP_ITERATIONS);
-                    iterTsMicros += oneMinuteMicros;
+                    runIteration(engine, sqlCtx, iterTsMicros, o3LagMinutes, oneMinuteMicros, wideTicks, timings, i - WARMUP_ITERATIONS);
+                    // Bump by the wide cluster width so the next iteration's
+                    // recent ticks don't overlap this one's range.
+                    iterTsMicros += wideTicks * oneMinuteMicros;
                 }
 
                 final long rowsAfterIters = queryRowCount(compiler, sqlCtx, "ohlc_1m");
@@ -231,12 +242,14 @@ public class MatViewO3RefreshBenchmark {
                     // win.
                     throw new IllegalStateException(
                             "Benchmark scenario produced no new mat view rows -- refresh likely skipped." +
-                                    " rowsPerQuery=" + rowsPerQuery + ", o3LagMinutes=" + o3LagMinutes
+                                    " rowsPerQuery=" + rowsPerQuery + ", o3LagMinutes=" + o3LagMinutes +
+                                    ", wideRecentBuckets=" + wideRecentBuckets
                     );
                 }
-                System.out.printf("%-18d %-14d %12.3f %12.3f %12.3f %12.3f %14d%n",
+                System.out.printf("%-18d %-14d %-14d %12.3f %12.3f %12.3f %12.3f %14d%n",
                         rowsPerQuery,
                         o3LagMinutes,
+                        wideTicks,
                         avg / 1_000_000.0,
                         median / 1_000_000.0,
                         p99 / 1_000_000.0,
@@ -255,12 +268,20 @@ public class MatViewO3RefreshBenchmark {
             long iterTsMicros,
             long o3LagMinutes,
             long oneMinuteMicros,
+            long wideRecentTicks,
             long[] timings,
             int recordIdx
     ) throws Exception {
-        // Insert current tick. Each WAL txn = single row.
+        // Insert wideRecentTicks consecutive recent ticks (one per minute) in a
+        // single WAL txn so they coalesce into one cached refresh interval of
+        // width = wideRecentTicks buckets.
         final StringBuilder currentInsert = new StringBuilder("insert into ohlc_base(sym, price, ts) values ");
-        appendInsertRow(currentInsert, iterTsMicros, 0, 100.0 + recordIdx);
+        for (long k = 0; k < wideRecentTicks; k++) {
+            if (k > 0) {
+                currentInsert.append(',');
+            }
+            appendInsertRow(currentInsert, iterTsMicros + k * oneMinuteMicros, 0, 100.0 + recordIdx);
+        }
         engine.execute(currentInsert.toString(), sqlCtx);
 
         if (o3LagMinutes > 0) {

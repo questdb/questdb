@@ -32,60 +32,63 @@ import org.junit.Test;
 /**
  * Direct unit tests for the static cost-model helpers in MatViewRefreshJob:
  * {@link MatViewRefreshJob#clusterIntervals} and
- * {@link MatViewRefreshJob#capStepByNarrowestInterval}. These functions are
+ * {@link MatViewRefreshJob#computePerClusterSteps}. These functions are
  * pure -- no engine bootstrap required.
  */
 public class MatViewRefreshJobClusterTest {
 
     @Test
-    public void testCapStepBucketSizeZero() {
-        final LongList intervals = list(10, 20);
-        Assert.assertEquals(50L, MatViewRefreshJob.capStepByNarrowestInterval(intervals, 0, 50));
-        Assert.assertEquals(50L, MatViewRefreshJob.capStepByNarrowestInterval(intervals, -1, 50));
+    public void testComputeStepsBucketSizeZero() {
+        // Without a usable bucket size we can't translate cluster widths to
+        // bucket counts, so every cluster falls back to the natural step.
+        // Two clusters here: [10,20] and [30,40], so we expect two entries.
+        Assert.assertEquals(list(50, 50), perClusterSteps(list(10, 20, 30, 40), 0, 50));
+        Assert.assertEquals(list(50, 50), perClusterSteps(list(10, 20, 30, 40), -1, 50));
     }
 
     @Test
-    public void testCapStepEmptyAndSingleInterval() {
-        Assert.assertEquals(100L, MatViewRefreshJob.capStepByNarrowestInterval(null, 60, 100));
-        Assert.assertEquals(100L, MatViewRefreshJob.capStepByNarrowestInterval(new LongList(), 60, 100));
-        // Single interval -- still cap based on its width.
+    public void testComputeStepsEmptyAndSingleInterval() {
+        Assert.assertEquals(new LongList(), perClusterSteps(null, 60, 100));
+        Assert.assertEquals(new LongList(), perClusterSteps(new LongList(), 60, 100));
+        // Single interval -- step caps at the cluster width.
         // 10..20 micros with bucketSize=10 -> widthBuckets = max(1, (20-10)/10 + 1) = 2.
-        Assert.assertEquals(2L, MatViewRefreshJob.capStepByNarrowestInterval(list(10, 20), 10, 100));
+        Assert.assertEquals(list(2), perClusterSteps(list(10, 20), 10, 100));
     }
 
     @Test
-    public void testCapStepNoCapNeededWhenStepIsAlreadySmall() {
-        // Width = 5 buckets. step=2 already smaller -- stays unchanged.
-        final LongList intervals = list(0, 50);
-        Assert.assertEquals(2L, MatViewRefreshJob.capStepByNarrowestInterval(intervals, 10, 2));
+    public void testComputeStepsNoCapNeededWhenStepIsAlreadySmall() {
+        // Width = 5 buckets. natural step=2 is smaller -- stays unchanged.
+        Assert.assertEquals(list(2), perClusterSteps(list(0, 50), 10, 2));
     }
 
     @Test
-    public void testCapStepSkipsMalformedHiLessThanLo() {
-        // Defensive: an interval with hi < lo would produce a negative width.
-        // Such entries are skipped; the cap comes from the well-formed siblings.
+    public void testComputeStepsSkipsMalformedHiLessThanLo() {
+        // Defensive: an interval with hi < lo produces a negative width and
+        // falls back to the natural step. Well-formed siblings get their
+        // own per-cluster cap.
         final LongList intervals = list(
-                50, 30,    // malformed (hi < lo), width = -20 -> skipped
+                50, 30,    // malformed (hi < lo), width = -20 -> fallback to naturalStep
                 100, 100   // well-formed point, widthBuckets = 1
         );
-        Assert.assertEquals(1L, MatViewRefreshJob.capStepByNarrowestInterval(intervals, 10, 50));
+        Assert.assertEquals(list(50, 1), perClusterSteps(intervals, 10, 50));
     }
 
     @Test
-    public void testCapStepPicksNarrowestAmongMany() {
-        // Three intervals: widths 5, 1, 3 (in buckets) at bucketSize=10.
+    public void testComputeStepsPerCluster() {
+        // Three clusters: widths 5, 1, 3 (in buckets) at bucketSize=10.
+        // naturalStep=100 -- each cluster caps to its own width.
         final LongList intervals = list(
                 0, 40,        // (40-0)/10 + 1 = 5
                 100, 100,     // (0)/10 + 1 = 1
                 200, 220      // (20)/10 + 1 = 3
         );
-        Assert.assertEquals(1L, MatViewRefreshJob.capStepByNarrowestInterval(intervals, 10, 100));
+        Assert.assertEquals(list(5, 1, 3), perClusterSteps(intervals, 10, 100));
     }
 
     @Test
-    public void testCapStepPointInterval() {
+    public void testComputeStepsPointInterval() {
         // Point interval at 100: width 0 -> max(1, 0/10 + 1) = 1.
-        Assert.assertEquals(1L, MatViewRefreshJob.capStepByNarrowestInterval(list(100, 100), 10, 50));
+        Assert.assertEquals(list(1), perClusterSteps(list(100, 100), 10, 50));
     }
 
     @Test
@@ -184,22 +187,28 @@ public class MatViewRefreshJobClusterTest {
     }
 
     @Test
-    public void testCapStepOverflowingBucketArithmetic() {
+    public void testComputeStepsOverflowingBucketArithmetic() {
         // A pathological huge interval (~290 years in micros) should still
         // produce a sane cap, not overflow.
         final long farFuture = Long.MAX_VALUE / 4;
         final LongList intervals = list(0, farFuture);
-        final long step = MatViewRefreshJob.capStepByNarrowestInterval(intervals, 1_000_000, 1_000);
-        // Width should be huge -> step stays at the input value (1000).
-        Assert.assertEquals(1_000L, step);
+        // Width fits in long here; min(naturalStep, width) = naturalStep.
+        Assert.assertEquals(list(1_000), perClusterSteps(intervals, 1_000_000, 1_000));
     }
 
     @Test
-    public void testCapStepWithNegativeStep() {
-        // A negative step (shouldn't happen, but be defensive) should not
-        // be widened by the cap.
-        final LongList intervals = list(0, 100);
-        Assert.assertEquals(-5L, MatViewRefreshJob.capStepByNarrowestInterval(intervals, 10, -5));
+    public void testComputeStepsOverflowFallsBackToNaturalStep() {
+        // hi - lo overflows long range -- the helper falls back to naturalStep
+        // for that cluster rather than producing garbage.
+        final LongList intervals = list(Long.MIN_VALUE, Long.MAX_VALUE);
+        Assert.assertEquals(list(1_000), perClusterSteps(intervals, 1_000_000, 1_000));
+    }
+
+    @Test
+    public void testComputeStepsWithNegativeStep() {
+        // A negative natural step (shouldn't happen, but be defensive) is the
+        // smaller of (negative, positive) so it propagates as-is.
+        Assert.assertEquals(list(-5), perClusterSteps(list(0, 100), 10, -5));
     }
 
     @Test
@@ -358,5 +367,11 @@ public class MatViewRefreshJobClusterTest {
             list.add(v);
         }
         return list;
+    }
+
+    private static LongList perClusterSteps(LongList intervals, long approxBucketSize, long naturalStep) {
+        final LongList out = new LongList();
+        MatViewRefreshJob.computePerClusterSteps(intervals, approxBucketSize, naturalStep, out);
+        return out;
     }
 }
