@@ -26,6 +26,8 @@ package io.questdb.cairo.sql;
 
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.std.BinarySequence;
+import io.questdb.std.Decimal128;
+import io.questdb.std.Decimal256;
 import io.questdb.std.Interval;
 import io.questdb.std.Long256;
 import io.questdb.std.str.CharSink;
@@ -67,6 +69,36 @@ public class DelegatingRecord implements Record {
     @Override
     public long getDate(int col) {
         return base.getDate(col);
+    }
+
+    @Override
+    public void getDecimal128(int col, Decimal128 sink) {
+        base.getDecimal128(col, sink);
+    }
+
+    @Override
+    public short getDecimal16(int col) {
+        return base.getDecimal16(col);
+    }
+
+    @Override
+    public void getDecimal256(int col, Decimal256 sink) {
+        base.getDecimal256(col, sink);
+    }
+
+    @Override
+    public int getDecimal32(int col) {
+        return base.getDecimal32(col);
+    }
+
+    @Override
+    public long getDecimal64(int col) {
+        return base.getDecimal64(col);
+    }
+
+    @Override
+    public byte getDecimal8(int col) {
+        return base.getDecimal8(col);
     }
 
     @Override
@@ -120,6 +152,16 @@ public class DelegatingRecord implements Record {
     }
 
     @Override
+    public long getLong128Hi(int col) {
+        return base.getLong128Hi(col);
+    }
+
+    @Override
+    public long getLong128Lo(int col) {
+        return base.getLong128Lo(col);
+    }
+
+    @Override
     public void getLong256(int col, CharSink<?> sink) {
         base.getLong256(col, sink);
     }
@@ -137,6 +179,11 @@ public class DelegatingRecord implements Record {
     @Override
     public Record getRecord(int col) {
         return base.getRecord(col);
+    }
+
+    @Override
+    public long getRowId() {
+        return base.getRowId();
     }
 
     @Override
@@ -172,6 +219,11 @@ public class DelegatingRecord implements Record {
     @Override
     public long getTimestamp(int col) {
         return base.getTimestamp(col);
+    }
+
+    @Override
+    public long getUpdateRowId() {
+        return base.getUpdateRowId();
     }
 
     @Override
