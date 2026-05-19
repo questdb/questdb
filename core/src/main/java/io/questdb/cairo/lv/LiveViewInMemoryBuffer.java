@@ -69,6 +69,14 @@ public class LiveViewInMemoryBuffer implements QuietCloseable {
     private final IntList columnTypes;
     private final ObjList<MemoryCARWImpl> columns;
     private final int timestampColumnIndex;
+    // Highest base seqTxn whose rows the slot reflects. Eviction (RFC 123
+    // §"In-memory tier" line 848) only ages out rows when this value is
+    // covered by the LV's applied_watermark — protects unflushed rows from
+    // being dropped before they reach disk. Phase 1b always advances this
+    // after a successful apply, so the clamp is vacuous today; Phase 4
+    // (hand-off ring) is the regime where the clamp does real work.
+    // LONG_NULL means "no seqTxn information yet" — treated as durable.
+    private long maxSeqTxn;
     private long rowCount;
     private long seamTs;
 
@@ -96,6 +104,7 @@ public class LiveViewInMemoryBuffer implements QuietCloseable {
         this.timestampColumnIndex = timestampColumnIndex;
         this.rowCount = 0;
         this.seamTs = Numbers.LONG_NULL;
+        this.maxSeqTxn = Numbers.LONG_NULL;
     }
 
     @Override
@@ -312,6 +321,10 @@ public class LiveViewInMemoryBuffer implements QuietCloseable {
         return timestampColumnIndex;
     }
 
+    public long maxSeqTxn() {
+        return maxSeqTxn;
+    }
+
     public void putBool(long row, int col, boolean value) {
         columns.getQuick(col).putByte(row, (byte) (value ? 1 : 0));
     }
@@ -345,12 +358,14 @@ public class LiveViewInMemoryBuffer implements QuietCloseable {
     }
 
     /**
-     * Resets row count to zero and clears seam timestamp. Column buffers retain
-     * their allocated pages so the next refill reuses memory.
+     * Resets row count to zero, clears seam timestamp and the durability
+     * watermark. Column buffers retain their allocated pages so the next refill
+     * reuses memory.
      */
     public void reset() {
         rowCount = 0;
         seamTs = Numbers.LONG_NULL;
+        maxSeqTxn = Numbers.LONG_NULL;
     }
 
     public long rowCount() {
@@ -359,6 +374,10 @@ public class LiveViewInMemoryBuffer implements QuietCloseable {
 
     public long seamTs() {
         return seamTs;
+    }
+
+    public void setMaxSeqTxn(long maxSeqTxn) {
+        this.maxSeqTxn = maxSeqTxn;
     }
 
     public void setRowCount(long rowCount) {

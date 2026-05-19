@@ -674,6 +674,71 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testInMemEvictionDurabilityClampHoldsBackUnflushedRows() throws Exception {
+        // RFC 123 §"In-memory tier" line 848: in-mem eviction must clamp on
+        // (ts < latest - IN_MEMORY) AND (seqTxn <= applied_watermark) so the
+        // gap-free invariant between tiers stays intact when the disk tier
+        // is behind. Phase 1b reaches the in-mem publish only after a
+        // successful apply, so the natural cycle always satisfies the clamp;
+        // this test poisons the published slot's maxSeqTxn to Long.MAX_VALUE
+        // before driving a second slow-path swap, simulating the Phase 4
+        // hand-off-ring regime where the in-mem tier publishes rows ahead of
+        // apply. The aged-out row must survive.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_IN_MEMORY_BUFFER_GROWTH_BYTES, 0);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms IN MEMORY 100ms AS " +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base WHERE x > 0");
+
+            LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(instance);
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                setCurrentMicros(0L);
+                execute("INSERT INTO base (ts, x) VALUES ('2026-05-12T00:00:00.000000Z', 1)");
+                drainWalQueue();
+                drainJob(job);
+
+                LiveViewInMemoryTier tier = instance.getInMemoryTier();
+                Assert.assertNotNull(tier);
+                LiveViewInMemoryBuffer firstPublished = tier.getSlot(tier.getPublishedIdx());
+                Assert.assertEquals("seed cycle: one row in tier", 1, firstPublished.rowCount());
+                Assert.assertNotEquals(
+                        "fast-path append must stamp slot maxSeqTxn",
+                        Numbers.LONG_NULL,
+                        firstPublished.maxSeqTxn()
+                );
+
+                // Poison the published slot's maxSeqTxn to outrun any
+                // applied_watermark the next cycle can advance to. This
+                // simulates the Phase 4 regime where in-mem rows have been
+                // published ahead of the disk-side apply.
+                firstPublished.setMaxSeqTxn(Long.MAX_VALUE);
+
+                // Second insert: data ts 200ms after the first, so the first
+                // row's ts is below the IN_MEMORY threshold and would normally
+                // be evicted. With the clamp engaged (the prior slot is not
+                // durable yet), both rows must survive the slow-path swap.
+                setCurrentMicros(200_000L);
+                execute("INSERT INTO base (ts, x) VALUES ('2026-05-12T00:00:00.200000Z', 2)");
+                drainWalQueue();
+                drainJob(job);
+
+                LiveViewInMemoryBuffer published = tier.getSlot(tier.getPublishedIdx());
+                Assert.assertEquals(
+                        "durability clamp must retain the aged-out row when prior slot is unflushed",
+                        2,
+                        published.rowCount()
+                );
+                Assert.assertEquals("first surviving row is the older insert", 1, published.getInt(0, 1));
+                Assert.assertEquals("second surviving row is the newer insert", 2, published.getInt(1, 1));
+            }
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
     public void testLiveViewsExposesInMemBytes() throws Exception {
         // RFC 123 §"Catalogue function live_views()": in_mem_bytes reports the
         // current footprint of both N=2 slots. Zero before any refresh; > 0

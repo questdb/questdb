@@ -722,7 +722,11 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 // slot, append staging on top, publishSwap. Failure to acquire
                 // the write slot is a non-fatal stall — the on-disk tier still
                 // advanced, the in-mem tier just trails for this cycle.
-                publishToInMemoryTier(instance, stagingMaxTs);
+                // advanceTo is this cycle's highest base seqTxn — stamped on
+                // the resulting slot so the durability clamp at slow-path
+                // eviction (RFC 123 §"In-memory tier" line 848) can compare
+                // against applied_watermark.
+                publishToInMemoryTier(instance, stagingMaxTs, advanceTo);
             }
             if (lvConsumedPersisted && appendedRows > 0) {
                 // 2a.4 head-checkpoint write hook. Ordered after the apply's
@@ -1862,7 +1866,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * {@code live_views().writer_stall_micros} surfaces the stall duration
      * (RFC 123 §"Stall behavior").
      */
-    private void publishToInMemoryTier(LiveViewInstance instance, long stagingMaxTs) {
+    private void publishToInMemoryTier(LiveViewInstance instance, long stagingMaxTs, long cycleSeqTxn) {
         LiveViewInMemoryTier tier = instance.getInMemoryTier();
         if (tier == null) {
             return;
@@ -1882,6 +1886,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             if (acquired != null) {
                 try {
                     appendStagingInPlace(acquired, stagingBuffer.seamTs());
+                    acquired.setMaxSeqTxn(cycleSeqTxn);
                 } catch (Throwable t) {
                     // Fast-path append cannot leave the slot partially
                     // populated visibly to readers: rowCount only advances
@@ -1920,6 +1925,24 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             long inMemoryInBaseUnits = driver.fromMicros(instance.getDefinition().getInMemoryMicros());
             long retainThreshold = stagingMaxTs - inMemoryInBaseUnits;
 
+            // Durability clamp (RFC 123 §"In-memory tier" line 848): a row may
+            // only age out when both (a) ts < latest - IN_MEMORY and (b) its
+            // seqTxn is covered by applied_watermark — otherwise the gap-free
+            // invariant between tiers can break when the disk side is behind.
+            // Phase 1b reaches this code only after a successful apply, so
+            // every staging row is durable on disk; the clamp is vacuous
+            // today but protects the Phase 4 hand-off-ring regime where the
+            // in-mem tier publishes ahead of apply.
+            //
+            // The slot does not carry per-row seqTxn metadata, so the clamp
+            // is enforced at slot granularity: when the published slot's
+            // maxSeqTxn outruns applied_watermark, retain every row (no
+            // age-out this cycle). The RFC accepts that under stalled apply
+            // the in-mem footprint can temporarily exceed 2 x per_buffer_size.
+            long pubMaxSeqTxn = pubSlot.maxSeqTxn();
+            long appliedWatermark = instance.getStateReader().getAppliedWatermark();
+            boolean pubSlotDurable = pubMaxSeqTxn == Numbers.LONG_NULL || pubMaxSeqTxn <= appliedWatermark;
+
             // Copy retained rows from the currently-published slot (those
             // with ts >= retainThreshold). Rows in the slot are stored in
             // ts-ascending order, so we can simply skip leading rows until
@@ -1928,7 +1951,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             long writeSeamTs = Numbers.LONG_NULL;
             for (long r = 0, rn = pubSlot.rowCount(); r < rn; r++) {
                 long srcTs = pubSlot.getLong(r, tsCol);
-                if (srcTs < retainThreshold) {
+                if (pubSlotDurable && srcTs < retainThreshold) {
                     continue;
                 }
                 if (writeSeamTs == Numbers.LONG_NULL) {
@@ -1948,6 +1971,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             }
             writeSlot.setRowCount(writeRow);
             writeSlot.setSeamTs(writeSeamTs);
+            writeSlot.setMaxSeqTxn(cycleSeqTxn);
             tier.publishSwap(writeIdx);
             // Clear any prior stall streak — this cycle made progress.
             instance.setWriterStallStartUs(Numbers.LONG_NULL);
