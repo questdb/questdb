@@ -69,6 +69,8 @@ public class NthValueTimestampWindowFunctionFactory extends AbstractWindowFuncti
     public static final String NAME = "nth_value";
     private static final ArrayColumnTypes NTH_VALUE_COLUMN_TYPES;
     private static final ArrayColumnTypes NTH_VALUE_COLUMN_TYPES_LV;
+    private static final ArrayColumnTypes NTH_VALUE_OVER_PARTITION_ROWS_UNBOUNDED_COLUMN_TYPES;
+    private static final ArrayColumnTypes NTH_VALUE_OVER_PARTITION_ROWS_UNBOUNDED_COLUMN_TYPES_LV;
     // LONG signature for n so both INT literals (auto-widened) and LONG literals resolve; the
     // value is validated to fit in a positive int below.
     private static final String SIGNATURE = NAME + "(NL)";
@@ -279,14 +281,13 @@ public class NthValueTimestampWindowFunctionFactory extends AbstractWindowFuncti
                 }
                 // unbounded preceding and K preceding (K > 0) -- no per-partition buffer needed.
                 else if (rowsLo == Long.MIN_VALUE) {
-                    ArrayColumnTypes columnTypes = new ArrayColumnTypes();
-                    columnTypes.add(ColumnType.LONG); // count
-                    columnTypes.add(ColumnType.LONG); // lockedValue
-
+                    final boolean liveView = windowContext.isLiveView();
                     Map map = MapFactory.createUnorderedMap(
                             configuration,
                             partitionByKeyTypes,
-                            columnTypes
+                            liveView
+                                    ? NTH_VALUE_OVER_PARTITION_ROWS_UNBOUNDED_COLUMN_TYPES_LV
+                                    : NTH_VALUE_OVER_PARTITION_ROWS_UNBOUNDED_COLUMN_TYPES
                     );
                     try {
                         return new NthValueOverPartitionRowsFrameUnboundedFunction(
@@ -295,7 +296,10 @@ public class NthValueTimestampWindowFunctionFactory extends AbstractWindowFuncti
                                 partitionBySink,
                                 rowsHi,
                                 args.get(0),
-                                n
+                                n,
+                                partitionByKeyTypes,
+                                liveView,
+                                configuration
                         );
                     } catch (Throwable t) {
                         Misc.free(map);
@@ -955,6 +959,12 @@ public class NthValueTimestampWindowFunctionFactory extends AbstractWindowFuncti
     public static class NthValueOverPartitionRowsFrameUnboundedFunction extends BasePartitionedWindowFunction implements WindowTimestampFunction {
 
         protected final int bufferSize;
+        protected final CairoConfiguration configuration;
+        protected final ArrayColumnTypes keyColumnTypes;
+        protected final boolean liveView;
+        // Full value layout (including tombstone slot) for the compactPartitionMap
+        // scratch Map. Null outside live-view mode.
+        protected final ArrayColumnTypes mapValueTypes;
         protected final int n;
         protected long nthValue;
 
@@ -964,12 +974,61 @@ public class NthValueTimestampWindowFunctionFactory extends AbstractWindowFuncti
                 RecordSink partitionBySink,
                 long rowsHi,
                 Function arg,
-                int n
+                int n,
+                ColumnTypes partitionByKeyTypes,
+                boolean liveView,
+                CairoConfiguration configuration
         ) {
             super(map, partitionByRecord, partitionBySink, arg);
             assert rowsHi < 0 && rowsHi != Long.MIN_VALUE; // K preceding with K > 0; (int) Math.abs would overflow at MIN_VALUE
             this.bufferSize = (int) Math.abs(rowsHi);
             this.n = n;
+            this.liveView = liveView;
+            this.configuration = configuration;
+            this.keyColumnTypes = new ArrayColumnTypes();
+            for (int i = 0, len = partitionByKeyTypes.getColumnCount(); i < len; i++) {
+                this.keyColumnTypes.add(partitionByKeyTypes.getColumnType(i));
+            }
+            if (liveView) {
+                ArrayColumnTypes valueTypesCopy = new ArrayColumnTypes();
+                for (int i = 0, len = NTH_VALUE_OVER_PARTITION_ROWS_UNBOUNDED_COLUMN_TYPES_LV.getColumnCount(); i < len; i++) {
+                    valueTypesCopy.add(NTH_VALUE_OVER_PARTITION_ROWS_UNBOUNDED_COLUMN_TYPES_LV.getColumnType(i));
+                }
+                this.mapValueTypes = valueTypesCopy;
+                this.tombstoneValueIndex = 2;
+            } else {
+                this.mapValueTypes = null;
+                this.tombstoneValueIndex = -1;
+            }
+        }
+
+        @Override
+        public void compactPartitionMap() {
+            if (tombstoneValueIndex < 0 || tombstoneCount == 0) {
+                return;
+            }
+            Map scratch = MapFactory.createUnorderedMap(configuration, keyColumnTypes, mapValueTypes);
+            try {
+                MapRecordCursor cursor = map.getCursor();
+                MapRecord record = map.getRecord();
+                while (cursor.hasNext()) {
+                    MapValue srcValue = record.getValue();
+                    if (srcValue.getByte(tombstoneValueIndex) == 1) {
+                        continue;
+                    }
+                    long srcKeyHash = record.keyHashCode();
+                    MapKey dstKey = scratch.withKey();
+                    record.copyToKey(dstKey);
+                    MapValue dstValue = dstKey.createValue(srcKeyHash);
+                    record.copyValue(dstValue);
+                }
+                Misc.free(map);
+                map = scratch;
+                scratch = null;
+                tombstoneCount = 0;
+            } finally {
+                Misc.free(scratch);
+            }
         }
 
         @Override
@@ -984,6 +1043,9 @@ public class NthValueTimestampWindowFunctionFactory extends AbstractWindowFuncti
             if (mapValue.isNew()) {
                 count = 0;
                 mapValue.putLong(1, Numbers.LONG_NULL);
+                if (tombstoneValueIndex >= 0) {
+                    mapValue.putByte(tombstoneValueIndex, (byte) 0);
+                }
             } else {
                 count = mapValue.getLong(0);
             }
@@ -1010,6 +1072,11 @@ public class NthValueTimestampWindowFunctionFactory extends AbstractWindowFuncti
         }
 
         @Override
+        public Map getPartitionMap() {
+            return map;
+        }
+
+        @Override
         public long getTimestamp(Record rec) {
             return nthValue;
         }
@@ -1026,6 +1093,105 @@ public class NthValueTimestampWindowFunctionFactory extends AbstractWindowFuncti
         }
 
         @Override
+        public void reopen() {
+            super.reopen();
+            tombstoneCount = 0;
+        }
+
+        @Override
+        public void reset() {
+            super.reset();
+            tombstoneCount = 0;
+        }
+
+        @Override
+        public void resetPartition(Record record) {
+            partitionByRecord.of(record);
+            MapKey key = map.withKey();
+            key.put(partitionByRecord, partitionBySink);
+            MapValue mapValue = key.createValue();
+            mapValue.putLong(0, 0L);
+            mapValue.putLong(1, Numbers.LONG_NULL);
+            if (mapValue.isNew()) {
+                if (tombstoneValueIndex >= 0) {
+                    mapValue.putByte(tombstoneValueIndex, (byte) 0);
+                }
+            } else if (tombstoneValueIndex >= 0 && mapValue.getByte(tombstoneValueIndex) != 1) {
+                mapValue.putByte(tombstoneValueIndex, (byte) 1);
+                tombstoneCount++;
+            }
+        }
+
+        @Override
+        public void restore(MemoryR source, int formatVersion) {
+            map.clear();
+            tombstoneCount = 0;
+            long offset = 0;
+            final long partitionCount = source.getLong(offset);
+            offset += Long.BYTES;
+            for (long p = 0; p < partitionCount; p++) {
+                MapKey key = map.withKey();
+                offset = LiveViewSnapshotKeyCodec.readKey(key, source, offset, keyColumnTypes);
+                MapValue value = key.createValue();
+                value.putLong(0, source.getLong(offset));
+                offset += Long.BYTES;
+                value.putLong(1, source.getLong(offset));
+                offset += Long.BYTES;
+                if (tombstoneValueIndex >= 0) {
+                    value.putByte(tombstoneValueIndex, (byte) 0);
+                }
+            }
+        }
+
+        @Override
+        public void snapshot(MemoryA sink) {
+            MapRecordCursor cursor = map.getCursor();
+            MapRecord record = map.getRecord();
+            final long liveCount;
+            if (tombstoneValueIndex < 0 || tombstoneCount == 0) {
+                liveCount = map.size();
+            } else {
+                long count = 0;
+                while (cursor.hasNext()) {
+                    if (record.getValue().getByte(tombstoneValueIndex) != 1) {
+                        count++;
+                    }
+                }
+                liveCount = count;
+            }
+            sink.putLong(liveCount);
+
+            cursor.toTop();
+            final int keyStartIndex = mapValueTypes != null
+                    ? mapValueTypes.getColumnCount()
+                    : NTH_VALUE_OVER_PARTITION_ROWS_UNBOUNDED_COLUMN_TYPES.getColumnCount();
+            while (cursor.hasNext()) {
+                final MapValue value = record.getValue();
+                if (tombstoneValueIndex >= 0 && value.getByte(tombstoneValueIndex) == 1) {
+                    continue;
+                }
+                LiveViewSnapshotKeyCodec.writeKey(sink, record, keyColumnTypes, keyStartIndex);
+                sink.putLong(value.getLong(0));
+                sink.putLong(value.getLong(1));
+            }
+        }
+
+        @Override
+        public int snapshotFormatVersion() {
+            return 1;
+        }
+
+        @Override
+        public int snapshotMinSupportedVersion() {
+            return 1;
+        }
+
+        @Override
+        public boolean supportsSnapshot() {
+            return LiveViewSnapshotKeyCodec.isAllTypesSupported(keyColumnTypes);
+        }
+
+        @Override
         public void toPlan(PlanSink sink) {
             sink.val(getName());
             sink.val('(').val(arg).val(',').val(n).val(')');
@@ -1035,6 +1201,12 @@ public class NthValueTimestampWindowFunctionFactory extends AbstractWindowFuncti
             sink.val(" rows between unbounded preceding and ");
             sink.val(bufferSize).val(" preceding");
             sink.val(')');
+        }
+
+        @Override
+        public void toTop() {
+            super.toTop();
+            tombstoneCount = 0;
         }
     }
 
@@ -1919,5 +2091,14 @@ public class NthValueTimestampWindowFunctionFactory extends AbstractWindowFuncti
         NTH_VALUE_COLUMN_TYPES_LV.add(ColumnType.TIMESTAMP); // captured value
         NTH_VALUE_COLUMN_TYPES_LV.add(ColumnType.LONG); // row count within partition
         NTH_VALUE_COLUMN_TYPES_LV.add(ColumnType.BYTE); // tombstone (anchor-driven compaction)
+
+        NTH_VALUE_OVER_PARTITION_ROWS_UNBOUNDED_COLUMN_TYPES = new ArrayColumnTypes();
+        NTH_VALUE_OVER_PARTITION_ROWS_UNBOUNDED_COLUMN_TYPES.add(ColumnType.LONG); // count
+        NTH_VALUE_OVER_PARTITION_ROWS_UNBOUNDED_COLUMN_TYPES.add(ColumnType.LONG); // lockedValue
+
+        NTH_VALUE_OVER_PARTITION_ROWS_UNBOUNDED_COLUMN_TYPES_LV = new ArrayColumnTypes();
+        NTH_VALUE_OVER_PARTITION_ROWS_UNBOUNDED_COLUMN_TYPES_LV.add(ColumnType.LONG); // count
+        NTH_VALUE_OVER_PARTITION_ROWS_UNBOUNDED_COLUMN_TYPES_LV.add(ColumnType.LONG); // lockedValue
+        NTH_VALUE_OVER_PARTITION_ROWS_UNBOUNDED_COLUMN_TYPES_LV.add(ColumnType.BYTE); // tombstone (anchor-driven compaction)
     }
 }
