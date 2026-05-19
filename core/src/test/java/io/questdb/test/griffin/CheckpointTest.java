@@ -459,8 +459,9 @@ public class CheckpointTest extends AbstractCairoTest {
             drainWalQueue();
 
             execute("CREATE LIVE VIEW live_rn FLUSH EVERY 1s AS" +
-                    " SELECT symbol, price, ts, row_number() OVER (PARTITION BY symbol ORDER BY ts ANCHOR DAILY '00:00') AS rn" +
-                    " FROM trades");
+                    " SELECT symbol, price, ts, row_number() OVER w AS rn" +
+                    " FROM trades" +
+                    " WINDOW w AS (PARTITION BY symbol ORDER BY ts ANCHOR DAILY '00:00')");
 
             execute("CHECKPOINT CREATE;");
 
@@ -2047,8 +2048,9 @@ public class CheckpointTest extends AbstractCairoTest {
             drainWalQueue();
 
             execute("CREATE LIVE VIEW live_rn FLUSH EVERY 1s AS" +
-                    " SELECT symbol, price, ts, row_number() OVER (PARTITION BY symbol ORDER BY ts ANCHOR DAILY '00:00') AS rn" +
-                    " FROM trades");
+                    " SELECT symbol, price, ts, row_number() OVER w AS rn" +
+                    " FROM trades" +
+                    " WINDOW w AS (PARTITION BY symbol ORDER BY ts ANCHOR DAILY '00:00')");
 
             execute("CHECKPOINT CREATE;");
 

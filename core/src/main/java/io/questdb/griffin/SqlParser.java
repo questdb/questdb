@@ -1716,13 +1716,18 @@ public class SqlParser {
         // A column may either be an inline WindowExpression itself (e.g. SELECT
         // sum(price) OVER (...) FROM t) or carry a nested inline OVER inside an
         // arithmetic / function tree (e.g. sum(price) OVER (...) + 1). Walk both.
+        // Two checks fire here: bare-unbounded reject (PARTITION-BY-keyed window
+        // without ANCHOR), and inline-ANCHOR reject. The runtime AnchorSpec is
+        // captured only from named WINDOW clauses, so an inline anchor parses
+        // but never wires through to the reset path - reject up front and
+        // point the user at the named-window form.
         ObjList<QueryColumn> columns = queryModel.getBottomUpColumns();
         for (int i = 0, n = columns.size(); i < n; i++) {
             QueryColumn qc = columns.getQuick(i);
             if (qc.isWindowExpression()) {
-                rejectIfBareUnbounded((WindowExpression) qc, qc.getAst());
+                validateInlineWindow((WindowExpression) qc, qc.getAst());
             }
-            walkInlineWindowsForBareUnbounded(qc.getAst());
+            walkInlineWindows(qc.getAst());
         }
     }
 
@@ -1740,14 +1745,19 @@ public class SqlParser {
         }
     }
 
-    private static void rejectIfBareUnbounded(WindowExpression w, ExpressionNode fallback) throws SqlException {
-        // An OVER <named-window> reference inherits the bound check from the
-        // named definition (already validated upstream in this method).
+    private static void validateInlineWindow(WindowExpression w, ExpressionNode fallback) throws SqlException {
+        // An OVER <named-window> reference inherits all checks from the named
+        // definition (already validated upstream in this method).
         if (w.isNamedWindowReference()) {
             return;
         }
+        // Inline OVER (... ANCHOR ...) parses but the runtime AnchorSpec is
+        // captured only from named WINDOW clauses, so an inline anchor would
+        // silently never reset. Reject up front and direct the user at the
+        // named-window form.
         if (w.getAnchorKind() != WindowExpression.ANCHOR_KIND_NONE) {
-            return;
+            throw SqlException.$(positionOfWindow(w, fallback),
+                    "ANCHOR is only supported on named WINDOW clauses; declare the window with WINDOW <name> AS (...) and reference it from the SELECT");
         }
         if (w.isNonDefaultFrame()) {
             return;
@@ -1833,19 +1843,19 @@ public class SqlParser {
         }
     }
 
-    private static void walkInlineWindowsForBareUnbounded(ExpressionNode node) throws SqlException {
+    private static void walkInlineWindows(ExpressionNode node) throws SqlException {
         if (node == null) {
             return;
         }
         if (node.windowExpression != null) {
-            rejectIfBareUnbounded(node.windowExpression, node);
+            validateInlineWindow(node.windowExpression, node);
         }
         if (node.paramCount < 3) {
-            walkInlineWindowsForBareUnbounded(node.lhs);
-            walkInlineWindowsForBareUnbounded(node.rhs);
+            walkInlineWindows(node.lhs);
+            walkInlineWindows(node.rhs);
         } else if (node.args != null) {
             for (int i = 0, n = node.paramCount; i < n; i++) {
-                walkInlineWindowsForBareUnbounded(node.args.getQuick(i));
+                walkInlineWindows(node.args.getQuick(i));
             }
         }
     }

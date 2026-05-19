@@ -1007,7 +1007,8 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
             // (variable-length partition keys are not yet supported by the
             // codec used to serialise key bytes into checkpoint blocks).
             execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
-                    "SELECT ts, sym, x, row_number() OVER (PARTITION BY x ORDER BY ts ANCHOR DAILY '00:00') AS rn FROM base");
+                    "SELECT ts, sym, x, row_number() OVER w AS rn FROM base " +
+                    "WINDOW w AS (PARTITION BY x ORDER BY ts ANCHOR DAILY '00:00')");
             execute("INSERT INTO base (ts, sym, x) VALUES " +
                     "('2026-05-12T00:00:00.000001Z', 'a', 1), " +
                     "('2026-05-12T00:00:00.000002Z', 'b', 2), " +
@@ -6024,6 +6025,64 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                 Assert.fail("expected constant anchor reject");
             } catch (SqlException e) {
                 Assert.assertTrue(e.getMessage(), e.getMessage().contains("must not be a constant"));
+            }
+        });
+    }
+
+    @Test
+    public void testRejectInlineAnchorDaily() throws Exception {
+        // Inline OVER (... ANCHOR DAILY ...) parses but the runtime AnchorSpec
+        // is captured only from named WINDOW clauses, so an inline anchor would
+        // silently never reset. The parser rejects it up front and points the
+        // user at the named-window form.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            try {
+                execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                        "SELECT ts, sym, row_number() OVER (PARTITION BY sym ORDER BY ts ANCHOR DAILY '00:00') AS rn FROM base");
+                Assert.fail("expected inline ANCHOR reject");
+            } catch (SqlException e) {
+                Assert.assertTrue(
+                        e.getMessage(),
+                        e.getMessage().contains("ANCHOR is only supported on named WINDOW clauses")
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testRejectInlineAnchorExpression() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            try {
+                execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                        "SELECT ts, sym, sum(x) OVER (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts)) AS s FROM base");
+                Assert.fail("expected inline ANCHOR EXPRESSION reject");
+            } catch (SqlException e) {
+                Assert.assertTrue(
+                        e.getMessage(),
+                        e.getMessage().contains("ANCHOR is only supported on named WINDOW clauses")
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testRejectInlineAnchorNestedInArithmetic() throws Exception {
+        // sum(x) OVER (... ANCHOR ...) + 1 — the inline OVER lives inside an
+        // arithmetic tree rather than at the QueryColumn top level. The
+        // recursive walk must reach it.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            try {
+                execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                        "SELECT ts, sym, sum(x) OVER (PARTITION BY sym ORDER BY ts ANCHOR DAILY '00:00') + 1 AS s FROM base");
+                Assert.fail("expected nested inline ANCHOR reject");
+            } catch (SqlException e) {
+                Assert.assertTrue(
+                        e.getMessage(),
+                        e.getMessage().contains("ANCHOR is only supported on named WINDOW clauses")
+                );
             }
         });
     }

@@ -291,9 +291,9 @@ public class ServerMainTest extends AbstractBootstrapTest {
 
                 serverMain.getEngine().execute(
                         "CREATE LIVE VIEW live_rn FLUSH EVERY 1s AS" +
-                                " SELECT symbol, price, ts," +
-                                " row_number() OVER (PARTITION BY symbol ORDER BY ts ANCHOR DAILY '00:00') AS rn" +
-                                " FROM trades",
+                                " SELECT symbol, price, ts, row_number() OVER w AS rn" +
+                                " FROM trades" +
+                                " WINDOW w AS (PARTITION BY symbol ORDER BY ts ANCHOR DAILY '00:00')",
                         sqlExecutionContext
                 );
 
@@ -599,6 +599,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "cairo.live.view.enabled\tQDB_CAIRO_LIVE_VIEW_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
                                     "cairo.live.view.flush.retry.max\tQDB_CAIRO_LIVE_VIEW_FLUSH_RETRY_MAX\t5\tdefault\tfalse\tfalse\n" +
                                     "cairo.live.view.flush.retry.max.duration.micros\tQDB_CAIRO_LIVE_VIEW_FLUSH_RETRY_MAX_DURATION_MICROS\t60000000\tdefault\tfalse\tfalse\n" +
+                                    "cairo.live.view.in.memory.buffer.growth.bytes\tQDB_CAIRO_LIVE_VIEW_IN_MEMORY_BUFFER_GROWTH_BYTES\t16777216\tdefault\tfalse\tfalse\n" +
                                     "cairo.live.view.in.memory.buffer.initial.bytes\tQDB_CAIRO_LIVE_VIEW_IN_MEMORY_BUFFER_INITIAL_BYTES\t65536\tdefault\tfalse\tfalse\n" +
                                     "cairo.live.view.in.memory.max\tQDB_CAIRO_LIVE_VIEW_IN_MEMORY_MAX\t3600000000\tdefault\tfalse\tfalse\n" +
                                     "cairo.live.view.partition.compact.threshold\tQDB_CAIRO_LIVE_VIEW_PARTITION_COMPACT_THRESHOLD\t100000\tdefault\tfalse\tfalse\n" +
