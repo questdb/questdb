@@ -262,11 +262,10 @@ public interface WindowFunction extends Function {
      * tombstone-compaction routine to rebuild the function's state container.
      * Returns {@code null} by default; window functions that maintain per-partition
      * state in a Map keyed by the named window's PARTITION BY columns override this
-     * once they sign up for full compaction (the Phase 2b function migration
-     * train).
+     * once they sign up for full compaction by overriding this method.
      * <p>
-     * Phase 2a only consumes the anchor-map compaction trigger; per-function map
-     * rebuild lands as each group's 2b commit overrides this method. While the
+     * A function that does not override this leaves its per-function Map out of the
+     * rebuild; only the anchor-map compaction trigger runs for it. While the
      * default returns {@code null}, the function's Map continues to grow and is
      * reclaimed only when the live view is dropped.
      */

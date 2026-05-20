@@ -34,7 +34,7 @@ import io.questdb.std.Numbers;
  * Adapts a live view's metadata to {@link TableStructure} so the engine can
  * materialize the on-disk WAL-backed table that backs the view's durable tier.
  * <p>
- * Phase 1 brings live views in line with materialized views: real
+ * Live views are in line with materialized views: real
  * {@code partitionBy}, the standard {@code _meta}/{@code _txn}/partition layout,
  * and per-segment {@code wal<n>/} directories. The default partition scheme is
  * inherited from the base table at CREATE time; an explicit {@code PARTITION BY}

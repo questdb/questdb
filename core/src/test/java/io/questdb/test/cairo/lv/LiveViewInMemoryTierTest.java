@@ -37,7 +37,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
- * Phase 1b Commit 2: unit tests for the N=2 in-memory tier infrastructure.
+ * Unit tests for the N=2 in-memory tier infrastructure.
  * No live-view CREATE / refresh involved — the tier is exercised standalone
  * so allocations + CAS-based pin/swap can be audited without higher-layer
  * noise. All tests run under {@code assertMemoryLeak} to catch native-memory

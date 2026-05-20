@@ -215,7 +215,7 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
     // Returns true when the current compile is the CREATE-time or refresh-time
     // compile of a live view's SELECT. Compile-time switch that lets window
     // function factories opt into live-view-only machinery (e.g. the
-    // lastActivityTs value-layout slot that drives Phase 5 partition-state
+    // lastActivityTs value-layout slot that drives partition-state
     // eviction) and lets WhereClauseParser suppress indexed-symbol key
     // extraction so the planner falls back to a plain FilteredRecordCursorFactory
     // shape that the incremental refresh path can handle.

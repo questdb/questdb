@@ -40,16 +40,16 @@ import io.questdb.std.Numbers;
  * visible to the refresh worker's slow-path {@code tryAcquireWrite} ensures
  * the writer trails rather than progressing past a slow reader.
  * <p>
- * Phase 3a wires seam_ts routing: after the disk cursor exhausts, the cursor
+ * Seam_ts routing: after the disk cursor exhausts, the cursor
  * iterates the pinned in-mem buffer rows whose timestamp is strictly greater
  * than the maximum timestamp seen on the disk side. In the current
  * inline-apply architecture the in-mem tier is at most one cycle behind disk
  * and almost always a subset, so the in-mem iteration produces zero rows in
  * steady state; the routing logic engages only in narrow races (cursor opens
- * between disk apply and in-mem publish) and in future phases that decouple
- * apply from per-notification refresh (Phase 4 hand-off ring).
+ * between disk apply and in-mem publish) and in a future hand-off ring regime
+ * that decouples apply from per-notification refresh.
  * <p>
- * In-mem rows have no rowId in Phase 3a — {@link #recordAt(Record, long)}
+ * In-mem rows have no rowId — {@link #recordAt(Record, long)}
  * targets only disk rows. ASOF JOIN as RHS and other random-access readers
  * cannot land on an in-mem row; this is consistent with the steady-state
  * in-mem-as-subset-of-disk property.
@@ -159,7 +159,7 @@ public class LiveViewRecordCursor implements RecordCursor {
 
     @Override
     public void recordAt(Record record, long atRowId) {
-        // Phase 3a: in-mem rows are not addressable via rowId — only disk
+        // In-mem rows are not addressable via rowId — only disk
         // rows have rowIds. Random-access readers (ASOF JOIN as RHS, etc.)
         // land on the disk side; the in-mem tier is a subset of disk in
         // steady state so no data is hidden by this choice.
@@ -170,7 +170,7 @@ public class LiveViewRecordCursor implements RecordCursor {
 
     @Override
     public long size() {
-        // Phase 3a steady state: in-mem is a subset of disk, so disk.size()
+        // In steady state in-mem is a subset of disk, so disk.size()
         // is the cursor's actual size. Returning -1 (unknown) would defeat
         // LIMIT pushdown for the disk slice.
         return diskCursor.size();
@@ -285,12 +285,12 @@ public class LiveViewRecordCursor implements RecordCursor {
 
         @Override
         public long getRowId() {
-            // In-mem rows have no rowId in Phase 3a — they are not addressable
+            // In-mem rows have no rowId — they are not addressable
             // via recordAt. Throw on access to fail loudly if a caller tries
             // to round-trip through random access.
             if (inMemMode) {
                 throw new UnsupportedOperationException(
-                        "live view in-mem row has no rowId (Phase 3a)"
+                        "live view in-mem row has no rowId"
                 );
             }
             return base.getRowId();

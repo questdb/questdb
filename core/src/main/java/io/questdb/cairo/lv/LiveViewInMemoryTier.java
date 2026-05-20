@@ -48,7 +48,7 @@ import java.util.concurrent.atomic.AtomicInteger;
  *     retained rows from the published slot, appends new rows, and flips the
  *     published index via {@link #publishSwap(int)}. The post-flip release
  *     also drops the writer sentinel on the new slot.</li>
- *   <li><b>Fast-path in-place append</b> (Phase 3a) — writer calls
+ *   <li><b>Fast-path in-place append</b> — writer calls
  *     {@link #tryAcquireWrite(int)} on the <em>published</em> slot, appends
  *     new rows in place, and drops the sentinel via
  *     {@link #releaseWriteWithoutPublish(int)} without changing
@@ -142,7 +142,7 @@ public class LiveViewInMemoryTier implements QuietCloseable {
             if (current < 0) {
                 // Writer in flight on this slot. Yield and re-read; publishedIdx
                 // may have moved (slow-path swap completing) or stay on the same
-                // slot while a Phase 3a fast-path in-place append finishes.
+                // slot while a fast-path in-place append finishes.
                 Os.pause();
                 continue;
             }
@@ -267,7 +267,7 @@ public class LiveViewInMemoryTier implements QuietCloseable {
      *     writer releases the sentinel (so the slot can be retried next
      *     cycle) without exposing partial / zero-row contents to readers as
      *     the new published state.</li>
-     *   <li><b>Fast-path success</b> (Phase 3a) — the writer appended in
+     *   <li><b>Fast-path success</b> — the writer appended in
      *     place on the published slot; readers were already seeing this
      *     slot, so {@code publishedIdx} stays put and only the sentinel
      *     drops.</li>

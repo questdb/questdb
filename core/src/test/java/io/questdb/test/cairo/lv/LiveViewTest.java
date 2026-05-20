@@ -38,7 +38,7 @@ import org.junit.Assert;
 import org.junit.Test;
 
 /**
- * Phase 1 lifecycle and catalogue tests for live views. Complements
+ * Lifecycle and catalogue tests for live views. Complements
  * {@link LiveViewSmokeTest} (CREATE / DROP / refresh / restart / anchor reset)
  * with surface coverage:
  * <ul>

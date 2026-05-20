@@ -175,7 +175,7 @@ public class WindowRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     /**
-     * Drives live view Phase 5 partition-state eviction across all window functions.
+     * Drives live view partition-state eviction across all window functions.
      * Each partitioned function sheds accumulator entries whose last-seen row
      * timestamp has fallen below {@code cutoffTs}. Non-partitioned window functions
      * treat this as a no-op.

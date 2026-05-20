@@ -82,20 +82,17 @@ public class LiveViewDefinition {
     private final ObjList<String> dependencyColumnNames;
     private final long flushEveryInterval;
     private final char flushEveryIntervalUnit;
-    // User-facing knob for the in-memory tier. Phase 1 has no in-mem tier
-    // (reads route through the standard TableReader), so the value is parsed,
-    // validated against cairo.live.view.in.memory.max, and persisted but not
-    // consumed at runtime. Reserved for the Phase 2 in-mem cache, which will
-    // honour this duration as the trim window. Forward-compat: existing LVs
-    // already carry the parameter when the tier lands; no _lv schema bump.
+    // User-facing knob for the in-memory tier: how much of the most recent data
+    // (by event time) the tier keeps before eviction trims it. Parsed at CREATE,
+    // validated against cairo.live.view.in.memory.max, and persisted in _lv.
     private final long inMemoryInterval;
     private final char inMemoryIntervalUnit;
     private final GenericRecordMetadata metadata;
     private final int partitionBy;
     private final String viewName;
     private final String viewSql;
-    // Earliest base-table ts the view promises to retain rows for. Phase 1 (no BACKFILL)
-    // sets this to the view's CREATE timestamp; O3 rejects rows below this bound.
+    // Earliest base-table ts the view promises to retain rows for. Non-BACKFILL
+    // views set this to the view's CREATE timestamp; O3 rejects rows below this bound.
     private final long viewLowerBoundTimestamp;
 
     public LiveViewDefinition(

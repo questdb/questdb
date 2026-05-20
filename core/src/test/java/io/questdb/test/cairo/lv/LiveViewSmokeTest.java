@@ -75,7 +75,7 @@ import org.junit.Test;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
- * Phase 1 smoke tests: confirm the new CREATE LIVE VIEW syntax (FLUSH EVERY,
+ * Smoke tests: confirm the new CREATE LIVE VIEW syntax (FLUSH EVERY,
  * IN MEMORY, PARTITION BY, BACKFILL reject) is parsed and validated, and that
  * creating + dropping a live view goes through the engine end-to-end.
  * <p>
@@ -136,7 +136,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
     public void testCreateLiveViewMakesCheckpointsDir() throws Exception {
         // CREATE LIVE VIEW must materialize _checkpoints/
         // inside the LV directory so the flush cycle's checkpoint write hook
-        // (Phase 2a.4) has a target directory ready.
+        // has a target directory ready.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
@@ -486,7 +486,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
 
     @Test
     public void testBackfillAcceptedAtCreate() throws Exception {
-        // Phase 3b: BACKFILL parses, the CORE_DEFINITION block stores
+        // BACKFILL parses, the CORE_DEFINITION block stores
         // backfillRequested=true, and the CORE_STATE block stores
         // BACKFILL_STATE_BACKFILLING plus the captured target seqTxn.
         assertMemoryLeak(() -> {
@@ -609,7 +609,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
 
     @Test
     public void testRejectInMemoryBelowFlushEvery() throws Exception {
-        // Asserted-wording RFC requires the FLUSH EVERY value in parentheses so the
+        // The asserted message requires the FLUSH EVERY value in parentheses so the
         // operator sees what the floor was (1s in this case).
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
@@ -761,7 +761,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
         // IN MEMORY 100ms and a 200ms gap between the two inserts (data ts),
         // the first row's ts is below the eviction threshold by the time the
         // second refresh cycle runs, so only the second row survives.
-        // Phase 3a: IN_MEMORY eviction runs on slow-path edges only — the
+        // IN_MEMORY eviction runs on slow-path edges only — the
         // fast-path append leaves prior rows intact regardless of age. Force
         // slow-path (growth=0) to exercise the eviction policy.
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_IN_MEMORY_BUFFER_GROWTH_BYTES, 0);
@@ -805,10 +805,10 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
         // In-mem eviction must clamp on
         // (ts < latest - IN_MEMORY) AND (seqTxn <= applied_watermark) so the
         // gap-free invariant between tiers stays intact when the disk tier
-        // is behind. Phase 1b reaches the in-mem publish only after a
+        // is behind. The in-mem publish happens only after a
         // successful apply, so the natural cycle always satisfies the clamp;
         // this test poisons the published slot's maxSeqTxn to Long.MAX_VALUE
-        // before driving a second slow-path swap, simulating the Phase 4
+        // before driving a second slow-path swap, simulating a future
         // hand-off-ring regime where the in-mem tier publishes rows ahead of
         // apply. The aged-out row must survive.
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_IN_MEMORY_BUFFER_GROWTH_BYTES, 0);
@@ -838,7 +838,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
 
                 // Poison the published slot's maxSeqTxn to outrun any
                 // applied_watermark the next cycle can advance to. This
-                // simulates the Phase 4 regime where in-mem rows have been
+                // simulates a future regime where in-mem rows have been
                 // published ahead of the disk-side apply.
                 firstPublished.setMaxSeqTxn(Long.MAX_VALUE);
 
@@ -1005,7 +1005,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
         // testReleaseWriteWithoutPublishKeepsPriorSlotPublished pins the tier
         // contract; this smoke test drives the same recovery via the refresh
         // worker so the production catch path itself is exercised.
-        // Phase 3a: the publishSwap injection point fires only on the
+        // The publishSwap injection point fires only on the
         // slow-path. Force slow-path (growth=0) so the failure injection runs.
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_IN_MEMORY_BUFFER_GROWTH_BYTES, 0);
         assertMemoryLeak(() -> {
@@ -1065,7 +1065,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
 
                 // The on-disk tier did advance — the inline apply committed
                 // before publishToInMemoryTier ran. Both base rows must be
-                // visible through SELECT (which reads from disk in Phase 1b).
+                // visible through SELECT (which reads from disk).
                 assertSql(
                         "x\trn\n" +
                                 "7\t1\n" +
@@ -1079,13 +1079,13 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                 // the retained row from the previously-published slot plus the
                 // new staging row.
                 //
-                // Phase 1b note: the row processed by the failed refresh cycle
+                // Note: the row processed by the failed refresh cycle
                 // (x=13) is durable on disk via the inline apply that committed
                 // before publishToInMemoryTier ran, but it never made it into
                 // the in-mem tier — the slow-path swap that would have copied
                 // it threw. The tier therefore lags the on-disk tier by one
                 // row until that row ages out of the IN MEMORY window. Reads
-                // route through disk in Phase 1b, so this gap is invisible to
+                // route through disk, so this gap is invisible to
                 // SELECT; once seam_ts routing lands, the recovery path will
                 // need to re-source the missed rows from disk (or reset the
                 // seam) on the next successful swap. Documented here so the
@@ -1310,12 +1310,12 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                     instance.getLastProcessedSeqTxn() > preLvConsumed
             );
             Assert.assertEquals(
-                    "lvConsumedSeqTxn must advance inline with refresh in Phase 1b",
+                    "lvConsumedSeqTxn must advance inline with refresh",
                     instance.getLastProcessedSeqTxn(),
                     instance.getStateReader().getLvConsumedSeqTxn()
             );
 
-            // drainWalQueue is a no-op for the LV's own WAL in Phase 1b — global apply
+            // drainWalQueue is a no-op for the LV's own WAL — global apply
             // skips LV tokens. Calling it must not change anything.
             long lvConsumedPostRefresh = instance.getStateReader().getLvConsumedSeqTxn();
             drainWalQueue();
@@ -1829,7 +1829,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                     preLastProcessed,
                     reloaded.getStateReader().getLvConsumedSeqTxn()
             );
-            // Phase 1: reads route through the standard TableReader cursor over the LV's
+            // Reads route through the standard TableReader cursor over the LV's
             // _meta + applied WAL. The on-disk tier survives restart so the row count
             // should reflect what the refresh wrote before the registry was cleared.
             assertSql("count\n2\n", "SELECT count() FROM lv");
@@ -2821,8 +2821,8 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
 
     @Test
     public void testAnchorMapCompactRebuildsWithoutTombstones() throws Exception {
-        // Phase 2a.11 lands the compact() scaffolding but does not auto-trigger
-        // it from processRow - that wiring waits for Phase 2b to add tombstone
+        // compact() can be called directly to exercise the scaffolding without
+        // the auto-trigger wiring that adds tombstone
         // tracking to each window function's own Map. This test calls compact()
         // directly to verify the rebuild correctly drops tombstoned entries
         // and preserves alive ones. End-to-end LV output correctness under
@@ -2934,7 +2934,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
 
     @Test
     public void testCompactionFiresUnderPartitionChurn() throws Exception {
-        // Phase 2c.5: with the threshold set low, an anchor-cross run that
+        // With the threshold set low, an anchor-cross run that
         // accumulates more tombstones than the threshold allows must trigger
         // compact() from processRow. The trigger fires inside processRow
         // AFTER the current row's anchor-map mutation but BEFORE the row
@@ -3030,7 +3030,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
 
     @Test
     public void testCrossCycleAnchorMapPreserved() throws Exception {
-        // Phase 2c.4: a second refresh cycle that hits no anchor crossings
+        // A second refresh cycle that hits no anchor crossings
         // must not wipe the anchor map populated by the first cycle. Before
         // 2c.4, the cursor-reopen chain (AnchorDispatchingCursor.toTop ->
         // LiveViewWindow.toTop -> anchorMap.clear()) discarded the in-memory
@@ -3101,7 +3101,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
 
     @Test
     public void testPostRestartCommitPreservesAnchorMap() throws Exception {
-        // Phase 2c.4: the first post-restart refresh cycle must NOT wipe
+        // The first post-restart refresh cycle must NOT wipe
         // the anchor map that tryRestoreFromHead just rehydrated. Without
         // the 2c.4 fix, getIncrementalCursor would drive
         // AnchorDispatchingCursor.toTop -> LiveViewWindow.toTop and clear
@@ -3200,8 +3200,8 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
 
     @Test
     public void testRingSlabReclaimUnderChurn() throws Exception {
-        // Phase 2c.5: a bounded-ROWS aggregate carries a per-partition ring
-        // slab inside MemoryARW. compactPartitionMap (2c.3) captures
+        // A bounded-ROWS aggregate carries a per-partition ring
+        // slab inside MemoryARW. compactPartitionMap captures
         // (capacity, startOffset) of each dropped slab into a freeList that
         // the next isNew partition pops from before falling back to
         // memory.appendAddressFor. Bounded frames cannot share a WINDOW with
@@ -3700,7 +3700,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
     public void testLiveViewsCatalogueColumnOrderMatchesRfc() throws Exception {
         // Columns appear in the documented order so clients binding by
         // ordinal see a stable shape. The documented columns come first;
-        // the three head_checkpoint_* columns trail as Phase 2a debug
+        // the three head_checkpoint_* columns trail as debug
         // surface.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
@@ -3810,7 +3810,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
         // Regression: viewLowerBoundTimestamp used to be persisted in wall-clock
         // micros regardless of the base's timestamp unit, so a TIMESTAMP_NS base
         // ended up with a value 1000x smaller than any base-table ts. The persisted
-        // value is now scaled to base units so the eventual O3 reject in Phase 2
+        // value is now scaled to base units so the eventual O3 reject
         // can compare it against late_row.ts directly. The catalogue column stays
         // TIMESTAMP_MICRO and rounds
         // NS values back to the MICRO grid at display time.
@@ -3862,7 +3862,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
             // is enabled in tests it diverges from the view name, so resolve via the engine.
             TableToken token = engine.verifyTableName("lv");
             String expectedDir = token.getDirName();
-            // writer_stall_micros is always 0 in Phase 1a (no in-mem tier, no stall mechanism).
+            // writer_stall_micros is 0 here: this scenario never stalls the writer.
             // lag_micros = 3_000_000 - lastFlushTimeUs. lastFlushTimeUs was set to 1_000_000
             // (the clock at refresh), so lag_micros = 2_000_000.
             assertSql(
@@ -3877,7 +3877,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
 
     @Test
     public void testCountOverUnboundedPartitionRowsSnapshotRoundTrip() throws Exception {
-        // Phase 2a.5 Group #2: count() over unbounded partition rows + ANCHOR.
+        // count() over unbounded partition rows + ANCHOR.
         // State per partition is a single LONG count. Round-trip via direct
         // snapshot to in-memory sink + toTop + restore; verify counts match.
         assertMemoryLeak(() -> {
@@ -3927,7 +3927,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
 
     @Test
     public void testSumOverUnboundedPartitionRowsSnapshotRoundTrip() throws Exception {
-        // Phase 2a.5 Group #2: sum() over unbounded partition rows + ANCHOR.
+        // sum() over unbounded partition rows + ANCHOR.
         // State per partition is [sum: DOUBLE, count: LONG] - same shape as
         // avg. Round-trip via direct snapshot + toTop + restore.
         assertMemoryLeak(() -> {
@@ -3976,7 +3976,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
 
     @Test
     public void testAvgOverUnboundedPartitionRowsSnapshotRoundTrip() throws Exception {
-        // Phase 2a.5 Group #2: avg() over (PARTITION BY ... ROWS UNBOUNDED
+        // avg() over (PARTITION BY ... ROWS UNBOUNDED
         // PRECEDING ... ANCHOR ...) implements snapshot/restore. State per
         // partition is [sum: DOUBLE, count: LONG]. Round-trip via direct
         // snapshot to in-memory sink + toTop + restore; verify Map content.
@@ -4031,7 +4031,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
 
     @Test
     public void testMaxOverUnboundedPartitionRowsSnapshotRoundTrip() throws Exception {
-        // Phase 2a.5 Group #2: max() over unbounded partition rows + ANCHOR.
+        // max() over unbounded partition rows + ANCHOR.
         // State per partition is [value: DOUBLE, initialized: BYTE]. The same
         // class handles min() via a swapped comparator.
         assertMemoryLeak(() -> {
@@ -4081,7 +4081,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
 
     @Test
     public void testFirstValueOverUnboundedPartitionRowsSnapshotRoundTrip() throws Exception {
-        // Phase 2a.5 Group #2: first_value() over unbounded partition rows +
+        // first_value() over unbounded partition rows +
         // ANCHOR. State per partition is [value: DOUBLE, initialized: BYTE].
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x DOUBLE, sym SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
@@ -4130,7 +4130,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
 
     @Test
     public void testKSumOverUnboundedPartitionRowsSnapshotRoundTrip() throws Exception {
-        // Phase 2a.5 Group #2: ksum() (Kahan-compensated sum) over unbounded
+        // ksum() (Kahan-compensated sum) over unbounded
         // partition rows + ANCHOR. State per partition is [sum: DOUBLE,
         // compensation: DOUBLE, count: LONG].
         assertMemoryLeak(() -> {
@@ -4814,13 +4814,13 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
 
     @Test
     public void testRowNumberSnapshotRoundTrip() throws Exception {
-        // Phase 2a.5 Group #1: row_number() implements snapshot/restore.
+        // row_number() implements snapshot/restore.
         // Drive a single refresh cycle so the function's Map is populated with
         // partition state, then snapshot to an in-memory sink, reset via
         // toTop(), restore from the sink, and verify the Map content matches
         // by iterating partition entries directly. End-to-end snapshot/restore
-        // through the LV refresh pipeline is gated on Phase 2a.4 (the write
-        // hook) and Phase 2a.7 (the restart restore path) and the cross-cycle
+        // through the LV refresh pipeline is gated on the write
+        // hook and the restart restore path and the cross-cycle
         // anchor-map reset behaviour is a separate concern.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
@@ -4892,7 +4892,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
 
     @Test
     public void testLiveViewWindowSnapshotRoundTrip() throws Exception {
-        // Phase 2a.6 (deferred half): LiveViewWindow's anchor map serialises into
+        // LiveViewWindow's anchor map serialises into
         // the WINDOW_ANCHOR block payload via snapshot() and rehydrates via
         // restore(). The format mirrors the codec used by the migrated window
         // functions in 2a.5 - typed key columns + a single LONG anchor value
@@ -5043,7 +5043,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
 
     @Test
     public void testHeadCheckpointWrittenOnFirstCommit() throws Exception {
-        // Phase 2a.4: the refresh worker writes a head .cp on the first cycle
+        // The refresh worker writes a head .cp on the first cycle
         // that lands rows, so subsequent restart / O3 paths have a head to
         // restore from. The cadence triggers (rows / max.duration) gate
         // subsequent writes; this test only proves the first one fires.
@@ -5133,7 +5133,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
 
     @Test
     public void testRestartRestoresFromHeadCheckpoint() throws Exception {
-        // Phase 2a.7: a simulated restart should re-discover the head .cp
+        // A simulated restart should re-discover the head .cp
         // via the startup sweep, then the first refresh-worker tick rehydrates
         // the LV's window-function state from the head and advances
         // lastProcessedSeqTxn to the manifest's baseSeqTxn.
@@ -5398,7 +5398,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
 
     @Test
     public void testRestartRestoresRankFromHeadCheckpoint() throws Exception {
-        // Phase 2b.1: rank() is now snapshot-capable. End-to-end check that a
+        // rank() is now snapshot-capable. End-to-end check that a
         // refresh cycle writes a head .cp, a simulated restart re-discovers
         // it, and the first post-restart refresh tick rehydrates the rank
         // function's partition map. Mirrors testRestartRestoresFromHeadCheckpoint
@@ -5411,7 +5411,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
         // so a new commit immediately after restore would discard the
         // rehydrated state. That cross-cycle wipe is the broader limitation
         // tracked under 2a.8's "known limitations" - addressing it sits
-        // outside Phase 2b.1's scope.
+        // outside this test's scope.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
@@ -5467,7 +5467,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
 
     @Test
     public void testRankSnapshotRestoreRoundTripsState() throws Exception {
-        // Phase 2b.1b/1a: snapshot() / restore() round-trip the rank function's
+        // snapshot() / restore() round-trip the rank function's
         // per-partition rank, count, and chain-prefix bytes through a MemoryCARW
         // buffer. The end-to-end LV head .cp path is exercised by
         // testRestartRestoresRankFromHeadCheckpoint; this case isolates the codec
@@ -5517,7 +5517,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
 
     @Test
     public void testLagSnapshotRestoreRoundTripsState() throws Exception {
-        // Phase 2b.2: snapshot() / restore() round-trip the lag function's
+        // snapshot() / restore() round-trip the lag function's
         // per-partition firstIdx + count and the raw ring buffer contents
         // through a MemoryCARW buffer. Isolates the codec round-trip from the
         // end-to-end .cp path so a regression in the ring-blob serializer
@@ -5566,7 +5566,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
 
     @Test
     public void testRestartRestoresBoundedRowsAggregatesFromHeadCheckpoint() throws Exception {
-        // Phase 2b.3a/b/c: avg, sum, count(*), count(arg), and ksum over
+        // avg, sum, count(*), count(arg), and ksum over
         // (PARTITION BY ... ROWS N PRECEDING ...) are now snapshot-capable.
         // End-to-end check that an LV combining all of them writes a head .cp
         // and the first post-restart refresh tick rehydrates the partition
@@ -5631,7 +5631,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
 
     @Test
     public void testRestartRestoresStatefulEmaFamilyFromHeadCheckpoint() throws Exception {
-        // Phase 2b.5 (Group #6 — Stateful + EMA family): the UNBOUNDED +
+        // The stateful + EMA family's UNBOUNDED +
         // ANCHOR variants now ship snapshot/restore. Six classes migrated:
         //   StdDevOverUnboundedPartitionRowsFrameFunction (covers stddev_*,
         //     var_*; 3 slots, Welford mean/m2/count)
@@ -5704,7 +5704,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
 
     @Test
     public void testRestartRestoresBoundedRowsMinMaxFromHeadCheckpoint() throws Exception {
-        // Phase 2b.4: min/max over (PARTITION BY ... ROWS N PRECEDING ...) are
+        // min/max over (PARTITION BY ... ROWS N PRECEDING ...) are
         // now snapshot-capable. The single MaxMinOverPartitionRowsFrameFunction
         // class carries two state shapes:
         //   - frameLoBounded == true:  ring + monotonic deque (5 LONG slots)
@@ -5776,7 +5776,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
 
     @Test
     public void testRestartRestoresBoundedRangeAggregatesFromHeadCheckpoint() throws Exception {
-        // Phase 2b.6a/b: avg/sum/count(*)/count(arg) over (PARTITION BY ...
+        // avg/sum/count(*)/count(arg) over (PARTITION BY ...
         // RANGE BETWEEN '<n>' <unit> PRECEDING AND ...) are now snapshot-
         // capable. End-to-end check that an LV combining all of them writes a
         // head .cp and the first post-restart refresh tick rehydrates the
@@ -5841,7 +5841,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
 
     @Test
     public void testRestartRestoresBoundedRangeFirstLastValueFromHeadCheckpoint() throws Exception {
-        // Phase 2b.6d/e: first_value() and last_value() over (PARTITION BY ...
+        // first_value() and last_value() over (PARTITION BY ...
         // RANGE BETWEEN ...) are now snapshot-capable across Double / Long /
         // Timestamp factories and respect-nulls vs IGNORE NULLS variants.
         // First and last share the same per-partition slot count in their LV
@@ -5907,7 +5907,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
 
     @Test
     public void testRestartRestoresBoundedRangeMinMaxFromHeadCheckpoint() throws Exception {
-        // Phase 2b.6c: min/max over (PARTITION BY ... RANGE BETWEEN ...) are
+        // min/max over (PARTITION BY ... RANGE BETWEEN ...) are
         // now snapshot-capable. The MaxMinOverPartitionRangeFrameFunction
         // class carries two state shapes:
         //   - frameLoBounded == true:  ring + monotonic deque (9 LONG slots)
@@ -5979,7 +5979,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
 
     @Test
     public void testRestartRestoresFirstLastValueFromHeadCheckpoint() throws Exception {
-        // Phase 2b.3d/e: first_value() and last_value() over (PARTITION BY ...
+        // first_value() and last_value() over (PARTITION BY ...
         // ROWS N PRECEDING ...) are now snapshot-capable, in both the parent
         // ("respect nulls", default) and IGNORE NULLS subclass variants. The
         // four migrated classes have distinct slot layouts:
@@ -6052,7 +6052,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
 
     @Test
     public void testRestartRestoresLagFromHeadCheckpoint() throws Exception {
-        // Phase 2b.2: lag() is now snapshot-capable. End-to-end check that a
+        // lag() is now snapshot-capable. End-to-end check that a
         // refresh cycle writes a head .cp, a simulated restart re-discovers
         // it, and the first post-restart refresh tick rehydrates the lag
         // function's partition map. Mirrors testRestartRestoresRankFromHead
@@ -6119,7 +6119,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
 
     @Test
     public void testLatestSeenTsAdvancesAcrossRows() throws Exception {
-        // Phase 2a.8: the anchor-dispatch cursor stamps the per-LV latestSeenTs
+        // The anchor-dispatch cursor stamps the per-LV latestSeenTs
         // watermark on every base row consumed by the refresh worker. This is
         // the input the O3 detection path will read in a later commit; for now
         // we just verify the cursor feeds the setter with the max ts in the
@@ -6198,7 +6198,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
 
     @Test
     public void testO3InvalidatesHeadCheckpoint() throws Exception {
-        // Phase 2a.8: an O3 base commit (min ts strictly below the LV's
+        // An O3 base commit (min ts strictly below the LV's
         // latestSeenTs watermark) cannot be replayed in WAL order without
         // corrupting per-partition window state, so the refresh worker
         // rolls back the in-flight WAL writer, branches to o3Replay, and
@@ -6305,7 +6305,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
 
     @Test
     public void testO3HeadMissReplaysFromLowerBound() throws Exception {
-        // Phase 2a.8: an O3 row with ts strictly below the head's maxTimestamp
+        // An O3 row with ts strictly below the head's maxTimestamp
         // forces a head-miss replay. The path resets every window-function map,
         // wipes the anchor map, scans the base TableReader from
         // viewLowerBoundTimestamp through advanceTo, emits a single REPLACE_RANGE
@@ -6425,7 +6425,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
 
     @Test
     public void testO3HeadHitReplaysFromHead() throws Exception {
-        // Phase 2a.8: an O3 row with ts > head.maxTimestamp drops into the
+        // An O3 row with ts > head.maxTimestamp drops into the
         // head-hit branch. State rolls back to the head's snapshot moment
         // (restoreFromHead populates anchor + function maps), the replay
         // scans only the rows past head.maxTimestamp, and emits a single
@@ -6515,7 +6515,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
 
     @Test
     public void testO3StormAtFixedHorizon() throws Exception {
-        // Phase 2a.8: repeated O3 rows at the same historical horizon (well
+        // Repeated O3 rows at the same historical horizon (well
         // below headMaxTs) fall into the head-miss path each time. Every event triggers a
         // full replay from viewLowerBoundTimestamp and writes one fresh head.
         // After three such events the LV output reflects all rows in ts order.
@@ -6577,7 +6577,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
 
     @Test
     public void testO3WritesFreshCheckpointPostReplay() throws Exception {
-        // Phase 2a.8: after the O3 replay path drives an apply commit, the
+        // After the O3 replay path drives an apply commit, the
         // head metadata trio (lvSeqTxn, maxTs, stateBytes) reflects the
         // post-replay state - not the pre-O3 state, and not LONG_NULL.
         // The .cp file exists on disk at the new lvSeqTxn.
@@ -6644,7 +6644,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
 
     @Test
     public void testO3DetectionFiresForNonAnchoredLv() throws Exception {
-        // Phase 2a.8 (non-anchored stamp): the row-loop stamp updates
+        // Non-anchored stamp: the row-loop stamp updates
         // latestSeenTs for LVs without an anchored named window. Pre-fix,
         // only AnchorDispatchingCursor stamped, so non-anchored LVs never
         // drove O3 detection. The test uses row_number() OVER (), which the
@@ -6836,7 +6836,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
 
     @Test
     public void testFreezeGateSkipsRefreshTurn() throws Exception {
-        // Phase 2a.9c: DatabaseCheckpointAgent toggles freezeInProgress around
+        // DatabaseCheckpointAgent toggles freezeInProgress around
         // its per-LV file copy so the refresh worker does not advance _lv.s /
         // the on-disk tier mid-snapshot. This test exercises the gate without
         // running the full agent: set startCheckpoint manually, drive a
@@ -6960,8 +6960,8 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
 
     @Test
     public void testLiveViewsCatalogueExposesHeadCheckpointColumns() throws Exception {
-        // Phase 2a.10: head_checkpoint_* columns are preallocated; values stay
-        // at LONG_NULL / 0 until the Phase 2a.4 flush-cycle write hook starts
+        // head_checkpoint_* columns are preallocated; values stay
+        // at LONG_NULL / 0 until the flush-cycle write hook starts
         // populating them.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
@@ -7746,7 +7746,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
 
     @Test
     public void testRejectLengthFoldedConstantAnchor() throws Exception {
-        // Pass-2 fold case the RFC explicitly calls out alongside 1+2+3 and
+        // Pass-2 fold case explicitly handled alongside 1+2+3 and
         // date_trunc-of-literal: length('hello') folds to the constant 5
         // before the validator walks it, so the top-level isConstant() check
         // is the surface that fires the reject. Position must land on the
@@ -7774,7 +7774,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
 
     @Test
     public void testRejectAnchorWithSystimestamp() throws Exception {
-        // systimestamp() is the second runtime-state function the RFC names
+        // systimestamp() is the second runtime-state function named
         // alongside now() / current_timestamp; the validator surfaces it via
         // the same isRuntimeConstant branch.
         assertMemoryLeak(() -> {

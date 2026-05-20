@@ -46,8 +46,7 @@ import org.jetbrains.annotations.NotNull;
  *     in state, in base-table timestamp units. Lookup key for the
  *     {@code head.maxTimestamp <= late_row.ts} O3 routing rule.</li>
  *     <li>{@link #getKind() kind} - {@link #KIND_STEADY} for steady-state
- *     and O3 replay; {@link #KIND_BACKFILL} for in-progress backfill
- *     (Phase 3).</li>
+ *     and O3 replay; {@link #KIND_BACKFILL} for in-progress backfill.</li>
  *     <li>{@link #getWindowNames() windowNames} - the names of every named
  *     WINDOW the live view's compiled SELECT defines (anchored and
  *     non-anchored). The window names are persisted so a future revision

@@ -346,7 +346,7 @@ public class RankFunctionFactory extends AbstractWindowFunctionFactory {
         private final ColumnTypes keyColumnTypes;
         // True when this function is being compiled as part of a live view's
         // SELECT. Drives opt-in allocation of the lastActivityTs value-layout
-        // slot used by Phase 5 partition-state eviction.
+        // slot used by partition-state eviction.
         private final boolean liveView;
         private final String name;
         private final VirtualRecord partitionByRecord;
@@ -359,7 +359,7 @@ public class RankFunctionFactory extends AbstractWindowFunctionFactory {
         private ArrayColumnTypes chainColumnTypes;
         private int chainTypeIndex;
         private int columnIndex;
-        // Value-layout index of the lastActivityTs slot (live view Phase 5). Lives
+        // Value-layout index of the lastActivityTs slot (live view). Lives
         // at chainTypeIndex + 2 when present, or is -1 for regular queries where
         // the slot is omitted.
         private int lastActivityTsValueIndex = -1;
@@ -390,8 +390,8 @@ public class RankFunctionFactory extends AbstractWindowFunctionFactory {
             this.partitionByRecord = partitionByRecord;
             this.partitionBySink = partitionBySink;
             // The WindowContext's partitionByKeyTypes is a transient buffer owned by
-            // SqlCodeGenerator that gets cleared on every window function compile. Phase 5
-            // partition eviction needs to allocate a scratch Map with the same key shape
+            // SqlCodeGenerator that gets cleared on every window function compile.
+            // Partition-state eviction needs to allocate a scratch Map with the same key shape
             // after compilation has moved on, so take our own copy.
             ArrayColumnTypes keyTypesCopy = new ArrayColumnTypes();
             for (int i = 0, n = keyColumnTypes.getColumnCount(); i < n; i++) {
@@ -487,7 +487,7 @@ public class RankFunctionFactory extends AbstractWindowFunctionFactory {
         public void evictStalePartitionState(long cutoffTs) {
             if (lastActivityTsValueIndex < 0) {
                 // Non-live-view queries do not carry the lastActivityTs slot and
-                // do not exercise Phase 5 eviction.
+                // do not exercise partition-state eviction.
                 return;
             }
             long size = map.size();
@@ -618,8 +618,8 @@ public class RankFunctionFactory extends AbstractWindowFunctionFactory {
                 chainTypes.add(ColumnType.LONG); // rank
                 chainTypes.add(ColumnType.LONG); // count
                 if (liveView) {
-                    chainTypes.add(ColumnType.LONG); // lastActivityTs (live view Phase 5)
-                    chainTypes.add(ColumnType.BYTE); // tombstone (Phase 2b anchor compaction)
+                    chainTypes.add(ColumnType.LONG); // lastActivityTs (live view)
+                    chainTypes.add(ColumnType.BYTE); // tombstone (anchor compaction)
                     lastActivityTsValueIndex = chainTypeIndex + 2;
                     tombstoneValueIndex = chainTypeIndex + 3;
                     // Caller reuses the chainTypes buffer across window functions in the
@@ -729,7 +729,7 @@ public class RankFunctionFactory extends AbstractWindowFunctionFactory {
         public void snapshot(MemoryA sink) {
             // Two-pass walk so the partition count written first matches the
             // entries that follow even if tombstoneCount drifts between cycles.
-            // Phase 2b skips tombstoned entries per RFC §"Tombstone tracking";
+            // Tombstoned entries are skipped on restore;
             // the restored Map starts at the post-compaction shape.
             MapRecordCursor cursor = map.getCursor();
             MapRecord record = map.getRecord();

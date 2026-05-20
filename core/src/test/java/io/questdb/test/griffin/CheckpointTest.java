@@ -450,7 +450,7 @@ public class CheckpointTest extends AbstractCairoTest {
 
     @Test
     public void testCheckpointLiveViewMetadataFiles() throws Exception {
-        // Phase 2a.9: live views are full WAL-backed tables. The checkpoint
+        // Live views are full WAL-backed tables. The checkpoint
         // must carry both LV-specific files (_lv, _lv.s) and the standard
         // table-skeleton files (_meta, _txn, _name, partition data, wal<n>/).
         assertMemoryLeak(() -> {
@@ -489,7 +489,7 @@ public class CheckpointTest extends AbstractCairoTest {
             path.trimTo(rootLen).concat(lvToken.getDirName()).concat(TableUtils.TABLE_NAME_FILE).$();
             Assert.assertTrue("_name file should exist in checkpoint", TestFilesFacadeImpl.INSTANCE.exists(path.$()));
 
-            // _txn now exists (live views are WAL-backed tables in Phase 1+).
+            // _txn now exists (live views are WAL-backed tables).
             path.trimTo(rootLen).concat(lvToken.getDirName()).concat(TableUtils.TXN_FILE_NAME).$();
             Assert.assertTrue("_txn file should exist in checkpoint", TestFilesFacadeImpl.INSTANCE.exists(path.$()));
 

@@ -43,9 +43,9 @@ import org.junit.Assert;
 import org.junit.Test;
 
 /**
- * Unit-test coverage for {@link LiveViewSnapshotKeyCodec}. Phase 2a shipped the
+ * Unit-test coverage for {@link LiveViewSnapshotKeyCodec}. The codec covers the
  * fixed-width primitive dispatch (BYTE/BOOLEAN/SHORT/CHAR/INT/SYMBOL/FLOAT/
- * LONG/TIMESTAMP/DATE/DOUBLE); Phase 2b.1 extends the dispatch to cover IPv4
+ * LONG/TIMESTAMP/DATE/DOUBLE), plus IPv4
  * and the four GEOHASH variants (BYTE/SHORT/INT/LONG) so that the rank
  * function's chain-prefix can be snapshotted regardless of which projected
  * source column types appear.

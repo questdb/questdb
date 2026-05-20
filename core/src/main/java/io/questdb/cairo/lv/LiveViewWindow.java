@@ -71,7 +71,7 @@ import org.jetbrains.annotations.NotNull;
  *     WINDOW, then update the partition's recorded anchor value.</li>
  * </ol>
  * <p>
- * Phase 1 limitations:
+ * Limitations:
  * <ul>
  *     <li>Anchor expressions must return a {@code TIMESTAMP} or {@code LONG}
  *     (the most common calendar-period anchor case). Other primitive return
@@ -91,7 +91,7 @@ public class LiveViewWindow implements QuietCloseable {
     // "anchor changed between rows."
     // Slot 2: byte tombstone — 0 means "alive" (partition saw a row recently), 1
     // means "stale" (anchor crossed and no follow-up row visited the partition
-    // since). The anchor-map compaction trigger (Phase 2a.11) reclaims
+    // since). The anchor-map compaction trigger reclaims
     // tombstoned entries.
     private static final int SLOT_ANCHOR_VALUE = 0;
     private static final int SLOT_INITIALIZED = 1;
@@ -157,8 +157,8 @@ public class LiveViewWindow implements QuietCloseable {
      * <p>
      * Throws {@link CairoException} when:
      * <ul>
-     *     <li>{@code partitionColumnNames} is empty (Phase 1 requires at least one
-     *     partition column on an anchored WINDOW).</li>
+     *     <li>{@code partitionColumnNames} is empty (an anchored WINDOW requires at
+     *     least one partition column).</li>
      *     <li>any partition column is not present in {@code projectedMetadata}.</li>
      *     <li>the anchor expression's return type is not TIMESTAMP or LONG.</li>
      * </ul>
@@ -259,7 +259,7 @@ public class LiveViewWindow implements QuietCloseable {
 
     /**
      * @return number of anchor-map entries currently marked tombstoned
-     * (SLOT_TOMBSTONE == 1). Consumed by the Phase 2a.11 compaction trigger.
+     * (SLOT_TOMBSTONE == 1). Consumed by the compaction trigger.
      */
     public long getTombstoneCount() {
         return tombstoneCount;
@@ -361,7 +361,7 @@ public class LiveViewWindow implements QuietCloseable {
             // assumption that the partition might go silent after the crossing. A
             // subsequent row visiting the partition clears the bit in the branch
             // above; if no row arrives within the residence window, the compaction
-            // trigger (Phase 2a.11) reclaims the entry. Fresh partitions (isNew=true)
+            // trigger reclaims the entry. Fresh partitions (isNew=true)
             // are not tombstoned - the first row that creates them is also reviving
             // them.
             if (!isNewPartition) {

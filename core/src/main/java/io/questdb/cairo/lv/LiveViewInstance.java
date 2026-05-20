@@ -40,10 +40,10 @@ import org.jetbrains.annotations.Nullable;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
- * Runtime representation of a Phase 1 live view.
+ * Runtime representation of a live view.
  * <p>
- * Replaces the prototype's merge-buffer / cold-path state with the disk-only
- * Phase 1 surface:
+ * Replaces the prototype's merge-buffer / cold-path state with the disk-backed
+ * surface:
  * <ul>
  *     <li>Lifecycle is derived from registry visibility + {@link #stateReader}.invalid;
  *         see {@link LiveViewLifecycleState}.</li>
@@ -104,12 +104,12 @@ public class LiveViewInstance implements QuietCloseable {
     private volatile boolean freezeInProgress;
     // N=2 in-memory tier; lazily allocated on the
     // first refresh cycle after the LV's compiled factory + projected metadata
-    // are known. Reads route through it via LiveViewRecordCursor (Phase 1b
-    // Commit 4); the refresh worker drives the slow-path swap from
+    // are known. Reads route through it via LiveViewRecordCursor; the refresh
+    // worker drives the slow-path swap from
     // LiveViewRefreshJob. Null when no refresh has happened yet, or when the LV
     // was just constructed at startup.
     // Head-checkpoint metadata mirrored from the most recently committed
-    // _checkpoints/<lvSeqTxn>.cp. Populated by the Phase 2a.4 flush-cycle
+    // _checkpoints/<lvSeqTxn>.cp. Populated by the flush-cycle
     // write hook (deferred) and consumed by the live_views() catalogue and
     // by the O3 head-hit / restart-restore decision paths.
     // <p>

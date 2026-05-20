@@ -209,7 +209,7 @@ public class DependentViewGraphAndStateStoreTest extends AbstractCairoTest {
 
     @Test
     public void testLiveViewOrderedAfterBase() {
-        // Phase 2a follow-up: live views participate in the same
+        // Live views participate in the same
         // dependents-after-base ordering rule that mat views use.
         TableToken base = newTableToken("base");
         TableToken lv1 = newLiveViewToken("lv1");

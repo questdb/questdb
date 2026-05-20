@@ -2370,8 +2370,8 @@ public class ExpressionParser {
         // the closing ')'. Two forms:
         //   ANCHOR EXPRESSION <expr>
         //   ANCHOR DAILY '<HH:MM>' ['<tz>']
-        // Phase 1 enforces "ANCHOR + bounded frame is rejected" at CREATE LIVE VIEW
-        // validation, not here — the parser only captures the syntax.
+        // CREATE LIVE VIEW validation enforces "ANCHOR + bounded frame is rejected",
+        // not here — the parser only captures the syntax.
         if (tok != null && SqlKeywords.isAnchorKeyword(tok)) {
             int anchorPos = lexer.lastTokenPosition();
             tok = SqlUtil.fetchNext(lexer);

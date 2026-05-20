@@ -540,7 +540,7 @@ public class ServerMain implements Closeable {
             lvWorkerPool.assign(i, liveViewRefreshJob);
             lvWorkerPool.freeOnExit(liveViewRefreshJob);
         }
-        // Phase 1 has no LiveViewTimerJob: idle flushes are driven by FLUSH EVERY
+        // There is no LiveViewTimerJob: idle flushes are driven by FLUSH EVERY
         // ticks polled inside LiveViewRefreshJob, not by a separate timer.
     }
 

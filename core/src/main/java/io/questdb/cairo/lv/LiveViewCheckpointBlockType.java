@@ -45,9 +45,9 @@ public final class LiveViewCheckpointBlockType {
 
     /**
      * Present iff the checkpoint covers an in-progress backfill sweep
-     * ({@link LiveViewCheckpointManifest#getKind() kind == BACKFILL}). Phase
-     * 2a reserves this block type but does not write any BACKFILL_CURSOR
-     * blocks - backfill lands in Phase 3.
+     * ({@link LiveViewCheckpointManifest#getKind() kind == BACKFILL}). Reserved
+     * but not yet written: the current one-shot backfill sweep does not
+     * checkpoint mid-sweep, so no BACKFILL_CURSOR blocks are produced.
      */
     public static final int BLOCK_BACKFILL_CURSOR = 1;
 

@@ -41,7 +41,7 @@ import org.jetbrains.annotations.Nullable;
  * Mirrors {@link io.questdb.cairo.mv.MatViewStateReader}: a mutable snapshot
  * populated either by reading the file or by direct setters during refresh.
  * <p>
- * Phase 1 fields:
+ * Core fields:
  * <ul>
  *     <li>{@code invalid} / {@code invalidationReason} / {@code invalidationTimestampUs} —
  *     unified invalidation path</li>
@@ -61,9 +61,9 @@ public class LiveViewStateReader implements Mutable {
     // worker code paths; written by the refresh worker. Volatile so lock-free readers see
     // a published value rather than a torn long.
     private volatile long appliedWatermark = -1L;
-    // Phase 1a always BACKFILL_STATE_ACTIVE / Numbers.LONG_NULL (BACKFILL rejected at
-    // CREATE). Preallocated in CORE_STATE so Phase 3 can land BACKFILL semantics without
-    // an _lv.s schema bump.
+    // Defaults to BACKFILL_STATE_ACTIVE / Numbers.LONG_NULL; a BACKFILL view sets
+    // BACKFILL_STATE_BACKFILLING and the target seqTxn while its sweep runs. Both
+    // fields are preallocated in CORE_STATE so BACKFILL needed no _lv.s schema bump.
     private byte backfillState = LiveViewState.BACKFILL_STATE_ACTIVE;
     private long backfillTargetSeqTxn = Numbers.LONG_NULL;
     private boolean invalid;

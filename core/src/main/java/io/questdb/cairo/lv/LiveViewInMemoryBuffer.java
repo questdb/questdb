@@ -40,7 +40,7 @@ import io.questdb.std.QuietCloseable;
  * {@link MemoryCARWImpl} per column, primary buffer only.
  * <p>
  * Variable-length columns (STRING / VARCHAR / BINARY) are not yet supported —
- * Phase 1b currently targets fixed-width output schemas (numeric window
+ * the buffer currently targets fixed-width output schemas (numeric window
  * functions over a numeric / timestamp / symbol-id row). Calling {@code put*}
  * with a column index typed as a var-length type throws
  * {@link UnsupportedOperationException}; var-length support layers on later
@@ -53,7 +53,7 @@ import io.questdb.std.QuietCloseable;
  * enforce a write order — callers are expected to write all columns for a
  * given row index before bumping {@code rowCount}.
  * <p>
- * Phase 3a fast-path: the refresh worker calls {@link #copyRowFromRecord(Record, long)}
+ * Fast-path: the refresh worker calls {@link #copyRowFromRecord(Record, long)}
  * directly into the published slot, then bumps {@link #setRowCount(long)} for
  * each appended row. {@code seamTs} is left unchanged on the fast-path (the
  * minimum retained timestamp does not move when appending at the tail). The
@@ -72,9 +72,9 @@ public class LiveViewInMemoryBuffer implements QuietCloseable {
     // Highest base seqTxn whose rows the slot reflects. Eviction only ages
     // out rows when this value is covered by the LV's applied_watermark —
     // protects unflushed rows from
-    // being dropped before they reach disk. Phase 1b always advances this
-    // after a successful apply, so the clamp is vacuous today; Phase 4
-    // (hand-off ring) is the regime where the clamp does real work.
+    // being dropped before they reach disk. The refresh worker always advances this
+    // after a successful apply, so the clamp is vacuous today; a future
+    // hand-off ring is the regime where the clamp does real work.
     // LONG_NULL means "no seqTxn information yet" — treated as durable.
     private long maxSeqTxn;
     private long rowCount;
@@ -93,7 +93,7 @@ public class LiveViewInMemoryBuffer implements QuietCloseable {
         for (int i = 0, n = columnTypes.size(); i < n; i++) {
             int type = columnTypes.getQuick(i);
             this.columnTypes.add(type);
-            // Var-size types intentionally not supported in Phase 1b — see class
+            // Var-size types intentionally not supported yet — see class
             // javadoc. Track the per-row footprint so allocation + slice copy stay
             // honest; for var-size the entry is 0 and we will assert at the put
             // site if the caller ever tries to write.
@@ -117,7 +117,7 @@ public class LiveViewInMemoryBuffer implements QuietCloseable {
 
     /**
      * Returns true iff every column type in {@code columnTypes} is supported by
-     * the in-memory tier. Phase 1b ships fixed-width-only — variable-length
+     * the in-memory tier. The tier ships fixed-width-only — variable-length
      * STRING / VARCHAR / BINARY columns and ARRAY return false. SYMBOL is
      * supported (stored as INT). Used by {@code LiveViewRefreshJob} to decide
      * whether to populate the tier for a given LV; unsupported schemas fall
@@ -170,7 +170,7 @@ public class LiveViewInMemoryBuffer implements QuietCloseable {
      * into this buffer. Caller is responsible for advancing
      * {@link #setRowCount(long)} after the row is written. Throws
      * {@link UnsupportedOperationException} on var-length column types, which
-     * Phase 1b does not support — callers should check
+     * the tier does not support — callers should check
      * {@link #areColumnTypesSupported(IntList)} before deciding to use the tier.
      */
     public void copyRowFrom(LiveViewInMemoryBuffer src, long srcRow, long dstRow) {
@@ -219,8 +219,8 @@ public class LiveViewInMemoryBuffer implements QuietCloseable {
      * buffer was constructed with — the caller is responsible for ensuring
      * shape compatibility (this is the staging-buffer path in
      * {@code LiveViewRefreshJob}). SYMBOL columns store the record's int value
-     * directly without translation; the in-mem tier consumer (Phase 1b Commit 4
-     * cursor) handles symbol-id resolution.
+     * directly without translation; the in-mem tier consumer cursor
+     * handles symbol-id resolution.
      */
     public void copyRowFromRecord(Record record, long dstRow) {
         for (int c = 0, n = columnTypes.size(); c < n; c++) {
@@ -389,7 +389,7 @@ public class LiveViewInMemoryBuffer implements QuietCloseable {
     // timestamp instead. Under the current inline-apply architecture the in-mem
     // buffer is always a subset of what is already on disk, so a seam-based split
     // would just iterate an empty range past the disk tail. The field is kept set
-    // for the Phase 4 hand-off ring regime, where the in-mem buffer can outpace
+    // for a future hand-off ring regime, where the in-mem buffer can outpace
     // disk and the seam becomes the real splitter; wiring the read side to it is
     // that phase's work.
     public void setSeamTs(long seamTs) {

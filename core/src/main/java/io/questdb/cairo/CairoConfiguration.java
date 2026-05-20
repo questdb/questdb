@@ -363,7 +363,7 @@ public interface CairoConfiguration {
 
     /**
      * Fast-path growth budget. When the published in-memory slot's footprint
-     * already meets or exceeds this size, the Phase 3a refresh worker falls
+     * already meets or exceeds this size, the refresh worker falls
      * back to a slow-path swap (which evicts rows older than {@code IN MEMORY}
      * and may shrink the slot) instead of appending in place. Acts as a
      * safety backstop against unbounded slot growth between slow-path edges.

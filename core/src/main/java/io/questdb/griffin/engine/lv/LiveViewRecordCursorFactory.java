@@ -44,12 +44,12 @@ import io.questdb.std.Misc;
  * {@code tryAcquireWrite} sees the reader and trails rather than progressing
  * past it.
  * <p>
- * Phase 3a wires seam_ts routing in the returned cursor: disk rows are
+ * The returned cursor wires seam_ts routing: disk rows are
  * served first, then in-mem rows whose timestamp exceeds the disk's maximum.
  * In the current inline-apply architecture the in-mem tier is at most one
  * cycle behind disk, so the in-mem iteration is almost always empty; the
- * routing logic engages in narrow races and in future phases that decouple
- * apply from per-notification refresh (Phase 4 hand-off ring).
+ * routing logic engages in narrow races and in a future hand-off ring regime
+ * that decouples apply from per-notification refresh.
  * <p>
  * Each {@link #getCursor(SqlExecutionContext)} call allocates a fresh
  * {@link LiveViewRecordCursor}: the cursor pins a tier slot until
@@ -89,7 +89,7 @@ public class LiveViewRecordCursorFactory extends AbstractRecordCursorFactory {
 
     @Override
     public TimeFrameCursor getTimeFrameCursor(SqlExecutionContext executionContext) throws SqlException {
-        // Phase 1b: every in-mem row is also durable on disk after the
+        // Every in-mem row is also durable on disk after the
         // inline apply, so ASOF JOIN-as-RHS reading via the base factory's
         // time-frame cursor sees the full dataset. Future phases (when in-mem
         // outpaces disk via the hand-off ring) will need a dedicated

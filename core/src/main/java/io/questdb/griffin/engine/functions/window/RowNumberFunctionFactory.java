@@ -61,7 +61,7 @@ public class RowNumberFunctionFactory implements FunctionFactory {
     public static final String NAME = "row_number";
     // Base value layout for regular queries: [rowNumber:LONG]. When compiling
     // inside a live view, RowNumberFunction appends a second LONG slot for
-    // lastActivityTs — consumed by Phase 5 partition-state eviction (see
+    // lastActivityTs — consumed by partition-state eviction (see
     // {@link RowNumberFunction#evictStalePartitionState}). The slot is
     // omitted for non-live-view queries to avoid the 8 bytes per partition
     // key overhead.
@@ -93,8 +93,8 @@ public class RowNumberFunctionFactory implements FunctionFactory {
 
         if (windowContext.getPartitionByRecord() != null) {
             // The WindowContext's partitionByKeyTypes is a transient buffer owned by
-            // SqlCodeGenerator that gets cleared on every window function compile. Phase 5
-            // partition eviction needs to allocate a scratch Map with the same key shape
+            // SqlCodeGenerator that gets cleared on every window function compile.
+            // Partition-state eviction needs to allocate a scratch Map with the same key shape
             // after compilation has moved on, so take our own copy.
             ArrayColumnTypes keyTypes = new ArrayColumnTypes();
             ColumnTypes contextKeyTypes = windowContext.getPartitionByKeyTypes();
@@ -106,7 +106,7 @@ public class RowNumberFunctionFactory implements FunctionFactory {
             int lastActivityTsValueIndex = -1;
             int tombstoneValueIndex = -1;
             if (windowContext.isLiveView()) {
-                valueTypes.add(ColumnType.LONG); // lastActivityTs (live view Phase 5)
+                valueTypes.add(ColumnType.LONG); // lastActivityTs (live view)
                 lastActivityTsValueIndex = 1;
                 valueTypes.add(ColumnType.BYTE); // tombstone (anchor-driven compaction)
                 tombstoneValueIndex = 2;
@@ -136,7 +136,7 @@ public class RowNumberFunctionFactory implements FunctionFactory {
         private final CairoConfiguration configuration;
         private final ColumnTypes keyColumnTypes;
         // -1 when the value layout does not carry a lastActivityTs slot, i.e. for
-        // regular (non-live-view) queries. Phase 5 eviction is a no-op in that case.
+        // regular (non-live-view) queries. Partition-state eviction is a no-op in that case.
         private final int lastActivityTsValueIndex;
         private final VirtualRecord partitionByRecord;
         private final RecordSink partitionBySink;
@@ -256,7 +256,7 @@ public class RowNumberFunctionFactory implements FunctionFactory {
         public void evictStalePartitionState(long cutoffTs) {
             if (lastActivityTsValueIndex < 0) {
                 // Non-live-view queries do not carry the lastActivityTs slot and
-                // do not exercise Phase 5 eviction.
+                // do not exercise partition-state eviction.
                 return;
             }
             long size = map.size();

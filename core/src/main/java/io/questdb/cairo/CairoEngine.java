@@ -747,7 +747,7 @@ public class CairoEngine implements Closeable, WriterSource {
                             // over the same base.
                             dependentViewGraph.addLiveView(tableToken, definition.getBaseTableName());
                             liveViewStateStore.registerBaseTable(definition.getBaseTableName());
-                            // Phase 2a.7 startup sweep: clean .cp.tmp orphans
+                            // Startup sweep: clean .cp.tmp orphans
                             // and any .cp whose lvSeqTxn outran the applied
                             // watermark, then retain only the highest survivor.
                             // Stamp the survivor's lvSeqTxn on the instance so
@@ -951,7 +951,7 @@ public class CairoEngine implements Closeable, WriterSource {
                 // bind variables, rnd_*/now()/etc.) ran in the parser; this is the
                 // function-property half that needs the compiled tree so it can see
                 // post-constant-fold flags and runtime-state predicates per-fn.
-                // Runs at CREATE only, never at restart, per RFC.
+                // Runs at CREATE only, never at restart.
                 final LiveViewDefinition.LvAnchorSpec anchor = op.getAnchorSpec();
                 if (anchor != null && anchor.anchorExpressionSql != null) {
                     final ExpressionNode anchorNode = compiler.parseExpression(anchor.anchorExpressionSql);
@@ -2753,7 +2753,7 @@ public class CairoEngine implements Closeable, WriterSource {
         if (root instanceof CachedWindowRecordCursorFactory cwf) {
             // The planner picks the cached factory whenever any window function needs
             // multi-pass evaluation (e.g. lead, percentile, etc.). Surface the lead()
-            // case with the RFC's specific message before the generic reject — lead()
+            // case with a specific message before the generic reject — lead()
             // is the most common cause and the user benefit of "use lag()" is high.
             rejectLeadIfPresent(cwf.getAllWindowFunctions(), position);
             throw SqlException.$(position, "live view select may only use window functions that support incremental refresh; " +

@@ -36,10 +36,10 @@ import org.jetbrains.annotations.Nullable;
  * Mirrors {@link io.questdb.cairo.mv.MatViewState}'s file shape: BlockFile with
  * typed blocks, rewritten on every state change, durable across restarts.
  * <p>
- * Phase 1 holds CORE_STATE only. {@code backfillState} / {@code backfillTargetSeqTxn}
- * are preallocated as {@code ACTIVE} / {@code Numbers.LONG_NULL} (BACKFILL is
- * rejected at CREATE in 1a) so Phase 3 can land BACKFILL semantics without a
- * {@code _lv.s} schema bump.
+ * The state file holds CORE_STATE. {@code backfillState} / {@code backfillTargetSeqTxn}
+ * default to {@code ACTIVE} / {@code Numbers.LONG_NULL}; a BACKFILL view sets
+ * {@code BACKFILLING} and the target seqTxn during its sweep. Both were
+ * preallocated in CORE_STATE so BACKFILL needed no {@code _lv.s} schema bump.
  */
 public class LiveViewState {
     public static final String LIVE_VIEW_STATE_FILE_NAME = "_lv.s";

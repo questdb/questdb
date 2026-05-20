@@ -67,7 +67,7 @@ public class ReaderPool extends AbstractMultiTenantPool<ReaderPool.R> {
     @Override
     public ReaderPool.R get(TableToken tableToken) {
         // Live views are WAL-backed tables backed by a real on-disk _meta + WAL;
-        // queries route through the standard TableReader machinery (Phase 1).
+        // queries route through the standard TableReader machinery.
         // Regular SQL views remain rejected here.
         if (tableToken.isView()) {
             throw CairoException.critical(0).put("cannot get a reader for view [view=").put(tableToken).put(']');

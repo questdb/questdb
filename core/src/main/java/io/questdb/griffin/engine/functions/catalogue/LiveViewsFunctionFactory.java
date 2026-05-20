@@ -60,7 +60,7 @@ import io.questdb.std.ObjList;
  * {@code applied_watermark} are surfaced as debug columns; both are useful
  * for operators tracking refresh-worker progress before the corresponding
  * {@code lvConsumed} flow catches up. Three head-checkpoint columns trail
- * the documented column set as additional debug surface for Phase 2a head
+ * the documented column set as additional debug surface for head
  * checkpoints.
  */
 public class LiveViewsFunctionFactory implements FunctionFactory {

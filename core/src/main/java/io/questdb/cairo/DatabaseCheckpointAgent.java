@@ -467,9 +467,8 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
 
                                 if (tableToken.isLiveView()) {
                                     // Live views are WAL-backed tables with two extra files: _lv
-                                    // (immutable definition) and _lv.s (mutable state). Phase 2a
-                                    // also adds _checkpoints/<head>.cp once the flush-cycle
-                                    // write hook lands.
+                                    // (immutable definition) and _lv.s (mutable state), plus
+                                    // _checkpoints/<head>.cp written by the flush cycle.
                                     //
                                     // Freeze the view's refresh worker first so _lv.s + the
                                     // standard path's _txn / partition data all capture a
@@ -502,8 +501,8 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                                     }
 
                                     // Copy _checkpoints/<head>.cp if present. The directory was
-                                    // created at CREATE LIVE VIEW (Phase 2a.3); the head file
-                                    // appears once the flush-cycle write hook lands (Phase 2a.4).
+                                    // created at CREATE LIVE VIEW; the head file is written by the
+                                    // flush cycle.
                                     // Steady-state has at most one .cp file; any .cp.tmp orphans
                                     // are skipped. mat-view-style log-and-continue on individual
                                     // file copy errors keeps the checkpoint progressing.

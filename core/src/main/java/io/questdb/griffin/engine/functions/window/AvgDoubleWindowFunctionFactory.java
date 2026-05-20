@@ -1770,7 +1770,7 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         // construction. The factory passes the live WindowContext buffer
         // which it reuses across window-function compiles; the function's
         // own copy keeps the types available after compilation has moved
-        // on (live-view snapshot, Phase 5 eviction).
+        // on (live-view snapshot, partition-state eviction).
         private final ArrayColumnTypes keyColumnTypes;
         private final boolean liveView;
         // Full value layout (including tombstone slot) for the

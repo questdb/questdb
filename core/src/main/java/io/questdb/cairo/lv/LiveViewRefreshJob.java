@@ -82,19 +82,19 @@ import org.jetbrains.annotations.NotNull;
 import static io.questdb.cairo.wal.WalUtils.WAL_NAME_BASE;
 
 /**
- * Phase 1 live-view refresh job.
+ * Live-view refresh job.
  * <p>
  * Disk-only refresh path: walks the base table's sequencer log forward from
  * {@code lastProcessedSeqTxn + 1}, opens each WAL segment via
  * {@link WalSegmentPageFrameCursor}, runs rows through the compiled SELECT's
  * filter + window cursor, and writes outputs to the live view's own WAL via
- * {@link WalWriter}. Phase 1b applies the just-written WAL block inline on
+ * {@link WalWriter}. The job applies the just-written WAL block inline on
  * this worker via a dedicated {@link ApplyWal2TableJob} — the global apply
  * job's {@code doRun} skips LV tokens so it never races the inline apply.
  * Once apply commits, {@code lvConsumedSeqTxn} advances and {@code _lv.s}
  * persists atomically through {@code engine.advanceLiveViewConsumedSeqTxn}.
  * <p>
- * Phase 1 sharp edges (per delta plan §"Phase 1 — disk-only end-to-end"):
+ * Sharp edges of the disk-only refresh path:
  * <ul>
  *     <li>No checkpoints, no JIT filter path, no cold-skip / warm-replay branching.</li>
  *     <li>FLUSH EVERY enforces a minimum interval between LV WAL commits: a refresh
@@ -427,7 +427,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         RecordMetadata baseMetadata = pageFrameFactory.getMetadata();
         buildColumnMappings(baseMetadata, baseToken);
 
-        // Phase 1b: decide whether the in-memory tier can be populated
+        // Decide whether the in-memory tier can be populated
         // for this LV. Only LVs whose output schema is fully fixed-width are
         // supported in this phase; var-length columns fall back to disk-only.
         // The staging buffer is reshaped on schema-mismatch; the LV's tier is
@@ -625,7 +625,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             }
 
             if (appendedRows > 0) {
-                // Phase 1b: the LV WAL block carries advanceTo as
+                // The LV WAL block carries advanceTo as
                 // maxBaseSeqTxnInBlock. The inline apply below makes the rows
                 // durable in the LV's on-disk table; only then do we advance
                 // lvConsumedSeqTxn so base WAL retention releases.
@@ -663,7 +663,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             instance.setAppliedWatermark(advanceTo);
             boolean lvConsumedPersisted = false;
             if (appendedRows > 0) {
-                // Phase 1b: LV apply runs inline on this thread. The
+                // LV apply runs inline on this thread. The
                 // global ApplyWal2TableJob.doRun skips LV tokens, so without
                 // applyWalDirect here the LIVE_VIEW_DATA block would sit
                 // unapplied and the on-disk tier would not catch up.
@@ -716,7 +716,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 persistState(instance);
             }
             if (lvConsumedPersisted && populateTier && appendedRows > 0) {
-                // Phase 1b slow-path swap: copy retained rows from the published
+                // Slow-path swap: copy retained rows from the published
                 // slot, append staging on top, publishSwap. Failure to acquire
                 // the write slot is a non-fatal stall — the on-disk tier still
                 // advanced, the in-mem tier just trails for this cycle.
@@ -743,10 +743,10 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     }
 
     /**
-     * Phase 2a.8 head invalidation on out-of-order arrival. The current cycle
+     * Head invalidation on out-of-order arrival. The current cycle
      * still feeds the offending batch through the in-WAL-order pipeline (so
-     * the live output for the affected partitions is wrong for this batch -
-     * same disposition Phase 1b shipped with); the value of this helper is
+     * the live output for the affected partitions is wrong for this batch);
+     * the value of this helper is
      * narrower: the on-disk head no longer reflects the rows the LV will
      * eventually need to replay, so it must be retired now to keep restart
      * recovery sound. The view falls through to head-miss replay on the
@@ -785,7 +785,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     }
 
     /**
-     * Phase 2a.8 out-of-order replay. Called from {@code incrementalRefresh}
+     * Out-of-order replay. Called from {@code incrementalRefresh}
      * after detection rolls back the in-WAL-order draft for the offending
      * cycle. Picks the head-hit branch when an in-disk head exists and its
      * {@code maxTimestamp <= lateRowTs}; falls back to head-miss replay from
@@ -800,7 +800,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * Map via {@link WindowFunction#getPartitionMap()}. Non-capable LVs fall
      * back to head invalidation only (the prior Option 1 disposition); their
      * live output for the O3 batch is wrong until the next refresh cycle,
-     * matching the Phase 1b behaviour for any LV whose SELECT contains a
+     * matching the fallback behaviour for any LV whose SELECT contains a
      * function still on the default-throw snapshot path.
      *
      * @param instance      live view being replayed
@@ -876,7 +876,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     }
 
     /**
-     * Phase 2a.8 head-hit replay: rolls window state back to the head .cp's
+     * Head-hit replay: rolls window state back to the head .cp's
      * snapshot moment (clear per-function maps, then restore from disk),
      * scans the base table from {@code headMaxTs + 1} forward, and emits
      * a single REPLACE_RANGE commit covering {@code [headMaxTs + 1, +inf)}.
@@ -1052,7 +1052,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     }
 
     /**
-     * Phase 2a.8 head-miss replay path: discards every window-function
+     * Head-miss replay path: discards every window-function
      * partition map and the anchor map, opens the base table at applied
      * watermark &gt;= {@code advanceTo}, drives the compiled SELECT's
      * filter / anchor / window cursor stack over the {@code TableReader}'s
@@ -1062,7 +1062,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * <p>
      * Cost is O(retained_rows x n_window_functions) of {@code computeNext}
      * plus the partition-rewrite I/O - acceptable for short-lived views
-     * but several seconds to minutes for long-lived ones, per the RFC
+     * but several seconds to minutes for long-lived ones per the
      * cost model. The head-hit branch (follow-up commit) will avoid the
      * worst of this by starting from the head's {@code maxTimestamp}.
      * <p>
@@ -1387,7 +1387,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     }
 
     /**
-     * Phase 2a.4 head-checkpoint write hook. Computes the per-LV snapshot
+     * Head-checkpoint write hook. Computes the per-LV snapshot
      * capability on the first call, accumulates the cycle's row count into
      * the cadence counter, and writes a fresh {@code <lvSeqTxn>.cp} when
      * either trigger has fired (or this is the first commit and no head
@@ -1647,7 +1647,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     }
 
     /**
-     * Phase 2a.7 restart-restore: opens the head {@code .cp} (stamped on the
+     * Restart-restore: opens the head {@code .cp} (stamped on the
      * instance by the startup sweep), rehydrates the LV's window state from
      * the manifest + anchor block + per-function blocks, then advances
      * {@code lastProcessedSeqTxn} to the manifest's {@code baseSeqTxn} so the
@@ -1669,8 +1669,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         }
         // Advance the refresh worker's view of the base position to the
         // manifest's baseSeqTxn; the next incrementalRefresh resumes one
-        // step past it. appliedWatermark mirrors lastProcessed in
-        // Phase 1b (the seam_ts is anchored at the WAL commit boundary,
+        // step past it. appliedWatermark mirrors lastProcessed here
+        // (the seam_ts is anchored at the WAL commit boundary,
         // see incrementalRefresh).
         instance.setLastProcessedSeqTxn(restoredHeadState.manifestBaseSeqTxn);
         instance.setAppliedWatermark(restoredHeadState.manifestBaseSeqTxn);
@@ -1812,7 +1812,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         if (!LiveViewInMemoryBuffer.areColumnTypesSupported(tierColumnTypes)) {
             // LV output schema contains a var-length / unsupported column type;
             // skip the in-mem tier population for this LV. The cursor reads
-            // disk-only via TableReader (Phase 1a behaviour).
+            // disk-only via TableReader.
             return false;
         }
         long pageSize = engine.getConfiguration().getLiveViewInMemoryBufferInitialBytes();
@@ -1841,7 +1841,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
 
     /**
      * Publishes this cycle's staging rows into the LV's in-memory tier
-     * (Phase 3a fast-path + slow-path swap).
+     * (fast-path + slow-path swap).
      * <p>
      * Two paths share the same {@code 0 -> -1} CAS primitive on a slot's
      * refcount:
@@ -1939,9 +1939,9 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // only age out when both (a) ts < latest - IN_MEMORY and (b) its
             // seqTxn is covered by applied_watermark — otherwise the gap-free
             // invariant between tiers can break when the disk side is behind.
-            // Phase 1b reaches this code only after a successful apply, so
+            // This code is reached only after a successful apply, so
             // every staging row is durable on disk; the clamp is vacuous
-            // today but protects the Phase 4 hand-off-ring regime where the
+            // today but protects a future hand-off-ring regime where the
             // in-mem tier publishes ahead of apply.
             //
             // The slot does not carry per-row seqTxn metadata, so the clamp
@@ -2132,7 +2132,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             }
             boolean attempted = false;
             try {
-                // Phase 2a.7: first cycle after restart restores from the head
+                // First cycle after restart restores from the head
                 // .cp (if any). Single-shot per LV lifetime - the flag flips
                 // true whether the restore succeeded, missed, or failed.
                 if (!instance.isCheckpointRestoreAttempted()) {

@@ -31,7 +31,7 @@ import io.questdb.cairo.map.MapRecordCursor;
 import io.questdb.cairo.map.MapValue;
 
 /**
- * Helper for live view Phase 5 partition-state eviction. Rebuilds a partitioned
+ * Helper for live view partition-state eviction. Rebuilds a partitioned
  * window function's primary {@link Map} into a caller-provided scratch Map by
  * copying only entries whose last-activity-ts value column is at or above the
  * retention cutoff. Entries below the cutoff are skipped; the result is a packed
