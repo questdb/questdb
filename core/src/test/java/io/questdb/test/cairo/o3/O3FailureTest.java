@@ -3764,7 +3764,8 @@ public class O3FailureTest extends AbstractO3Test {
         int batchCountMin = batchCountMax / 2;
         int batchCount = batchCountMin + rnd.nextInt(batchCountMax - batchCountMin + 1);
 
-        // max timestamp should be 100_000
+        // bulk-load the initial dataset; the O3 batches below use timestamps in [0, 100_000)
+        // to force out-of-order inserts into the earliest partitions
         engine.execute("insert atomic into x select rnd_symbol('aa', 'bb', 'cc'), rnd_str(4,4,1), rnd_str(4,4,1), rnd_str(4,4,1), rnd_str(4,4,1), rnd_varchar(1,40,1), rnd_varchar(1,1,1), rnd_symbol('aa', 'bb', 'cc'), rnd_int(), timestamp_sequence(0, 100) from long_sequence(" + initialRows + ")", executionContext);
 
         String[] symbols = new String[]{"ppp", "wrre", "0ppd", "l22z", "wwe32", "pps", "oop2", "00kk"};

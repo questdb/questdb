@@ -279,9 +279,14 @@ public class O3MaxLagTest extends AbstractO3Test {
                     int initialCountLo = longsPerPage - 1;
                     int additionalCountLo = longsPerPage - 1;
 
-                    // sample a sliding window of the inner range; smaller on slow CI runners (Mac, Windows)
+                    // Sample a sliding window of the inner range; smaller on slow CI runners (Mac, Windows).
+                    // The window always covers the page boundary (longsPerPage * 2), the value this test
+                    // exists to exercise, so every run still hits the boundary while total iterations drop.
+                    int pageBoundary = longsPerPage * 2;
                     int innerWindow = Os.isLinux() ? 8 : 2;
-                    int innerStart = lo + rnd.nextInt(Math.max(1, hi - lo - innerWindow + 1));
+                    int startLo = Math.max(lo, pageBoundary - innerWindow + 1);
+                    int startHi = Math.min(pageBoundary, hi - innerWindow);
+                    int innerStart = startLo + rnd.nextInt(Math.max(1, startHi - startLo + 1));
                     int innerEnd = innerStart + innerWindow;
 
                     for (int initialCount = initialCountLo; initialCount < initialCountLo + 3; initialCount++) {
