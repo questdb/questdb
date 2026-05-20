@@ -709,7 +709,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                         }
                     }
                 }
-                // RFC 123 Phase 1b: lvConsumedSeqTxn advance for LV tokens lives in
+                // The lvConsumedSeqTxn advance for LV tokens lives in
                 // LiveViewRefreshJob, which runs immediately after applyWalDirect
                 // returns. That keeps the per-FLUSH-cycle BlockFileWriter + Path
                 // amortised on the refresh worker (no per-cycle allocations) and
@@ -926,8 +926,8 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
      * Convenience entry for direct (non-queue-driven) callers — runs the apply loop
      * for the given token using the job's own {@code engine} and
      * {@code operationExecutor}. Used by {@code LiveViewRefreshJob} to apply an
-     * LV's own WAL inline after a {@code LIVE_VIEW_DATA} block has been committed
-     * (RFC 123 Phase 1b). The notification-driven
+     * LV's own WAL inline after a {@code LIVE_VIEW_DATA} block has been committed.
+     * The notification-driven
      * {@link #doRun(int, long, RunStatus)} path skips live-view tokens so a global
      * pool worker never races the LV's own refresh worker.
      */
@@ -940,8 +940,8 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
      * <p>
      * Public so that {@code LiveViewRefreshJob} can drive the same apply machinery
      * inline after writing a {@code LIVE_VIEW_DATA} block. The notification-driven
-     * {@link #doRun(int, long, RunStatus)} path skips live-view tokens (RFC 123
-     * Phase 1b) so a global pool worker never races the LV's own refresh worker.
+     * {@link #doRun(int, long, RunStatus)} path skips live-view tokens so a global
+     * pool worker never races the LV's own refresh worker.
      */
     public void applyWal(
             @NotNull TableToken tableToken,
@@ -1023,7 +1023,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
             subSeq.done(cursor);
         }
 
-        // RFC 123 Phase 1b: live views apply their own WAL inline on the refresh
+        // Live views apply their own WAL inline on the refresh
         // worker, so a global apply task on this token would race the LV's own
         // TableWriter acquire. Notifications still land on the queue (WalWriter
         // emits them unconditionally on commit) — just drop them here.

@@ -1436,8 +1436,8 @@ public class SqlParser {
         final ExpressionNode baseNameExpr = from.getTableNameExpr();
         builder.setBaseTableNamePosition(baseNameExpr != null ? baseNameExpr.position : selectStart);
 
-        // Validate ORDER BY on each named window: RFC 123 §"CREATE-time validation"
-        // requires the ORDER BY column to be the base table's designated timestamp,
+        // Validate ORDER BY on each named window: CREATE-time validation requires
+        // the ORDER BY column to be the base table's designated timestamp,
         // ascending. Caught at parse time so the LV never reaches the engine with a
         // shape its WAL-row-order processing can't honor.
         validateLiveViewWindowOrderBy(queryModel, from.getTableName());
@@ -1793,7 +1793,7 @@ public class SqlParser {
     }
 
     /**
-     * Recursive AST walk implementing the parser-side half of RFC 123's anchor-expression
+     * Recursive AST walk implementing the parser-side half of the anchor-expression
      * validator. Rejects subqueries, bind variables, and function calls that the planner
      * would later resolve to runtime-state ({@code now}, {@code current_timestamp},
      * {@code systimestamp}) or random ({@code rnd_*}) functions. The function-property

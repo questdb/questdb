@@ -422,7 +422,7 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
 
         @Override
         public void resetPartition(Record record) {
-            // ANCHOR-driven reset (RFC 123). The Map value's [sum, count] slots
+            // ANCHOR-driven reset. The Map value's [sum, count] slots
             // return to identity so the next row in the new bucket starts fresh.
             // findValue() returns null when the partition has no recorded state
             // yet — nothing to reset.
@@ -1925,7 +1925,7 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
 
         @Override
         public void resetPartition(Record record) {
-            // ANCHOR-driven reset (RFC 123). Zero the [sum, count] slots; next
+            // ANCHOR-driven reset. Zero the [sum, count] slots; next
             // computeNext reads sum=0, count=0 and re-anchors on the post-reset row.
             partitionByRecord.of(record);
             MapKey key = map.withKey();

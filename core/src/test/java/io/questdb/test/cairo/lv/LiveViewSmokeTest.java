@@ -134,7 +134,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
 
     @Test
     public void testCreateLiveViewMakesCheckpointsDir() throws Exception {
-        // RFC 123 Phase 2a.3: CREATE LIVE VIEW must materialize _checkpoints/
+        // CREATE LIVE VIEW must materialize _checkpoints/
         // inside the LV directory so the flush cycle's checkpoint write hook
         // (Phase 2a.4) has a target directory ready.
         assertMemoryLeak(() -> {
@@ -161,7 +161,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
 
     @Test
     public void testCreateLiveViewNameVisibleOnlyAfterFilesDurable() throws Exception {
-        // RFC 123 §"CREATE LIVE VIEW" step 7: registry name commit must follow
+        // Registry name commit must follow
         // the durable _lv.s + _lv writes. A concurrent name lookup that races
         // with CREATE must therefore resolve nothing until both files are on
         // disk - never a half-built LV. The hook below observes the registry
@@ -663,7 +663,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
 
     @Test
     public void testWriterStallWhenBothSlotsPinned() throws Exception {
-        // RFC 123 §"Stall behavior": when both slots are reader-pinned, the
+        // When both slots are reader-pinned, the
         // slow-path tryAcquireWrite returns null and the refresh worker
         // records the start of the stall streak. writer_stall_micros surfaces
         // the duration via live_views(). We pin both slots through the test
@@ -756,7 +756,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
 
     @Test
     public void testInMemEvictionPastInMemoryWindow() throws Exception {
-        // RFC 123 Phase 1b: rows whose ts falls below latest - IN_MEMORY are
+        // Rows whose ts falls below latest - IN_MEMORY are
         // not copied into the new write slot during the slow-path swap. With
         // IN MEMORY 100ms and a 200ms gap between the two inserts (data ts),
         // the first row's ts is below the eviction threshold by the time the
@@ -802,7 +802,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
 
     @Test
     public void testInMemEvictionDurabilityClampHoldsBackUnflushedRows() throws Exception {
-        // RFC 123 §"In-memory tier" line 848: in-mem eviction must clamp on
+        // In-mem eviction must clamp on
         // (ts < latest - IN_MEMORY) AND (seqTxn <= applied_watermark) so the
         // gap-free invariant between tiers stays intact when the disk tier
         // is behind. Phase 1b reaches the in-mem publish only after a
@@ -867,7 +867,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
 
     @Test
     public void testLiveViewsExposesInMemBytes() throws Exception {
-        // RFC 123 §"Catalogue function live_views()": in_mem_bytes reports the
+        // in_mem_bytes reports the
         // current footprint of both N=2 slots. Zero before any refresh; > 0
         // once a refresh has populated the tier.
         assertMemoryLeak(() -> {
@@ -906,7 +906,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
 
     @Test
     public void testInMemTierReceivesRowsAfterRefresh() throws Exception {
-        // RFC 123 Phase 1b: refresh worker mirrors LV outputs into a worker-local
+        // Refresh worker mirrors LV outputs into a worker-local
         // staging buffer and runs a slow-path swap into the LV's N=2 in-mem
         // tier after the inline apply commits. Two rows match the WHERE
         // filter; both must show up in the published slot, in ts-ascending
@@ -948,7 +948,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
 
     @Test
     public void testCursorPinKeepsTierAliveAcrossDrop() throws Exception {
-        // RFC 123 §"DROP LIVE VIEW" step 4 "modulo cursor pins": a reader
+        // A reader
         // holding an in-mem tier pin must survive a concurrent DROP LIVE VIEW
         // without segfault. The tier's deferred-close protocol marks it
         // closed on DROP but keeps native memory alive until the last pin
@@ -997,7 +997,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
 
     @Test
     public void testSlowPathSwapFailureKeepsPreviousSlotPublished() throws Exception {
-        // RFC 123 Phase 1b end-to-end: when publishToInMemoryTier's slow-path
+        // End-to-end: when publishToInMemoryTier's slow-path
         // swap throws after a successful tryAcquireWrite, the catch block must
         // call releaseWriteWithoutPublish so the previously-published slot
         // stays visible to readers and the held sentinel does not deadlock the
@@ -1116,7 +1116,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
 
     @Test
     public void testSqlCursorPinKeepsTierAliveAcrossDrop() throws Exception {
-        // RFC 123 §"DROP LIVE VIEW" step 4 "modulo cursor pins": a SQL
+        // A SQL
         // RecordCursor opened against an LV pins the in-mem tier slot for its
         // lifetime; concurrent DROP LIVE VIEW marks the tier closed but
         // deferred-frees native memory until the cursor releases. The unit-
@@ -1185,7 +1185,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
 
     @Test
     public void testInMemTierBypassedForVarLengthOutputSchema() throws Exception {
-        // RFC 123 Phase 1b: LiveViewInMemoryBuffer supports fixed-width column
+        // LiveViewInMemoryBuffer supports fixed-width column
         // types only; an LV that projects a var-length column (VARCHAR,
         // STRING, etc.) falls through to disk-only reads.
         // ensureStagingAndTier returns false, no tier is allocated, but the
@@ -1239,7 +1239,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
 
     @Test
     public void testGlobalApplyDoesNotTouchLiveView() throws Exception {
-        // RFC 123 Phase 1b: the global ApplyWal2TableJob.doRun skips LV tokens. We
+        // The global ApplyWal2TableJob.doRun skips LV tokens. We
         // ingest into the base, write a LIVE_VIEW_DATA block via the refresh worker,
         // then capture the LV's applied seqTxn. A subsequent drainWalQueue must NOT
         // advance the LV's _txn, since global apply ignores LV notifications.
@@ -1285,7 +1285,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
 
     @Test
     public void testRefreshAppliesInlineAndAdvancesLvConsumedSeqTxn() throws Exception {
-        // RFC 123 Phase 1b: LV apply runs inline on the refresh worker after the
+        // LV apply runs inline on the refresh worker after the
         // LIVE_VIEW_DATA block is written. The global ApplyWal2TableJob.doRun skips
         // LV tokens, so drainWalQueue is a no-op for the LV's own WAL. The temporal
         // contract: lvConsumedSeqTxn advances within a single refresh cycle, not on
@@ -1336,8 +1336,8 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
         // emits no LIVE_VIEW_DATA block, so the apply path has nothing to consume.
         // Pre-fix, lvConsumedSeqTxn stayed at the CREATE-time floor and held base WAL
         // retention forever. Post-fix, the no-row branch advances lvConsumedSeqTxn
-        // directly via engine.advanceLiveViewConsumedSeqTxn (RFC 123 §"Lifecycle /
-        // Invalidation - Base-table data removal").
+        // directly via engine.advanceLiveViewConsumedSeqTxn on base-table data
+        // removal.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
@@ -1619,7 +1619,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
         // Regression: pre-fix, advanceLiveViewConsumedSeqTxn mutated the in-memory
         // floor before persisting _lv.s and silently swallowed any persist error,
         // leaving the in-memory floor ahead of the durable contract WalPurgeJob
-        // reads (RFC 123 §"WAL retention coupling"). The fix reorders to persist
+        // reads (WAL retention coupling). The fix reorders to persist
         // first and throws on failure.
         final AtomicBoolean failPersist = new AtomicBoolean(false);
         FilesFacade ff = new TestFilesFacadeImpl() {
@@ -1893,7 +1893,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
 
     @Test
     public void testRestartRoundTripsLvConsumedSeqTxn() throws Exception {
-        // RFC 123 Phase 1b: refresh writes + applies inline, so a successful refresh
+        // Refresh writes + applies inline, so a successful refresh
         // cycle leaves no unapplied LV WAL block in steady state. This pins the
         // round-trip of lvConsumedSeqTxn and lastProcessedSeqTxn through restart.
         // (Recovery from a crash mid-cycle — between commitLiveView and the inline
@@ -2174,7 +2174,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
 
     @Test
     public void testFlushRetryBudgetExhaustionInvalidatesView() throws Exception {
-        // RFC 123 §"Flush": persist failures retry up to cairo.live.view.flush.retry.max
+        // Persist failures retry up to cairo.live.view.flush.retry.max
         // (or .duration, whichever fires first). On budget exhaustion the view is
         // invalidated via the unified path. We force consecutive _lv.s persist failures
         // on the refresh worker and assert the LV flips to INVALID after the configured
@@ -3812,7 +3812,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
         // ended up with a value 1000x smaller than any base-table ts. The persisted
         // value is now scaled to base units so the eventual O3 reject in Phase 2
         // can compare it against late_row.ts directly. The catalogue column stays
-        // TIMESTAMP_MICRO (RFC 123 §"Catalogue function live_views()") and rounds
+        // TIMESTAMP_MICRO and rounds
         // NS values back to the MICRO grid at display time.
         assertMemoryLeak(() -> {
             setCurrentMicros(1_700_000_000_000_000L);
@@ -6516,8 +6516,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
     @Test
     public void testO3StormAtFixedHorizon() throws Exception {
         // Phase 2a.8: repeated O3 rows at the same historical horizon (well
-        // below headMaxTs) fall into the head-miss path each time per RFC 123
-        // §"O3 storms at a fixed historical horizon". Every event triggers a
+        // below headMaxTs) fall into the head-miss path each time. Every event triggers a
         // full replay from viewLowerBoundTimestamp and writes one fresh head.
         // After three such events the LV output reflects all rows in ts order.
         assertMemoryLeak(() -> {
@@ -7447,7 +7446,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
 
     @Test
     public void testRejectWindowOrderByNonTimestampColumn() throws Exception {
-        // RFC 123: each named WINDOW must ORDER BY the base's designated timestamp.
+        // Each named WINDOW must ORDER BY the base's designated timestamp.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
             try {
@@ -7463,7 +7462,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
 
     @Test
     public void testRejectWindowOrderByDescending() throws Exception {
-        // RFC 123: ORDER BY direction must be ascending; DESC violates the WAL-row-order
+        // ORDER BY direction must be ascending; DESC violates the WAL-row-order
         // processing model.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
@@ -7480,7 +7479,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
 
     @Test
     public void testRejectWindowOrderByMissing() throws Exception {
-        // RFC 123: a named WINDOW without any ORDER BY can't be ordered by the
+        // A named WINDOW without any ORDER BY can't be ordered by the
         // designated ts and must be rejected.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
@@ -7497,7 +7496,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
 
     @Test
     public void testRejectWindowOrderByMultipleColumns() throws Exception {
-        // RFC 123: ORDER BY must be a single column (the designated timestamp);
+        // ORDER BY must be a single column (the designated timestamp);
         // multi-column ordering doesn't have a meaningful WAL-stream semantics.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
@@ -7527,7 +7526,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
 
     @Test
     public void testFastPathAppendsToSamePublishedSlot() throws Exception {
-        // RFC 123 Phase 3a: when no reader pins the published slot and the
+        // When no reader pins the published slot and the
         // slot's footprint is under the growth budget, the refresh worker
         // appends staging rows in place via the {@code 0 -> -1} CAS protocol
         // and releases without flipping {@code publishedIdx}. Three
@@ -7577,7 +7576,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
 
     @Test
     public void testFastPathFallsBackToSlowPathWhenReaderPinned() throws Exception {
-        // RFC 123 Phase 3a: a reader pin on the published slot makes the
+        // A reader pin on the published slot makes the
         // fast-path CAS {@code 0 -> -1} fail (rc > 0). The refresh worker
         // falls through to the slow-path swap, taking the non-published
         // slot, copying retained rows, appending staging, and flipping
@@ -7631,7 +7630,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
 
     @Test
     public void testGrowthThresholdForcesSwap() throws Exception {
-        // RFC 123 Phase 3a: when the published slot's footprint already
+        // When the published slot's footprint already
         // meets or exceeds {@code cairo.live.view.in.memory.buffer.growth.bytes},
         // the refresh worker skips the fast-path acquire and goes directly to
         // the slow-path swap. The growth budget acts as a backstop against
@@ -7673,7 +7672,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
 
     @Test
     public void testInMemTierSkipsAllocationForUnsupportedColumnTypes() throws Exception {
-        // RFC 123 Phase 3a: an LV whose output schema contains a column type
+        // An LV whose output schema contains a column type
         // the fixed-width in-mem tier cannot store (STRING / VARCHAR /
         // BINARY / ARRAY) skips tier allocation entirely. The cursor stays
         // disk-only with no pin, and reads pass through unchanged. The
@@ -7728,7 +7727,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
 
     @Test
     public void testRejectFlushEveryZero() throws Exception {
-        // RFC 123 §"CREATE-time validation" line 53: FLUSH EVERY 0 is rejected
+        // FLUSH EVERY 0 is rejected
         // alongside any value below 100ms - no row would ever durably reach
         // disk. The implementation collapses both branches into one message;
         // this test pins that the zero case also fires the same wording so a
@@ -7793,7 +7792,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
 
     @Test
     public void testRejectSymbolAnchorReturnType() throws Exception {
-        // RFC 123 §"CREATE-time validation": ANCHOR EXPRESSION must return
+        // ANCHOR EXPRESSION must return
         // TIMESTAMP, LONG, or INT. SYMBOL is rejected because base_id vs.
         // lv_id translation lands after window evaluation - equality
         // semantics on the raw base symbol id don't compose with the runtime
@@ -7935,7 +7934,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
 
     @Test
     public void testShowCreateRoundTripsDailyUtc() throws Exception {
-        // RFC 123 §"DAILY sugar" line 803: ANCHOR DAILY '00:00' 'UTC' and the
+        // ANCHOR DAILY '00:00' 'UTC' and the
         // unqualified ANCHOR DAILY '00:00' desugar to the same expression
         // (timestamp_floor('1d', ts)). SHOW CREATE must round-trip the
         // user-typed clause faithfully so re-executing the emitted DDL

@@ -502,7 +502,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
             }
         }
 
-        // Phase 1 RFC 123: live views publish lv_consumed_seqTxn through this purge floor
+        // Live views publish lv_consumed_seqTxn through this purge floor
         // alongside mat-view consumers. Skip dropped / invalid views — invalid stays at the
         // last published value but its WAL retention need disappears once it's invalid (the
         // refresh worker will not consume more base segments).

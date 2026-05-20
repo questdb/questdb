@@ -1504,7 +1504,7 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
 
         @Override
         public void resetPartition(Record record) {
-            // ANCHOR-driven reset (RFC 123). Welford's [mean, m2, count] all return to
+            // ANCHOR-driven reset. Welford's [mean, m2, count] all return to
             // zero. The next finite value re-runs Welford with mean=0, m2=0, count=0
             // and produces (mean=d, m2=0, count=1) — identical to the isNew init.
             partitionByRecord.of(record);

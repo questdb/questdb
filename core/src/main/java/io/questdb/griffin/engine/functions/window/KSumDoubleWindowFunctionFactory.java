@@ -424,7 +424,7 @@ public class KSumDoubleWindowFunctionFactory extends AbstractWindowFunctionFacto
 
         @Override
         public void resetPartition(Record record) {
-            // ANCHOR-driven reset (RFC 123). [sum, compensation, count] all return to zero;
+            // ANCHOR-driven reset. [sum, compensation, count] all return to zero;
             // the next finite value re-runs Kahan with sum=0, compensation=0 which
             // correctly anchors the new bucket on the post-reset row.
             partitionByRecord.of(record);
@@ -1651,7 +1651,7 @@ public class KSumDoubleWindowFunctionFactory extends AbstractWindowFunctionFacto
 
         @Override
         public void resetPartition(Record record) {
-            // ANCHOR-driven reset (RFC 123). Zero [sum, compensation, count]; Kahan
+            // ANCHOR-driven reset. Zero [sum, compensation, count]; Kahan
             // re-runs cleanly from zero.
             partitionByRecord.of(record);
             MapKey key = map.withKey();

@@ -67,7 +67,7 @@ public class LiveViewInMemoryTierTest extends AbstractCairoTest {
 
     @Test
     public void testDoublePinStallsWriter() throws Exception {
-        // RFC 123 §"Stall behavior": when both slots are pinned by readers the
+        // When both slots are pinned by readers the
         // writer cannot make progress; tryAcquireWrite returns null and the
         // refresh worker trails.
         assertMemoryLeak(() -> {
@@ -158,7 +158,7 @@ public class LiveViewInMemoryTierTest extends AbstractCairoTest {
 
     @Test
     public void testReaderObservesWriterSentinelAndSpins() throws Exception {
-        // RFC 123 §"In-memory tier" reader CAS-loop: rc < 0 means a writer holds
+        // Reader CAS-loop: rc < 0 means a writer holds
         // the sentinel; the reader must spin until the writer releases. We hold
         // the sentinel on a non-published slot, run acquireRead in the
         // background — it pins the *currently-published* slot immediately, so
@@ -277,7 +277,7 @@ public class LiveViewInMemoryTierTest extends AbstractCairoTest {
 
     @Test
     public void testAcquireReadAfterCloseReturnsMinusOne() throws Exception {
-        // RFC 123 §"DROP LIVE VIEW" step 4 — once close() is observed, no new
+        // Once close() is observed, no new
         // cursor should be able to pin a slot. Returning -1 from acquireRead
         // lets the caller fall through to disk-only reads without segfaulting
         // on freed native memory.
@@ -296,7 +296,7 @@ public class LiveViewInMemoryTierTest extends AbstractCairoTest {
 
     @Test
     public void testDeferredCloseFreesWhenLastPinReleases() throws Exception {
-        // RFC 123 §"DROP LIVE VIEW" step 4 "modulo cursor pins": close() while a
+        // Modulo cursor pins: close() while a
         // cursor holds a pin must defer native memory free until the cursor
         // releases. Verifies the cursor-side releaseRead path remains safe
         // after the LV's DROP has marked the tier closed.
@@ -335,7 +335,7 @@ public class LiveViewInMemoryTierTest extends AbstractCairoTest {
 
     @Test
     public void testReleaseWriteWithoutPublishKeepsPriorSlotPublished() throws Exception {
-        // RFC 123 Phase 1b: a copy failure mid-swap must not flip publishedIdx,
+        // A copy failure mid-swap must not flip publishedIdx,
         // otherwise readers would silently regress from N rows to 0 rows.
         // releaseWriteWithoutPublish drops the writer sentinel while leaving
         // publishedIdx pointing at the prior (still-populated) slot.

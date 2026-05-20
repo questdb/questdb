@@ -237,7 +237,7 @@ public class RowNumberFunctionFactory implements FunctionFactory {
 
         @Override
         public void resetPartition(Record record) {
-            // ANCHOR-driven reset (RFC 123). Drop the partition's row counter back to
+            // ANCHOR-driven reset. Drop the partition's row counter back to
             // zero so the next computeNext sees x=0 and emits 1.
             partitionByRecord.of(record);
             MapKey key = map.withKey();

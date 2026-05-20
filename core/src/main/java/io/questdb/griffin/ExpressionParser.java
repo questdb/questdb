@@ -2366,7 +2366,7 @@ public class ExpressionParser {
             }
         }
 
-        // Live-view ANCHOR clause (RFC 123). Slots after the frame clause and before
+        // Live-view ANCHOR clause. Slots after the frame clause and before
         // the closing ')'. Two forms:
         //   ANCHOR EXPRESSION <expr>
         //   ANCHOR DAILY '<HH:MM>' ['<tz>']

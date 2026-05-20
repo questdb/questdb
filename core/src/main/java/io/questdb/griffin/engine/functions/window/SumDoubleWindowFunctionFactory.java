@@ -649,7 +649,7 @@ public class SumDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
 
         @Override
         public void resetPartition(Record record) {
-            // ANCHOR-driven reset (RFC 123). Zero the [sum, count] slots; next
+            // ANCHOR-driven reset. Zero the [sum, count] slots; next
             // computeNext re-anchors on the post-reset row.
             partitionByRecord.of(record);
             MapKey key = map.withKey();

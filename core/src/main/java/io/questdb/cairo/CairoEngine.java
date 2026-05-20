@@ -433,7 +433,7 @@ public class CairoEngine implements Closeable, WriterSource {
             if (maxBaseSeqTxn <= reader.getLvConsumedSeqTxn()) {
                 return;
             }
-            // Durability rule (RFC 123 §"WAL retention coupling"): _lv.s is the contract with
+            // Durability rule: _lv.s is the contract with
             // WalPurgeJob; the in-memory floor must trail disk. Persist the new value first,
             // then publish in-memory. If persist fails, the in-memory value stays at the old
             // durable floor, so the next apply re-attempts the advance from the same point.
@@ -894,8 +894,7 @@ public class CairoEngine implements Closeable, WriterSource {
         // against late_row.ts in base-table units. The non-BACKFILL path takes the
         // wall-clock CREATE moment, scaled into base units via the base's driver
         // so MICRO and NANO bases both produce a comparable value. The catalogue
-        // converts back to TIMESTAMP_MICRO at display time per RFC 123 §"Catalogue
-        // function live_views()".
+        // converts back to TIMESTAMP_MICRO at display time.
         //
         // BACKFILL views capture the full base history, so the floor sits at zero
         // (epoch): every historical row is admissible during the sweep, and any
@@ -948,8 +947,7 @@ public class CairoEngine implements Closeable, WriterSource {
                     }
                 }
 
-                // Pass 2 of the ANCHOR EXPRESSION validator (RFC 123 §"ANCHOR
-                // EXPRESSION validator"). Pass 1 (AST-level rejects of subqueries,
+                // Pass 2 of the ANCHOR EXPRESSION validator. Pass 1 (AST-level rejects of subqueries,
                 // bind variables, rnd_*/now()/etc.) ran in the parser; this is the
                 // function-property half that needs the compiled tree so it can see
                 // post-constant-fold flags and runtime-state predicates per-fn.
@@ -1058,8 +1056,8 @@ public class CairoEngine implements Closeable, WriterSource {
                         metadata
                 );
 
-                // _checkpoints/ subdirectory holds the rolling head checkpoint
-                // (RFC 123 §"On-disk tier"). Created before _lv.s so the rollback
+                // _checkpoints/ subdirectory holds the rolling head checkpoint.
+                // Created before _lv.s so the rollback
                 // path in dropTableOrViewOrMatView below covers it; _lv stays the
                 // atomic CREATE commit marker. mkdirs() is used (not mkdir()) so
                 // an IF NOT EXISTS CREATE against a pre-existing LV - whose
@@ -1926,8 +1924,8 @@ public class CairoEngine implements Closeable, WriterSource {
     /**
      * Invalidates a single live view directly by instance reference, without going
      * through the per-base-table iteration. Used by paths that already hold the
-     * instance — notably the refresh worker on flush retry budget exhaustion
-     * (RFC 123 §"Lifecycle / Invalidation"). Mirrors the lock + persist pattern
+     * instance — notably the refresh worker on flush retry budget exhaustion.
+     * Mirrors the lock + persist pattern
      * of {@link #invalidateLiveViewsForBaseTable0}.
      */
     public void invalidateLiveView(LiveViewInstance instance, String reason) {
@@ -2663,8 +2661,8 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     /**
-     * Pass 2 of the ANCHOR EXPRESSION validator — the function-property half that
-     * RFC 123 §"ANCHOR EXPRESSION validator" specifies on the post-constant-fold
+     * Pass 2 of the ANCHOR EXPRESSION validator — the function-property half applied to
+     * the post-constant-fold
      * Function tree. Rejects fold-to-constant top-level expressions, runtime-state
      * functions ({@code now()}, {@code current_timestamp}, ...), random functions,
      * non-deterministic functions, and aggregations. Pass 1 (AST-level rejects of

@@ -1673,7 +1673,7 @@ public class CountFunctionFactoryHelper {
 
         @Override
         public void resetPartition(Record record) {
-            // ANCHOR-driven reset (RFC 123). Zero the count slot.
+            // ANCHOR-driven reset. Zero the count slot.
             partitionByRecord.of(record);
             MapKey key = map.withKey();
             key.put(partitionByRecord, partitionBySink);

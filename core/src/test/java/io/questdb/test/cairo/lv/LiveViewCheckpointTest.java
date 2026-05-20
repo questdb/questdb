@@ -45,7 +45,7 @@ import org.junit.Test;
 
 /**
  * Round-trip tests for the live view checkpoint ({@code .cp}) file framing
- * (RFC 123 §"{@code .cp} file framing", §"Checkpoint manifest"). These tests
+ * and checkpoint manifest. These tests
  * exercise the pure format with synthetic block payloads - they do not
  * involve the live view runtime.
  */

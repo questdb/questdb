@@ -9940,7 +9940,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
         // Live views are WAL-backed tables: the base factory is a standard
         // PageFrameRecordCursorFactory over the LV's _meta + _txn + applied WAL.
-        // RFC 123 Phase 1b wraps it in a LiveViewRecordCursorFactory that
+        // The live-view layer wraps it in a LiveViewRecordCursorFactory that
         // pins the in-memory tier at cursor-open and routes by seam_ts.
         final TableToken tableToken = executionContext.getTableToken(tableName);
         RecordCursorFactory result;

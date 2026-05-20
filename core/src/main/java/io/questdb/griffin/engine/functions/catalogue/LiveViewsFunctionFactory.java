@@ -203,8 +203,8 @@ public class LiveViewsFunctionFactory implements FunctionFactory {
                         case COLUMN_FLUSH_EVERY_INTERVAL -> definition.getFlushEveryInterval();
                         case COLUMN_IN_MEMORY_INTERVAL -> definition.getInMemoryInterval();
                         case COLUMN_IN_MEM_BYTES -> {
-                            // RFC 123 §"Catalogue function live_views()": current in-mem
-                            // tier footprint (sum across both N=2 slots). Zero when the
+                            // Current in-mem tier footprint (sum across both N=2 slots).
+                            // Zero when the
                             // tier has not been allocated yet (LV has not refreshed, or
                             // schema is var-length and the tier is unused).
                             LiveViewInMemoryTier tier = instance.getInMemoryTier();
@@ -219,8 +219,8 @@ public class LiveViewsFunctionFactory implements FunctionFactory {
                             yield head < 0 || lp < 0 ? Numbers.LONG_NULL : Math.max(0, head - lp);
                         }
                         case COLUMN_LAG_MICROS -> {
-                            // RFC 123 §"Catalogue function live_views()": now minus the
-                            // wall-clock of the last successful flush. lastFlushTimeUs is the
+                            // Now minus the wall-clock of the last successful flush.
+                            // lastFlushTimeUs is the
                             // closest proxy we keep — the LV refresh runs immediately after a
                             // base commit it can see, so this approximates "now - timestamp of
                             // last processed base commit" for both caught-up and lagging views.
@@ -248,15 +248,14 @@ public class LiveViewsFunctionFactory implements FunctionFactory {
                         }
                         case COLUMN_HEAD_CHECKPOINT_STATE_BYTES -> instance.getHeadCheckpointStateBytes();
                         case COLUMN_VIEW_LOWER_BOUND_TIMESTAMP ->
-                                // Persisted in base-table units (RFC 123 §"On-disk tier"); convert back to
+                                // Persisted in base-table units; convert back to
                                 // TIMESTAMP_MICRO per the catalogue column's declared type. Identity for
-                                // MICRO bases; rounds NS bases down to the MICRO grid (RFC §"Catalogue
-                                // function live_views()").
+                                // MICRO bases; rounds NS bases down to the MICRO grid.
                                 ColumnType
                                         .getTimestampDriver(definition.getBaseTimestampType())
                                         .toMicros(definition.getViewLowerBoundTimestamp());
                         case COLUMN_WRITER_STALL_MICROS -> {
-                            // RFC 123 §"Stall behavior": current uninterrupted stall duration.
+                            // Current uninterrupted stall duration.
                             // writerStallStartUs is set when the in-mem tier's slow-path
                             // tryAcquireWrite fails (both slots reader-pinned); cleared on
                             // the next successful publish. Zero when not stalled.
