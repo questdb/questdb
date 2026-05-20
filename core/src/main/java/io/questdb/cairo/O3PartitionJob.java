@@ -3958,10 +3958,12 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         final ColumnTypeConverter.Fixed2VarConverter converter =
                 ColumnTypeConverter.getFixedToVarConverter(srcType, ColumnType.STRING);
         final long elemSize = ColumnType.sizeOf(srcType);
+        final int arg1 = ColumnType.isDecimal(srcType) ? ColumnType.getDecimalPrecision(srcType) : 0;
+        final int arg2 = ColumnType.isDecimal(srcType) ? ColumnType.getDecimalScale(srcType) : 0;
 
         for (int i = 0; i < rowCount; i++) {
             sink.clear();
-            boolean hasValue = converter.convert(srcDataPtr + i * elemSize, sink);
+            boolean hasValue = converter.convert(srcDataPtr + i * elemSize, sink, arg1, arg2);
 
             if (!hasValue) {
                 // Null: write -1 as length prefix.
@@ -3995,10 +3997,12 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         final ColumnTypeConverter.Fixed2VarConverter converter =
                 ColumnTypeConverter.getFixedToVarConverter(srcType, ColumnType.VARCHAR);
         final long elemSize = ColumnType.sizeOf(srcType);
+        final int arg1 = ColumnType.isDecimal(srcType) ? ColumnType.getDecimalPrecision(srcType) : 0;
+        final int arg2 = ColumnType.isDecimal(srcType) ? ColumnType.getDecimalScale(srcType) : 0;
 
         for (int i = 0; i < rowCount; i++) {
             sink.clear();
-            boolean hasValue = converter.convert(srcDataPtr + i * elemSize, sink);
+            boolean hasValue = converter.convert(srcDataPtr + i * elemSize, sink, arg1, arg2);
             boolean isNull = !hasValue;
             long auxEntryAddr = auxAddr + (long) i * VarcharTypeDriver.VARCHAR_AUX_WIDTH_BYTES;
 

@@ -78,26 +78,31 @@ import org.jetbrains.annotations.Nullable;
 public class PageFrameMemoryRecord implements Record, StableStringSource, QuietCloseable, Mutable {
     public static final byte RECORD_A_LETTER = 0;
     public static final byte RECORD_B_LETTER = 1;
-    protected final ObjList<BorrowedArray> arrayBuffers = new ObjList<>();
-    protected final ObjList<DirectByteSequenceView> bsViews = new ObjList<>();
-    protected final ObjList<DirectString> csViewsA = new ObjList<>();
-    protected final ObjList<DirectString> csViewsB = new ObjList<>();
-    protected final ObjList<Long256Impl> longs256A = new ObjList<>();
-    protected final ObjList<Long256Impl> longs256B = new ObjList<>();
-    // Per-column sinks for lazy fixed/var->string conversion. Per-column to avoid
-    // violating the Record flyweight contract that getStrA(c1) followed by getStrA(c2)
-    // must not invalidate the c1 return value.
-    protected final ObjList<StringSink> stringSinksA = new ObjList<>();
-    protected final ObjList<StringSink> stringSinksB = new ObjList<>();
-    protected final ObjList<SymbolTable> symbolTableCache = new ObjList<>();
-    protected final ObjList<Utf8SplitString> utf8ViewsA = new ObjList<>();
-    protected final ObjList<Utf8SplitString> utf8ViewsB = new ObjList<>();
-    // Per-column sinks for lazy fixed->varchar conversion. Same flyweight reasoning
-    // as stringSinksA/B.
-    protected final ObjList<Utf8StringSink> varcharSinksA = new ObjList<>();
-    protected final ObjList<Utf8StringSink> varcharSinksB = new ObjList<>();
+    // Per-column flyweight pools. Each list is sized 2 * columnCount: A views live at
+    // [0, columnCount), B views at [columnCount, 2 * columnCount). Halving the list count
+    // saves an ObjList header per record per pool. Per-column slot-per-column avoids
+    // violating the Record flyweight contract that, e.g., getStrA(c1) followed by
+    // getStrA(c2) must not invalidate the c1 return value.
+    private final ObjList<BorrowedArray> arrayBuffers = new ObjList<>();
+    private final ObjList<DirectByteSequenceView> bsViews = new ObjList<>();
+    private final ObjList<DirectString> csViews = new ObjList<>();
+    private final ObjList<Long256Impl> longs256 = new ObjList<>();
+    private final ObjList<StringSink> stringSinks = new ObjList<>();
+    private final ObjList<SymbolTable> symbolTableCache = new ObjList<>();
+    // Per-column lazy fixed->str/varchar cache: one converter singleton (same for both
+    // destinations), packed (precision<<16)|scale args for DECIMAL, and ColumnType.sizeOf
+    // width. Null until first type-cast read; invalidated when sourceColumnTypes changes.
+    protected IntList typeCastArgs;
+    protected ObjList<ColumnTypeConverter.Fixed2VarConverter> typeCastConverters;
+    protected IntList typeCastWidth;
+    private final ObjList<Utf8SplitString> utf8Views = new ObjList<>();
+    private final ObjList<Utf8StringSink> varcharSinks = new ObjList<>();
     protected DirectLongList auxPageAddresses;
     protected DirectLongList auxPageSizes;
+    // Number of columns in the frame; B-side per-column flyweights live at index
+    // columnCount + columnIndex, so the value must be set before any getStrB / getVarcharB
+    // / getLong256B / getStrB-like helper is called.
+    protected int columnCount;
     protected int columnOffset;
     protected byte frameFormat = -1;
     protected int frameIndex = -1;
@@ -143,6 +148,7 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
         this.pageSizes = other.pageSizes;
         this.auxPageSizes = other.auxPageSizes;
         this.columnOffset = other.columnOffset;
+        this.columnCount = other.columnCount;
         this.stableStrings = other.stableStrings;
         this.hasTypeCasts = other.hasTypeCasts;
         // Deep-copy the per-column conversion state. Sharing the reference would race
@@ -173,6 +179,7 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
         if (sourceColumnTypes != null) {
             sourceColumnTypes.clear();
         }
+        invalidateTypeCastConverterCache();
     }
 
     @Override
@@ -772,17 +779,18 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
         this.pageSizes = frameMemory.getPageSizes();
         this.auxPageSizes = frameMemory.getAuxPageSizes();
         this.columnOffset = frameMemory.getColumnOffset();
+        this.columnCount = frameMemory.getColumnCount();
         if (this.hasTypeCasts) {
             // Copy source column types from PageFrameMemory.
-            final int n = frameMemory.getColumnCount();
             if (this.sourceColumnTypes == null) {
-                this.sourceColumnTypes = new IntList(n);
+                this.sourceColumnTypes = new IntList(columnCount);
             }
-            this.sourceColumnTypes.setAll(n, -1);
-            for (int col = 0; col < n; col++) {
+            this.sourceColumnTypes.setAll(columnCount, -1);
+            for (int col = 0; col < columnCount; col++) {
                 this.sourceColumnTypes.setQuick(col, frameMemory.getSourceColumnType(col));
             }
         }
+        invalidateTypeCastConverterCache();
     }
 
     @Override
@@ -813,68 +821,38 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
         this.rowIndex = rowIndex;
     }
 
-    private boolean appendDecimalToSink(int srcType, long address, CharSink<?> sink) {
-        final int tag = ColumnType.tagOf(srcType);
-        final int precision = ColumnType.getDecimalPrecision(srcType);
-        final int scale = ColumnType.getDecimalScale(srcType);
-        switch (tag) {
-            case ColumnType.DECIMAL8 -> {
-                byte val = Unsafe.getByte(address + rowIndex);
-                if (val == Decimals.DECIMAL8_NULL) {
-                    return false;
-                }
-                Decimals.appendNonNull(val, precision, scale, sink);
-            }
-            case ColumnType.DECIMAL16 -> {
-                short val = Unsafe.getShort(address + (rowIndex << 1));
-                if (val == Decimals.DECIMAL16_NULL) {
-                    return false;
-                }
-                Decimals.appendNonNull(val, precision, scale, sink);
-            }
-            case ColumnType.DECIMAL32 -> {
-                int val = Unsafe.getInt(address + (rowIndex << 2));
-                if (val == Decimals.DECIMAL32_NULL) {
-                    return false;
-                }
-                Decimals.appendNonNull(val, precision, scale, sink);
-            }
-            case ColumnType.DECIMAL64 -> {
-                long val = Unsafe.getLong(address + (rowIndex << 3));
-                if (val == Decimals.DECIMAL64_NULL) {
-                    return false;
-                }
-                Decimals.appendNonNull(val, precision, scale, sink);
-            }
-            case ColumnType.DECIMAL128 -> {
-                long hi = Unsafe.getLong(address + (rowIndex << 4));
-                long lo = Unsafe.getLong(address + (rowIndex << 4) + Long.BYTES);
-                if (Decimal128.isNull(hi, lo)) {
-                    return false;
-                }
-                Decimals.appendNonNull(hi, lo, precision, scale, sink);
-            }
-            case ColumnType.DECIMAL256 -> {
-                long base = address + (rowIndex << 5);
-                long hh = Unsafe.getLong(base);
-                long hl = Unsafe.getLong(base + 8L);
-                long lh = Unsafe.getLong(base + 16L);
-                long ll = Unsafe.getLong(base + 24L);
-                if (Decimal256.isNull(hh, hl, lh, ll)) {
-                    return false;
-                }
-                Decimals.appendNonNull(hh, hl, lh, ll, precision, scale, sink);
-            }
-            default -> {
-                return false;
-            }
+
+    private ColumnTypeConverter.Fixed2VarConverter cacheTypeCastConverter(int columnIndex, int srcType, int dstType) {
+        // The destination only affects the unsupported diagnostic in getFixedToVarConverter,
+        // so the resolved singleton is the same for STRING and VARCHAR targets and one
+        // converter cache serves both. Caller guarantees this runs at most once per column
+        // per frame (it gates on typeCastConverters being null or returning null at index).
+        if (typeCastConverters == null) {
+            typeCastConverters = new ObjList<>();
+            typeCastArgs = new IntList();
+            typeCastWidth = new IntList();
         }
-        return true;
+        final ColumnTypeConverter.Fixed2VarConverter converter =
+                ColumnTypeConverter.getFixedToVarConverter(srcType, dstType);
+        typeCastConverters.extendAndSet(columnIndex, converter);
+        final int args;
+        if (ColumnType.isDecimal(srcType)) {
+            args = (ColumnType.getDecimalPrecision(srcType) << 16) | ColumnType.getDecimalScale(srcType);
+        } else {
+            args = 0;
+        }
+        typeCastArgs.extendAndSet(columnIndex, args);
+        typeCastWidth.extendAndSet(columnIndex, ColumnType.sizeOf(srcType));
+        return converter;
     }
 
     /**
      * Converts a fixed-type value to a STRING CharSequence.
      * Returns null for null values. Called only when the column needs a type cast.
+     * The first call per column per frame resolves and caches the
+     * {@link ColumnTypeConverter.Fixed2VarConverter}, the packed (precision, scale)
+     * args for decimal columns, and the row stride; subsequent rows pay only a flat
+     * array load instead of repeating the type dispatch.
      */
     private CharSequence convertFixedToStr(int srcType, int columnIndex, StringSink sink) {
         final long address = pageAddresses.get(columnOffset + columnIndex);
@@ -882,19 +860,24 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
             return null; // column top
         }
         sink.clear();
-        // Decimal has a distinct (precision, scale) format path that the shared
-        // Fixed2VarConverter doesn't cover.
-        if (ColumnType.isDecimal(srcType)) {
-            return appendDecimalToSink(srcType, address, sink) ? sink : null;
+        ColumnTypeConverter.Fixed2VarConverter converter =
+                typeCastConverters != null ? typeCastConverters.getQuiet(columnIndex) : null;
+        if (converter == null) {
+            converter = cacheTypeCastConverter(columnIndex, srcType, ColumnType.STRING);
         }
-        final ColumnTypeConverter.Fixed2VarConverter converter =
-                ColumnTypeConverter.getFixedToVarConverter(srcType, ColumnType.STRING);
-        return converter.convert(address + rowIndex * ColumnType.sizeOf(srcType), sink) ? sink : null;
+        final int args = typeCastArgs.getQuick(columnIndex);
+        return converter.convert(
+                address + rowIndex * typeCastWidth.getQuick(columnIndex),
+                sink,
+                args >>> 16,
+                args & 0xFFFF
+        ) ? sink : null;
     }
 
     /**
      * Converts a fixed-type value to a VARCHAR Utf8Sequence.
      * Returns null for null values. Called only when the column needs a type cast.
+     * See {@link #convertFixedToStr} for the per-column cache shape.
      */
     private Utf8Sequence convertFixedToVarchar(int srcType, int columnIndex, Utf8StringSink sink) {
         final long address = pageAddresses.get(columnOffset + columnIndex);
@@ -902,12 +885,18 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
             return null; // column top
         }
         sink.clear();
-        if (ColumnType.isDecimal(srcType)) {
-            return appendDecimalToSink(srcType, address, sink) ? sink : null;
+        ColumnTypeConverter.Fixed2VarConverter converter =
+                typeCastConverters != null ? typeCastConverters.getQuiet(columnIndex) : null;
+        if (converter == null) {
+            converter = cacheTypeCastConverter(columnIndex, srcType, ColumnType.VARCHAR);
         }
-        final ColumnTypeConverter.Fixed2VarConverter converter =
-                ColumnTypeConverter.getFixedToVarConverter(srcType, ColumnType.VARCHAR);
-        return converter.convert(address + rowIndex * ColumnType.sizeOf(srcType), sink) ? sink : null;
+        final int args = typeCastArgs.getQuick(columnIndex);
+        return converter.convert(
+                address + rowIndex * typeCastWidth.getQuick(columnIndex),
+                sink,
+                args >>> 16,
+                args & 0xFFFF
+        ) ? sink : null;
     }
 
     private boolean convertVarToBool(int srcTag, int columnIndex) {
@@ -1159,20 +1148,21 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
     }
 
     private @NotNull DirectString csViewA(int columnIndex) {
-        DirectString view = csViewsA.getQuiet(columnIndex);
+        DirectString view = csViews.getQuiet(columnIndex);
         if (view != null) {
             return view;
         }
-        csViewsA.extendAndSet(columnIndex, view = new DirectString(this));
+        csViews.extendAndSet(columnIndex, view = new DirectString(this));
         return view;
     }
 
     private @NotNull DirectString csViewB(int columnIndex) {
-        DirectString view = csViewsB.getQuiet(columnIndex);
+        final int slot = columnCount + columnIndex;
+        DirectString view = csViews.getQuiet(slot);
         if (view != null) {
             return view;
         }
-        csViewsB.extendAndSet(columnIndex, view = new DirectString(this));
+        csViews.extendAndSet(slot, view = new DirectString(this));
         return view;
     }
 
@@ -1185,21 +1175,34 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
         NullMemoryCMR.INSTANCE.getLong256(0, sink);
     }
 
+    private void invalidateTypeCastConverterCache() {
+        // Source types can differ between frames (older partitions may predate an
+        // ALTER and still carry the original fixed type), so the cache must drop
+        // whenever the frame is repointed. The lists are null on records that have
+        // never seen a type-cast column, which is the common case.
+        if (typeCastConverters != null) {
+            typeCastConverters.clear();
+            typeCastArgs.clear();
+            typeCastWidth.clear();
+        }
+    }
+
     private @NotNull Long256Impl long256A(int columnIndex) {
-        Long256Impl long256 = longs256A.getQuiet(columnIndex);
+        Long256Impl long256 = longs256.getQuiet(columnIndex);
         if (long256 != null) {
             return long256;
         }
-        longs256A.extendAndSet(columnIndex, long256 = new Long256Impl());
+        longs256.extendAndSet(columnIndex, long256 = new Long256Impl());
         return long256;
     }
 
     private @NotNull Long256Impl long256B(int columnIndex) {
-        Long256Impl long256 = longs256B.getQuiet(columnIndex);
+        final int slot = columnCount + columnIndex;
+        Long256Impl long256 = longs256.getQuiet(slot);
         if (long256 != null) {
             return long256;
         }
-        longs256B.extendAndSet(columnIndex, long256 = new Long256Impl());
+        longs256.extendAndSet(slot, long256 = new Long256Impl());
         return long256;
     }
 
@@ -1218,56 +1221,59 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
     }
 
     private @NotNull StringSink stringSinkA(int columnIndex) {
-        StringSink sink = stringSinksA.getQuiet(columnIndex);
+        StringSink sink = stringSinks.getQuiet(columnIndex);
         if (sink != null) {
             return sink;
         }
-        stringSinksA.extendAndSet(columnIndex, sink = new StringSink());
+        stringSinks.extendAndSet(columnIndex, sink = new StringSink());
         return sink;
     }
 
     private @NotNull StringSink stringSinkB(int columnIndex) {
-        StringSink sink = stringSinksB.getQuiet(columnIndex);
+        final int slot = columnCount + columnIndex;
+        StringSink sink = stringSinks.getQuiet(slot);
         if (sink != null) {
             return sink;
         }
-        stringSinksB.extendAndSet(columnIndex, sink = new StringSink());
+        stringSinks.extendAndSet(slot, sink = new StringSink());
         return sink;
     }
 
     private @NotNull Utf8SplitString utf8ViewA(int columnIndex) {
-        Utf8SplitString view = utf8ViewsA.getQuiet(columnIndex);
+        Utf8SplitString view = utf8Views.getQuiet(columnIndex);
         if (view != null) {
             return view;
         }
-        utf8ViewsA.extendAndSet(columnIndex, view = new Utf8SplitString(this));
+        utf8Views.extendAndSet(columnIndex, view = new Utf8SplitString(this));
         return view;
     }
 
     private @NotNull Utf8SplitString utf8ViewB(int columnIndex) {
-        Utf8SplitString view = utf8ViewsB.getQuiet(columnIndex);
+        final int slot = columnCount + columnIndex;
+        Utf8SplitString view = utf8Views.getQuiet(slot);
         if (view != null) {
             return view;
         }
-        utf8ViewsB.extendAndSet(columnIndex, view = new Utf8SplitString(this));
+        utf8Views.extendAndSet(slot, view = new Utf8SplitString(this));
         return view;
     }
 
     private @NotNull Utf8StringSink varcharSinkA(int columnIndex) {
-        Utf8StringSink sink = varcharSinksA.getQuiet(columnIndex);
+        Utf8StringSink sink = varcharSinks.getQuiet(columnIndex);
         if (sink != null) {
             return sink;
         }
-        varcharSinksA.extendAndSet(columnIndex, sink = new Utf8StringSink());
+        varcharSinks.extendAndSet(columnIndex, sink = new Utf8StringSink());
         return sink;
     }
 
     private @NotNull Utf8StringSink varcharSinkB(int columnIndex) {
-        Utf8StringSink sink = varcharSinksB.getQuiet(columnIndex);
+        final int slot = columnCount + columnIndex;
+        Utf8StringSink sink = varcharSinks.getQuiet(slot);
         if (sink != null) {
             return sink;
         }
-        varcharSinksB.extendAndSet(columnIndex, sink = new Utf8StringSink());
+        varcharSinks.extendAndSet(slot, sink = new Utf8StringSink());
         return sink;
     }
 
@@ -1423,6 +1429,7 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
             DirectLongList pageLimits,
             DirectLongList auxPageLimits,
             int columnOffset,
+            int columnCount,
             boolean hasTypeCasts,
             IntList sourceColumnTypes
     ) {
@@ -1449,5 +1456,7 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
         this.pageSizes = pageLimits;
         this.auxPageSizes = auxPageLimits;
         this.columnOffset = columnOffset;
+        this.columnCount = columnCount;
+        invalidateTypeCastConverterCache();
     }
 }

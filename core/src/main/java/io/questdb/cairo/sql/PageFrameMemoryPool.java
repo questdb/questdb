@@ -142,6 +142,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
                     addressCache.getPageSizes(),
                     addressCache.getAuxPageSizes(),
                     columnOffset,
+                    addressCache.getColumnCount(),
                     false,
                     null
             );
@@ -165,6 +166,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
                     parquetBuffers.pageSizes,
                     parquetBuffers.auxPageSizes,
                     0, // parquet buffers use 0 offset since they're frame-specific
+                    addressCache.getColumnCount(),
                     hasTypeCasts,
                     sourceColumnTypes
             );
