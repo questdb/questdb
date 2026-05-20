@@ -270,11 +270,14 @@ public class LiveViewsFunctionFactory implements FunctionFactory {
                         // once the sweep completes and the state flips to ACTIVE
                         // (the field is wiped on the BACKFILLING -> ACTIVE flip).
                         case COLUMN_BACKFILL_TARGET_SEQTXN -> instance.getStateReader().getBackfillTargetSeqTxn();
-                        // V1: the per-view symbol-id translation table T and
-                        // the O3-rejected-row counter land in later phases;
-                        // surface zero so the catalogue column shape is stable
-                        // for clients.
-                        case COLUMN_SYMBOL_TRANSLATION_SIZE, COLUMN_O3_REJECTED_COUNT -> 0L;
+                        // Count of late rows rejected for falling below
+                        // viewLowerBoundTimestamp. In-memory counter, resets on
+                        // restart.
+                        case COLUMN_O3_REJECTED_COUNT -> instance.getO3RejectedCount();
+                        // V1: the per-view symbol-id translation table T lands in a
+                        // later phase; surface zero so the catalogue column shape
+                        // stays stable for clients.
+                        case COLUMN_SYMBOL_TRANSLATION_SIZE -> 0L;
                         default -> 0;
                     };
                 }

@@ -3963,6 +3963,60 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testO3LateRowBelowLowerBoundIsRejectedAndCounted() throws Exception {
+        // A late O3 row whose timestamp falls below viewLowerBoundTimestamp is
+        // rejected: it never reaches the on-disk tier, and the rejection is
+        // recorded in live_views().o3_rejected_count.
+        assertMemoryLeak(() -> {
+            // Pin the clock so the non-BACKFILL view's lower bound is a known
+            // wall-clock moment (2023-11-14T22:13:20Z).
+            setCurrentMicros(1_700_000_000_000_000L);
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base");
+
+            LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(instance);
+
+            // A row above the lower bound advances latestSeenTs through a refresh.
+            execute("INSERT INTO base (ts, x) VALUES ('2023-11-15T00:00:00.000000Z', 1)");
+            drainWalQueue();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+            }
+            drainWalQueue();
+            assertSql("count\n1\n", "SELECT count() FROM lv");
+            Assert.assertEquals("no rejections yet", 0L, instance.getO3RejectedCount());
+
+            // A late row below the lower bound: it is O3 (ts < latestSeenTs) and
+            // sits entirely below viewLowerBoundTimestamp, so the refresh rejects it.
+            execute("INSERT INTO base (ts, x) VALUES ('2023-11-14T00:00:00.000000Z', 2)");
+            drainWalQueue();
+            // FLUSH EVERY 1s would otherwise rate-limit the back-to-back cycle.
+            instance.setLastFlushTimeUs(Numbers.LONG_NULL);
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+            }
+            drainWalQueue();
+
+            // The rejected row never reached the tier; the counter recorded it.
+            assertSql("count\n1\n", "SELECT count() FROM lv");
+            Assert.assertEquals(
+                    "one O3 row rejected below the lower bound",
+                    1L,
+                    instance.getO3RejectedCount()
+            );
+            assertSql(
+                    "view_name\to3_rejected_count\n" +
+                            "lv\t1\n",
+                    "SELECT view_name, o3_rejected_count FROM live_views() WHERE view_name = 'lv'"
+            );
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
     public void testLiveViewsCatalogueExposesOperationalColumns() throws Exception {
         // Pin the clock so lag_micros is deterministic across runs.
         assertMemoryLeak(() -> {

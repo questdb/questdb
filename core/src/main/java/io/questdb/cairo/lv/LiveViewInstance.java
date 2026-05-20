@@ -166,6 +166,14 @@ public class LiveViewInstance implements QuietCloseable {
     // both this and the cadence counter so writes and restores stay aligned.
     // Mutated under the refresh latch only.
     private long lvRowsTotal;
+    // Cumulative count of late O3 rows rejected because their timestamp fell below
+    // viewLowerBoundTimestamp. Surfaced via live_views().o3_rejected_count. Bumped
+    // only on the refresh-worker thread at the O3-detection step; volatile so the
+    // catalogue query thread reads a current value. In-memory only - it resets to
+    // 0 on restart (an observability signal, not durable state). Rows can only land
+    // below the bound via the O3 path: in-WAL order guarantees
+    // ts >= latestSeenTs >= viewLowerBoundTimestamp.
+    private volatile long o3RejectedCount;
     // Reason string the refresh worker stashes here when a head-restore step
     // surfaces a "version too old" function snapshot. The worker holds the
     // refresh latch when populating this field; the same worker drains it
@@ -215,6 +223,15 @@ public class LiveViewInstance implements QuietCloseable {
     public void addRowsSinceLastCheckpointWritten(long n) {
         rowsSinceLastCheckpointWritten += n;
         lvRowsTotal += n;
+    }
+
+    /**
+     * Accumulates {@code n} late O3 rows rejected for falling below
+     * {@code viewLowerBoundTimestamp}. Called from the refresh worker at the
+     * O3-detection step; the value is exposed via {@code live_views().o3_rejected_count}.
+     */
+    public void bumpO3RejectedCount(long n) {
+        o3RejectedCount += n;
     }
 
     @Override
@@ -390,6 +407,10 @@ public class LiveViewInstance implements QuietCloseable {
      */
     public long getLvRowsTotal() {
         return lvRowsTotal;
+    }
+
+    public long getO3RejectedCount() {
+        return o3RejectedCount;
     }
 
     public long getRecordRowCopierMetadataVersion() {

@@ -548,6 +548,18 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         batchMaxTs = Numbers.LONG_NULL;
                         stagingMinTs = Numbers.LONG_NULL;
                         stagingMaxTs = Numbers.LONG_NULL;
+                        // Count late rows that fall entirely below the view's
+                        // lower bound as O3 rejections (surfaced via
+                        // live_views().o3_rejected_count). The common case - the
+                        // whole offending commit sits below the bound - is exact;
+                        // a commit straddling the bound (minTs < bound <= maxTs)
+                        // is not counted here, an accepted V1 under-count on a
+                        // rare path. These rows are dropped by the replay's lower-
+                        // bound cursor and never reach the on-disk tier.
+                        final long viewLowerBound = instance.getDefinition().getViewLowerBoundTimestamp();
+                        if (dataInfo.getMaxTimestamp() < viewLowerBound) {
+                            instance.bumpO3RejectedCount(dataInfo.getEndRowID() - dataInfo.getStartRowID());
+                        }
                         break;
                     }
                     long startRow = dataInfo.getStartRowID();
