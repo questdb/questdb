@@ -896,13 +896,21 @@ public class CairoEngine implements Closeable, WriterSource {
         // so MICRO and NANO bases both produce a comparable value. The catalogue
         // converts back to TIMESTAMP_MICRO at display time.
         //
-        // BACKFILL views capture the full base history, so the floor sits at zero
-        // (epoch): every historical row is admissible during the sweep, and any
-        // later O3 row drives the standard replay path after backfill completes.
-        viewLowerBoundTimestamp = op.getBackfillRequested()
-                ? 0L
-                : ColumnType.getTimestampDriver(baseTimestampType)
-                        .fromMicros(configuration.getMicrosecondClock().getTicks());
+        // BACKFILL views seed from the earliest visible base row, so the floor
+        // sits at that row's timestamp (already in base units): every historical
+        // row from there is admissible during the sweep, and any later O3 row
+        // below it is rejected. An empty base falls back to the CREATE moment.
+        final long createMomentLowerBound = ColumnType.getTimestampDriver(baseTimestampType)
+                .fromMicros(configuration.getMicrosecondClock().getTicks());
+        if (op.getBackfillRequested()) {
+            try (TableReader baseReader = getReader(baseTableToken)) {
+                viewLowerBoundTimestamp = baseReader.size() == 0
+                        ? createMomentLowerBound
+                        : baseReader.getMinTimestamp();
+            }
+        } else {
+            viewLowerBoundTimestamp = createMomentLowerBound;
+        }
 
         // compile the SELECT to validate and get metadata. The live-view-compile flag
         // suppresses indexed-symbol key extraction in WhereClauseParser so the planner
@@ -996,6 +1004,15 @@ public class CairoEngine implements Closeable, WriterSource {
         final long backfillTargetSeqTxn = backfillRequested
                 ? baseHeadSeqTxn
                 : Numbers.LONG_NULL;
+        // Initial WAL purge floor this view publishes. BACKFILLING sits at
+        // backfillTargetSeqTxn - 1: the snapshot reader MVCC-pins everything
+        // <= the target, so base WAL up to the target is not load-bearing, while
+        // one extra segment stays retained for the deferred ring drain after the
+        // sweep. Non-BACKFILL views start at subscribeFromSeqTxn - 1 - everything
+        // from subscribeFromSeqTxn forward is the view's responsibility.
+        final long initialLvConsumedSeqTxn = backfillRequested
+                ? backfillTargetSeqTxn - 1
+                : subscribeFromSeqTxn - 1;
 
         LiveViewTableStructure struct = new LiveViewTableStructure(configuration, op.getViewName(), partitionBy, metadata);
         try (
@@ -1083,7 +1100,7 @@ public class CairoEngine implements Closeable, WriterSource {
                         subscribeFromSeqTxn,
                         subscribeFromSeqTxn - 1,
                         -1L,
-                        subscribeFromSeqTxn - 1,
+                        initialLvConsumedSeqTxn,
                         backfillState,
                         backfillTargetSeqTxn,
                         blockFileWriter
@@ -1098,7 +1115,7 @@ public class CairoEngine implements Closeable, WriterSource {
                 instance.setSubscribeFromSeqTxn(subscribeFromSeqTxn);
                 instance.setLastProcessedSeqTxn(subscribeFromSeqTxn - 1);
                 instance.setAppliedWatermark(-1L);
-                instance.setLvConsumedSeqTxn(subscribeFromSeqTxn - 1);
+                instance.setLvConsumedSeqTxn(initialLvConsumedSeqTxn);
                 instance.setBackfillState(backfillState);
                 instance.setBackfillTargetSeqTxn(backfillTargetSeqTxn);
                 liveViewRegistry.registerView(instance);

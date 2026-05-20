@@ -522,6 +522,36 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testBackfillInitialLvConsumedSeqTxnIsTargetMinusOne() throws Exception {
+        // A BACKFILLING view publishes backfillTargetSeqTxn - 1 as its initial WAL
+        // purge floor (WAL retention coupling): the snapshot reader MVCC-pins
+        // everything <= the target, while one extra base segment stays retained for
+        // the deferred ring drain after the sweep. That is one lower than the
+        // subscribeFromSeqTxn - 1 floor a non-BACKFILL view starts at.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO base (ts, x) VALUES " +
+                    "('2026-04-01T00:00:00.000000Z', 1)," +
+                    "('2026-04-01T00:00:01.000000Z', 2)");
+            drainWalQueue();
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s BACKFILL AS " +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base");
+
+            LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(instance);
+            long target = instance.getStateReader().getBackfillTargetSeqTxn();
+            Assert.assertTrue("backfillTargetSeqTxn must be captured", target >= 0);
+            Assert.assertEquals(
+                    "BACKFILLING initial lvConsumedSeqTxn must be backfillTargetSeqTxn - 1",
+                    target - 1,
+                    instance.getStateReader().getLvConsumedSeqTxn()
+            );
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
     public void testRejectBareUnboundedWindow() throws Exception {
         // A window with PARTITION BY and the default (UNBOUNDED PRECEDING ...
         // CURRENT ROW) frame must have an ANCHOR clause, otherwise partition
@@ -656,6 +686,49 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
             engine.releaseInactive();
             drainPurgeJob();
             assertSegmentExistence(false, "base", 1, 0);
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testInvalidatedViewHoldsWalRetentionFloor() throws Exception {
+        // An INVALID live view keeps holding its WAL purge floor at the last
+        // published value until it is dropped (WAL retention coupling). Releasing
+        // it would let the base WAL be purged past the LV's last-applied seqTxn,
+        // foreclosing the invalid-and-readable -> re-CREATE recovery path.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base WHERE x > 0");
+
+            LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(instance);
+            // Initial published floor for a non-BACKFILL view is subscribeFromSeqTxn
+            // - 1. The view never refreshes, so the floor stays at this value.
+            long floorBefore = instance.getStateReader().getLvConsumedSeqTxn();
+            Assert.assertTrue("LV must publish an initial floor", floorBefore > -1);
+
+            // A base commit lands in segment 0, above the LV's floor and never
+            // consumed by the view.
+            execute("INSERT INTO base (ts, x) VALUES ('2026-06-01T00:00:00.000000Z', 1)");
+            drainWalQueue();
+            engine.releaseInactive();
+
+            // Invalidate the LV. The floor must stay at the last published value.
+            engine.invalidateLiveView(instance, "test retention floor");
+            Assert.assertTrue("LV must be invalid", instance.isInvalid());
+            Assert.assertEquals(
+                    "invalid LV must hold its floor at the last published value",
+                    floorBefore,
+                    instance.getStateReader().getLvConsumedSeqTxn()
+            );
+
+            // Purge: segment 0 holds the unconsumed seqTxn, which sits above the
+            // held floor, so the segment must survive. Were the floor released on
+            // invalidation, the purge would clamp only to the base head and reap it.
+            drainPurgeJob();
+            assertSegmentExistence(true, "base", 1, 0);
 
             execute("DROP LIVE VIEW lv");
         });
@@ -3830,6 +3903,55 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
 
             // Catalogue column commits to TIMESTAMP_MICRO; toMicros rounds NS back
             // to the MICRO grid (lossless here since the source is wall-clock micros).
+            assertSql(
+                    "view_name\tview_lower_bound_timestamp\n" +
+                            "lv\t2023-11-14T22:13:20.000000Z\n",
+                    "SELECT view_name, view_lower_bound_timestamp FROM live_views()"
+            );
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testBackfillCapturesEarliestBaseRowAsLowerBound() throws Exception {
+        // For a BACKFILL view, viewLowerBoundTimestamp is the earliest visible
+        // base-table row at CREATE, not the wall-clock CREATE moment. Operators
+        // inspecting view_lower_bound_timestamp then see the real retention floor.
+        assertMemoryLeak(() -> {
+            // Pin the clock well after the data so a CREATE-moment floor would read
+            // visibly different from the earliest base row.
+            setCurrentMicros(1_800_000_000_000_000L);
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO base (ts, x) VALUES " +
+                    "('2023-01-01T00:00:00.000000Z', 1)," +
+                    "('2024-06-15T12:00:00.000000Z', 2)," +
+                    "('2026-01-01T00:00:00.000000Z', 3)");
+            drainWalQueue();
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s BACKFILL AS " +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base");
+
+            assertSql(
+                    "view_name\tview_lower_bound_timestamp\n" +
+                            "lv\t2023-01-01T00:00:00.000000Z\n",
+                    "SELECT view_name, view_lower_bound_timestamp FROM live_views()"
+            );
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testBackfillOnEmptyBaseUsesCreateMomentLowerBound() throws Exception {
+        // BACKFILL on an empty base has no earliest row to anchor to, so
+        // viewLowerBoundTimestamp falls back to the wall-clock CREATE moment,
+        // matching the non-BACKFILL default.
+        assertMemoryLeak(() -> {
+            setCurrentMicros(1_700_000_000_000_000L);
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s BACKFILL AS " +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base");
+
             assertSql(
                     "view_name\tview_lower_bound_timestamp\n" +
                             "lv\t2023-11-14T22:13:20.000000Z\n",
