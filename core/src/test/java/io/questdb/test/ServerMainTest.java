@@ -741,7 +741,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "cairo.work.steal.timeout.nanos\tQDB_CAIRO_WORK_STEAL_TIMEOUT_NANOS\t10000\tdefault\tfalse\tfalse\n" +
                                     "cairo.writer.alter.busy.wait.timeout\tQDB_CAIRO_WRITER_ALTER_BUSY_WAIT_TIMEOUT\t500\tdefault\tfalse\tfalse\n" +
                                     "cairo.writer.alter.max.wait.timeout\tQDB_CAIRO_WRITER_ALTER_MAX_WAIT_TIMEOUT\t30000\tdefault\tfalse\tfalse\n" +
-                                    "cairo.writer.command.queue.capacity\tQDB_CAIRO_WRITER_COMMAND_QUEUE_CAPACITY\t32\tdefault\tfalse\tfalse\n" +
+                                    "cairo.writer.command.queue.capacity\tQDB_CAIRO_WRITER_COMMAND_QUEUE_CAPACITY\t256\tdefault\tfalse\tfalse\n" +
                                     "cairo.writer.command.queue.slot.size\tQDB_CAIRO_WRITER_COMMAND_QUEUE_SLOT_SIZE\t2048\tdefault\tfalse\tfalse\n" +
                                     "cairo.writer.data.append.page.size\tQDB_CAIRO_WRITER_DATA_APPEND_PAGE_SIZE\t16777216\tdefault\tfalse\tfalse\n" +
                                     "cairo.writer.data.index.key.append.page.size\tQDB_CAIRO_WRITER_DATA_INDEX_KEY_APPEND_PAGE_SIZE\t524288\tdefault\tfalse\tfalse\n" +
