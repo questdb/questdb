@@ -24,6 +24,7 @@
 
 package io.questdb.cairo.sql;
 
+import io.questdb.cairo.ReaderScanProfile;
 import io.questdb.std.QuietCloseable;
 import org.jetbrains.annotations.Nullable;
 
@@ -147,34 +148,18 @@ public interface PageFrameCursor extends QuietCloseable, SymbolTableSource {
     }
 
     /**
-     * Asks the cursor to close every partition it opened when the underlying
-     * reader is next returned to the pool. Useful for workloads that may touch
-     * many partitions in one pass (e.g. Parquet export) and want a hard
-     * cleanup backstop.
+     * Sets the scan profile of the underlying reader (kernel page-cache
+     * hints, partition retention on pool return). See
+     * {@link io.questdb.cairo.ReaderScanProfile} for the meaning of each
+     * value.
      * <p>
-     * Default implementation is a no-op. Subclasses backed by TableReader
-     * delegate to {@link io.questdb.cairo.TableReader#setEvictPartitionsOnReturn(boolean)}.
-     * Orthogonal to {@link #setStreamingMode(boolean)}.
+     * Default implementation is a no-op for cursors that are not backed by a
+     * {@link io.questdb.cairo.TableReader}; backed cursors delegate to
+     * {@link io.questdb.cairo.TableReader#setScanProfile}.
      *
-     * @param enabled true to evict all partitions on the next pool return
+     * @param profile the profile to adopt (non-null)
      */
-    default void setEvictPartitionsOnReturn(boolean enabled) {
-        // no-op by default
-    }
-
-    /**
-     * Enables sequential-scan kernel hints (MADV_SEQUENTIAL on open,
-     * MADV_DONTNEED on close) for the underlying resources. Useful for large
-     * sequential scans like Parquet export to avoid evicting the server's
-     * working set from the page cache.
-     * <p>
-     * Default implementation is a no-op. Subclasses backed by TableReader
-     * delegate to {@link io.questdb.cairo.TableReader#setStreamingMode(boolean)}.
-     * Orthogonal to {@link #setEvictPartitionsOnReturn(boolean)}.
-     *
-     * @param enabled true to enable sequential-scan hints, false to disable
-     */
-    default void setStreamingMode(boolean enabled) {
+    default void setScanProfile(ReaderScanProfile profile) {
         // no-op by default
     }
 

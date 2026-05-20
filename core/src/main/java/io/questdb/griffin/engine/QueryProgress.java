@@ -28,6 +28,7 @@ import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ReaderScanProfile;
 import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
@@ -506,16 +507,11 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
             baseCursor.releaseOpenPartitions();
         }
 
-        @Override
-        public void setEvictPartitionsOnReturn(boolean enabled) {
-            baseCursor.setEvictPartitionsOnReturn(enabled);
-        }
-
         // Qodana false positive
         @SuppressWarnings("unused")
         @Override
-        public void setStreamingMode(boolean enabled) {
-            baseCursor.setStreamingMode(enabled);
+        public void setScanProfile(ReaderScanProfile profile) {
+            baseCursor.setScanProfile(profile);
         }
 
         @Override

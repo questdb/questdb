@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.table;
 
+import io.questdb.cairo.ReaderScanProfile;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.sql.ColumnMapping;
 import io.questdb.cairo.sql.PageFrameCursor;
@@ -70,17 +71,11 @@ public interface TablePageFrameCursor extends PageFrameCursor {
         throw new UnsupportedOperationException();
     }
 
-    default void setEvictPartitionsOnReturn(boolean enabled) {
+    @Override
+    default void setScanProfile(ReaderScanProfile profile) {
         TableReader reader = getTableReader();
         if (reader != null) {
-            reader.setEvictPartitionsOnReturn(enabled);
-        }
-    }
-
-    default void setStreamingMode(boolean enabled) {
-        TableReader reader = getTableReader();
-        if (reader != null) {
-            reader.setStreamingMode(enabled);
+            reader.setScanProfile(profile);
         }
     }
 }

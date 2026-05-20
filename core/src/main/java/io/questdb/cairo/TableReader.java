@@ -96,14 +96,6 @@ public class TableReader implements Closeable, SymbolTableSource {
     private int columnCountShl;
     private LongList columnTops;
     private ObjList<MemoryCMR> columns;
-    // When true, closeExcessPartitions() (called from goPassive() on pool return)
-    // uses keepOpen=0 instead of maxOpenPartitions, so every partition opened by
-    // the current checkout is released back to the pool. Used by Parquet export
-    // workloads that may touch thousands of partitions in a single scan and need
-    // a hard cleanup backstop. High-frequency small-query workloads (e.g. QWP
-    // egress) must leave this false so the partition stays mapped across
-    // queries and the FdCache stays warm.
-    private boolean evictPartitionsOnReturn = false;
     private boolean hasActiveColumns;
     private ObjList<IndexReader> indexes;
     private int openPartitionCount;
@@ -113,11 +105,10 @@ public class TableReader implements Closeable, SymbolTableSource {
     private ObjList<MemoryCMR> parquetPartitions;
     private int partitionCount;
     private long rowCount;
-    // When true, partitions are opened with MADV_SEQUENTIAL and closed with
-    // MADV_DONTNEED so large sequential scans don't evict the server's working
-    // set. Independent of evictPartitionsOnReturn -- the two flags can be set
-    // separately depending on what the caller actually needs.
-    private boolean streamingMode = false;
+    // Per-checkout scan profile -- controls kernel page-cache hints and
+    // post-checkout partition retention. Reset to DEFAULT by goPassive() on
+    // every pool return so cross-checkout leaks are impossible.
+    private ReaderScanProfile scanProfile = ReaderScanProfile.DEFAULT;
     private TableToken tableToken;
     private long tempMem8b = Unsafe.malloc(8, MemoryTag.NATIVE_TABLE_READER);
     private long txColumnVersion;
@@ -279,7 +270,7 @@ public class TableReader implements Closeable, SymbolTableSource {
 
     public void closeExcessPartitions() {
         // close all but N latest partitions
-        int keepOpen = evictPartitionsOnReturn ? 0 : maxOpenPartitions;
+        int keepOpen = scanProfile == ReaderScanProfile.SEQUENTIAL_EVICT ? 0 : maxOpenPartitions;
         if (PartitionBy.isPartitioned(partitionBy) && openPartitionCount > keepOpen) {
             final int originallyOpen = openPartitionCount;
             int openCount = 0;
@@ -666,8 +657,7 @@ public class TableReader implements Closeable, SymbolTableSource {
         closeExcessPartitions();
         hasActiveColumns = false;
         resetAllColumnsOpenFlag();
-        evictPartitionsOnReturn = false;
-        streamingMode = false;
+        scanProfile = ReaderScanProfile.DEFAULT;
     }
 
     public boolean hasParquetPartitions() {
@@ -761,41 +751,15 @@ public class TableReader implements Closeable, SymbolTableSource {
     }
 
     /**
-     * Enables the aggressive partition-eviction backstop for the current reader
-     * checkout. When enabled, returning the reader to the pool closes every
-     * partition opened during the checkout (via {@link #closeExcessPartitions()}
-     * with {@code keepOpen=0}), so the pool never accumulates thousands of
-     * partition mmaps from a single export pass.
-     * <p>
-     * Callers running many short queries on the same table (for example QWP
-     * egress) must leave this {@code false} -- otherwise every checkout closes
-     * and re-opens the same partition, defeating the {@link io.questdb.std.FdCache}
-     * and incurring per-query allocations on the open path.
-     * <p>
-     * Reset to {@code false} by {@link #goPassive()} on every pool return.
-     * Orthogonal to {@link #setStreamingMode(boolean)}.
+     * Sets the scan profile for the current checkout. See {@link ReaderScanProfile}
+     * for the meaning of each value. Reset to {@link ReaderScanProfile#DEFAULT}
+     * by {@link #goPassive()} on every pool return, so the profile is always
+     * a per-checkout decision.
      *
-     * @param enabled true to close all partitions on the next pool return
+     * @param profile the profile to adopt for the current checkout (non-null)
      */
-    public void setEvictPartitionsOnReturn(boolean enabled) {
-        this.evictPartitionsOnReturn = enabled;
-    }
-
-    /**
-     * Enables sequential-scan kernel hints for the current reader checkout.
-     * When enabled, partition columns are opened with {@code MADV_SEQUENTIAL}
-     * and any partition closed during this checkout has its mappings hinted
-     * with {@code MADV_DONTNEED} before unmap, so a large scan doesn't evict
-     * the server's working set.
-     * <p>
-     * Reset to {@code false} by {@link #goPassive()} on every pool return.
-     * Orthogonal to {@link #setEvictPartitionsOnReturn(boolean)} -- enabling
-     * one does not enable the other.
-     *
-     * @param enabled true to enable sequential-scan hints, false to disable
-     */
-    public void setStreamingMode(boolean enabled) {
-        this.streamingMode = enabled;
+    public void setScanProfile(ReaderScanProfile profile) {
+        this.scanProfile = profile;
     }
 
     public long size() {
@@ -962,7 +926,7 @@ public class TableReader implements Closeable, SymbolTableSource {
 
     private void closePartitionColumn(int base, int columnIndex) {
         int index = getPrimaryColumnIndex(base, columnIndex);
-        if (streamingMode) {
+        if (scanProfile != ReaderScanProfile.DEFAULT) {
             MemoryCMR mem = columns.get(index);
             if (mem != null) {
                 ff.madvise(mem.addressOf(0), mem.size(), Files.POSIX_MADV_DONTNEED);
@@ -1386,9 +1350,11 @@ public class TableReader implements Closeable, SymbolTableSource {
             long columnSize,
             boolean keepFdOpen
     ) {
-        // When streaming mode is enabled, use MADV_DONTNEED to hint the kernel
-        // to release page cache after reading, avoiding memory pressure during large scans
-        final int madviseOpts = streamingMode ? Files.POSIX_MADV_SEQUENTIAL : -1;
+        // Sequential scan profiles hint the kernel to read ahead and to
+        // release page cache after reading, avoiding memory pressure during
+        // large scans. closePartitionColumn() applies the matching DONTNEED
+        // hint at unmap time.
+        final int madviseOpts = scanProfile != ReaderScanProfile.DEFAULT ? Files.POSIX_MADV_SEQUENTIAL : -1;
         MemoryCMRDetachedImpl memory;
         if (mem != null && mem != NullMemoryCMR.INSTANCE) {
             memory = (MemoryCMRDetachedImpl) mem;
