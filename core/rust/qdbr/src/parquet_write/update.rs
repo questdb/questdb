@@ -27,7 +27,9 @@ use crate::parquet::error::{
 };
 use crate::parquet::qdb_metadata::{QdbMeta, QdbMetaCol, QdbMetaColFormat, QDB_META_KEY};
 use crate::parquet_write::file::{create_row_group, WriteOptions};
-use crate::parquet_write::schema::{to_compressions, to_encodings, to_parquet_schema, Partition};
+use crate::parquet_write::schema::{
+    to_compressions, to_encodings, to_parquet_schema, Column, Partition,
+};
 use parquet2::compression::CompressionOptions;
 use parquet2::encoding::uleb128;
 use parquet2::metadata::{FileMetaData, KeyValue, SchemaDescriptor, SortingColumn};
@@ -1137,15 +1139,24 @@ impl ParquetUpdater {
     /// (Required in the schema). Only safe in rewrite mode where all row groups
     /// are re-encoded; in update mode untouched row groups would have data
     /// encoded with the old schema.
-    /// Handles a legacy edge case during rewrite: old parquet files may have
-    /// Symbol columns marked as Required in the schema (written before the
-    /// convention was established that symbols are always Optional). If the
-    /// current data now contains nulls (`!col.not_null_hint`), the schema must be
-    /// downgraded to Optional so the rewritten pages include definition levels.
     ///
-    /// New files always write symbols as Optional (see `column_type_to_parquet_type`
-    /// in schema.rs). The `Column::not_null_hint` flag is only a write-time hint for
-    /// the encoder to emit a fast all-ones RLE run for definition levels.
+    /// Handles two legacy edge cases during rewrite:
+    /// 1. Symbol columns marked Required in old files (written before the
+    ///    convention was established that symbols are always Optional). If the
+    ///    current data contains nulls (`!col.not_null_hint`), the schema must be
+    ///    downgraded to Optional so the rewritten pages include definition levels.
+    /// 2. Byte/Short/Char columns marked Required in files written before
+    ///    commit 247cb447cd ("fix: known-bad null-sentinel behaviour"). Modern
+    ///    files always write these as Optional so column-top rows can be
+    ///    materialised as NULL via def-level=0. The repetition-aware dispatch
+    ///    in encode.rs preserves the Required path for these tags in update
+    ///    mode, but during a rewrite the file is fully re-encoded, so the
+    ///    schema is migrated to Optional unconditionally.
+    ///
+    /// New files always write Symbol and Byte/Short/Char as Optional
+    /// (see `column_type_to_parquet_type` in schema.rs). The `Column::not_null_hint`
+    /// flag is only a write-time hint for the encoder to emit a fast all-ones
+    /// RLE run for definition levels.
     fn ensure_schema_matches_columns(&mut self, partition: &Partition) -> ParquetResult<()> {
         if self.symbol_schema_checked || !self.is_rewrite {
             return Ok(());
@@ -1160,21 +1171,27 @@ impl ParquetUpdater {
                 fields.len()
             ));
         }
+        let needs_migration = |col: &Column, field: &ParquetType| -> bool {
+            if field.get_field_info().repetition != Repetition::Required {
+                return false;
+            }
+            match col.data_type.tag() {
+                ColumnTypeTag::Symbol => !col.not_null_hint,
+                ColumnTypeTag::Byte | ColumnTypeTag::Short | ColumnTypeTag::Char => true,
+                _ => false,
+            }
+        };
         let needs_update = partition
             .columns
             .iter()
             .zip(fields.iter())
-            .any(|(col, field)| {
-                col.data_type.tag() == ColumnTypeTag::Symbol
-                    && !col.not_null_hint
-                    && field.get_field_info().repetition == Repetition::Required
-            });
+            .any(|(col, field)| needs_migration(col, field));
         if !needs_update {
             return Ok(());
         }
         let mut new_fields: Vec<ParquetType> = fields.to_vec();
         for (col, field) in partition.columns.iter().zip(new_fields.iter_mut()) {
-            if col.data_type.tag() == ColumnTypeTag::Symbol && !col.not_null_hint {
+            if needs_migration(col, field) {
                 if let ParquetType::PrimitiveType(ref mut pt) = field {
                     pt.field_info.repetition = Repetition::Optional;
                 }
@@ -2212,6 +2229,283 @@ mod tests {
                 "copied bloom filter should contain {val}"
             );
         }
+
+        Ok(())
+    }
+
+    /// Files written before commit 247cb447cd carry `Repetition::Required` for
+    /// BYTE/SHORT/CHAR. That commit and follow-up c65b523964 flipped both the
+    /// schema and the encoder dispatch to Optional for new files. In update
+    /// mode the legacy schema is preserved (`ensure_schema_matches_columns`
+    /// returns early when `!is_rewrite`), so without a repetition-aware
+    /// dispatch the encoder would assert Optional against a Required schema
+    /// and abort the JVM. The dispatch in `encode.rs` now picks
+    /// `encode_int_notnull` when the schema field is Required and
+    /// `encode_int_nullable` when it is Optional, for all three encodings
+    /// (Plain, DeltaBinaryPacked, RleDictionary).
+    ///
+    /// This test exercises the success path of both branches by calling
+    /// `create_row_group` (the same function `insert_row_group` /
+    /// `replace_row_group` delegate to) with a hand-built schema field that
+    /// pins repetition. The Required arm verifies the legacy-file fix; the
+    /// Optional arm verifies the modern-file behaviour is untouched.
+    #[test]
+    fn create_row_group_handles_both_repetitions_for_byte_short_char() {
+        use parquet2::encoding::Encoding;
+        use parquet2::schema::types::{
+            IntegerType, ParquetType, PhysicalType, PrimitiveConvertedType, PrimitiveLogicalType,
+        };
+        use parquet2::schema::Repetition;
+        use parquet2::write::Version;
+
+        fn build_field(tag: ColumnTypeTag, repetition: Repetition, id: i32) -> ParquetType {
+            // Mirrors the field definitions schema.rs builds for these tags
+            // (Byte=Int8, Short=Int16, Char=Uint16); only the repetition is
+            // a parameter so the test can pin both legacy and modern shapes.
+            let (converted, logical) = match tag {
+                ColumnTypeTag::Byte => (
+                    PrimitiveConvertedType::Int8,
+                    PrimitiveLogicalType::Integer(IntegerType::Int8),
+                ),
+                ColumnTypeTag::Short => (
+                    PrimitiveConvertedType::Int16,
+                    PrimitiveLogicalType::Integer(IntegerType::Int16),
+                ),
+                ColumnTypeTag::Char => (
+                    PrimitiveConvertedType::Uint16,
+                    PrimitiveLogicalType::Integer(IntegerType::UInt16),
+                ),
+                _ => unreachable!(),
+            };
+            ParquetType::try_from_primitive(
+                "col".to_string(),
+                PhysicalType::Int32,
+                repetition,
+                Some(converted),
+                Some(logical),
+                Some(id),
+            )
+            .unwrap()
+        }
+
+        let options = WriteOptions {
+            write_statistics: true,
+            compression: CompressionOptions::Uncompressed,
+            version: Version::V1,
+            row_group_size: None,
+            data_page_size: None,
+            raw_array_encoding: false,
+            bloom_filter_fpp: DEFAULT_BLOOM_FILTER_FPP,
+            min_compression_ratio: 0.0,
+        };
+        let bloom_filter_columns: HashSet<usize> = HashSet::new();
+        let compressions: Vec<Option<CompressionOptions>> = vec![None];
+
+        // Helper: run create_row_group for the given partition+field+encoding
+        // under panic-catch (the bug pre-fix manifested as panic, not Err).
+        fn run_one(
+            partition: &Partition,
+            field: &ParquetType,
+            encoding: Encoding,
+            row_count: usize,
+            options: WriteOptions,
+            compressions: &[Option<CompressionOptions>],
+            bloom_filter_columns: &HashSet<usize>,
+        ) -> Result<crate::parquet::error::ParquetResult<()>, Box<dyn std::any::Any + Send>>
+        {
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                create_row_group(
+                    partition,
+                    0,
+                    row_count,
+                    std::slice::from_ref(field),
+                    &[encoding],
+                    options,
+                    compressions,
+                    bloom_filter_columns,
+                    false,
+                )
+                .map(|_| ())
+            }))
+        }
+
+        for &encoding in &[
+            Encoding::Plain,
+            Encoding::DeltaBinaryPacked,
+            Encoding::RleDictionary,
+        ] {
+            for &repetition in &[Repetition::Required, Repetition::Optional] {
+                // Each tag has distinct backing storage; build the Partition
+                // inline so the slice borrow lives across the call.
+                let byte_data: [i8; 4] = [1, 2, 3, 4];
+                let short_data: [i16; 4] = [-1, 0, 1, 2];
+                let char_data: [u16; 4] = [b'a' as u16, b'b' as u16, b'c' as u16, b'd' as u16];
+
+                let cases: [(ColumnTypeTag, Partition, usize); 3] = [
+                    (
+                        ColumnTypeTag::Byte,
+                        Partition {
+                            table: "test".to_string(),
+                            columns: vec![make_column(
+                                "col",
+                                ColumnTypeTag::Byte.into_type(),
+                                &byte_data,
+                            )],
+                        },
+                        byte_data.len(),
+                    ),
+                    (
+                        ColumnTypeTag::Short,
+                        Partition {
+                            table: "test".to_string(),
+                            columns: vec![make_column(
+                                "col",
+                                ColumnTypeTag::Short.into_type(),
+                                &short_data,
+                            )],
+                        },
+                        short_data.len(),
+                    ),
+                    (
+                        ColumnTypeTag::Char,
+                        Partition {
+                            table: "test".to_string(),
+                            columns: vec![make_column(
+                                "col",
+                                ColumnTypeTag::Char.into_type(),
+                                &char_data,
+                            )],
+                        },
+                        char_data.len(),
+                    ),
+                ];
+
+                for (tag, partition, row_count) in cases {
+                    let field = build_field(tag, repetition, 0);
+                    let result = run_one(
+                        &partition,
+                        &field,
+                        encoding,
+                        row_count,
+                        options,
+                        &compressions,
+                        &bloom_filter_columns,
+                    );
+                    let inner = result.unwrap_or_else(|_| {
+                        panic!(
+                            "encoder panicked for tag {:?} encoding {:?} repetition {:?}; \
+                             the repetition-aware dispatch in encode.rs must route Required \
+                             schemas to encode_int_notnull and Optional to encode_int_nullable",
+                            tag, encoding, repetition
+                        )
+                    });
+                    inner.unwrap_or_else(|e| {
+                        panic!(
+                            "create_row_group failed for tag {:?} encoding {:?} repetition {:?}: {:?}",
+                            tag, encoding, repetition, e
+                        )
+                    });
+                }
+            }
+        }
+    }
+
+    /// Round-trip: build a legacy-shaped file with Required BYTE in the schema,
+    /// open it via ParquetUpdater in rewrite mode, append a row group, and
+    /// verify the resulting file's schema has been migrated to Optional.
+    /// Update mode is not covered here because, by design, it preserves the
+    /// legacy schema (validated by the success of the dispatch test above).
+    #[test]
+    fn rewrite_mode_migrates_legacy_required_byte_to_optional() -> Result<(), Box<dyn Error>> {
+        use crate::allocator::TestAllocatorState;
+        use crate::parquet_write::file::ParquetWriter;
+        use crate::parquet_write::schema::to_parquet_schema;
+        use parquet2::schema::Repetition;
+
+        let initial = [1i8, 2, 3, 4];
+        let initial_col = make_column("b", ColumnTypeTag::Byte.into_type(), &initial);
+        let initial_partition = Partition { table: "t".to_string(), columns: vec![initial_col] };
+
+        // Build the modern schema, then patch BYTE -> Required so the written
+        // file matches the pre-247cb447cd layout. The repetition-aware
+        // dispatch in encode.rs picks encode_int_notnull for this field, so
+        // the pages on disk are also in the legacy shape (no def-levels).
+        let (modern_schema, additional_meta) = to_parquet_schema(&initial_partition, false, -1)?;
+        let mut legacy_fields = modern_schema.fields().to_vec();
+        for field in legacy_fields.iter_mut() {
+            if let parquet2::schema::types::ParquetType::PrimitiveType(ref mut pt) = field {
+                pt.field_info.repetition = Repetition::Required;
+            }
+        }
+        let legacy_schema = parquet2::metadata::SchemaDescriptor::new(
+            modern_schema.name().to_string(),
+            legacy_fields,
+        );
+
+        let tmp = NamedTempFile::new()?;
+        {
+            let writer = tmp.reopen()?;
+            let mut chunked = ParquetWriter::new(writer)
+                .chunked(legacy_schema.clone(), to_encodings(&initial_partition))?;
+            chunked.write_chunk(&initial_partition)?;
+            chunked.finish(additional_meta)?;
+        }
+
+        // Sanity: the legacy file really did write BYTE as Required.
+        {
+            let mut reader = tmp.reopen()?;
+            let len = reader.metadata()?.len();
+            let metadata = read_metadata_with_size(&mut reader, len)?;
+            assert_eq!(
+                metadata.schema_descr.fields()[0]
+                    .get_field_info()
+                    .repetition,
+                Repetition::Required,
+                "legacy file must carry Required BYTE so the migration is exercised"
+            );
+        }
+
+        // Rewrite-mode updater: write_file_size = 0 routes through the
+        // rewrite path; the new file goes to a fresh temp.
+        let out_tmp = NamedTempFile::new()?;
+        let alloc_state = TestAllocatorState::new();
+        let mut updater = super::ParquetUpdater::new(
+            alloc_state.allocator(),
+            tmp.reopen()?,
+            tmp.as_file().metadata()?.len(),
+            out_tmp.reopen()?,
+            0, // write_file_size = 0 => rewrite mode
+            None,
+            true,
+            false,
+            CompressionOptions::Uncompressed,
+            None,
+            None,
+            DEFAULT_BLOOM_FILTER_FPP,
+            0.0,
+            None,
+            0,
+            -1,
+        )?;
+
+        let extra = [5i8, 6, 7, 8];
+        let extra_col = make_column("b", ColumnTypeTag::Byte.into_type(), &extra);
+        let extra_partition = Partition { table: "t".to_string(), columns: vec![extra_col] };
+        updater.insert_row_group(&extra_partition, 0)?;
+        updater.end(None)?;
+
+        // The rewritten file's schema must be Optional for BYTE, regardless
+        // of what the input file declared.
+        let mut verify = out_tmp.reopen()?;
+        let verify_len = verify.metadata()?.len();
+        let new_metadata = read_metadata_with_size(&mut verify, verify_len)?;
+        assert_eq!(
+            new_metadata.schema_descr.fields()[0]
+                .get_field_info()
+                .repetition,
+            Repetition::Optional,
+            "ensure_schema_matches_columns must migrate legacy Required BYTE to Optional in rewrite mode"
+        );
 
         Ok(())
     }

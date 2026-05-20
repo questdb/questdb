@@ -30,7 +30,9 @@ import io.questdb.cairo.ColumnTypeConverter;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.MillisTimestampDriver;
+import io.questdb.cairo.NanosTimestampDriver;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.VarcharTypeDriver;
 import io.questdb.cairo.arr.ArrayTypeDriver;
 import io.questdb.cairo.arr.ArrayView;
@@ -1108,13 +1110,20 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
         return sink;
     }
 
-    private long convertVarToTimestamp(int srcTag, int columnIndex) {
+    private long convertVarToTimestamp(int encoded, int columnIndex) {
+        // bits 0-7:  source tag (STRING or VARCHAR)
+        // bit  24:   target timestamp precision (0 = micros, 1 = nanos)
+        // Without the precision bit the driver would default to micros and
+        // ALTER COLUMN c TYPE TIMESTAMP_NS would silently return values 1000x
+        // smaller than expected. Mirrors the native ColumnTypeConverter, which
+        // dispatches via ColumnType.getTimestampDriver(dstColumnType).
+        int srcTag = encoded & 0xFF;
+        boolean isNano = (encoded & (1 << 24)) != 0;
         CharSequence cs = readVarValueForConversion(srcTag, columnIndex);
         if (cs != null) {
             try {
-                // parseFloorLiteral matches ColumnTypeConverter's STRING->TIMESTAMP path
-                // and accepts nanosecond-precision input by truncating trailing nanos.
-                return MicrosTimestampDriver.INSTANCE.parseFloorLiteral(cs);
+                TimestampDriver driver = isNano ? NanosTimestampDriver.INSTANCE : MicrosTimestampDriver.INSTANCE;
+                return driver.parseFloorLiteral(cs);
             } catch (NumericException ignore) {
             }
         }

@@ -41,6 +41,10 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.AbstractQueueConsumerJob;
 import io.questdb.mp.Sequence;
+import io.questdb.std.Decimal128;
+import io.questdb.std.Decimal256;
+import io.questdb.std.Decimal64;
+import io.questdb.std.Decimals;
 import io.questdb.std.DirectIntList;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
@@ -3832,10 +3836,34 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 Unsafe.putLong(addr, Numbers.LONG_NULL);
                 Unsafe.putLong(addr + Long.BYTES, Numbers.LONG_NULL);
             }
+            case ColumnType.DECIMAL8 -> Unsafe.putByte(dstPtr + rowIndex, Decimals.DECIMAL8_NULL);
+            case ColumnType.DECIMAL16 -> Unsafe.putShort(dstPtr + ((long) rowIndex << 1), Decimals.DECIMAL16_NULL);
+            case ColumnType.DECIMAL32 -> Unsafe.putInt(dstPtr + ((long) rowIndex << 2), Decimals.DECIMAL32_NULL);
+            case ColumnType.DECIMAL64 -> Unsafe.putLong(dstPtr + ((long) rowIndex << 3), Decimals.DECIMAL64_NULL);
+            case ColumnType.DECIMAL128 -> {
+                long addr = dstPtr + ((long) rowIndex << 4);
+                Unsafe.putLong(addr, Decimals.DECIMAL128_HI_NULL);
+                Unsafe.putLong(addr + Long.BYTES, Decimals.DECIMAL128_LO_NULL);
+            }
+            case ColumnType.DECIMAL256 -> {
+                long addr = dstPtr + ((long) rowIndex << 5);
+                Unsafe.putLong(addr, Decimals.DECIMAL256_HH_NULL);
+                Unsafe.putLong(addr + Long.BYTES, Decimals.DECIMAL256_HL_NULL);
+                Unsafe.putLong(addr + 2L * Long.BYTES, Decimals.DECIMAL256_LH_NULL);
+                Unsafe.putLong(addr + 3L * Long.BYTES, Decimals.DECIMAL256_LL_NULL);
+            }
         }
     }
 
-    private static void writeFixedParsedValue(int dstType, long dstPtr, int rowIndex, CharSequence value) {
+    private static void writeFixedParsedValue(
+            int dstType,
+            long dstPtr,
+            int rowIndex,
+            CharSequence value,
+            Decimal64 d64,
+            Decimal128 d128,
+            Decimal256 d256
+    ) {
         try {
             switch (ColumnType.tagOf(dstType)) {
                 case ColumnType.BOOLEAN -> {
@@ -3863,9 +3891,47 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         Unsafe.putLong(dstPtr + ((long) rowIndex << 3), ColumnType.getTimestampDriver(dstType).parseFloorLiteral(value));
                 case ColumnType.IPv4 -> Unsafe.putInt(dstPtr + ((long) rowIndex << 2), Numbers.parseIPv4Quiet(value));
                 case ColumnType.UUID -> {
+                    // checkDashesAndLength must run first: parseLo/parseHi index charAt up
+                    // to UUID_LENGTH unconditionally. On a short or oversize input that
+                    // would either throw IndexOutOfBoundsException (which the catch below
+                    // does NOT handle) or silently accept the 36-char prefix and drop the
+                    // tail. Pre-validation matches the lazy path in
+                    // PageFrameMemoryRecord.convertVarToUuidHi/Lo and the native
+                    // ColumnTypeConverter.str2Uuid contract: malformed input is null.
+                    Uuid.checkDashesAndLength(value);
                     long addr = dstPtr + ((long) rowIndex << 4);
                     Unsafe.putLong(addr, Uuid.parseLo(value));
                     Unsafe.putLong(addr + Long.BYTES, Uuid.parseHi(value));
+                }
+                case ColumnType.DECIMAL8 -> {
+                    d64.ofString(value, ColumnType.getDecimalPrecision(dstType), ColumnType.getDecimalScale(dstType));
+                    Unsafe.putByte(dstPtr + rowIndex, (byte) d64.getValue());
+                }
+                case ColumnType.DECIMAL16 -> {
+                    d64.ofString(value, ColumnType.getDecimalPrecision(dstType), ColumnType.getDecimalScale(dstType));
+                    Unsafe.putShort(dstPtr + ((long) rowIndex << 1), (short) d64.getValue());
+                }
+                case ColumnType.DECIMAL32 -> {
+                    d64.ofString(value, ColumnType.getDecimalPrecision(dstType), ColumnType.getDecimalScale(dstType));
+                    Unsafe.putInt(dstPtr + ((long) rowIndex << 2), (int) d64.getValue());
+                }
+                case ColumnType.DECIMAL64 -> {
+                    d64.ofString(value, ColumnType.getDecimalPrecision(dstType), ColumnType.getDecimalScale(dstType));
+                    Unsafe.putLong(dstPtr + ((long) rowIndex << 3), d64.getValue());
+                }
+                case ColumnType.DECIMAL128 -> {
+                    d128.ofString(value, ColumnType.getDecimalPrecision(dstType), ColumnType.getDecimalScale(dstType));
+                    long addr = dstPtr + ((long) rowIndex << 4);
+                    Unsafe.putLong(addr, d128.getHigh());
+                    Unsafe.putLong(addr + Long.BYTES, d128.getLow());
+                }
+                case ColumnType.DECIMAL256 -> {
+                    d256.ofString(value, ColumnType.getDecimalPrecision(dstType), ColumnType.getDecimalScale(dstType));
+                    long addr = dstPtr + ((long) rowIndex << 5);
+                    Unsafe.putLong(addr, d256.getHh());
+                    Unsafe.putLong(addr + Long.BYTES, d256.getHl());
+                    Unsafe.putLong(addr + 2L * Long.BYTES, d256.getLh());
+                    Unsafe.putLong(addr + 3L * Long.BYTES, d256.getLl());
                 }
                 default -> writeFixedNull(dstType, dstPtr, rowIndex);
             }
@@ -3997,6 +4063,12 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         //   - string source: per-row UTF-16 accumulator. Both clear() per row,
         //     so a single sink covers both paths.
         final StringSink strSink = utf16Sink;
+        // Scratch decimal buffers for DECIMAL targets. Allocating once per row
+        // group keeps the per-row write zero-allocation. Unused for non-decimal
+        // dstType.
+        final Decimal64 d64 = new Decimal64();
+        final Decimal128 d128 = new Decimal128();
+        final Decimal256 d256 = new Decimal256();
 
         for (int i = 0; i < rowCount; i++) {
             CharSequence value;
@@ -4035,7 +4107,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 value = strSink;
             }
 
-            writeFixedParsedValue(dstType, dstPtr, i, value);
+            writeFixedParsedValue(dstType, dstPtr, i, value, d64, d128, d256);
         }
     }
 

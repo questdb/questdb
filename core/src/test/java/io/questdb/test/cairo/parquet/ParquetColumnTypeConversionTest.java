@@ -802,18 +802,6 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
         });
     }
 
-    @Test
-    public void testStringToChar() throws Exception {
-        assertMemoryLeak(() -> {
-            String values = """
-                    ('a', '2024-01-01T00:00:01.000000Z'),
-                    ('z', '2024-01-01T00:00:02.000000Z'),
-                    (NULL, '2024-01-01T00:00:03.000000Z')""";
-            assertConversion("STRING", "CHAR", values);
-            assertConversion("VARCHAR", "CHAR", values);
-        });
-    }
-
     /**
      * Asserts VARCHAR-&gt;CHAR conversion on a parquet partition against an absolute
      * oracle. This is a lazy conversion path: the parquet decoder hands back a
@@ -954,19 +942,6 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testStringToDecimal() throws Exception {
-        assertMemoryLeak(() -> {
-            String values = """
-                    ('12345.6789', '2024-01-01T00:00:01.000000Z'),
-                    ('0', '2024-01-01T00:00:02.000000Z'),
-                    ('-99.9999', '2024-01-01T00:00:03.000000Z'),
-                    (NULL, '2024-01-01T00:00:04.000000Z')""";
-            assertConversion("STRING", "DECIMAL(18, 4)", values);
-            assertConversion("VARCHAR", "DECIMAL(18, 4)", values);
-        });
-    }
-
-    @Test
     public void testStringToFixed() throws Exception {
         assertMemoryLeak(() -> {
             // Var→Fixed path: Rust decodes the source var type;
@@ -1022,20 +997,53 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
                         ('2020-06-15T12:30:00.123456Z', '2024-01-01T00:00:01.000000Z'),
                         ('1970-01-01T00:00:00.000000Z', '2024-01-01T00:00:02.000000Z'),
                         (NULL, '2024-01-01T00:00:03.000000Z')""");
-            }
-        });
-    }
 
-    @Test
-    public void testStringToIpv4() throws Exception {
-        assertMemoryLeak(() -> {
-            String values = """
-                    ('192.168.1.1', '2024-01-01T00:00:01.000000Z'),
-                    ('10.0.0.1', '2024-01-01T00:00:02.000000Z'),
-                    ('255.255.255.255', '2024-01-01T00:00:03.000000Z'),
-                    (NULL, '2024-01-01T00:00:04.000000Z')""";
-            assertConversion("STRING", "IPv4", values);
-            assertConversion("VARCHAR", "IPv4", values);
+                assertConversion(source, "TIMESTAMP_NS", """
+                        ('2020-06-15T12:30:00.123456789Z', '2024-01-01T00:00:01.000000Z'),
+                        ('1970-01-01T00:00:00.000000001Z', '2024-01-01T00:00:02.000000Z'),
+                        (NULL, '2024-01-01T00:00:03.000000Z')""");
+
+                assertConversion(source, "CHAR", """
+                        ('a', '2024-01-01T00:00:01.000000Z'),
+                        ('z', '2024-01-01T00:00:02.000000Z'),
+                        (NULL, '2024-01-01T00:00:03.000000Z')""");
+
+                assertConversion(source, "DECIMAL(18, 4)", """
+                        ('12345.6789', '2024-01-01T00:00:01.000000Z'),
+                        ('0', '2024-01-01T00:00:02.000000Z'),
+                        ('-99.9999', '2024-01-01T00:00:03.000000Z'),
+                        (NULL, '2024-01-01T00:00:04.000000Z')""");
+
+                assertConversion(source, "IPv4", """
+                        ('192.168.1.1', '2024-01-01T00:00:01.000000Z'),
+                        ('10.0.0.1', '2024-01-01T00:00:02.000000Z'),
+                        ('255.255.255.255', '2024-01-01T00:00:03.000000Z'),
+                        (NULL, '2024-01-01T00:00:04.000000Z')""");
+
+                // →Symbol requires the pre-pass to convert parquet→native
+                // before building the symbol map.
+                assertConversion(source, "SYMBOL", """
+                        ('hello', '2024-01-01T00:00:01.000000Z'),
+                        ('world', '2024-01-01T00:00:02.000000Z'),
+                        (NULL, '2024-01-01T00:00:03.000000Z')""");
+
+                // UUID cases include malformed inputs: non-UUID strings must produce NULL on
+                // the lazy parquet path, matching the native str2Uuid converter (which calls
+                // Uuid.checkDashesAndLength first and treats failure as null). Without the
+                // length/dash pre-check, Uuid.parseHi/parseLo index past the end of short
+                // strings and raise IndexOutOfBoundsException, which the NumericException-only
+                // catch in convertVarToUuidHi/Lo does not handle, propagating out of the
+                // Record API.
+                assertConversion(source, "UUID", """
+                        ('a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11', '2024-01-01T00:00:01.000000Z'),
+                        ('11111111-1111-1111-1111-111111111111', '2024-01-01T00:00:02.000000Z'),
+                        ('not-a-uuid', '2024-01-01T00:00:03.000000Z'),
+                        ('', '2024-01-01T00:00:04.000000Z'),
+                        ('short', '2024-01-01T00:00:05.000000Z'),
+                        ('a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11-extra', '2024-01-01T00:00:06.000000Z'),
+                        ('zzzzzzzz-zzzz-zzzz-zzzz-zzzzzzzzzzzz', '2024-01-01T00:00:07.000000Z'),
+                        (NULL, '2024-01-01T00:00:08.000000Z')""");
+            }
         });
     }
 
@@ -1080,22 +1088,71 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
         });
     }
 
+
     @Test
-    public void testStringToSymbol() throws Exception {
+    public void testStringToUuidMalformedThroughConvertToNative() throws Exception {
         assertMemoryLeak(() -> {
-            // →Symbol requires the pre-pass to convert parquet→native
-            // before building the symbol map.
-            String values = """
-                    ('hello', '2024-01-01T00:00:01.000000Z'),
-                    ('world', '2024-01-01T00:00:02.000000Z'),
-                    (NULL, '2024-01-01T00:00:03.000000Z')""";
-            assertConversion("STRING", "SYMBOL", values);
-            assertConversion("VARCHAR", "SYMBOL", values);
+            for (String source : new String[]{"STRING", "VARCHAR"}) {
+                try {
+                    execute("CREATE TABLE pt (val " + source + ", ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                    execute("""
+                            INSERT INTO pt VALUES
+                            ('a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11', '2024-01-01T00:00:01.000000Z'),
+                            ('11111111-1111-1111-1111-111111111111', '2024-01-01T00:00:02.000000Z'),
+                            ('not-a-uuid',                           '2024-01-01T00:00:03.000000Z'),
+                            ('',                                     '2024-01-01T00:00:04.000000Z'),
+                            ('short',                                '2024-01-01T00:00:05.000000Z'),
+                            ('a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11-extra', '2024-01-01T00:00:06.000000Z'),
+                            ('zzzzzzzz-zzzz-zzzz-zzzz-zzzzzzzzzzzz', '2024-01-01T00:00:07.000000Z'),
+                            (NULL,                                   '2024-01-01T00:00:08.000000Z')""");
+                    drainWalQueue();
+                    execute("ALTER TABLE pt CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+                    drainWalQueue();
+                    execute("ALTER TABLE pt ALTER COLUMN val TYPE UUID");
+                    drainWalQueue();
+                    // Materializes the var->fixed conversion through
+                    // O3PartitionJob.writeFixedParsedValue. With the bug, row 6
+                    // ('...-extra') round-trips as the prefix UUID because
+                    // parseLo/parseHi only read positions [0, 36); the trailing
+                    // characters are silently dropped.
+                    execute("ALTER TABLE pt CONVERT PARTITION TO NATIVE LIST '2024-01-01'");
+                    drainWalQueue();
+
+                    assertSql(
+                            """
+                                    val\tts
+                                    a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11\t2024-01-01T00:00:01.000000Z
+                                    11111111-1111-1111-1111-111111111111\t2024-01-01T00:00:02.000000Z
+                                    \t2024-01-01T00:00:03.000000Z
+                                    \t2024-01-01T00:00:04.000000Z
+                                    \t2024-01-01T00:00:05.000000Z
+                                    \t2024-01-01T00:00:06.000000Z
+                                    \t2024-01-01T00:00:07.000000Z
+                                    \t2024-01-01T00:00:08.000000Z
+                                    """,
+                            "SELECT val, ts FROM pt"
+                    );
+                    assertSql(
+                            "c\n6\n",
+                            "SELECT count() c FROM pt WHERE val IS NULL"
+                    );
+                } finally {
+                    tryDrop("pt");
+                }
+            }
         });
     }
 
+    /**
+     * Pins lazy VARCHAR/STRING -> TIMESTAMP_NS conversion on a parquet partition.
+     * The partition stays in parquet (no CONVERT PARTITION TO NATIVE), so reads
+     * go through PageFrameMemoryRecord.convertVarToTimestamp. That path must
+     * dispatch to NanosTimestampDriver based on the target column type; the prior
+     * implementation hard-coded MicrosTimestampDriver, returning values 1000x
+     * too small.
+     */
     @Test
-    public void testStringToTimestampNano() throws Exception {
+    public void testStringToTimestampNanoLazyParquet() throws Exception {
         assertMemoryLeak(() -> {
             for (String source : new String[]{"STRING", "VARCHAR"}) {
                 try {
@@ -1109,8 +1166,6 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
                     execute("ALTER TABLE pt CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
                     drainWalQueue();
                     execute("ALTER TABLE pt ALTER COLUMN val TYPE TIMESTAMP_NS");
-                    drainWalQueue();
-                    execute("ALTER TABLE pt CONVERT PARTITION TO NATIVE LIST '2024-01-01'");
                     drainWalQueue();
 
                     assertSql(
@@ -1126,40 +1181,6 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
                     tryDrop("pt");
                 }
             }
-        });
-    }
-
-    @Test
-    public void testStringToUuid() throws Exception {
-        assertMemoryLeak(() -> {
-            String values = """
-                    ('a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11', '2024-01-01T00:00:01.000000Z'),
-                    ('11111111-1111-1111-1111-111111111111', '2024-01-01T00:00:02.000000Z'),
-                    (NULL, '2024-01-01T00:00:03.000000Z')""";
-            assertConversion("STRING", "UUID", values);
-            assertConversion("VARCHAR", "UUID", values);
-        });
-    }
-
-    @Test
-    public void testStringToUuidWithInvalidValues() throws Exception {
-        // Non-UUID strings must produce NULL on the lazy parquet path, matching the native
-        // str2Uuid converter (which calls Uuid.checkDashesAndLength first and treats failure
-        // as null). Without the length/dash pre-check, Uuid.parseHi/parseLo index past the
-        // end of short strings and raise IndexOutOfBoundsException, which the
-        // NumericException-only catch in convertVarToUuidHi/Lo does not handle, propagating
-        // the exception out of the Record API.
-        assertMemoryLeak(() -> {
-            String values = """
-                    ('a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11', '2024-01-01T00:00:01.000000Z'),
-                    ('not-a-uuid', '2024-01-01T00:00:02.000000Z'),
-                    ('', '2024-01-01T00:00:03.000000Z'),
-                    ('short', '2024-01-01T00:00:04.000000Z'),
-                    ('a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11-extra', '2024-01-01T00:00:05.000000Z'),
-                    ('zzzzzzzz-zzzz-zzzz-zzzz-zzzzzzzzzzzz', '2024-01-01T00:00:06.000000Z'),
-                    (NULL, '2024-01-01T00:00:07.000000Z')""";
-            assertConversion("STRING", "UUID", values);
-            assertConversion("VARCHAR", "UUID", values);
         });
     }
 
@@ -1264,6 +1285,11 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
             assertConversion("SYMBOL", "TIMESTAMP", """
                     ('2020-06-15T12:30:00.123456Z', '2024-01-01T00:00:01.000000Z'),
                     (NULL, '2024-01-01T00:00:02.000000Z')""");
+
+            assertConversion("SYMBOL", "TIMESTAMP_NS", """
+                    ('2020-06-15T12:30:00.123456789Z', '2024-01-01T00:00:01.000000Z'),
+                    ('1970-01-01T00:00:00.000000001Z', '2024-01-01T00:00:02.000000Z'),
+                    (NULL, '2024-01-01T00:00:03.000000Z')""");
         });
     }
 
@@ -2088,6 +2114,16 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
             execute("ALTER TABLE pt ALTER COLUMN val TYPE " + targetType);
             drainWalQueue();
 
+            // First assertion: lazy parquet read path (pt partition is still parquet).
+            assertSqlCursors("SELECT * FROM nt ORDER BY ts", "SELECT * FROM pt ORDER BY ts");
+
+            // Second assertion: eager rewrite path. CONVERT PARTITION TO NATIVE
+            // materializes the lazy conversion through produceNativeFromParquet ->
+            // O3PartitionJob.convertVarColumnToFixed / convertFixedColumnToString /
+            // convertFixedColumnToVarchar (and the in-place var->var copy), so the
+            // re-read goes against native files written by the eager kernel.
+            execute("ALTER TABLE pt CONVERT PARTITION TO NATIVE LIST '2024-01-01'");
+            drainWalQueue();
             assertSqlCursors("SELECT * FROM nt ORDER BY ts", "SELECT * FROM pt ORDER BY ts");
         } finally {
             tryDrop("nt");

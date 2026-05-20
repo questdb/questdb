@@ -456,7 +456,17 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
                         fromParquetColumnIndexes.setQuick(parquetIdx, i);
                         parquetColumns.add(ColumnType.VARCHAR_SLICE);
                         // Negative VARCHAR tag signals var→fixed/var→string conversion.
-                        sourceColumnTypes.setQuick(i, -ColumnType.VARCHAR);
+                        // Same target-type metadata layout as the var→fixed branch
+                        // below; the Symbol-as-VARCHAR_SLICE rows are converted by
+                        // the same lazy converters in PageFrameMemoryRecord.
+                        int encoded = ColumnType.VARCHAR;
+                        if (ColumnType.isDecimal(targetType)) {
+                            encoded |= (ColumnType.getDecimalPrecision(targetType) << 8)
+                                    | (ColumnType.getDecimalScale(targetType) << 16);
+                        } else if (ColumnType.isTimestampNano(targetType)) {
+                            encoded |= (1 << 24);
+                        }
+                        sourceColumnTypes.setQuick(i, -encoded);
                         hasTypeCasts = true;
                         return;
                     }
@@ -486,14 +496,18 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
                     parquetColumns.add(decodeType);
                     // Negative value signals var→fixed direction.
                     // -1 remains the "no conversion" sentinel.
-                    // For decimal targets, encode precision/scale in the upper bits:
-                    //   bits 0-7:  source tag (STRING or VARCHAR)
-                    //   bits 8-15: target decimal precision
-                    //   bits 16-23: target decimal scale
+                    // Bit layout of the encoded value (target-specific metadata
+                    // in the upper bits — only one target family fills 8-23 at a time):
+                    //   bits 0-7:   source tag (STRING or VARCHAR)
+                    //   bits 8-15:  target decimal precision (decimal targets)
+                    //   bits 16-23: target decimal scale (decimal targets)
+                    //   bit  24:    target timestamp precision (0 = micros, 1 = nanos)
                     int encoded = ColumnType.tagOf(sourceType);
                     if (ColumnType.isDecimal(targetType)) {
                         encoded |= (ColumnType.getDecimalPrecision(targetType) << 8)
                                 | (ColumnType.getDecimalScale(targetType) << 16);
+                    } else if (ColumnType.isTimestampNano(targetType)) {
+                        encoded |= (1 << 24);
                     }
                     sourceColumnTypes.setQuick(i, -encoded);
                     hasTypeCasts = true;
