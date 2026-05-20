@@ -22,13 +22,12 @@
   ~
   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~-->
 
-<project xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns="http://maven.apache.org/POM/4.0.0"
-         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
 
     <groupId>io.questdb</groupId>
     <artifactId>utils</artifactId>
-    <version>9.3.6-SNAPSHOT</version>
+    <version>9.4.1-SNAPSHOT</version>
 
     <name>Command line utils for QuestDB</name>
 
@@ -41,7 +40,7 @@
         <test.exclude>None</test.exclude>
         <test.include>%regex[.*[^o].class]</test.include><!-- exclude module-info.class-->
 
-        <questdb.client.version>1.2.1</questdb.client.version>
+        <questdb.client.version>1.2.2</questdb.client.version>
     </properties>
 
     <dependencies>
