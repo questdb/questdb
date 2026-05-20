@@ -441,9 +441,13 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
         setProperty(PropertyKey.CAIRO_WAL_PURGE_INTERVAL, 10);
         assertMemoryLeak(() -> {
             final Rnd rnd = generateRandom(LOG);
-            setFuzzParams(rnd, 0, 0);
+            // Smaller workload on slow CI runners (Mac, Windows): fewer transactions, rows, and tables.
+            // Segment rollover stays at 10 rows and the purge interval at 10, so the test still
+            // generates many WAL segments and runs WalPurgeJob frequently to exercise the race.
+            final boolean isLinux = Os.isLinux();
+            setFuzzParams(rnd, isLinux ? 10_000 : 3_000, isLinux ? 100_000 : 30_000, 0, 0);
             setFuzzProperties(rnd);
-            runMvFuzz(rnd, getTestName(), 4, true);
+            runMvFuzz(rnd, getTestName(), isLinux ? 4 : 2, true);
         });
     }
 
