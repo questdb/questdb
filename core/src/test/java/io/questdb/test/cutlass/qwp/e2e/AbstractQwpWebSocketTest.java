@@ -183,20 +183,40 @@ public class AbstractQwpWebSocketTest extends AbstractCairoTest {
     }
 
     protected void runInContext(QwpTestContext r, int recvBufferSize, int forceRecvFragmentationChunkSize) throws Exception {
-        runInContext(r, recvBufferSize, forceRecvFragmentationChunkSize, true);
+        runInContext(r, recvBufferSize, forceRecvFragmentationChunkSize, Integer.MAX_VALUE, true);
+    }
+
+    protected void runInContext(
+            QwpTestContext r,
+            int recvBufferSize,
+            int forceRecvFragmentationChunkSize,
+            int forceSendFragmentationChunkSize
+    ) throws Exception {
+        runInContext(r, recvBufferSize, forceRecvFragmentationChunkSize, forceSendFragmentationChunkSize, true);
     }
 
     protected void runInContextNoAutoCreate(QwpTestContext r) throws Exception {
-        runInContext(r, 65_536, Integer.MAX_VALUE, false);
+        runInContext(r, 65_536, Integer.MAX_VALUE, Integer.MAX_VALUE, false);
     }
 
-    private void runInContext(QwpTestContext r, int recvBufferSize, int forceRecvFragmentationChunkSize, boolean autoCreateNewColumns) throws Exception {
+    private void runInContext(
+            QwpTestContext r,
+            int recvBufferSize,
+            int forceRecvFragmentationChunkSize,
+            int forceSendFragmentationChunkSize,
+            boolean autoCreateNewColumns
+    ) throws Exception {
         final HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(
                 configuration,
                 new DefaultHttpContextConfiguration() {
                     @Override
                     public int getForceRecvFragmentationChunkSize() {
                         return forceRecvFragmentationChunkSize;
+                    }
+
+                    @Override
+                    public int getForceSendFragmentationChunkSize() {
+                        return forceSendFragmentationChunkSize;
                     }
                 }
         ) {

@@ -120,6 +120,25 @@ public class QwpWebSocketProtocolTest extends AbstractQwpWebSocketTest {
     }
 
     @Test
+    public void testHandshakeSurvivesSmallSendChunkSize() throws Exception {
+        // Regression test: with forceSendFragmentationChunkSize=7, the ~200-byte
+        // 101 response gets fragmented and HttpResponseSink.sendBuffer throws
+        // PeerIsSlowToReadException after the first chunk to hand control back
+        // to the dispatcher's park-on-write loop. The ingress upgrade processor
+        // must defer the raw send to onRequestComplete and let PISR propagate
+        // into the framework, not catch it and treat it as a fatal handshake
+        // failure. performWebSocketHandshake reads byte-by-byte until
+        // \r\n\r\n and asserts a 101 status line, so a mid-handshake disconnect
+        // surfaces as "Unexpected end of stream during handshake".
+        runInContext((port) -> {
+            try (Socket socket = new Socket("localhost", port)) {
+                socket.setSoTimeout(5_000);
+                performWebSocketHandshake(socket, port);
+            }
+        }, 65_536, Integer.MAX_VALUE, 7);
+    }
+
+    @Test
     public void testStatusCodesSynchronizedBetweenServerAndClient() {
         assertClientDecodesStatus(QwpConstants.STATUS_OK, "OK");
         assertClientDecodesStatus(QwpConstants.STATUS_PARSE_ERROR, "PARSE_ERROR");

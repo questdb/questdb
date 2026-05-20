@@ -563,6 +563,12 @@ public class QwpWebSocketUpgradeProcessorResumeRecvTest extends AbstractCairoTes
 
     @Test
     public void testHandshakeSendSlowToRead() throws Exception {
+        // onHeadersReady defers the raw-socket send to onRequestComplete so that
+        // PeerIsSlowToReadException can propagate cleanly into the framework's
+        // park-on-write path. Verify onHeadersReady returns without throwing and
+        // that the deferred send in onRequestComplete surfaces PISR for the
+        // framework to handle (rather than the upgrade processor swallowing it
+        // and disconnecting mid-handshake).
         assertMemoryLeak(() -> {
             HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
             QwpWebSocketUpgradeProcessor processor = new QwpWebSocketUpgradeProcessor(engine, httpConfig);
@@ -582,11 +588,15 @@ public class QwpWebSocketUpgradeProcessorResumeRecvTest extends AbstractCairoTes
                 header.setHeader("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ==");
                 header.setHeader("Sec-WebSocket-Version", "13");
 
+                processor.onHeadersReady(context);
+                Assert.assertEquals("onHeadersReady must not send", 0, mockRawSocket.sendCallCount);
+
                 try {
-                    processor.onHeadersReady(context);
-                    Assert.fail("Expected HttpException");
-                } catch (HttpException e) {
-                    TestUtils.assertContains(e.getFlyweightMessage(), "blocked");
+                    processor.onRequestComplete(context);
+                    Assert.fail("Expected PeerIsSlowToReadException");
+                } catch (PeerIsSlowToReadException expected) {
+                    // PISR propagates so the dispatcher parks the connection and
+                    // schedules resumeSend to finish the flush.
                 }
             } finally {
                 Unsafe.free(sendBuf, SEND_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
@@ -1139,8 +1149,10 @@ public class QwpWebSocketUpgradeProcessorResumeRecvTest extends AbstractCairoTes
                 header.setHeader("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ==");
                 header.setHeader("Sec-WebSocket-Version", "13");
 
-                // First call creates state
+                // First call creates state; the protocol switch is finalised
+                // after the deferred 101 send completes in onRequestComplete.
                 processor.onHeadersReady(context);
+                processor.onRequestComplete(context);
                 Assert.assertTrue(context.isSwitchProtocolCalled());
 
                 LocalValue<QwpProcessorState> lv = getLV();
@@ -1153,6 +1165,7 @@ public class QwpWebSocketUpgradeProcessorResumeRecvTest extends AbstractCairoTes
 
                 // Second call reuses (clears) existing state
                 processor.onHeadersReady(context);
+                processor.onRequestComplete(context);
                 Assert.assertTrue(context.isSwitchProtocolCalled());
 
                 QwpProcessorState state2 = lv.get(context);

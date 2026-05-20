@@ -93,10 +93,12 @@ public class QwpProcessorState implements QuietCloseable, ConnectionAware {
     private byte deferredErrorStatus;
     private boolean durableAckEnabled;
     private long fd = -1;
+    private boolean handshakeFlushPending;
     private long highestProcessedSequence = -1;
     private long lastAckedSequence = -1;
     private long messageSequence;
     private byte negotiatedVersion = QwpConstants.VERSION_1;
+    private int pendingHandshakeBytes;
     private int recvBufferLen;
     private long resumeAckSequence = -1;
     private SecurityContext securityContext;
@@ -275,6 +277,10 @@ public class QwpProcessorState implements QuietCloseable, ConnectionAware {
         return pendingAckSeqTxns;
     }
 
+    public int getPendingHandshakeBytes() {
+        return pendingHandshakeBytes;
+    }
+
     public int getRecvBufferLen() {
         return recvBufferLen;
     }
@@ -297,6 +303,10 @@ public class QwpProcessorState implements QuietCloseable, ConnectionAware {
 
     public boolean isDurableAckEnabled() {
         return durableAckEnabled;
+    }
+
+    public boolean isHandshakeFlushPending() {
+        return handshakeFlushPending;
     }
 
     public boolean isOk() {
@@ -415,6 +425,8 @@ public class QwpProcessorState implements QuietCloseable, ConnectionAware {
         sendState = SEND_STATE_READY;
         clearDeferredError();
         clearDeferredClose();
+        handshakeFlushPending = false;
+        pendingHandshakeBytes = 0;
         wsHandshakeSent = false;
 
         // Drop any durable-ack state; the connection is going away, so even if
@@ -614,12 +626,20 @@ public class QwpProcessorState implements QuietCloseable, ConnectionAware {
         this.durableAckEnabled = durableAckEnabled;
     }
 
+    public void setHandshakeFlushPending(boolean handshakeFlushPending) {
+        this.handshakeFlushPending = handshakeFlushPending;
+    }
+
     public void setHighestProcessedSequence(long highestProcessedSequence) {
         this.highestProcessedSequence = highestProcessedSequence;
     }
 
     public void setNegotiatedVersion(byte negotiatedVersion) {
         this.negotiatedVersion = negotiatedVersion;
+    }
+
+    public void setPendingHandshakeBytes(int pendingHandshakeBytes) {
+        this.pendingHandshakeBytes = pendingHandshakeBytes;
     }
 
     public void setRecvBufferLen(int recvBufferLen) {

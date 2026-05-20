@@ -346,32 +346,37 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
         if (bytesWritten <= 0) {
             throw responseDoesNotFitSendBuffer(context.getFd(), "101 handshake response", bufferSize, requiredHandshakeSize);
         }
-        try {
-            rawSocket.send(bytesWritten);
-        } catch (PeerIsSlowToReadException e) {
-            // Handshake blocked — shouldn't happen on a fresh connection.
-            // Throw HttpException so handleClientRecv disconnects the connection
-            // rather than leaving the buffer in an inconsistent state.
-            throw HttpException.instance("WebSocket 101 handshake blocked");
-        }
-        // PeerDisconnectedException propagates to handleClientRecv → disconnectHttp()
-        state.setWsHandshakeSent(true);
-        LOG.info().$("WebSocket handshake sent [fd=").$(context.getFd()).I$();
-
-        // Switch to WebSocket protocol - this tells the framework to bypass HTTP parsing
-        context.switchProtocol();
+        // The HttpRequestProcessor contract forbids PeerIsSlowToReadException
+        // from onHeadersReady, so defer the raw-socket send to onRequestComplete
+        // where PISR propagates cleanly into the framework's park-on-write path.
+        // State carries the byte count across the two calls; finalizeHandshake
+        // performs the protocol switch only after the bytes are on the wire so
+        // we don't start parsing WebSocket frames while the 101 is still in
+        // flight.
+        state.setPendingHandshakeBytes(bytesWritten);
+        state.setHandshakeFlushPending(true);
     }
 
     @Override
-    public void onRequestComplete(HttpConnectionContext context) {
-        // For WebSocket, after the handshake is sent, we just return normally.
-        // The framework will call reset() and then loop back to handleClientRecv().
-        // Since we called switchProtocol() in onHeadersReady, the framework will
-        // delegate to resumeRecv instead of parsing more HTTP requests.
+    public void onRequestComplete(HttpConnectionContext context)
+            throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
         QwpProcessorState state = LV.get(context);
-        if (state != null && state.isWsHandshakeSent()) {
-            LOG.debug().$("WebSocket handshake complete, ready for frames [fd=").$(context.getFd()).I$();
+        if (state == null || !state.isHandshakeFlushPending()) {
+            // Either the handshake never made it past validation, or it has
+            // already been flushed and the protocol switch completed.
+            if (state != null && state.isWsHandshakeSent()) {
+                LOG.debug().$("WebSocket handshake complete, ready for frames [fd=").$(context.getFd()).I$();
+            }
+            return;
         }
+        // rawSocket.send may park us (small force-fragmentation chunk or a real
+        // slow peer's kernel buffer filling up). PISR propagates to
+        // handleClientRecv which parks the connection for write and schedules
+        // resumeSend; resumeSend finishes the flush and finalises the protocol
+        // switch.
+        HttpRawSocket rawSocket = context.getRawResponseSocket();
+        rawSocket.send(state.getPendingHandshakeBytes());
+        finalizeHandshake(context, state);
     }
 
     @Override
@@ -456,6 +461,18 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
         QwpProcessorState state = LV.get(context);
         if (state == null) {
             throw ServerDisconnectException.INSTANCE;
+        }
+
+        if (state.isHandshakeFlushPending()) {
+            // The deferred 101 send parked mid-flight. Drain the rest of the
+            // response from the framework buffer; PISR propagates so the
+            // dispatcher re-parks and re-enters here until the buffer is empty.
+            // Only after the flush completes do we finalise the protocol switch,
+            // so the connection never starts parsing WebSocket frames while the
+            // 101 response is still on the wire.
+            context.resumeResponseSend();
+            finalizeHandshake(context, state);
+            return;
         }
 
         switch (state.getSendState()) {
@@ -585,6 +602,17 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
                 throw PeerDisconnectedException.INSTANCE;
             }
         }
+    }
+
+    private void finalizeHandshake(HttpConnectionContext context, QwpProcessorState state) {
+        state.setWsHandshakeSent(true);
+        state.setHandshakeFlushPending(false);
+        state.setPendingHandshakeBytes(0);
+        LOG.info().$("WebSocket handshake sent [fd=").$(context.getFd()).I$();
+        // Switch to WebSocket protocol so subsequent reads bypass HTTP parsing.
+        // Done here, not in onHeadersReady, so the switch happens only after
+        // the 101 response has fully flushed.
+        context.switchProtocol();
     }
 
     private void flushPendingAck(HttpConnectionContext context, QwpProcessorState state)
