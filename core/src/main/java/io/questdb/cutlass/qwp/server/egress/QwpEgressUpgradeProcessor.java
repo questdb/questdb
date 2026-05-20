@@ -26,6 +26,7 @@ package io.questdb.cutlass.qwp.server.egress;
 
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ReaderScanProfile;
 import io.questdb.cairo.sql.InsertOperation;
 import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.PageFrame;
@@ -1100,10 +1101,12 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
             // heap copy, so the decoder's scratch is free to be overwritten
             // by the next request on this connection.
             if (pageFrameCursor != null) {
-                // Streaming mode asks the cursor to release page cache pages
-                // after reading, so a 10M-row scan doesn't evict the server's
-                // working set. Same hint used by the parquet exporter.
-                pageFrameCursor.setStreamingMode(true);
+                // SEQUENTIAL_CACHED hints the kernel to read ahead and to drop
+                // page cache after streaming, so a 10M-row scan doesn't evict
+                // the server's working set. Unlike SEQUENTIAL_EVICT (used by
+                // the parquet exporter), the partition stays mapped on pool
+                // return so the next QWP query reuses the FdCache.
+                pageFrameCursor.setScanProfile(ReaderScanProfile.SEQUENTIAL_CACHED);
                 state.beginStreamingPageFrame(requestId, factory, pageFrameCursor,
                         columnCount, schemaId, schemaAlreadyKnown, decoder.initialCredit, cacheKey);
             } else {
