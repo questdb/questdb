@@ -195,13 +195,14 @@ public class QwpSenderFailoverBatchSizeTest extends AbstractCairoTest {
                 // The QWP processor on each sidecar acquired WAL writers to
                 // ingest the warm-up / failover-driving rows. Without a WAL
                 // apply job those segments stay un-drained and the pooled
-                // writers keep file descriptors open. Stop the sidecars first
-                // so their worker pools halt and return the WAL writers to the
-                // pool; otherwise releaseInactive() races serverB's worker
-                // thread and may skip a still-checked-out writer, leaking fds.
-                // Then drain explicitly and release inactive pool entries so
-                // assertMemoryLeak doesn't see them as a leak.
-                serverA.stop();
+                // writers keep file descriptors open. serverB's sidecar is
+                // still running here (serverA was already stopped above), so
+                // stop it first to halt its worker pool and return the WAL
+                // writer to the pool; otherwise releaseInactive() races
+                // serverB's worker thread and may skip a still-checked-out
+                // writer, leaking fds. Then drain explicitly and release
+                // inactive pool entries so assertMemoryLeak doesn't see them
+                // as a leak.
                 serverB.stop();
                 drainWalQueue();
                 engine.releaseInactive();
