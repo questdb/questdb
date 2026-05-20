@@ -505,8 +505,8 @@ public class BitmapIndexTest extends AbstractCairoTest {
     public void testConcurrentWriterAndBackwardReadHeight() throws Exception {
         final Rnd rnd = TestUtils.generateRandom(LOG);
         // randomize row count with a floor for meaningful coverage; smaller range on slow CI runners (Mac, Windows)
-        int n = Os.isLinux() ? 100_000 + rnd.nextInt(900_000) : 10_000 + rnd.nextInt(90_000);
-        testConcurrentBackwardRW(n, 100000);
+        int rowCount = Os.isLinux() ? 100_000 + rnd.nextInt(900_000) : 10_000 + rnd.nextInt(90_000);
+        testConcurrentBackwardRW(rowCount, 100000);
     }
 
     @Test
