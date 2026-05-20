@@ -94,6 +94,45 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
         return any;
     }
 
+    // Drives the named view's backfill sweep to completion across however many
+    // turns the configured budget needs (each drainJob burst is capped at 64
+    // turns), reusing the caller's refresh job. Re-fetches the instance each
+    // pass so it survives a simulated restart that rebuilds the registry, and
+    // applies the LV WAL at the end. The caller owns the job's lifecycle: a
+    // backfill test must drive the whole sweep through a single
+    // LiveViewRefreshJob, since tearing one down mid-sweep and resuming on a
+    // fresh one is not a path production takes (the pool keeps jobs alive).
+    private void driveBackfillToCompletion(LiveViewRefreshJob job, String viewName) {
+        for (int i = 0; i < 500; i++) {
+            LiveViewInstance inst = engine.getLiveViewRegistry().getViewInstance(viewName);
+            if (inst == null
+                    || inst.getStateReader().getBackfillState() != LiveViewState.BACKFILL_STATE_BACKFILLING) {
+                break;
+            }
+            drainJob(job);
+        }
+        drainWalQueue();
+    }
+
+    // Removes the view's rolling backfill checkpoint file, simulating a crash
+    // before the .bcp the latest committed turn would have written (or a view
+    // whose functions cannot snapshot). Recovery then has no resume source and
+    // re-sweeps from offset 0, skip-writing the on-disk prefix.
+    private void unlinkBackfillCheckpointFile(LiveViewInstance instance) {
+        long key = instance.getHeadBackfillCpKey();
+        if (key == Numbers.LONG_NULL) {
+            return;
+        }
+        try (Path p = new Path()) {
+            p.of(engine.getConfiguration().getDbRoot())
+                    .concat(instance.getLiveViewToken())
+                    .concat(LiveViewCheckpointWriter.CHECKPOINT_DIR_NAME)
+                    .slash();
+            LiveViewCheckpointWriter.appendBcpFileName(p, key);
+            engine.getConfiguration().getFilesFacade().removeQuiet(p.$());
+        }
+    }
+
     // Walks the LV's compiled factory to its WindowRecordCursorFactory and
     // returns its window function list. Mirrors the unwrap logic in
     // LiveViewRefreshJob; tests use this to reach non-anchored windows which
@@ -423,6 +462,338 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
             drainWalQueue();
             assertSql("count\n4\n", "SELECT count() FROM lv");
 
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testBackfillAnchoredViewResumesAcrossRestart() throws Exception {
+        // An anchored window's per-partition state (lastAnchorValue) must
+        // survive a restart mid-sweep: the day-2 'a' row resets row_number to 1
+        // only if the restored anchor state knows the day-1 anchor was crossed.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO base (ts, sym, x) VALUES " +
+                    "('2026-04-01T00:00:00.000000Z', 'a', 1), " +
+                    "('2026-04-01T00:00:01.000000Z', 'b', 4), " +
+                    "('2026-04-01T00:00:05.000000Z', 'a', 2), " +
+                    "('2026-04-02T00:00:00.000000Z', 'a', 3), " +
+                    "('2026-04-02T00:00:02.000000Z', 'b', 5)");
+            drainWalQueue();
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms BACKFILL AS " +
+                    "SELECT ts, sym, x, row_number() OVER w AS rn FROM base " +
+                    "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR DAILY '00:00')");
+
+            // Partial sweep, then simulate a restart mid-sweep, all on one job.
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                Job.RunStatus status = () -> false;
+                job.run(0, status);
+                drainWalQueue();
+                Assert.assertEquals(
+                        "partial sweep must still be BACKFILLING",
+                        LiveViewState.BACKFILL_STATE_BACKFILLING,
+                        engine.getLiveViewRegistry().getViewInstance("lv").getStateReader().getBackfillState()
+                );
+
+                engine.getLiveViewRegistry().clear();
+                engine.buildViewGraphs();
+                driveBackfillToCompletion(job, "lv");
+            }
+
+            Assert.assertEquals(
+                    LiveViewState.BACKFILL_STATE_ACTIVE,
+                    engine.getLiveViewRegistry().getViewInstance("lv").getStateReader().getBackfillState()
+            );
+            assertSql(
+                    "ts\tsym\tx\trn\n" +
+                            "2026-04-01T00:00:00.000000Z\ta\t1\t1\n" +
+                            "2026-04-01T00:00:01.000000Z\tb\t4\t1\n" +
+                            "2026-04-01T00:00:05.000000Z\ta\t2\t2\n" +
+                            "2026-04-02T00:00:00.000000Z\ta\t3\t1\n" +
+                            "2026-04-02T00:00:02.000000Z\tb\t5\t1\n",
+                    "SELECT ts, sym, x, rn FROM lv ORDER BY ts"
+            );
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testBackfillCompletionRetiresCheckpointFiles() throws Exception {
+        // On completion the rolling .bcp is unlinked and a steady head .cp is
+        // materialised, so the ACTIVE phase has a restart/O3 anchor.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO base (ts, x) " +
+                    "SELECT timestamp_sequence('2026-04-01T00:00:00.000000Z', 1_000_000), x FROM long_sequence(4)");
+            drainWalQueue();
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms BACKFILL AS " +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base");
+
+            // Capture the rolling .bcp key from a partial sweep before finishing.
+            final long bcpKey;
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                Job.RunStatus status = () -> false;
+                job.run(0, status);
+                drainWalQueue();
+                bcpKey = engine.getLiveViewRegistry().getViewInstance("lv").getHeadBackfillCpKey();
+                Assert.assertNotEquals("a .bcp must have been written mid-sweep", Numbers.LONG_NULL, bcpKey);
+                driveBackfillToCompletion(job, "lv");
+            }
+
+            LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertEquals(
+                    LiveViewState.BACKFILL_STATE_ACTIVE,
+                    instance.getStateReader().getBackfillState()
+            );
+            Assert.assertEquals(
+                    "completion must clear the in-memory .bcp key",
+                    Numbers.LONG_NULL,
+                    instance.getHeadBackfillCpKey()
+            );
+            Assert.assertNotEquals(
+                    "completion must leave a steady head .cp",
+                    Numbers.LONG_NULL,
+                    instance.getHeadCheckpointLvSeqTxn()
+            );
+            // The mid-sweep .bcp file must be gone after completion.
+            FilesFacade ff = engine.getConfiguration().getFilesFacade();
+            try (Path p = new Path()) {
+                p.of(engine.getConfiguration().getDbRoot())
+                        .concat(instance.getLiveViewToken())
+                        .concat(LiveViewCheckpointWriter.CHECKPOINT_DIR_NAME)
+                        .slash();
+                LiveViewCheckpointWriter.appendBcpFileName(p, bcpKey);
+                Assert.assertFalse("no .bcp must survive completion", ff.exists(p.$()));
+            }
+            assertSql("count\n4\n", "SELECT count() FROM lv");
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testBackfillFilteredViewResumesAcrossRestart() throws Exception {
+        // A WHERE filter drops base rows, so the sweep's data-cursor offset
+        // outruns the output-row count. The restart must resume at the correct
+        // data offset (via FilteringRecordCursor's base-rows-consumed counter)
+        // and reproduce exactly the filtered result.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO base (ts, x) VALUES " +
+                    "('2026-04-01T00:00:00.000000Z', 1), " +
+                    "('2026-04-01T00:00:01.000000Z', 2), " +
+                    "('2026-04-01T00:00:02.000000Z', 3), " +
+                    "('2026-04-01T00:00:03.000000Z', 4), " +
+                    "('2026-04-01T00:00:04.000000Z', 5), " +
+                    "('2026-04-01T00:00:05.000000Z', 6), " +
+                    "('2026-04-01T00:00:06.000000Z', 7), " +
+                    "('2026-04-01T00:00:07.000000Z', 8)");
+            drainWalQueue();
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms BACKFILL AS " +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base WHERE x >= 5");
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                Job.RunStatus status = () -> false;
+                job.run(0, status);
+                drainWalQueue();
+                Assert.assertEquals(
+                        LiveViewState.BACKFILL_STATE_BACKFILLING,
+                        engine.getLiveViewRegistry().getViewInstance("lv").getStateReader().getBackfillState()
+                );
+
+                engine.getLiveViewRegistry().clear();
+                engine.buildViewGraphs();
+                driveBackfillToCompletion(job, "lv");
+            }
+
+            // Only x >= 5 survive the filter; rn is the filtered sweep order.
+            assertSql(
+                    "ts\tx\trn\n" +
+                            "2026-04-01T00:00:04.000000Z\t5\t1\n" +
+                            "2026-04-01T00:00:05.000000Z\t6\t2\n" +
+                            "2026-04-01T00:00:06.000000Z\t7\t3\n" +
+                            "2026-04-01T00:00:07.000000Z\t8\t4\n",
+                    "SELECT ts, x, rn FROM lv ORDER BY ts"
+            );
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testBackfillRestartResumesFromCheckpoint() throws Exception {
+        // A restart mid-sweep finds the surviving .bcp, stamps its key, resumes
+        // from the recorded data offset, and produces the full, gap-free output.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 10);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO base (ts, x) " +
+                    "SELECT timestamp_sequence('2026-04-01T00:00:00.000000Z', 1_000_000), x FROM long_sequence(40)");
+            drainWalQueue();
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms BACKFILL AS " +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base");
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                Job.RunStatus status = () -> false;
+                job.run(0, status);
+                drainWalQueue();
+                LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertEquals(
+                        LiveViewState.BACKFILL_STATE_BACKFILLING,
+                        instance.getStateReader().getBackfillState()
+                );
+                Assert.assertNotEquals(
+                        "a .bcp must exist before restart",
+                        Numbers.LONG_NULL,
+                        instance.getHeadBackfillCpKey()
+                );
+
+                engine.getLiveViewRegistry().clear();
+                engine.buildViewGraphs();
+
+                LiveViewInstance reloaded = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotEquals(
+                        "recovery must stamp the surviving .bcp key so the sweep resumes",
+                        Numbers.LONG_NULL,
+                        reloaded.getHeadBackfillCpKey()
+                );
+
+                driveBackfillToCompletion(job, "lv");
+            }
+
+            Assert.assertEquals(
+                    LiveViewState.BACKFILL_STATE_ACTIVE,
+                    engine.getLiveViewRegistry().getViewInstance("lv").getStateReader().getBackfillState()
+            );
+            assertSql("count\n40\n", "SELECT count() FROM lv");
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testBackfillRestartWithoutCheckpointReSweeps() throws Exception {
+        // If no .bcp survives (crash before the first cadence write, or a
+        // non-snapshot-capable view), recovery re-sweeps from offset 0 and
+        // skip-writes the on-disk prefix - the result is still complete and
+        // gap-free with no duplicates.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 10);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO base (ts, x) " +
+                    "SELECT timestamp_sequence('2026-04-01T00:00:00.000000Z', 1_000_000), x FROM long_sequence(40)");
+            drainWalQueue();
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms BACKFILL AS " +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base");
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                Job.RunStatus status = () -> false;
+                job.run(0, status);
+                drainWalQueue();
+                LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertEquals(
+                        LiveViewState.BACKFILL_STATE_BACKFILLING,
+                        instance.getStateReader().getBackfillState()
+                );
+                // Drop the .bcp so recovery has no resume source.
+                unlinkBackfillCheckpointFile(instance);
+
+                engine.getLiveViewRegistry().clear();
+                engine.buildViewGraphs();
+
+                LiveViewInstance reloaded = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertEquals(
+                        "no .bcp survives, so no resume key is stamped",
+                        Numbers.LONG_NULL,
+                        reloaded.getHeadBackfillCpKey()
+                );
+
+                driveBackfillToCompletion(job, "lv");
+            }
+
+            Assert.assertEquals(
+                    LiveViewState.BACKFILL_STATE_ACTIVE,
+                    engine.getLiveViewRegistry().getViewInstance("lv").getStateReader().getBackfillState()
+            );
+            assertSql("count\n40\n", "SELECT count() FROM lv");
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testBackfillResumedSweepThenIncrementalDrain() throws Exception {
+        // After a restart-resumed sweep flips to ACTIVE, post-CREATE inserts
+        // drain incrementally and continue the row_number sequence.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 10);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO base (ts, x) " +
+                    "SELECT timestamp_sequence('2026-04-01T00:00:00.000000Z', 1_000_000), x FROM long_sequence(40)");
+            drainWalQueue();
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms BACKFILL AS " +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base");
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                Job.RunStatus status = () -> false;
+                job.run(0, status);
+                drainWalQueue();
+                engine.getLiveViewRegistry().clear();
+                engine.buildViewGraphs();
+                driveBackfillToCompletion(job, "lv");
+            }
+            assertSql("count\n40\n", "SELECT count() FROM lv");
+
+            // Post-backfill inserts go through the incremental drain.
+            execute("INSERT INTO base (ts, x) VALUES " +
+                    "('2026-04-01T00:01:00.000000Z', 41), " +
+                    "('2026-04-01T00:01:01.000000Z', 42)");
+            drainWalQueue();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+            }
+            drainWalQueue();
+            assertSql("count\n42\n", "SELECT count() FROM lv");
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testBackfillYieldsAcrossTurns() throws Exception {
+        // checkpoint.rows=10 caps each turn at 10 rows, so a 40-row sweep
+        // yields across several turns instead of monopolising the worker: one
+        // turn leaves the view BACKFILLING with a partial result, and draining
+        // the rest completes it in order.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 10);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO base (ts, x) " +
+                    "SELECT timestamp_sequence('2026-04-01T00:00:00.000000Z', 1_000_000), x FROM long_sequence(40)");
+            drainWalQueue();
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms BACKFILL AS " +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base");
+
+            LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                Job.RunStatus status = () -> false;
+                job.run(0, status);
+                drainWalQueue();
+                Assert.assertEquals(
+                        "one turn must not complete a 40-row sweep",
+                        LiveViewState.BACKFILL_STATE_BACKFILLING,
+                        instance.getStateReader().getBackfillState()
+                );
+                assertSql("c\ntrue\n", "SELECT count() > 0 AND count() < 40 AS c FROM lv");
+                driveBackfillToCompletion(job, "lv");
+            }
+
+            Assert.assertEquals(
+                    LiveViewState.BACKFILL_STATE_ACTIVE,
+                    instance.getStateReader().getBackfillState()
+            );
+            // count() catches any over- or under-emission across the turn yields.
+            // The exact row_number values are verified at small scale by the
+            // anchored/filtered tests, which read the full output column set.
+            assertSql("count\n40\n", "SELECT count() FROM lv");
             execute("DROP LIVE VIEW lv");
         });
     }

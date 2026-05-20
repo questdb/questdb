@@ -190,9 +190,118 @@ public final class LiveViewRecovery {
         return highest;
     }
 
-    private static long parseLvSeqTxn(StringSink name) {
+    /**
+     * Sweeps a live view's {@code _checkpoints/} directory at startup for
+     * rolling backfill checkpoints ({@code <key>.bcp}), a namespace disjoint
+     * from the steady {@code .cp} files {@link #sweepCheckpoints} handles.
+     * <p>
+     * Always unlinks {@code *.bcp.tmp} orphans. When {@code isBackfilling} the
+     * view is mid-sweep: retain the highest {@code .bcp} (the resume source),
+     * retire older ones, and return its key. When not backfilling the view has
+     * either completed or never backfilled: retire every {@code .bcp} (leftovers
+     * from a crash before the post-completion unlink) and return
+     * {@link Numbers#LONG_NULL}.
+     *
+     * @param ff            files-facade
+     * @param sweepPath     reusable {@link Path}, re-based on entry
+     * @param liveViewDir   absolute path to the LV directory (no
+     *                      {@code _checkpoints/} suffix)
+     * @param isBackfilling whether the view loaded in BACKFILLING state
+     * @param nameSink      reusable sink for filename decoding; cleared on entry
+     * @return the highest surviving {@code .bcp} key when backfilling, else
+     * {@link Numbers#LONG_NULL}
+     */
+    public static long sweepBackfillCheckpoints(
+            @NotNull FilesFacade ff,
+            @NotNull Path sweepPath,
+            @NotNull Path liveViewDir,
+            boolean isBackfilling,
+            @NotNull StringSink nameSink
+    ) {
+        sweepPath.of(liveViewDir).concat(LiveViewCheckpointWriter.CHECKPOINT_DIR_NAME);
+        if (!ff.exists(sweepPath.$())) {
+            return Numbers.LONG_NULL;
+        }
+        long highest = Numbers.LONG_NULL;
+        final long findPtr = ff.findFirst(sweepPath.$());
+        if (findPtr == 0) {
+            return Numbers.LONG_NULL;
+        }
+        try {
+            do {
+                final long namePtr = ff.findName(findPtr);
+                if (namePtr == 0) {
+                    continue;
+                }
+                nameSink.clear();
+                if (!Utf8s.utf8ToUtf16Z(namePtr, nameSink)) {
+                    continue;
+                }
+                if (Chars.equals(nameSink, ".") || Chars.equals(nameSink, "..")) {
+                    continue;
+                }
+                if (Chars.endsWith(nameSink, LiveViewCheckpointWriter.CP_BCP_TMP_FILE_EXT)) {
+                    unlinkInDir(ff, sweepPath, liveViewDir, nameSink);
+                    continue;
+                }
+                if (!Chars.endsWith(nameSink, LiveViewCheckpointWriter.CP_BCP_FILE_EXT)) {
+                    // Steady .cp or foreign noise - not our namespace.
+                    continue;
+                }
+                final long key = parseKeyBeforeExt(nameSink, LiveViewCheckpointWriter.CP_BCP_FILE_EXT.length());
+                if (key == Numbers.LONG_NULL) {
+                    continue;
+                }
+                if (!isBackfilling) {
+                    // Completed (or never-backfilled) view: no .bcp should
+                    // survive. Retire leftovers from a pre-unlink crash.
+                    unlinkInDir(ff, sweepPath, liveViewDir, nameSink);
+                    continue;
+                }
+                if (highest == Numbers.LONG_NULL || key > highest) {
+                    highest = key;
+                }
+            } while (ff.findNext(findPtr) > 0);
+        } finally {
+            ff.findClose(findPtr);
+        }
+        if (!isBackfilling || highest == Numbers.LONG_NULL) {
+            return Numbers.LONG_NULL;
+        }
+        // Second pass: retire .bcp files older than the survivor.
+        sweepPath.of(liveViewDir).concat(LiveViewCheckpointWriter.CHECKPOINT_DIR_NAME);
+        final long findPtr2 = ff.findFirst(sweepPath.$());
+        if (findPtr2 == 0) {
+            return highest;
+        }
+        try {
+            do {
+                final long namePtr = ff.findName(findPtr2);
+                if (namePtr == 0) {
+                    continue;
+                }
+                nameSink.clear();
+                if (!Utf8s.utf8ToUtf16Z(namePtr, nameSink)) {
+                    continue;
+                }
+                if (!Chars.endsWith(nameSink, LiveViewCheckpointWriter.CP_BCP_FILE_EXT)
+                        || Chars.endsWith(nameSink, LiveViewCheckpointWriter.CP_BCP_TMP_FILE_EXT)) {
+                    continue;
+                }
+                final long key = parseKeyBeforeExt(nameSink, LiveViewCheckpointWriter.CP_BCP_FILE_EXT.length());
+                if (key == Numbers.LONG_NULL || key == highest) {
+                    continue;
+                }
+                unlinkInDir(ff, sweepPath, liveViewDir, nameSink);
+            } while (ff.findNext(findPtr2) > 0);
+        } finally {
+            ff.findClose(findPtr2);
+        }
+        return highest;
+    }
+
+    private static long parseKeyBeforeExt(StringSink name, int extLen) {
         final int len = name.length();
-        final int extLen = LiveViewCheckpointWriter.CP_FILE_EXT.length();
         final int digitsLen = len - extLen;
         if (digitsLen <= 0) {
             return Numbers.LONG_NULL;
@@ -202,6 +311,10 @@ public final class LiveViewRecovery {
         } catch (NumericException e) {
             return Numbers.LONG_NULL;
         }
+    }
+
+    private static long parseLvSeqTxn(StringSink name) {
+        return parseKeyBeforeExt(name, LiveViewCheckpointWriter.CP_FILE_EXT.length());
     }
 
     private static void unlinkInDir(FilesFacade ff, Path sweepPath, Path liveViewDir, CharSequence fileName) {

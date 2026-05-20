@@ -46,6 +46,11 @@ import io.questdb.griffin.SqlExecutionContext;
  */
 final class FilteringRecordCursor implements RecordCursor {
     private RecordCursor base;
+    // Count of base rows pulled (passing or filtered out) since the last of()
+    // or toTop(). The backfill sweep reads this as the skipRows() resume offset:
+    // the filter drops rows, so the output-row count understates how far the
+    // base cursor advanced. Only the backfill path consults it.
+    private long baseRowsConsumed;
     private Function filter;
     private Record record;
 
@@ -54,6 +59,11 @@ final class FilteringRecordCursor implements RecordCursor {
         base = null;
         record = null;
         filter = null;
+        baseRowsConsumed = 0;
+    }
+
+    public long getBaseRowsConsumed() {
+        return baseRowsConsumed;
     }
 
     @Override
@@ -74,6 +84,7 @@ final class FilteringRecordCursor implements RecordCursor {
     @Override
     public boolean hasNext() {
         while (base.hasNext()) {
+            baseRowsConsumed++;
             if (filter.getBool(record)) {
                 return true;
             }
@@ -90,6 +101,7 @@ final class FilteringRecordCursor implements RecordCursor {
         this.base = base;
         this.record = base.getRecord();
         this.filter = filter;
+        this.baseRowsConsumed = 0;
         filter.init(base, executionContext);
     }
 
@@ -112,5 +124,6 @@ final class FilteringRecordCursor implements RecordCursor {
     public void toTop() {
         base.toTop();
         filter.toTop();
+        baseRowsConsumed = 0;
     }
 }

@@ -82,6 +82,25 @@ public class LiveViewInstance implements QuietCloseable {
     // Built once from anchorFunction + the compiled SELECT's window functions. Drives the
     // per-row resetPartition dispatch when the LV has an anchored named WINDOW.
     private LiveViewWindow anchorWindow;
+    // In-memory count of base data-cursor rows the backfill sweep has consumed
+    // so far - the skipRows() resume position for the next turn. Persists in
+    // memory across in-process turns (window state persists with it), and is
+    // re-seeded from the surviving .bcp on the first turn after a restart.
+    // Numbers.LONG_NULL until the first backfill turn initialises it; 0 means
+    // "swept nothing yet". Mutated under the refresh latch only.
+    private long backfillDataOffset = Numbers.LONG_NULL;
+    // Single-shot flag: the first backfill turn of the process restores window
+    // state + data offset from the surviving .bcp (if any), then later turns
+    // continue from the in-memory state. Mirrors checkpointRestoreAttempted for
+    // the backfill path. Mutated under the refresh latch only.
+    private boolean backfillResumeAttempted;
+    // Skip-write floor for the backfill sweep: the LV table's on-disk row count
+    // captured on the first turn of the process. Output rows whose position is
+    // below it are already durable (deterministic recompute), so the sweep
+    // recomputes them to advance window state but skips the WAL append. Spans
+    // however many turns the catch-up needs; persists across turns (the per-turn
+    // budget can split the catch-up). Mutated under the refresh latch only.
+    private long backfillSkipWriteFloor;
     private RecordCursorFactory compiledFactory;
     private volatile boolean dropped;
     // Consecutive refresh-cycle failures since the last success. The flush retry
@@ -119,6 +138,13 @@ public class LiveViewInstance implements QuietCloseable {
     // could observe a fresh lvSeqTxn paired with the prior maxTs.
     // Indexes: HEAD_CHECKPOINT_LV_SEQ_TXN / _MAX_TS / _STATE_BYTES.
     private volatile long[] headCheckpoint = EMPTY_HEAD_CHECKPOINT;
+    // Key (data-cursor row offset) of the current rolling backfill checkpoint
+    // _checkpoints/<key>.bcp, or Numbers.LONG_NULL when none exists. Stamped by
+    // the startup recovery sweep for a view loaded in BACKFILLING state, updated
+    // each backfill turn after a fresh .bcp is written, and cleared when the
+    // sweep completes. Volatile so the catalogue thread can read it; mutated
+    // under the refresh latch.
+    private volatile long headBackfillCpKey = Numbers.LONG_NULL;
     private volatile LiveViewInMemoryTier inMemoryTier;
     private volatile boolean isClosed;
     // Restart-restore single-shot flag. The refresh worker flips it true on
@@ -299,6 +325,14 @@ public class LiveViewInstance implements QuietCloseable {
         return anchorWindow;
     }
 
+    public long getBackfillDataOffset() {
+        return backfillDataOffset;
+    }
+
+    public long getBackfillSkipWriteFloor() {
+        return backfillSkipWriteFloor;
+    }
+
     public RecordCursorFactory getCompiledFactory() {
         return compiledFactory;
     }
@@ -346,6 +380,10 @@ public class LiveViewInstance implements QuietCloseable {
      */
     public long getFreezeFrozenLvSeqTxn() {
         return freezeFrozenLvSeqTxn;
+    }
+
+    public long getHeadBackfillCpKey() {
+        return headBackfillCpKey;
     }
 
     public long getHeadCheckpointLvSeqTxn() {
@@ -489,6 +527,16 @@ public class LiveViewInstance implements QuietCloseable {
     }
 
     /**
+     * @return {@code true} once the refresh worker has attempted to resume the
+     * backfill sweep from the surviving {@code .bcp} on the first turn of this
+     * process (whether a checkpoint was found or not). Single-shot per process;
+     * later turns continue from the in-memory window state + data offset.
+     */
+    public boolean isBackfillResumeAttempted() {
+        return backfillResumeAttempted;
+    }
+
+    /**
      * @return {@code true} once the refresh worker has attempted a head
      * checkpoint restore for this LV (whether the restore succeeded, found
      * no head, or failed on a corrupt file). Single-shot per LV lifetime.
@@ -544,6 +592,18 @@ public class LiveViewInstance implements QuietCloseable {
     }
 
     /**
+     * Records a written rolling backfill checkpoint: stamps the {@code .bcp}
+     * key and the checkpoint write time. The backfill cadence keys off the
+     * {@code .bcp} data offset delta (not {@link #rowsSinceLastCheckpointWritten},
+     * which the steady head owns), so this does not touch the steady head
+     * metadata or the steady cadence counter.
+     */
+    public void recordBackfillCheckpointWritten(long key, long writtenUs) {
+        this.headBackfillCpKey = key;
+        this.lastCheckpointWrittenUs = writtenUs;
+    }
+
+    /**
      * Records a refresh-cycle failure. Increments the consecutive-failure counter
      * and stamps the start of the failure streak (used by the flush retry budget
      * in {@link io.questdb.cairo.lv.LiveViewRefreshJob}).
@@ -591,6 +651,23 @@ public class LiveViewInstance implements QuietCloseable {
         stateReader.setAppliedWatermark(appliedWatermark);
     }
 
+    public void setBackfillDataOffset(long backfillDataOffset) {
+        this.backfillDataOffset = backfillDataOffset;
+    }
+
+    public void setBackfillSkipWriteFloor(long backfillSkipWriteFloor) {
+        this.backfillSkipWriteFloor = backfillSkipWriteFloor;
+    }
+
+    /**
+     * Single-shot setter for {@link #isBackfillResumeAttempted()}. The refresh
+     * worker calls this on the first backfill turn of the process, regardless
+     * of whether a {@code .bcp} was found to resume from.
+     */
+    public void setBackfillResumeAttempted() {
+        this.backfillResumeAttempted = true;
+    }
+
     public void setBackfillState(byte backfillState) {
         stateReader.setBackfillState(backfillState);
     }
@@ -635,6 +712,10 @@ public class LiveViewInstance implements QuietCloseable {
      * counters reset too so the next eligible cycle writes a fresh head
      * immediately rather than waiting for the row-count trigger to re-fire.
      */
+    public void setHeadBackfillCpKey(long key) {
+        this.headBackfillCpKey = key;
+    }
+
     public void setHeadCheckpoint(long lvSeqTxn, long maxTs, long stateBytes, long writtenUs) {
         // Publish the (lvSeqTxn, maxTs, stateBytes) trio atomically: build a
         // fresh immutable array and store the reference volatile. A reader

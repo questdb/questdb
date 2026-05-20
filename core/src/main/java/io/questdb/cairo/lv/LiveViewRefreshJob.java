@@ -117,6 +117,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     private final PageFrameAddressCache addressCache = new PageFrameAddressCache();
     private final AnchorDispatchingCursor anchorDispatchingCursor = new AnchorDispatchingCursor();
     private final ApplyWal2TableJob applyJob;
+    // Reusable counter for the backfill sweep's skipRows() resume positioning.
+    private final RecordCursor.Counter backfillSkipCounter = new RecordCursor.Counter();
     private final BlockFileWriter blockFileWriter;
     // Reusable manifest bean for the head-checkpoint write hook and the
     // restore path. Mutated only on the refresh-worker thread between clear()
@@ -1237,26 +1239,59 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     }
 
     /**
-     * Drives the BACKFILL sweep for a freshly-created live view. Mirrors the
-     * o3HeadMissReplay shape: waits for {@code ApplyWal2TableJob} to catch up
-     * to {@code backfillTargetSeqTxn}, opens the compiled SELECT's filter /
-     * anchor / window cursor stack over a base-table {@code TableReader}
-     * snapshot, emits a single LV WAL commit covering everything observed,
-     * applies inline, and flips {@code _lv.s.backfillState} to ACTIVE.
-     * <p>
-     * Current limitations: the sweep runs in a single turn (no mid-sweep budget
-     * yield). A crash before the LV WAL commit re-runs the sweep on restart;
-     * a crash between the commit and the ACTIVE flip re-runs the sweep and
-     * may emit duplicate rows. Resumable mid-sweep checkpoints are deferred.
+     * Clears all live-view window state in place: every window function's
+     * partition map and the anchor map. The compiled factory's
+     * {@code WindowFunction} instances stay live so the cursor chain can reuse
+     * them; only the accumulated state resets. Used before a from-scratch
+     * re-sweep so a partial or failed checkpoint restore cannot leave drift.
+     */
+    private static void clearWindowState(WindowRecordCursorFactory windowFactory, LiveViewWindow anchorWindow) {
+        final ObjList<WindowFunction> functions = windowFactory.getWindowFunctions();
+        for (int i = 0, n = functions.size(); i < n; i++) {
+            Map m = functions.getQuick(i).getPartitionMap();
+            if (m != null) {
+                m.clear();
+            }
+        }
+        if (anchorWindow != null) {
+            anchorWindow.toTop();
+        }
+    }
+
+    /**
+     * Drives one turn of the BACKFILL sweep for a view in BACKFILLING state.
+     * The sweep is resumable and yields on the turn budget so a long history
+     * does not starve other views sharing the worker pool. One
+     * {@code runBackfillSweep} call is one turn; the fallback scan re-enqueues
+     * the view while it stays BACKFILLING.
+     * <ul>
+     *     <li>The first turn of a process resumes window state + the data-cursor
+     *     offset from the surviving {@code .bcp} (restart mid-sweep), or starts
+     *     from offset 0 with empty state (fresh CREATE, or no usable {@code
+     *     .bcp}). Later turns continue from the in-memory window state + offset
+     *     ({@code getIncrementalCursor} preserves accumulated state across
+     *     turns), so no per-turn restore is needed.</li>
+     *     <li>Each turn re-opens the MVCC base reader at {@code backfillTargetSeqTxn},
+     *     {@code skipRows()} past already-swept rows, feeds up to a row/duration
+     *     budget, commits the batch, applies it, and writes a {@code .bcp} on
+     *     the checkpoint cadence.</li>
+     *     <li>On cursor exhaustion the turn flips {@code backfillState} to ACTIVE,
+     *     writes a steady head {@code .cp} from the now-complete state, and
+     *     retires the {@code .bcp}; the next tick begins the deferred drain from
+     *     {@code sweepSeqTxn + 1}.</li>
+     * </ul>
+     * Crash idempotency: the on-disk output is a deterministic prefix of the
+     * eventual result, so a re-feed past the last {@code .bcp} recomputes rows
+     * already on disk to advance state but skips their WAL append
+     * ({@code skipWriteUntil}). A crash before any {@code .bcp} re-sweeps from
+     * offset 0 and skip-writes the entire stale prefix.
      */
     private void runBackfillSweep(LiveViewInstance instance) throws SqlException {
         final long backfillTargetSeqTxn = instance.getStateReader().getBackfillTargetSeqTxn();
         final String viewName = instance.getDefinition().getViewName();
         final TableToken baseToken = instance.getDefinition().getBaseTableToken();
-        WindowRecordCursorFactory windowFactory = getWindowFactory(instance);
+        final WindowRecordCursorFactory windowFactory = getWindowFactory(instance);
         final LiveViewWindow anchorWindow = instance.getAnchorWindow();
-        long appendedRows = 0;
-        long batchMaxTs = Numbers.LONG_NULL;
 
         // Empty base or pre-CREATE base with no committed seqTxn: nothing to
         // sweep. Skip straight to the ACTIVE flip so incremental drain takes
@@ -1270,13 +1305,65 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             return;
         }
 
+        // Resume setup, once per process on the first backfill turn: establish
+        // the in-memory data offset, window state, latestSeenTs, and the
+        // persistent skip-write floor. Later turns inherit all of these in
+        // memory (the per-turn budget can split the skip-write catch-up across
+        // turns, so the floor must persist - it is an instance field).
+        if (!instance.isBackfillResumeAttempted()) {
+            instance.setBackfillResumeAttempted();
+            long onDiskLvRows = 0;
+            try (TableReader lvReader = engine.getReader(instance.getLiveViewToken())) {
+                onDiskLvRows = lvReader.size();
+            } catch (CairoException e) {
+                // No readable LV table yet (fresh CREATE before first apply).
+                onDiskLvRows = 0;
+            }
+            // Always start from a clean slate; restore (if any) repopulates on top.
+            clearWindowState(windowFactory, anchorWindow);
+            final long bcpKey = instance.getHeadBackfillCpKey();
+            boolean restored = false;
+            if (bcpKey != Numbers.LONG_NULL
+                    && restoreFromHead(instance, windowFactory, bcpKey, true, restoredHeadState)
+                    && restoredHeadState.resumeDataOffset != Numbers.LONG_NULL) {
+                instance.setBackfillDataOffset(restoredHeadState.resumeDataOffset);
+                instance.setLvRowsTotal(restoredHeadState.lvRowsTotal);
+                if (restoredHeadState.maxTimestamp != Numbers.LONG_NULL) {
+                    instance.setLatestSeenTs(restoredHeadState.maxTimestamp);
+                }
+                restored = true;
+            }
+            if (!restored) {
+                // Fresh CREATE, no .bcp, or corrupt .bcp: re-sweep from offset 0
+                // with empty state. The on-disk prefix (if any) is a
+                // deterministic match, kept via skip-write below.
+                instance.setBackfillDataOffset(0);
+                instance.setLvRowsTotal(0);
+                instance.setHeadBackfillCpKey(Numbers.LONG_NULL);
+            }
+            // On-disk output is append-only (>= the restored row count), so the
+            // skip-write floor is simply the on-disk row count: rows re-fed
+            // below it are recomputed to advance state but not re-appended.
+            instance.setBackfillSkipWriteFloor(onDiskLvRows);
+        }
+
+        final long skipWriteUntil = instance.getBackfillSkipWriteFloor();
+        long dataOffset = instance.getBackfillDataOffset();
+
         TableReader reader = waitForApply(baseToken, backfillTargetSeqTxn);
         // The reader may sit at a seqTxn strictly greater than the target if
-        // ApplyWal2TableJob caught up further while waitForApply was running.
-        // Pin lastProcessedSeqTxn to the reader's actual seqTxn so the
-        // subsequent incremental drain resumes from after the snapshot rather
-        // than re-emitting rows the sweep already saw.
+        // ApplyWal2TableJob caught up further while waitForApply was running;
+        // sweepSeqTxn pins the deferred drain to resume from after the snapshot.
         final long sweepSeqTxn = Math.max(backfillTargetSeqTxn, reader.getSeqTxn());
+
+        final long turnMaxRows = engine.getConfiguration().getLiveViewCheckpointRows();
+        final long turnMaxDurationUs = engine.getConfiguration().getLiveViewRefreshTurnMaxDurationMicros();
+
+        long batchMaxTs = Numbers.LONG_NULL;
+        long lvRows = instance.getLvRowsTotal();
+        long appendedThisTurn = 0;
+        long processedThisTurn = 0;
+        boolean yielded = false;
         boolean readerAttached = false;
         try {
             engine.detachReader(reader);
@@ -1307,6 +1394,14 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         source = anchorDispatchingCursor;
                     }
                     try (RecordCursor windowCursor = windowFactory.getIncrementalCursor(source, executionContext)) {
+                        // getIncrementalCursor() rewinds the whole cursor chain
+                        // (super.of() calls baseCursor.toTop()), so skip past the
+                        // already-swept rows AFTER it is built, not before. The
+                        // window functions already hold the state for those rows.
+                        if (dataOffset > 0) {
+                            backfillSkipCounter.set(dataOffset);
+                            pageCursor.skipRows(backfillSkipCounter);
+                        }
                         Record outRecord = windowCursor.getRecord();
                         while (windowCursor.hasNext()) {
                             long ts = outRecord.getTimestamp(cursorTimestampIndex);
@@ -1314,16 +1409,32 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                                 batchMaxTs = ts;
                             }
                             instance.setLatestSeenTs(ts);
-                            TableWriter.Row row = walWriter.newRow(ts);
-                            copier.copy(executionContext, outRecord, row);
-                            row.append();
-                            appendedRows++;
+                            // Skip-write: rows already on disk (outPos below the
+                            // floor) are recomputed to advance window state but
+                            // not re-appended; rows at/above it are emitted.
+                            if (lvRows >= skipWriteUntil) {
+                                TableWriter.Row row = walWriter.newRow(ts);
+                                copier.copy(executionContext, outRecord, row);
+                                row.append();
+                                appendedThisTurn++;
+                            }
+                            lvRows++;
+                            processedThisTurn++;
+                            if (processedThisTurn >= turnMaxRows
+                                    || engine.getConfiguration().getMicrosecondClock().getTicks() - turnStartUs >= turnMaxDurationUs) {
+                                yielded = true;
+                                break;
+                            }
                         }
+                        // Capture the base-cursor advance BEFORE the cursor
+                        // chain closes: windowCursor.close() cascades to
+                        // filteringCursor.close(), which resets its
+                        // base-rows-consumed counter.
+                        dataOffset += (filter != null ? filteringCursor.getBaseRowsConsumed() : processedThisTurn);
                     }
-                }
-
-                if (appendedRows > 0) {
-                    walWriter.commitLiveView(sweepSeqTxn);
+                    if (appendedThisTurn > 0) {
+                        walWriter.commitLiveView(sweepSeqTxn);
+                    }
                 }
             }
         } finally {
@@ -1334,18 +1445,32 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             reader.close();
         }
 
-        if (appendedRows > 0) {
+        instance.setLvRowsTotal(lvRows);
+        instance.setBackfillDataOffset(dataOffset);
+        if (appendedThisTurn > 0) {
             applyJob.applyWalDirect(instance.getLiveViewToken(), Job.RUNNING_STATUS);
         }
+
+        if (yielded) {
+            // More to sweep: persist a resumable checkpoint on cadence, then
+            // yield. The fallback scan re-enqueues (needsBackfill stays true).
+            maybeWriteBackfillCheckpoint(instance, windowFactory, dataOffset, batchMaxTs, sweepSeqTxn);
+            return;
+        }
+
+        // Sweep complete. Materialise the steady head .cp from the now-complete
+        // window state (maxTs = overall latestSeenTs, not this possibly-empty
+        // final turn's batchMaxTs) so the ACTIVE phase's restart-restore + O3
+        // head-hit have an anchor. lvRowsTotal is already maintained above, so
+        // pass 0 appendedRows to avoid double-counting it.
         instance.setLastProcessedSeqTxn(sweepSeqTxn);
         instance.setAppliedWatermark(sweepSeqTxn);
-        // Flip backfill state to ACTIVE in memory; the _lv.s rewrite below
-        // makes the transition durable. A crash between this in-memory flip
-        // and the rewrite is recovered on restart from the on-disk
-        // BACKFILLING state - the sweep simply re-runs.
+        maybeWriteHeadCheckpoint(instance, windowFactory, sweepSeqTxn, instance.getLatestSeenTs(), 0L);
         instance.setBackfillState(LiveViewState.BACKFILL_STATE_ACTIVE);
         instance.setBackfillTargetSeqTxn(Numbers.LONG_NULL);
         try {
+            // Persists backfillState=ACTIVE + watermarks durably before the .bcp
+            // is retired, so a crash between the two recovers as ACTIVE.
             engine.advanceLiveViewConsumedSeqTxn(
                     instance.getLiveViewToken(),
                     sweepSeqTxn,
@@ -1359,11 +1484,33 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     .$(", error=").$safe(e.getFlyweightMessage()).I$();
             persistState(instance);
         }
+        unlinkBackfillCheckpoint(instance);
         LOG.info().$("live view backfill sweep completed [view=")
                 .$(viewName)
                 .$(", backfillTargetSeqTxn=").$(backfillTargetSeqTxn)
                 .$(", sweepSeqTxn=").$(sweepSeqTxn)
-                .$(", rowsEmitted=").$(appendedRows).I$();
+                .$(", lvRowsTotal=").$(instance.getLvRowsTotal()).I$();
+    }
+
+    /**
+     * Retires the rolling backfill checkpoint {@code <key>.bcp} (best-effort)
+     * and clears {@code headBackfillCpKey}. Called after the BACKFILLING ->
+     * ACTIVE flip is durable. Leftovers from a crash in the tiny window before
+     * this runs are swept at the next startup by {@code sweepBackfillCheckpoints}
+     * (the view is no longer BACKFILLING then).
+     */
+    private void unlinkBackfillCheckpoint(LiveViewInstance instance) {
+        final long bcpKey = instance.getHeadBackfillCpKey();
+        if (bcpKey == Numbers.LONG_NULL) {
+            return;
+        }
+        path.of(engine.getConfiguration().getDbRoot())
+                .concat(instance.getLiveViewToken())
+                .concat(LiveViewCheckpointWriter.CHECKPOINT_DIR_NAME)
+                .slash();
+        LiveViewCheckpointWriter.appendBcpFileName(path, bcpKey);
+        engine.getConfiguration().getFilesFacade().removeQuiet(path.$());
+        instance.setHeadBackfillCpKey(Numbers.LONG_NULL);
     }
 
     /**
@@ -1396,6 +1543,115 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             reader = engine.getReader(baseToken);
         }
         return reader;
+    }
+
+    /**
+     * Backfill-checkpoint write hook. Writes a {@code <dataOffset>.bcp}
+     * capturing the sweep's resume position (a BACKFILL_CURSOR block holding
+     * the data-cursor row offset + lvRowsTotal) plus the same WINDOW_ANCHOR /
+     * FUNCTION_SNAPSHOT state blocks the steady head writes, then unlinks the
+     * prior {@code .bcp} and stamps {@code headBackfillCpKey} on the instance.
+     * <p>
+     * Cadence-gated by the same {@code cairo.live.view.checkpoint.rows} /
+     * {@code .max.duration} triggers as the steady head, plus a
+     * first-checkpoint trigger so a restart early in the sweep resumes rather
+     * than re-sweeping. The intervening per-turn yields rely on in-memory
+     * window state; the {@code .bcp} only has to be recent enough that a
+     * restart's skip-write re-feed (bounded by the cadence) is cheap.
+     * <p>
+     * No-op when the LV is not snapshot-capable: such a view cannot persist
+     * window state, so a crash mid-sweep re-sweeps from the beginning (the
+     * wipe path in {@link #runBackfillSweep}).
+     * <p>
+     * A failure here does not invalidate the view ({@code .bcp} is derived
+     * state). The prior {@code .bcp}, if any, stays addressable; we log
+     * critical, drop the half-open writer, and continue.
+     */
+    private void maybeWriteBackfillCheckpoint(
+            LiveViewInstance instance,
+            WindowRecordCursorFactory windowFactory,
+            long dataOffset,
+            long batchMaxTs,
+            long sweepSeqTxn
+    ) {
+        if (!instance.isSnapshotCapabilityComputed()) {
+            instance.setSnapshotCapability(computeSnapshotCapability(instance, windowFactory));
+        }
+        if (!instance.isSnapshotCapability()) {
+            return;
+        }
+
+        // Cadence keys off the data-offset delta since the prior .bcp (its key
+        // is the data offset at that write). firstBcp forces a write so a crash
+        // early in the sweep resumes rather than re-sweeping from scratch.
+        final long rowsCadence = engine.getConfiguration().getLiveViewCheckpointRows();
+        final long durationCadence = engine.getConfiguration().getLiveViewCheckpointMaxDurationMicros();
+        final long nowUs = engine.getConfiguration().getMicrosecondClock().getTicks();
+        final long lastWrittenUs = instance.getLastCheckpointWrittenUs();
+        final long priorKey = instance.getHeadBackfillCpKey();
+        final boolean firstBcp = priorKey == Numbers.LONG_NULL;
+        final boolean rowTrigger = !firstBcp && (dataOffset - priorKey) >= rowsCadence;
+        final boolean durationTrigger = !firstBcp
+                && lastWrittenUs != Numbers.LONG_NULL
+                && (nowUs - lastWrittenUs) >= durationCadence;
+        if (!(firstBcp || rowTrigger || durationTrigger)) {
+            return;
+        }
+
+        try {
+            if (checkpointWriter == null) {
+                checkpointWriter = new LiveViewCheckpointWriter(engine.getConfiguration());
+            }
+            path.of(engine.getConfiguration().getDbRoot()).concat(instance.getLiveViewToken());
+            checkpointWriter.of(path.$(), dataOffset, true);
+
+            checkpointManifest.clear();
+            checkpointManifest.setLvSeqTxn(dataOffset);
+            checkpointManifest.setBaseSeqTxn(sweepSeqTxn);
+            checkpointManifest.setMaxTimestamp(batchMaxTs);
+            checkpointManifest.setLvRowPosition(instance.getLvRowsTotal());
+            checkpointManifest.setKind(LiveViewCheckpointManifest.KIND_BACKFILL);
+            final LiveViewWindow anchorWindow = instance.getAnchorWindow();
+            if (anchorWindow != null) {
+                checkpointManifest.addWindowName(anchorWindow.getWindowName());
+            }
+            checkpointWriter.writeManifestBlock(checkpointManifest);
+
+            final MemoryA cursorSink = checkpointWriter.beginBlock(LiveViewCheckpointBlockType.BLOCK_BACKFILL_CURSOR);
+            cursorSink.putLong(dataOffset);
+            cursorSink.putLong(instance.getLvRowsTotal());
+            checkpointWriter.endBlock();
+
+            if (anchorWindow != null) {
+                MemoryA anchorSink = checkpointWriter.beginBlock(LiveViewCheckpointBlockType.BLOCK_WINDOW_ANCHOR);
+                anchorWindow.snapshot(anchorSink);
+                checkpointWriter.endBlock();
+            }
+
+            final ObjList<WindowFunction> functions = windowFactory.getWindowFunctions();
+            final String windowName = anchorWindow != null ? anchorWindow.getWindowName() : "";
+            for (int i = 0, n = functions.size(); i < n; i++) {
+                final WindowFunction f = functions.getQuick(i);
+                if (!f.supportsSnapshot()) {
+                    continue;
+                }
+                final MemoryA fnSink = checkpointWriter.beginBlock(LiveViewCheckpointBlockType.BLOCK_FUNCTION_SNAPSHOT);
+                fnSink.putStr(windowName);
+                fnSink.putStr(snapshotFactoryName(f));
+                fnSink.putInt(f.snapshotFormatVersion());
+                f.snapshot(fnSink);
+                checkpointWriter.endBlock();
+            }
+
+            checkpointWriter.commit(firstBcp ? Numbers.LONG_NULL : priorKey);
+            instance.recordBackfillCheckpointWritten(dataOffset, nowUs);
+        } catch (Throwable t) {
+            LOG.critical().$("could not write live view backfill checkpoint [view=")
+                    .$(instance.getDefinition().getViewName())
+                    .$(", dataOffset=").$(dataOffset)
+                    .$(", error=").$(t).I$();
+            checkpointWriter = Misc.free(checkpointWriter);
+        }
     }
 
     /**
@@ -1542,12 +1798,32 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             long headLvSeqTxn,
             RestoredHeadState out
     ) {
+        return restoreFromHead(instance, windowFactory, headLvSeqTxn, false, out);
+    }
+
+    /**
+     * Opens a {@code .cp} (steady, {@code isBackfill=false}) or {@code .bcp}
+     * (backfill, {@code isBackfill=true}) checkpoint and rehydrates window
+     * state. The backfill variant additionally surfaces the BACKFILL_CURSOR's
+     * data offset in {@code out.resumeDataOffset}.
+     */
+    private boolean restoreFromHead(
+            LiveViewInstance instance,
+            WindowRecordCursorFactory windowFactory,
+            long headLvSeqTxn,
+            boolean isBackfill,
+            RestoredHeadState out
+    ) {
         out.reset();
         path.of(engine.getConfiguration().getDbRoot())
                 .concat(instance.getLiveViewToken())
                 .concat(LiveViewCheckpointWriter.CHECKPOINT_DIR_NAME)
                 .slash();
-        LiveViewCheckpointWriter.appendCpFileName(path, headLvSeqTxn);
+        if (isBackfill) {
+            LiveViewCheckpointWriter.appendBcpFileName(path, headLvSeqTxn);
+        } else {
+            LiveViewCheckpointWriter.appendCpFileName(path, headLvSeqTxn);
+        }
 
         if (checkpointReader == null) {
             checkpointReader = new LiveViewCheckpointReader(engine.getConfiguration());
@@ -1579,6 +1855,13 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             while (cursor.hasNext()) {
                 final LiveViewCheckpointReader.ReadableBlock block = cursor.next();
                 switch (block.type()) {
+                    case LiveViewCheckpointBlockType.BLOCK_BACKFILL_CURSOR:
+                        // Two LONGs: data-cursor row offset, then lvRowsTotal.
+                        // lvRowsTotal is redundant with the manifest's
+                        // lvRowPosition (already in out.lvRowsTotal); we read
+                        // only the offset here.
+                        out.resumeDataOffset = block.getLong(0L);
+                        break;
                     case LiveViewCheckpointBlockType.BLOCK_WINDOW_ANCHOR:
                         if (anchorWindow == null) {
                             throw CairoException.critical(0)
@@ -2300,12 +2583,17 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         long lvRowsTotal;
         long manifestBaseSeqTxn;
         long maxTimestamp;
+        // Backfill sweep's data-cursor row offset read from a BACKFILL_CURSOR
+        // block. Numbers.LONG_NULL when the restored checkpoint carries no such
+        // block (any steady .cp), signalling "not a resumable backfill head".
+        long resumeDataOffset;
         long stateBytes;
 
         void reset() {
             lvRowsTotal = 0L;
             manifestBaseSeqTxn = Numbers.LONG_NULL;
             maxTimestamp = Numbers.LONG_NULL;
+            resumeDataOffset = Numbers.LONG_NULL;
             stateBytes = 0L;
         }
     }

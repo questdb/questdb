@@ -97,6 +97,15 @@ public class LiveViewCheckpointWriter implements Closeable {
      * length field is patched in place at {@link #endBlock()}.
      */
     public static final int BLOCK_HEADER_SIZE = 8;
+    /**
+     * Extension for an in-progress backfill checkpoint. Distinct from the
+     * steady {@code .cp} namespace: a backfill checkpoint's filename key is the
+     * sweep's data-cursor row offset (monotonic per turn), not a base seqTxn,
+     * so the recovery sweep must keep the two apart by extension rather than by
+     * the {@code appliedWatermark} gate that governs {@code .cp} files.
+     */
+    public static final String CP_BCP_FILE_EXT = ".bcp";
+    public static final String CP_BCP_TMP_FILE_EXT = ".bcp.tmp";
     public static final String CP_FILE_EXT = ".cp";
     public static final String CP_TMP_FILE_EXT = ".cp.tmp";
     /**
@@ -116,6 +125,14 @@ public class LiveViewCheckpointWriter implements Closeable {
     private long activeLvSeqTxn = Numbers.LONG_NULL;
     private int blockCount;
     /**
+     * True when the in-flight file is a backfill checkpoint, selecting the
+     * {@code .bcp} / {@code .bcp.tmp} extensions over {@code .cp} / {@code
+     * .cp.tmp}. Set by {@link #of(LPSZ, long, boolean)}, consulted by
+     * {@link #commit(long)} so the rename target and prior-unlink path use the
+     * matching namespace.
+     */
+    private boolean isBackfill;
+    /**
      * Absolute offset of the in-flight block's header, or {@code -1} when no
      * block is open. The block-length field at {@code currentBlockHeaderOffset
      * + 4} is patched by {@link #endBlock()}.
@@ -130,6 +147,25 @@ public class LiveViewCheckpointWriter implements Closeable {
         // anchor blocks + per-function state. Mem grows on demand.
         this.extendSegmentSize = 64 * 1024;
         this.mem = Vm.getCMARWInstance();
+    }
+
+    /**
+     * Appends a {@code <key>.bcp} backfill-checkpoint filename onto
+     * {@code path}, 16-digit zero-padded like the {@code .cp} naming so the
+     * recovery sweep's lexical enumeration equals numeric ordering. The key is
+     * the sweep's data-cursor row offset, not a base seqTxn.
+     */
+    public static void appendBcpFileName(@NotNull Path path, long key) {
+        appendPaddedLvSeqTxn(path, key);
+        path.put(CP_BCP_FILE_EXT);
+    }
+
+    /**
+     * Appends a {@code <key>.bcp.tmp} filename onto {@code path}.
+     */
+    public static void appendBcpTmpFileName(@NotNull Path path, long key) {
+        appendPaddedLvSeqTxn(path, key);
+        path.put(CP_BCP_TMP_FILE_EXT);
     }
 
     /**
@@ -230,11 +266,15 @@ public class LiveViewCheckpointWriter implements Closeable {
         // beyond the actual write size.
         mem.close(true, Vm.TRUNCATE_TO_POINTER);
 
-        // Rename tmp -> .cp.
+        // Rename tmp -> .cp / .bcp.
         finalPath.of(liveViewDirCopy)
                 .concat(CHECKPOINT_DIR_NAME)
                 .slash();
-        appendCpFileName(finalPath, activeLvSeqTxn);
+        if (isBackfill) {
+            appendBcpFileName(finalPath, activeLvSeqTxn);
+        } else {
+            appendCpFileName(finalPath, activeLvSeqTxn);
+        }
         final int renameResult = ff.rename(tmpPath.$(), finalPath.$());
         if (renameResult != Files.FILES_RENAME_OK) {
             // Try to keep operator visibility into the tmp leftover -
@@ -260,7 +300,11 @@ public class LiveViewCheckpointWriter implements Closeable {
             priorPath.of(liveViewDirCopy)
                     .concat(CHECKPOINT_DIR_NAME)
                     .slash();
-            appendCpFileName(priorPath, priorLvSeqTxn);
+            if (isBackfill) {
+                appendBcpFileName(priorPath, priorLvSeqTxn);
+            } else {
+                appendCpFileName(priorPath, priorLvSeqTxn);
+            }
             ff.removeQuiet(priorPath.$());
         }
 
@@ -314,14 +358,29 @@ public class LiveViewCheckpointWriter implements Closeable {
      * remove them anyway.
      */
     public void of(@NotNull LPSZ liveViewDir, long lvSeqTxn) {
+        of(liveViewDir, lvSeqTxn, false);
+    }
+
+    /**
+     * Opens a {@code .cp} (steady) or {@code .bcp} (backfill) checkpoint for
+     * writing. {@code isBackfill} selects the filename namespace; everything
+     * else - header layout, block framing, CRC trailer, tmp+rename atomicity -
+     * is identical between the two.
+     */
+    public void of(@NotNull LPSZ liveViewDir, long lvSeqTxn, boolean isBackfill) {
         if (isOpen) {
             throw CairoException.critical(0)
                     .put("live view checkpoint writer already open");
         }
+        this.isBackfill = isBackfill;
         liveViewDirCopy.of(liveViewDir);
 
         tmpPath.of(liveViewDir).concat(CHECKPOINT_DIR_NAME).slash();
-        appendCpTmpFileName(tmpPath, lvSeqTxn);
+        if (isBackfill) {
+            appendBcpTmpFileName(tmpPath, lvSeqTxn);
+        } else {
+            appendCpTmpFileName(tmpPath, lvSeqTxn);
+        }
 
         mem.of(
                 ff,

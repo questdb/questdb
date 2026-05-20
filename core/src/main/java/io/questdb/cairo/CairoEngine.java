@@ -765,6 +765,24 @@ public class CairoEngine implements Closeable, WriterSource {
                             if (headSeqTxn != Numbers.LONG_NULL) {
                                 instance.setHeadCheckpoint(headSeqTxn, Numbers.LONG_NULL, 0L, Numbers.LONG_NULL);
                             }
+                            // Backfill checkpoints live in a disjoint .bcp
+                            // namespace. For a view loaded mid-sweep, retain the
+                            // highest .bcp and stamp its key so the first
+                            // backfill turn resumes from it; otherwise retire
+                            // any .bcp leftovers from a pre-completion crash.
+                            liveViewDirPath.of(configuration.getDbRoot()).concat(tableToken);
+                            final boolean isBackfilling = stateReader.getBackfillState()
+                                    == LiveViewState.BACKFILL_STATE_BACKFILLING;
+                            final long headBackfillKey = LiveViewRecovery.sweepBackfillCheckpoints(
+                                    configuration.getFilesFacade(),
+                                    sweepPath,
+                                    liveViewDirPath,
+                                    isBackfilling,
+                                    sweepNameSink
+                            );
+                            if (headBackfillKey != Numbers.LONG_NULL) {
+                                instance.setHeadBackfillCpKey(headBackfillKey);
+                            }
                         }
                     } catch (CairoException ce) {
                         if (ce.getErrno() == CairoException.LV_FILE_VERSION_UNSUPPORTED) {

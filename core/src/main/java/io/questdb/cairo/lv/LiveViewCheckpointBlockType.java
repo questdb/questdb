@@ -45,9 +45,12 @@ public final class LiveViewCheckpointBlockType {
 
     /**
      * Present iff the checkpoint covers an in-progress backfill sweep
-     * ({@link LiveViewCheckpointManifest#getKind() kind == BACKFILL}). Reserved
-     * but not yet written: the current one-shot backfill sweep does not
-     * checkpoint mid-sweep, so no BACKFILL_CURSOR blocks are produced.
+     * ({@link LiveViewCheckpointManifest#getKind() kind == BACKFILL}, written to
+     * the {@code .bcp} namespace). Payload is two LONGs: the sweep's
+     * data-cursor row offset (the {@code skipRows} resume position) and the
+     * live-view row count at the checkpoint (the skip-write reconciliation
+     * floor). The refresh worker writes one per backfill turn so a restart
+     * mid-sweep resumes from the latest turn rather than re-sweeping.
      */
     public static final int BLOCK_BACKFILL_CURSOR = 1;
 
