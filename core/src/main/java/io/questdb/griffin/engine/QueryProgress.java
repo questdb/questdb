@@ -105,7 +105,11 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
             @Nullable ObjList<TableReader> leakedReaders,
             @Nullable QueryTrace queryTrace
     ) {
-        if (!executionContext.shouldLogSql() || sqlText == null) {
+        final int leakedReadersCount = leakedReaders != null ? leakedReaders.size() : 0;
+        // Validation only compiles the SQL to check it; suppress the normal query-progress
+        // line so the validation endpoint does not pollute the log. Still report reader leaks,
+        // as those indicate a real bug regardless of validation mode.
+        if ((!executionContext.shouldLogSql() && leakedReadersCount == 0) || sqlText == null) {
             return;
         }
 
@@ -117,7 +121,6 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
         CharSequence principal = executionContext.getSecurityContext().getPrincipal();
         LogRecord log = null;
         try {
-            final int leakedReadersCount = leakedReaders != null ? leakedReaders.size() : 0;
             if (leakedReadersCount > 0) {
                 log = LOG.errorW();
                 executionContext.getCairoEngine().getMetrics().healthMetrics()
@@ -146,7 +149,7 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
         // When queryTrace is not null, queryTrace.queryText is already set and equal to sqlText,
         // as well as already converted to an immutable String, as needed to queue it up for handling
         // at a later time. For this reason, do not assign queryTrace.queryText = sqlText here.
-        if (queryTrace != null && engine.getConfiguration().isQueryTracingEnabled()) {
+        if (queryTrace != null && executionContext.shouldLogSql() && engine.getConfiguration().isQueryTracingEnabled()) {
             queryTrace.executionNanos = durationNanos;
             queryTrace.isJit = isJit;
             queryTrace.timestamp = config.getMicrosecondClock().getTicks();
