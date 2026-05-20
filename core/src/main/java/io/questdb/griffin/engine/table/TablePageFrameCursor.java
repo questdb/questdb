@@ -70,14 +70,13 @@ public interface TablePageFrameCursor extends PageFrameCursor {
         throw new UnsupportedOperationException();
     }
 
-    /**
-     * Enables or disables streaming mode for the underlying TableReader.
-     * When streaming mode is enabled, partitions are opened with MADV_DONTNEED hint
-     * to release page cache after reading. This is useful for large sequential scans
-     * like Parquet export to avoid page cache exhaustion under memory pressure.
-     *
-     * @param enabled true to enable streaming mode, false to disable
-     */
+    default void setEvictPartitionsOnReturn(boolean enabled) {
+        TableReader reader = getTableReader();
+        if (reader != null) {
+            reader.setEvictPartitionsOnReturn(enabled);
+        }
+    }
+
     default void setStreamingMode(boolean enabled) {
         TableReader reader = getTableReader();
         if (reader != null) {

@@ -541,6 +541,11 @@ public final class SelectedRecordCursorFactory extends AbstractRecordCursorFacto
         }
 
         @Override
+        public void setEvictPartitionsOnReturn(boolean enabled) {
+            baseCursor.setEvictPartitionsOnReturn(enabled);
+        }
+
+        @Override
         public void setStreamingMode(boolean enabled) {
             baseCursor.setStreamingMode(enabled);
         }

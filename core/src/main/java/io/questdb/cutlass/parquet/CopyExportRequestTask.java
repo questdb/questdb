@@ -332,8 +332,11 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
 
     public void setUpStreamPartitionParquetExporter() {
         if (pageFrameCursor != null) {
-            // Enable streaming mode to use MADV_DONTNEED on mmap, avoiding page cache exhaustion
+            // Enable streaming mode for MADV_SEQUENTIAL/DONTNEED hints, plus
+            // eviction-on-return so the pooled reader doesn't accumulate
+            // mappings from a multi-partition export.
             pageFrameCursor.setStreamingMode(true);
+            pageFrameCursor.setEvictPartitionsOnReturn(true);
             streamPartitionParquetExporter.setUp();
         }
     }
@@ -344,8 +347,11 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
         this.pageFrameCursor = pageFrameCursor;
         this.metadata = metadata;
         this.descending = descending;
-        // Enable streaming mode to use MADV_DONTNEED on mmap, avoiding page cache exhaustion
+        // Enable streaming mode for MADV_SEQUENTIAL/DONTNEED hints, plus
+        // eviction-on-return so the pooled reader doesn't accumulate
+        // mappings from a multi-partition export.
         pageFrameCursor.setStreamingMode(true);
+        pageFrameCursor.setEvictPartitionsOnReturn(true);
         streamPartitionParquetExporter.setUp();
     }
 

@@ -506,6 +506,11 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
             baseCursor.releaseOpenPartitions();
         }
 
+        @Override
+        public void setEvictPartitionsOnReturn(boolean enabled) {
+            baseCursor.setEvictPartitionsOnReturn(enabled);
+        }
+
         // Qodana false positive
         @SuppressWarnings("unused")
         @Override

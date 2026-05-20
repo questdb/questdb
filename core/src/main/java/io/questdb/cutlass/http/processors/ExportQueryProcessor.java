@@ -250,6 +250,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                         RecordCursorFactory unwrapped = ParquetExportMode.unwrapFactory(state.recordCursorFactory);
                         VirtualRecordCursorFactory vf = (VirtualRecordCursorFactory) unwrapped;
                         state.pageFrameCursor.setStreamingMode(true);
+                        state.pageFrameCursor.setEvictPartitionsOnReturn(true);
                         state.materializer.setUpPageFrameBacked(vf, state.pageFrameCursor, sqlExecutionContext);
                     } else if (isParquet && state.parquetExportMode == ParquetExportMode.CURSOR_BASED) {
                         RecordCursorFactory unwrapped = ParquetExportMode.unwrapFactory(state.recordCursorFactory);

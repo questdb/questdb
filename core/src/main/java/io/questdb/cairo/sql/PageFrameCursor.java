@@ -147,15 +147,32 @@ public interface PageFrameCursor extends QuietCloseable, SymbolTableSource {
     }
 
     /**
-     * Enables or disables streaming mode for the cursor.
-     * When streaming mode is enabled, underlying resources (e.g., partitions) are opened
-     * with hints to release page cache after reading. This is useful for large sequential
-     * scans like Parquet export to avoid page cache exhaustion under memory pressure.
+     * Asks the cursor to close every partition it opened when the underlying
+     * reader is next returned to the pool. Useful for workloads that may touch
+     * many partitions in one pass (e.g. Parquet export) and want a hard
+     * cleanup backstop.
      * <p>
-     * Default implementation is a no-op. Subclasses backed by TableReader should override
-     * this method to delegate to the TableReader's streaming mode setting.
+     * Default implementation is a no-op. Subclasses backed by TableReader
+     * delegate to {@link io.questdb.cairo.TableReader#setEvictPartitionsOnReturn(boolean)}.
+     * Orthogonal to {@link #setStreamingMode(boolean)}.
      *
-     * @param enabled true to enable streaming mode, false to disable
+     * @param enabled true to evict all partitions on the next pool return
+     */
+    default void setEvictPartitionsOnReturn(boolean enabled) {
+        // no-op by default
+    }
+
+    /**
+     * Enables sequential-scan kernel hints (MADV_SEQUENTIAL on open,
+     * MADV_DONTNEED on close) for the underlying resources. Useful for large
+     * sequential scans like Parquet export to avoid evicting the server's
+     * working set from the page cache.
+     * <p>
+     * Default implementation is a no-op. Subclasses backed by TableReader
+     * delegate to {@link io.questdb.cairo.TableReader#setStreamingMode(boolean)}.
+     * Orthogonal to {@link #setEvictPartitionsOnReturn(boolean)}.
+     *
+     * @param enabled true to enable sequential-scan hints, false to disable
      */
     default void setStreamingMode(boolean enabled) {
         // no-op by default
