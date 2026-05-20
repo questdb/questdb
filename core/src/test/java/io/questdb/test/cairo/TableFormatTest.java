@@ -168,6 +168,73 @@ public class TableFormatTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCreateTableFormatAfterBypassWalRejected() throws Exception {
+        // FORMAT PARQUET still requires WAL even when placed after BYPASS WAL.
+        // The position reported in the error points at the FORMAT clause, not
+        // the BYPASS WAL clause.
+        assertMemoryLeak(() -> {
+            try {
+                execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL FORMAT PARQUET");
+                fail("FORMAT PARQUET should be rejected on non-WAL CREATE TABLE");
+            } catch (SqlException e) {
+                assertEquals("[83] FORMAT PARQUET is only supported on WAL tables", e.getMessage());
+            }
+        });
+    }
+
+    @Test
+    public void testCreateTableFormatAfterDedup() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango (ts TIMESTAMP, n LONG) TIMESTAMP(ts) PARTITION BY DAY WAL " +
+                    "DEDUP UPSERT KEYS(ts) FORMAT PARQUET");
+            assertTableFormat("tango", TableUtils.TABLE_FORMAT_PARQUET);
+        });
+    }
+
+    @Test
+    public void testCreateTableFormatAfterWal() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL FORMAT PARQUET");
+            assertTableFormat("tango", TableUtils.TABLE_FORMAT_PARQUET);
+        });
+    }
+
+    @Test
+    public void testCreateTableFormatBeforeDedup() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango (ts TIMESTAMP, n LONG) TIMESTAMP(ts) PARTITION BY DAY WAL " +
+                    "FORMAT PARQUET DEDUP UPSERT KEYS(ts)");
+            assertTableFormat("tango", TableUtils.TABLE_FORMAT_PARQUET);
+        });
+    }
+
+    @Test
+    public void testCreateTableFormatDuplicateAcrossDedupRejected() throws Exception {
+        assertMemoryLeak(() -> {
+            try {
+                execute("CREATE TABLE tango (ts TIMESTAMP, n LONG) TIMESTAMP(ts) PARTITION BY DAY " +
+                        "FORMAT PARQUET WAL DEDUP UPSERT KEYS(ts) FORMAT NATIVE");
+                fail("duplicate FORMAT clause should be rejected");
+            } catch (SqlException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "duplicate FORMAT clause");
+            }
+        });
+    }
+
+    @Test
+    public void testCreateTableFormatDuplicateAcrossWalRejected() throws Exception {
+        assertMemoryLeak(() -> {
+            try {
+                execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY " +
+                        "FORMAT NATIVE WAL FORMAT PARQUET");
+                fail("duplicate FORMAT clause should be rejected");
+            } catch (SqlException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "duplicate FORMAT clause");
+            }
+        });
+    }
+
+    @Test
     public void testCreateTableFormatNative() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY FORMAT NATIVE WAL");
@@ -227,19 +294,14 @@ public class TableFormatTest extends AbstractCairoTest {
 
     @Test
     public void testCreateTableUnpartitionedWithFormatParquetRejected() throws Exception {
-        // FORMAT is parsed inside the PARTITION BY branch in parseCreateTable,
-        // so on a non-partitioned table the FORMAT token is never consumed and
-        // falls through to the generic "unexpected token" handler. This is the
-        // current behavior, not the ideal one: a dedicated message ("FORMAT
-        // PARQUET is only supported on partitioned tables", mirroring ALTER
-        // TABLE) would be clearer. Lock down the existing surface so silent
-        // acceptance or a different generic message is caught.
+        // A non-partitioned table cannot be WAL, and FORMAT PARQUET requires
+        // WAL. The validation surfaces that via the WAL message.
         assertMemoryLeak(() -> {
             try {
                 execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) FORMAT PARQUET");
                 fail("FORMAT clause on a non-partitioned table should be rejected");
             } catch (SqlException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "unexpected token [FORMAT]");
+                TestUtils.assertContains(e.getFlyweightMessage(), "FORMAT PARQUET is only supported on WAL tables");
             }
         });
     }

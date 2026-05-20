@@ -1699,6 +1699,7 @@ public class SqlParser {
         }
 
         int walSetting = WAL_NOT_SET;
+        boolean formatSeen = false;
 
         final ExpressionNode partitionByExpr = parseCreateTablePartition(lexer, tok);
         if (partitionByExpr != null) {
@@ -1715,20 +1716,10 @@ public class SqlParser {
 
             tok = sqlParserCallback.parseTtlSettings(lexer, tok, partitionBy, builder, false);
 
+            // FORMAT can appear before WAL: ... PARTITION BY DAY FORMAT PARQUET WAL ...
             if (tok != null && isFormatKeyword(tok)) {
-                final int formatPos = lexer.getPosition();
-                tok = tok(lexer, "'parquet' or 'native'");
-                int format;
-                if (isParquetKeyword(tok)) {
-                    format = TableUtils.TABLE_FORMAT_PARQUET;
-                } else if (isNativeKeyword(tok)) {
-                    format = TableUtils.TABLE_FORMAT_NATIVE;
-                } else {
-                    throw SqlException.$(lexer.lastTokenPosition(), "'parquet' or 'native' expected");
-                }
-                builder.setTableFormat(format);
-                builder.setTableFormatPosition(formatPos);
-                tok = optTok(lexer);
+                tok = parseCreateTableFormat(lexer, builder);
+                formatSeen = true;
             }
 
             if (tok != null) {
@@ -1751,15 +1742,20 @@ public class SqlParser {
                     }
                 }
             }
+
+            // FORMAT can also appear after WAL: ... PARTITION BY DAY WAL FORMAT PARQUET ...
+            if (tok != null && isFormatKeyword(tok)) {
+                if (formatSeen) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "duplicate FORMAT clause");
+                }
+                tok = parseCreateTableFormat(lexer, builder);
+                formatSeen = true;
+            }
         }
         final boolean isWalEnabled = configuration.isWalSupported()
                 && PartitionBy.isPartitioned(builder.getPartitionByFromExpr())
                 && ((walSetting == WAL_NOT_SET && configuration.getWalEnabledDefault()) || walSetting == WAL_ENABLED);
         builder.setWalEnabled(isWalEnabled);
-
-        if (builder.getTableFormat() == TableUtils.TABLE_FORMAT_PARQUET && !isWalEnabled) {
-            throw SqlException.$(builder.getTableFormatPosition(), "FORMAT PARQUET is only supported on WAL tables");
-        }
 
         int maxUncommittedRows = configuration.getMaxUncommittedRows();
         long o3MaxLag = configuration.getO3MaxLag();
@@ -1866,6 +1862,19 @@ public class SqlParser {
                 throw SqlException.position(lexer.getPosition()).put("column list expected");
             }
         }
+
+        // FORMAT can also appear after DEDUP: ... DEDUP UPSERT KEYS(ts) FORMAT PARQUET
+        if (tok != null && isFormatKeyword(tok)) {
+            if (formatSeen) {
+                throw SqlException.$(lexer.lastTokenPosition(), "duplicate FORMAT clause");
+            }
+            tok = parseCreateTableFormat(lexer, builder);
+        }
+
+        if (builder.getTableFormat() == TableUtils.TABLE_FORMAT_PARQUET && !isWalEnabled) {
+            throw SqlException.$(builder.getTableFormatPosition(), "FORMAT PARQUET is only supported on WAL tables");
+        }
+
         return parseCreateTableExt(lexer, executionContext, sqlParserCallback, tok, builder);
     }
 
@@ -2021,6 +2030,22 @@ public class SqlParser {
                 throw err(lexer, tok, "',' or ')' expected");
             }
         }
+    }
+
+    private CharSequence parseCreateTableFormat(GenericLexer lexer, CreateTableOperationBuilderImpl builder) throws SqlException {
+        final int formatPos = lexer.getPosition();
+        final CharSequence tok = tok(lexer, "'parquet' or 'native'");
+        final int format;
+        if (isParquetKeyword(tok)) {
+            format = TableUtils.TABLE_FORMAT_PARQUET;
+        } else if (isNativeKeyword(tok)) {
+            format = TableUtils.TABLE_FORMAT_NATIVE;
+        } else {
+            throw SqlException.$(lexer.lastTokenPosition(), "'parquet' or 'native' expected");
+        }
+        builder.setTableFormat(format);
+        builder.setTableFormatPosition(formatPos);
+        return optTok(lexer);
     }
 
     private void parseCreateTableIndexDef(GenericLexer lexer, boolean isDirectCreate) throws SqlException {
