@@ -185,7 +185,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
                 0.1,
                 1.0,
                 0.01,
-                0.00,
+                0.01,
                 0.5,
                 0.5,
                 0.1,

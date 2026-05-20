@@ -976,6 +976,28 @@ public final class TableUtils {
         return getSymbolWriterIndexOffset(symbolWriterCount);
     }
 
+    /**
+     * Walks the replacingIndex chain starting from {@code writerIndex} and returns the
+     * root (oldest) writer index. Caps iterations at {@code columnCount}: a longer chain
+     * implies a cycle (e.g. A->B->A) from a corrupt metadata file and triggers a
+     * validation exception rather than spinning forever.
+     */
+    public static int getReplacingChainHead(MemoryR metaMem, int writerIndex, int columnCount) {
+        int origWriterIndex = writerIndex;
+        int ri = getReplacingColumnIndex(metaMem, writerIndex);
+        int hops = 0;
+        while (ri >= 0) {
+            if (++hops > columnCount) {
+                throw validationException(metaMem)
+                        .put("replacingIndex cycle detected starting at writer index ")
+                        .put(writerIndex);
+            }
+            origWriterIndex = ri;
+            ri = getReplacingColumnIndex(metaMem, ri);
+        }
+        return origWriterIndex;
+    }
+
     public static int getReplacingColumnIndex(MemoryR metaMem, int columnIndex) {
         return metaMem.getInt(META_OFFSET_COLUMN_TYPES + columnIndex * META_COLUMN_DATA_SIZE + 4 + 8 + 4 + 8) - 1;
     }
@@ -2697,7 +2719,12 @@ public final class TableUtils {
                 // This is O(chain length) instead of O(N) scan per replacement.
                 int targetSlot = replacingColumnIndex;
                 int marker = targetList.getQuick(3 * targetSlot);
+                int hops = 0;
                 while (marker < 0) {
+                    if (++hops > columnCount) {
+                        throw validationException(metaMem)
+                                .put("replacingIndex cycle detected in dead-marker chain at column ").put(i);
+                    }
                     targetSlot = -marker - 1;
                     marker = targetList.getQuick(3 * targetSlot);
                 }

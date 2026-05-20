@@ -199,7 +199,14 @@ fn simd_segments_to_page<T: SimdEncodable>(
     primitive_type: PrimitiveType,
     bloom_hashes: Option<&mut HashSet<u64>>,
 ) -> ParquetResult<Page> {
-    assert_eq!(primitive_type.field_info.repetition, Repetition::Optional);
+    if primitive_type.field_info.repetition != Repetition::Optional {
+        return Err(fmt_err!(
+            InvalidLayout,
+            "plain nullable encoder requires Optional repetition, got {:?} for column {}",
+            primitive_type.field_info.repetition,
+            primitive_type.field_info.name
+        ));
+    }
 
     // SAFETY: Column data originates from JNI/Java memory-mapped buffers.
     let mut views = unsafe {
@@ -383,7 +390,14 @@ where
     P: NativeType + num_traits::AsPrimitive<i64>,
     T: Default + num_traits::AsPrimitive<P> + Debug + 'static,
 {
-    assert_eq!(primitive_type.field_info.repetition, Repetition::Required);
+    if primitive_type.field_info.repetition != Repetition::Required {
+        return Err(fmt_err!(
+            InvalidLayout,
+            "plain notnull encoder requires Required repetition, got {:?} for column {}",
+            primitive_type.field_info.repetition,
+            primitive_type.field_info.name
+        ));
+    }
 
     let num_rows = window.row_count;
     let default_bytes = {
@@ -453,7 +467,14 @@ where
     T: Nullable + num_traits::AsPrimitive<P> + Debug + 'static,
     MaxMin<P>: StatsUpdater<P, UNSIGNED_STATS>,
 {
-    assert_eq!(primitive_type.field_info.repetition, Repetition::Optional);
+    if primitive_type.field_info.repetition != Repetition::Optional {
+        return Err(fmt_err!(
+            InvalidLayout,
+            "plain nullable encoder requires Optional repetition, got {:?} for column {}",
+            primitive_type.field_info.repetition,
+            primitive_type.field_info.name
+        ));
+    }
 
     let num_rows = window.row_count;
     let mut validity = FlatValidity::new();
@@ -541,7 +562,14 @@ fn decimal_segments_to_page<T>(
 where
     T: Nullable + NativeType + Debug + 'static,
 {
-    assert_eq!(primitive_type.field_info.repetition, Repetition::Optional);
+    if primitive_type.field_info.repetition != Repetition::Optional {
+        return Err(fmt_err!(
+            InvalidLayout,
+            "plain nullable native encoder requires Optional repetition, got {:?} for column {}",
+            primitive_type.field_info.repetition,
+            primitive_type.field_info.name
+        ));
+    }
 
     let num_rows = window.row_count;
     let mut validity = FlatValidity::new();

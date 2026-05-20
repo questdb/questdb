@@ -1949,10 +1949,6 @@ public class ParquetWriteTest extends AbstractCairoTest {
         });
     }
 
-    // ---------------------------------------------------------------
-    //  Range-checking: float/double → integer with out-of-range values
-    // ---------------------------------------------------------------
-
     @Test
     public void testAlterColumnTypeStringToAllFixedWithParquetPartition() throws Exception {
         testConvertVarToAllFixed("STRING");
@@ -1993,10 +1989,6 @@ public class ParquetWriteTest extends AbstractCairoTest {
             );
         });
     }
-
-    // ---------------------------------------------------------------
-    //  Missing widening pairs: byte/short → float/double, long → float
-    // ---------------------------------------------------------------
 
     @Test
     public void testAlterColumnTypeTimestampToLongWithParquetPartition() throws Exception {
@@ -2211,10 +2203,6 @@ public class ParquetWriteTest extends AbstractCairoTest {
             );
         });
     }
-
-    // ---------------------------------------------------------------
-    //  Missing narrowing pairs: float/double → long/short/byte
-    // ---------------------------------------------------------------
 
     @Test
     public void testAlterColumnTypeWithExoticColumnsInParquetPartition() throws Exception {
@@ -3239,10 +3227,6 @@ public class ParquetWriteTest extends AbstractCairoTest {
         });
     }
 
-    // ---------------------------------------------------------------
-    //  Timestamp / Date conversions
-    // ---------------------------------------------------------------
-
     @Test
     public void testNativeToParquetRoundTripNonExistentColumn() throws Exception {
         // When a column is added on a later partition, earlier partitions have
@@ -3627,10 +3611,6 @@ public class ParquetWriteTest extends AbstractCairoTest {
             );
         });
     }
-
-    // ---------------------------------------------------------------
-    //  Boolean conversions
-    // ---------------------------------------------------------------
 
     @Test
     public void testO3AfterAddDedupKeyColumn() throws Exception {

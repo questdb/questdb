@@ -134,7 +134,7 @@ class ReusablePageFrameMemory implements PageFrameMemory, Mutable, QuietCloseabl
     }
 
     @Override
-    public boolean needsColumnTypeCast() {
+    public boolean hasColumnTypeCasts() {
         return false;
     }
 

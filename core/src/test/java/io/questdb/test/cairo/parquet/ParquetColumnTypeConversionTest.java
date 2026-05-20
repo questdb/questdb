@@ -1515,7 +1515,7 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
 
     /**
      * The async not-keyed group-by factory runs an aggregation without a {@code GROUP BY}
-     * clause. Its inner loop checks {@code frameMemory.needsColumnTypeCast()} and falls back
+     * clause. Its inner loop checks {@code frameMemory.hasColumnTypeCasts()} and falls back
      * to a row-by-row update path when {@code true}; the batched / vectorized aggregation
      * path reads raw page addresses and would silently produce wrong values if the parquet
      * column needs lazy conversion. The control table {@code nt} is native; {@code pt} is a
@@ -1530,7 +1530,7 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
     }
 
     /**
-     * The async keyed group-by factory. Same {@code needsColumnTypeCast()} gate. The
+     * The async keyed group-by factory. Same {@code hasColumnTypeCasts()} gate. The
      * difference vs the not-keyed variant is that a {@code GROUP BY} key is materialized
      * per row and the per-key aggregation update path runs.
      */
@@ -1552,7 +1552,7 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
      * {@code other}. This sequences the failing code path:
      * <ol>
      *   <li>{@code AsyncGroupByRecordCursorFactory.run} sees
-     *       {@code frameMemory.needsColumnTypeCast()} and falls back to the scalar filter,
+     *       {@code frameMemory.hasColumnTypeCasts()} and falls back to the scalar filter,
      *       calling {@code populateRemainingColumns(filterColumnIndexes, rows, false)}
      *       which decodes non-filter columns in compacted layout.</li>
      *   <li>{@code aggregateFilteredNonSharded} wraps the frame in a
@@ -1723,7 +1723,7 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
      * which routes the query through {@code AsyncMultiHorizonJoinNotKeyedRecordCursorFactory}.
      * The {@code WHERE t.val > 50} predicate is JIT-compiled against the current INT
      * metadata, but the parquet frame still stores {@code val} as STRING. Without the
-     * {@code needsColumnTypeCast()} fallback the compiled filter would read VARCHAR aux
+     * {@code hasColumnTypeCasts()} fallback the compiled filter would read VARCHAR aux
      * bytes as INT and select wrong rows -- the parity check against the native control
      * pins the bug.
      */
@@ -1880,7 +1880,7 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
      * Builds a native control table {@code nt} and a parquet-backed table {@code pt} with
      * identical data, then ALTERs {@code val} from STRING to INT on both. On {@code pt} the
      * parquet keeps the STRING storage so reads go through lazy var to fixed conversion,
-     * setting {@code needsColumnTypeCast()=true} on every parquet frame. The supplied
+     * setting {@code hasColumnTypeCasts()=true} on every parquet frame. The supplied
      * query template (with {@code $T} placeholder) runs against both tables and must
      * produce identical cursors.
      */
@@ -1917,7 +1917,7 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
      * {@code val} starts as INT, the partition is converted to parquet, and {@code val}
      * is ALTERed to a var type ({@code STRING} or {@code VARCHAR}). On {@code pt} the
      * parquet keeps the INT storage so reads go through lazy fixed-to-var conversion,
-     * setting {@code needsColumnTypeCast()=true} on every parquet frame. The extra
+     * setting {@code hasColumnTypeCasts()=true} on every parquet frame. The extra
      * {@code other LONG} column carries the WHERE predicate so {@code val} can remain
      * a non-filter column (in compacted layout under
      * {@link io.questdb.cairo.sql.PageFrameFilteredMemoryRecord}).
@@ -1956,7 +1956,7 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
      * cast direction: {@code val} starts as STRING, the partition is converted to parquet,
      * and {@code val} is ALTERed to a fixed-width type (e.g. {@code INT}). On {@code pt}
      * the parquet keeps the STRING storage so reads go through lazy var-to-fixed conversion,
-     * setting {@code needsColumnTypeCast()=true} on every parquet frame. The extra
+     * setting {@code hasColumnTypeCasts()=true} on every parquet frame. The extra
      * {@code other LONG} column carries the WHERE predicate so {@code val} can remain
      * a non-filter column (in compacted layout under
      * {@link io.questdb.cairo.sql.PageFrameFilteredMemoryRecord}).
@@ -2036,7 +2036,7 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
      * the {@code AsyncMultiHorizonJoin(NotKeyed)RecordCursorFactory} pair.
      * <p>
      * Spreads data across many daily partitions on the master side. The compiled-filter
-     * fallback under {@code needsColumnTypeCast()} only fires when SelectivityStats
+     * fallback under {@code hasColumnTypeCasts()} only fires when SelectivityStats
      * decides against late materialization (selectivity above 20% with at least two
      * recorded samples). A single-partition setup keeps every frame on the late-material
      * path, where {@code hasColumnTops()} already routes around the compiled filter and

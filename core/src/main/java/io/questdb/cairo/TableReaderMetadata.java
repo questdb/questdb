@@ -330,12 +330,7 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
             int columnType = TableUtils.getColumnType(mem, writerIndex);
 
             if (columnType > -1) {
-                int origWriterIndex = writerIndex;
-                int ri = TableUtils.getReplacingColumnIndex(mem, writerIndex);
-                while (ri >= 0) {
-                    origWriterIndex = ri;
-                    ri = TableUtils.getReplacingColumnIndex(mem, ri);
-                }
+                int origWriterIndex = TableUtils.getReplacingChainHead(mem, writerIndex, columnCount);
                 String colName = Chars.toString(name);
                 TableReaderMetadataColumn colMeta = new TableReaderMetadataColumn(
                         colName,
@@ -413,14 +408,7 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
             int indexBlockCapacity = TableUtils.getIndexBlockCapacity(newMetaMem, writerIndex);
             boolean symbolIsCached = TableUtils.isSymbolCached(newMetaMem, writerIndex);
             int symbolCapacity = TableUtils.getSymbolCapacity(newMetaMem, writerIndex);
-            int origWriterIndex = writerIndex;
-            {
-                int ri = TableUtils.getReplacingColumnIndex(newMetaMem, writerIndex);
-                while (ri >= 0) {
-                    origWriterIndex = ri;
-                    ri = TableUtils.getReplacingColumnIndex(newMetaMem, ri);
-                }
-            }
+            int origWriterIndex = TableUtils.getReplacingChainHead(newMetaMem, writerIndex, columnCount);
             TableReaderMetadataColumn existing = null;
             String newName;
 

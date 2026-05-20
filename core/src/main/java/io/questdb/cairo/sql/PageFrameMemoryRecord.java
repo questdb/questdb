@@ -772,7 +772,7 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
         this.frameIndex = frameMemory.getFrameIndex();
         this.frameFormat = frameMemory.getFrameFormat();
         this.stableStrings = (frameFormat == PartitionFormat.NATIVE);
-        this.hasTypeCasts = frameMemory.needsColumnTypeCast();
+        this.hasTypeCasts = frameMemory.hasColumnTypeCasts();
         this.rowIdOffset = frameMemory.getRowIdOffset();
         this.pageAddresses = frameMemory.getPageAddresses();
         this.auxPageAddresses = frameMemory.getAuxPageAddresses();
@@ -957,7 +957,10 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
         if (cs != null) {
             try {
                 decimal64Buf.ofString(cs, precision, scale);
-                return (short) decimal64Buf.getValue();
+                long v = decimal64Buf.getValue();
+                if (v >= Short.MIN_VALUE + 1 && v <= Short.MAX_VALUE) {
+                    return (short) v;
+                }
             } catch (NumericException ignore) {
             }
         }
@@ -988,7 +991,10 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
         if (cs != null) {
             try {
                 decimal64Buf.ofString(cs, precision, scale);
-                return (int) decimal64Buf.getValue();
+                long v = decimal64Buf.getValue();
+                if (v >= Integer.MIN_VALUE + 1 && v <= Integer.MAX_VALUE) {
+                    return (int) v;
+                }
             } catch (NumericException ignore) {
             }
         }
@@ -1018,7 +1024,10 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
         if (cs != null) {
             try {
                 decimal64Buf.ofString(cs, precision, scale);
-                return (byte) decimal64Buf.getValue();
+                long v = decimal64Buf.getValue();
+                if (v >= Byte.MIN_VALUE + 1 && v <= Byte.MAX_VALUE) {
+                    return (byte) v;
+                }
             } catch (NumericException ignore) {
             }
         }

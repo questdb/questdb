@@ -169,14 +169,7 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
             int type = TableUtils.getColumnType(metaMem, i);
             String nameStr = Chars.toString(name);
             int replacingIndex = TableUtils.getReplacingColumnIndex(metaMem, i);
-            int origWriterIndex = i;
-            if (replacingIndex >= 0) {
-                int ri = replacingIndex;
-                origWriterIndex = ri;
-                while ((ri = TableUtils.getReplacingColumnIndex(metaMem, ri)) >= 0) {
-                    origWriterIndex = ri;
-                }
-            }
+            int origWriterIndex = TableUtils.getReplacingChainHead(metaMem, i, columnCount);
             WriterTableColumnMetadata colMeta = new WriterTableColumnMetadata(
                     nameStr,
                     type,

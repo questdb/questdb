@@ -642,7 +642,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         }
 
         @Override
-        public boolean needsColumnTypeCast() {
+        public boolean hasColumnTypeCasts() {
             return frameFormat == PartitionFormat.PARQUET && hasTypeCasts;
         }
 

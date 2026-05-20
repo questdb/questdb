@@ -133,7 +133,11 @@ pub mod int32 {
 
     impl Int32ToDoubleConverter {
         pub fn new(ratio: usize) -> Self {
-            Self { ratio: 10f64.powi(ratio as i32) }
+            // Decimal scales are bounded by parquet (max 76), so this conversion is exact
+            // in practice. Saturate on a corrupt/tampered metadata value rather than letting
+            // `as i32` silently wrap and produce a nonsense ratio.
+            let exp = i32::try_from(ratio).unwrap_or(i32::MAX);
+            Self { ratio: 10f64.powi(exp) }
         }
     }
 

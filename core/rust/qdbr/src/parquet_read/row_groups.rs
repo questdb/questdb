@@ -542,11 +542,11 @@ fn rescale_decimal_in_place(
     let abs_diff = (dst_scale as i32 - src_scale as i32).unsigned_abs();
     let divide = dst_scale < src_scale;
     match target_tag {
-        ColumnTypeTag::Decimal8 => rescale_fixed::<1>(data, abs_diff, divide),
-        ColumnTypeTag::Decimal16 => rescale_fixed::<2>(data, abs_diff, divide),
-        ColumnTypeTag::Decimal32 => rescale_fixed::<4>(data, abs_diff, divide),
-        ColumnTypeTag::Decimal64 => rescale_fixed::<8>(data, abs_diff, divide),
-        ColumnTypeTag::Decimal128 => rescale_i128(data, abs_diff, divide),
+        ColumnTypeTag::Decimal8 => rescale_fixed::<1>(data, abs_diff, divide)?,
+        ColumnTypeTag::Decimal16 => rescale_fixed::<2>(data, abs_diff, divide)?,
+        ColumnTypeTag::Decimal32 => rescale_fixed::<4>(data, abs_diff, divide)?,
+        ColumnTypeTag::Decimal64 => rescale_fixed::<8>(data, abs_diff, divide)?,
+        ColumnTypeTag::Decimal128 => rescale_i128(data, abs_diff, divide)?,
         ColumnTypeTag::Decimal256 => rescale_i256(data, abs_diff, divide),
         _ => {}
     }
@@ -554,35 +554,56 @@ fn rescale_decimal_in_place(
 }
 
 /// Rescale Decimal8/16/32/64 values (N = 1, 2, 4, or 8 bytes) in place.
-fn rescale_fixed<const N: usize>(data: &mut AcVec<u8>, scale_diff: u32, divide: bool) {
+///
+/// On multiply (dst_scale > src_scale), the product can exceed the destination
+/// width even when src and dst share a tag, so the multiply path goes through
+/// `scale_or_null_i64`, which detects i64 overflow via `checked_mul` and rejects
+/// results outside the signed range of N bytes by writing the null sentinel.
+/// Without this guard, `write_le_i64::<N>` would silently truncate the low bytes
+/// (e.g. Decimal8 value 2 rescaled by factor 100 = 200, which becomes -56 as i8).
+fn rescale_fixed<const N: usize>(
+    data: &mut AcVec<u8>,
+    scale_diff: u32,
+    divide: bool,
+) -> ParquetResult<()> {
     debug_assert!(N == 1 || N == 2 || N == 4 || N == 8);
     let count = data.len() / N;
     let ptr = data.as_mut_ptr();
-    // For N <= 8, 10^max_scale fits in the native integer (max scales: 2, 4, 9, 18).
-    // Use i64 arithmetic for all sizes to keep things simple.
-    let factor = 10i64.wrapping_pow(scale_diff);
+    // For N <= 8, 10^max_scale fits in i64 (max scales: 2, 4, 9, 18). Beyond that,
+    // checked_pow returns None and we reject the corrupt/tampered scale_diff.
+    let Some(factor) = 10i64.checked_pow(scale_diff) else {
+        return Err(fmt_err!(
+            InvalidLayout,
+            "decimal scale_diff {} exceeds i64 range for Decimal{}",
+            scale_diff,
+            N * 8
+        ));
+    };
+    // Null sentinel is MIN for each width.
+    let null = match N {
+        1 => i8::MIN as i64,
+        2 => i16::MIN as i64,
+        4 => i32::MIN as i64,
+        _ => i64::MIN,
+    };
     for i in 0..count {
         let offset = i * N;
         unsafe {
             let val = read_le_i64::<N>(ptr.add(offset));
-            // Null sentinel is MIN for each width.
-            let null = match N {
-                1 => i8::MIN as i64,
-                2 => i16::MIN as i64,
-                4 => i32::MIN as i64,
-                _ => i64::MIN,
-            };
             if val == null {
                 continue;
             }
+            // Divide always shrinks magnitude, so the result fits and i64::MIN / -1
+            // is unreachable since factor is a positive power of 10.
             let scaled = if divide {
                 val / factor
             } else {
-                val.wrapping_mul(factor)
+                scale_or_null_i64(val, factor, N, null)
             };
             write_le_i64::<N>(ptr.add(offset), scaled);
         }
     }
+    Ok(())
 }
 
 #[inline]
@@ -606,8 +627,15 @@ unsafe fn write_le_i64<const N: usize>(ptr: *mut u8, val: i64) {
 }
 
 /// Rescale Decimal128 values in place. Layout: [hi: i64 LE, lo: u64 LE].
-fn rescale_i128(data: &mut AcVec<u8>, scale_diff: u32, divide: bool) {
-    let factor = 10i128.wrapping_pow(scale_diff);
+fn rescale_i128(data: &mut AcVec<u8>, scale_diff: u32, divide: bool) -> ParquetResult<()> {
+    // 10^scale_diff overflows i128 once scale_diff > 38; reject corrupt/tampered input.
+    let Some(factor) = 10i128.checked_pow(scale_diff) else {
+        return Err(fmt_err!(
+            InvalidLayout,
+            "decimal scale_diff {} exceeds i128 range for Decimal128",
+            scale_diff
+        ));
+    };
     let count = data.len() / 16;
     let ptr = data.as_mut_ptr();
     for i in 0..count {
@@ -628,6 +656,7 @@ fn rescale_i128(data: &mut AcVec<u8>, scale_diff: u32, divide: bool) {
             (ptr.add(offset + 8) as *mut u64).write_unaligned(scaled as u64);
         }
     }
+    Ok(())
 }
 
 /// Rescale Decimal256 values in place. Layout: [w0(hi): i64 LE, w1: u64 LE, w2: u64 LE, w3(lo): u64 LE].

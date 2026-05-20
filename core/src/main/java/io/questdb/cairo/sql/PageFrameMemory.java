@@ -118,5 +118,5 @@ public interface PageFrameMemory {
      * Returns true if any column requires a lazy type cast (e.g. fixed→varchar
      * conversion for parquet partitions with ALTER COLUMN TYPE).
      */
-    boolean needsColumnTypeCast();
+    boolean hasColumnTypeCasts();
 }
