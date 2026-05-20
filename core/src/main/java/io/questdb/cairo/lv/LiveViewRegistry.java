@@ -117,9 +117,21 @@ public class LiveViewRegistry implements QuietCloseable {
         }
     }
 
+    /**
+     * Registers a version-unsupported stub. Such an instance has no resolvable
+     * base table (its {@code _lv} could not be read), so it lives only in
+     * {@code viewsByName} for catalogue visibility and is not added to the
+     * base-table fan-out index.
+     */
+    public void registerVersionUnsupportedView(LiveViewInstance instance) {
+        viewsByName.put(instance.getLiveViewToken().getTableName(), instance);
+    }
+
     public LiveViewInstance removeView(CharSequence name) {
         LiveViewInstance instance = viewsByName.remove(name);
-        if (instance != null) {
+        // A version-unsupported stub has a null definition and was never added to
+        // the base-table fan-out index, so skip that cleanup for it.
+        if (instance != null && instance.getDefinition() != null) {
             DepList list = viewsByBaseTable.get(instance.getDefinition().getBaseTableName());
             if (list != null) {
                 ObjList<LiveViewInstance> views = list.lockForWrite();

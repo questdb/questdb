@@ -44,6 +44,10 @@ import org.jetbrains.annotations.Nullable;
 public class LiveViewState {
     public static final String LIVE_VIEW_STATE_FILE_NAME = "_lv.s";
     public static final int LIVE_VIEW_STATE_CORE_MSG_TYPE = 0;
+    // Format version stamped as the first field of the CORE_STATE block. A reader
+    // that finds a higher value refuses to load the view and surfaces it as
+    // version_unsupported. Bump when the CORE_STATE layout changes incompatibly.
+    public static final int LIVE_VIEW_STATE_FORMAT_VERSION = 1;
 
     public static final byte BACKFILL_STATE_ACTIVE = 0;
     public static final byte BACKFILL_STATE_BACKFILLING = 1;
@@ -95,6 +99,7 @@ public class LiveViewState {
             @NotNull BlockFileWriter writer
     ) {
         AppendableBlock block = writer.append();
+        block.putInt(LIVE_VIEW_STATE_FORMAT_VERSION);
         block.putBool(invalid);
         block.putStr(invalidationReason);
         block.putLong(invalidationTimestampUs);

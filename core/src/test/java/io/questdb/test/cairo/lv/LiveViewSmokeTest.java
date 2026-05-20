@@ -29,6 +29,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.file.AppendableBlock;
 import io.questdb.cairo.file.BlockFileWriter;
 import io.questdb.cairo.lv.LiveViewCheckpointBlockType;
 import io.questdb.cairo.lv.LiveViewCheckpointManifest;
@@ -4014,6 +4015,98 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
 
             execute("DROP LIVE VIEW lv");
         });
+    }
+
+    @Test
+    public void testUnsupportedDefinitionVersionSurfacesAndDrops() throws Exception {
+        // An _lv whose CORE format version is newer than this build supports must
+        // not vanish silently: the load path surfaces the view in live_views()
+        // with view_status='version_unsupported' and other columns NULL, and DROP
+        // LIVE VIEW still removes it best-effort.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base");
+            TableToken token = engine.getLiveViewRegistry().getViewInstance("lv").getLiveViewToken();
+
+            overwriteLiveViewFileWithBumpedFormatVersion(
+                    token,
+                    LiveViewDefinition.LIVE_VIEW_DEFINITION_FILE_NAME,
+                    LiveViewDefinition.LIVE_VIEW_DEFINITION_CORE_MSG_TYPE
+            );
+            // Simulate restart: drop the in-memory registry and rebuild from disk.
+            engine.getLiveViewRegistry().clear();
+            engine.buildViewGraphs();
+
+            LiveViewInstance stub = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull("version-unsupported view must still be registered", stub);
+            Assert.assertTrue("stub must report version-unsupported", stub.isVersionUnsupported());
+
+            // view_name and view_status surface; definition/state columns are NULL
+            // (string columns render empty, long columns render "null").
+            assertSql(
+                    "view_name\tview_status\tview_sql\tbase_table_name\tlv_consumed_seqtxn\tview_lower_bound_timestamp\n" +
+                            "lv\tversion_unsupported\t\t\tnull\t\n",
+                    "SELECT view_name, view_status, view_sql, base_table_name, lv_consumed_seqtxn, " +
+                            "view_lower_bound_timestamp FROM live_views() WHERE view_name = 'lv'"
+            );
+
+            // DROP works on the stub (best-effort recovery path).
+            execute("DROP LIVE VIEW lv");
+            assertSql(
+                    "count\n0\n",
+                    "SELECT count() FROM live_views() WHERE view_name = 'lv'"
+            );
+        });
+    }
+
+    @Test
+    public void testUnsupportedStateVersionSurfaces() throws Exception {
+        // The version gate also covers _lv.s: a newer state-file format surfaces
+        // the view as version_unsupported even when _lv reads cleanly.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base");
+            TableToken token = engine.getLiveViewRegistry().getViewInstance("lv").getLiveViewToken();
+
+            overwriteLiveViewFileWithBumpedFormatVersion(
+                    token,
+                    LiveViewState.LIVE_VIEW_STATE_FILE_NAME,
+                    LiveViewState.LIVE_VIEW_STATE_CORE_MSG_TYPE
+            );
+            engine.getLiveViewRegistry().clear();
+            engine.buildViewGraphs();
+
+            LiveViewInstance stub = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(stub);
+            Assert.assertTrue(stub.isVersionUnsupported());
+            assertSql(
+                    "view_name\tview_status\n" +
+                            "lv\tversion_unsupported\n",
+                    "SELECT view_name, view_status FROM live_views() WHERE view_name = 'lv'"
+            );
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    private void overwriteLiveViewFileWithBumpedFormatVersion(TableToken token, String fileName, int coreBlockType) {
+        try (
+                BlockFileWriter writer = new BlockFileWriter(
+                        engine.getConfiguration().getFilesFacade(),
+                        engine.getConfiguration().getCommitMode());
+                Path path = new Path()
+        ) {
+            path.of(engine.getConfiguration().getDbRoot()).concat(token).concat(fileName);
+            writer.of(path.$());
+            AppendableBlock block = writer.append();
+            // The format version is the CORE block's first field, so a value above
+            // the reader's supported version is rejected before the rest is parsed.
+            block.putInt(Integer.MAX_VALUE);
+            block.commit(coreBlockType);
+            writer.commit();
+        }
     }
 
     @Test

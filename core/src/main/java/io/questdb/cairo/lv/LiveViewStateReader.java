@@ -141,6 +141,16 @@ public class LiveViewStateReader implements Mutable {
             if (block.type() == LiveViewState.LIVE_VIEW_STATE_CORE_MSG_TYPE) {
                 coreBlockFound = true;
                 long offset = 0;
+                int onDiskVersion = block.getInt(offset);
+                if (onDiskVersion > LiveViewState.LIVE_VIEW_STATE_FORMAT_VERSION) {
+                    throw CairoException.critical(CairoException.LV_FILE_VERSION_UNSUPPORTED)
+                            .put("live view state format version not supported [view=")
+                            .put(liveViewToken.getTableName())
+                            .put(", onDiskVersion=").put(onDiskVersion)
+                            .put(", supportedVersion=").put(LiveViewState.LIVE_VIEW_STATE_FORMAT_VERSION)
+                            .put(']');
+                }
+                offset += Integer.BYTES;
                 invalid = block.getBool(offset);
                 offset += Byte.BYTES;
                 invalidationReason.clear();

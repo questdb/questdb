@@ -201,6 +201,12 @@ public class LiveViewInstance implements QuietCloseable {
     // live_views().head_checkpoint_lv_seqtxn stays LONG_NULL for its lifetime.
     private volatile boolean snapshotCapability;
     private volatile boolean snapshotCapabilityComputed;
+    // True only for a minimal stub registered by the catalogue load path when the
+    // on-disk _lv / _lv.s carry an unsupported newer format version. Such an
+    // instance has a null definition and default runtime state; getLifecycleState
+    // reports VERSION_UNSUPPORTED and the catalogue surfaces only view_name /
+    // view_status. Final, so it is safely published to the catalogue read thread.
+    private final boolean versionUnsupported;
     // Wall-clock (micros) when the in-mem tier's slow-path tryAcquireWrite first
     // observed both slots reader-pinned. Numbers.LONG_NULL when not stalled.
     // Cleared on the next successful acquire. Surfaces via
@@ -210,6 +216,20 @@ public class LiveViewInstance implements QuietCloseable {
     public LiveViewInstance(LiveViewDefinition definition, TableToken liveViewToken) {
         this.definition = definition;
         this.liveViewToken = liveViewToken;
+        this.versionUnsupported = false;
+    }
+
+    /**
+     * Builds a minimal stub for a live view whose on-disk files carry an
+     * unsupported newer format version. Carries only the token; the definition is
+     * null and the runtime state stays at defaults. The catalogue surfaces it with
+     * {@code view_status='version_unsupported'}; the refresh worker never runs
+     * against it, and DROP LIVE VIEW removes it best-effort.
+     */
+    public LiveViewInstance(TableToken liveViewToken) {
+        this.definition = null;
+        this.liveViewToken = liveViewToken;
+        this.versionUnsupported = true;
     }
 
     /**
@@ -386,6 +406,11 @@ public class LiveViewInstance implements QuietCloseable {
     }
 
     public LiveViewLifecycleState getLifecycleState() {
+        if (versionUnsupported) {
+            // Stub for an unloadable newer-schema view: its durable signals were
+            // never read, so report the terminal state directly.
+            return LiveViewLifecycleState.VERSION_UNSUPPORTED;
+        }
         // A registered LiveViewInstance has, by definition, completed CREATE,
         // so CREATING is unreachable here. close() always flips `dropped` before
         // `isClosed`, so `!dropped && !isClosed` collapses to "not yet dropped"
@@ -493,6 +518,14 @@ public class LiveViewInstance implements QuietCloseable {
      */
     public boolean isSnapshotCapabilityComputed() {
         return snapshotCapabilityComputed;
+    }
+
+    /**
+     * @return {@code true} for a minimal stub registered when the on-disk files
+     * carry an unsupported newer format version (see the stub constructor).
+     */
+    public boolean isVersionUnsupported() {
+        return versionUnsupported;
     }
 
     /**

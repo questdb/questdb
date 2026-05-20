@@ -766,15 +766,30 @@ public class CairoEngine implements Closeable, WriterSource {
                                 instance.setHeadCheckpoint(headSeqTxn, Numbers.LONG_NULL, 0L, Numbers.LONG_NULL);
                             }
                         }
-                    } catch (Throwable th) {
-                        final LogRecord rec = LOG.error().$("could not load live view [view=").$(tableToken);
-                        if (th instanceof CairoException ce) {
-                            rec.$(", msg=").$safe(ce.getFlyweightMessage())
-                                    .$(", errno=").$(ce.getErrno());
+                    } catch (CairoException ce) {
+                        if (ce.getErrno() == CairoException.LV_FILE_VERSION_UNSUPPORTED) {
+                            // The on-disk _lv / _lv.s carry a newer schema this
+                            // build cannot read. Surface the view in live_views()
+                            // as version_unsupported instead of hiding it, so
+                            // operators see it exists and why it will not load. The
+                            // refresh worker never starts for the stub; the row
+                            // data stays intact and DROP LIVE VIEW still works.
+                            LOG.error().$("live view on-disk format not supported, surfacing as version_unsupported [view=")
+                                    .$(tableToken)
+                                    .$(", errno=").$(ce.getErrno())
+                                    .$(", msg=").$safe(ce.getFlyweightMessage())
+                                    .I$();
+                            liveViewRegistry.registerVersionUnsupportedView(new LiveViewInstance(tableToken));
                         } else {
-                            rec.$(", msg=").$safe(th.getMessage());
+                            LOG.error().$("could not load live view [view=").$(tableToken)
+                                    .$(", msg=").$safe(ce.getFlyweightMessage())
+                                    .$(", errno=").$(ce.getErrno())
+                                    .I$();
                         }
-                        rec.I$();
+                    } catch (Throwable th) {
+                        LOG.error().$("could not load live view [view=").$(tableToken)
+                                .$(", msg=").$safe(th.getMessage())
+                                .I$();
                     }
                 }
             }
@@ -1268,9 +1283,13 @@ public class CairoEngine implements Closeable, WriterSource {
         }
         LiveViewInstance instance = liveViewRegistry.removeView(name);
         if (instance != null) {
-            // Drop the LV from the dependents graph too so a multi-LV chain's
-            // snapshot ordering does not still see the dropped view.
-            dependentViewGraph.removeLiveView(instance.getLiveViewToken(), instance.getDefinition().getBaseTableName());
+            // A version-unsupported stub was never added to the dependents graph
+            // (its base table could not be resolved), so skip that cleanup for it.
+            if (!instance.isVersionUnsupported()) {
+                // Drop the LV from the dependents graph too so a multi-LV chain's
+                // snapshot ordering does not still see the dropped view.
+                dependentViewGraph.removeLiveView(instance.getLiveViewToken(), instance.getDefinition().getBaseTableName());
+            }
             // Mark the instance dropped and attempt an immediate free. If a refresh or
             // reader is currently holding a lock, tryCloseIfDropped() bails and the
             // winning party (refresh finally hook or cursor close) performs the free.

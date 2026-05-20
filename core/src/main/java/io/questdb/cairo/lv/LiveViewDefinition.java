@@ -62,6 +62,11 @@ public class LiveViewDefinition {
     public static final String LIVE_VIEW_DEFINITION_FILE_NAME = "_lv";
     public static final int LIVE_VIEW_DEFINITION_ANCHOR_MSG_TYPE = 1;
     public static final int LIVE_VIEW_DEFINITION_CORE_MSG_TYPE = 0;
+    // Format version stamped as the first field of the CORE block. A reader that
+    // finds a higher value refuses to load the view and surfaces it as
+    // version_unsupported. Bump this when the CORE layout changes incompatibly;
+    // each bump needs explicit per-version read handling.
+    public static final int LIVE_VIEW_DEFINITION_FORMAT_VERSION = 1;
     // _lv.drop is the durable "DROP in progress" sentinel. dropLiveView creates
     // it (and fsyncs it) before any in-memory or on-disk teardown so a crash
     // mid-drop leaves an unambiguous signal for the startup loader to reap.
@@ -131,6 +136,7 @@ public class LiveViewDefinition {
 
     public static void append(@NotNull LiveViewDefinition definition, @NotNull BlockFileWriter writer) {
         final AppendableBlock block = writer.append();
+        block.putInt(LIVE_VIEW_DEFINITION_FORMAT_VERSION);
         block.putStr(definition.viewSql);
         block.putStr(definition.baseTableName);
         block.putInt(definition.baseTimestampType);
@@ -240,6 +246,8 @@ public class LiveViewDefinition {
             final ReadableBlock block = cursor.next();
             if (block.type() == LIVE_VIEW_DEFINITION_CORE_MSG_TYPE) {
                 long offset = 0;
+                requireSupportedFormatVersion(block.getInt(offset), liveViewToken);
+                offset += Integer.BYTES;
                 CharSequence viewSqlCs = block.getStr(offset);
                 offset += Vm.getStorageLength(viewSqlCs);
                 return Chars.toString(block.getStr(offset));
@@ -280,6 +288,8 @@ public class LiveViewDefinition {
             if (block.type() == LIVE_VIEW_DEFINITION_CORE_MSG_TYPE) {
                 coreFound = true;
                 long offset = 0;
+                requireSupportedFormatVersion(block.getInt(offset), liveViewToken);
+                offset += Integer.BYTES;
                 CharSequence viewSqlCs = block.getStr(offset);
                 offset += Vm.getStorageLength(viewSqlCs);
                 viewSql = Chars.toString(viewSqlCs);
@@ -438,6 +448,23 @@ public class LiveViewDefinition {
 
     public long getViewLowerBoundTimestamp() {
         return viewLowerBoundTimestamp;
+    }
+
+    /**
+     * Rejects a CORE block whose stamped format version is newer than this build
+     * supports, throwing {@link CairoException#LV_FILE_VERSION_UNSUPPORTED}. The
+     * catalogue load path catches this and surfaces the view as
+     * version_unsupported instead of hiding it.
+     */
+    private static void requireSupportedFormatVersion(int onDiskVersion, @NotNull TableToken liveViewToken) {
+        if (onDiskVersion > LIVE_VIEW_DEFINITION_FORMAT_VERSION) {
+            throw CairoException.critical(CairoException.LV_FILE_VERSION_UNSUPPORTED)
+                    .put("live view definition format version not supported [view=")
+                    .put(liveViewToken.getTableName())
+                    .put(", onDiskVersion=").put(onDiskVersion)
+                    .put(", supportedVersion=").put(LIVE_VIEW_DEFINITION_FORMAT_VERSION)
+                    .put(']');
+        }
     }
 
     /**

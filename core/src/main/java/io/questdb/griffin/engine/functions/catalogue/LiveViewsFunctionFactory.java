@@ -199,6 +199,11 @@ public class LiveViewsFunctionFactory implements FunctionFactory {
 
                 @Override
                 public long getLong(int col) {
+                    if (instance.isVersionUnsupported()) {
+                        // The stub has a null definition and default state; every
+                        // numeric column is NULL.
+                        return Numbers.LONG_NULL;
+                    }
                     return switch (col) {
                         case COLUMN_FLUSH_EVERY_INTERVAL -> definition.getFlushEveryInterval();
                         case COLUMN_IN_MEMORY_INTERVAL -> definition.getInMemoryInterval();
@@ -284,6 +289,16 @@ public class LiveViewsFunctionFactory implements FunctionFactory {
 
                 @Override
                 public CharSequence getStrA(int col) {
+                    if (instance.isVersionUnsupported()) {
+                        // The stub has a null definition; surface only the name
+                        // (from the token) and the status, NULL for the rest.
+                        return switch (col) {
+                            case COLUMN_VIEW_NAME -> instance.getLiveViewToken().getTableName();
+                            case COLUMN_VIEW_TABLE_DIR_NAME -> instance.getLiveViewToken().getDirName();
+                            case COLUMN_VIEW_STATUS -> instance.getLifecycleState().catalogueName();
+                            default -> null;
+                        };
+                    }
                     return switch (col) {
                         case COLUMN_VIEW_NAME -> definition.getViewName();
                         case COLUMN_VIEW_TABLE_DIR_NAME -> instance.getLiveViewToken().getDirName();
