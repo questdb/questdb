@@ -173,6 +173,12 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
             @Nullable ObjList<TableReader> leakedReaders
     ) {
         int leakedReadersCount = leakedReaders != null ? leakedReaders.size() : 0;
+        // Validation only compiles the SQL to check it; a validation failure is reported to the
+        // client, so do not log it as a server-side query error or inflate the error metrics.
+        // Still report reader leaks, as those indicate a real bug regardless of validation mode.
+        if (executionContext.isValidationOnly() && leakedReadersCount == 0) {
+            return;
+        }
         LogRecord log = null;
         try {
             executionContext.getCairoEngine().getMetrics().healthMetrics().incrementQueryErrorCounter();

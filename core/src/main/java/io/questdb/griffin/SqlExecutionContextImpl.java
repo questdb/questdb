@@ -540,6 +540,13 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
+    public boolean shouldLogSql() {
+        // Validation only compiles the SQL to check it; suppress query progress logging
+        // so the validation endpoint does not pollute the log with every validated statement.
+        return !validationOnly;
+    }
+
+    @Override
     public void storeTelemetry(short event, short origin) {
         telemetryFacade.store(event, origin);
     }
