@@ -46,6 +46,9 @@ jobs:
           javadoc_step: ""
           javadoc_profile: ""
         mac-other:
+          # No WEB_CONSOLE_PROFILE override: this group runs ServerMainTest, whose
+          # testServerUpgradeDoesNotOverrideWebConsoleConfig needs the bundled web
+          # console, so it inherits the default build-web-console profile.
           imageName: "macos-14"
           poolName: "Azure Pipelines"
           os: macOS
@@ -147,7 +150,9 @@ jobs:
           javadoc_step: ""
           javadoc_profile: ""
         windows-other-1:
-          WEB_CONSOLE_PROFILE: ""
+          # No WEB_CONSOLE_PROFILE override: this group runs ServerMainTest, whose
+          # testServerUpgradeDoesNotOverrideWebConsoleConfig needs the bundled web
+          # console, so it inherits the default build-web-console profile.
           imageName: "windows-latest"
           poolName: "Azure Pipelines"
           os: Windows
