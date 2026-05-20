@@ -861,6 +861,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
             CountDownLatch renameRegistered = new CountDownLatch(1);
             AtomicBoolean trackOpens = new AtomicBoolean(false);
             AtomicBoolean batchPausedOnce = new AtomicBoolean(false);
+            AtomicBoolean renameRegisteredTimedOut = new AtomicBoolean(false);
 
             FilesFacade ff = new TestFilesFacadeImpl() {
                 @Override
@@ -870,10 +871,18 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                             && Utf8s.containsAscii(name, tableName)
                             && Utf8s.containsAscii(name, "wal")
                             && Utf8s.endsWithAscii(name, ".d")) {
-                        walSegmentRolled.countDown();
+                        // Claim the pause slot BEFORE releasing the main thread.
+                        // The RENAME executed by the main thread also initializes
+                        // its own WAL segment, which opens matching .d column files.
+                        // If we counted down walSegmentRolled first, the main thread
+                        // could run RENAME and have its openRW win this slot, parking
+                        // the rename itself (deadlock) while the batch commits unparked.
                         if (batchPausedOnce.compareAndSet(false, true)) {
+                            walSegmentRolled.countDown();
                             try {
-                                renameRegistered.await(60, TimeUnit.SECONDS);
+                                if (!renameRegistered.await(60, TimeUnit.SECONDS)) {
+                                    renameRegisteredTimedOut.set(true);
+                                }
                             } catch (InterruptedException e) {
                                 Thread.currentThread().interrupt();
                             }
@@ -987,6 +996,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                 // Wait for sender thread to complete
                 senderThread.join(60_000);
                 Assert.assertFalse("Sender thread timed out", senderThread.isAlive());
+                Assert.assertFalse("Batch timed out waiting for the rename to register", renameRegisteredTimedOut.get());
 
                 // Check for errors
                 Throwable error = senderError.get();
