@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.ReaderScanProfile;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
@@ -172,9 +173,12 @@ public class SQLSerialParquetExporter extends BaseParquetExporter implements Clo
             }
 
             try (TableReader reader = cairoEngine.getReader(tableToken)) {
-                // Enable streaming mode to use MADV_SEQUENTIAL/DONTNEED hints,
-                // releasing page cache after each partition is processed
-                reader.setStreamingMode(true);
+                // SEQUENTIAL_EVICT: MADV_SEQUENTIAL/DONTNEED hints to release
+                // page cache after each partition, plus a hard cleanup
+                // backstop -- closeExcessPartitions(keepOpen=0) on pool
+                // return ensures the pooled reader doesn't accumulate
+                // mappings across exports.
+                reader.setScanProfile(ReaderScanProfile.SEQUENTIAL_EVICT);
                 final int timestampType = reader.getMetadata().getTimestampType();
                 final int partitionCount = reader.getPartitionCount();
                 final int partitionBy = reader.getPartitionedBy();
@@ -433,7 +437,7 @@ public class SQLSerialParquetExporter extends BaseParquetExporter implements Clo
             if (isPageFrameBacked) {
                 VirtualRecordCursorFactory vf = (VirtualRecordCursorFactory) factory;
                 pfc = vf.getBaseFactory().getPageFrameCursor(sqlExecutionContext, ORDER_ASC);
-                pfc.setStreamingMode(true);
+                pfc.setScanProfile(ReaderScanProfile.SEQUENTIAL_EVICT);
                 streamBuffers.setUpPageFrameBacked(vf, pfc, sqlExecutionContext);
                 exporter.setUp(streamBuffers.getAdjustedMetadata(), pfc, streamBuffers.getBaseColumnMap());
             } else {
@@ -500,7 +504,7 @@ public class SQLSerialParquetExporter extends BaseParquetExporter implements Clo
             switch (mode) {
                 case DIRECT_PAGE_FRAME -> {
                     try (PageFrameCursor pfc = baseFactory.getPageFrameCursor(sqlExecutionContext, ORDER_ASC)) {
-                        pfc.setStreamingMode(true);
+                        pfc.setScanProfile(ReaderScanProfile.SEQUENTIAL_EVICT);
                         RecordMetadata meta = baseFactory.getMetadata();
                         int colCount = meta.getColumnCount();
                         if (identityColumnMap.size() != colCount) {

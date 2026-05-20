@@ -339,7 +339,7 @@ public final class QwpConstants {
             case TYPE_BOOLEAN -> 0; // Special: bit-packed
             case TYPE_BYTE -> 1;
             case TYPE_SHORT, TYPE_CHAR -> 2;
-            case TYPE_INT, TYPE_FLOAT -> 4;
+            case TYPE_INT, TYPE_IPV4, TYPE_FLOAT -> 4;
             case TYPE_LONG, TYPE_DOUBLE, TYPE_TIMESTAMP, TYPE_TIMESTAMP_NANOS, TYPE_DATE, TYPE_DECIMAL64 -> 8;
             case TYPE_UUID, TYPE_DECIMAL128 -> 16;
             case TYPE_LONG256, TYPE_DECIMAL256 -> 32;
@@ -392,7 +392,7 @@ public final class QwpConstants {
     public static boolean isFixedWidthType(byte typeCode) {
         return switch (typeCode) {
             case TYPE_BOOLEAN, TYPE_BYTE, TYPE_SHORT, TYPE_CHAR,
-                 TYPE_INT, TYPE_LONG, TYPE_FLOAT, TYPE_DOUBLE,
+                 TYPE_INT, TYPE_IPV4, TYPE_LONG, TYPE_FLOAT, TYPE_DOUBLE,
                  TYPE_TIMESTAMP, TYPE_TIMESTAMP_NANOS, TYPE_DATE,
                  TYPE_UUID, TYPE_LONG256,
                  TYPE_DECIMAL64, TYPE_DECIMAL128, TYPE_DECIMAL256 -> true;
