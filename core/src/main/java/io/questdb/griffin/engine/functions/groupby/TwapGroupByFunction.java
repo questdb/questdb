@@ -32,7 +32,9 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.DoubleFunction;
 import io.questdb.griffin.engine.functions.GroupByFunction;
+import io.questdb.griffin.engine.groupby.SortedRunsMerge;
 import io.questdb.griffin.engine.groupby.GroupByAllocator;
+import io.questdb.std.LongList;
 import io.questdb.std.Numbers;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
@@ -55,14 +57,22 @@ import org.jetbrains.annotations.NotNull;
  * incorrectly bridge the gaps between those frames, attributing duration to
  * observations that belong to other workers.
  * <p>
- * Instead, each worker records all (timestamp, price) observations in a native
- * buffer. Within a single worker, observations arrive in timestamp order
- * (page frames are dispatched chronologically). During the merge phase, the
- * two sorted per-worker buffers are combined with a merge-sort merge step
- * into a fresh buffer in the destination's allocator - either the owner's
- * allocator on the non-sharded merge path or a per-worker allocator on the
- * sharded merge path. The final TWAP is computed from the fully sorted
- * buffer in {@link #getDouble(Record)}.
+ * Instead, each per-slot {@link GroupByFunction} instance records all
+ * (timestamp, price) observations into a native buffer through its own
+ * {@link GroupByAllocator}. A single {@code computeNext} loop processes one
+ * page frame's rows in timestamp order, producing one sorted run per frame.
+ * However, the slot a frame lands on is determined by lock acquisition in
+ * {@link io.questdb.griffin.engine.PerWorkerLocks}, not by the worker's
+ * identity, so under cross-query work-stealing a single slot's buffer can
+ * accumulate frames in non-monotonic order. The buffer is therefore best
+ * modelled as a concatenation of disjoint sorted runs whose key (timestamp)
+ * ranges do not overlap, since each frame covers a contiguous rowId range
+ * and frames are dispatched chronologically on TS-ordered data. See
+ * {@link SortedRunsMerge} for the run-permutation compaction that
+ * exploits this property at merge and read time.
+ * <p>
+ * The final TWAP is computed from the compacted, fully sorted buffer in
+ * {@link #getDouble(Record)}.
  * <p>
  * <b>MapValue layout</b> (3 slots):
  * <pre>
@@ -80,6 +90,9 @@ public class TwapGroupByFunction extends DoubleFunction implements GroupByFuncti
     private static final long ENTRY_SIZE = 16;
     private static final long INITIAL_CAPACITY = 16;
     private final Function priceFunc;
+    // Scratch list for run descriptors used by SortedRunsMerge. Not
+    // thread-safe; each per-slot function instance owns its own.
+    private final LongList runScratch = new LongList(16);
     private final Function tsFunc;
     private GroupByAllocator allocator;
     private long cachedPtr;
@@ -148,9 +161,17 @@ public class TwapGroupByFunction extends DoubleFunction implements GroupByFuncti
     }
 
     /**
-     * Computes TWAP from the sorted observation buffer. The result is memoized
-     * per buffer pointer so that repeated calls within the same SQL projection
-     * avoid re-scanning the buffer.
+     * Computes TWAP from the observation buffer. Before integration, ensures
+     * the buffer is a single sorted run via
+     * {@link SortedRunsMerge#compactInPlace}: under parallel GROUP BY the
+     * buffer may be a concatenation of disjoint sorted runs (one per frame
+     * landing on this slot), and the step-function integration relies on
+     * monotonic timestamps.
+     * <p>
+     * The result is memoized per buffer pointer so that repeated calls within
+     * the same SQL projection avoid re-scanning the buffer. The compaction
+     * step preserves the buffer pointer, so the cache key stays valid across
+     * the in-place sort.
      * <p>
      * The step-function integration walks consecutive pairs: each price is
      * weighted by the duration until the next observation. When all timestamps
@@ -166,6 +187,7 @@ public class TwapGroupByFunction extends DoubleFunction implements GroupByFuncti
         if (ptr == cachedPtr) {
             return cachedValue;
         }
+        SortedRunsMerge.compactInPlace(allocator, runScratch, ptr, count, ENTRY_SIZE);
         double result;
         if (count == 1) {
             result = Unsafe.getDouble(ptr + 8);
@@ -253,17 +275,18 @@ public class TwapGroupByFunction extends DoubleFunction implements GroupByFuncti
     }
 
     /**
-     * Merges a source worker's observation buffer into the destination buffer.
-     * Both buffers are sorted by timestamp within their respective workers.
-     * The merge produces a single sorted buffer using a classic merge-sort
-     * merge step, allocated in the destination's allocator - either the
-     * owner's allocator on the non-sharded merge path or a per-worker
-     * allocator on the sharded merge path.
+     * Combines the source slot's observation buffer with the destination's
+     * into a single sorted buffer allocated in the destination's allocator
+     * (the owner's allocator on the non-sharded merge path, a per-worker
+     * allocator on the sharded one). Both inputs are treated as
+     * concatenations of disjoint sorted runs (one run per page frame); the
+     * combined run set still satisfies the disjointness invariant because
+     * different frames cover disjoint rowId ranges. See
+     * {@link SortedRunsMerge} for the algorithm and the assertion that
+     * fails loudly under {@code -ea} if disjointness ever breaks.
      * <p>
-     * When the destination is empty, the source buffer is copied into a fresh
-     * allocation in the destination's allocator rather than copying the raw
-     * pointer, because the source buffer lives in a separate allocator that
-     * will be reclaimed independently.
+     * The old destination buffer is abandoned and reclaimed when the
+     * allocator is closed.
      */
     @Override
     public void merge(MapValue destValue, MapValue srcValue) {
@@ -272,55 +295,18 @@ public class TwapGroupByFunction extends DoubleFunction implements GroupByFuncti
             return;
         }
         long srcPtr = srcValue.getLong(valueIndex);
-
         long destCount = destValue.getLong(valueIndex + 1);
-        if (destCount <= 0) {
-            // Destination is empty — copy source buffer into owner's allocator
-            long newCapacity = Math.max(INITIAL_CAPACITY, srcCount);
-            long newPtr = allocator.malloc(newCapacity * ENTRY_SIZE);
-            Vect.memcpy(newPtr, srcPtr, srcCount * ENTRY_SIZE);
-            destValue.putLong(valueIndex, newPtr);
-            destValue.putLong(valueIndex + 1, srcCount);
-            destValue.putLong(valueIndex + 2, newCapacity);
-            return;
-        }
-
-        // Both non-empty: merge two sorted buffers
-        long destPtr = destValue.getLong(valueIndex);
+        long destPtr = destCount > 0 ? destValue.getLong(valueIndex) : 0;
         long mergedCount = destCount + srcCount;
         long mergedPtr = allocator.malloc(mergedCount * ENTRY_SIZE);
-
-        // Classic merge-sort merge of two sorted runs
-        long di = 0, si = 0, mi = 0;
-        while (di < destCount && si < srcCount) {
-            long destTs = Unsafe.getLong(destPtr + di * ENTRY_SIZE);
-            long srcTs = Unsafe.getLong(srcPtr + si * ENTRY_SIZE);
-            if (destTs <= srcTs) {
-                Vect.memcpy(mergedPtr + mi * ENTRY_SIZE, destPtr + di * ENTRY_SIZE, ENTRY_SIZE);
-                di++;
-            } else {
-                Vect.memcpy(mergedPtr + mi * ENTRY_SIZE, srcPtr + si * ENTRY_SIZE, ENTRY_SIZE);
-                si++;
-            }
-            mi++;
-        }
-        // Copy remaining tail from whichever run was not exhausted
-        if (di < destCount) {
-            Vect.memcpy(
-                    mergedPtr + mi * ENTRY_SIZE,
-                    destPtr + di * ENTRY_SIZE,
-                    (destCount - di) * ENTRY_SIZE
-            );
-        }
-        if (si < srcCount) {
-            Vect.memcpy(
-                    mergedPtr + mi * ENTRY_SIZE,
-                    srcPtr + si * ENTRY_SIZE,
-                    (srcCount - si) * ENTRY_SIZE
-            );
-        }
-
-        // Old dest buffer is abandoned — its allocator will reclaim the memory
+        SortedRunsMerge.compactInto(
+                allocator,
+                runScratch,
+                mergedPtr,
+                destPtr, destCount,
+                srcPtr, srcCount,
+                ENTRY_SIZE
+        );
         destValue.putLong(valueIndex, mergedPtr);
         destValue.putLong(valueIndex + 1, mergedCount);
         destValue.putLong(valueIndex + 2, mergedCount);
