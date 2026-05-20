@@ -6226,8 +6226,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private long getWalMaxLagRows() {
-        return Math.min(
-                Math.max(0L, (long) configuration.getWalLagRowsMultiplier() * metadata.getMaxUncommittedRows()),
+        return Math.clamp((long) configuration.getWalLagRowsMultiplier() * metadata.getMaxUncommittedRows(), 0L,
                 getWalMaxLagSize()
         );
     }
@@ -6451,6 +6450,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      */
     private void housekeep(long wallClockMicros) {
         try {
+            // Drain async writer commands (e.g. storage policy parquet commit / drop local / squash)
+            // published while the writer was busy. The WAL apply path does not otherwise tick the
+            // command queue, so without this such commands could sit unprocessed on hot tables.
+            processCommandQueue(false);
             squashSplitPartitions(minSplitPartitionTimestamp, txWriter.getMaxTimestamp(), configuration.getO3LastPartitionMaxSplits());
             processPartitionRemoveCandidates();
             metrics.tableWriterMetrics().incrementCommits();
@@ -9931,7 +9934,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
             final int rowGroupCount = parquetMetadata.getRowGroupCount();
             for (int rowGroupIndex = 0; rowGroupIndex < rowGroupCount; rowGroupIndex++) {
-                assert parquetMetadata.getRowGroupSize(rowGroupIndex) <= Integer.MAX_VALUE;
                 final long rowGroupRowCount = parquetFileDecoder.decodeRowGroup(
                         rowGroupBuffers,
                         parquetColumnIdsAndTypes,
