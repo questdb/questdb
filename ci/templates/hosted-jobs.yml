@@ -162,10 +162,10 @@ jobs:
           # Exclude cairo: run in windows-cairo-1, windows-cairo-2, windows-fuzz1
           # Exclude compat/cliutil: run in Linux (JavaAndRustLint stage)
           # Exclude pgwire: run in windows-pgwire
-          # Exclude cutlass/http: run in windows-other-2
+          # Exclude cutlass/http, cutlass/qwp, cutlass/text: run in windows-other-2
           # Exclude Fuzz tests: run in windows-fuzz1 and windows-fuzz2
           # Exclude O3 tests: run in windows-other-2
-          excludeTests: "**/griffin/**,**/cairo/**,**/compat/**,**/cliutil/**,**/pgwire/**,**/cutlass/http/**,**/**Fuzz**,**/O3*Test**"
+          excludeTests: "**/griffin/**,**/cairo/**,**/compat/**,**/cliutil/**,**/pgwire/**,**/cutlass/http/**,**/cutlass/qwp/**,**/cutlass/text/**,**/**Fuzz**,**/O3*Test**"
           javadoc_step: ""
           javadoc_profile: ""
         windows-other-2:
@@ -174,7 +174,8 @@ jobs:
           os: Windows
           jdk: "1.25"
           testset: "all"
-          includeTests: "**/cutlass/http/**,**/O3*Test**"
+          # Heavier cutlass groups (http, qwp, text) plus O3 tests; balances wall-clock with windows-other-1
+          includeTests: "**/cutlass/http/**,**/cutlass/qwp/**,**/cutlass/text/**,**/O3*Test**"
           # Exclude Fuzz tests: run in windows-fuzz2
           # Exclude cairo/o3 and cairo/mv: run in windows-cairo-2
           excludeTests: "**/**Fuzz**,**/cairo/o3/**,**/cairo/mv/**"
