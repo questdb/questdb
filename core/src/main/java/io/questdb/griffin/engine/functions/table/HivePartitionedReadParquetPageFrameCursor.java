@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.functions.table;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ParquetFileCache;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.VarcharTypeDriver;
 import io.questdb.cairo.sql.ColumnMapping;
@@ -114,10 +115,12 @@ public class HivePartitionedReadParquetPageFrameCursor implements PageFrameCurso
     private static final int VARCHAR_AUX_ENTRY_BYTES = 16;
     private static final int VARCHAR_HEADER_FLAG_ASCII = 2;
     private final ColumnMapping columnMapping = new ColumnMapping();
-    // Per-file cache handles (factory-owned); slot index aligns with decoders.
-    // The cursor borrows references; it must not free entries here - the factory's
-    // LRU cache does that.
-    private final ObjList<HivePartitionedReadParquetRecordCursorFactory.CachedFile> cachedFiles = new ObjList<>();
+    // Per-file shared-cache entries; slot index aligns with decoders. Each entry
+    // is acquired from {@link ParquetFileCache} and MUST be released when the
+    // cursor is done with that file - the engine-wide cache uses refcounts so
+    // a pinned (in-flight) entry stays alive while another cursor independently
+    // acquires the same path.
+    private final ObjList<ParquetFileCache.Entry> cachedFiles = new ObjList<>();
     private final ObjList<ParquetFileDecoder> decoders = new ObjList<>();
     private final FilesFacade ff;
     private final LongList filterBufEnds = new LongList();
@@ -608,10 +611,16 @@ public class HivePartitionedReadParquetPageFrameCursor implements PageFrameCurso
                 sum += perFile.getQuick(i);
             } else {
                 // Cache miss - open only this survivor's footer through the
-                // factory's LRU. Subsequent next() walks may reuse the same
-                // entry; the open cost is paid once per file regardless.
-                HivePartitionedReadParquetRecordCursorFactory.CachedFile cf = factory.openCachedFile(filePath, ff);
-                sum += cf.decoder.metadata().getRowCount();
+                // engine-shared parquet cache. Acquire/release narrowly: we
+                // only need the row count, so primethe entry and immediately
+                // hand it back to the LRU.
+                final ParquetFileCache parquetCache = factory.getParquetFileCache();
+                final ParquetFileCache.Entry e = parquetCache.acquire(filePath, ff);
+                try {
+                    sum += e.decoder.metadata().getRowCount();
+                } finally {
+                    parquetCache.release(e);
+                }
             }
         }
         cachedPrunedTotal = sum;
@@ -645,10 +654,14 @@ public class HivePartitionedReadParquetPageFrameCursor implements PageFrameCurso
         if (fileIndex < 0 || fileIndex >= decoders.size()) {
             return;
         }
-        // Decoder + fd + mmap belong to the factory's CachedFile - DON'T free here.
-        // Just unreference so the cursor doesn't keep using a stale decoder after a
-        // cache eviction would have invalidated it. The factory's LRU determines
-        // when the underlying OS resources are actually released.
+        // Release the cursor's refcount on the shared cache entry. The fd / mmap /
+        // decoder live on in the engine-shared cache as long as another cursor
+        // holds a ref OR the cache's LRU keeps it around; only when refcount=0
+        // AND the cache is over its byte/entry budget does the entry get freed.
+        final ParquetFileCache.Entry entry = cachedFiles.getQuick(fileIndex);
+        if (entry != null) {
+            factory.getParquetFileCache().release(entry);
+        }
         decoders.setQuick(fileIndex, null);
         cachedFiles.setQuick(fileIndex, null);
         DirectLongList fl = filterLists.getQuick(fileIndex);
@@ -1008,12 +1021,17 @@ public class HivePartitionedReadParquetPageFrameCursor implements PageFrameCurso
             }
         } while (isPruned);
         final int fileIndex = ++currentFileIndex;
-        // Factory-owned cache returns the parsed ParquetFileDecoder plus the fd and
-        // mmap it sits over. The cursor borrows the decoder reference; the cache
-        // owns the lifetime and the cursor MUST NOT free anything in CachedFile.
-        final HivePartitionedReadParquetRecordCursorFactory.CachedFile cachedFile = factory.openCachedFile(filePath, ff);
+        // Acquire the file's decoder + fd + mmap from the engine-shared
+        // ParquetFileCache. The cursor OWNS this reference until closeFile()
+        // releases it back; the cache refcount lets two cursors against the
+        // same path share the underlying handles without either disturbing
+        // the other's lifetime.
+        final ParquetFileCache.Entry cachedFile = factory.getParquetFileCache().acquire(filePath, ff);
         final ParquetFileDecoder decoder = cachedFile.decoder;
         if (parquetColumnCount > 0 && !canProjectMetadata(parquetMetadata, decoder, null, null)) {
+            // Schema mismatch: release the just-acquired entry before throwing
+            // so a chain of mismatched files doesn't leak refs into the cache.
+            factory.getParquetFileCache().release(cachedFile);
             throw CairoException.nonCritical()
                     .put("parquet schema mismatch: file '")
                     .put(filePath)

@@ -25,9 +25,9 @@
 package io.questdb.griffin.engine.functions.table;
 
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
+import io.questdb.cairo.ParquetFileCache;
 import io.questdb.cairo.ProjectableRecordCursorFactory;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.PageFrameCursor;
@@ -50,8 +50,6 @@ import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
-import io.questdb.std.QuietCloseable;
-import io.questdb.std.Utf8SequenceObjHashMap;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.DirectUtf8StringList;
 import io.questdb.std.str.Path;
@@ -155,29 +153,16 @@ public class HivePartitionedReadParquetRecordCursorFactory extends ProjectableRe
     // emitted row count without re-opening files. Reads under the synchronized
     // lock; published with cachedTotalRowCount.
     private final io.questdb.std.LongList cachedPerFileRowCounts = new io.questdb.std.LongList();
-    // Tracks sum of mapSize across all CachedFile entries currently in fileCache.
-    // Maintained under the synchronized lock alongside fileCacheLruOrder so eviction
-    // can stop adding new entries once the byte budget is exceeded, independent of
-    // the entry-count cap.
-    private long currentCacheBytes;
-    // Per-file cache of mmap + parsed parquet footer + ParquetFileDecoder, owned by
-    // the factory and bounded by maxConcurrentOpenFiles (LRU). Lets cursor reuse
-    // skip the open+mmap+parse-footer cost when the same factory runs more than
-    // one query against overlapping files - common for prepared statements and any
-    // JMH-style replay. Cache eviction releases the fd back through FdCache and
-    // the mmap back through MmapCache, so peak OS resource usage stays bounded.
-    private final Utf8SequenceObjHashMap<CachedFile> fileCache = new Utf8SequenceObjHashMap<>();
-    private final ObjList<CachedFile> fileCacheLruOrder = new ObjList<>();
-    // Scratch Path reused inside the synchronized openCachedFile body so we do not
-    // alloc-and-free a Path's native buffer per cursor file-open. Lazy-init on first
-    // miss; nulled in _close.
-    private Path scratchPath;
-    // Set true by _close to refuse opens that win the synchronized lock after the
-    // factory has been told to shut down. Without this, a prefetch task that was
-    // queued before _close ran (or had just released the lock to retry) could
-    // acquire the lock once _close released it, insert a fresh CachedFile into the
-    // already-cleared map, and leak the fd + mmap. Volatile is enough: the read
-    // happens under the synchronized lock, which provides the visibility barrier.
+    // Engine-shared cache of opened+mmapped+footer-parsed parquet files. Each
+    // cursor borrows entries via {@code acquire()}/{@code release()} - the
+    // factory itself does not hold long-lived refs (prefetch acquires-and-releases
+    // as a warm-up hint). Memory is bounded globally by cairo.parquet.cache.max.*
+    // rather than per-factory.
+    private final ParquetFileCache parquetCache;
+    // Set true by _close to refuse new prefetch submissions after the factory has
+    // been told to shut down. The shared cache itself is engine-owned and never
+    // shuts down with the factory; this flag is only used to wind down the
+    // prefetch executor cleanly.
     private volatile boolean closed;
     // Single-thread executor used to open files ahead of the cursor's iteration.
     // Lazy: only created if a query actually triggers a prefetch. Daemon thread so
@@ -189,6 +174,7 @@ public class HivePartitionedReadParquetRecordCursorFactory extends ProjectableRe
 
     public HivePartitionedReadParquetRecordCursorFactory(
             @NotNull CairoConfiguration configuration,
+            @NotNull ParquetFileCache parquetCache,
             @NotNull DirectUtf8StringList matchedFiles,
             @NotNull CharSequence globPattern,
             int nonGlobRootByteLen,
@@ -199,6 +185,7 @@ public class HivePartitionedReadParquetRecordCursorFactory extends ProjectableRe
     ) {
         super(wrappingMetadata);
         this.configuration = configuration;
+        this.parquetCache = parquetCache;
         this.matchedFiles = matchedFiles;
         this.globPattern = globPattern.toString();
         this.nonGlobRootByteLen = nonGlobRootByteLen;
@@ -231,7 +218,7 @@ public class HivePartitionedReadParquetRecordCursorFactory extends ProjectableRe
                     partitionColumnNames,
                     partitionColumnTypes,
                     nonGlobRootByteLen,
-                    configuration.getSqlParquetHiveMaxOpenFiles(),
+                    configuration.getParquetCacheMaxEntries(),
                     projectedToParquetWriterIdx,
                     projectedToPartitionIdx,
                     pushdownFilterConditions,
@@ -436,42 +423,6 @@ public class HivePartitionedReadParquetRecordCursorFactory extends ProjectableRe
         return cachedPerFileRowCounts;
     }
 
-    /**
-     * Cached open parquet file: fd, mmap, and parsed footer/decoder. Owned by
-     * the factory's fileCache; the cursor borrows the {@link #decoder} reference
-     * but must not free the entry. Close releases the fd via FdCache and the
-     * mmap via MmapCache, both refcounted - if another cursor still holds the
-     * underlying handles via a concurrent path open, the OS resources stay live.
-     */
-    public static final class CachedFile implements QuietCloseable {
-        public final Utf8String cachedPath;
-        public final ParquetFileDecoder decoder;
-        public final long fd;
-        public final FilesFacade ff;
-        public final long mapAddr;
-        public final long mapSize;
-
-        CachedFile(FilesFacade ff, Utf8String path, long fd, long mapAddr, long mapSize, ParquetFileDecoder decoder) {
-            this.ff = ff;
-            this.cachedPath = path;
-            this.fd = fd;
-            this.mapAddr = mapAddr;
-            this.mapSize = mapSize;
-            this.decoder = decoder;
-        }
-
-        @Override
-        public void close() {
-            Misc.free(decoder);
-            if (mapAddr != 0) {
-                ff.munmap(mapAddr, mapSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
-            }
-            if (fd != -1) {
-                ff.close(fd);
-            }
-        }
-    }
-
     // True iff the partition column whose runtime value is parsed from the directory
     // path can be exactly compared at planning time against constants of this type.
     // Must match HivePartitionedReadParquetPageFrameCursor.canCompareTyped - the cursor
@@ -614,16 +565,6 @@ public class HivePartitionedReadParquetRecordCursorFactory extends ProjectableRe
 
     @Override
     protected void _close() {
-        // Two-phase shutdown. Phase 1: take the monitor briefly to (a) flip
-        // the `closed` flag so subsequent schedulePrefetch / openCachedFile
-        // calls short-circuit, (b) snapshot the executor reference, and (c)
-        // free all owned state. Phase 2: shut the executor down OUTSIDE the
-        // monitor so any prefetch task already parked on openCachedFile's
-        // synchronized acquire can grab the lock, observe closed=true, and
-        // exit fast via the CairoException path. Doing the shutdown inside
-        // the synchronized block self-deadlocked: awaitTermination always
-        // timed out at its 2-second cap because parked tasks could never
-        // acquire the lock to make progress.
         ExecutorService toShutdown;
         synchronized (this) {
             if (closed) {
@@ -636,21 +577,13 @@ public class HivePartitionedReadParquetRecordCursorFactory extends ProjectableRe
             Misc.free(pageFrameRecordCursor);
             Misc.free(pageFrameCursor);
             Misc.freeObjListAndClear(pushdownFilterConditions);
-            for (int i = 0, n = fileCacheLruOrder.size(); i < n; i++) {
-                Misc.free(fileCacheLruOrder.getQuick(i));
-            }
-            fileCacheLruOrder.clear();
-            fileCache.clear();
-            currentCacheBytes = 0;
-            scratchPath = Misc.free(scratchPath);
         }
         if (toShutdown != null) {
+            // Shut the executor down OUTSIDE the monitor so any prefetch task
+            // mid-acquire on the shared cache can finish without contending on
+            // our own lock. The cache is engine-scoped and lives beyond this
+            // factory; nothing here needs to drain it.
             toShutdown.shutdownNow();
-            // Best-effort wait. Most parked tasks bail in under a millisecond
-            // once they acquire the monitor and see closed=true; anything
-            // mid-mmap finishes in single-digit milliseconds. 100 ms is a
-            // safety cap, not the expected cost. The daemon thread will exit
-            // the JVM cleanly even if this times out.
             try {
                 toShutdown.awaitTermination(100, TimeUnit.MILLISECONDS);
             } catch (InterruptedException e) {
@@ -659,33 +592,29 @@ public class HivePartitionedReadParquetRecordCursorFactory extends ProjectableRe
         }
     }
 
+    public ParquetFileCache getParquetFileCache() {
+        return parquetCache;
+    }
+
     /**
-     * Schedule an asynchronous open of {@code path} so its decoder is hot in the
-     * cache before the cursor reaches it. Returns immediately. Best-effort: if the
-     * open fails (file deleted, schema drift) the prefetch is silently dropped and
-     * the cursor's later synchronous open will surface the error.
+     * Schedule asynchronous opens for every matched file up front. Best-effort
+     * priming of the engine-shared {@link ParquetFileCache}: the prefetch task
+     * does an acquire-release pair, so the entry lands in the cache LRU but
+     * is immediately eligible for eviction under pressure. Under sufficient
+     * cache budget the cursor's later acquire is a hit; under tight budget,
+     * prefetched entries get displaced before consumption and prefetch is a
+     * no-op - the right behaviour because the dataset does not fit anyway.
      * <p>
-     * The prefetch worker calls {@link #openCachedFile} which is synchronized -
-     * concurrent prefetch and cursor opens for the same path serialise via that
-     * lock, so the cursor's open observes a populated cache entry rather than
-     * duplicating the work. Sharing also lands automatically at the OS layer
-     * because both code paths go through TableUtils.openRO/mapRO which dedupe via
-     * FdCache and MmapCache.
-     */
-    /**
-     * Schedule asynchronous opens for every matched file up front. Intended for the
-     * very first {@code getCursor()} call - it lets file open + mmap + footer parse
-     * run in parallel with the cursor's first decoded frame, instead of being paid
-     * serially on demand. Subsequent cursor calls find a populated cache and skip
-     * the open cost entirely. No-op when the file count exceeds the cache cap
-     * (would only thrash the LRU). Safe to call concurrently with cursor iteration.
+     * No-op when the file count would individually overrun the cache entry
+     * cap; prefetching past it would only thrash. Safe to call concurrently
+     * with cursor iteration.
      */
     public void schedulePrefetchAll(FilesFacade ff) {
         if (closed) {
             return;
         }
         final int n = matchedFiles.size();
-        if (n == 0 || n > configuration.getSqlParquetHiveMaxOpenFiles()) {
+        if (n == 0) {
             return;
         }
         for (int i = 0; i < n; i++) {
@@ -700,10 +629,6 @@ public class HivePartitionedReadParquetRecordCursorFactory extends ProjectableRe
         ExecutorService executor = prefetchExecutor;
         if (executor == null) {
             synchronized (this) {
-                // Re-check closed under the lock - _close also sets `closed` while
-                // holding the monitor, so this guard rules out the post-close racy
-                // creation of a fresh executor whose daemon thread would then linger
-                // for the JVM's lifetime with no work to do.
                 if (closed) {
                     return;
                 }
@@ -718,101 +643,25 @@ public class HivePartitionedReadParquetRecordCursorFactory extends ProjectableRe
                 }
             }
         }
-        // Copy the path bytes - the original Utf8Sequence is a flyweight backed by
-        // the DirectUtf8StringList that may be advancing under iteration.
+        // Copy the path bytes - the original Utf8Sequence is a flyweight backed
+        // by the DirectUtf8StringList that may advance under iteration.
         final Utf8String key = Utf8String.newInstance(path);
         try {
             executor.submit(() -> {
+                ParquetFileCache.Entry entry = null;
                 try {
-                    openCachedFile(key, ff);
+                    entry = parquetCache.acquire(key, ff);
                 } catch (Throwable ignored) {
-                    // Best-effort prefetch; the cursor will retry synchronously on demand
-                    // and surface any real error there.
+                    // Best-effort prefetch; cursor's sync acquire surfaces real errors.
+                } finally {
+                    if (entry != null) {
+                        parquetCache.release(entry);
+                    }
                 }
             });
         } catch (RejectedExecutionException ignored) {
-            // Executor shutting down. Cursor's sync open path will handle.
+            // Executor shutting down. Cursor's sync acquire path will handle.
         }
-    }
-
-    /**
-     * Returns a cached open-and-parsed handle to {@code path}, opening it on demand
-     * if missing. The cursor must NOT close the returned {@link CachedFile} - the
-     * factory owns its lifetime. Used by the cursor's openNextFile in place of the
-     * direct openRO/mapRO + ParquetFileDecoder.of sequence, so repeated queries
-     * against the same factory skip the file-open + metadata-parse cost.
-     */
-    public synchronized CachedFile openCachedFile(Utf8Sequence path, FilesFacade ff) {
-        if (closed) {
-            // _close has already drained the cache. Either we're a prefetch task that
-            // was queued before shutdown, or the caller has a bug holding the factory
-            // open past close. Refusing here keeps the post-close map empty and the
-            // CairoException surfaces the bug if the cursor is at fault.
-            throw CairoException.nonCritical().put("hive parquet factory is closed");
-        }
-        final int idx = fileCache.keyIndex(path);
-        if (idx < 0) {
-            CachedFile hit = fileCache.valueAt(idx);
-            // Touch LRU: move to tail. Linear scan - the list is bounded by
-            // maxConcurrentOpenFiles so it stays small (4096 by default), and this
-            // path runs from the cursor's single-threaded iteration only.
-            final int n = fileCacheLruOrder.size();
-            for (int i = 0; i < n; i++) {
-                if (fileCacheLruOrder.getQuick(i) == hit) {
-                    if (i != n - 1) {
-                        fileCacheLruOrder.remove(i);
-                        fileCacheLruOrder.add(hit);
-                    }
-                    break;
-                }
-            }
-            return hit;
-        }
-        // Miss - open. Evict LRU until BOTH (a) the entry count is below the cap and
-        // (b) the byte budget would still cover one more entry. The byte check is
-        // best-effort: at the moment of decision we don't know the new entry's size,
-        // so we leave one slot of headroom and re-check after insertion. Eviction
-        // removes from BOTH the map and the order list, then frees the entry (which
-        // releases fd and mmap back to FdCache / MmapCache and decrements the byte
-        // counter).
-        final int maxEntries = configuration.getSqlParquetHiveMaxOpenFiles();
-        final long maxBytes = configuration.getSqlParquetHiveMaxCacheBytes();
-        while (fileCacheLruOrder.size() >= maxEntries
-                || (currentCacheBytes > maxBytes && fileCacheLruOrder.size() > 0)) {
-            CachedFile victim = fileCacheLruOrder.getQuick(0);
-            fileCacheLruOrder.remove(0);
-            fileCache.remove(victim.cachedPath);
-            currentCacheBytes -= victim.mapSize;
-            Misc.free(victim);
-        }
-        final Utf8String key = Utf8String.newInstance(path);
-        final CachedFile entry;
-        if (scratchPath == null) {
-            scratchPath = new Path(MemoryTag.NATIVE_PATH);
-        }
-        scratchPath.of(path);
-        final long fd = TableUtils.openRO(ff, scratchPath.$(), LOG);
-        long addr = 0;
-        long size = 0;
-        ParquetFileDecoder decoder = null;
-        try {
-            size = ff.length(fd);
-            addr = TableUtils.mapRO(ff, fd, size, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
-            decoder = new ParquetFileDecoder();
-            decoder.of(addr, size, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
-        } catch (Throwable th) {
-            if (addr != 0) {
-                ff.munmap(addr, size, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
-            }
-            ff.close(fd);
-            Misc.free(decoder);
-            throw th;
-        }
-        entry = new CachedFile(ff, key, fd, addr, size, decoder);
-        fileCache.putAt(idx, key, entry);
-        fileCacheLruOrder.add(entry);
-        currentCacheBytes += size;
-        return entry;
     }
 
     private RecordCursor getLegacyCursor(SqlExecutionContext executionContext) throws SqlException {
@@ -820,6 +669,7 @@ public class HivePartitionedReadParquetRecordCursorFactory extends ProjectableRe
         try {
             parquetCursor = new ReadParquetRecordCursor(
                     configuration.getFilesFacade(),
+                    parquetCache,
                     parquetMetadata,
                     pushdownFilterConditions
             );
@@ -856,7 +706,7 @@ public class HivePartitionedReadParquetRecordCursorFactory extends ProjectableRe
                     partitionColumnNames,
                     partitionColumnTypes,
                     nonGlobRootByteLen,
-                    configuration.getSqlParquetHiveMaxOpenFiles(),
+                    configuration.getParquetCacheMaxEntries(),
                     projectedToParquetWriterIdx,
                     projectedToPartitionIdx,
                     pushdownFilterConditions,

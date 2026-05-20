@@ -515,9 +515,9 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final boolean sqlParallelWindowJoinEnabled;
     private final long sqlParallelWorkStealingSpinTimeout;
     private final int sqlParallelWorkStealingThreshold;
+    private final long parquetCacheMaxBytes;
+    private final int parquetCacheMaxEntries;
     private final int sqlParquetFrameCacheCapacity;
-    private final long sqlParquetHiveMaxCacheBytes;
-    private final int sqlParquetHiveMaxOpenFiles;
     private final boolean sqlParquetHiveParallelEnabled;
     private final boolean sqlParquetRowGroupPruningEnabled;
     private final boolean sqlParquetVerifySortClaimEnabled;
@@ -2121,8 +2121,14 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.sqlParallelWorkStealingThreshold = getInt(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_WORK_STEALING_THRESHOLD, 16);
             this.sqlParallelWorkStealingSpinTimeout = getNanos(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_WORK_STEALING_SPIN_TIMEOUT, 50_000);
             this.sqlParquetFrameCacheCapacity = Math.max(getInt(properties, env, PropertyKey.CAIRO_SQL_PARQUET_FRAME_CACHE_CAPACITY, 8), 8);
-            this.sqlParquetHiveMaxOpenFiles = Math.max(getInt(properties, env, PropertyKey.CAIRO_SQL_PARQUET_HIVE_MAX_OPEN_FILES, 4096), 1);
-            this.sqlParquetHiveMaxCacheBytes = Math.max(getLong(properties, env, PropertyKey.CAIRO_SQL_PARQUET_HIVE_MAX_CACHE_BYTES, 16L * 1024 * 1024 * 1024), 1L);
+            // New parquet shared-cache keys; fall back to legacy per-hive-factory keys
+            // for one release so existing operator configs keep working. Defaults are
+            // a global ceiling - 1 GiB / 1024 entries - not the 16 GiB / 4096 of the
+            // old per-factory model which scaled with concurrent factories.
+            this.parquetCacheMaxEntries = Math.max(getInt(properties, env, PropertyKey.CAIRO_PARQUET_CACHE_MAX_ENTRIES,
+                    getInt(properties, env, PropertyKey.CAIRO_SQL_PARQUET_HIVE_MAX_OPEN_FILES, 1024)), 1);
+            this.parquetCacheMaxBytes = Math.max(getLong(properties, env, PropertyKey.CAIRO_PARQUET_CACHE_MAX_BYTES,
+                    getLong(properties, env, PropertyKey.CAIRO_SQL_PARQUET_HIVE_MAX_CACHE_BYTES, 1024L * 1024 * 1024)), 1L);
             this.sqlParquetHiveParallelEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_PARQUET_HIVE_PARALLEL_ENABLED, true);
             this.sqlParquetRowGroupPruningEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_PARQUET_ROW_GROUP_PRUNING_ENABLED, true);
             this.sqlParquetVerifySortClaimEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_PARQUET_VERIFY_SORT_CLAIM_ENABLED, false);
@@ -4548,13 +4554,13 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public long getSqlParquetHiveMaxCacheBytes() {
-            return sqlParquetHiveMaxCacheBytes;
+        public long getParquetCacheMaxBytes() {
+            return parquetCacheMaxBytes;
         }
 
         @Override
-        public int getSqlParquetHiveMaxOpenFiles() {
-            return sqlParquetHiveMaxOpenFiles;
+        public int getParquetCacheMaxEntries() {
+            return parquetCacheMaxEntries;
         }
 
         @Override

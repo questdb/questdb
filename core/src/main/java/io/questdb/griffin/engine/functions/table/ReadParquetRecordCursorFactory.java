@@ -65,7 +65,12 @@ public class ReadParquetRecordCursorFactory extends ProjectableRecordCursorFacto
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         final CairoConfiguration configuration = executionContext.getCairoEngine().getConfiguration();
         if (cursor == null) {
-            cursor = new ReadParquetRecordCursor(configuration.getFilesFacade(), getMetadata(), pushdownFilterConditions);
+            cursor = new ReadParquetRecordCursor(
+                    configuration.getFilesFacade(),
+                    executionContext.getCairoEngine().getParquetFileCache(),
+                    getMetadata(),
+                    pushdownFilterConditions
+            );
         }
         // Sync the cursor's iteration direction with the factory's flag
         // BEFORE of() - the cursor's toTop (called from of()) seeds its row

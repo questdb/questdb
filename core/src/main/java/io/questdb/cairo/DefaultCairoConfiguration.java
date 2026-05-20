@@ -1167,15 +1167,17 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public int getSqlParquetHiveMaxOpenFiles() {
-        return 4096;
+    public long getParquetCacheMaxBytes() {
+        // 1 GiB default. The cache holds mmap regions whose pages count against
+        // process RSS once touched; a budget far above process memory is a foot
+        // gun on small / shared machines. Sites with large parquet datasets and
+        // plenty of RAM can raise this via cairo.parquet.cache.max.bytes.
+        return 1024L * 1024 * 1024;
     }
 
     @Override
-    public long getSqlParquetHiveMaxCacheBytes() {
-        // 16 GiB - matches what an OLAP server can comfortably keep mapped without
-        // pressuring the OS file-cache reclaim. Lower this in sandboxed envs.
-        return 16L * 1024 * 1024 * 1024;
+    public int getParquetCacheMaxEntries() {
+        return 1024;
     }
 
     @Override

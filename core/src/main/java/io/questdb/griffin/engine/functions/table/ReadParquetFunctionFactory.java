@@ -333,6 +333,7 @@ public class ReadParquetFunctionFactory implements FunctionFactory {
         context.storeTelemetry(TelemetryEvent.READ_PARQUET, TelemetryOrigin.NO_MATTERS);
         return new CursorFunction(new HivePartitionedReadParquetRecordCursorFactory(
                 configuration,
+                context.getCairoEngine().getParquetFileCache(),
                 matchedFiles,
                 originalPattern,
                 nonGlobRootByteLen,

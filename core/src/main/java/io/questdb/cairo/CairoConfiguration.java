@@ -747,18 +747,24 @@ public interface CairoConfiguration {
 
     int getSqlParallelWorkStealingThreshold();
 
-    int getSqlParquetFrameCacheCapacity();
-
-    int getSqlParquetHiveMaxOpenFiles();
-
     /**
-     * Total mmap byte budget for the per-hive-factory {@code CachedFile} cache.
+     * Total mmap byte budget for the engine-shared {@code ParquetFileCache}.
      * Reads of any parquet file beyond this size pressure the LRU into evicting
      * older entries even when the entry-count cap is not reached. Protects against
-     * address-space exhaustion when matched parquet files are individually large.
+     * address-space exhaustion when scanned parquet files are individually large.
      * Default is large enough for typical OLAP workloads; lower for sandboxed envs.
      */
-    long getSqlParquetHiveMaxCacheBytes();
+    long getParquetCacheMaxBytes();
+
+    /**
+     * Maximum number of entries in the engine-shared {@code ParquetFileCache}.
+     * Once exceeded, the LRU starts evicting refcount=0 entries on the next
+     * acquire. Refcount &gt; 0 entries are pinned and the cache may temporarily
+     * exceed this cap while many parquet files are read concurrently.
+     */
+    int getParquetCacheMaxEntries();
+
+    int getSqlParquetFrameCacheCapacity();
 
     int getSqlPivotMaxProducedColumns();
 

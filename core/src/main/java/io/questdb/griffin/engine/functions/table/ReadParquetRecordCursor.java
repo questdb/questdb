@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.functions.table;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ParquetFileCache;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.VarcharTypeDriver;
 import io.questdb.cairo.arr.ArrayView;
@@ -85,19 +86,23 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
     private final LongList auxPtrs = new LongList();
     private final DirectIntList columns;
     private final LongList dataPtrs = new LongList();
-    private final ParquetFileDecoder decoder;
     private final FilesFacade ff;
     private final DirectLongList filterList;
     private final MemoryCARWImpl filterValues;
     // doesn't include unsupported columns
     private final RecordMetadata metadata;
+    // Engine-shared parquet cache. The cursor borrows entries via acquire()
+    // and MUST release them on close / on the next of() / ofMetadata() call.
+    private final ParquetFileCache parquetCache;
     private final @Nullable ObjList<PushdownFilterExtractor.PushdownFilterCondition> pushdownFilterConditions;
     private final ParquetRecord record;
     private final RowGroupBuffers rowGroupBuffers;
-    private long addr = 0;
+    // Currently-held cache entry. Non-null between of()/ofMetadata() and the
+    // matching closeFile(). The decoder field always tracks currentEntry.decoder
+    // - kept as a field for hot getter paths that would otherwise pay a chase.
+    private ParquetFileCache.Entry currentEntry;
     private int currentRowInRowGroup;
-    private long fd = -1;
-    private long fileSize = 0;
+    private ParquetFileDecoder decoder;
     private long filterBufEnd;
     private boolean isFilterListPrepared;
     // When true, hasNext walks row groups from last to first and rows within
@@ -116,11 +121,11 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
     private int rowGroupIndex;
     private long rowGroupRowCount;
 
-    public ReadParquetRecordCursor(FilesFacade ff, RecordMetadata metadata, @Nullable ObjList<PushdownFilterExtractor.PushdownFilterCondition> pushdownFilterConditions) {
+    public ReadParquetRecordCursor(FilesFacade ff, ParquetFileCache parquetCache, RecordMetadata metadata, @Nullable ObjList<PushdownFilterExtractor.PushdownFilterCondition> pushdownFilterConditions) {
         try {
             this.ff = ff;
+            this.parquetCache = parquetCache;
             this.metadata = metadata;
-            this.decoder = new ParquetFileDecoder();
             this.rowGroupBuffers = new RowGroupBuffers(MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
             this.columns = new DirectIntList(32, MemoryTag.NATIVE_DEFAULT);
             this.record = new ParquetRecord(metadata.getColumnCount());
@@ -230,13 +235,15 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
 
     @Override
     public void close() {
-        Misc.free(decoder);
+        // The decoder is owned by ParquetFileCache - closeFile() releases the
+        // shared ref. Do NOT free it here. Internal buffers below are owned by
+        // this cursor and must be freed.
+        closeFile();
         Misc.free(rowGroupBuffers);
         Misc.free(columns);
         Misc.free(record);
         Misc.free(filterList);
         Misc.free(filterValues);
-        closeFile();
     }
 
     /**
@@ -283,10 +290,8 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
         // Reopen the file; it could have changed since the last call, or this cursor may
         // be reused across files by HivePartitionedReadParquetRecordCursor.
         closeFile();
-        this.fd = TableUtils.openRO(ff, path, LOG);
-        this.fileSize = ff.length(fd);
-        this.addr = TableUtils.mapRO(ff, fd, fileSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
-        decoder.of(addr, fileSize, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
+        currentEntry = parquetCache.acquire(path, ff);
+        decoder = currentEntry.decoder;
         rowGroupBuffers.reopen();
         columns.reopen();
         columns.clear();
@@ -325,10 +330,8 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
      */
     public void ofMetadata(LPSZ path) {
         closeFile();
-        this.fd = TableUtils.openRO(ff, path, LOG);
-        this.fileSize = ff.length(fd);
-        this.addr = TableUtils.mapRO(ff, fd, fileSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
-        decoder.of(addr, fileSize, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
+        currentEntry = parquetCache.acquire(path, ff);
+        decoder = currentEntry.decoder;
         toTop();
     }
 
@@ -411,15 +414,11 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
     }
 
     private void closeFile() {
-        if (fd != -1) {
-            ff.close(fd);
-            fd = -1;
+        if (currentEntry != null) {
+            parquetCache.release(currentEntry);
+            currentEntry = null;
         }
-        if (addr != 0) {
-            ff.munmap(addr, fileSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
-            addr = 0;
-            fileSize = 0;
-        }
+        decoder = null;
     }
 
     private long getStrAddr(int col) {

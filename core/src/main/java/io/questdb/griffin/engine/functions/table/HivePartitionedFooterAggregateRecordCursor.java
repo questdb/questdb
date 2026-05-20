@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.functions.table;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ParquetFileCache;
 import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.SqlException;
@@ -98,23 +99,27 @@ class HivePartitionedFooterAggregateRecordCursor implements NoRandomAccessRecord
         final FilesFacade ff = configuration.getFilesFacade();
         final DirectUtf8StringList matchedFiles = base.getMatchedFiles();
 
+        final ParquetFileCache parquetCache = base.getParquetFileCache();
         final boolean useGenericNative = aggregateColumnName != null;
-        // Pre-walk first file to discover the column type tag so we pick
-        // the right native and global accumulator. Skipped if matchedFiles
-        // is empty - the empty-glob branch below already handles that.
+        // Pre-walk files to discover the column type tag so we pick the
+        // right native and global accumulator. Skipped if matchedFiles is
+        // empty - the empty-glob branch below already handles that.
         int columnTypeTag = ColumnType.UNDEFINED;
         for (int i = 0, n = matchedFiles.size(); i < n && columnTypeTag == ColumnType.UNDEFINED; i++) {
             final DirectUtf8Sequence filePath = matchedFiles.getQuick(i);
-            final HivePartitionedReadParquetRecordCursorFactory.CachedFile cached =
-                    base.openCachedFile(filePath, ff);
-            final ParquetFileDecoder decoder = cached.decoder;
-            final int parquetColumnIndex = useGenericNative
-                    ? decoder.metadata().getColumnIndex(aggregateColumnName)
-                    : decoder.metadata().getTimestampIndex();
-            if (parquetColumnIndex >= 0) {
-                columnTypeTag = useGenericNative
-                        ? ColumnType.tagOf(decoder.metadata().getColumnType(parquetColumnIndex))
-                        : ColumnType.TIMESTAMP;
+            final ParquetFileCache.Entry cached = parquetCache.acquire(filePath, ff);
+            try {
+                final ParquetFileDecoder decoder = cached.decoder;
+                final int parquetColumnIndex = useGenericNative
+                        ? decoder.metadata().getColumnIndex(aggregateColumnName)
+                        : decoder.metadata().getTimestampIndex();
+                if (parquetColumnIndex >= 0) {
+                    columnTypeTag = useGenericNative
+                            ? ColumnType.tagOf(decoder.metadata().getColumnType(parquetColumnIndex))
+                            : ColumnType.TIMESTAMP;
+                }
+            } finally {
+                parquetCache.release(cached);
             }
         }
 
@@ -125,30 +130,33 @@ class HivePartitionedFooterAggregateRecordCursor implements NoRandomAccessRecord
             outer:
             for (int i = 0, n = matchedFiles.size(); i < n; i++) {
                 final DirectUtf8Sequence filePath = matchedFiles.getQuick(i);
-                final HivePartitionedReadParquetRecordCursorFactory.CachedFile cached =
-                        base.openCachedFile(filePath, ff);
-                final ParquetFileDecoder decoder = cached.decoder;
-                final int parquetColumnIndex = decoder.metadata().getColumnIndex(aggregateColumnName);
-                if (parquetColumnIndex < 0) {
-                    continue;
-                }
-                final int rowGroupCount = decoder.metadata().getRowGroupCount();
-                for (int rg = 0; rg < rowGroupCount; rg++) {
-                    final double rgMin = decoder.rowGroupMinValueDouble(rg, parquetColumnIndex);
-                    final double rgMax = decoder.rowGroupMaxValueDouble(rg, parquetColumnIndex);
-                    if (Double.isNaN(rgMin) || Double.isNaN(rgMax)) {
-                        globalMinD = Double.NaN;
-                        globalMaxD = Double.NaN;
+                final ParquetFileCache.Entry cached = parquetCache.acquire(filePath, ff);
+                try {
+                    final ParquetFileDecoder decoder = cached.decoder;
+                    final int parquetColumnIndex = decoder.metadata().getColumnIndex(aggregateColumnName);
+                    if (parquetColumnIndex < 0) {
+                        continue;
+                    }
+                    final int rowGroupCount = decoder.metadata().getRowGroupCount();
+                    for (int rg = 0; rg < rowGroupCount; rg++) {
+                        final double rgMin = decoder.rowGroupMinValueDouble(rg, parquetColumnIndex);
+                        final double rgMax = decoder.rowGroupMaxValueDouble(rg, parquetColumnIndex);
+                        if (Double.isNaN(rgMin) || Double.isNaN(rgMax)) {
+                            globalMinD = Double.NaN;
+                            globalMaxD = Double.NaN;
+                            anyFileContributed = true;
+                            break outer;
+                        }
+                        if (rgMin < globalMinD) {
+                            globalMinD = rgMin;
+                        }
+                        if (rgMax > globalMaxD) {
+                            globalMaxD = rgMax;
+                        }
                         anyFileContributed = true;
-                        break outer;
                     }
-                    if (rgMin < globalMinD) {
-                        globalMinD = rgMin;
-                    }
-                    if (rgMax > globalMaxD) {
-                        globalMaxD = rgMax;
-                    }
-                    anyFileContributed = true;
+                } finally {
+                    parquetCache.release(cached);
                 }
             }
             if (!anyFileContributed) {
@@ -169,36 +177,40 @@ class HivePartitionedFooterAggregateRecordCursor implements NoRandomAccessRecord
 
         for (int i = 0, n = matchedFiles.size(); i < n; i++) {
             final DirectUtf8Sequence filePath = matchedFiles.getQuick(i);
-            final HivePartitionedReadParquetRecordCursorFactory.CachedFile cached =
-                    base.openCachedFile(filePath, ff);
-            final ParquetFileDecoder decoder = cached.decoder;
-            final int parquetColumnIndex = useGenericNative
-                    ? decoder.metadata().getColumnIndex(aggregateColumnName)
-                    : decoder.metadata().getTimestampIndex();
-            if (parquetColumnIndex < 0) {
-                // Defensive: planner gate requires the column to exist and be
-                // declared sorted. Skip files lacking it rather than passing
-                // -1 to the native and surfacing a confusing decoder error.
-                continue;
-            }
-            final int rowGroupCount = decoder.metadata().getRowGroupCount();
-            for (int rg = 0; rg < rowGroupCount; rg++) {
-                final long rgMin;
-                final long rgMax;
-                if (useGenericNative) {
-                    rgMin = decoder.rowGroupMinValueLong(rg, parquetColumnIndex);
-                    rgMax = decoder.rowGroupMaxValueLong(rg, parquetColumnIndex);
-                } else {
-                    rgMin = decoder.rowGroupMinTimestamp(rg, parquetColumnIndex);
-                    rgMax = decoder.rowGroupMaxTimestamp(rg, parquetColumnIndex);
+            final ParquetFileCache.Entry cached = parquetCache.acquire(filePath, ff);
+            try {
+                final ParquetFileDecoder decoder = cached.decoder;
+                final int parquetColumnIndex = useGenericNative
+                        ? decoder.metadata().getColumnIndex(aggregateColumnName)
+                        : decoder.metadata().getTimestampIndex();
+                if (parquetColumnIndex < 0) {
+                    // Defensive: planner gate requires the column to exist and
+                    // be declared sorted. Skip files lacking it rather than
+                    // passing -1 to the native and surfacing a confusing
+                    // decoder error.
+                    continue;
                 }
-                if (rgMin < globalMin) {
-                    globalMin = rgMin;
+                final int rowGroupCount = decoder.metadata().getRowGroupCount();
+                for (int rg = 0; rg < rowGroupCount; rg++) {
+                    final long rgMin;
+                    final long rgMax;
+                    if (useGenericNative) {
+                        rgMin = decoder.rowGroupMinValueLong(rg, parquetColumnIndex);
+                        rgMax = decoder.rowGroupMaxValueLong(rg, parquetColumnIndex);
+                    } else {
+                        rgMin = decoder.rowGroupMinTimestamp(rg, parquetColumnIndex);
+                        rgMax = decoder.rowGroupMaxTimestamp(rg, parquetColumnIndex);
+                    }
+                    if (rgMin < globalMin) {
+                        globalMin = rgMin;
+                    }
+                    if (rgMax > globalMax) {
+                        globalMax = rgMax;
+                    }
+                    anyFileContributed = true;
                 }
-                if (rgMax > globalMax) {
-                    globalMax = rgMax;
-                }
-                anyFileContributed = true;
+            } finally {
+                parquetCache.release(cached);
             }
         }
 
