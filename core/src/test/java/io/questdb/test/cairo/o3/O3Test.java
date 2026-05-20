@@ -570,6 +570,9 @@ public class O3Test extends AbstractO3Test {
 
     @Test
     public void testLargeO3MaxLagContended() throws Exception {
+        // This large-dataset lag test exercises only platform-independent logic and the shared
+        // native sort path; it is slow on the hosted Mac and Windows runners, so run on Linux only.
+        Assume.assumeTrue(Os.isLinux());
         executeWithPool(0, O3Test::testLargeO3MaxLag0);
     }
 
