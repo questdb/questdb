@@ -424,6 +424,83 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testReadAggregateOverPrunedColumn() throws Exception {
+        // Aggregating a non-timestamp column (max(rn), sum(rn), count_distinct(rn))
+        // prunes the timestamp out of the LV read projection, so the cursor's
+        // resolved timestampColumnIndex is -1. The read must serve from disk
+        // without probing the absent timestamp column (regressions there read
+        // out of bounds and crash the JVM).
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base");
+            execute("INSERT INTO base (ts, x) " +
+                    "SELECT timestamp_sequence('2026-04-01T00:00:00.000000Z', 1_000_000), x FROM long_sequence(40)");
+            drainWalQueue();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+            }
+            drainWalQueue();
+            assertSql("count\n40\n", "SELECT count() FROM lv");
+            assertSql("max\n40\n", "SELECT max(rn) FROM lv");
+            assertSql("sum\n820\n", "SELECT sum(rn) FROM lv");
+            assertSql("count_distinct\n40\n", "SELECT count_distinct(rn) FROM lv");
+            // A single-column read also prunes the timestamp; content stays correct.
+            assertSql("rn\n1\n2\n3\n", "SELECT rn FROM lv ORDER BY rn LIMIT 3");
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testReadAggregateOverPrunedColumnMultiPartitionAtScale() throws Exception {
+        // The pruned-projection read must cross page-frame and partition
+        // boundaries cleanly. 600 rows at 1-hour steps span 25 day-partitions.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base");
+            execute("INSERT INTO base (ts, x) " +
+                    "SELECT timestamp_sequence('2026-04-01T00:00:00.000000Z', 3_600_000_000), x FROM long_sequence(600)");
+            drainWalQueue();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+            }
+            drainWalQueue();
+            assertSql("count\n600\n", "SELECT count() FROM lv");
+            assertSql("max\n600\n", "SELECT max(rn) FROM lv");
+            assertSql("sum\n180300\n", "SELECT sum(rn) FROM lv");
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testReadAggregateOverPrunedColumnWithInMemoryTier() throws Exception {
+        // With an in-mem tier configured, a pruned read (max(rn)) must find the
+        // tier ineligible and serve from disk; a full-schema read remains
+        // eligible for the tier. Neither path may crash.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms IN MEMORY 10s AS " +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base");
+            execute("INSERT INTO base (ts, x) " +
+                    "SELECT timestamp_sequence('2026-04-01T00:00:00.000000Z', 1_000_000), x FROM long_sequence(40)");
+            drainWalQueue();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+            }
+            drainWalQueue();
+            // Pruned read: tier present but not eligible -> disk-only.
+            assertSql("max\n40\n", "SELECT max(rn) FROM lv");
+            // Full-schema read: tier eligible; content correct.
+            assertSql("ts\tx\trn\n" +
+                            "2026-04-01T00:00:00.000000Z\t1\t1\n" +
+                            "2026-04-01T00:00:01.000000Z\t2\t2\n",
+                    "SELECT ts, x, rn FROM lv ORDER BY ts LIMIT 2");
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
     public void testBackfillCoexistsWithFollowOnInserts() throws Exception {
         // After BACKFILL completes, subsequent inserts go through the normal
         // incremental refresh path. End-to-end row count must include both

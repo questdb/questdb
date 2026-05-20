@@ -30,6 +30,7 @@ import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.sql.DelegatingRecord;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
@@ -49,6 +50,13 @@ import io.questdb.std.Numbers;
  * between disk apply and in-mem publish) and in a future hand-off ring regime
  * that decouples apply from per-notification refresh.
  * <p>
+ * The in-mem tier stores the full output row, so the cursor routes through it
+ * only when the read projects every output column in declared order (see
+ * {@link #isFullSchemaProjection}). Pruned or reordered projections - e.g.
+ * {@code SELECT max(rn)}, where column pruning drops the timestamp and leaves
+ * {@code timestampColumnIndex < 0} - serve from disk alone, which is correct
+ * given the steady-state in-mem-as-subset-of-disk property.
+ * <p>
  * In-mem rows have no rowId — {@link #recordAt(Record, long)}
  * targets only disk rows. ASOF JOIN as RHS and other random-access readers
  * cannot land on an in-mem row; this is consistent with the steady-state
@@ -64,6 +72,7 @@ public class LiveViewRecordCursor implements RecordCursor {
     private final MergedRecord recordB = new MergedRecord();
     private RecordCursor diskCursor;
     private boolean diskExhausted;
+    private boolean inMemEligible;
     private long inMemRow;
     private long maxDiskTs;
     private LiveViewInMemoryBuffer pinnedSlot;
@@ -101,16 +110,22 @@ public class LiveViewRecordCursor implements RecordCursor {
     public boolean hasNext() {
         if (!diskExhausted) {
             if (diskCursor.hasNext()) {
-                long ts = diskCursor.getRecord().getTimestamp(timestampColumnIndex);
-                if (maxDiskTs == Numbers.LONG_NULL || ts > maxDiskTs) {
-                    maxDiskTs = ts;
+                if (inMemEligible) {
+                    // Track the max disk timestamp only when the in-mem tier may
+                    // contribute rows. The probe reads the projected timestamp
+                    // column, which is present (index >= 0) only for full-schema
+                    // reads; pruned/reordered projections serve from disk alone.
+                    long ts = diskCursor.getRecord().getTimestamp(timestampColumnIndex);
+                    if (maxDiskTs == Numbers.LONG_NULL || ts > maxDiskTs) {
+                        maxDiskTs = ts;
+                    }
                 }
                 recordA.toDiskMode();
                 return true;
             }
             diskExhausted = true;
         }
-        if (pinnedSlot != null) {
+        if (inMemEligible) {
             long rn = pinnedSlot.rowCount();
             while (inMemRow + 1 < rn) {
                 inMemRow++;
@@ -124,7 +139,7 @@ public class LiveViewRecordCursor implements RecordCursor {
         return false;
     }
 
-    public void of(RecordCursor diskCursor, LiveViewInstance instance, int timestampColumnIndex) {
+    public void of(RecordCursor diskCursor, RecordMetadata baseMetadata, LiveViewInstance instance, int timestampColumnIndex) {
         releaseSlot();
         this.diskCursor = diskCursor;
         this.timestampColumnIndex = timestampColumnIndex;
@@ -132,6 +147,7 @@ public class LiveViewRecordCursor implements RecordCursor {
         this.diskExhausted = false;
         this.inMemRow = -1;
         this.pinnedSlot = null;
+        this.inMemEligible = false;
         if (instance != null) {
             LiveViewInMemoryTier candidate = instance.getInMemoryTier();
             if (candidate != null) {
@@ -145,6 +161,7 @@ public class LiveViewRecordCursor implements RecordCursor {
                     this.tier = candidate;
                     this.slotIdx = pin;
                     this.pinnedSlot = candidate.getSlot(pin);
+                    this.inMemEligible = isFullSchemaProjection(baseMetadata, pinnedSlot, timestampColumnIndex);
                 }
             }
         }
@@ -184,6 +201,36 @@ public class LiveViewRecordCursor implements RecordCursor {
         maxDiskTs = Numbers.LONG_NULL;
         diskExhausted = false;
         inMemRow = -1;
+    }
+
+    /**
+     * The in-mem tier stores the live view's full output row. A read whose
+     * projection prunes or reorders columns would index the buffer by the wrong
+     * column, and a read that prunes the timestamp leaves
+     * {@code timestampColumnIndex < 0}, which would address the buffer and the
+     * disk record out of bounds. Such reads serve from disk only, which is
+     * correct because the in-mem tier is a subset of disk in steady state. Only
+     * an identity projection (every output column, in declared order) may route
+     * through the tier; the type-by-type match below establishes that.
+     */
+    private static boolean isFullSchemaProjection(
+            RecordMetadata baseMetadata,
+            LiveViewInMemoryBuffer buffer,
+            int timestampColumnIndex
+    ) {
+        if (timestampColumnIndex < 0 || buffer == null) {
+            return false;
+        }
+        final int columnCount = buffer.columnCount();
+        if (baseMetadata.getColumnCount() != columnCount) {
+            return false;
+        }
+        for (int i = 0; i < columnCount; i++) {
+            if (baseMetadata.getColumnType(i) != buffer.columnType(i)) {
+                return false;
+            }
+        }
+        return true;
     }
 
     private void releaseSlot() {

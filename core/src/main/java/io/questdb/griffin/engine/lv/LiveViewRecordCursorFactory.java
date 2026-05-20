@@ -79,7 +79,7 @@ public class LiveViewRecordCursorFactory extends AbstractRecordCursorFactory {
         LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance(liveViewToken.getTableName());
         LiveViewRecordCursor cursor = new LiveViewRecordCursor();
         try {
-            cursor.of(diskCursor, instance, timestampColumnIndex);
+            cursor.of(diskCursor, base.getMetadata(), instance, timestampColumnIndex);
         } catch (Throwable t) {
             Misc.free(cursor);
             throw t;
