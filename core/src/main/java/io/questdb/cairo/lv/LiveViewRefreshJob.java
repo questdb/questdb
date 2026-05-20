@@ -267,6 +267,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             TableToken baseToken = instance.getDefinition().getBaseTableToken();
             boolean ownReader = !executionContext.hasReader();
             TableReader localReader = ownReader ? engine.getReader(baseToken) : null;
+            boolean committed = false;
             try {
                 if (ownReader) {
                     engine.detachReader(localReader);
@@ -279,12 +280,22 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 } finally {
                     executionContext.setLiveViewCompile(false);
                 }
-                instance.setCompiledFactory(factory);
-                // Lazily compile the anchor expression as a Function so the
-                // ANCHOR runtime can evaluate it per-row. Only fires when the
-                // LV has an anchored named WINDOW persisted in _lv.
+                // Build the anchor machinery (anchor Function + LiveViewWindow)
+                // BEFORE caching the factory. Those are what dispatch the per-row
+                // resetPartition; without them an anchored view cannot produce
+                // correct output. Caching the factory first would skip this whole
+                // block - and the anchor build - on every later refresh, so a
+                // build failure would leave the view silently running with resets
+                // never dispatched. Leaving the factory uncached makes the next
+                // refresh recompile and retry; a persistent failure trips the
+                // flush-retry budget and invalidates the view.
                 ensureAnchorFunction(instance, factory);
+                instance.setCompiledFactory(factory);
+                committed = true;
             } finally {
+                if (!committed) {
+                    factory = Misc.free(factory);
+                }
                 if (ownReader) {
                     executionContext.clearReader();
                     engine.attachReader(localReader);
@@ -302,7 +313,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * {@link LiveViewInstance}; consumed by the runtime hookup that wraps the
      * source cursor with {@link LiveViewWindow#processRow(Record)}.
      */
-    private void ensureAnchorFunction(LiveViewInstance instance, RecordCursorFactory compiledFactory) {
+    private void ensureAnchorFunction(LiveViewInstance instance, RecordCursorFactory compiledFactory) throws SqlException {
         if (instance.getAnchorFunction() != null) {
             return;
         }
@@ -310,6 +321,9 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         if (spec == null || spec.anchorExpressionSql == null) {
             return;
         }
+        Function fn = null;
+        LiveViewWindow window = null;
+        boolean committed = false;
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
             // Re-parse just the anchor expression text into an ExpressionNode.
             // Going via generateExecutionModel does not work because the optimiser
@@ -318,32 +332,31 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // anchor spec across.
             ExpressionNode anchorNode = compiler.parseExpression(spec.anchorExpressionSql);
             if (anchorNode == null) {
-                LOG.error().$("anchor compile: parser returned null node [view=")
-                        .$(instance.getDefinition().getViewName())
-                        .$(", sql=").$safe(spec.anchorExpressionSql).I$();
-                return;
+                throw CairoException.critical(0)
+                        .put("live view anchor expression failed to parse [view=")
+                        .put(instance.getDefinition().getViewName())
+                        .put(", sql=").put(spec.anchorExpressionSql)
+                        .put(']');
             }
             // Resolve against the LV's projected metadata (the page-frame factory's
             // metadata at the leaf of the compiled tree). That matches the records
             // WalSegmentRecordCursor emits at runtime.
             RecordMetadata projectedMeta = findLeafProjectedMetadata(compiledFactory);
             if (projectedMeta == null) {
-                LOG.error().$("anchor compile: could not find leaf projected metadata [view=")
-                        .$(instance.getDefinition().getViewName()).I$();
-                return;
+                throw CairoException.critical(0)
+                        .put("live view anchor compile could not resolve projected metadata [view=")
+                        .put(instance.getDefinition().getViewName())
+                        .put(']');
             }
             FunctionParser fp = new FunctionParser(engine.getConfiguration(), engine.getFunctionFactoryCache());
             executionContext.setLiveViewCompile(true);
-            Function fn;
             try {
                 fn = fp.parseFunction(anchorNode, projectedMeta, executionContext);
             } finally {
                 executionContext.setLiveViewCompile(false);
             }
-            instance.setAnchorFunction(fn);
-
             WindowRecordCursorFactory wf = unwrapWindowFactory(compiledFactory);
-            LiveViewWindow window = LiveViewWindow.build(
+            window = LiveViewWindow.build(
                     engine.getConfiguration(),
                     compiler.getAsm(),
                     spec.windowName,
@@ -352,16 +365,21 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     fn,
                     wf.getWindowFunctions()
             );
+            // Commit the anchor Function and window together, only after the full
+            // machinery builds. A failure before this point must not leave a
+            // half-built anchor (function set, window null): the per-row reset
+            // would never dispatch and the view would silently produce wrong
+            // results. Propagating instead leaves the compiled factory uncached
+            // (see ensureCompiledFactory) so the next refresh retries; a
+            // persistent failure invalidates via the flush-retry budget.
+            instance.setAnchorFunction(fn);
             instance.setAnchorWindow(window);
-        } catch (SqlException e) {
-            LOG.error().$("could not compile live-view anchor function [view=")
-                    .$(instance.getDefinition().getViewName())
-                    .$(", error=").$safe(e.getFlyweightMessage())
-                    .I$();
-        } catch (Throwable t) {
-            LOG.error().$("could not compile live-view anchor function [view=")
-                    .$(instance.getDefinition().getViewName())
-                    .$(", error=").$(t).I$();
+            committed = true;
+        } finally {
+            if (!committed) {
+                Misc.free(window);
+                Misc.free(fn);
+            }
         }
     }
 
