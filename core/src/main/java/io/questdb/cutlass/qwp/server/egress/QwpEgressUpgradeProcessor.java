@@ -308,12 +308,20 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
         long negotiatedCompression = QwpEgressCompressionNegotiator.negotiate(acceptEncoding);
         byte negotiatedCodec = QwpEgressCompressionNegotiator.codec(negotiatedCompression);
         byte negotiatedLevel = QwpEgressCompressionNegotiator.level(negotiatedCompression);
-        String contentEncodingHeader = QwpEgressCompressionNegotiator.responseHeaderValue(
-                negotiatedCodec, negotiatedLevel);
+        // Apply the operator's force-level override (if any). Read from the
+        // live configuration on every handshake -- a hot config reload picks
+        // up the new value on the next new connection. Already-established
+        // connections keep their negotiated level since the ZSTD context is
+        // built once and mutating its level mid-stream is not safe.
+        byte effectiveLevel = QwpEgressCompressionNegotiator.resolveEffectiveZstdLevel(
+                negotiatedCodec, negotiatedLevel,
+                engine.getConfiguration().getQwpEgressForcedZstdLevel());
+        byte[] contentEncodingHeaderBytes = QwpEgressCompressionNegotiator.responseHeaderValue(
+                negotiatedCodec, effectiveLevel);
 
         String acceptKey = QwpWebSocketHttpProcessor.computeAcceptKey(wsKey);
         int requiredHandshakeSize = QwpWebSocketHttpProcessor.responseSize(
-                acceptKey, negotiatedVersion, contentEncodingHeader, false, null);
+                acceptKey, negotiatedVersion, contentEncodingHeaderBytes, false, null);
         // v2 appends a SERVER_INFO WebSocket frame right after the 101 response
         // bytes, in the same send buffer. Reserve an upper-bound for the frame so
         // a tiny send buffer that would fit the 101 response alone but not the
@@ -337,7 +345,7 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
         }
         state.of(context.getFd(), context.getSecurityContext());
         state.setNegotiatedVersion((byte) negotiatedVersion);
-        state.setCompression(negotiatedCodec, negotiatedLevel);
+        state.setCompression(negotiatedCodec, effectiveLevel);
         // Optional client preference for per-batch row cap. Absent or malformed
         // header falls back to the server's hard cap. Values outside [1, MAX]
         // are clamped rather than rejected so one buggy client doesn't break
@@ -354,7 +362,7 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
         state.setMaxBatchRows(effectiveMaxBatchRows);
 
         int bytesWritten = QwpWebSocketHttpProcessor.writeResponse(
-                bufferAddr, acceptKey, negotiatedVersion, contentEncodingHeader, false, null);
+                bufferAddr, acceptKey, negotiatedVersion, contentEncodingHeaderBytes, false, null);
         // For v2 and above, append an unsolicited SERVER_INFO WebSocket frame to
         // the same send buffer. The client reads it as the first frame after the
         // upgrade handshake completes, which lets it route reads to primary vs

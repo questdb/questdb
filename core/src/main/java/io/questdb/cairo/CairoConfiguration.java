@@ -564,6 +564,31 @@ public interface CairoConfiguration {
     int getQueryRegistryPoolSize();
 
     /**
+     * Operator override for the zstd compression level used on QWP egress
+     * {@code RESULT_BATCH} frames. Default {@code 0} means "honor the
+     * client-negotiated level" -- the server uses whatever the client
+     * advertised via {@code X-QWP-Accept-Encoding}, clamped to the wire
+     * range {@code [COMPRESSION_ZSTD_MIN_LEVEL, COMPRESSION_ZSTD_MAX_LEVEL]}.
+     * <p>
+     * A value in {@code [1, 9]} forces every ZSTD-negotiated connection on
+     * this server to use that level regardless of what the client asked
+     * for; out-of-range values are clamped at the override site. A misbehaving
+     * client cannot raise the server's CPU spend above the operator's chosen
+     * ceiling. The {@code X-QWP-Content-Encoding} response header echoes
+     * the effective (post-override) level so the client can observe what was
+     * actually used.
+     * <p>
+     * Read from the configuration object on every handshake (not cached at
+     * processor construction), so a live config reload takes effect on the
+     * next new connection. Connections already established keep their
+     * already-built ZSTD contexts -- runtime mutation of an in-flight cctx
+     * level is not safe.
+     */
+    default int getQwpEgressForcedZstdLevel() {
+        return 0;
+    }
+
+    /**
      * Source of the role / cluster / node identity emitted in the QWP egress
      * {@code SERVER_INFO} frame. Default is the standalone OSS provider; the
      * Enterprise configuration overrides this with a provider backed by the

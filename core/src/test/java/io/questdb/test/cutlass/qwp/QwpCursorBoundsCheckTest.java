@@ -479,6 +479,7 @@ public class QwpCursorBoundsCheckTest {
             case TYPE_SHORT:
             case TYPE_CHAR:
             case TYPE_INT:
+            case TYPE_IPV4:
             case TYPE_LONG:
             case TYPE_DATE:
                 acc = table.getFixedWidthColumn(col).getLong();
@@ -499,6 +500,9 @@ public class QwpCursorBoundsCheckTest {
                 break;
             }
             case TYPE_VARCHAR:
+            case TYPE_BINARY:
+                // BINARY shares VARCHAR's wire layout, so the string cursor decodes
+                // both. We only sample the byte length to fold into the checksum.
                 acc = table.getStringColumn(col).getUtf8Value().size();
                 break;
             case TYPE_SYMBOL: {
@@ -539,6 +543,14 @@ public class QwpCursorBoundsCheckTest {
                 throw new AssertionError("unsupported fuzz column type: " + typeCode);
         }
         return acc;
+    }
+
+    private static byte[] randomBytes(Rnd rnd, int len) {
+        byte[] b = new byte[len];
+        for (int i = 0; i < len; i++) {
+            b[i] = (byte) rnd.nextInt(256);
+        }
+        return b;
     }
 
     private static byte[] copyFromNative(long address, int length) {
@@ -644,6 +656,8 @@ public class QwpCursorBoundsCheckTest {
         QwpTableBuffer.ColumnBuffer uuidCol = buffer.getOrCreateColumn("b_uuid", TYPE_UUID, true);
         QwpTableBuffer.ColumnBuffer long256Col = buffer.getOrCreateColumn("b_l256", TYPE_LONG256, true);
         QwpTableBuffer.ColumnBuffer geoCol = buffer.getOrCreateColumn("b_geo", TYPE_GEOHASH, true);
+        QwpTableBuffer.ColumnBuffer ipv4Col = buffer.getOrCreateColumn("b_ipv4", TYPE_IPV4, true);
+        QwpTableBuffer.ColumnBuffer binCol = buffer.getOrCreateColumn("b_bin", TYPE_BINARY, true);
         QwpTableBuffer.ColumnBuffer dec64Col = buffer.getOrCreateColumn("b_dec64", TYPE_DECIMAL64, true);
         QwpTableBuffer.ColumnBuffer dec128Col = buffer.getOrCreateColumn("b_dec128", TYPE_DECIMAL128, true);
         QwpTableBuffer.ColumnBuffer dec256Col = buffer.getOrCreateColumn("b_dec256", TYPE_DECIMAL256, true);
@@ -695,6 +709,9 @@ public class QwpCursorBoundsCheckTest {
                 uuidCol.addUuid(rnd.nextLong(), rnd.nextLong());
                 long256Col.addLong256(rnd.nextLong(), rnd.nextLong(), rnd.nextLong(), rnd.nextLong());
                 geoCol.addGeoHash(rnd.nextGeoHashLong(30), 30);
+                // OR a high bit to keep the address out of the 0.0.0.0 NULL sentinel.
+                ipv4Col.addIPv4(rnd.nextInt() | 0x01000000);
+                binCol.addBinary(randomBytes(rnd, 1 + rnd.nextInt(8)));
                 dec64Col.addDecimal64(new Decimal64((long) rnd.nextInt(100_000) - 50_000L, 2));
                 dec128Col.addDecimal128(Decimal128.fromLong((long) rnd.nextInt(1_000_000) - 500_000L, 4));
                 dec256Col.addDecimal256(Decimal256.fromLong((long) rnd.nextInt(10_000_000) - 5_000_000L, 5));
@@ -706,6 +723,8 @@ public class QwpCursorBoundsCheckTest {
                 uuidCol.addNull();
                 long256Col.addNull();
                 geoCol.addNull();
+                ipv4Col.addNull();
+                binCol.addNull();
                 dec64Col.addNull();
                 dec128Col.addNull();
                 dec256Col.addNull();
