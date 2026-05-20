@@ -890,7 +890,14 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         final long[] headPair = instance.getHeadCheckpointSeqAndMaxTs();
         final long headLvSeqTxn = headPair[0];
         final long headMaxTs = headPair[1];
-        final boolean headHitEligible = headLvSeqTxn != Numbers.LONG_NULL && headMaxTs <= lateRowTs;
+        // Strict comparison is load-bearing. The head's state covers every row
+        // up to AND INCLUDING headMaxTs, and head-hit replay starts at
+        // headMaxTs + 1 (TimestampLowerBoundCursor admits ts >= lowTs). A late
+        // row at exactly headMaxTs is therefore not covered by the head yet also
+        // excluded from the replay window, so it would be silently dropped. The
+        // exact boundary routes to head-miss instead (full replay from the lower
+        // bound), which re-reads and merges the late row in ts order.
+        final boolean headHitEligible = headLvSeqTxn != Numbers.LONG_NULL && headMaxTs < lateRowTs;
         LOG.info().$("live view O3 replay [view=").$(viewName)
                 .$(", lateRowTs=").$(lateRowTs)
                 .$(", advanceTo=").$(advanceTo)

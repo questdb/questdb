@@ -7274,6 +7274,92 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testO3AtHeadMaxTimestampBoundaryIsNotDropped() throws Exception {
+        // Boundary case: an O3 row whose ts is EXACTLY the head's maxTimestamp.
+        // Head-hit eligibility must be strict (headMaxTs < lateRowTs): the head
+        // state already covers every row up to and including headMaxTs, and a
+        // head-hit replay starts at headMaxTs + 1, so a late row at headMaxTs
+        // would be excluded from the replay and silently lost. The exact
+        // boundary must route to head-miss instead, which re-reads from
+        // viewLowerBoundTimestamp and merges the late row in ts order.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+                    "SELECT ts, sym, sum(x) OVER w AS s FROM base " +
+                    "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                // Batch 1: two rows. Drain writes a head at maxTs=20.
+                setCurrentMicros(0L);
+                execute("INSERT INTO base (ts, sym, x) VALUES " +
+                        "('2026-11-01T00:00:10.000000Z', 'a', 1.0), " +
+                        "('2026-11-01T00:00:20.000000Z', 'a', 2.0)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull(lv);
+                final long preO3HeadLvSeqTxn = lv.getHeadCheckpointLvSeqTxn();
+                Assert.assertNotEquals(Numbers.LONG_NULL, preO3HeadLvSeqTxn);
+                Assert.assertEquals(
+                        MicrosFormatUtils.parseUTCTimestamp("2026-11-01T00:00:20.000000Z"),
+                        lv.getHeadCheckpointMaxTs()
+                );
+
+                // Batch 2: advance latestSeenTs to 40 without rewriting the head
+                // (cadence triggers do not fire), so headMaxTs stays at 20 while
+                // the watermark moves past it.
+                setCurrentMicros(150_000L);
+                execute("INSERT INTO base (ts, sym, x) VALUES " +
+                        "('2026-11-01T00:00:30.000000Z', 'a', 4.0), " +
+                        "('2026-11-01T00:00:40.000000Z', 'a', 8.0)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                Assert.assertEquals(
+                        "head metadata unchanged after batch 2 (cadence did not fire)",
+                        preO3HeadLvSeqTxn,
+                        lv.getHeadCheckpointLvSeqTxn()
+                );
+                Assert.assertEquals(
+                        MicrosFormatUtils.parseUTCTimestamp("2026-11-01T00:00:40.000000Z"),
+                        lv.getLatestSeenTs()
+                );
+
+                // O3 row at ts=20 == headMaxTs. latestSeenTs=40, so it is O3
+                // (20 < 40). Under strict head-hit eligibility it routes to
+                // head-miss; the late row tie-sorts after the original ts=20 row
+                // and merges into the cumulative sum.
+                setCurrentMicros(400_000L);
+                execute("INSERT INTO base (ts, sym, x) VALUES " +
+                        "('2026-11-01T00:00:20.000000Z', 'a', 100.0)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                // Correct cumulative sum across all rows in ts order, ties by
+                // WAL order (original ts=20 before the O3 ts=20):
+                //   10 -> 1, 20 -> 3, 20 -> 103, 30 -> 107, 40 -> 115.
+                // The pre-fix head-hit path replays from 21 and drops the O3 row
+                // entirely, yielding 10->1, 20->3, 30->7, 40->15 (four rows).
+                assertSql(
+                        "ts\tsym\ts\n" +
+                                "2026-11-01T00:00:10.000000Z\ta\t1.0\n" +
+                                "2026-11-01T00:00:20.000000Z\ta\t3.0\n" +
+                                "2026-11-01T00:00:20.000000Z\ta\t103.0\n" +
+                                "2026-11-01T00:00:30.000000Z\ta\t107.0\n" +
+                                "2026-11-01T00:00:40.000000Z\ta\t115.0\n",
+                        "SELECT ts, sym, s FROM lv ORDER BY ts, s"
+                );
+            }
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
     public void testO3StormAtFixedHorizon() throws Exception {
         // Repeated O3 rows at the same historical horizon (well
         // below headMaxTs) fall into the head-miss path each time. Every event triggers a
