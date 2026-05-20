@@ -34,7 +34,6 @@ import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
-import java.lang.reflect.Method;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -92,7 +91,7 @@ public class QwpQueryClientTerminalFailureTest extends AbstractBootstrapTest {
                     // Simulate an I/O-thread-detected terminal failure. This is what
                     // the listener wires to when the real I/O thread sees onClose,
                     // a truncated/unknown frame, or a send/receive exception.
-                    invokeRecordTerminalFailure(client, (byte) 42, "synthetic terminal failure");
+                    client.recordTerminalFailureForTest((byte) 42, "synthetic terminal failure");
 
                     // Execute must short-circuit: onError fires immediately with the
                     // stored status/message, and no query is dispatched to the server.
@@ -159,7 +158,7 @@ public class QwpQueryClientTerminalFailureTest extends AbstractBootstrapTest {
                     client.connect();
                     // Latch a synthetic terminal failure -- execute() will see it
                     // on entry and classify it as a transport failure.
-                    invokeRecordTerminalFailure(client, (byte) 42, "synthetic transport failure");
+                    client.recordTerminalFailureForTest((byte) 42, "synthetic transport failure");
 
                     AtomicReference<String> errMsg = new AtomicReference<>();
                     AtomicReference<Byte> errStatus = new AtomicReference<>();
@@ -200,11 +199,11 @@ public class QwpQueryClientTerminalFailureTest extends AbstractBootstrapTest {
                         "ws::addr=127.0.0.1:" + HTTP_PORT + ";failover=off;")) {
                     client.connect();
 
-                    invokeRecordTerminalFailure(client, (byte) 1, "first failure");
+                    client.recordTerminalFailureForTest((byte) 1, "first failure");
                     // Second call must not overwrite the first -- the user needs the
                     // original root cause, not the last error the I/O thread saw as
                     // it wound down.
-                    invokeRecordTerminalFailure(client, (byte) 2, "later failure");
+                    client.recordTerminalFailureForTest((byte) 2, "later failure");
 
                     AtomicReference<String> msg = new AtomicReference<>();
                     AtomicReference<Byte> status = new AtomicReference<>();
@@ -230,11 +229,4 @@ public class QwpQueryClientTerminalFailureTest extends AbstractBootstrapTest {
         });
     }
 
-    private static void invokeRecordTerminalFailure(QwpQueryClient client, byte status, String message)
-            throws Exception {
-        Method m = QwpQueryClient.class.getDeclaredMethod(
-                "recordTerminalFailure", byte.class, String.class);
-        m.setAccessible(true);
-        m.invoke(client, status, message);
-    }
 }

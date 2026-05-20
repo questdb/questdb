@@ -216,6 +216,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private final ObjList<ColumnIndexer> denseIndexers = new ObjList<>();
     private final ObjList<MapWriter> denseSymbolMapWriters;
     private final int detachedMkDirMode;
+    private final DetachedPostingFileRemover detachedPostingFileRemover = new DetachedPostingFileRemover();
     private final CairoEngine engine;
     private final FilesFacade ff;
     private final int fileOperationRetryCount;
@@ -4055,11 +4056,25 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             .put(partitionPath)
                             .put(']');
                 }
-                long sealTxn = columnNameTxn;
+                long sealTxn;
                 if (IndexType.isPosting(indexType)) {
-                    long fromPk = PostingIndexUtils.readSealTxnFromKeyFile(
-                            ff, keyFileName(indexType, partitionPath.trimTo(pathLen), columnName, columnNameTxn));
-                    if (fromPk >= 0) sealTxn = fromPk;
+                    // Strict read: throws if .pk is persistently unreadable AND a .pv
+                    // matching columnNameTxn exists, instead of falling back to
+                    // sealTxn=columnNameTxn and surfacing the .pk read failure as a
+                    // misleading "Index value file does not exist" further down.
+                    // Returns -1 only when the chain is legitimately empty
+                    // (V2_NO_HEAD), in which case the live .pv sits at sealTxn=0.
+                    long fromPk = PostingIndexUtils.readLiveSealTxnFromKeyFileOrThrow(
+                            ff,
+                            partitionPath,
+                            pathLen,
+                            columnName,
+                            columnNameTxn,
+                            keyFileName(indexType, partitionPath.trimTo(pathLen), columnName, columnNameTxn));
+                    sealTxn = fromPk >= 0 ? fromPk : 0;
+                } else {
+                    // BITMAP: valueFileName ignores the sealTxn arg.
+                    sealTxn = columnNameTxn;
                 }
                 valueFileName(indexType, partitionPath.trimTo(pathLen), columnName, columnNameTxn, sealTxn);
                 if (!ff.exists(partitionPath.$())) {
@@ -4201,33 +4216,21 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         long columnNameTxn = attachColumnVersionReader.getColumnNameTxn(partitionTimestamp, colIdx);
                         long sealTxn = columnNameTxn;
                         if (IndexType.isPosting(indexTypeAtDetached)) {
-                            // Read sealTxn before removing .pk, then remove sealed .pv and sidecars
+                            // Best-effort read of the live sealTxn for the BITMAP-style
+                            // explicit removal at the end of this branch. If the .pk is
+                            // unreadable we no longer rely on this value -- the scan
+                            // below enumerates every .pv.<columnNameTxn>.<sealTxn> and
+                            // every .pc<N>.<columnNameTxn>.<C>.<sealTxn> for the column
+                            // and removes them, so a -1 from readSealTxnFromKeyFile no
+                            // longer leaves the sealed .pv behind in the detached dir.
                             long fromPk = PostingIndexUtils.readSealTxnFromKeyFile(
                                     ff, keyFileName(indexTypeAtDetached, detachedPath.trimTo(detachedPartitionRoot), columnName, columnNameTxn));
                             if (fromPk >= 0) {
                                 sealTxn = fromPk;
-                                if (fromPk != columnNameTxn) {
-                                    removeFileOrLog(ff, PostingIndexUtils.valueFileName(
-                                            detachedPath.trimTo(detachedPartitionRoot), columnName, columnNameTxn, fromPk));
-                                }
                             }
                             removeFileOrLog(ff, PostingIndexUtils.coverInfoFileName(detachedPath.trimTo(detachedPartitionRoot), columnName, columnNameTxn));
-                            // Enumerate every .pc<N>.<C>.<S> belonging to this column instance (any sealTxn).
-                            PostingIndexUtils.scanSealedFiles(ff, detachedPath, detachedPartitionRoot, columnName, new PostingIndexUtils.SealedFileVisitor() {
-                                @Override
-                                public void onCoverDataFile(int includeIdx, long postingColumnNameTxn, long coveredColumnNameTxn, long sTxn) {
-                                    if (postingColumnNameTxn != columnNameTxn) {
-                                        return;
-                                    }
-                                    detachedPath.trimTo(detachedPartitionRoot);
-                                    removeFileOrLog(ff, PostingIndexUtils.coverDataFileName(detachedPath, columnName, includeIdx, postingColumnNameTxn, coveredColumnNameTxn, sTxn));
-                                }
-
-                                @Override
-                                public void onValueFile(long postingColumnNameTxn, long sTxn) {
-                                    // .pv is removed via the explicit valueFileName call below.
-                                }
-                            });
+                            detachedPostingFileRemover.of(ff, detachedPath, detachedPartitionRoot, columnName, columnNameTxn);
+                            PostingIndexUtils.scanSealedFiles(ff, detachedPath, detachedPartitionRoot, columnName, detachedPostingFileRemover);
                         }
                         keyFileName(indexTypeAtDetached, detachedPath.trimTo(detachedPartitionRoot), columnName, columnNameTxn);
                         removeFileOrLog(ff, detachedPath.$());
@@ -4773,11 +4776,18 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     // No column top change (or posting index): hard link existing index files.
                     long linkSealTxn = columnNameTxn;
                     if (IndexType.isPosting(indexType)) {
-                        long fromPk = PostingIndexUtils.readSealTxnFromKeyFile(
-                                ff, keyFileName(indexType, path.trimTo(srcDirLen), columnName, columnNameTxn));
-                        if (fromPk >= 0) {
-                            linkSealTxn = fromPk;
-                        }
+                        // Strict read: throw if .pk header is unreadable while .pv files
+                        // exist in the partition (silent fallback to columnNameTxn would
+                        // make linkFile target a path that does not exist).
+                        long fromPk = PostingIndexUtils.readLiveSealTxnFromKeyFileOrThrow(
+                                ff, path, srcDirLen, columnName, columnNameTxn,
+                                keyFileName(indexType, path.trimTo(srcDirLen), columnName, columnNameTxn));
+                        // Live data sits at sealTxn=0 in the pre-seal state
+                        // (chain empty). Fall back to 0 instead of leaving
+                        // linkSealTxn at the columnNameTxn, which would point
+                        // valueFileName at .pv.<col>.<col> -- a path that
+                        // never exists.
+                        linkSealTxn = fromPk >= 0 ? fromPk : 0L;
                     }
                     if (
                             !linkFile(ff,
@@ -6421,6 +6431,16 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
+    private boolean hasPostingIndex() {
+        for (int i = 0; i < columnCount; i++) {
+            if (metadata.getColumnType(i) > 0 && metadata.isColumnIndexed(i)
+                    && IndexType.isPosting(metadata.getColumnIndexType(i))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     /**
      * House keeps table after commit. The tricky bit is to run this housekeeping on each commit. Commit() itself
      * has a contract that if exception is thrown, the data is not committed. However, if this housekeeping fails,
@@ -6787,15 +6807,29 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         //      get purged by their queued tasks, but the dst copies would survive
         //      until the dst column is dropped (no purge task targets the dst
         //      namespace).
-        final long liveSealTxn = PostingIndexUtils.readSealTxnFromKeyFile(
-                ff, keyFileName(IndexType.POSTING, path.trimTo(srcDirLen), srcColumnName, srcColumnNameTxn)
+        // Use the strict variant: if the .pk header read fails (e.g. a transient
+        // pread error returning -1) AND .pv files for this column exist in the
+        // partition, the function throws rather than silently skipping the link.
+        // Silent skip would leave the renamed column with .d + .pk but no .pv,
+        // and any later indexed read would fail with "file does not exist" on
+        // the chain's referenced .pv.{sealTxn}.
+        final long liveSealTxn = PostingIndexUtils.readLiveSealTxnFromKeyFileOrThrow(
+                ff, path, srcDirLen, srcColumnName, srcColumnNameTxn,
+                keyFileName(IndexType.POSTING, path.trimTo(srcDirLen), srcColumnName, srcColumnNameTxn)
         );
-        if (liveSealTxn >= 0) {
-            LPSZ srcPv = IndexFactory.valueFileName(IndexType.POSTING, path.trimTo(srcDirLen), srcColumnName, srcColumnNameTxn, liveSealTxn);
-            LPSZ dstPv = IndexFactory.valueFileName(IndexType.POSTING, other.trimTo(dstDirLen), dstColumnName, dstColumnNameTxn, liveSealTxn);
-            if (ff.exists(srcPv) && !ff.exists(dstPv)) {
-                linkFile(ff, srcPv, dstPv);
-            }
+        // When the chain is empty (liveSealTxn < 0) the column is in its
+        // pre-seal state: the live unsealed values sit in .pv.<colTxn>.0
+        // rather than under a chain-published sealTxn. ADD COLUMN creates
+        // this file before any seal runs, so a rename arriving before the
+        // first seal must still hardlink it -- otherwise the renamed
+        // column reads empty for every key. We fall back to sealTxn=0 in
+        // that case; ff.exists() naturally guards columns that have no
+        // posting data at all (no .pv.<colTxn>.0 on disk).
+        final long pvSealTxn = liveSealTxn >= 0 ? liveSealTxn : 0L;
+        LPSZ srcPv = IndexFactory.valueFileName(IndexType.POSTING, path.trimTo(srcDirLen), srcColumnName, srcColumnNameTxn, pvSealTxn);
+        LPSZ dstPv = IndexFactory.valueFileName(IndexType.POSTING, other.trimTo(dstDirLen), dstColumnName, dstColumnNameTxn, pvSealTxn);
+        if (ff.exists(srcPv) && !ff.exists(dstPv)) {
+            linkFile(ff, srcPv, dstPv);
         }
         // Sidecar info file (.pci) is not subject to seal purge and is one per
         // posting column instance, so it is linked unconditionally.
@@ -6812,7 +6846,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         PostingIndexUtils.scanSealedFiles(ff, path, srcDirLen, srcColumnName, new PostingIndexUtils.SealedFileVisitor() {
             @Override
             public void onCoverDataFile(int includeIdx, long postingColumnNameTxn, long coveredColumnNameTxn, long sealTxn) {
-                if (postingColumnNameTxn != srcColumnNameTxn || sealTxn != liveSealTxn) {
+                // Match the live generation. pvSealTxn folds the empty
+                // chain into sealTxn=0 so pre-seal .pc<N>.<col>.0.* files
+                // are linked alongside the live .pv.<col>.0.
+                if (postingColumnNameTxn != srcColumnNameTxn || sealTxn != pvSealTxn) {
                     return;
                 }
                 linkFile(ff,
@@ -7630,7 +7667,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             setStateForTimestamp(other, newSplitPartitionTimestamp);
                             ff.mkdir(other.$(), configuration.getMkDirMode());
                             try (Frame targetFrame = frameFactory.createRW(other, newSplitPartitionTimestamp, metadata, columnVersionWriter, 0)) {
-                                FrameAlgebra.append(targetFrame, sourceFrame, newPrevPartitionSize, prevPartitionSize, configuration.getCommitMode());
+                                FrameAlgebra.append(targetFrame, sourceFrame, newPrevPartitionSize, prevPartitionSize, txWriter.getTxn() + 1L, configuration.getCommitMode());
                             }
                         }
                         addPhysicallyWrittenRows(prevPartitionSize - newPrevPartitionSize);
@@ -10055,6 +10092,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         indexer.configureCovering(o3SealAddrs, o3SealAuxAddrs, o3SealTops, o3SealShifts, coveringCols, o3SealTypes, coverCount,
                                 metadata.getTimestampIndex());
                         indexer.setCoveredColumnNameTxns(o3SealNameTxns);
+                        // WAL fast-lag uses getTxn() (NOT getTxn()+1L like the
+                        // O3 seal paths). See publishToChain javadoc: the
+                        // partition stays attached and openPartition's
+                        // rollbackConditionally evicts orphans on reopen,
+                        // so the chain walk is not the recovery path here.
                         indexer.getWriter().setNextTxnAtSeal(txWriter.getTxn());
                         indexer.getWriter().commit();
                         indexer.publishPendingPurges(messageBus, tableToken, partitionBy, timestampType, txWriter.getTxn());
@@ -10071,6 +10113,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     }
                     continue;
                 }
+                // Non-covering branch of the WAL fast-lag path. See the
+                // covering branch above for why getTxn() (not getTxn()+1L).
                 indexer.getWriter().setNextTxnAtSeal(txWriter.getTxn());
                 indexer.getWriter().commit();
                 indexer.publishPendingPurges(messageBus, tableToken, partitionBy, timestampType, txWriter.getTxn());
@@ -11014,6 +11058,53 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
+    private void restorePostingIndexersToLastPartition() {
+        // Reset writer.partitionPath back to lastOpenPartitionTs regardless of
+        // whether each POSTING-indexed column has data in the last partition yet.
+        // The caller's per-partition seal loop may have left partitionPath pointing
+        // at a partition the next housekeep step squashes or deletes; a stale path
+        // strands the next rollback's openSealValueFile on a missing dir.
+        if (lastOpenPartitionTs == Long.MIN_VALUE || !PartitionBy.isPartitioned(partitionBy)
+                || txWriter.isPartitionParquetByPartitionTimestamp(lastOpenPartitionTs)) {
+            return;
+        }
+        long currentNameTxn = txWriter.getPartitionNameTxnByPartitionTimestamp(lastOpenPartitionTs, Long.MIN_VALUE);
+        if (currentNameTxn == Long.MIN_VALUE) {
+            return;
+        }
+        path.trimTo(pathSize);
+        setPathForNativePartition(path, timestampType, partitionBy, lastOpenPartitionTs, currentNameTxn);
+        int plen = path.size();
+        try {
+            for (int colIdx = 0; colIdx < columnCount; colIdx++) {
+                if (metadata.getColumnType(colIdx) <= 0 || !metadata.isColumnIndexed(colIdx)
+                        || !IndexType.isPosting(metadata.getColumnIndexType(colIdx))) {
+                    continue;
+                }
+                ColumnIndexer indexer = indexers.getQuick(colIdx);
+                if (indexer == null) {
+                    continue;
+                }
+                // columnTop == -1 means the column does not exist on this partition at
+                // all (no .pk file), so skip those.
+                long columnTop = columnVersionWriter.getColumnTopQuick(lastOpenPartitionTs, colIdx);
+                if (columnTop < 0) {
+                    continue;
+                }
+                CharSequence colName = metadata.getColumnName(colIdx);
+                long colNameTxn = columnVersionWriter.getColumnNameTxn(lastOpenPartitionTs, colIdx);
+                indexer.configureFollowerAndWriter(
+                        path.trimTo(plen), colName, colNameTxn,
+                        getPrimaryColumn(colIdx), columnTop,
+                        lastOpenPartitionTs, currentNameTxn
+                );
+                configureCoveringIfNeeded(indexer, colIdx, lastOpenPartitionTs);
+            }
+        } finally {
+            path.trimTo(pathSize);
+        }
+    }
+
     private void rewriteAndSwapMetadata(TableWriterMetadata metadata) {
         // create new _meta.swp
         this.metaSwapIndex = rewriteMetadata(metadata);
@@ -11243,6 +11334,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * @return true if at least one column indexer was touched.
      */
     private boolean sealPostingIndexForPartition(long partitionTimestamp, boolean canSkipRebuild) {
+        // Tables without any POSTING index incur per-call filesystem and
+        // metadata work below, including a stat(2). Bail out before any of
+        // that when no POSTING index column exists.
+        if (!hasPostingIndex()) {
+            return false;
+        }
         // Range-replace can fully drop a partition during this commit; the
         // sink block still references the defunct partition, but there is
         // nothing left to index.
@@ -11303,32 +11400,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                 getPrimaryColumn(colIdx), columnTop,
                                 partitionTimestamp, partitionNameTxn
                         );
-                        // Tag the rebuild's intermediate commit (the
-                        // discardForRebuild + commit dance below) with
-                        // getTxn()+1, NOT getTxn(). discardForRebuild
-                        // rotates sealTxn so the trailing commit takes
-                        // appendNewEntry rather than mutating the OLD
-                        // entry in place; that fresh REBUILD entry sits
-                        // as the chain head from commit() until
-                        // rebuildSidecars() supersedes it. During that
-                        // window, and afterwards as a prev entry, REBUILD
-                        // has no cover footer (configureCovering runs
-                        // after commit), so any reader that picks it
-                        // resolves all cover columns to NULL. Tagging
-                        // with getTxn()+1 keeps REBUILD invisible to
-                        // every snapshot-isolated reader pinned at any
-                        // committed txn (T_pin <= getTxn() < getTxn()+1):
-                        // the picker walks past it to OLD (which still
-                        // has its proper footer) until rebuildSidecars
-                        // publishes SEAL with txnAtSeal=getTxn() and a
-                        // real footer. recoveryDropAbandoned can also
-                        // drop REBUILD on a partial-publish reopen
-                        // (predicate txnAtSeal > committedTxn fires when
-                        // the rebuild aborts before txWriter.commit).
-                        // The non-covering branch below uses getTxn()
-                        // because it has no covering footer to lose;
-                        // the brief-window picker hit there returns the
-                        // posting index alone, which is correct.
+                        // REBUILD intermediate entry: getTxn()+1 keeps it
+                        // invisible to T-pinned readers (it lacks a cover
+                        // footer until rebuildSidecars() supersedes it),
+                        // and recoveryDropAbandoned can drop it on a
+                        // partial-publish distress.
                         indexer.getWriter().setNextTxnAtSeal(txWriter.getTxn() + 1L);
                         // Fold the fd-based O3 tentative state into
                         // the writer view before the reseal.
@@ -11375,23 +11451,16 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         indexer.configureCovering(o3SealAddrs, o3SealAuxAddrs, o3SealTops, o3SealShifts, coveringCols, o3SealTypes, coverCount,
                                 metadata.getTimestampIndex());
                         indexer.setCoveredColumnNameTxns(o3SealNameTxns);
-                        // sealPostingIndexesForO3Partitions runs inside
-                        // finishO3Commit, BEFORE txWriter.commit. The
-                        // chain entry rebuildSidecars publishes is tagged
-                        // with the current committed txn (not the upcoming
-                        // one): tagging with getTxn()+1 corrupts covering
-                        // reads, because publishPendingPurges' purge bound
-                        // would push the scoreboard's max ahead of the
-                        // not-yet-committed table txn and shorten the
-                        // window in which an existing reader can still
-                        // resolve the previous-seal sidecar files. Using
-                        // getTxn() leaves a partial-publish chain entry
-                        // undroppable by the recovery walk for this code
-                        // path; the trade-off is accepted here because the
-                        // failure mode (orphan chain head referencing the
-                        // committed state) is data-correct, while
-                        // getTxn()+1 produces wrong query results.
-                        indexer.getWriter().setNextTxnAtSeal(txWriter.getTxn());
+                        // Same getTxn()+1 convention as the REBUILD entry
+                        // above and as O3CopyJob's setO3PathContext. Picker
+                        // (per-gen visibility via slot[0].TXN_AT_SEAL) keeps
+                        // T-pinned readers on the prev entry until
+                        // txWriter.commit lands, and recoveryDropAbandoned
+                        // can drop the SEAL entry on a partial-publish
+                        // distress. publishPendingPurges clamps toTableTxn
+                        // back to getTxn() so the scoreboard max is not
+                        // pushed past the not-yet-committed table txn.
+                        indexer.getWriter().setNextTxnAtSeal(txWriter.getTxn() + 1L);
                         indexer.rebuildSidecars();
                         indexer.publishPendingPurges(messageBus, tableToken, partitionBy, timestampType, txWriter.getTxn());
                     } finally {
@@ -11413,17 +11482,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             getPrimaryColumn(colIdx), columnTop,
                             partitionTimestamp, partitionNameTxn
                     );
-                    // See covering branch above: sealPostingIndexesForO3Partitions
-                    // runs inside finishO3Commit BEFORE txWriter.commit, and
-                    // publishPendingPurges below uses txWriter.getTxn() (the
-                    // current committed txn) for its purge bound. Tagging the
-                    // chain entry with getTxn()+1 here would push the
-                    // scoreboard's max past the not-yet-committed table txn,
-                    // shrinking the window in which an existing reader can
-                    // resolve the previous-seal .pv file. The covering branch
-                    // accepts the partial-publish-leaves-orphan trade-off; the
-                    // same trade-off is correct here.
-                    indexer.getWriter().setNextTxnAtSeal(txWriter.getTxn());
+                    // Same getTxn()+1 convention as O3CopyJob and the
+                    // covering branch above. See comment there.
+                    indexer.getWriter().setNextTxnAtSeal(txWriter.getTxn() + 1L);
                     indexer.mergeTentativeIntoActiveIfAny();
                     if (canSkipRebuild) {
                         // See pure-append fast-path comment in the covering branch above.
@@ -11461,15 +11522,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         if (o3PartitionUpdateSink == null) {
             return;
         }
-        boolean hasPostingIndex = false;
-        for (int i = 0; i < columnCount; i++) {
-            if (metadata.getColumnType(i) > 0 && metadata.isColumnIndexed(i)
-                    && IndexType.isPosting(metadata.getColumnIndexType(i))) {
-                hasPostingIndex = true;
-                break;
-            }
-        }
-        if (!hasPostingIndex) {
+        if (!hasPostingIndex()) {
             return;
         }
 
@@ -11505,47 +11558,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
         }
 
-        if (anyPartitionProcessed && lastOpenPartitionTs != Long.MIN_VALUE && PartitionBy.isPartitioned(partitionBy)
-                && !txWriter.isPartitionParquetByPartitionTimestamp(lastOpenPartitionTs)) {
-            long currentNameTxn = txWriter.getPartitionNameTxnByPartitionTimestamp(lastOpenPartitionTs, Long.MIN_VALUE);
-            if (currentNameTxn != Long.MIN_VALUE) {
-                path.trimTo(pathSize);
-                setPathForNativePartition(path, timestampType, partitionBy, lastOpenPartitionTs, currentNameTxn);
-                int plen = path.size();
-                try {
-                    for (int colIdx = 0; colIdx < columnCount; colIdx++) {
-                        if (metadata.getColumnType(colIdx) <= 0 || !metadata.isColumnIndexed(colIdx)
-                                || !IndexType.isPosting(metadata.getColumnIndexType(colIdx))) {
-                            continue;
-                        }
-                        ColumnIndexer indexer = indexers.getQuick(colIdx);
-                        if (indexer == null) {
-                            continue;
-                        }
-                        // Reset writer.partitionPath back to lastOpenPartitionTs regardless
-                        // of whether this column has data in the last partition yet. The per-
-                        // partition seal loop above may have left partitionPath pointing at a
-                        // split partition that housekeep() squashes and deletes next; a stale
-                        // path strands the next rollback's openSealValueFile on a missing dir.
-                        // columnTop == -1 means the column does not exist on this partition at
-                        // all (no .pk file), so skip those.
-                        long columnTop = columnVersionWriter.getColumnTopQuick(lastOpenPartitionTs, colIdx);
-                        if (columnTop < 0) {
-                            continue;
-                        }
-                        CharSequence colName = metadata.getColumnName(colIdx);
-                        long colNameTxn = columnVersionWriter.getColumnNameTxn(lastOpenPartitionTs, colIdx);
-                        indexer.configureFollowerAndWriter(
-                                path.trimTo(plen), colName, colNameTxn,
-                                getPrimaryColumn(colIdx), columnTop,
-                                lastOpenPartitionTs, currentNameTxn
-                        );
-                        configureCoveringIfNeeded(indexer, colIdx, lastOpenPartitionTs);
-                    }
-                } finally {
-                    path.trimTo(pathSize);
-                }
-            }
+        if (anyPartitionProcessed) {
+            restorePostingIndexersToLastPartition();
         }
     }
 
@@ -11797,7 +11811,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     LOG.info().$("copying partition to force squash [from=").$substr(pathRootSize, path).$(", to=").$(other).I$();
 
                     targetFrame = frameFactory.openRW(other, targetPartition, metadata, columnVersionWriter, 0);
-                    FrameAlgebra.append(targetFrame, firstPartitionFrame, configuration.getCommitMode());
+                    FrameAlgebra.append(targetFrame, firstPartitionFrame, txWriter.getTxn() + 1L, configuration.getCommitMode());
                     addPhysicallyWrittenRows(firstPartitionFrame.getRowCount());
                     txWriter.updatePartitionSizeAndTxnByRawIndex(targetPartitionIndex * LONGS_PER_TX_ATTACHED_PARTITION, originalSize);
                     partitionRemoveCandidates.add(targetPartition, targetPartitionNameTxn);
@@ -11839,7 +11853,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         .I$();
 
                 try (Frame sourceFrame = frameFactory.openRO(other, sourcePartition, metadata, columnVersionWriter, partitionRowCount)) {
-                    FrameAlgebra.append(targetFrame, sourceFrame, configuration.getCommitMode());
+                    FrameAlgebra.append(targetFrame, sourceFrame, txWriter.getTxn() + 1L, configuration.getCommitMode());
                     addPhysicallyWrittenRows(sourceFrame.getRowCount());
                 } catch (Throwable th) {
                     LOG.critical().$("partition squashing failed [table=").$(tableToken)
@@ -11883,6 +11897,45 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         if (lastPartitionSquashed) {
             openLastPartition();
+        }
+
+        // The squash grew the target partition's .d files via FrameAlgebra.append.
+        // FrameAlgebra's short-lived IndexWriter calls commit() after the per-row
+        // add() loop, and that commit() does publish entries to the chain: via
+        // extendHead in the non-copy squash (chain already open, head sealTxn
+        // matches) or via appendNewEntry with txnAtSeal=0 in the copy squash
+        // (fresh chain; pendingTxnAtSeal is never set, so the fallback at
+        // PostingIndexWriter#publishToChain fires). The IndexWriter never sees
+        // configureCovering, however, so coverCount=0 when captureCoverEndOffsets
+        // runs and the new gens land with an empty cover footer. For COVERING
+        // POSTING indexes this is what drops rows from indexed predicates: the
+        // reader can resolve the index key but cannot resolve the covering
+        // columns for any rowid the squash merged in, so the rows fall out of
+        // the result.
+        //
+        // Reseal the target's POSTING indexes from .d. That republishes the
+        // chain head with a real cover footer captured from the live MA columns
+        // and tags the entry with txWriter.getTxn() -- the current committed
+        // txn, not the upcoming one (see sealPostingIndexForPartition for why
+        // getTxn()+1 would corrupt covering reads). After seal, restore the
+        // table's indexers to lastOpenPartitionTs so the next append writes to
+        // the active partition rather than the just-sealed target.
+        // Mirror finishO3Commit's seal-failure handling: at this point txWriter,
+        // columnVersionWriter and the in-memory partition tables already reflect
+        // the squash (removeAttachedPartitions, squashPartition,
+        // updatePartitionSizeByTimestamp, transient/fixed row count adjustments
+        // all ran above) but neither commit() has fired yet. A throw here would
+        // leave the writer with in-memory state diverged from the on-disk _txn,
+        // so distress it before propagating so the pool replaces it instead of
+        // handing it back to the next caller.
+        try {
+            if (sealPostingIndexForPartition(targetPartition, false)) {
+                restorePostingIndexersToLastPartition();
+            }
+        } catch (Throwable e) {
+            LOG.critical().$("squash succeeded but posting-index reseal failed `").$(e).$('`').$();
+            distressed = true;
+            throw e;
         }
 
         // Commit the new transaction with the partitions squashed
@@ -12912,6 +12965,48 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         void putVarchar(int columnIndex, char value);
 
         void putVarchar(int columnIndex, Utf8Sequence value);
+    }
+
+    /**
+     * Reusable {@link PostingIndexUtils.SealedFileVisitor} that removes every
+     * {@code .pv.<columnNameTxn>.<sealTxn>} and
+     * {@code .pc<N>.<columnNameTxn>.<C>.<sealTxn>} file belonging to a given
+     * column instance from the detached partition directory. Used by
+     * {@link #attachPrepare} when the column was indexed at detach time but
+     * is no longer indexed in the live schema.
+     */
+    private static final class DetachedPostingFileRemover implements PostingIndexUtils.SealedFileVisitor {
+        private CharSequence columnName;
+        private long columnNameTxn;
+        private Path detachedPath;
+        private int detachedPartitionRoot;
+        private FilesFacade ff;
+
+        public void of(FilesFacade ff, Path detachedPath, int detachedPartitionRoot, CharSequence columnName, long columnNameTxn) {
+            this.ff = ff;
+            this.detachedPath = detachedPath;
+            this.detachedPartitionRoot = detachedPartitionRoot;
+            this.columnName = columnName;
+            this.columnNameTxn = columnNameTxn;
+        }
+
+        @Override
+        public void onCoverDataFile(int includeIdx, long postingColumnNameTxn, long coveredColumnNameTxn, long sealTxn) {
+            if (postingColumnNameTxn != columnNameTxn) {
+                return;
+            }
+            detachedPath.trimTo(detachedPartitionRoot);
+            removeFileOrLog(ff, PostingIndexUtils.coverDataFileName(detachedPath, columnName, includeIdx, postingColumnNameTxn, coveredColumnNameTxn, sealTxn));
+        }
+
+        @Override
+        public void onValueFile(long postingColumnNameTxn, long sealTxn) {
+            if (postingColumnNameTxn != columnNameTxn) {
+                return;
+            }
+            detachedPath.trimTo(detachedPartitionRoot);
+            removeFileOrLog(ff, PostingIndexUtils.valueFileName(detachedPath, columnName, postingColumnNameTxn, sealTxn));
+        }
     }
 
     private static class NoOpRow implements Row {

@@ -175,20 +175,35 @@ public final class PostingIndexUtils {
     public static final byte ENCODING_ADAPTIVE = 0;
     public static final byte ENCODING_DELTA = 1;
     public static final byte ENCODING_EF = 2;
-    public static final int GEN_DIR_ENTRY_SIZE = 28;
+    public static final int GEN_DIR_ENTRY_SIZE = 44;
     public static final int GEN_DIR_OFFSET_FILE_OFFSET = 0;
     public static final int GEN_DIR_OFFSET_KEY_COUNT = 16;
     public static final int GEN_DIR_OFFSET_MAX_KEY = 24;
+    // Cumulative max row id covered by this gen (the entry-level MAX_VALUE
+    // at the moment the writer published this gen). Lets recovery restore
+    // the entry header's MAX_VALUE after trimming in-flight gens off the
+    // tail without rescanning the gen's encoded row ids.
+    public static final int GEN_DIR_OFFSET_MAX_VALUE = 36;
     public static final int GEN_DIR_OFFSET_MIN_KEY = 20;
     public static final int GEN_DIR_OFFSET_SIZE = 8;
+    // Table _txn the gen anticipated when extendHead/appendNewEntry wrote
+    // it. The writer-open recovery walk trims trailing slots with
+    // txnAtSeal > committedTxn before loading head state, so a commit that
+    // bumped GEN_COUNT but never had its txWriter.commit run gets evicted
+    // instead of surfacing as ghost (key, rowId) pairs to readers. Must be
+    // written LAST in publishToChain (after all the other slot fields,
+    // under a storeFence) so a torn write cannot leave a slot with new
+    // metadata but stale txnAtSeal.
+    public static final int GEN_DIR_OFFSET_TXN_AT_SEAL = 28;
     public static final int KEY_FILE_RESERVED = 8192;
     public static final int LONG_OFFSETS_FLAG = 0x4000_0000;
     public static final int MAX_BLOCK_COUNT = 1_000_000; // corruption guard: 64M values at BLOCK_CAPACITY=64
-    // Maximum number of generations a single chain entry can carry. The
-    // bound comes from the per-entry gen-dir region, which lives in the
-    // remaining bytes of an entry's 4KB seqlock page (4088 - 64 header
-    // bytes) divided by GEN_DIR_ENTRY_SIZE = 28.
-    public static final int MAX_GEN_COUNT = 143;
+    // Maximum number of generations a single chain entry can carry before
+    // the writer force-seals. Soft cap: trades seal frequency (lower with
+    // a larger cap, better write throughput) against entry size (gen-dir
+    // grows linearly, inflating reader snapshot cost). PC_HEADER_SIZE is
+    // sized off this constant (one long per gen).
+    public static final int MAX_GEN_COUNT = 128;
     public static final int PACKED_BATCH_SIZE = BLOCK_CAPACITY;
     public static final long PAGE_A_OFFSET = 0;
     public static final long PAGE_B_OFFSET = 4096;
@@ -207,7 +222,7 @@ public final class PostingIndexUtils {
     public static final int PAGE_OFFSET_SEQUENCE_START = 0;
     public static final int PAGE_OFFSET_VALUE_MEM_SIZE = 8;
     public static final int PAGE_SIZE = 4096;
-    public static final int PC_HEADER_SIZE = MAX_GEN_COUNT * Long.BYTES; // 1144
+    public static final int PC_HEADER_SIZE = MAX_GEN_COUNT * Long.BYTES;
     public static final byte SIGNATURE = (byte) 0xfb;
     public static final double SPARSE_SBBF_DEFAULT_FPP = 0.01;
     public static final int SPARSE_SBBF_NUM_BLOCKS_FOOTER_SIZE = Integer.BYTES;
@@ -241,27 +256,27 @@ public final class PostingIndexUtils {
     //   [56..4087]  reserved
     //   [4088..4095] V2_HEADER_OFFSET_SEQUENCE_END
     //
-    // Entry header (V2_ENTRY_HEADER_SIZE = 64 bytes; gen dir follows):
+    // Entry header (V2_ENTRY_HEADER_SIZE = 56 bytes; gen dir follows):
     //   [0..7]      V2_ENTRY_OFFSET_LEN
     //                 total entry size in bytes (header + gen dir).
     //   [8..15]     V2_ENTRY_OFFSET_SEAL_TXN  (>= 1, monotonic per .pk).
-    //   [16..23]    V2_ENTRY_OFFSET_TXN_AT_SEAL
-    //                 the table _txn this entry takes effect at.
-    //                 Readers pick the entry where TXN_AT_SEAL <= pinned _txn
-    //                 (highest such). Entries with TXN_AT_SEAL > _txn are
-    //                 either uncommitted or abandoned.
-    //   [24..31]    V2_ENTRY_OFFSET_VALUE_MEM_SIZE  (.pv.{sealTxn} bytes).
-    //   [32..39]    V2_ENTRY_OFFSET_MAX_VALUE        (highest row id).
-    //   [40..43]    V2_ENTRY_OFFSET_KEY_COUNT
-    //   [44..47]    V2_ENTRY_OFFSET_GEN_COUNT
-    //   [48..51]    V2_ENTRY_OFFSET_BLOCK_CAPACITY
-    //   [52..55]    V2_ENTRY_OFFSET_COVERING_FORMAT (reserved; 0 for now).
-    //   [56..63]    V2_ENTRY_OFFSET_PREV_ENTRY_OFFSET
+    //                 The entry-level "table _txn this entry takes effect at"
+    //                 lives in slot[0]'s TXN_AT_SEAL field. Fast-path multi-
+    //                 commit shares an entry, so visibility / recovery is
+    //                 per-gen; entry-level uses slot[0] (the earliest gen)
+    //                 as the picker's coarse filter.
+    //   [16..23]    V2_ENTRY_OFFSET_VALUE_MEM_SIZE  (.pv.{sealTxn} bytes).
+    //   [24..31]    V2_ENTRY_OFFSET_MAX_VALUE        (highest row id).
+    //   [32..35]    V2_ENTRY_OFFSET_KEY_COUNT
+    //   [36..39]    V2_ENTRY_OFFSET_GEN_COUNT
+    //   [40..43]    V2_ENTRY_OFFSET_BLOCK_CAPACITY
+    //   [44..47]    V2_ENTRY_OFFSET_COVERING_FORMAT (reserved; 0 for now).
+    //   [48..55]    V2_ENTRY_OFFSET_PREV_ENTRY_OFFSET
     //                 byte offset of the previous entry, or V2_NO_HEAD if
     //                 this is the oldest entry. Lets readers walk backwards
     //                 from head without scanning the whole region.
-    //   [64..]      gen dir, GEN_COUNT * GEN_DIR_ENTRY_SIZE bytes.
-    //   [64 + GEN_COUNT * GEN_DIR_ENTRY_SIZE ..]
+    //   [56..]      gen dir, GEN_COUNT * GEN_DIR_ENTRY_SIZE bytes.
+    //   [56 + GEN_COUNT * GEN_DIR_ENTRY_SIZE ..]
     //               cover end-offset footer, COVER_COUNT * COVER_END_OFFSET_ENTRY_SIZE
     //               bytes. The c-th long is the writer's append offset in
     //               .pc{c}.<...>.<SEAL_TXN> at the moment this entry was
@@ -271,17 +286,16 @@ public final class PostingIndexUtils {
     //               every entry in this .pk file. The footer is empty when
     //               COVER_COUNT == 0. The whole entry is then 8-byte aligned
     //               via PostingIndexChainEntry.entrySize.
-    public static final int V2_ENTRY_HEADER_SIZE = 64;
-    public static final int V2_ENTRY_OFFSET_BLOCK_CAPACITY = 48;
-    public static final int V2_ENTRY_OFFSET_COVERING_FORMAT = 52;
-    public static final int V2_ENTRY_OFFSET_GEN_COUNT = 44;
-    public static final int V2_ENTRY_OFFSET_KEY_COUNT = 40;
+    public static final int V2_ENTRY_HEADER_SIZE = 56;
+    public static final int V2_ENTRY_OFFSET_BLOCK_CAPACITY = 40;
+    public static final int V2_ENTRY_OFFSET_COVERING_FORMAT = 44;
+    public static final int V2_ENTRY_OFFSET_GEN_COUNT = 36;
+    public static final int V2_ENTRY_OFFSET_KEY_COUNT = 32;
     public static final int V2_ENTRY_OFFSET_LEN = 0;
-    public static final int V2_ENTRY_OFFSET_MAX_VALUE = 32;
-    public static final int V2_ENTRY_OFFSET_PREV_ENTRY_OFFSET = 56;
+    public static final int V2_ENTRY_OFFSET_MAX_VALUE = 24;
+    public static final int V2_ENTRY_OFFSET_PREV_ENTRY_OFFSET = 48;
     public static final int V2_ENTRY_OFFSET_SEAL_TXN = 8;
-    public static final int V2_ENTRY_OFFSET_TXN_AT_SEAL = 16;
-    public static final int V2_ENTRY_OFFSET_VALUE_MEM_SIZE = 24;
+    public static final int V2_ENTRY_OFFSET_VALUE_MEM_SIZE = 16;
     public static final long V2_ENTRY_REGION_BASE = 8192L;
     public static final int V2_FORMAT_VERSION = 2;
     public static final int V2_HEADER_OFFSET_ENTRY_COUNT = 24;
@@ -296,6 +310,12 @@ public final class PostingIndexUtils {
     // EF header: sentinel(4B) + count(4B) + L(1B) + universe(8B) = 17B
     static final int EF_HEADER_SIZE = 17;
     private static final long PARSE_FAIL = Long.MIN_VALUE;
+    /**
+     * Tri-state sentinel returned by {@link #readSealTxnFromKeyFdTriState} to
+     * mark a read-or-corruption failure. Distinct from {@link #V2_NO_HEAD},
+     * which signals a well-formed file with an explicitly empty chain.
+     */
+    static final long READ_FAILURE = Long.MIN_VALUE;
     // Bounded retry budget for the seqlock loop in readSealTxnFromKeyFd. The
     // writer always leaves one of the two pages stable across a write, so a
     // consistent snapshot is normally found within one or two iterations.
@@ -1069,12 +1089,56 @@ public final class PostingIndexUtils {
      * <p>
      * Returns {@code -1} if the file is too short, the format version is
      * not v2, the chain is empty, both header pages fail seqlock
-     * validation, or every retry observes a torn read.
+     * validation, or every retry observes a torn read. Writer-locked
+     * callers that must distinguish "empty chain" from "read failure"
+     * should call {@link #readSealTxnFromKeyFdTriState} instead.
      */
     public static long readSealTxnFromKeyFd(FilesFacade ff, long keyFd) {
+        long result = readSealTxnFromKeyFdTriState(ff, keyFd);
+        return result == READ_FAILURE ? -1 : result;
+    }
+
+    /**
+     * Reads the current {@code sealTxn} from a .pk file. Returns -1 if the file
+     * cannot be opened or both metadata pages fail the seq-lock validation.
+     * <p>
+     * Callers use this when they need to construct the path of the live .pv or
+     * .pc&lt;N&gt; files but only have the {@code postingColumnNameTxn}.
+     */
+    public static long readSealTxnFromKeyFile(FilesFacade ff, LPSZ keyFilePath) {
+        long fd = ff.openRO(keyFilePath);
+        if (fd < 0) {
+            return -1;
+        }
+        try {
+            return readSealTxnFromKeyFd(ff, fd);
+        } finally {
+            ff.close(fd);
+        }
+    }
+
+    /**
+     * Tri-state companion of {@link #readSealTxnFromKeyFd}. Returns:
+     * <ul>
+     *   <li>{@code >= 0} the live sealTxn for the head chain entry.</li>
+     *   <li>{@link #V2_NO_HEAD} (-1) when the file is well-formed and the
+     *       chain is explicitly empty. Distinguished from a read failure by
+     *       a clean format version read and a stable seqlock pair around
+     *       the head-pointer observation.</li>
+     *   <li>{@link #READ_FAILURE} when the .pk file is too short, the
+     *       format version mismatches, the head pointer lies outside the
+     *       entry region, the region descriptors look unreadable, or every
+     *       retry observes a torn seqlock.</li>
+     * </ul>
+     * {@link #readSealTxnFromKeyFd} collapses the last two into {@code -1},
+     * which is sufficient for read-mostly callers; only the strict
+     * writer-side caller needs the distinction to avoid throwing on a
+     * legitimately empty chain.
+     */
+    static long readSealTxnFromKeyFdTriState(FilesFacade ff, long keyFd) {
         long fileSize = ff.length(keyFd);
         if (fileSize < KEY_FILE_RESERVED) {
-            return -1;
+            return READ_FAILURE;
         }
         for (int attempt = 0; attempt < SEAL_TXN_READ_ATTEMPTS; attempt++) {
             long seqA = ff.readNonNegativeLong(keyFd, PAGE_A_OFFSET + V2_HEADER_OFFSET_SEQUENCE_START);
@@ -1110,23 +1174,52 @@ public final class PostingIndexUtils {
             // Verify format and head-entry pointer, then read the head
             // entry's sealTxn. ff.readNonNegativeLong returns -1 on
             // negative or unreadable values, so V2_NO_HEAD (-1) and any
-            // I/O error fold into a single sentinel here.
+            // I/O error fold into the same -1 -- the post-seqlock check
+            // plus the region-descriptor sanity below disambiguates them.
             long formatVersion = ff.readNonNegativeLong(keyFd, pageOffset + V2_HEADER_OFFSET_FORMAT_VERSION);
             if (formatVersion != V2_FORMAT_VERSION) {
-                return -1;
+                return READ_FAILURE;
             }
             long headEntryOffset = ff.readNonNegativeLong(keyFd, pageOffset + V2_HEADER_OFFSET_HEAD_ENTRY_OFFSET);
             long regionBase = ff.readNonNegativeLong(keyFd, pageOffset + V2_HEADER_OFFSET_REGION_BASE);
             long regionLimit = ff.readNonNegativeLong(keyFd, pageOffset + V2_HEADER_OFFSET_REGION_LIMIT);
 
-            // Empty chain or unreadable pointer.
-            if (headEntryOffset < 0 || headEntryOffset < regionBase || headEntryOffset >= regionLimit) {
+            // Region descriptors must be sensible -- base sits past the
+            // reserved header pages and limit is at least equal to base
+            // (limit == base is the legitimate empty-region shape that a
+            // freshly initialised .pk publishes before its first seal).
+            // An unreadable descriptor (folded to -1) or an inverted pair
+            // flunks here and is treated as a read failure.
+            if (regionBase < KEY_FILE_RESERVED || regionLimit < regionBase) {
                 long postSeqStart = ff.readNonNegativeLong(keyFd, pageOffset + V2_HEADER_OFFSET_SEQUENCE_START);
                 long postSeqEnd = ff.readNonNegativeLong(keyFd, pageOffset + V2_HEADER_OFFSET_SEQUENCE_END);
                 if (postSeqStart != expectedSeq || postSeqEnd != expectedSeq) {
                     continue;
                 }
-                return -1;
+                return READ_FAILURE;
+            }
+
+            if (headEntryOffset < 0) {
+                // V2_NO_HEAD: explicit empty chain. The format and region
+                // descriptors all read cleanly, so the -1 we see for the
+                // head pointer cannot be a read error -- the only way to
+                // get a negative head pointer here is the on-disk
+                // V2_NO_HEAD sentinel.
+                long postSeqStart = ff.readNonNegativeLong(keyFd, pageOffset + V2_HEADER_OFFSET_SEQUENCE_START);
+                long postSeqEnd = ff.readNonNegativeLong(keyFd, pageOffset + V2_HEADER_OFFSET_SEQUENCE_END);
+                if (postSeqStart != expectedSeq || postSeqEnd != expectedSeq) {
+                    continue;
+                }
+                return V2_NO_HEAD;
+            }
+            if (headEntryOffset < regionBase || headEntryOffset >= regionLimit) {
+                // Out-of-region head pointer: torn read or corruption.
+                long postSeqStart = ff.readNonNegativeLong(keyFd, pageOffset + V2_HEADER_OFFSET_SEQUENCE_START);
+                long postSeqEnd = ff.readNonNegativeLong(keyFd, pageOffset + V2_HEADER_OFFSET_SEQUENCE_END);
+                if (postSeqStart != expectedSeq || postSeqEnd != expectedSeq) {
+                    continue;
+                }
+                return READ_FAILURE;
             }
 
             long sealTxn = ff.readNonNegativeLong(keyFd, headEntryOffset + V2_ENTRY_OFFSET_SEAL_TXN);
@@ -1140,26 +1233,129 @@ public final class PostingIndexUtils {
                 return sealTxn;
             }
         }
-        return -1;
+        return READ_FAILURE;
     }
 
     /**
-     * Reads the current {@code sealTxn} from a .pk file. Returns -1 if the file
-     * cannot be opened or both metadata pages fail the seq-lock validation.
-     * <p>
-     * Callers use this when they need to construct the path of the live .pv or
-     * .pc&lt;N&gt; files but only have the {@code postingColumnNameTxn}.
+     * Tri-state companion of {@link #readSealTxnFromKeyFile}. See
+     * {@link #readSealTxnFromKeyFdTriState} for return semantics.
      */
-    public static long readSealTxnFromKeyFile(FilesFacade ff, LPSZ keyFilePath) {
+    static long readSealTxnFromKeyFileTriState(FilesFacade ff, LPSZ keyFilePath) {
         long fd = ff.openRO(keyFilePath);
         if (fd < 0) {
-            return -1;
+            return READ_FAILURE;
         }
         try {
-            return readSealTxnFromKeyFd(ff, fd);
+            return readSealTxnFromKeyFdTriState(ff, fd);
         } finally {
             ff.close(fd);
         }
+    }
+
+    /**
+     * Strict variant of {@link #readSealTxnFromKeyFile} for writer-locked contexts
+     * (column rename, parquet conversion) where a silent -1 from the
+     * non-strict reader would let the caller hard-link {@code .d} and
+     * {@code .pk} files without their referenced {@code .pv} sidecar,
+     * corrupting the renamed column. Returns the live sealTxn on success and
+     * {@code -1} when the chain is truly empty; throws
+     * {@link CairoException#critical} only when the .pk file is persistently
+     * unreadable AND a .pv file matching {@code postingColumnNameTxn} exists
+     * in the partition directory.
+     * <p>
+     * Disambiguation walks the tri-state reader
+     * ({@link #readSealTxnFromKeyFileTriState}):
+     * <ul>
+     *   <li>If either attempt returns a non-negative sealTxn, the chain has
+     *       data and that value wins. A one-shot transient read failure
+     *       (FilesFacade fault injection, pread EINTR, etc.) clears between
+     *       opens, so the second read sees the true file state.</li>
+     *   <li>If the first attempt returns {@link #V2_NO_HEAD}, the chain is
+     *       confirmed empty and we short-circuit. V2_NO_HEAD is only
+     *       returned after a clean format-version read, a stable seqlock
+     *       pair across the head-pointer observation, and sane region
+     *       descriptors -- under the writer lock that answer is
+     *       authoritative and a second read cannot legitimately disagree.</li>
+     *   <li>If the first attempt returns {@link #READ_FAILURE}, retry once.
+     *       If the retry returns {@link #V2_NO_HEAD}, the chain is empty.
+     *       If the retry also returns {@link #READ_FAILURE}, the failure is
+     *       persistent (file corrupt, hardware error). Only then does the
+     *       .pv-existence check gate the throw: with .pv files present,
+     *       dropping the link would lose sealed data.</li>
+     * </ul>
+     */
+    public static long readLiveSealTxnFromKeyFileOrThrow(
+            FilesFacade ff,
+            Path path,
+            int pathTrimTo,
+            CharSequence columnName,
+            long postingColumnNameTxn,
+            LPSZ keyFilePath
+    ) {
+        long firstAttempt = readSealTxnFromKeyFileTriState(ff, keyFilePath);
+        if (firstAttempt >= 0) {
+            return firstAttempt;
+        }
+        if (firstAttempt == V2_NO_HEAD) {
+            // Authoritative empty-chain answer: the tri-state reader only
+            // returns V2_NO_HEAD when format version, region descriptors
+            // and the seqlock pair around the head-pointer read all check
+            // out. Under the writer lock no concurrent writer can publish
+            // a head, so a retry cannot produce a different answer. Falling
+            // through to a second attempt would risk a spurious throw if
+            // an injected one-shot read failure trips the retry while a
+            // pre-seal .pv.<colTxn>.0 sidecar exists in the partition.
+            return -1;
+        }
+        // firstAttempt == READ_FAILURE: retry once. A one-shot read failure
+        // (FF injection, pread EINTR) clears on a second open of the .pk
+        // file. The second read reveals whether the chain truly has data,
+        // is genuinely empty, or the .pk file is persistently unreadable.
+        long secondAttempt = readSealTxnFromKeyFileTriState(ff, keyFilePath);
+        if (secondAttempt >= 0) {
+            return secondAttempt;
+        }
+        if (secondAttempt == V2_NO_HEAD) {
+            return -1;
+        }
+        // secondAttempt == READ_FAILURE: persistent failure. Capture errno
+        // before ff.exists() and scanSealedFiles()'s iterateDir() overwrite
+        // the thread-local errno set by the failing .pk read.
+        final int savedErrno = ff.errno();
+        if (!ff.exists(keyFilePath)) {
+            return -1;
+        }
+        // The .pk file exists but the reader cannot produce a stable
+        // header snapshot. Distinguish "file is initialised but the read
+        // path is genuinely failing" from "file is mid-init or leftover
+        // garbage from a failed earlier init" -- the latter has no chain
+        // and no on-disk sealTxn to lose, so no .pv link is required.
+        if (!hasInitialisedKeyFileHeader(ff, keyFilePath)) {
+            return -1;
+        }
+        final boolean[] hasPv = {false};
+        scanSealedFiles(ff, path, pathTrimTo, columnName, new SealedFileVisitor() {
+            @Override
+            public void onCoverDataFile(int includeIdx, long filePostingColumnNameTxn, long coveredColumnNameTxn, long fileSealTxn) {
+            }
+
+            @Override
+            public void onValueFile(long filePostingColumnNameTxn, long fileSealTxn) {
+                if (filePostingColumnNameTxn == postingColumnNameTxn) {
+                    hasPv[0] = true;
+                }
+            }
+        });
+        if (hasPv[0]) {
+            // scanSealedFiles trimmed path back to the partition dir, so the
+            // keyFilePath LPSZ now points at the partition dir rather than at
+            // the .pk.<txn> file. Rebuild the full path for the diagnostic.
+            throw CairoException.critical(savedErrno)
+                    .put("could not read live sealTxn from posting key file but .pv files exist; ")
+                    .put("file is unreadable or corrupt, refusing to drop sealed data [path=")
+                    .put(keyFileName(path.trimTo(pathTrimTo), columnName, postingColumnNameTxn)).put(']');
+        }
+        return -1;
     }
 
     /**
