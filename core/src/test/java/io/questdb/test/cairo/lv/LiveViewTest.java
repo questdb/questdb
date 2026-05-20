@@ -24,8 +24,14 @@
 
 package io.questdb.test.cairo.lv;
 
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
+import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.WindowSPI;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.engine.functions.window.BaseWindowFunction;
+import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.mp.Job;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
@@ -276,6 +282,24 @@ public class LiveViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRejectNonSnapshotCapableWindowFunction() {
+        // The supportsSnapshot() reject is unreachable through real SQL today: every GA
+        // window function supports snapshots, and the multi-pass / lead / percent_rank
+        // cases are caught upstream. Drive the validation directly with a ZERO_PASS stub
+        // that lacks snapshot support to pin the user-facing message and position.
+        try {
+            CairoEngine.validateLiveViewWindowFunction(new NonSnapshotWindowFunction(), 42);
+            Assert.fail("expected SqlException for non-snapshot-capable window function");
+        } catch (SqlException e) {
+            Assert.assertEquals(42, e.getPosition());
+            Assert.assertTrue(
+                    e.getMessage(),
+                    e.getMessage().contains("live view select cannot use window function test_no_snapshot(); incremental snapshot is not supported for this function yet")
+            );
+        }
+    }
+
+    @Test
     public void testRejectTwoPassWindowFunction() throws Exception {
         // ntile() is a TWO_PASS window function — incremental refresh cannot drive it
         // because the second pass needs the partition's total row count up front.
@@ -423,5 +447,32 @@ public class LiveViewTest extends AbstractCairoTest {
             );
             execute("DROP LIVE VIEW lv");
         });
+    }
+
+    // A ZERO_PASS window function that does not support snapshots. No such GA function
+    // exists, so this stub is the only way to reach (and pin) the supportsSnapshot reject.
+    private static final class NonSnapshotWindowFunction extends BaseWindowFunction {
+        NonSnapshotWindowFunction() {
+            super(null);
+        }
+
+        @Override
+        public String getName() {
+            return "test_no_snapshot";
+        }
+
+        @Override
+        public int getPassCount() {
+            return WindowFunction.ZERO_PASS;
+        }
+
+        @Override
+        public int getType() {
+            return ColumnType.DOUBLE;
+        }
+
+        @Override
+        public void pass1(Record record, long recordOffset, WindowSPI spi) {
+        }
     }
 }

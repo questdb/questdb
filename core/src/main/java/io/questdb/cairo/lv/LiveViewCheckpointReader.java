@@ -237,6 +237,16 @@ public class LiveViewCheckpointReader implements Closeable {
         offset += Integer.BYTES;
         for (int i = 0; i < windowCount; i++) {
             final CharSequence name = manifestBlock.getStr(offset);
+            // The writer never emits a null window name (addWindowName rejects null),
+            // so a null slot here means a corrupt or truncated manifest. Throw the same
+            // structural-corruption CairoException the magic/CRC checks use, so the caller
+            // unlinks the head and falls into the viewLowerBoundTimestamp replay path
+            // instead of dereferencing null on the next line.
+            if (name == null) {
+                throw CairoException.critical(0)
+                        .put("live view checkpoint manifest has null window name, index=")
+                        .put(i);
+            }
             // Length-prefixed: 4 bytes for length + 2 * length bytes for chars.
             offset += Integer.BYTES + (long) name.length() * Character.BYTES;
             dst.addWindowName(name.toString());

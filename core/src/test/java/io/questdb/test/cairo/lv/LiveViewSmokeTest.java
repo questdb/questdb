@@ -7056,6 +7056,69 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRejectDuplicateBackfillClause() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            final String sql = "CREATE LIVE VIEW lv FLUSH EVERY 1s BACKFILL BACKFILL AS " +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base WHERE x > 0";
+            final int secondClausePos = sql.indexOf("BACKFILL", sql.indexOf("BACKFILL") + 1);
+            try {
+                execute(sql);
+                Assert.fail("expected SqlException rejecting duplicate BACKFILL");
+            } catch (SqlException e) {
+                Assert.assertEquals(secondClausePos, e.getPosition());
+                Assert.assertTrue(
+                        "wrong message [msg=" + e.getFlyweightMessage() + ']',
+                        Chars.contains(e.getFlyweightMessage(),
+                                "live view BACKFILL clause specified more than once")
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testRejectDuplicateInMemoryClause() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            final String sql = "CREATE LIVE VIEW lv FLUSH EVERY 1s IN MEMORY 1s IN MEMORY 2s AS " +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base WHERE x > 0";
+            final int secondClausePos = sql.indexOf("IN MEMORY", sql.indexOf("IN MEMORY") + 1);
+            try {
+                execute(sql);
+                Assert.fail("expected SqlException rejecting duplicate IN MEMORY");
+            } catch (SqlException e) {
+                Assert.assertEquals(secondClausePos, e.getPosition());
+                Assert.assertTrue(
+                        "wrong message [msg=" + e.getFlyweightMessage() + ']',
+                        Chars.contains(e.getFlyweightMessage(),
+                                "live view IN MEMORY clause specified more than once")
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testRejectDuplicatePartitionByClause() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            final String sql = "CREATE LIVE VIEW lv FLUSH EVERY 1s PARTITION BY DAY PARTITION BY HOUR AS " +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base WHERE x > 0";
+            final int secondClausePos = sql.indexOf("PARTITION BY", sql.indexOf("PARTITION BY") + 1);
+            try {
+                execute(sql);
+                Assert.fail("expected SqlException rejecting duplicate PARTITION BY");
+            } catch (SqlException e) {
+                Assert.assertEquals(secondClausePos, e.getPosition());
+                Assert.assertTrue(
+                        "wrong message [msg=" + e.getFlyweightMessage() + ']',
+                        Chars.contains(e.getFlyweightMessage(),
+                                "live view PARTITION BY clause specified more than once")
+                );
+            }
+        });
+    }
+
+    @Test
     public void testShowCreateEmitsResolvedPartitionByForDefault() throws Exception {
         // When PARTITION BY is omitted, the LV inherits the base's scheme. SHOW
         // CREATE emits the resolved value (not a missing clause), so re-executing

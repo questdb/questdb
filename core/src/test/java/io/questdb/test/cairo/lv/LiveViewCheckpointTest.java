@@ -144,6 +144,47 @@ public class LiveViewCheckpointTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNullWindowNameInManifestIsRejected() throws Exception {
+        assertMemoryLeak(() -> {
+            final long lvSeqTxn = 7;
+            try (Path liveViewDir = newLiveViewDir()) {
+                try (LiveViewCheckpointWriter writer = new LiveViewCheckpointWriter(configuration)) {
+                    writer.of(liveViewDir.$(), lvSeqTxn);
+                    // Hand-craft a MANIFEST block carrying a null-encoded window name.
+                    // writeManifestBlock cannot produce one (addWindowName is non-null),
+                    // so write the block fields directly and emit a null string slot.
+                    final MemoryA sink = writer.beginBlock(LiveViewCheckpointBlockType.BLOCK_MANIFEST);
+                    sink.putLong(lvSeqTxn);                                // lvSeqTxn
+                    sink.putLong(0);                                       // lvRowPosition
+                    sink.putLong(0);                                       // baseSeqTxn
+                    sink.putLong(0);                                       // maxTimestamp
+                    sink.putByte(LiveViewCheckpointManifest.KIND_STEADY);  // kind
+                    sink.putInt(1);                                        // windowCount
+                    sink.putStr(null);                                     // null window name
+                    writer.endBlock();
+                    writer.commit(Long.MIN_VALUE);
+                }
+                // The file itself is structurally valid (magic, version, CRC all check
+                // out), so of() succeeds; the corruption surfaces only when the manifest
+                // parser hits the null name. It must throw, not NPE.
+                try (Path cpPath = openHeadPath(liveViewDir, lvSeqTxn);
+                     LiveViewCheckpointReader reader = new LiveViewCheckpointReader(configuration)) {
+                    reader.of(cpPath.$());
+                    try {
+                        reader.readManifestInto(new LiveViewCheckpointManifest());
+                        Assert.fail("expected null window name to be rejected");
+                    } catch (CairoException e) {
+                        Assert.assertTrue(
+                                e.getFlyweightMessage().toString(),
+                                e.getFlyweightMessage().toString().contains("null window name")
+                        );
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
     public void testPriorHeadIsUnlinkedOnCommit() throws Exception {
         assertMemoryLeak(() -> {
             final long priorLvSeqTxn = 100;

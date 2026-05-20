@@ -1326,13 +1326,19 @@ public class SqlParser {
         char inMemoryUnit = flushUnit;
         long inMemoryMicros = flushMicros;
         boolean inMemorySpecified = false;
+        boolean partitionBySpecified = false;
+        boolean backfillSpecified = false;
 
         // Optional clauses: IN MEMORY <duration>, PARTITION BY <unit>, BACKFILL.
-        // Order: any of the three may appear, in any order, before AS. (Phase 1 expects
-        // at most one of each.)
+        // Any of the three may appear, in any order, before AS, but each at most
+        // once - a repeat is rejected so a typo'd second clause does not silently
+        // overwrite the first.
         tok = tok(lexer, "'in', 'partition', 'backfill', or 'as'");
         while (true) {
             if (isInKeyword(tok)) {
+                if (inMemorySpecified) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "live view IN MEMORY clause specified more than once");
+                }
                 expectTok(lexer, "memory");
                 CharSequence memTok = tok(lexer, "in memory duration");
                 int memPos = lexer.lastTokenPosition();
@@ -1359,6 +1365,9 @@ public class SqlParser {
                 builder.setInMemoryIntervalUnit(inMemoryUnit);
                 tok = tok(lexer, "next clause or 'as'");
             } else if (isPartitionKeyword(tok)) {
+                if (partitionBySpecified) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "live view PARTITION BY clause specified more than once");
+                }
                 expectTok(lexer, "by");
                 tok = tok(lexer, "year month week day hour");
                 int partPos = lexer.lastTokenPosition();
@@ -1376,9 +1385,14 @@ public class SqlParser {
                             "live view PARTITION BY NONE is not supported; live views must be partitioned");
                 }
                 builder.setPartitionBy(partitionBy);
+                partitionBySpecified = true;
                 tok = tok(lexer, "next clause or 'as'");
             } else if (isBackfillKeyword(tok)) {
+                if (backfillSpecified) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "live view BACKFILL clause specified more than once");
+                }
                 builder.setBackfillRequested(true);
+                backfillSpecified = true;
                 tok = tok(lexer, "next clause or 'as'");
             } else {
                 break;

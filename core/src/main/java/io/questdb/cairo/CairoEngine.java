@@ -371,6 +371,31 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     /**
+     * Per-function half of {@link #validateLiveViewFactory}: rejects a window function
+     * the incremental refresh path cannot drive. Extracted so the reject contract can be
+     * unit-tested directly - both rejects are unreachable for GA functions today
+     * (multi-pass and lead/percent_rank are caught upstream, and every migrated function
+     * supports snapshots), so a stub function is the only way to pin the wording.
+     * <p>
+     * A non-{@link WindowFunction#ZERO_PASS} function needs caching or a lookahead pass
+     * that incremental refresh has no way to supply. A function without snapshot support
+     * would make the refresh worker silently skip checkpoint writes for the whole view,
+     * routing every restart and every O3 through full head-miss replay from
+     * viewLowerBoundTimestamp; surfacing the gap at CREATE keeps that surprise off the
+     * steady-state hot path.
+     */
+    public static void validateLiveViewWindowFunction(WindowFunction f, int position) throws SqlException {
+        if (f.getPassCount() != WindowFunction.ZERO_PASS) {
+            throw SqlException.$(position, "live view select may only use window functions that support incremental refresh");
+        }
+        if (!f.supportsSnapshot()) {
+            throw SqlException.$(position, "live view select cannot use window function ")
+                    .put(f.getName())
+                    .put("(); incremental snapshot is not supported for this function yet");
+        }
+    }
+
+    /**
      * Advances the live view's {@code lvConsumedSeqTxn} to {@code maxBaseSeqTxn} after
      * the LV's own WAL block has been applied to its on-disk table. The advance is
      * monotonic and persisted to {@code _lv.s} so WAL purge sees the latest floor across
@@ -2744,20 +2769,7 @@ public class CairoEngine implements Closeable, WriterSource {
         ObjList<WindowFunction> fns = wf.getWindowFunctions();
         rejectLeadIfPresent(fns, position);
         for (int i = 0, n = fns.size(); i < n; i++) {
-            WindowFunction f = fns.getQuick(i);
-            if (f.getPassCount() != WindowFunction.ZERO_PASS) {
-                throw SqlException.$(position, "live view select may only use window functions that support incremental refresh");
-            }
-            // Every window function in the LV select must also be checkpoint-capable.
-            // Without snapshot support, the refresh worker would silently skip checkpoint
-            // writes for the whole view, routing every restart and every O3 through full
-            // head-miss replay from viewLowerBoundTimestamp. Surfacing the gap here keeps
-            // operator surprise out of the steady-state hot path.
-            if (!f.supportsSnapshot()) {
-                throw SqlException.$(position, "live view select cannot use window function ")
-                        .put(f.getName())
-                        .put("(); incremental snapshot is not supported for this function yet");
-            }
+            validateLiveViewWindowFunction(fns.getQuick(i), position);
         }
 
         // Incremental refresh drives window functions manually over rows read directly
@@ -3222,6 +3234,12 @@ public class CairoEngine implements Closeable, WriterSource {
     // the signal, not its contents. Failure throws CairoException with the
     // path; the caller's DROP aborts before any teardown so the LV remains
     // queryable.
+    //
+    // Unlike the .cp writer, this deliberately does NOT tmp+rename. Recovery
+    // keys off existence alone, so a zero-byte or partially written _lv.drop
+    // still correctly triggers the reap branch; a tmp+rename scheme would
+    // instead lose a crash-before-rename drop intent. Existence-only is the
+    // stronger durability contract here, not an oversight.
     private void writeLiveViewDropSentinel(TableToken token) {
         final FilesFacade ff = configuration.getFilesFacade();
         try (Path path = new Path()) {
