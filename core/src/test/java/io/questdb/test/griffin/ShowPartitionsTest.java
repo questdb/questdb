@@ -416,9 +416,11 @@ public class ShowPartitionsTest extends AbstractCairoTest {
             }
 
             assertQueryNoLeakCheck(
-                    "name\tminTimestamp\tmaxTimestamp\tnumRows\tisParquet\n" +
-                            "2023-01-01\t2023-01-01T00:00:00.000000Z\t2023-01-01T07:00:00.000000Z\t8\ttrue\n" +
-                            "2023-01-02\t2023-01-02T00:00:00.000000Z\t2023-01-02T00:00:00.000000Z\t1\tfalse\n",
+                    """
+                            name\tminTimestamp\tmaxTimestamp\tnumRows\tisParquet
+                            2023-01-01\t2023-01-01T00:00:00.000000Z\t2023-01-01T07:00:00.000000Z\t8\ttrue
+                            2023-01-02\t2023-01-02T00:00:00.000000Z\t2023-01-02T00:00:00.000000Z\t1\tfalse
+                            """,
                     "SELECT name, minTimestamp, maxTimestamp, numRows, isParquet" +
                             " FROM table_partitions('" + tableName + "')" +
                             " WHERE attached" +
@@ -478,10 +480,12 @@ public class ShowPartitionsTest extends AbstractCairoTest {
             // Despite the cleared raw bit, the parquet partition reports
             // hasParquetGenerated as true.
             assertQueryNoLeakCheck(
-                    "name\thasParquetGenerated\tisParquet\n" +
-                            "2023-01-01\ttrue\ttrue\n" +
-                            "2023-01-02\tfalse\tfalse\n" +
-                            "2023-01-03\tfalse\tfalse\n",
+                    """
+                            name\thasParquetGenerated\tisParquet
+                            2023-01-01\ttrue\ttrue
+                            2023-01-02\tfalse\tfalse
+                            2023-01-03\tfalse\tfalse
+                            """,
                     "SELECT name, hasParquetGenerated, isParquet" +
                             " FROM table_partitions('" + tableName + "')" +
                             " WHERE attached" +
@@ -520,9 +524,11 @@ public class ShowPartitionsTest extends AbstractCairoTest {
             }
 
             assertQueryNoLeakCheck(
-                    "name\tminTimestamp\tmaxTimestamp\tnumRows\tisParquet\n" +
-                            "2023-01-01\t2023-01-01T00:00:00.000000Z\t2023-01-01T18:00:00.000000Z\t4\ttrue\n" +
-                            "2023-01-02\t2023-01-02T00:00:00.000000Z\t2023-01-02T00:00:00.000000Z\t1\tfalse\n",
+                    """
+                            name\tminTimestamp\tmaxTimestamp\tnumRows\tisParquet
+                            2023-01-01\t2023-01-01T00:00:00.000000Z\t2023-01-01T18:00:00.000000Z\t4\ttrue
+                            2023-01-02\t2023-01-02T00:00:00.000000Z\t2023-01-02T00:00:00.000000Z\t1\tfalse
+                            """,
                     "SELECT name, minTimestamp, maxTimestamp, numRows, isParquet" +
                             " FROM table_partitions('" + tableName + "')" +
                             " WHERE attached" +
@@ -680,10 +686,12 @@ public class ShowPartitionsTest extends AbstractCairoTest {
             // This exercises the ShowPartitionsRecordCursorFactory code path that
             // reads min/max timestamps from the _pm sidecar file.
             assertQueryNoLeakCheck(
-                    "name\tminTimestamp\tmaxTimestamp\tnumRows\tisParquet\n" +
-                            "2023-01-01\t2023-01-01T00:00:00.000000Z\t2023-01-01T00:00:00.000000Z\t1\ttrue\n" +
-                            "2023-01-02\t2023-01-02T00:00:00.000000Z\t2023-01-02T00:00:00.000000Z\t1\tfalse\n" +
-                            "2023-01-03\t2023-01-03T00:00:00.000000Z\t2023-01-03T00:00:00.000000Z\t1\tfalse\n",
+                    """
+                            name\tminTimestamp\tmaxTimestamp\tnumRows\tisParquet
+                            2023-01-01\t2023-01-01T00:00:00.000000Z\t2023-01-01T00:00:00.000000Z\t1\ttrue
+                            2023-01-02\t2023-01-02T00:00:00.000000Z\t2023-01-02T00:00:00.000000Z\t1\tfalse
+                            2023-01-03\t2023-01-03T00:00:00.000000Z\t2023-01-03T00:00:00.000000Z\t1\tfalse
+                            """,
                     "SELECT name, minTimestamp, maxTimestamp, numRows, isParquet" +
                             " FROM table_partitions('" + tableName + "')" +
                             " WHERE attached" +
