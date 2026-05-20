@@ -694,26 +694,46 @@ public class QwpGeoHashDecoderTest {
     }
 
     @Test
-    public void testResetAllowsNewPrecision() throws Exception {
+    public void testResetPreservesGeoHashPrecisionAcrossBatches() throws Exception {
+        // Precision is a schema property locked on first write: the server
+        // auto-creates the column type from the first batch's precision and
+        // the wire varint must keep matching it across every subsequent
+        // batch. QwpTableBuffer.ColumnBuffer.reset() (called between batches)
+        // therefore preserves geohashPrecision, the same way it preserves the
+        // column's type byte. A producer that tries a different precision
+        // after a reset gets a synchronous LineSenderException from
+        // addGeoHash, well before anything reaches the wire.
         assertMemoryLeak(() -> {
             try (QwpWebSocketEncoder encoder = new QwpWebSocketEncoder()) {
                 QwpTableBuffer buffer = new QwpTableBuffer("test_table");
 
-                // First batch: 5-bit precision
+                // Batch 1: lock the column at 5-bit precision and flush.
                 QwpTableBuffer.ColumnBuffer col = buffer.getOrCreateColumn("geo", TYPE_GEOHASH, false);
                 col.addGeoHash(0b10110, 5);
                 buffer.nextRow();
-
                 encoder.encode(buffer, false);
                 buffer.reset();
 
-                // After reset: 20-bit precision works fine
+                // Batch 2: same precision must still work (sanity check that
+                // the lock isn't accidentally rejecting matching precisions).
                 col = buffer.getOrCreateColumn("geo", TYPE_GEOHASH, false);
-                col.addGeoHash(0xABCDE, 20);
+                col.addGeoHash(0b11010, 5);
                 buffer.nextRow();
-
                 int size = encoder.encode(buffer, false);
                 Assert.assertTrue(size > 12);
+                buffer.reset();
+
+                // Batch 3: different precision after reset must throw -- the
+                // schema is locked at 5 bits and a 20-bit write would diverge
+                // from the server's auto-created GEOHASH(1c) on the next flush.
+                col = buffer.getOrCreateColumn("geo", TYPE_GEOHASH, false);
+                try {
+                    col.addGeoHash(0xABCDE, 20);
+                    Assert.fail("expected LineSenderException for precision mismatch across reset");
+                } catch (LineSenderException e) {
+                    Assert.assertTrue("got: " + e.getMessage(),
+                            e.getMessage().contains("GeoHash precision mismatch"));
+                }
             }
         });
     }
