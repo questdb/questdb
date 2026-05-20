@@ -165,7 +165,7 @@ public interface MetadataServiceStub extends MetadataService {
     }
 
     @Override
-    default void setMetaTableFormat(int tableFormat) {
+    default void setTableFormat(int tableFormat) {
         throw CairoException.critical(0).put("change of table format does not update sequencer metadata");
     }
 

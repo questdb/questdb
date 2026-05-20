@@ -310,6 +310,75 @@ public class TableFormatTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testFreshParquetTimestampDeltaBinaryPackedEncoding() throws Exception {
+        assertParquetTimestampRoundTrip("delta_binary_packed");
+    }
+
+    @Test
+    public void testFreshParquetTimestampPlainEncoding() throws Exception {
+        assertParquetTimestampRoundTrip("plain");
+    }
+
+    @Test
+    public void testFreshParquetTimestampRleDictionaryEncoding() throws Exception {
+        assertParquetTimestampRoundTrip("rle_dictionary");
+    }
+
+    /**
+     * Exercises both `writeFreshParquetFromO3` (first insert into each
+     * partition) and `copyO3ToRowGroup` (second insert into the same partition
+     * at a later timestamp) for a designated-timestamp column whose PARQUET
+     * encoding has been explicitly set. Catches any regression where the
+     * strided merge-index layout is mishandled on the Rust side for a given
+     * encoding.
+     */
+    private void assertParquetTimestampRoundTrip(String encoding) throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango (" +
+                    "  ts TIMESTAMP PARQUET(" + encoding + "), " +
+                    "  v LONG" +
+                    ") TIMESTAMP(ts) PARTITION BY DAY FORMAT PARQUET WAL");
+
+            // First commit: three partitions, each lands via
+            // writeFreshParquetFromO3.
+            execute("INSERT INTO tango VALUES " +
+                    "('2024-01-01T00:00:00.000000Z', 1), " +
+                    "('2024-01-02T00:00:00.000000Z', 2), " +
+                    "('2024-01-03T00:00:00.000000Z', 3)");
+            drainWalQueue();
+            assertSql("name\tisParquet\n" +
+                            "2024-01-01\ttrue\n" +
+                            "2024-01-02\ttrue\n" +
+                            "2024-01-03\ttrue\n",
+                    "SELECT name, isParquet FROM table_partitions('tango')");
+
+            // Second commit: each partition gets a later timestamp. With no
+            // overlap to the existing row group, the merge strategy picks
+            // COPY_O3 — exercising copyO3ToRowGroup.
+            execute("INSERT INTO tango VALUES " +
+                    "('2024-01-01T12:00:00.000000Z', 4), " +
+                    "('2024-01-02T12:00:00.000000Z', 5), " +
+                    "('2024-01-03T12:00:00.000000Z', 6)");
+            drainWalQueue();
+
+            assertSql("ts\tv\n" +
+                            "2024-01-01T00:00:00.000000Z\t1\n" +
+                            "2024-01-01T12:00:00.000000Z\t4\n" +
+                            "2024-01-02T00:00:00.000000Z\t2\n" +
+                            "2024-01-02T12:00:00.000000Z\t5\n" +
+                            "2024-01-03T00:00:00.000000Z\t3\n" +
+                            "2024-01-03T12:00:00.000000Z\t6\n",
+                    "tango");
+
+            // Min/max round-trip — sensitive to off-by-one or wrong-stride
+            // reads of the merge index.
+            assertSql("min\tmax\tcount\n" +
+                            "2024-01-01T00:00:00.000000Z\t2024-01-03T12:00:00.000000Z\t6\n",
+                    "SELECT min(ts), max(ts), count() FROM tango");
+        });
+    }
+
     /**
      * Inject a failure in writeFreshParquetFromO3 by failing the _pm file open
      * and assert (a) the WAL apply surfaces the error by suspending the table,

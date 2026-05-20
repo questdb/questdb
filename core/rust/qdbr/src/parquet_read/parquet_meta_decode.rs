@@ -804,6 +804,7 @@ mod tests {
             column_top: 0,
             designated_timestamp: true,
             not_null_hint: true,
+            strided_timestamp_16: false,
             designated_timestamp_ascending: true,
             parquet_encoding_config: ParquetEncodingConfig::from_raw(0),
         };

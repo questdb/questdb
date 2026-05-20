@@ -482,6 +482,7 @@ mod tests {
             column_top: 0,
             designated_timestamp: false,
             not_null_hint: false,
+            strided_timestamp_16: false,
             designated_timestamp_ascending: true,
             parquet_encoding_config: ParquetEncodingConfig::from_raw(0),
         };

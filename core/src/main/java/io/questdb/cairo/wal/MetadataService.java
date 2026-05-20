@@ -244,7 +244,7 @@ public interface MetadataService {
      * See {@link io.questdb.cairo.TableUtils#TABLE_FORMAT_NATIVE} and
      * {@link io.questdb.cairo.TableUtils#TABLE_FORMAT_PARQUET}.
      */
-    void setMetaTableFormat(int tableFormat);
+    void setTableFormat(int tableFormat);
 
     /**
      * Sets the time-to-live (TTL) of the data in this table:

@@ -3110,7 +3110,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     @Override
-    public void setMetaTableFormat(int tableFormat) {
+    public void setTableFormat(int tableFormat) {
         if (tableFormat == TableUtils.TABLE_FORMAT_PARQUET) {
             if (!metadata.isWalEnabled()) {
                 throw CairoException.nonCritical().put("FORMAT PARQUET is only supported on WAL tables");

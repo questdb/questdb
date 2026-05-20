@@ -339,8 +339,45 @@ pub struct Column {
     /// fast path that writes an all-ones RLE run for definition levels instead of
     /// computing per-row values.
     pub not_null_hint: bool,
+    /// When true, `primary_data` is a 16-byte-strided merge index where each
+    /// entry is `(i64 timestamp, i64 rowId)` and only the timestamp at offset 0
+    /// is consumed. Set only on the designated timestamp column when QuestDB
+    /// hands its O3 merge index directly to the encoder. Lets the encoder read
+    /// timestamps in place without a Java-side malloc + scatter pass.
+    /// Currently respected by the Plain and DeltaBinaryPacked encode paths;
+    /// RleDictionary callers must not set this bit.
+    pub strided_timestamp_16: bool,
     pub designated_timestamp_ascending: bool,
     pub parquet_encoding_config: ParquetEncodingConfig,
+}
+
+/// Tagged container that tells an encoder which physical layout backs the
+/// designated-timestamp column's primary data. Used purely as a dispatch
+/// label at the encoder entry: `match` once at the top, then call the
+/// generic inner encoder with a concrete (monomorphized) iterator type.
+#[derive(Clone, Copy, Debug)]
+pub enum TimestampValues<'a> {
+    /// `primary_data` reinterpreted as a contiguous `[i64; N]`.
+    Contiguous(&'a [i64]),
+    /// `primary_data` reinterpreted as `[(i64 ts, i64 rowId); N]`. The encoder
+    /// iterates `.iter().map(|p| p[0])` to pull timestamps; the second i64 is
+    /// the original O3 row id, irrelevant to encoding.
+    Strided16(&'a [[i64; 2]]),
+}
+
+impl<'a> TimestampValues<'a> {
+    #[inline]
+    pub fn len(&self) -> usize {
+        match self {
+            Self::Contiguous(s) => s.len(),
+            Self::Strided16(s) => s.len(),
+        }
+    }
+
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
 }
 
 impl Column {
@@ -384,7 +421,10 @@ impl Column {
         }
 
         let not_null_hint = column_type < 0;
-        let column_type: ColumnType = (column_type & 0x7FFFFFFF).try_into()?;
+        // Bit 30: strided-timestamp flag (set by Java when handing the O3 merge
+        // index in place — primary_data is N * 16 bytes, ts at offset 0).
+        let strided_timestamp_16 = (column_type & 0x40000000) != 0;
+        let column_type: ColumnType = (column_type & 0x3FFFFFFF).try_into()?;
 
         let primary_data = if primary_data_ptr.is_null() {
             &[]
@@ -416,9 +456,30 @@ impl Column {
             symbol_offsets,
             designated_timestamp,
             not_null_hint,
+            strided_timestamp_16,
             designated_timestamp_ascending,
             parquet_encoding_config: ParquetEncodingConfig::from_raw(parquet_encoding_config),
         })
+    }
+
+    /// Returns the timestamp values backing this column. Cheap O(1) — just a
+    /// reinterpret of `primary_data`. Callers gate on `data_type` being a
+    /// timestamp-shaped i64 column.
+    pub fn timestamp_values(&self) -> TimestampValues<'_> {
+        // SAFETY: Data originates from JNI/Java memory-mapped column data,
+        // which is page-aligned. The byte content represents valid `i64`s
+        // (or `[i64; 2]` entries when the strided flag is set).
+        unsafe {
+            if self.strided_timestamp_16 {
+                TimestampValues::Strided16(crate::parquet_write::util::transmute_slice(
+                    self.primary_data,
+                ))
+            } else {
+                TimestampValues::Contiguous(crate::parquet_write::util::transmute_slice(
+                    self.primary_data,
+                ))
+            }
+        }
     }
 }
 

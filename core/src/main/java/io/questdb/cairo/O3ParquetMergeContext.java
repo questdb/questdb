@@ -44,6 +44,11 @@ public class O3ParquetMergeContext implements Closeable {
     private IntList activeColIndices;
     private IntList activeToDecodeIdx;
     private PartitionDescriptor chunkDescriptor;
+    // Non-owning descriptor for the O3-only writers (writeFreshParquetFromO3 +
+    // copyO3ToRowGroup). Column pointers reference already-sorted/deduped O3
+    // source buffers — and the merge index for the designated timestamp — so
+    // nothing in this descriptor needs to be freed by the descriptor itself.
+    private PartitionDescriptor freshPartitionDescriptor;
     private LongList gapO3Ranges;
     private LongList mergeDstBufs;
     private LongList nullBufs;
@@ -64,6 +69,7 @@ public class O3ParquetMergeContext implements Closeable {
         activeColIndices = new IntList();
         activeToDecodeIdx = new IntList();
         chunkDescriptor = new PartitionDescriptor();
+        freshPartitionDescriptor = new PartitionDescriptor();
         gapO3Ranges = new LongList();
         mergeDstBufs = new LongList();
         nullBufs = new LongList();
@@ -84,6 +90,7 @@ public class O3ParquetMergeContext implements Closeable {
         activeColIndices.clear();
         activeToDecodeIdx.clear();
         chunkDescriptor.clear();
+        freshPartitionDescriptor.clear();
         gapO3Ranges.clear();
         mergeDstBufs.clear();
         nullBufs.clear();
@@ -103,6 +110,7 @@ public class O3ParquetMergeContext implements Closeable {
         activeColIndices = null;
         activeToDecodeIdx = null;
         chunkDescriptor = Misc.free(chunkDescriptor);
+        freshPartitionDescriptor = Misc.free(freshPartitionDescriptor);
         gapO3Ranges = null;
         mergeDstBufs = null;
         nullBufs = null;
@@ -140,6 +148,10 @@ public class O3ParquetMergeContext implements Closeable {
 
     public PartitionDescriptor getChunkDescriptor() {
         return chunkDescriptor;
+    }
+
+    public PartitionDescriptor getFreshPartitionDescriptor() {
+        return freshPartitionDescriptor;
     }
 
     public LongList getGapO3Ranges() {
