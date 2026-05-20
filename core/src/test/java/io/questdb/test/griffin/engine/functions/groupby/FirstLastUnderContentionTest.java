@@ -26,8 +26,6 @@ package io.questdb.test.griffin.engine.functions.groupby;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -45,38 +43,32 @@ import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
- * Regression test that locks in the fix for
- * <a href="https://github.com/questdb/questdb/issues/7123">#7123</a>: under
- * heavy cross-query work-stealing, a per-slot buffer in
- * {@code AbstractArrayAggDoubleGroupByFunction} can accumulate page frames in
- * non-monotonic order. Before the fix the two-pointer merge produced
- * out-of-order output that contained inversions.
+ * Regression guard for {@code first(val)} and {@code last(val)} under the
+ * same forced-contention setup that triggered
+ * <a href="https://github.com/questdb/questdb/issues/7123">#7123</a> in
+ * {@code twap}, {@code sparkline}, and {@code array_agg}.
  *
- * <p>The detection is indirect but airtight: the data is constructed so the
- * correct {@code array_agg} result is exactly {@code [0, 1, 2, ..., N-1]} -
- * any inversion in the output is direct evidence that the compaction step in
- * {@link io.questdb.griffin.engine.groupby.SortedRunsMerge} either was not
- * called or failed to restore key-monotonic order before the array was
- * rendered.
- *
- * <p>Forced contention:
+ * <p>Unlike those three, {@code first} / {@code last} compare rowIds
+ * explicitly in {@code computeNext}, {@code computeBatch},
+ * {@code computeKeyedBatch}, and {@code merge}, so they are immune to
+ * per-slot frame ordering by construction - there is no buffer to compact.
+ * If first/last ever start relying on insertion order, this test will fail
+ * under the same workload that used to break TWAP.
  * <ul>
- *   <li>Tiny page frames (many tasks per query).</li>
- *   <li>Small worker pool (queue is shared, easily saturated).</li>
- *   <li>Many concurrent threads firing the same query (cross-query
- *       work-stealing dominates).</li>
- *   <li>Aggressive work-stealing threshold.</li>
+ *   <li>{@code first(val)} = 1.0 (val of the smallest-rowId row)</li>
+ *   <li>{@code last(val)} = 5000.0 (val of the largest-rowId row)</li>
  * </ul>
  */
-public class ArrayAggUnsortedRunReproTest extends AbstractCairoTest {
+public class FirstLastUnderContentionTest extends AbstractCairoTest {
 
+    private static final double EXPECTED_FIRST = 1.0;
+    private static final double EXPECTED_LAST = 5_000.0;
     private static final int NUM_ITERATIONS = 30;
     private static final int NUM_THREADS = 8;
-    private static final int ROWS = 20_000;
+    private static final int ROWS = 5_000;
 
     @Test
-    public void testParallelArrayAggMatchesUnderContention() throws Exception {
-        // Frame size is small to multiply task count per query.
+    public void testParallelFirstLastUnderContention() throws Exception {
         setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 50);
         setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_ENABLED, "true");
         setProperty(PropertyKey.CAIRO_SQL_PARALLEL_WORK_STEALING_THRESHOLD, 1);
@@ -95,38 +87,36 @@ public class ArrayAggUnsortedRunReproTest extends AbstractCairoTest {
                         if (i > 0) {
                             sb.append(",\n");
                         }
-                        // val == rowId, so a correctly-ordered array_agg result is [0.0, 1.0, ..., ROWS-1.0]
-                        sb.append('(').append((double) i).append(", ").append((long) i * 1000).append(')');
+                        sb.append('(').append((double) (i + 1)).append(", ").append((long) i * 1000).append(')');
                     }
                     engine.execute(sb.toString(), sqlExecutionContext);
-
-                    final String query = "SELECT array_agg(val) FROM tab";
 
                     final CyclicBarrier barrier = new CyclicBarrier(NUM_THREADS);
                     final SOCountDownLatch latch = new SOCountDownLatch(NUM_THREADS);
                     final Map<Integer, Throwable> errors = new ConcurrentHashMap<>();
-                    final AtomicInteger totalInversions = new AtomicInteger();
-                    final AtomicInteger threadsThatSawInversions = new AtomicInteger();
+                    final AtomicInteger firstMismatches = new AtomicInteger();
+                    final AtomicInteger lastMismatches = new AtomicInteger();
 
                     for (int t = 0; t < NUM_THREADS; t++) {
                         final int threadId = t;
                         new Thread(() -> {
-                            int localInversions = 0;
                             try {
                                 TestUtils.await(barrier);
                                 for (int iter = 0; iter < NUM_ITERATIONS; iter++) {
-                                    localInversions += countInversions(engine, sqlExecutionContext, query);
+                                    double[] observed = runFirstLast(engine, sqlExecutionContext);
+                                    if (observed[0] != EXPECTED_FIRST) {
+                                        firstMismatches.incrementAndGet();
+                                    }
+                                    if (observed[1] != EXPECTED_LAST) {
+                                        lastMismatches.incrementAndGet();
+                                    }
                                 }
                             } catch (Throwable th) {
                                 errors.put(threadId, th);
                             } finally {
-                                if (localInversions > 0) {
-                                    threadsThatSawInversions.incrementAndGet();
-                                    totalInversions.addAndGet(localInversions);
-                                }
                                 latch.countDown();
                             }
-                        }, "repro-" + threadId).start();
+                        }, "firstlast-" + threadId).start();
                     }
                     latch.await();
 
@@ -136,45 +126,30 @@ public class ArrayAggUnsortedRunReproTest extends AbstractCairoTest {
                     Assert.assertTrue("thread errors: " + errors, errors.isEmpty());
 
                     Assert.assertEquals(
-                            "array_agg(val) must return a strictly increasing [0..N-1] array on every "
-                                    + "iteration. Any inversion under this contention setup would mean the "
-                                    + "compaction step in SortedRunsMerge either was not invoked or failed "
-                                    + "to restore key-monotonic order before the array was rendered. Observed "
-                                    + threadsThatSawInversions.get() + " thread(s) with inversions, "
-                                    + totalInversions.get() + " total inversions over "
-                                    + NUM_THREADS + " threads x " + NUM_ITERATIONS + " iterations.",
-                            0, totalInversions.get()
-                    );
+                            "first(val) must always return the value at the smallest rowId regardless of "
+                                    + "per-slot frame ordering. A mismatch would mean first() started relying "
+                                    + "on insertion order - the same class of bug that broke twap/sparkline/"
+                                    + "array_agg in #7123.",
+                            0, firstMismatches.get());
+                    Assert.assertEquals(
+                            "last(val) must always return the value at the largest rowId regardless of "
+                                    + "per-slot frame ordering. A mismatch would mean last() started relying "
+                                    + "on insertion order.",
+                            0, lastMismatches.get());
                 }, configuration, LOG);
             }
         });
     }
 
-    private static int countInversions(CairoEngine engine, SqlExecutionContext ctx, String sql) throws Exception {
-        int inversions = 0;
+    private static double[] runFirstLast(CairoEngine engine, SqlExecutionContext ctx) throws Exception {
+        final String sql = "SELECT first(val), last(val) FROM tab";
         try (RecordCursorFactory factory = engine.select(sql, ctx);
              RecordCursor cursor = factory.getCursor(ctx)) {
             final Record record = cursor.getRecord();
-            final int arrayType = ColumnType.encodeArrayType(ColumnType.DOUBLE, 1);
-            while (cursor.hasNext()) {
-                ArrayView arr = record.getArray(0, arrayType);
-                if (arr == null) {
-                    continue;
-                }
-                int len = arr.getDimLen(0);
-                if (len != ROWS) {
-                    return Integer.MAX_VALUE;
-                }
-                double prev = arr.getDouble(0);
-                for (int i = 1; i < len; i++) {
-                    double curr = arr.getDouble(i);
-                    if (curr <= prev) {
-                        inversions++;
-                    }
-                    prev = curr;
-                }
+            if (!cursor.hasNext()) {
+                return new double[]{Double.NaN, Double.NaN};
             }
+            return new double[]{record.getDouble(0), record.getDouble(1)};
         }
-        return inversions;
     }
 }

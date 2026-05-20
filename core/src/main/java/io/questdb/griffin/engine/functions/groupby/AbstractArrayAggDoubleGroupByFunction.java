@@ -38,10 +38,11 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.constants.ArrayConstant;
+import io.questdb.griffin.engine.groupby.SortedRunsMerge;
 import io.questdb.griffin.engine.groupby.GroupByAllocator;
+import io.questdb.std.LongList;
 import io.questdb.std.Misc;
 import io.questdb.std.Unsafe;
-import io.questdb.std.Vect;
 import org.jetbrains.annotations.NotNull;
 
 /**
@@ -53,16 +54,19 @@ import org.jetbrains.annotations.NotNull;
  * subclass javadoc.
  * <p>
  * <b>Parallelism strategy.</b> Same pattern as {@link TwapGroupByFunction} and
- * {@link SparklineGroupByFunction}. Each worker accumulates its observations
- * into a native buffer via its own {@link GroupByAllocator}. Within a single
- * worker, page frames arrive in rowId order, so per-worker buffers are sorted
- * runs. During the merge phase two sorted runs are combined with a merge-sort
- * step into a fresh buffer in the destination allocator, preserving insertion
- * order deterministically.
+ * {@link SparklineGroupByFunction}. Each per-slot function instance accumulates
+ * observations into a native buffer through its own {@link GroupByAllocator}.
+ * A single {@code computeNext} loop processes one page frame in rowId order,
+ * producing one sorted run per frame. Under parallel GROUP BY a slot can
+ * accumulate frames in non-monotonic order, so the buffer is modelled as a
+ * concatenation of disjoint sorted runs keyed on rowId. See
+ * {@link SortedRunsMerge} for the run-permutation compaction applied at
+ * merge and read time.
  * <p>
  * For the array variant, all elements from the same source row share the same
- * rowId, so intra-row element order is preserved by the stable dest-first
- * tie-breaking in the merge step.
+ * rowId; intra-row element order is preserved because the compaction copies
+ * each run as a whole {@code memcpy} block, never interleaving entries inside
+ * a run.
  * <p>
  * Build buffer layout in native memory (managed by {@link GroupByAllocator}):
  * <pre>
@@ -100,6 +104,11 @@ public abstract class AbstractArrayAggDoubleGroupByFunction extends ArrayFunctio
     // Set on shared instances to redirect cache and allocator access through
     // the primary. Null on the primary itself.
     protected AbstractArrayAggDoubleGroupByFunction primary;
+    // Scratch list for run descriptors used by SortedRunsMerge. Lives
+    // logically on the primary; shared instances route via owner = primary.
+    // Not thread-safe; the per-slot instance has serialized access by virtue
+    // of PerWorkerLocks.
+    protected final LongList runScratch = new LongList(16);
     protected final DirectArray scratch;
     protected int valueIndex;
 
@@ -159,6 +168,19 @@ public abstract class AbstractArrayAggDoubleGroupByFunction extends ArrayFunctio
         }
         AbstractArrayAggDoubleGroupByFunction owner = (primary != null) ? primary : this;
         if (ptr != owner.cachedSrcPtr) {
+            // Under parallel GROUP BY the entries buffer may be a
+            // concatenation of disjoint sorted runs in non-monotonic order.
+            // Compact in place to a single sorted run before rendering so
+            // the output array reflects rowId order, not slot-acquisition
+            // order. The buffer pointer is preserved across compaction, so
+            // owner.cachedSrcPtr stays a valid cache key.
+            SortedRunsMerge.compactInPlace(
+                    owner.allocator,
+                    owner.runScratch,
+                    ptr + HEADER_SIZE,
+                    count,
+                    ENTRY_SIZE
+            );
             owner.scratch.setDimLen(0, count);
             owner.scratch.applyShape();
             long dst = owner.scratch.ptr();
@@ -232,6 +254,19 @@ public abstract class AbstractArrayAggDoubleGroupByFunction extends ArrayFunctio
         return false;
     }
 
+    /**
+     * Combines the source slot's entries with the destination's into a
+     * single sorted buffer allocated in the destination's allocator. Both
+     * inputs are treated as concatenations of disjoint sorted runs (one
+     * run per page frame); the combined run set still satisfies the
+     * disjointness invariant because different frames cover disjoint rowId
+     * ranges, including the array variant where multiple entries from one
+     * row share its rowId but all live inside that frame's run.
+     * <p>
+     * See {@link SortedRunsMerge} for the algorithm. Intra-run order is
+     * preserved by bulk {@code memcpy}, which keeps the array variant's
+     * intra-row element order intact.
+     */
     @Override
     public void merge(MapValue destValue, MapValue srcValue) {
         long srcPtr = srcValue.getLong(valueIndex);
@@ -244,56 +279,20 @@ public abstract class AbstractArrayAggDoubleGroupByFunction extends ArrayFunctio
         }
 
         long destPtr = destValue.getLong(valueIndex);
-        if (destPtr == 0 || Unsafe.getInt(destPtr) == 0) {
-            // Dest empty - deep copy src into dest's allocator. Cannot shallow-copy
-            // srcPtr because src's allocator is reclaimed independently.
-            checkCapacityLimit(srcCount);
-            long newPtr = allocator.malloc(HEADER_SIZE + (long) srcCount * ENTRY_SIZE);
-            Unsafe.putInt(newPtr, srcCount);
-            Unsafe.putInt(newPtr + CAPACITY_OFFSET, srcCount);
-            Vect.memcpy(newPtr + HEADER_SIZE, srcPtr + HEADER_SIZE, (long) srcCount * ENTRY_SIZE);
-            destValue.putLong(valueIndex, newPtr);
-            return;
-        }
-
-        int destCount = Unsafe.getInt(destPtr);
+        int destCount = (destPtr == 0) ? 0 : Unsafe.getInt(destPtr);
         checkCapacityLimit(destCount);
         checkCapacityLimit(srcCount);
         int mergedCount = destCount + srcCount;
         checkCapacityLimit(mergedCount);
         long mergedPtr = allocator.malloc(HEADER_SIZE + (long) mergedCount * ENTRY_SIZE);
-        if (tryMergeDisjointRuns(destValue, mergedPtr, destPtr, destCount, srcPtr, srcCount, mergedCount)
-                || tryMergeDisjointRuns(destValue, mergedPtr, srcPtr, srcCount, destPtr, destCount, mergedCount)) {
-            return;
-        }
-        // Two-pointer merge-sort by rowId: both runs are sorted within their respective
-        // workers because page frames arrive in rowId order per worker. For the array
-        // variant, elements from the same row share the same rowId; dest-first
-        // tie-breaking keeps them contiguous.
-        int di = 0, si = 0, mi = 0;
-        while (di < destCount && si < srcCount) {
-            long destAddr = destPtr + HEADER_SIZE + (long) di * ENTRY_SIZE;
-            long srcAddr = srcPtr + HEADER_SIZE + (long) si * ENTRY_SIZE;
-            long destRowId = Unsafe.getLong(destAddr);
-            long srcRowId = Unsafe.getLong(srcAddr);
-            long mergedAddr = mergedPtr + HEADER_SIZE + (long) mi * ENTRY_SIZE;
-            if (destRowId <= srcRowId) {
-                Unsafe.putLong(mergedAddr, destRowId);
-                Unsafe.putLong(mergedAddr + VALUE_OFFSET, Unsafe.getLong(destAddr + VALUE_OFFSET));
-                di++;
-            } else {
-                Unsafe.putLong(mergedAddr, srcRowId);
-                Unsafe.putLong(mergedAddr + VALUE_OFFSET, Unsafe.getLong(srcAddr + VALUE_OFFSET));
-                si++;
-            }
-            mi++;
-        }
-        if (di < destCount) {
-            Vect.memcpy(mergedPtr + HEADER_SIZE + (long) mi * ENTRY_SIZE, destPtr + HEADER_SIZE + (long) di * ENTRY_SIZE, (long) (destCount - di) * ENTRY_SIZE);
-        }
-        if (si < srcCount) {
-            Vect.memcpy(mergedPtr + HEADER_SIZE + (long) mi * ENTRY_SIZE, srcPtr + HEADER_SIZE + (long) si * ENTRY_SIZE, (long) (srcCount - si) * ENTRY_SIZE);
-        }
+        SortedRunsMerge.compactInto(
+                allocator,
+                runScratch,
+                mergedPtr + HEADER_SIZE,
+                (destCount > 0) ? destPtr + HEADER_SIZE : 0, destCount,
+                srcPtr + HEADER_SIZE, srcCount,
+                ENTRY_SIZE
+        );
         Unsafe.putInt(mergedPtr, mergedCount);
         Unsafe.putInt(mergedPtr + CAPACITY_OFFSET, mergedCount);
         destValue.putLong(valueIndex, mergedPtr);
@@ -326,27 +325,5 @@ public abstract class AbstractArrayAggDoubleGroupByFunction extends ArrayFunctio
                     .put(maxArrayElementCount)
                     .put(']');
         }
-    }
-
-    private boolean tryMergeDisjointRuns(
-            MapValue destValue,
-            long mergedPtr,
-            long firstPtr,
-            int firstCount,
-            long secondPtr,
-            int secondCount,
-            int mergedCount
-    ) {
-        long firstLastRowId = Unsafe.getLong(firstPtr + HEADER_SIZE + (long) (firstCount - 1) * ENTRY_SIZE);
-        long secondFirstRowId = Unsafe.getLong(secondPtr + HEADER_SIZE);
-        if (firstLastRowId > secondFirstRowId) {
-            return false;
-        }
-        Vect.memcpy(mergedPtr + HEADER_SIZE, firstPtr + HEADER_SIZE, (long) firstCount * ENTRY_SIZE);
-        Vect.memcpy(mergedPtr + HEADER_SIZE + (long) firstCount * ENTRY_SIZE, secondPtr + HEADER_SIZE, (long) secondCount * ENTRY_SIZE);
-        Unsafe.putInt(mergedPtr, mergedCount);
-        Unsafe.putInt(mergedPtr + CAPACITY_OFFSET, mergedCount);
-        destValue.putLong(valueIndex, mergedPtr);
-        return true;
     }
 }

@@ -43,10 +43,13 @@ import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
- * End-to-end repro that proves a per-slot buffer in
- * {@link io.questdb.griffin.engine.functions.groupby.TwapGroupByFunction}
- * can become unsorted by timestamp under realistic parallel-GROUP-BY execution
- * with concurrent queries.
+ * Regression test that locks in the fix for
+ * <a href="https://github.com/questdb/questdb/issues/7123">#7123</a>: under
+ * heavy cross-query work-stealing, a per-slot buffer in
+ * {@link io.questdb.griffin.engine.functions.groupby.TwapGroupByFunction} can
+ * accumulate page frames in non-monotonic order. Before the fix, the
+ * merge-sort merge step received an unsorted-by-ts input and silently returned
+ * a wrong TWAP on a large fraction of runs.
  *
  * <p>The dataset is constructed so the correct TWAP is exactly 2500.0 with no
  * floating-point error:
@@ -59,9 +62,11 @@ import java.util.concurrent.atomic.AtomicInteger;
  * </ul>
  * All intermediate sums stay well within 2^53, so integer addition in double
  * is exact regardless of summation order - a correct (sorted) buffer always
- * produces exactly 2500.0. Any deviation is direct evidence that merge()
- * received an unsorted-by-ts input, which can only happen if a per-slot
- * buffer accumulated frames in non-rowId order.
+ * produces exactly 2500.0. Any deviation is direct evidence that the
+ * compaction step in
+ * {@link io.questdb.griffin.engine.groupby.SortedRunsMerge} either was not
+ * called or failed to restore a sorted buffer before the integration walk in
+ * {@code getDouble}.
  */
 public class TwapUnsortedRunReproTest extends AbstractCairoTest {
 
@@ -71,7 +76,7 @@ public class TwapUnsortedRunReproTest extends AbstractCairoTest {
     private static final double EXPECTED_TWAP = 2500.0;
 
     @Test
-    public void testParallelTwapCanProduceWrongResult() throws Exception {
+    public void testParallelTwapMatchesUnderContention() throws Exception {
         setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 50);
         setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_ENABLED, "true");
         setProperty(PropertyKey.CAIRO_SQL_PARALLEL_WORK_STEALING_THRESHOLD, 1);
@@ -134,19 +139,16 @@ public class TwapUnsortedRunReproTest extends AbstractCairoTest {
                     }
                     Assert.assertTrue("thread errors: " + errors, errors.isEmpty());
 
-                    System.out.println("PROOF: threadsThatSawMismatches=" + threadsThatSawMismatches.get()
-                            + " mismatches=" + mismatches.get()
-                            + " sampleWrongValue=" + sampleWrongValue.get()
-                            + " expected=" + EXPECTED_TWAP
-                            + " (over " + NUM_THREADS + " threads x " + NUM_ITERATIONS + " iterations)");
-
-                    Assert.assertTrue(
-                            "expected at least one TWAP mismatch under heavy concurrent contention. "
-                                    + "A mismatch from the exact expected value (2500.0) can only come from merge() "
-                                    + "operating on an unsorted-by-ts input. If this assertion ever stops firing, "
-                                    + "either the bug is fixed or contention is no longer forcing cross-query "
-                                    + "work-stealing onto per-slot resources.",
-                            mismatches.get() > 0
+                    Assert.assertEquals(
+                            "twap() must return the exact expected value (2500.0) on every iteration. "
+                                    + "Any deviation under this contention setup would mean the compaction step "
+                                    + "in SortedRunsMerge either was not invoked or failed to restore "
+                                    + "key-monotonic order before the integration walk. Observed wrong sample: "
+                                    + sampleWrongValue.get() + " across "
+                                    + threadsThatSawMismatches.get() + " thread(s), "
+                                    + mismatches.get() + " mismatches total over "
+                                    + NUM_THREADS + " threads x " + NUM_ITERATIONS + " iterations.",
+                            0, mismatches.get()
                     );
                 }, configuration, LOG);
             }
