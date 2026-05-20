@@ -1717,6 +1717,14 @@ public class SqlParser {
                 throw SqlException.$(w.getAnchorPosition(),
                         "live view supports at most one anchored WINDOW");
             }
+            if (w.getPartitionBy().size() == 0) {
+                // resetPartition is keyed on the partition; the LiveViewWindow
+                // anchor map cannot be built without at least one partition
+                // column, so the per-partition reset would never dispatch and
+                // window state would silently never reset at anchor boundaries.
+                throw SqlException.$(w.getAnchorPosition(),
+                        "live view anchored WINDOW requires PARTITION BY");
+            }
             if (w.isNonDefaultFrame()) {
                 throw SqlException.$(w.getAnchorPosition(),
                         "ANCHOR is incompatible with bounded frames; use a separate WINDOW without ANCHOR for ROWS / RANGE windows");

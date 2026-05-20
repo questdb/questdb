@@ -7084,6 +7084,49 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testO3WithinSingleCommitIsReordered() throws Exception {
+        // A single base commit whose rows are NOT in ts-ascending order must
+        // not corrupt window state. The refresh worker reads raw (unsorted) WAL
+        // segments, so detection cannot rely on the commit's min ts alone:
+        // here the whole commit sits above the LV watermark (the LV is empty),
+        // yet the rows are internally shuffled. The commit carries
+        // WalEventCursor.DataInfo.isOutOfOrder()==true, which must route the
+        // batch through the ts-sorted O3 replay path. All rows share one day
+        // bucket so no anchor reset fires - the bug is purely row order.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+                    "SELECT ts, sym, sum(x) OVER w AS s, row_number() OVER w AS rn FROM base " +
+                    "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                // One INSERT statement == one WAL commit; the two rows are out
+                // of ts order within it (ts=20 appended before ts=10).
+                execute("INSERT INTO base (ts, sym, x) VALUES " +
+                        "('2026-11-01T00:00:20.000000Z', 'a', 2.0), " +
+                        "('2026-11-01T00:00:10.000000Z', 'a', 1.0)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                // Correct cumulative-in-ts-order output:
+                //   ts=10 -> sum=1.0, rn=1
+                //   ts=20 -> sum=1+2=3.0, rn=2
+                // The buggy in-WAL-order path computes the reverse (ts=10 carries
+                // sum=3.0/rn=2 because it was processed second).
+                assertSql(
+                        "ts\tsym\ts\trn\n" +
+                                "2026-11-01T00:00:10.000000Z\ta\t1.0\t1\n" +
+                                "2026-11-01T00:00:20.000000Z\ta\t3.0\t2\n",
+                        "SELECT ts, sym, s, rn FROM lv ORDER BY ts"
+                );
+            }
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
     public void testO3HeadMissWithFullyFilteredReplayPreservesState() throws Exception {
         // The head-miss path replays from viewLowerBoundTimestamp and
         // rebuilds state. The probe-then-wipe ordering ensures a replay that
@@ -8001,6 +8044,28 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                 Assert.fail("expected multi-anchor reject");
             } catch (SqlException e) {
                 Assert.assertTrue(e.getMessage(), e.getMessage().contains("at most one anchored WINDOW"));
+            }
+        });
+    }
+
+    @Test
+    public void testRejectAnchoredWindowWithoutPartitionBy() throws Exception {
+        // An anchored named WINDOW with no PARTITION BY must be rejected at
+        // CREATE. resetPartition is keyed on the partition; with no partition
+        // column the anchor machinery (LiveViewWindow) cannot be built. Pre-fix
+        // CREATE accepted the view and the build failure was swallowed at first
+        // refresh, leaving the anchor reset permanently un-dispatched - e.g.
+        // row_number() numbered for the view's lifetime instead of resetting
+        // each day, silently and with no error surfaced to the user.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            try {
+                execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                        "SELECT ts, row_number() OVER w AS rn FROM base " +
+                        "WINDOW w AS (ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
+                Assert.fail("expected reject for anchored WINDOW without PARTITION BY");
+            } catch (SqlException e) {
+                Assert.assertTrue(e.getMessage(), e.getMessage().contains("anchored WINDOW requires PARTITION BY"));
             }
         });
     }

@@ -520,18 +520,26 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     }
 
                     WalEventCursor.DataInfo dataInfo = eventCursor.getDataInfo();
-                    // Out-of-order detection. A commit whose min ts sits below
-                    // the LV's latestSeenTs watermark cannot be processed in
-                    // WAL order without corrupting window-function state.
-                    // Discard any rows queued earlier in this cycle, break
-                    // out of the loop, and hand off to o3Replay below, which
-                    // re-feeds base data in ts order via TableReader and
-                    // emits a single REPLACE_RANGE commit covering everything
+                    // Out-of-order detection, two triggers, both handed to
+                    // o3Replay below (which re-feeds base data in ts order via a
+                    // sorted TableReader and emits a single REPLACE_RANGE commit
                     // from viewLowerBoundTimestamp (head-miss) or the head's
-                    // maxTimestamp (head-hit, follow-up commit) forward.
+                    // maxTimestamp (head-hit, follow-up commit) forward):
+                    //   - cross-commit: this commit's min ts sits below the LV's
+                    //     latestSeenTs watermark, so it lands before rows the LV
+                    //     already processed.
+                    //   - intra-commit: the commit's own rows are not in
+                    //     ts-ascending order. Raw WAL segments are unsorted, so
+                    //     DataInfo.isOutOfOrder() is set whenever a row lands
+                    //     below a preceding row in the same commit. Processing
+                    //     such a commit in WAL row order corrupts window state
+                    //     even when the whole commit sits above the watermark.
+                    // Either way, discard any rows queued earlier in this cycle,
+                    // break out of the loop, and hand off to o3Replay.
                     final long latestSeen = instance.getLatestSeenTs();
                     final long txnMinTs = dataInfo.getMinTimestamp();
-                    if (latestSeen != Numbers.LONG_NULL && txnMinTs < latestSeen) {
+                    final boolean crossCommitO3 = latestSeen != Numbers.LONG_NULL && txnMinTs < latestSeen;
+                    if (crossCommitO3 || dataInfo.isOutOfOrder()) {
                         walWriter.rollback();
                         // Roll back the in-cycle latestSeenTs bumps along with
                         // the WAL writes. The replay path below re-stamps the
@@ -835,6 +843,14 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             long advanceTo
     ) throws SqlException {
         final String viewName = instance.getDefinition().getViewName();
+        // An intra-commit out-of-order FIRST commit can reach the replay path
+        // before any in-order cycle computed snapshot capability (which normally
+        // happens in maybeWriteHeadCheckpoint). Compute it here so the
+        // not-capable disposition below is driven by the real value rather than
+        // the default false, which would wrongly skip the replay.
+        if (!instance.isSnapshotCapabilityComputed()) {
+            instance.setSnapshotCapability(computeSnapshotCapability(instance, windowFactory));
+        }
         if (!instance.isSnapshotCapability()) {
             // No clean per-function reset API for the unmigrated families;
             // recompiling the factory would wipe everything but is heavy.
