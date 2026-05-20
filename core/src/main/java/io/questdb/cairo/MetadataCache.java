@@ -215,7 +215,7 @@ public class MetadataCache implements QuietCloseable {
             table.setSoftLinkFlag(isSoftLink);
 
             TableUtils.buildColumnListFromMetadataFile(metaMem, columnCount, table.columnOrderList);
-            boolean isMetaFormatUpToDate = TableUtils.isMetaFormatUpToDate(metaMem);
+            boolean isMetaFormatUpToDate = TableUtils.isMetaFormatAtLeast(metaMem, TableUtils.META_FORMAT_MINOR_VERSION_PARQUET_ENCODING_CONFIG);
             boolean hasParquetEncodingConfig = TableUtils.hasParquetEncodingConfig(metaMem);
             // populate columns
             for (int i = 0, n = table.columnOrderList.size(); i < n; i += 3) {

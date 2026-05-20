@@ -125,7 +125,12 @@ fn write_required_i64_page<I>(
 where
     I: ExactSizeIterator<Item = i64>,
 {
-    assert_eq!(primitive_type.field_info.repetition, Repetition::Required);
+    if primitive_type.field_info.repetition != Repetition::Required {
+        return Err(fmt_err!(
+            InvalidLayout,
+            "write_required_i64_page expected Required repetition type"
+        ));
+    }
 
     let num_rows = values.len();
     let mut buffer = Vec::with_capacity(size_of::<i64>() * num_rows);

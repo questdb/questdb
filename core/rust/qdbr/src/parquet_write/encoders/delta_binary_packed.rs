@@ -142,7 +142,12 @@ fn write_delta_i64_page<I>(
 where
     I: Clone + ExactSizeIterator<Item = i64>,
 {
-    assert_eq!(primitive_type.field_info.repetition, Repetition::Required);
+    if primitive_type.field_info.repetition != Repetition::Required {
+        return Err(fmt_err!(
+            InvalidLayout,
+            "write_delta_i64_page expected Required repetition type"
+        ));
+    }
     let num_rows = values.len();
 
     let write_stats = options.write_statistics;

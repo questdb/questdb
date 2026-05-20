@@ -2222,6 +2222,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     @Override
+    public int getMetaTableFormat() {
+        return metadata.getTableFormat();
+    }
+
+    @Override
     public TableMetadata getMetadata() {
         return metadata;
     }
@@ -2322,11 +2327,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     public MapWriter getSymbolMapWriter(int columnIndex) {
         return symbolMapWriters.getQuick(columnIndex);
-    }
-
-    @Override
-    public int getTableFormat() {
-        return metadata.getTableFormat();
     }
 
     @Override
@@ -3110,7 +3110,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     @Override
-    public void setTableFormat(int tableFormat) {
+    public void setMetaTableFormat(int tableFormat) {
         if (tableFormat == TableUtils.TABLE_FORMAT_PARQUET) {
             if (!metadata.isWalEnabled()) {
                 throw CairoException.nonCritical().put("FORMAT PARQUET is only supported on WAL tables");

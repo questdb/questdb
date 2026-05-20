@@ -642,7 +642,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
     private void applyTableFormat(MetadataService svc) {
         final int tableFormat = (int) extraInfo.get(0);
         try {
-            svc.setTableFormat(tableFormat);
+            svc.setMetaTableFormat(tableFormat);
         } catch (CairoException e) {
             e.position(tableNamePosition);
             throw e;

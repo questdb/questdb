@@ -5,7 +5,9 @@ use super::*;
 use crate::parquet::error::ParquetErrorReason;
 use crate::parquet::tests::ColumnTypeTagExt;
 use crate::parquet_write::file::WriteOptions;
-use crate::parquet_write::schema::column_type_to_parquet_type;
+use crate::parquet_write::schema::{
+    column_type_to_parquet_type, COLUMN_TYPE_STRIDED_TIMESTAMP_16_BIT,
+};
 use crate::parquet_write::tests::make_column_with_top;
 use parquet2::compression::CompressionOptions;
 use parquet2::encoding::Encoding;
@@ -92,15 +94,16 @@ fn page_f32_min_max(page: &Page) -> (f32, f32) {
     }
 }
 
-/// Verifies the strided bit (0x40000000) on the column_type integer survives
-/// `from_raw_data` and shows up as `Column::strided_timestamp_16`. If this
-/// breaks, the Plain dispatch in encode.rs would fall through to the
-/// contiguous path and misinterpret the 16-byte merge entries as flat i64s.
+/// Verifies the strided bit (`COLUMN_TYPE_STRIDED_TIMESTAMP_16_BIT`) on the
+/// column_type integer survives `from_raw_data` and shows up as
+/// `Column::strided_timestamp_16`. If this breaks, the Plain dispatch in
+/// encode.rs would fall through to the contiguous path and misinterpret the
+/// 16-byte merge entries as flat i64s.
 #[test]
 fn from_raw_data_extracts_strided_timestamp_bit() {
-    const STRIDED_BIT: i32 = 0x4000_0000;
     let dummy: [[i64; 2]; 1] = [[42, 7]];
-    let column_type = ColumnType::new(ColumnTypeTag::Timestamp, 0).code() | STRIDED_BIT;
+    let column_type =
+        ColumnType::new(ColumnTypeTag::Timestamp, 0).code() | COLUMN_TYPE_STRIDED_TIMESTAMP_16_BIT;
     let column = crate::parquet_write::schema::Column::from_raw_data(
         0,
         "ts",
@@ -124,10 +127,10 @@ fn from_raw_data_extracts_strided_timestamp_bit() {
 
 /// Builds a designated-timestamp column with the strided merge-index layout
 /// (16-byte entries: i64 ts + i64 rowId). Bit 30 on the column type is the
-/// strided flag.
+/// strided flag (`COLUMN_TYPE_STRIDED_TIMESTAMP_16_BIT`).
 fn make_strided_ts_column(pairs: &[[i64; 2]]) -> crate::parquet_write::schema::Column {
-    const STRIDED_BIT: i32 = 0x4000_0000;
-    let column_type = ColumnType::new(ColumnTypeTag::Timestamp, 0).code() | STRIDED_BIT;
+    let column_type =
+        ColumnType::new(ColumnTypeTag::Timestamp, 0).code() | COLUMN_TYPE_STRIDED_TIMESTAMP_16_BIT;
     crate::parquet_write::schema::Column::from_raw_data(
         0,
         "ts",

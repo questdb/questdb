@@ -31,7 +31,6 @@ import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.vm.api.MemoryCR;
 import io.questdb.cairo.vm.api.MemoryMA;
 import io.questdb.cairo.vm.api.MemoryR;
-import io.questdb.griffin.engine.table.parquet.OwnedMemoryPartitionDescriptor;
 import io.questdb.griffin.engine.table.parquet.ParquetCompression;
 import io.questdb.griffin.engine.table.parquet.ParquetPartitionDecoder;
 import io.questdb.griffin.engine.table.parquet.PartitionDescriptor;
@@ -85,6 +84,9 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
     // encodings used for Timestamp (Plain, DeltaBinaryPacked, RleDictionary),
     // so callers can set this unconditionally on the designated-timestamp
     // column regardless of the user-configured encoding.
+    //
+    // Mirrors COLUMN_TYPE_STRIDED_TIMESTAMP_16_BIT in
+    // core/rust/qdbr/src/parquet_write/schema.rs - keep in sync.
     private static final int PARQUET_TIMESTAMP_STRIDED_16 = 0x4000_0000;
 
     public O3PartitionJob(MessageBus messageBus) {
@@ -1665,7 +1667,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         final int columnCount = metadata.getColumnCount();
         for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
             final int columnType = metadata.getColumnType(columnIndex);
-            if (columnType <= 0) {
+            if (columnType < 0) {
                 continue;
             }
             final String columnName = metadata.getColumnName(columnIndex);
@@ -3684,6 +3686,13 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     .$(", ts=").$ts(partitionTimestamp)
                     .$(", e=").$(th)
                     .I$();
+            // Close parquetMetaFd before rmdir; on Windows the open _pm file
+            // would prevent the partition dir from being removed, leaving an
+            // orphan directory behind. The finally block tolerates -1.
+            if (parquetMetaFd != -1) {
+                ff.close(parquetMetaFd);
+                parquetMetaFd = -1;
+            }
             if (partitionDirCreated) {
                 setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
                 if (!ff.rmdir(path.slash())) {

@@ -15,6 +15,20 @@ use parquet2::schema::types::{
 use parquet2::schema::Repetition;
 use qdb_core::col_type::{ColumnType, ColumnTypeTag, QDB_TIMESTAMP_NS_COLUMN_TYPE_FLAG};
 
+/// Bit 30 of the JNI `column_type` integer marks the designated-timestamp column
+/// as carrying a 16-byte-strided merge index (`(i64 ts, i64 rowId)` per entry)
+/// rather than a contiguous `[i64]`. Set by the Java O3 merge path; consumed by
+/// `Column::from_raw_data`.
+///
+/// Mirrored on the Java side as
+/// `io.questdb.cairo.O3PartitionJob.PARQUET_TIMESTAMP_STRIDED_16` — keep in sync.
+pub const COLUMN_TYPE_STRIDED_TIMESTAMP_16_BIT: i32 = 0x4000_0000;
+
+/// Mask of the low 30 bits of the JNI `column_type` integer that hold the
+/// actual QuestDB column type id. Bit 31 carries the `not_null_hint` flag and
+/// bit 30 carries [`COLUMN_TYPE_STRIDED_TIMESTAMP_16_BIT`].
+pub const COLUMN_TYPE_ID_MASK: i32 = 0x3FFF_FFFF;
+
 pub fn column_type_to_parquet_type(
     column_id: i32,
     column_name: &str,
@@ -344,8 +358,7 @@ pub struct Column {
     /// is consumed. Set only on the designated timestamp column when QuestDB
     /// hands its O3 merge index directly to the encoder. Lets the encoder read
     /// timestamps in place without a Java-side malloc + scatter pass.
-    /// Currently respected by the Plain and DeltaBinaryPacked encode paths;
-    /// RleDictionary callers must not set this bit.
+    /// Respected by the Plain, DeltaBinaryPacked, and RleDictionary encode paths.
     pub strided_timestamp_16: bool,
     pub designated_timestamp_ascending: bool,
     pub parquet_encoding_config: ParquetEncodingConfig,
@@ -363,21 +376,6 @@ pub enum TimestampValues<'a> {
     /// iterates `.iter().map(|p| p[0])` to pull timestamps; the second i64 is
     /// the original O3 row id, irrelevant to encoding.
     Strided16(&'a [[i64; 2]]),
-}
-
-impl<'a> TimestampValues<'a> {
-    #[inline]
-    pub fn len(&self) -> usize {
-        match self {
-            Self::Contiguous(s) => s.len(),
-            Self::Strided16(s) => s.len(),
-        }
-    }
-
-    #[inline]
-    pub fn is_empty(&self) -> bool {
-        self.len() == 0
-    }
 }
 
 impl Column {
@@ -423,8 +421,8 @@ impl Column {
         let not_null_hint = column_type < 0;
         // Bit 30: strided-timestamp flag (set by Java when handing the O3 merge
         // index in place — primary_data is N * 16 bytes, ts at offset 0).
-        let strided_timestamp_16 = (column_type & 0x40000000) != 0;
-        let column_type: ColumnType = (column_type & 0x3FFFFFFF).try_into()?;
+        let strided_timestamp_16 = (column_type & COLUMN_TYPE_STRIDED_TIMESTAMP_16_BIT) != 0;
+        let column_type: ColumnType = (column_type & COLUMN_TYPE_ID_MASK).try_into()?;
 
         let primary_data = if primary_data_ptr.is_null() {
             &[]

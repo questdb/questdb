@@ -2621,7 +2621,7 @@ public final class TableUtils {
         return metaMem.getStrA(offset);
     }
 
-    private static boolean isMetaFormatAtLeast(MemoryR metaMem, short minorVersion) {
+    static boolean isMetaFormatAtLeast(MemoryR metaMem, short minorVersion) {
         int metaFormatMinorVersionField = metaMem.getInt(META_OFFSET_META_FORMAT_MINOR_VERSION);
         short savedChecksum = Numbers.decodeLowShort(metaFormatMinorVersionField);
         short actualChecksum = checksumForMetaFormatMinorVersionField(

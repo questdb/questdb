@@ -95,12 +95,12 @@ public interface MetadataServiceStub extends MetadataService {
     }
 
     @Override
-    default int getTableFormat() {
+    default int getMetaMaxUncommittedRows() {
         throw new UnsupportedOperationException();
     }
 
     @Override
-    default int getMetaMaxUncommittedRows() {
+    default int getMetaTableFormat() {
         throw new UnsupportedOperationException();
     }
 
@@ -165,7 +165,7 @@ public interface MetadataServiceStub extends MetadataService {
     }
 
     @Override
-    default void setTableFormat(int tableFormat) {
+    default void setMetaTableFormat(int tableFormat) {
         throw CairoException.critical(0).put("change of table format does not update sequencer metadata");
     }
 

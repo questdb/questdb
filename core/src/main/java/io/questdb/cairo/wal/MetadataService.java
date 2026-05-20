@@ -161,9 +161,9 @@ public interface MetadataService {
 
     void forceRemovePartitions(LongList partitionTimestamps);
 
-    int getTableFormat();
-
     int getMetaMaxUncommittedRows();
+
+    int getMetaTableFormat();
 
     TableRecordMetadata getMetadata();
 
@@ -244,7 +244,7 @@ public interface MetadataService {
      * See {@link io.questdb.cairo.TableUtils#TABLE_FORMAT_NATIVE} and
      * {@link io.questdb.cairo.TableUtils#TABLE_FORMAT_PARQUET}.
      */
-    void setTableFormat(int tableFormat);
+    void setMetaTableFormat(int tableFormat);
 
     /**
      * Sets the time-to-live (TTL) of the data in this table:
