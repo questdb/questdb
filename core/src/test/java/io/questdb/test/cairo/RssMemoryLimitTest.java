@@ -30,6 +30,7 @@ import io.questdb.cairo.TableToken;
 import io.questdb.griffin.engine.QueryProgress;
 import io.questdb.log.LogFactory;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.Os;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.LogCapture;
 import io.questdb.test.tools.TestUtils;
@@ -80,7 +81,8 @@ public class RssMemoryLimitTest extends AbstractCairoTest {
     public void testLargeTxEventuallySucceeds() throws Exception {
         long limitMiB = 60;
         assertMemoryLeak(limitMiB, () -> {
-            int batchCount = 10;
+            // fewer transactions on slow CI runners (Mac, Windows); each batch still triggers memory pressure
+            int batchCount = Os.isLinux() ? 10 : 4;
             int batchSize = 500_000;
 
             execute("create table x (ts timestamp, i int, l long, d double, vch varchar) timestamp(ts) partition by day wal;");

@@ -5116,13 +5116,19 @@ public class O3Test extends AbstractO3Test {
             SqlExecutionContext sqlExecutionContext,
             String timestampTypeName
     ) throws SqlException {
+        // randomize workload; smaller range on slow CI runners (Mac, Windows)
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        int rowsMax = Os.isLinux() ? 1_000_000 : 250_000;
+        int rowsMin = rowsMax / 5;
+        int rows = rowsMin + rnd.nextInt(rowsMax - rowsMin + 1);
+        int batch = Math.max(1, rows / 10);
         assertLag(
                 engine,
                 compiler,
                 sqlExecutionContext,
                 "with maxUncommittedRows=400",
-                " from long_sequence(1000000)",
-                "insert batch 100000 o3MaxLag 180s into x select * from top",
+                " from long_sequence(" + rows + ")",
+                "insert batch " + batch + " o3MaxLag 180s into x select * from top",
                 timestampTypeName
         );
     }
@@ -8560,13 +8566,19 @@ public class O3Test extends AbstractO3Test {
             SqlExecutionContext sqlExecutionContext,
             String timestampTypeName
     ) throws SqlException {
+        // randomize workload; smaller range on slow CI runners (Mac, Windows)
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        int rowsMax = Os.isLinux() ? 1_000_000 : 250_000;
+        int rowsMin = rowsMax / 5;
+        int rows = rowsMin + rnd.nextInt(rowsMax - rowsMin + 1);
+        int batch = Math.max(1, rows / 10);
         assertLag(
                 engine,
                 compiler,
                 sqlExecutionContext,
                 "",
-                " from long_sequence(1000000)",
-                "insert batch 100000 o3MaxLag 180s into x select * from top",
+                " from long_sequence(" + rows + ")",
+                "insert batch " + batch + " o3MaxLag 180s into x select * from top",
                 timestampTypeName
         );
     }

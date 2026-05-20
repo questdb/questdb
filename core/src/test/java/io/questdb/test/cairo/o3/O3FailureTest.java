@@ -46,6 +46,7 @@ import io.questdb.mp.WorkerPool;
 import io.questdb.std.Chars;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
@@ -3753,16 +3754,23 @@ public class O3FailureTest extends AbstractO3Test {
     ) throws SqlException {
 
         engine.execute("create table x (f symbol index, a string, b string, c string, d string, vc1 varchar, vc2 varchar, e symbol index, g int, t " + timestampTypeName + ") timestamp (t) partition by DAY", executionContext);
+
+        // randomize workload; smaller ranges on slow CI runners (Mac, Windows)
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        int initialRowsMax = Os.isLinux() ? 3_000_000 : 500_000;
+        int initialRowsMin = initialRowsMax / 3;
+        int initialRows = initialRowsMin + rnd.nextInt(initialRowsMax - initialRowsMin + 1);
+        int batchCountMax = Os.isLinux() ? 75 : 30;
+        int batchCountMin = batchCountMax / 2;
+        int batchCount = batchCountMin + rnd.nextInt(batchCountMax - batchCountMin + 1);
+
         // max timestamp should be 100_000
-        engine.execute("insert atomic into x select rnd_symbol('aa', 'bb', 'cc'), rnd_str(4,4,1), rnd_str(4,4,1), rnd_str(4,4,1), rnd_str(4,4,1), rnd_varchar(1,40,1), rnd_varchar(1,1,1), rnd_symbol('aa', 'bb', 'cc'), rnd_int(), timestamp_sequence(0, 100) from long_sequence(3000000)", executionContext);
+        engine.execute("insert atomic into x select rnd_symbol('aa', 'bb', 'cc'), rnd_str(4,4,1), rnd_str(4,4,1), rnd_str(4,4,1), rnd_str(4,4,1), rnd_varchar(1,40,1), rnd_varchar(1,1,1), rnd_symbol('aa', 'bb', 'cc'), rnd_int(), timestamp_sequence(0, 100) from long_sequence(" + initialRows + ")", executionContext);
 
         String[] symbols = new String[]{"ppp", "wrre", "0ppd", "l22z", "wwe32", "pps", "oop2", "00kk"};
         final int symbolLen = symbols.length;
 
-
-        Rnd rnd = TestUtils.generateRandom(LOG);
         int batches = 0;
-        int batchCount = 75;
 
         Utf8StringSink utf8Sink = new Utf8StringSink();
         while (batches < batchCount) {

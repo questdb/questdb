@@ -61,6 +61,7 @@ import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
+import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.Rows;
 import io.questdb.std.Vect;
@@ -503,7 +504,9 @@ public class BitmapIndexTest extends AbstractCairoTest {
     @Test
     public void testConcurrentWriterAndBackwardReadHeight() throws Exception {
         final Rnd rnd = TestUtils.generateRandom(LOG);
-        testConcurrentBackwardRW(rnd.nextInt(1000000), 100000);
+        // randomize row count with a floor for meaningful coverage; smaller range on slow CI runners (Mac, Windows)
+        int n = Os.isLinux() ? 100_000 + rnd.nextInt(900_000) : 10_000 + rnd.nextInt(90_000);
+        testConcurrentBackwardRW(n, 100000);
     }
 
     @Test
