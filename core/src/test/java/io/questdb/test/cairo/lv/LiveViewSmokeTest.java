@@ -4065,6 +4065,197 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAnchorResetsDenseRankAcrossDayBoundary() throws Exception {
+        // dense_rank reuses the migrated RankOverPartitionFunction (dense=true);
+        // resetPartition restarts the counter at each anchor crossing.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                    "SELECT ts, sym, dense_rank() OVER w AS r FROM base " +
+                    "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
+
+            // Distinct ts per row, so dense_rank climbs 1,2 within a day and
+            // restarts at 1 on day 2. Without reset day 2 would be 3,4.
+            execute("INSERT INTO base (ts, sym) VALUES " +
+                    "('2026-08-01T00:00:00.000000Z', 'a'), " +
+                    "('2026-08-01T01:00:00.000000Z', 'a'), " +
+                    "('2026-08-02T00:00:00.000000Z', 'a'), " +
+                    "('2026-08-02T01:00:00.000000Z', 'a')");
+            drainWalQueue();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+            }
+            drainWalQueue();
+
+            assertSql(
+                    "ts\tsym\tr\n" +
+                            "2026-08-01T00:00:00.000000Z\ta\t1\n" +
+                            "2026-08-01T01:00:00.000000Z\ta\t2\n" +
+                            "2026-08-02T00:00:00.000000Z\ta\t1\n" +
+                            "2026-08-02T01:00:00.000000Z\ta\t2\n",
+                    "SELECT ts, sym, r FROM lv ORDER BY ts"
+            );
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testAnchorResetsMinAcrossDayBoundary() throws Exception {
+        // min reuses the migrated MaxMin partition function; resetPartition
+        // clears the initialized flag so day 2 starts from its own first value.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x DOUBLE, sym SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                    "SELECT ts, sym, min(x) OVER w AS m FROM base " +
+                    "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
+
+            // Day 1 min falls 50 -> 5; day 2 starts fresh at 30 (higher than
+            // day 1's 5). Without anchor reset, day 2's first row would carry
+            // forward min=5 instead of 30.
+            execute("INSERT INTO base (ts, x, sym) VALUES " +
+                    "('2026-08-01T00:00:00.000000Z', 50.0, 'a'), " +
+                    "('2026-08-01T01:00:00.000000Z', 5.0, 'a'), " +
+                    "('2026-08-01T02:00:00.000000Z', 25.0, 'a'), " +
+                    "('2026-08-02T00:00:00.000000Z', 30.0, 'a'), " +
+                    "('2026-08-02T01:00:00.000000Z', 7.0, 'a')");
+            drainWalQueue();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+            }
+            drainWalQueue();
+
+            assertSql(
+                    "ts\tsym\tm\n" +
+                            "2026-08-01T00:00:00.000000Z\ta\t50.0\n" +
+                            "2026-08-01T01:00:00.000000Z\ta\t5.0\n" +
+                            "2026-08-01T02:00:00.000000Z\ta\t5.0\n" +
+                            "2026-08-02T00:00:00.000000Z\ta\t30.0\n" +
+                            "2026-08-02T01:00:00.000000Z\ta\t7.0\n",
+                    "SELECT ts, sym, m FROM lv ORDER BY ts"
+            );
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testAnchorResetsVarPopAcrossDayBoundary() throws Exception {
+        // var_pop shares the Welford state with stddev/var_samp; resetPartition
+        // zeroes count/mean/m2 so day 2's variance covers day 2 rows only.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x DOUBLE, sym SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                    "SELECT ts, sym, var_pop(x) OVER w AS v FROM base " +
+                    "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
+
+            // var_pop of one value is 0; of {a,b} it is ((a-b)/2)^2 * 2 / 2 =
+            // (a-b)^2 / 4. Day 1 (10,20): 0, 25. Day 2 reset (5,25): 0, 100.
+            // Without reset, day 2's first row would be the variance over all
+            // three prior values (non-zero).
+            execute("INSERT INTO base (ts, x, sym) VALUES " +
+                    "('2026-08-01T00:00:00.000000Z', 10.0, 'a'), " +
+                    "('2026-08-01T01:00:00.000000Z', 20.0, 'a'), " +
+                    "('2026-08-02T00:00:00.000000Z', 5.0, 'a'), " +
+                    "('2026-08-02T01:00:00.000000Z', 25.0, 'a')");
+            drainWalQueue();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+            }
+            drainWalQueue();
+
+            assertSql(
+                    "ts\tsym\tv\n" +
+                            "2026-08-01T00:00:00.000000Z\ta\t0.0\n" +
+                            "2026-08-01T01:00:00.000000Z\ta\t25.0\n" +
+                            "2026-08-02T00:00:00.000000Z\ta\t0.0\n" +
+                            "2026-08-02T01:00:00.000000Z\ta\t100.0\n",
+                    "SELECT ts, sym, v FROM lv ORDER BY ts"
+            );
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testAnchorResetsCovarPopAcrossDayBoundary() throws Exception {
+        // covar_pop exercises the bivariate Welford state shared by corr /
+        // covar_samp / covar_pop; resetPartition clears it at each anchor cross.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x DOUBLE, y DOUBLE, sym SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                    "SELECT ts, sym, covar_pop(x, y) OVER w AS c FROM base " +
+                    "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
+
+            // covar_pop of one point is 0; of {(a,b),(c,d)} it is (a-c)(b-d)/4.
+            // Day 1 (10,10),(20,30): 0, then (-10)(-20)/4=50. Day 2 reset
+            // (5,5),(25,45): 0, then (-20)(-40)/4=200. Without reset day 2's
+            // first row would mix day 1 points and be non-zero.
+            execute("INSERT INTO base (ts, x, y, sym) VALUES " +
+                    "('2026-08-01T00:00:00.000000Z', 10.0, 10.0, 'a'), " +
+                    "('2026-08-01T01:00:00.000000Z', 20.0, 30.0, 'a'), " +
+                    "('2026-08-02T00:00:00.000000Z', 5.0, 5.0, 'a'), " +
+                    "('2026-08-02T01:00:00.000000Z', 25.0, 45.0, 'a')");
+            drainWalQueue();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+            }
+            drainWalQueue();
+
+            assertSql(
+                    "ts\tsym\tc\n" +
+                            "2026-08-01T00:00:00.000000Z\ta\t0.0\n" +
+                            "2026-08-01T01:00:00.000000Z\ta\t50.0\n" +
+                            "2026-08-02T00:00:00.000000Z\ta\t0.0\n" +
+                            "2026-08-02T01:00:00.000000Z\ta\t200.0\n",
+                    "SELECT ts, sym, c FROM lv ORDER BY ts"
+            );
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testAnchorResetsNthValueAcrossDayBoundary() throws Exception {
+        // nth_value tracks N within the anchor bucket; resetPartition restarts
+        // the per-partition count so day 2's nth_value(x, 2) sees only day 2.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x DOUBLE, sym SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                    "SELECT ts, sym, nth_value(x, 2) OVER w AS n FROM base " +
+                    "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
+
+            // nth_value(x, 2) is null until the bucket holds two rows, then
+            // pins the 2nd value. Day 1 (10,20,30): null, 20, 20. Day 2 reset
+            // (100,200): null, 200. Without reset day 2's first row would be
+            // the overall 2nd value (20), not null.
+            execute("INSERT INTO base (ts, x, sym) VALUES " +
+                    "('2026-08-01T00:00:00.000000Z', 10.0, 'a'), " +
+                    "('2026-08-01T01:00:00.000000Z', 20.0, 'a'), " +
+                    "('2026-08-01T02:00:00.000000Z', 30.0, 'a'), " +
+                    "('2026-08-02T00:00:00.000000Z', 100.0, 'a'), " +
+                    "('2026-08-02T01:00:00.000000Z', 200.0, 'a')");
+            drainWalQueue();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+            }
+            drainWalQueue();
+
+            assertSql(
+                    "ts\tsym\tn\n" +
+                            "2026-08-01T00:00:00.000000Z\ta\tnull\n" +
+                            "2026-08-01T01:00:00.000000Z\ta\t20.0\n" +
+                            "2026-08-01T02:00:00.000000Z\ta\t20.0\n" +
+                            "2026-08-02T00:00:00.000000Z\ta\tnull\n" +
+                            "2026-08-02T01:00:00.000000Z\ta\t200.0\n",
+                    "SELECT ts, sym, n FROM lv ORDER BY ts"
+            );
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
     public void testAnchorDailyResetsAcrossDstWithTimeZone() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT, sym SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
@@ -8797,6 +8988,54 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
             execute("DROP LIVE VIEW lv_utc");
             execute("DROP LIVE VIEW lv_no_tz");
             execute("DROP LIVE VIEW lv_london");
+        });
+    }
+
+    @Test
+    public void testDailyNonMidnightNoTzDesugarsWithEpochOffset() throws Exception {
+        // ANCHOR DAILY '09:30' without a tz desugars to a timestamp_floor whose
+        // epoch-reference argument carries the 09:30 wall-clock offset - NOT a
+        // timestamp_floor_utc (there is no tz to resolve). The midnight no-tz
+        // case collapses the offset away; this pins the non-midnight branch.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                    "SELECT ts, x, sum(x) OVER w AS s FROM base " +
+                    "WINDOW w AS (PARTITION BY x ORDER BY ts ANCHOR DAILY '09:30')");
+            LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(lv);
+            Assert.assertEquals(
+                    "DAILY '09:30' (no tz) must desugar to a timestamp_floor with a 09:30 epoch offset",
+                    "timestamp_floor('1d', ts, '1970-01-01T09:30:00.000000Z'::timestamp)",
+                    lv.getDefinition().getAnchorSpec().anchorExpressionSql
+            );
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testMaterializedViewAcceptedAsBase() throws Exception {
+        // A materialized view is a valid live-view base per the RFC (WAL-backed,
+        // designated timestamp). The live-on-live reject must NOT fire for it.
+        setProperty(PropertyKey.DEV_MODE_ENABLED, "true");
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, px DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE MATERIALIZED VIEW mv AS (" +
+                    "SELECT ts, sym, avg(px) AS ap FROM base SAMPLE BY 1h) PARTITION BY DAY");
+            drainWalQueue();
+
+            // Live view over the mat view - must be accepted.
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                    "SELECT ts, sym, row_number() OVER w AS rn FROM mv " +
+                    "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
+
+            Assert.assertNotNull(
+                    "live view over a materialized view must be created",
+                    engine.getLiveViewRegistry().getViewInstance("lv")
+            );
+
+            execute("DROP LIVE VIEW lv");
+            execute("DROP MATERIALIZED VIEW mv");
         });
     }
 

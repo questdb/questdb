@@ -4160,7 +4160,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             // become composable once the apply pipeline supports LV-as-base.
             // Position at the base table name.
             throw SqlException.$(op.getBaseTableNamePosition(),
-                    "live views are not allowed as base tables [name=").put(op.getBaseTableName()).put(']');
+                    "live views are not allowed as base tables in V1 [name=").put(op.getBaseTableName()).put(']');
         }
 
         engine.createLiveView(op, baseTableToken, executionContext);

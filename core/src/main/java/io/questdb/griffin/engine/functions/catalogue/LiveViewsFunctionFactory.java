@@ -53,11 +53,12 @@ import io.questdb.std.ObjList;
  * {@code live_views()} catalogue. Exposes per-view operator state derived from
  * {@link LiveViewInstance}'s in-memory mirror of {@code _lv} + {@code _lv.s}.
  * <p>
- * {@code symbol_translation_size}, {@code o3_rejected_count}, and
- * {@code backfill_target_seqtxn} are wired as stable defaults (zero for the
- * count columns, {@code LONG_NULL} for the seqtxn) until their producing
- * subsystems land in later phases. {@code last_processed_seqtxn} and
- * {@code applied_watermark} are surfaced as debug columns; both are useful
+ * {@code symbol_translation_size} is a placeholder (always zero): the
+ * symbol-id translation table does not exist in the current disk-only refresh
+ * path and lands with the hand-off ring in a later phase. {@code o3_rejected_count},
+ * {@code backfill_target_seqtxn}, {@code writer_stall_micros}, and
+ * {@code in_mem_bytes} are wired to live values. {@code last_processed_seqtxn}
+ * and {@code applied_watermark} are surfaced as debug columns; both are useful
  * for operators tracking refresh-worker progress before the corresponding
  * {@code lvConsumed} flow catches up. Three head-checkpoint columns trail
  * the documented column set as additional debug surface for head

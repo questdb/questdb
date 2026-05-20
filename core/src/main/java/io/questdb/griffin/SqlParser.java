@@ -1715,7 +1715,7 @@ public class SqlParser {
                 // LV. Multi-window LVs with different anchors would need per-WINDOW
                 // dispatch of resetPartition, which is not implemented yet.
                 throw SqlException.$(w.getAnchorPosition(),
-                        "live view supports at most one anchored WINDOW");
+                        "live view supports at most one anchored WINDOW in V1");
             }
             if (w.getPartitionBy().size() == 0) {
                 // resetPartition is keyed on the partition; the LiveViewWindow

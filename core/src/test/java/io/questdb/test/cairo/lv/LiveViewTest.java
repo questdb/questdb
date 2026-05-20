@@ -311,9 +311,15 @@ public class LiveViewTest extends AbstractCairoTest {
                         "WINDOW w AS (PARTITION BY val ORDER BY ts ANCHOR DAILY '00:00')");
                 Assert.fail("expected SqlException for TWO_PASS window function");
             } catch (SqlException e) {
+                // ntile compiles to a CachedWindowRecordCursorFactory, so the
+                // factory-level reject fires - pin its multi-pass tail, not just
+                // the shared prefix, so the two distinct reject messages stay
+                // distinguishable across refactors.
                 Assert.assertTrue(
                         e.getMessage(),
-                        e.getMessage().contains("live view select may only use window functions that support incremental refresh")
+                        e.getMessage().contains(
+                                "live view select may only use window functions that support incremental refresh; "
+                                        + "this query requires caching or multi-pass evaluation")
                 );
             }
         });
