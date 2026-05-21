@@ -86,15 +86,18 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
     private final ObjList<BorrowedArray> arrayBuffers = new ObjList<>();
     private final ObjList<DirectByteSequenceView> bsViews = new ObjList<>();
     private final ObjList<DirectString> csViews = new ObjList<>();
+    // Reusable decimal instances for lazy var->decimal conversion.
+    private final Decimal128 decimal128Buf = new Decimal128();
+    private final Decimal256 decimal256Buf = new Decimal256();
+    private final Decimal64 decimal64Buf = new Decimal64();
     private final ObjList<Long256Impl> longs256 = new ObjList<>();
     private final ObjList<StringSink> stringSinks = new ObjList<>();
     private final ObjList<SymbolTable> symbolTableCache = new ObjList<>();
-    // Per-column lazy fixed->str/varchar cache: one converter singleton (same for both
-    // destinations), packed (precision<<16)|scale args for DECIMAL, and ColumnType.sizeOf
-    // width. Null until first type-cast read; invalidated when sourceColumnTypes changes.
-    protected IntList typeCastArgs;
-    protected ObjList<ColumnTypeConverter.Fixed2VarConverter> typeCastConverters;
-    protected IntList typeCastWidth;
+    // Dedicated sink for UTF-8 -> UTF-16 decoding when reading a parquet VARCHAR value
+    // for a lazy var->fixed / var->decimal conversion. Kept separate from the per-column
+    // string sinks because those are used as the return buffer of getStrA/getStrB and
+    // must not be clobbered by the decode step inside readVarValueForConversion.
+    private final StringSink utf16DecodeSink = new StringSink();
     private final ObjList<Utf8SplitString> utf8Views = new ObjList<>();
     private final ObjList<Utf8StringSink> varcharSinks = new ObjList<>();
     protected DirectLongList auxPageAddresses;
@@ -120,15 +123,12 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
     protected IntList sourceColumnTypes;
     protected boolean stableStrings;
     protected SymbolTableSource symbolTableSource;
-    // Reusable decimal instances for lazy var->decimal conversion.
-    private final Decimal128 decimal128Buf = new Decimal128();
-    private final Decimal256 decimal256Buf = new Decimal256();
-    private final Decimal64 decimal64Buf = new Decimal64();
-    // Dedicated sink for UTF-8 -> UTF-16 decoding when reading a parquet VARCHAR value
-    // for a lazy var->fixed / var->decimal conversion. Kept separate from the per-column
-    // string sinks because those are used as the return buffer of getStrA/getStrB and
-    // must not be clobbered by the decode step inside readVarValueForConversion.
-    private final StringSink utf16DecodeSink = new StringSink();
+    // Per-column lazy fixed->str/varchar cache: one converter singleton (same for both
+    // destinations), packed (precision<<16)|scale args for DECIMAL, and ColumnType.sizeOf
+    // width. Null until first type-cast read; invalidated when sourceColumnTypes changes.
+    protected IntList typeCastArgs;
+    protected ObjList<ColumnTypeConverter.Fixed2VarConverter> typeCastConverters;
+    protected IntList typeCastWidth;
 
     public PageFrameMemoryRecord() {
     }
@@ -1215,6 +1215,19 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
         return long256;
     }
 
+    /**
+     * Decodes the var value at {@code columnIndex} of source type {@code srcTag} as a
+     * CharSequence that the convertVarToXxx callers feed into Numbers/Uuid/timestamp
+     * parsers.
+     * <p>
+     * The returned CharSequence may be backed by the single shared {@link #utf16DecodeSink}
+     * (on the non-ASCII VARCHAR path) or by a per-column DirectString view (STRING path).
+     * In both cases the caller must finish consuming the result before invoking
+     * readVarValueForConversion again on the same record — a subsequent call writes into
+     * the same sink, which would invalidate any reference still held by the caller.
+     * All current convertVarToXxx callers consume the result in a single parse call before
+     * returning, so the invariant holds today.
+     */
     private CharSequence readVarValueForConversion(int srcTag, int columnIndex) {
         if (srcTag == ColumnType.VARCHAR) {
             Utf8Sequence utf8 = getVarchar(columnIndex, utf8ViewA(columnIndex));

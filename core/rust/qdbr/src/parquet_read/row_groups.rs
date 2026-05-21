@@ -778,7 +778,17 @@ fn convert_fixed_to_decimal(
     match dst_tag {
         // Target Decimal8..Decimal64: use i64 arithmetic.
         tag if decimal_tag_size(tag) <= 8 => {
-            let factor = 10i64.wrapping_pow(dst_scale as u32);
+            // checked_pow matches rescale_fixed: rejects a corrupt/tampered scale.
+            // For Decimal8..64, max scale is 18, so 10^18 fits i64 today; this guards
+            // against future scale-bound changes.
+            let Some(factor) = 10i64.checked_pow(dst_scale as u32) else {
+                return Err(fmt_err!(
+                    InvalidLayout,
+                    "decimal scale {} exceeds i64 range for target {:?}",
+                    dst_scale,
+                    dst_tag
+                ));
+            };
             let null_sentinel = null_i64_for_decimal(dst_tag);
             if dst_size >= src_size {
                 for i in (0..count).rev() {
@@ -804,7 +814,14 @@ fn convert_fixed_to_decimal(
         }
         // Target Decimal128: widen to i128, scale, write as (hi, lo).
         ColumnTypeTag::Decimal128 => {
-            let factor = 10i128.wrapping_pow(dst_scale as u32);
+            // checked_pow matches rescale_i128: rejects a corrupt/tampered scale.
+            let Some(factor) = 10i128.checked_pow(dst_scale as u32) else {
+                return Err(fmt_err!(
+                    InvalidLayout,
+                    "decimal scale {} exceeds i128 range for Decimal128",
+                    dst_scale
+                ));
+            };
             for i in (0..count).rev() {
                 let val = unsafe { read_le_i64_at(ptr, i, src_size) };
                 let offset = i * 16;

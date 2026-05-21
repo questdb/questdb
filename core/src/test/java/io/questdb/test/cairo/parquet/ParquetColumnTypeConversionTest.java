@@ -26,6 +26,8 @@ package io.questdb.test.cairo.parquet;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -102,13 +104,15 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
             // DATE stores milliseconds since epoch.
             // '2020-06-15T12:00:00.000Z' = 1_592_222_400_000 ms
             // DATE -> TIMESTAMP scales x1000 (ms -> us), null preserved.
+            // DATE -> TIMESTAMP_NS scales x1_000_000 (ms -> ns) via the post-decode
+            // nano-scaling branch in PageFrameMemoryPool.openParquet.
             // Sub-second millisecond precision exercised with .999Z.
             String values = """
                     ('2020-06-15T12:00:00.000Z', '2024-01-01T00:00:01.000000Z'),
                     ('1970-01-01T00:00:00.000Z', '2024-01-01T00:00:02.000000Z'),
                     ('2020-06-15T12:00:00.999Z', '2024-01-01T00:00:03.000000Z'),
                     (NULL, '2024-01-01T00:00:04.000000Z')""";
-            for (String target : new String[]{"BOOLEAN", "BYTE", "SHORT", "INT", "LONG", "TIMESTAMP", "FLOAT", "DOUBLE"}) {
+            for (String target : new String[]{"BOOLEAN", "BYTE", "SHORT", "INT", "LONG", "TIMESTAMP", "TIMESTAMP_NS", "FLOAT", "DOUBLE"}) {
                 assertConversion("DATE", target, values);
             }
         });
@@ -117,13 +121,74 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
     @Test
     public void testDecimalToDecimal() throws Exception {
         assertMemoryLeak(() -> {
-            String values = """
+            // Decimal64 -> Decimal128: cross-physical widening (Int64 -> FLBA(16)),
+            // same-scale and scale-up. Scale-up hits rescale_i128 with small magnitudes.
+            String d64Values = """
                     (12345.6789m, '2024-01-01T00:00:01.000000Z'),
                     (0.0000m, '2024-01-01T00:00:02.000000Z'),
                     (-99.9999m, '2024-01-01T00:00:03.000000Z'),
                     (NULL, '2024-01-01T00:00:04.000000Z')""";
-            assertConversion("DECIMAL(18, 4)", "DECIMAL(38, 4)", values);
-            assertConversion("DECIMAL(18, 4)", "DECIMAL(38, 8)", values);
+            assertConversion("DECIMAL(18, 4)", "DECIMAL(38, 4)", d64Values);
+            assertConversion("DECIMAL(18, 4)", "DECIMAL(38, 8)", d64Values);
+
+            // Decimal8 <-> Decimal256: extreme width gap. Widening sign-extends 1 byte
+            // to 32 bytes; narrowing keeps the bottom byte. Narrowing keeps the same
+            // scale so no rescale runs: raw values stay inside i8 and the bottom-byte
+            // truncation is lossless. A wider sweep of scale-change-with-narrowing is
+            // intentionally out of scope here; the decoder narrows before rescale, so
+            // wide-to-narrow rescale across mismatched scales is a separate issue.
+            String tinyValues = """
+                    (1.2m, '2024-01-01T00:00:01.000000Z'),
+                    (0.0m, '2024-01-01T00:00:02.000000Z'),
+                    (-9.9m, '2024-01-01T00:00:03.000000Z'),
+                    (NULL, '2024-01-01T00:00:04.000000Z')""";
+            assertConversion("DECIMAL(2, 1)", "DECIMAL(76, 1)", tinyValues);
+            assertConversion("DECIMAL(2, 1)", "DECIMAL(76, 5)", tinyValues);
+            assertConversion("DECIMAL(76, 1)", "DECIMAL(2, 1)", tinyValues);
+
+            // Decimal16 <-> Decimal128: rescale_i128 widening and narrowing.
+            String d16Values = """
+                    (12.34m, '2024-01-01T00:00:01.000000Z'),
+                    (0.00m, '2024-01-01T00:00:02.000000Z'),
+                    (-99.99m, '2024-01-01T00:00:03.000000Z'),
+                    (NULL, '2024-01-01T00:00:04.000000Z')""";
+            assertConversion("DECIMAL(4, 2)", "DECIMAL(38, 2)", d16Values);
+            assertConversion("DECIMAL(4, 2)", "DECIMAL(38, 6)", d16Values);
+            assertConversion("DECIMAL(38, 2)", "DECIMAL(4, 2)", d16Values);
+
+            // Decimal32 <-> Decimal64: cross-physical Int32 <-> Int64 boundary.
+            String d32Values = """
+                    (123456.789m, '2024-01-01T00:00:01.000000Z'),
+                    (0.000m, '2024-01-01T00:00:02.000000Z'),
+                    (-987654.321m, '2024-01-01T00:00:03.000000Z'),
+                    (NULL, '2024-01-01T00:00:04.000000Z')""";
+            assertConversion("DECIMAL(9, 3)", "DECIMAL(18, 3)", d32Values);
+            assertConversion("DECIMAL(9, 3)", "DECIMAL(18, 6)", d32Values);
+            assertConversion("DECIMAL(18, 3)", "DECIMAL(9, 3)", d32Values);
+
+            // Decimal128 -> Decimal128 same-width rescale: exercises rescale_i128 in place
+            // with magnitudes past i64 range (so the i128 multiply genuinely matters) for
+            // both the multiply (scale-up) and divide (scale-down) branches. Trailing zero
+            // fractional digits keep the divide branch lossless so it matches the native
+            // path, which rejects information-losing rescale via RoundingMode.UNNECESSARY.
+            String d128Values = """
+                    (12345678901234567890.5600m, '2024-01-01T00:00:01.000000Z'),
+                    (0.0000m, '2024-01-01T00:00:02.000000Z'),
+                    (-99999999999999999999.9900m, '2024-01-01T00:00:03.000000Z'),
+                    (NULL, '2024-01-01T00:00:04.000000Z')""";
+            assertConversion("DECIMAL(38, 4)", "DECIMAL(38, 8)", d128Values);
+            assertConversion("DECIMAL(38, 4)", "DECIMAL(38, 2)", d128Values);
+
+            // Decimal256 -> Decimal256 same-width rescale: rescale_i256 path. Negative
+            // values exercise the negate_i256 branch in div_i256_pow10. Values use trailing
+            // zero fractional digits for the same reason as the Decimal128 divide above.
+            String d256Values = """
+                    (1234567890123456789012345678901234567890123456789012345678.0000m, '2024-01-01T00:00:01.000000Z'),
+                    (0.0000m, '2024-01-01T00:00:02.000000Z'),
+                    (-9999999999999999999999999999999999999999999999999999999999.0000m, '2024-01-01T00:00:03.000000Z'),
+                    (NULL, '2024-01-01T00:00:04.000000Z')""";
+            assertConversion("DECIMAL(76, 4)", "DECIMAL(76, 8)", d256Values);
+            assertConversion("DECIMAL(76, 4)", "DECIMAL(76, 0)", d256Values);
         });
     }
 
@@ -653,6 +718,9 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             // 256 wraps to 0 in BYTE (256 & 0xFF = 0).
             // 2_147_483_647 (MAX_INT) wraps to -1 in SHORT (0x7FFFFFFF & 0xFFFF).
+            // -2_147_483_647 is i32::MIN+1, the smallest legal non-NULL INT (one above
+            // INT_NULL = i32::MIN). It must survive widening to LONG/DATE/TIMESTAMP
+            // as -2_147_483_647 rather than be mistaken for the null sentinel.
             // NULL (INT_MIN) maps to the target type's null sentinel.
             String values = """
                     (1, '2024-01-01T00:00:01.000000Z'),
@@ -660,7 +728,8 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
                     (-1, '2024-01-01T00:00:03.000000Z'),
                     (256, '2024-01-01T00:00:04.000000Z'),
                     (2_147_483_647, '2024-01-01T00:00:05.000000Z'),
-                    (NULL, '2024-01-01T00:00:06.000000Z')""";
+                    (-2_147_483_647, '2024-01-01T00:00:06.000000Z'),
+                    (NULL, '2024-01-01T00:00:07.000000Z')""";
             for (String target : new String[]{"BOOLEAN", "BYTE", "SHORT", "LONG", "DATE", "TIMESTAMP", "FLOAT", "DOUBLE"}) {
                 assertConversion("INT", target, values);
             }
@@ -773,6 +842,9 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             // 256 wraps to 0 in BYTE, stays 256 in SHORT.
             // 2_147_483_648 overflows INT (becomes -2_147_483_648 via truncation).
+            // -9_223_372_036_854_775_807 is i64::MIN+1, the smallest legal non-NULL LONG
+            // (one above LONG_NULL = i64::MIN). It must survive pass-through to
+            // DATE/TIMESTAMP as the same value rather than be mistaken for null.
             // NULL (LONG_MIN) maps to the target type's null sentinel.
             String values = """
                     (1, '2024-01-01T00:00:01.000000Z'),
@@ -780,7 +852,8 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
                     (-1, '2024-01-01T00:00:03.000000Z'),
                     (256, '2024-01-01T00:00:04.000000Z'),
                     (2_147_483_648, '2024-01-01T00:00:05.000000Z'),
-                    (NULL, '2024-01-01T00:00:06.000000Z')""";
+                    (-9_223_372_036_854_775_807, '2024-01-01T00:00:06.000000Z'),
+                    (NULL, '2024-01-01T00:00:07.000000Z')""";
             for (String target : new String[]{"BOOLEAN", "BYTE", "SHORT", "INT", "DATE", "TIMESTAMP", "FLOAT", "DOUBLE"}) {
                 assertConversion("LONG", target, values);
             }
@@ -1212,6 +1285,8 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
             // TIMESTAMP stores microseconds since epoch.
             // '2020-06-15T12:30:00.123456Z' = 1_592_224_200_123_456 us
             // TIMESTAMP -> DATE divides by 1000 (us -> ms), losing sub-ms precision.
+            // TIMESTAMP -> TIMESTAMP_NS multiplies by 1000 (us -> ns) via the
+            // post-decode nano-scaling branch in PageFrameMemoryPool.openParquet.
             // NULL (LONG_MIN) is preserved across scaling (checked before divide).
             // Sub-millisecond precision: .000001Z = 1 microsecond, .999999Z = max micros.
             String values = """
@@ -1220,9 +1295,93 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
                     ('2020-06-15T12:30:00.000001Z', '2024-01-01T00:00:03.000000Z'),
                     ('2020-06-15T12:30:00.999999Z', '2024-01-01T00:00:04.000000Z'),
                     (NULL, '2024-01-01T00:00:05.000000Z')""";
-            for (String target : new String[]{"BOOLEAN", "BYTE", "SHORT", "INT", "LONG", "DATE", "FLOAT", "DOUBLE"}) {
+            for (String target : new String[]{"BOOLEAN", "BYTE", "SHORT", "INT", "LONG", "DATE", "TIMESTAMP_NS", "FLOAT", "DOUBLE"}) {
                 assertConversion("TIMESTAMP", target, values);
             }
+        });
+    }
+
+    /**
+     * Direct fixed-to-fixed conversions from TIMESTAMP_NS source on a parquet partition.
+     * Exercises the post-decode nano-scaling branch in PageFrameMemoryPool.openParquet
+     * (the bit-24 encoded flag path) for both narrowing into Timestamp/Date (divide by
+     * 1000 and 1_000_000) and pass-through into Long. NULL preservation across the nano
+     * scale is verified by the LONG_MIN sentinel surviving the divide.
+     */
+    @Test
+    public void testTimestampNanoToOtherFixedTypes() throws Exception {
+        assertMemoryLeak(() -> {
+            // TIMESTAMP_NS stores nanoseconds since epoch.
+            // Sub-microsecond precision is intentionally truncated by the ÷1000 to
+            // TIMESTAMP and the ÷1_000_000 to DATE; both lazy and native paths
+            // truncate identically.
+            String values = """
+                    ('2020-06-15T12:30:00.123456789Z', '2024-01-01T00:00:01.000000Z'),
+                    ('1970-01-01T00:00:00.000000001Z', '2024-01-01T00:00:02.000000Z'),
+                    ('2020-06-15T12:30:00.999999999Z', '2024-01-01T00:00:03.000000Z'),
+                    (NULL, '2024-01-01T00:00:04.000000Z')""";
+            for (String target : new String[]{"LONG", "TIMESTAMP", "DATE"}) {
+                assertConversion("TIMESTAMP_NS", target, values);
+            }
+        });
+    }
+
+    /**
+     * O3 insert into a parquet partition that has a pending column type cast must
+     * rewrite the parquet with the new type, materializing the conversion. The
+     * partition stays in parquet format but the on-disk parquet column type
+     * matches the post-ALTER metadata type, so subsequent reads no longer take
+     * the lazy decode path for that column.
+     */
+    @Test
+    public void testO3InsertRewritesConvertedParquetPartition() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE pt (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("""
+                    INSERT INTO pt VALUES
+                    (10, '2024-01-01T00:00:01.000000Z'),
+                    (20, '2024-01-01T00:00:03.000000Z'),
+                    (NULL, '2024-01-01T00:00:05.000000Z')""");
+            drainWalQueue();
+
+            execute("ALTER TABLE pt CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            drainWalQueue();
+
+            execute("ALTER TABLE pt ALTER COLUMN val TYPE LONG");
+            drainWalQueue();
+
+            // Before O3: parquet still stores the column as INT, the lazy decoder
+            // converts to LONG on the fly.
+            try (TableWriter writer = getWriter("pt")) {
+                Assert.assertEquals(PartitionFormat.PARQUET, writer.getPartitionFormat(0));
+                int colIdx = writer.getMetadata().getColumnIndex("val");
+                Assert.assertEquals(ColumnType.INT, ColumnType.tagOf(writer.getParquetColumnType(0, colIdx)));
+            }
+
+            // O3 row lands at 00:00:02, between the existing 00:00:01 and 00:00:03.
+            execute("INSERT INTO pt VALUES (99, '2024-01-01T00:00:02.000000Z')");
+            drainWalQueue();
+
+            // After the merge: partition is still parquet, but the parquet file
+            // has been rewritten with the new LONG type for val. hasSchemaChange
+            // in O3PartitionJob forces this rewrite when the partition has
+            // type-converted columns and new rows land on it.
+            try (TableWriter writer = getWriter("pt")) {
+                Assert.assertEquals(PartitionFormat.PARQUET, writer.getPartitionFormat(0));
+                int colIdx = writer.getMetadata().getColumnIndex("val");
+                Assert.assertEquals(ColumnType.LONG, ColumnType.tagOf(writer.getParquetColumnType(0, colIdx)));
+            }
+
+            assertSql(
+                    """
+                            val\tts
+                            10\t2024-01-01T00:00:01.000000Z
+                            99\t2024-01-01T00:00:02.000000Z
+                            20\t2024-01-01T00:00:03.000000Z
+                            null\t2024-01-01T00:00:05.000000Z
+                            """,
+                    "SELECT val, ts FROM pt ORDER BY ts"
+            );
         });
     }
 

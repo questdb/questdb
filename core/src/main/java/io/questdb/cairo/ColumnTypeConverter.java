@@ -1350,6 +1350,7 @@ public class ColumnTypeConverter {
             ColumnConversionOffsetSink columnSizesSink
     ) {
         MemoryCMARW dstFixMem = dstFixMemTL.get();
+        StringSink sink = sinkUtf16TL.get();
         int dstTypeSize = ColumnType.sizeOf(dstColumnType);
         int scale = ColumnType.getDecimalScale(dstColumnType);
         int precision = ColumnType.getDecimalPrecision(dstColumnType);
@@ -1361,7 +1362,11 @@ public class ColumnTypeConverter {
 
             for (long i = rowLo; i < rowHi; i++) {
                 Utf8Sequence utf8 = VarcharTypeDriver.getSplitValue(srcFixMem, srcVarMem, i, 1);
-                CharSequence str = utf8 != null ? utf8.asAsciiCharSequence() : null;
+                // utf8ToUtf16OrView gives a zero-alloc view on the ASCII fast path and
+                // decodes into sink for non-ASCII. Matches the sibling
+                // convertFromVarcharToFixed path; asAsciiCharSequence would corrupt
+                // non-ASCII digits like Arabic-Indic numerals.
+                CharSequence str = utf8 != null ? Utf8s.utf8ToUtf16OrView(utf8, sink) : null;
                 strToDecimal(str, decimal, precision, scale, dstFixMem, dstColumnType);
             }
             columnSizesSink.setDestSizes(dstFixMem.getAppendOffset(), -1);

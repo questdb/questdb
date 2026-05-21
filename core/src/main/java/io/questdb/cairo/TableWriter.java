@@ -1423,14 +1423,21 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
         try {
             txWriter.commit(denseSymbolMapWriters);
+            // hasParquetPartitions reflects post-commit txWriter state and does not change
+            // across loop iterations (the loop only does file-system housekeeping). Acquire
+            // the engine-wide metadata-cache lock once instead of N times.
+            try {
+                try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
+                    metadataRW.setHasParquetPartitions(tableToken, txWriter.hasParquetPartitions());
+                }
+            } catch (Throwable e) {
+                handleHousekeepingException(e);
+            }
             for (int i = 0, n = pendingParquetToNativeConversions.size(); i < n; i += 3) {
                 long pts = pendingParquetToNativeConversions.getQuick(i);
                 long oldNameTxn = pendingParquetToNativeConversions.getQuick(i + 1);
                 boolean lastConverted = pendingParquetToNativeConversions.getQuick(i + 2) != 0L;
                 try {
-                    try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
-                        metadataRW.setHasParquetPartitions(tableToken, txWriter.hasParquetPartitions());
-                    }
                     if (lastConverted) {
                         closeActivePartition(false);
                     }

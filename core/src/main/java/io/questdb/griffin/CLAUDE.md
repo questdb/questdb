@@ -159,31 +159,35 @@ if (parquetIdx < 0) {
 
 ### When Lazy Conversion Breaks
 
-The pre-pass in `ConvertOperatorImpl` converts parquet to native in three cases:
+The pre-pass in `ConvertOperatorImpl` converts parquet to native in two cases:
 
 **1. Target is SYMBOL**: Symbol maps cannot be built from parquet. Every parquet partition
 with data for the column must become native first.
 
-**2. Source is SYMBOL**: Symbol conversion from parquet needs the native symbol map files
-(.o, .k, .v). The main conversion loop skips parquet partitions entirely (relying on lazy
-decode), but Symbol→ conversions require reading the symbol table to resolve IDs to strings.
-Without the pre-pass, the parquet partition would be skipped, leaving the column unconverted.
-When the partition is later converted to native (by an explicit CONVERT TO NATIVE or by an
-O3 merge), the data would appear as NULL because the conversion was never performed.
-
-**3. Chained conversion with type mismatch**: If parquet stores type A, current metadata
+**2. Chained conversion with type mismatch**: If parquet stores type A, current metadata
 says type B, and we're now converting to type C — the parquet decoder would convert A→C
 directly. But the native path would convert B→C (it already did A→B in a prior ALTER).
 These paths may produce different results (e.g., INT→STRING→DATE vs INT→DATE have different
 semantics). Converting parquet to native first ensures B→C on both paths.
 
+Symbol-as-source (SYMBOL → non-SYMBOL) is **not** a pre-pass trigger. The lazy decoder
+handles it via `VARCHAR_SLICE`: `PageFrameMemoryPool.resolveParquetColumn` decodes the
+parquet BYTE_ARRAY as VARCHAR_SLICE and flags the column for var→fixed/var→string
+conversion in `PageFrameMemoryRecord`. No symbol-map lookup is needed because the parquet
+column already stores the strings directly.
+
 The check:
 ```java
-int parquetColType = tableWriter.getParquetColumnType(pi, existingColIndex);
-if (!ColumnType.isUndefined(parquetColType)
-        && (isTargetSymbol || isSourceSymbol
-            || ColumnType.tagOf(parquetColType) != ColumnType.tagOf(existingType))) {
-    tableWriter.convertPartitionParquetToNative(pts);
+boolean hasPriorConversion = tableWriter.getMetadata()
+        .getColumnMetadata(existingColIndex).getReplacingIndex() >= 0;
+boolean isTargetSymbol = ColumnType.isSymbol(newType);
+if (hasPriorConversion || isTargetSymbol) {
+    int parquetColType = tableWriter.getParquetColumnType(pi, existingColIndex);
+    if (!ColumnType.isUndefined(parquetColType)
+            && (isTargetSymbol
+                || !isParquetStorageCompatible(parquetColType, existingType))) {
+        tableWriter.convertPartitionParquetToNative(pts, false);
+    }
 }
 ```
 
