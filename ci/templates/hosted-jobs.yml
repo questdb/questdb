@@ -169,6 +169,9 @@ jobs:
           javadoc_step: ""
           javadoc_profile: ""
         windows-other-2:
+          # No test here needs the bundled web console (ServerMainTest runs in
+          # windows-other-1), so skip the build-web-console download.
+          WEB_CONSOLE_PROFILE: ""
           imageName: "windows-latest"
           poolName: "Azure Pipelines"
           os: Windows

@@ -81,7 +81,8 @@ public class RssMemoryLimitTest extends AbstractCairoTest {
     public void testLargeTxEventuallySucceeds() throws Exception {
         long limitMiB = 60;
         assertMemoryLeak(limitMiB, () -> {
-            // fewer transactions on slow CI runners (Mac, Windows); each batch still triggers memory pressure
+            // fewer transactions on slow CI runners (Mac, Windows); the workload below still triggers
+            // memory pressure during WAL apply, which the easing-up log assertion at the end verifies
             int batchCount = Os.isLinux() ? 10 : 4;
             int batchSize = 500_000;
 
@@ -114,6 +115,10 @@ public class RssMemoryLimitTest extends AbstractCairoTest {
                 }
             }, 600);
 
+            // The reduced workload must still exercise the memory pressure/recovery path; otherwise the
+            // test passes trivially. The apply job logs this line only after recovering from a pressure
+            // episode (onEnoughMemory() returns true), so its presence proves pressure was triggered.
+            capture.waitForRegex("table writing memory pressure is easing up \\[table=");
         });
     }
 
