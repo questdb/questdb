@@ -192,17 +192,19 @@ public class QwpSenderFailoverBatchSizeTest extends AbstractCairoTest {
                                     + " citing server B's tight cap, got: " + msg,
                             msg.contains("row too large for server batch cap"));
                 }
-                // The QWP processor on each sidecar acquired WAL writers to
-                // ingest the warm-up / failover-driving rows. Without a WAL
-                // apply job those segments stay un-drained and the pooled
-                // writers keep file descriptors open. Drain explicitly and
-                // release inactive pool entries so assertMemoryLeak doesn't
-                // see them as a leak.
-                drainWalQueue();
-                engine.releaseInactive();
             } finally {
+                // Stop the sidecars first: the QWP processor on each
+                // sidecar acquired WAL writers and holds them through
+                // its TableUpdateDetails until the HTTP connection
+                // context is closed, which happens during sidecar
+                // shutdown. Only after that are the writers idle in
+                // the pool. Drain any pending WAL segments and then
+                // release inactive pool entries so assertMemoryLeak
+                // doesn't see the pooled writer FDs as a leak.
                 serverA.stop();
                 serverB.stop();
+                drainWalQueue();
+                engine.releaseInactive();
             }
         });
     }
