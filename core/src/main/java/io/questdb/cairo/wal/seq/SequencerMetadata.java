@@ -358,7 +358,7 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
             // Propagate covering column indices (INCLUDE list) from the table structure
             IntList coveringIndices = tableStruct.getCoveringColumnIndices(i);
             if (coveringIndices != null && coveringIndices.size() > 0) {
-                columnMetadata.getQuick(columnMetadata.size() - 1).setCoveringColumnIndices(coveringIndices);
+                columnMetadata.getQuick(columnMetadata.size() - 1).setCoveringColumnIndices(new IntList(coveringIndices));
             }
             readColumnOrder.add(i);
         }
