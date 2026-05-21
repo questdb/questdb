@@ -867,6 +867,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
             AtomicBoolean trackOpens = new AtomicBoolean(false);
             AtomicBoolean batchPausedOnce = new AtomicBoolean(false);
             final Thread testThread = Thread.currentThread();
+            AtomicBoolean renameRegisteredTimedOut = new AtomicBoolean(false);
 
             FilesFacade ff = new TestFilesFacadeImpl() {
                 @Override
@@ -888,7 +889,9 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                         walSegmentRolled.countDown();
                         if (parker) {
                             try {
-                                renameRegistered.await(60, TimeUnit.SECONDS);
+                                if (!renameRegistered.await(60, TimeUnit.SECONDS)) {
+                                    renameRegisteredTimedOut.set(true);
+                                }
                             } catch (InterruptedException e) {
                                 Thread.currentThread().interrupt();
                             }
@@ -1002,6 +1005,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                 // Wait for sender thread to complete
                 senderThread.join(60_000);
                 Assert.assertFalse("Sender thread timed out", senderThread.isAlive());
+                Assert.assertFalse("Batch timed out waiting for the rename to register", renameRegisteredTimedOut.get());
 
                 // Check for errors
                 Throwable error = senderError.get();

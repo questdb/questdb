@@ -20,6 +20,10 @@ variables:
   MAVEN_RUN_OPTS: "-Dmaven.repo.local=$(MAVEN_CACHE_FOLDER) -Dmaven.resolver.transport=wagon -Dmaven.wagon.httpconnectionManager.ttlSeconds=30"
   MAVEN_VERSION: "version"
   MAVEN_VERSION_OPTION: "Default"
+  # Full reactor (the fuzz regex spans core and compat), but no fuzz test serves the
+  # web console, so skip its download.
+  TEST_REACTOR_ARGS: ""
+  WEB_CONSOLE_PROFILE: ""
 
 stages:
   - stage: HostedRunTestsBranches
