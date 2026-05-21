@@ -847,8 +847,20 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
             // large batch's first row triggers newRow(), it rolls to a new segment,
             // opening new column files via ff.openRW(). We intercept that to know
             // the server has started processing and then trigger the rename.
+            //
+            // We also need to pause the batch on the first matching openRW until
+            // the rename has committed its structural change to the sequencer.
+            // Otherwise the batch's sequencer.nextTxn (commit) can win the race
+            // against the rename's sequencer.nextStructureTxn — both serialize
+            // through the same sequencer WRITE lock, and the test depends on the
+            // rename arriving first so the batch commit sees a token mismatch and
+            // is rejected via TableReferenceOutOfDateException -> 503. Only the
+            // first matching openRW is blocked, so the rename's own openRW for
+            // its wal2/0 segment is not blocked and cannot deadlock.
             CountDownLatch walSegmentRolled = new CountDownLatch(1);
+            CountDownLatch renameRegistered = new CountDownLatch(1);
             AtomicBoolean trackOpens = new AtomicBoolean(false);
+            AtomicBoolean batchPausedOnce = new AtomicBoolean(false);
 
             FilesFacade ff = new TestFilesFacadeImpl() {
                 @Override
@@ -859,6 +871,13 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                             && Utf8s.containsAscii(name, "wal")
                             && Utf8s.endsWithAscii(name, ".d")) {
                         walSegmentRolled.countDown();
+                        if (batchPausedOnce.compareAndSet(false, true)) {
+                            try {
+                                renameRegistered.await(60, TimeUnit.SECONDS);
+                            } catch (InterruptedException e) {
+                                Thread.currentThread().interrupt();
+                            }
+                        }
                     }
                     return fd;
                 }
@@ -947,8 +966,16 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                 Assert.assertTrue("Timed out waiting for WAL segment roll",
                         walSegmentRolled.await(60, TimeUnit.SECONDS));
 
-                // Rename the table while the server is processing the large batch
+                // Rename the table while the server is processing the large batch.
+                // The batch's first column-file openRW is parked, so this RENAME
+                // is guaranteed to register its structural change on the sequencer
+                // before the batch can call sequencer.nextTxn at commit time.
                 serverMain.execute("RENAME TABLE " + tableName + " TO " + renamedTableName);
+
+                // Unblock the batch now that the rename's structural change is on
+                // the sequencer. The batch's commit will see the new table token
+                // and the sequencer will throw TableReferenceOutOfDateException.
+                renameRegistered.countDown();
 
                 // Create a new table with the original name
                 serverMain.execute("CREATE TABLE " + tableName + " (" +
