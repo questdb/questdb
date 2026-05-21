@@ -248,12 +248,13 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
                 // Row 2 omits the column -- implicit NULL via the null bitmap.
                 sender.table(table)
                         .at(2_000_000, ChronoUnit.MICROS);
-                // Row 3 ships a zero-length value. QuestDB's BINARY storage
-                // layer (MemoryPARWImpl.putBin) writes the NULL_LEN sentinel
-                // when len == 0, so an empty byte[] round-trips as NULL on
-                // read -- there is no length-0 non-null BINARY in the storage
-                // contract. We send it anyway to pin that quirk in case it
-                // ever changes.
+                // Row 3 ships a zero-length value. Cairo's MemoryCARW.putBin
+                // / MemoryPARWImpl.putBin now write the length prefix as 0
+                // (rather than NULL_LEN) for len == 0, so an empty byte[]
+                // round-trips as an empty (non-null) BINARY -- matching the
+                // BinarySequence overload's behavior and the QWP wire spec
+                // which distinguishes the null bitmap from the per-row
+                // length.
                 sender.table(table)
                         .binaryColumn("b", new byte[0])
                         .at(3_000_000, ChronoUnit.MICROS);
@@ -266,14 +267,28 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
                     "column\ttype\nb\tBINARY\n"
             );
             // length() returns -1 for NULL and the byte count otherwise.
-            // Rows 2 and 3 both surface as -1 (see comment on row 3 above).
+            // Row 2 is NULL (column omitted), row 3 is an empty non-null
+            // BINARY -- pinned distinct from null.
             assertSql(
                     "SELECT length(b) AS len FROM " + table + " ORDER BY ts",
                     """
                             len
                             6
                             -1
-                            -1
+                            0
+                            """
+            );
+            // Stronger regression than length() alone: pin isNull(b) so a
+            // future regression that flips empty back to null (e.g. by
+            // restoring the putBin(addr, 0) -> NULL_LEN shortcut) trips
+            // here rather than only in length-based assertions.
+            assertSql(
+                    "SELECT b IS NULL AS isnull FROM " + table + " ORDER BY ts",
+                    """
+                            isnull
+                            false
+                            true
+                            false
                             """
             );
         });
@@ -2633,6 +2648,89 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
 
             drainWalQueue();
             assertSql("SELECT count() FROM " + table, "count\n1\n");
+        });
+    }
+
+    /**
+     * Regression: empty BINARY ingested via the Java client must round-trip
+     * as an empty (non-null) value, not as NULL.
+     * <p>
+     * Cairo's {@code MemoryCARW.putBin(long, long)} and {@code
+     * MemoryPARWImpl.putBin(long, long)} used to write {@code NULL_LEN} (-1)
+     * as the length prefix when {@code len == 0}, conflating empty with null.
+     * The QWP-WS WAL ingest path (the only production caller of the {@code
+     * (from, len)} overload, via {@code
+     * WalColumnarRowAppender.putBinaryColumn}) drove a non-null empty {@code
+     * DirectUtf8Sequence} into {@code putBin(ptr, 0)}, so {@code byte[0]}
+     * sent through {@code sender.binaryColumn} was silently stored as NULL
+     * and read back as NULL by SQL and by the QWP egress reader.
+     * <p>
+     * After the fix, {@code putBin(from, len)} treats {@code len >= 0} as a
+     * real value (callers signal NULL via a negative {@code len} or via
+     * {@code putNullBin}). This test pins the corrected semantic
+     * end-to-end: a missing column still yields NULL while
+     * {@code binaryColumn("b", new byte[0])} yields a length-0 non-null
+     * value, distinct from NULL on both the {@code length()} and {@code IS
+     * NULL} predicates.
+     */
+    @Test
+    public void testEmptyBinaryColumnRoundTripsAsNonNull() throws Exception {
+        runInContext((port) -> {
+            String table = "test_qwp_empty_binary_round_trip";
+            execute("CREATE TABLE " + table
+                    + " (b BINARY, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            byte[] payload = {0x01, 0x02, 0x03, 0x04};
+
+            try (QwpWebSocketSender sender = connectWs(port)) {
+                // Row 1: a small non-null payload. Anchors the "happy path"
+                // so a regression that flips every BINARY to NULL trips here
+                // as well as on the empty row.
+                sender.table(table)
+                        .binaryColumn("b", payload)
+                        .at(1_000_000, ChronoUnit.MICROS);
+                // Row 2: column omitted -> NULL via the row-level null
+                // bitmap. The (length=-1, isNull=true) signal must keep
+                // working after the fix.
+                sender.table(table)
+                        .at(2_000_000, ChronoUnit.MICROS);
+                // Row 3: empty payload sent explicitly. Before the fix this
+                // round-tripped as NULL; after the fix it is a length-0
+                // non-null BINARY.
+                sender.table(table)
+                        .binaryColumn("b", new byte[0])
+                        .at(3_000_000, ChronoUnit.MICROS);
+                sender.flush();
+            }
+
+            drainWalQueue();
+            // length() distinguishes the three cases on a single line:
+            //   4  -> non-null with payload bytes
+            //   -1 -> NULL (implicit via omitted column)
+            //   0  -> empty non-null (regression target)
+            assertSql(
+                    "SELECT length(b) AS len FROM " + table + " ORDER BY ts",
+                    """
+                            len
+                            4
+                            -1
+                            0
+                            """
+            );
+            // IS NULL pins null-vs-empty independently of length(), so a
+            // future regression that emits empty as NULL on the wire but
+            // keeps the length prefix at 0 (e.g. a server-side change that
+            // re-introduces fillNulls for BINARY column-tops) is caught
+            // here.
+            assertSql(
+                    "SELECT b IS NULL AS isnull FROM " + table + " ORDER BY ts",
+                    """
+                            isnull
+                            false
+                            true
+                            false
+                            """
+            );
         });
     }
 
