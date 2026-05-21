@@ -172,6 +172,21 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
     private PageFrameMemoryPool pageFrameMemoryPool;
     private PageFrameMemoryRecord pageFrameMemoryRecord;
     /**
+     * True between a CLOSE-frame send that parked on
+     * {@code PeerIsSlowToReadException} (either the {@code handleClose} echo
+     * or a {@code sendFatalClose} diagnostic) and the {@code resumeSend} that
+     * finishes flushing the residual bytes. While true, {@code resumeSend}
+     * runs {@code gracefulCloseAndDisconnect} after the deferred flush
+     * completes, instead of attempting to continue streaming.
+     * <p>
+     * Without this flag, the catch-and-swallow pattern that used to live in
+     * {@code handleClose} / {@code sendFatalClose} tore the connection down
+     * before the rest of the CLOSE frame left the box, so the client saw EOF
+     * mid-frame and reported "peer disconnect" instead of the close code we
+     * promised.
+     */
+    private boolean pendingDisconnectAfterFlush;
+    /**
      * Byte count of the WebSocket 101 handshake response written by
      * {@code onHeadersReady} but not yet committed. {@code onRequestComplete}
      * issues the {@code rawSocket.send(pendingHandshakeBytes)} -- PISR from
@@ -497,6 +512,7 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
         recvBufferLen = 0;
         wsHandshakeSent = false;
         handshakeFlushPending = false;
+        pendingDisconnectAfterFlush = false;
         pendingHandshakeBytes = 0;
         fd = -1;
         securityContext = null;
@@ -816,6 +832,17 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
         return handshakeFlushPending;
     }
 
+    /**
+     * True between a CLOSE-frame send that parked on
+     * {@link PeerIsSlowToReadException} and the {@code resumeSend} that
+     * finishes flushing the residual bytes. {@code resumeSend} consumes the
+     * flag and triggers {@code gracefulCloseAndDisconnect} once the deferred
+     * flush completes.
+     */
+    public boolean isPendingDisconnectAfterFlush() {
+        return pendingDisconnectAfterFlush;
+    }
+
     public boolean isStreamingActive() {
         return streamingActive;
     }
@@ -932,6 +959,10 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
 
     public void setHandshakeFlushPending(boolean pending) {
         this.handshakeFlushPending = pending;
+    }
+
+    public void setPendingDisconnectAfterFlush(boolean pending) {
+        this.pendingDisconnectAfterFlush = pending;
     }
 
     /**

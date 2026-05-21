@@ -172,12 +172,23 @@ public class QwpWebSocketUpgradeProcessorResumeRecvTest extends AbstractCairoTes
                 header.setHeader("Connection", "Upgrade");
                 header.setHeader("Sec-WebSocket-Version", "13");
 
+                // onHeadersReady stages the 400 body without sending: the
+                // contract forbids PeerIsSlowToReadException here, so the
+                // actual rawSocket.send is deferred to onRequestComplete.
+                processor.onHeadersReady(context);
+                Assert.assertEquals("onHeadersReady must not call rawSocket.send",
+                        0, mockRawSocket.sendCallCount);
+
+                // The first rawSocket.send is configured to throw PISR. The
+                // fix lets that propagate from onRequestComplete (the
+                // framework then parks-on-write and re-fires resumeSend).
                 try {
-                    processor.onHeadersReady(context);
-                    Assert.fail("Expected HttpException");
-                } catch (HttpException e) {
-                    TestUtils.assertContains(e.getFlyweightMessage(), "WebSocket handshake rejected");
+                    processor.onRequestComplete(context);
+                    Assert.fail("Expected PeerIsSlowToReadException to propagate from deferred reject flush");
+                } catch (PeerIsSlowToReadException ignored) {
                 }
+                Assert.assertEquals("onRequestComplete must have attempted the deferred send",
+                        1, mockRawSocket.sendCallCount);
             } finally {
                 Unsafe.free(sendBuf, SEND_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
             }

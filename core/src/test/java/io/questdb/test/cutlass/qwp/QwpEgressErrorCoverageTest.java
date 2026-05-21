@@ -195,6 +195,45 @@ public class QwpEgressErrorCoverageTest extends AbstractQwpBootstrapTest {
     }
 
     @Test
+    public void testOversizedQueryFrameSurfacesCloseDiagnosticUnderTinySendChunk() throws Exception {
+        // Regression: under a tight send fragmentation cap, sendFatalClose
+        // used to swallow the PeerIsSlowToReadException thrown by
+        // HttpResponseSink after the first chunk of the CLOSE(1009) frame
+        // landed, then proceed to gracefulCloseAndDisconnect. The residual
+        // bytes never reached the wire and the client observed plain
+        // "peer disconnect" instead of "code=1009". Pinning the send chunk
+        // to 1 byte makes the split deterministic; the buffered residual
+        // must drain via resumeSend's pendingDisconnectAfterFlush branch.
+        TestUtils.assertMemoryLeak(() -> {
+            try (TestServerMain serverMain = startWithEnvVariables(
+                    "QDB_HTTP_RECV_BUFFER_SIZE", "2048",
+                    "QDB_DEBUG_HTTP_FORCE_RECV_FRAGMENTATION_CHUNK_SIZE", "1",
+                    "QDB_DEBUG_HTTP_FORCE_SEND_FRAGMENTATION_CHUNK_SIZE", "1")) {
+                serverMain.execute("CREATE TABLE oversize_query_tiny(id LONG, ts TIMESTAMP) "
+                        + "TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+                StringBuilder bigLiteral = new StringBuilder(4096);
+                bigLiteral.repeat("x", 4000);
+                String sql = "SELECT id FROM oversize_query_tiny WHERE '"
+                        + bigLiteral + "' = 'placeholder'";
+
+                try (QwpQueryClient client = QwpQueryClient.fromConfig(
+                        "ws::addr=127.0.0.1:" + HTTP_PORT + ";failover=off;")) {
+                    client.connect();
+
+                    String[] errorMsg = {null};
+                    byte[] errorStatus = {0};
+                    client.execute(sql, failIfSuccess(errorStatus, errorMsg));
+
+                    Assert.assertNotNull(errorMsg[0]);
+                    TestUtils.assertContains(errorMsg[0], "code=1009");
+                    TestUtils.assertContains(errorMsg[0], "frame payload exceeds");
+                }
+            }
+        });
+    }
+
+    @Test
     public void testOversizedQueryFrameSurfacesCloseDiagnostic() throws Exception {
         // Regression: when a QUERY frame's declared payload exceeds the
         // server's recv buffer, the egress upgrade processor must emit a

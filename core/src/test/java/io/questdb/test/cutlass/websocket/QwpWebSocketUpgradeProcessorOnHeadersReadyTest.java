@@ -424,6 +424,17 @@ public class QwpWebSocketUpgradeProcessorOnHeadersReadyTest extends AbstractCair
 
             Assert.assertFalse("rejected handshake must not switch protocol", context.isSwitchProtocolCalled());
             Assert.assertNull("rejected handshake must not allocate processor state", lv.get(context));
+            Assert.assertEquals("onHeadersReady must defer the reject send to onRequestComplete",
+                    0, context.getMockRawSocket().sentSize);
+
+            // Drive the deferred flush. onRequestComplete throws HttpException
+            // after the reject body lands on the wire so the framework
+            // disconnects -- there is no protocol to switch to on a reject.
+            try {
+                processor.onRequestComplete(context);
+                Assert.fail("onRequestComplete must throw HttpException to disconnect after reject");
+            } catch (HttpException ignored) {
+            }
 
             String response = readResponse(bufferAddr, context.getMockRawSocket().sentSize);
             Assert.assertTrue("response must be 421: " + response,

@@ -495,7 +495,17 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
                 .I$();
         context.resumeResponseSend();
 
-        // 2. If the handshake response was parked mid-write, the flush above
+        // 2. If a CLOSE frame (echo or fatal diagnostic) was parked mid-write
+        //    by handleClose / sendFatalClose, the flush above finishes it.
+        //    Tear the connection down now -- the bytes are on the wire, and
+        //    there is nothing else this connection should do.
+        if (state != null && state.isPendingDisconnectAfterFlush()) {
+            state.setPendingDisconnectAfterFlush(false);
+            gracefulCloseAndDisconnect(context);
+            return; // unreachable -- gracefulCloseAndDisconnect always throws.
+        }
+
+        // 3. If the handshake response was parked mid-write, the flush above
         //    just completed it. Finalise the protocol switch now so subsequent
         //    recvs parse WebSocket frames rather than HTTP.
         if (state != null && state.isHandshakeFlushPending()) {
@@ -839,7 +849,8 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
         }
     }
 
-    private void handleClose(HttpConnectionContext context, long payload, int length) {
+    private void handleClose(HttpConnectionContext context, QwpEgressProcessorState state, long payload, int length)
+            throws PeerIsSlowToReadException {
         int closeCode = -1;
         if (length >= 2) {
             int high = Unsafe.getByte(payload) & 0xFF;
@@ -855,10 +866,19 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
                     WebSocketCloseCode.NORMAL_CLOSURE,
                     null);
             if (written > 0) {
-                rawSocket.send(written);
+                try {
+                    rawSocket.send(written);
+                } catch (PeerIsSlowToReadException e) {
+                    // CLOSE frame was partially written under a small send
+                    // fragmentation cap. The framework holds the residual
+                    // bytes; resumeSend completes the flush and then runs
+                    // gracefulCloseAndDisconnect.
+                    state.setPendingDisconnectAfterFlush(true);
+                    throw e;
+                }
             }
-        } catch (PeerDisconnectedException | PeerIsSlowToReadException e) {
-            // Best effort
+        } catch (PeerDisconnectedException e) {
+            // Peer is gone, nothing more to do.
         }
     }
 
@@ -1195,7 +1215,7 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
             case WebSocketOpcode.PING -> handlePing(context, payload, length);
             case WebSocketOpcode.PONG -> LOG.debug().$("Egress pong [fd=").$(context.getFd()).I$();
             case WebSocketOpcode.CLOSE -> {
-                handleClose(context, payload, length);
+                handleClose(context, state, payload, length);
                 throw ServerDisconnectException.INSTANCE;
             }
             default -> LOG.debug().$("Egress unknown opcode [fd=").$(context.getFd()).$(", opcode=").$(opcode).I$();
@@ -1350,7 +1370,9 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
      * teardown; clients tolerant of a missing CLOSE see the same behaviour as
      * before, while the common ready-buffer case now lands the diagnostic.
      */
-    private void sendFatalClose(HttpConnectionContext context, CharSequence reason) throws ServerDisconnectException {
+    private void sendFatalClose(HttpConnectionContext context, CharSequence reason)
+            throws ServerDisconnectException, PeerIsSlowToReadException {
+        QwpEgressProcessorState state = LV.get(context);
         try {
             HttpRawSocket rawSocket = context.getRawResponseSocket();
             int written = WebSocketFrameWriter.writeCloseFrame(
@@ -1360,11 +1382,23 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
                     reason
             );
             if (written > 0) {
-                rawSocket.send(written);
+                try {
+                    rawSocket.send(written);
+                } catch (PeerIsSlowToReadException e) {
+                    // CLOSE(1009) frame was partially written under a small
+                    // send fragmentation cap. The framework holds the
+                    // residual bytes; resumeSend completes the flush and
+                    // then runs gracefulCloseAndDisconnect. Swallowing PISR
+                    // here would tear the connection down mid-frame and the
+                    // client would see EOF instead of the diagnostic.
+                    if (state != null) {
+                        state.setPendingDisconnectAfterFlush(true);
+                    }
+                    throw e;
+                }
             }
-        } catch (PeerDisconnectedException | PeerIsSlowToReadException ignored) {
-            // Best effort -- we're disconnecting anyway. Anything queued in the
-            // framework send buffer flushes naturally during teardown.
+        } catch (PeerDisconnectedException ignored) {
+            // Peer is gone -- disconnect anyway.
         }
         gracefulCloseAndDisconnect(context);
     }
