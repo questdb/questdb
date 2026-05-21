@@ -1186,6 +1186,13 @@ public class PropServerConfigurationTest {
         }
     }
 
+    @Test(expected = ServerConfigurationException.class)
+    public void testInvalidWalMaxLagSizeNegative() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty("cairo.wal.max.lag.size", "-1");
+        newPropServerConfiguration(properties);
+    }
+
     @Test
     public void testInvalidValidationResult() {
         Properties properties = new Properties();
