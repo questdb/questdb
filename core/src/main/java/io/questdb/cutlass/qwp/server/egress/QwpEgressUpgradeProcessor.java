@@ -72,6 +72,7 @@ import io.questdb.network.Socket;
 import io.questdb.std.AssociativeCache;
 import io.questdb.std.ConcurrentAssociativeCache;
 import io.questdb.std.Misc;
+import io.questdb.std.Mutable;
 import io.questdb.std.NoOpAssociativeCache;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
@@ -140,6 +141,14 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
     private static final Log LOG = LogFactory.getLog(QwpEgressUpgradeProcessor.class);
     private static final LocalValue<QwpEgressProcessorState> LV = new LocalValue<>();
     private static final NoOpAssociativeCache<RecordCursorFactory> NO_OP_SELECT_CACHE = new NoOpAssociativeCache<>();
+    // Carries the byte count of a 4xx upgrade rejection staged in the raw
+    // response buffer by onHeadersReady, to be flushed by onRequestComplete
+    // (which is allowed to propagate PeerIsSlowToReadException to the
+    // framework's park-on-write path). Mirrors the same construct on the
+    // ingress side; sized for the rare 400 / 426 rejection paths --
+    // successful upgrades use the QwpEgressProcessorState handshake flush
+    // flags instead and never touch this LocalValue.
+    private static final LocalValue<RejectFlushTracker> REJECT_FLUSH = new LocalValue<>();
     /**
      * Upper bound for the SERVER_INFO body: 26 bytes fixed fields plus 65535
      * bytes for each of cluster_id and node_id. The frame writer truncates each
@@ -281,18 +290,21 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
         if (validationError != null) {
             LOG.error().$("Egress WebSocket handshake validation failed [fd=").$(context.getFd())
                     .$(", error=").$(validationError).I$();
-            try {
-                final boolean versionError = QwpWebSocketHttpProcessor.isVersionValidationError(validationError);
-                final int written = versionError
-                        ? QwpWebSocketUpgradeProcessor.writeUpgradeRequiredResponse(bufferAddr, bufferSize)
-                        : QwpWebSocketUpgradeProcessor.writeBadRequestResponse(bufferAddr, bufferSize, validationError);
-                if (written <= 0) {
-                    throw HttpException.instance("egress handshake error response does not fit send buffer");
-                }
-                rawSocket.send(written);
-            } catch (PeerIsSlowToReadException e) {
-                throw HttpException.instance("Egress handshake rejected: ").put(validationError);
+            final boolean versionError = QwpWebSocketHttpProcessor.isVersionValidationError(validationError);
+            final int written = versionError
+                    ? QwpWebSocketUpgradeProcessor.writeUpgradeRequiredResponse(bufferAddr, bufferSize)
+                    : QwpWebSocketUpgradeProcessor.writeBadRequestResponse(bufferAddr, bufferSize, validationError);
+            if (written <= 0) {
+                throw HttpException.instance("egress handshake error response does not fit send buffer");
             }
+            // Defer rawSocket.send to onRequestComplete (mirrors the ingress
+            // reject path). onHeadersReady is forbidden from throwing
+            // PeerIsSlowToReadException, so a small send-fragmentation cap
+            // splitting the reject body across two sends would otherwise
+            // turn into a fatal HttpException -- killing the connection
+            // before the residual fragment reached the client and stranding
+            // the diagnostic mid-frame.
+            stageReject(context, written);
             return;
         }
 
@@ -399,6 +411,21 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
     @Override
     public void onRequestComplete(HttpConnectionContext context)
             throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
+        RejectFlushTracker rejectTracker = REJECT_FLUSH.get(context);
+        if (rejectTracker != null && rejectTracker.pendingBytes > 0) {
+            // Flush the deferred 400 / 426 reject body. PISR propagates into
+            // the framework's park-on-write path; resumeSend picks the
+            // residual flush back up and disconnects after the last byte.
+            // pendingBytes stays non-zero until the send returns normally so
+            // resumeSend can recognise that it is still in the reject path.
+            HttpRawSocket rawSocketReject = context.getRawResponseSocket();
+            rawSocketReject.send(rejectTracker.pendingBytes);
+            rejectTracker.pendingBytes = 0;
+            // Send completed in a single call. Throw HttpException so the
+            // framework tears the connection down after the reject body has
+            // fully landed on the wire.
+            throw HttpException.instance("Egress WebSocket upgrade rejected");
+        }
         QwpEgressProcessorState state = LV.get(context);
         if (state == null || !state.isHandshakeFlushPending()) {
             // Either we're already past the handshake (protocol-switched
@@ -485,6 +512,17 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
     @Override
     public void resumeSend(HttpConnectionContext context)
             throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
+        RejectFlushTracker rejectTracker = REJECT_FLUSH.get(context);
+        if (rejectTracker != null && rejectTracker.pendingBytes > 0) {
+            // Residual bytes of a 4xx upgrade reject were parked mid-write.
+            // Flush the rest (PISR re-parks until the kernel takes the last
+            // byte) and then close the connection -- there is no protocol to
+            // switch to on a reject.
+            context.resumeResponseSend();
+            rejectTracker.pendingBytes = 0;
+            throw ServerDisconnectException.INSTANCE;
+        }
+
         QwpEgressProcessorState state = LV.get(context);
 
         // 1. Flush any deferred bytes from the previous send, regardless of
@@ -1898,6 +1936,39 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
                     schemaId, writeFullSchema, rowsThisBatch);
             // Credit debit and metric update both live inside sendResultBatch
             // so they survive a PeerIsSlowToReadException park.
+        }
+    }
+
+    private static void stageReject(HttpConnectionContext context, int bytesWritten) {
+        RejectFlushTracker tracker = REJECT_FLUSH.get(context);
+        if (tracker == null) {
+            tracker = new RejectFlushTracker();
+            REJECT_FLUSH.set(context, tracker);
+        }
+        tracker.pendingBytes = bytesWritten;
+    }
+
+    // Per-connection holder for the byte count of a 4xx upgrade rejection
+    // deferred from onHeadersReady to onRequestComplete. Lazily allocated;
+    // only connections that actually trigger a reject pay the single-object
+    // cost.
+    //
+    // Implements Mutable so LocalValueMap.clear() (invoked by
+    // HttpConnectionContext.reset() on every request boundary AND
+    // HttpConnectionContext.clear() on pool-return via super.clear()) resets
+    // pendingBytes to 0. Without this, a PeerDisconnectedException thrown by
+    // the staged send in onRequestComplete (which skips the
+    // pendingBytes = 0 reset) would leave a stale value on the context; the
+    // next pool reuse of that context would land a legitimate upgrade on a
+    // tracker whose pendingBytes > 0 still drives the reject branch and
+    // throws HttpException instead of finalising the 101 handshake. Mirrors
+    // the same construct in QwpWebSocketUpgradeProcessor.
+    private static final class RejectFlushTracker implements Mutable {
+        int pendingBytes;
+
+        @Override
+        public void clear() {
+            pendingBytes = 0;
         }
     }
 }

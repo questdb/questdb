@@ -32,6 +32,7 @@ import io.questdb.cutlass.http.HttpServer;
 import io.questdb.cutlass.qwp.codec.QwpEgressMsgKind;
 import io.questdb.cutlass.qwp.codec.QwpServerInfoProvider;
 import io.questdb.cutlass.qwp.server.QwpWebSocketHttpProcessor;
+import io.questdb.cutlass.qwp.server.egress.QwpEgressHttpProcessor;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.WorkerPoolUtils;
@@ -153,6 +154,49 @@ public class QwpUpgradeRejectFragmentationTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testEgress400OriginRejectIsFullyDeliveredUnderSendFragmentation() throws Exception {
+        // Egress (/read/v1) shares QwpWebSocketHttpProcessor.validateHandshake
+        // with ingress, so the same Origin-header rejection path applies. The
+        // egress upgrade processor's reject branch still synchronously calls
+        // rawSocket.send inside onHeadersReady and catches PISR -- the
+        // matching ingress fix did not carry over. With send fragmentation
+        // smaller than the 400 body, the inline send returns one fragment,
+        // the second send trips PISR, the catch converts to HttpException,
+        // and the framework disconnects mid-response. Without the fix the
+        // client receives a truncated body; with the fix the residual flushes
+        // through resumeSend.
+        runWithFragmentedSendEgress(port -> {
+            String request = "GET /read/v1 HTTP/1.1\r\n"
+                    + "Host: localhost:" + port + "\r\n"
+                    + "Origin: http://evil.example.com\r\n"
+                    + "Upgrade: websocket\r\n"
+                    + "Connection: Upgrade\r\n"
+                    + "Sec-WebSocket-Key: AQIDBAUGBwgJCgsMDQ4PEA==\r\n"
+                    + "Sec-WebSocket-Version: 13\r\n"
+                    + "\r\n";
+            assertFullRejectDelivered(port, request, EXPECTED_400_ORIGIN_REJECT);
+        });
+    }
+
+    @Test
+    public void testEgress426VersionRejectIsFullyDeliveredUnderSendFragmentation() throws Exception {
+        // Same shape as the 400 case but exercises the version-error branch
+        // (writeUpgradeRequiredResponse). Pinning Sec-WebSocket-Version=99
+        // forces validateHandshake to return ERROR_UNSUPPORTED_WS_VERSION
+        // and onHeadersReady writes the canonical 426 body.
+        runWithFragmentedSendEgress(port -> {
+            String request = "GET /read/v1 HTTP/1.1\r\n"
+                    + "Host: localhost:" + port + "\r\n"
+                    + "Upgrade: websocket\r\n"
+                    + "Connection: Upgrade\r\n"
+                    + "Sec-WebSocket-Key: AQIDBAUGBwgJCgsMDQ4PEA==\r\n"
+                    + "Sec-WebSocket-Version: 99\r\n"
+                    + "\r\n";
+            assertFullRejectDelivered(port, request, EXPECTED_426_RESPONSE);
+        });
+    }
+
     private static void assertFullRejectDelivered(int port, String request, byte[] expected) throws Exception {
         try (Socket socket = new Socket("localhost", port)) {
             socket.setSoTimeout(5_000);
@@ -234,6 +278,50 @@ public class QwpUpgradeRejectFragmentationTest extends AbstractCairoTest {
                     @Override
                     public QwpWebSocketHttpProcessor newInstance() {
                         return new QwpWebSocketHttpProcessor(engine, httpConfig);
+                    }
+                });
+                WorkerPoolUtils.setupWriterJobs(workerPool, engine);
+                workerPool.start(LOG);
+                try {
+                    test.run(server.getPort());
+                } finally {
+                    workerPool.halt();
+                    Path.clearThreadLocals();
+                }
+            }
+        });
+    }
+
+    private void runWithFragmentedSendEgress(PortTest test) throws Exception {
+        final HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(
+                configuration,
+                new DefaultHttpContextConfiguration() {
+                    @Override
+                    public int getForceSendFragmentationChunkSize() {
+                        return SEND_FRAGMENTATION_CHUNK_SIZE;
+                    }
+                }
+        ) {
+            @Override
+            public int getBindPort() {
+                return 0;
+            }
+        };
+
+        assertMemoryLeak(() -> {
+            try (
+                    TestWorkerPool workerPool = new TestWorkerPool(1);
+                    HttpServer server = new HttpServer(httpConfig, workerPool, PlainSocketFactory.INSTANCE)
+            ) {
+                server.bind(new HttpRequestHandlerFactory() {
+                    @Override
+                    public ObjHashSet<String> getUrls() {
+                        return httpConfig.getContextPathQWPRead();
+                    }
+
+                    @Override
+                    public QwpEgressHttpProcessor newInstance() {
+                        return new QwpEgressHttpProcessor(engine, httpConfig, 1);
                     }
                 });
                 WorkerPoolUtils.setupWriterJobs(workerPool, engine);
