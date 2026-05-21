@@ -76,6 +76,16 @@ public abstract class BasePartitionedWindowFunction extends BaseWindowFunction i
     }
 
     @Override
+    public long getTombstoneCount() {
+        return tombstoneCount;
+    }
+
+    @Override
+    public int getTombstoneValueIndex() {
+        return tombstoneValueIndex;
+    }
+
+    @Override
     public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
         super.init(symbolTableSource, executionContext);
         Function.init(partitionByRecord.getFunctions(), symbolTableSource, executionContext, null);
@@ -110,6 +120,18 @@ public abstract class BasePartitionedWindowFunction extends BaseWindowFunction i
             value.putByte(tombstoneValueIndex, (byte) 0);
             tombstoneCount--;
         }
+    }
+
+    /**
+     * Empties the partition-state map and zeroes the tombstone counter before the
+     * live-view snapshot framework rehydrates partitions. Native-memory-backed
+     * subclasses (ring/deque functions) override to also reset their backing arena
+     * and free list, calling {@code super.onSnapshotRestoreBegin()}.
+     */
+    @Override
+    public void onSnapshotRestoreBegin() {
+        Misc.clear(map);
+        tombstoneCount = 0;
     }
 
     @Override

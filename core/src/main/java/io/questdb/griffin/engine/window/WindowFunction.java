@@ -25,8 +25,10 @@
 package io.questdb.griffin.engine.window;
 
 import io.questdb.cairo.ArrayColumnTypes;
+import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.map.Map;
+import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -290,6 +292,29 @@ public interface WindowFunction extends Function {
         throw new UnsupportedOperationException();
     }
 
+    /**
+     * @return the partition-key {@link ColumnTypes} the live-view snapshot framework
+     * writes into the FUNCTION_SNAPSHOT key-shape header and validates on restore.
+     * Returns {@code null} for scalar (no-map) functions, which the framework treats
+     * as a single keyless partition. Partitioned functions override to return their
+     * own partition-key types.
+     */
+    @Nullable
+    default ColumnTypes getSnapshotKeyColumnTypes() {
+        return null;
+    }
+
+    /**
+     * @return the index of the first partition-key column inside the partition-state
+     * {@link Map} record's column layout ({@code [value0..valueN, key0..keyM]}), i.e.
+     * the value-slot count. The framework passes this to
+     * {@link io.questdb.cairo.lv.LiveViewSnapshotKeyCodec#writeKey} when emitting a
+     * partition's key. Default {@code 0}; partitioned functions override.
+     */
+    default int getSnapshotKeyStartIndex() {
+        return 0;
+    }
+
     @Override
     default CharSequence getStrA(Record rec) {
         throw new UnsupportedOperationException();
@@ -318,6 +343,27 @@ public interface WindowFunction extends Function {
     @Override
     default long getTimestamp(Record rec) {
         throw new UnsupportedOperationException();
+    }
+
+    /**
+     * @return the number of tombstoned (logically-evicted) partitions currently in
+     * the partition-state {@link Map}. The live-view snapshot framework uses it to
+     * pick the cheap {@code map.size()} live-count when no entry is tombstoned, and
+     * the two-pass count otherwise. Default {@code 0}; functions that track a
+     * per-partition tombstone bit override.
+     */
+    default long getTombstoneCount() {
+        return 0;
+    }
+
+    /**
+     * @return the value-slot index of the per-partition tombstone byte, or {@code -1}
+     * when the function tracks no tombstone bit. The snapshot framework reads this to
+     * skip tombstoned partitions when emitting. Default {@code -1}; partitioned
+     * functions in live-view mode override.
+     */
+    default int getTombstoneValueIndex() {
+        return -1;
     }
 
     @Override
@@ -384,6 +430,18 @@ public interface WindowFunction extends Function {
      * Map lookup.
      */
     default void markPartitionAlive(Record record) {
+    }
+
+    /**
+     * Resets this function's per-partition state to empty before the live-view
+     * snapshot framework rehydrates partitions via
+     * {@link #restorePartitionState(MemoryR, long, MapValue, int)}. Partitioned
+     * functions clear their {@link Map} and zero the tombstone counter here;
+     * native-memory-backed ring/deque functions also truncate their backing
+     * arena and clear their free list. Default no-op (scalar functions hold a
+     * single field that {@code restorePartitionState} overwrites directly).
+     */
+    default void onSnapshotRestoreBegin() {
     }
 
     /**
@@ -462,6 +520,27 @@ public interface WindowFunction extends Function {
     }
 
     /**
+     * Rehydrates ONE partition's accumulator state previously written by
+     * {@link #snapshotPartitionState(MemoryA, MapValue)}. The live-view snapshot
+     * framework owns iteration: it has already read the partition key and called
+     * {@code createValue()}, passing the fresh {@code value} here; for scalar
+     * (no-map) functions {@code value} is {@code null}. The function reads its own
+     * state bytes from {@code source} starting at {@code offset} and returns the
+     * advanced offset just past them. Native-memory-backed functions allocate the
+     * partition's ring/deque from their arena here.
+     * <p>
+     * The default throws — only window functions that {@link #supportsSnapshot()}
+     * override.
+     *
+     * @return the offset just past this partition's consumed state bytes
+     */
+    default long restorePartitionState(MemoryR source, long offset, MapValue value, int formatVersion) {
+        throw new UnsupportedOperationException(
+                "restorePartitionState not implemented for " + getClass().getName()
+        );
+    }
+
+    /**
      * Rebuilds the per-partition state {@link Map} to keep only partitions whose
      * key is present in {@code survivingKeys}, dropping the rest. The live-view
      * ANCHOR runtime ({@link io.questdb.cairo.lv.LiveViewWindow#compact()}) calls
@@ -517,6 +596,24 @@ public interface WindowFunction extends Function {
      */
     default int snapshotMinSupportedVersion() {
         return 0;
+    }
+
+    /**
+     * Serialises ONE partition's accumulator state into {@code sink} for later
+     * {@link #restorePartitionState(MemoryR, long, MapValue, int)}. The live-view
+     * snapshot framework owns iteration and the FUNCTION_SNAPSHOT key-shape header:
+     * it has already written this partition's key, so the function writes only its
+     * own value bytes from {@code value} (the partition's {@link MapValue}; for
+     * scalar no-map functions {@code value} is {@code null} and the function reads
+     * its single field directly).
+     * <p>
+     * The default throws — only window functions that {@link #supportsSnapshot()}
+     * override.
+     */
+    default void snapshotPartitionState(MemoryA sink, MapValue value) {
+        throw new UnsupportedOperationException(
+                "snapshotPartitionState not implemented for " + getClass().getName()
+        );
     }
 
     /**
