@@ -152,6 +152,11 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
         }
     }
 
+    @Override
+    public IntList getCoveringColumnIndices(int columnIndex) {
+        return getColumnMetadata(columnIndex).getCoveringColumnIndices();
+    }
+
     public int getDenseSymbolIndex(int columnIndex) {
         return ((TableReaderMetadataColumn) columnMetadata.getQuick(columnIndex)).getDenseSymbolIndex();
     }
@@ -179,11 +184,6 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
     @Override
     public long getO3MaxLag() {
         return o3MaxLag;
-    }
-
-    @Override
-    public IntList getCoveringColumnIndices(int columnIndex) {
-        return getColumnMetadata(columnIndex).getCoveringColumnIndices();
     }
 
     @Override
