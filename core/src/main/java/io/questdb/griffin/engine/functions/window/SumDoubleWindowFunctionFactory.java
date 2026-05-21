@@ -167,8 +167,7 @@ public class SumDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                                 configuration.getSqlWindowInitialRangeBufferSize(),
                                 timestampIndex,
                                 partitionByKeyTypes,
-                                liveView,
-                                configuration
+                                liveView
                         );
                     } catch (Throwable th) {
                         Misc.free(map);
@@ -242,8 +241,7 @@ public class SumDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                                 args.get(0),
                                 mem,
                                 partitionByKeyTypes,
-                                liveView,
-                                configuration
+                                liveView
                         );
                     } catch (Throwable th) {
                         Misc.free(map);
@@ -366,11 +364,10 @@ public class SumDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                 int initialBufferSize,
                 int timestampIdx,
                 ColumnTypes partitionByKeyTypes,
-                boolean liveView,
-                CairoConfiguration configuration
+                boolean liveView
         ) {
             super(map, partitionByRecord, partitionBySink, rangeLo, rangeHi, arg, memory, initialBufferSize, timestampIdx,
-                    partitionByKeyTypes, liveView, configuration);
+                    partitionByKeyTypes, liveView);
         }
 
         @Override
@@ -396,11 +393,10 @@ public class SumDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                 Function arg,
                 MemoryARW memory,
                 ColumnTypes partitionByKeyTypes,
-                boolean liveView,
-                CairoConfiguration configuration
+                boolean liveView
         ) {
             super(map, partitionByRecord, partitionBySink, rowsLo, rowsHi, arg, memory,
-                    partitionByKeyTypes, liveView, configuration);
+                    partitionByKeyTypes, liveView);
         }
 
         @Override
@@ -498,7 +494,8 @@ public class SumDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         private final ArrayColumnTypes keyColumnTypes;
         private final boolean liveView;
         // Full value layout (including tombstone slot) for the
-        // compactPartitionMap scratch Map. Null outside live-view mode.
+        // newCompactionScratch() scratch Map used by the frontier sweep. Null
+        // outside live-view mode.
         private final ArrayColumnTypes mapValueTypes;
         // Value-slot index of the per-partition tombstone byte; -1 outside LV.
         private double sum;
@@ -530,35 +527,6 @@ public class SumDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
             } else {
                 this.mapValueTypes = null;
                 this.tombstoneValueIndex = -1;
-            }
-        }
-
-        @Override
-        public void compactPartitionMap() {
-            if (tombstoneValueIndex < 0 || tombstoneCount == 0) {
-                return;
-            }
-            Map scratch = MapFactory.createUnorderedMap(configuration, keyColumnTypes, mapValueTypes);
-            try {
-                MapRecordCursor cursor = map.getCursor();
-                MapRecord record = map.getRecord();
-                while (cursor.hasNext()) {
-                    MapValue srcValue = record.getValue();
-                    if (srcValue.getByte(tombstoneValueIndex) == 1) {
-                        continue;
-                    }
-                    long srcKeyHash = record.keyHashCode();
-                    MapKey dstKey = scratch.withKey();
-                    record.copyToKey(dstKey);
-                    MapValue dstValue = dstKey.createValue(srcKeyHash);
-                    record.copyValue(dstValue);
-                }
-                Misc.free(map);
-                map = scratch;
-                scratch = null;
-                tombstoneCount = 0;
-            } finally {
-                Misc.free(scratch);
             }
         }
 

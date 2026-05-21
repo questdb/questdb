@@ -175,8 +175,7 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                                 configuration.getSqlWindowInitialRangeBufferSize(),
                                 timestampIndex,
                                 partitionByKeyTypes,
-                                liveView,
-                                configuration
+                                liveView
                         );
                     } catch (Throwable th) {
                         Misc.free(map);
@@ -249,8 +248,7 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                                 args.get(0),
                                 mem,
                                 partitionByKeyTypes,
-                                liveView,
-                                configuration
+                                liveView
                         );
                     } catch (Throwable th) {
                         Misc.free(map);
@@ -444,7 +442,6 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
     public static class AvgOverPartitionRangeFrameFunction extends BasePartitionedWindowFunction implements WindowDoubleFunction {
 
         private static final int RECORD_SIZE = Long.BYTES + Double.BYTES;
-        private final CairoConfiguration configuration;
         private final boolean frameIncludesCurrentValue;
         private final boolean frameLoBounded;
         // list of [size, startOffset] pairs marking free space within mem
@@ -454,8 +451,8 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         // buffer that backs the original partitionByKeyTypes argument.
         private final ArrayColumnTypes keyColumnTypes;
         private final boolean liveView;
-        // Full value layout for the compactPartitionMap scratch Map. Null
-        // outside live-view mode.
+        // Full value layout (including tombstone slot) for the snapshot codec.
+        // Null outside live-view mode.
         private final ArrayColumnTypes mapValueTypes;
         private final long maxDiff;
         // holds resizable ring buffers
@@ -479,8 +476,7 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                 int initialBufferSize,
                 int timestampIdx,
                 ColumnTypes partitionByKeyTypes,
-                boolean liveView,
-                CairoConfiguration configuration
+                boolean liveView
         ) {
             super(map, partitionByRecord, partitionBySink, arg);
             frameLoBounded = rangeLo != Long.MIN_VALUE;
@@ -493,7 +489,6 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
             frameIncludesCurrentValue = rangeHi == 0;
 
             this.liveView = liveView;
-            this.configuration = configuration;
             if (liveView) {
                 ArrayColumnTypes keyTypesCopy = new ArrayColumnTypes();
                 for (int i = 0, n = partitionByKeyTypes.getColumnCount(); i < n; i++) {
@@ -678,41 +673,6 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
             mapValue.putLong(3, size);
             mapValue.putLong(4, capacity);
             mapValue.putLong(5, firstIdx);
-        }
-
-        @Override
-        public void compactPartitionMap() {
-            if (tombstoneValueIndex < 0 || tombstoneCount == 0) {
-                return;
-            }
-            Map scratch = MapFactory.createUnorderedMap(configuration, keyColumnTypes, mapValueTypes);
-            try {
-                MapRecordCursor cursor = map.getCursor();
-                MapRecord record = map.getRecord();
-                while (cursor.hasNext()) {
-                    MapValue srcValue = record.getValue();
-                    if (srcValue.getByte(tombstoneValueIndex) == 1) {
-                        // Reclaim the tombstoned partition's ring slab so
-                        // expandRingBuffer can reuse it on a future grow.
-                        // Slot 4 is the per-partition capacity (bounded
-                        // RANGE rings grow on demand); slot 2 is the start
-                        // offset.
-                        freeList.add(srcValue.getLong(4), srcValue.getLong(2));
-                        continue;
-                    }
-                    long srcKeyHash = record.keyHashCode();
-                    MapKey dstKey = scratch.withKey();
-                    record.copyToKey(dstKey);
-                    MapValue dstValue = dstKey.createValue(srcKeyHash);
-                    record.copyValue(dstValue);
-                }
-                Misc.free(map);
-                map = scratch;
-                scratch = null;
-                tombstoneCount = 0;
-            } finally {
-                Misc.free(scratch);
-            }
         }
 
         @Override
@@ -945,23 +905,21 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         private final boolean frameLoBounded;
         private final int frameSize;
         // (capacity, startOffset) pairs marking free space within memory. Each
-        // entry is a ring slab evicted from a tombstoned partition by
-        // compactPartitionMap. computeNext's isNew branch pops the last pair
-        // before falling back to memory.appendAddressFor. The capacity slot
-        // mirrors the bounded-RANGE freeList convention; bounded ROWS slabs
-        // are always bufferSize doubles long.
+        // entry is a ring slab freed from an evicted partition. computeNext's
+        // isNew branch pops the last pair before falling back to
+        // memory.appendAddressFor. The capacity slot mirrors the bounded-RANGE
+        // freeList convention; bounded ROWS slabs are always bufferSize doubles
+        // long.
         private final LongList freeList = new LongList();
         // holds fixed-size ring buffers of double values
         private final MemoryARW memory;
-        private final CairoConfiguration configuration;
         // Deep copy of the partition-by key column types. The factory's
         // partitionByKeyTypes buffer is reused across compiles; keeping a copy
-        // here outlives that lifetime for compactPartitionMap and the snapshot
-        // codec.
+        // here outlives that lifetime for the snapshot codec.
         private final ArrayColumnTypes keyColumnTypes;
         private final boolean liveView;
-        // Full value-layout (including tombstone slot) for the compactPartitionMap
-        // scratch Map. Null for non-live-view compiles.
+        // Full value-layout (including tombstone slot) for the snapshot codec.
+        // Null for non-live-view compiles.
         private final ArrayColumnTypes mapValueTypes;
         // Value-slot index of the per-partition tombstone byte; -1 outside LV.
         protected double sum;
@@ -977,8 +935,7 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                 Function arg,
                 MemoryARW memory,
                 ColumnTypes partitionByKeyTypes,
-                boolean liveView,
-                CairoConfiguration configuration
+                boolean liveView
         ) {
             super(map, partitionByRecord, partitionBySink, arg);
 
@@ -995,7 +952,6 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
 
             this.memory = memory;
             this.liveView = liveView;
-            this.configuration = configuration;
             if (liveView) {
                 ArrayColumnTypes keyTypesCopy = new ArrayColumnTypes();
                 for (int i = 0, n = partitionByKeyTypes.getColumnCount(); i < n; i++) {
@@ -1020,39 +976,6 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
             super.close();
             memory.close();
             freeList.clear();
-        }
-
-        @Override
-        public void compactPartitionMap() {
-            if (tombstoneValueIndex < 0 || tombstoneCount == 0) {
-                return;
-            }
-            Map scratch = MapFactory.createUnorderedMap(configuration, keyColumnTypes, mapValueTypes);
-            try {
-                MapRecordCursor cursor = map.getCursor();
-                MapRecord record = map.getRecord();
-                while (cursor.hasNext()) {
-                    MapValue srcValue = record.getValue();
-                    if (srcValue.getByte(tombstoneValueIndex) == 1) {
-                        // Reclaim the tombstoned partition's ring slab so a
-                        // future isNew partition can reuse it instead of
-                        // growing memory.
-                        freeList.add((long) bufferSize, srcValue.getLong(3));
-                        continue;
-                    }
-                    long srcKeyHash = record.keyHashCode();
-                    MapKey dstKey = scratch.withKey();
-                    record.copyToKey(dstKey);
-                    MapValue dstValue = dstKey.createValue(srcKeyHash);
-                    record.copyValue(dstValue);
-                }
-                Misc.free(map);
-                map = scratch;
-                scratch = null;
-                tombstoneCount = 0;
-            } finally {
-                Misc.free(scratch);
-            }
         }
 
         @Override
@@ -1774,7 +1697,8 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         private final ArrayColumnTypes keyColumnTypes;
         private final boolean liveView;
         // Full value layout (including tombstone slot) for the
-        // compactPartitionMap scratch Map. Null outside live-view mode.
+        // newCompactionScratch() scratch Map used by the frontier sweep. Null
+        // outside live-view mode.
         private final ArrayColumnTypes mapValueTypes;
         // Value-slot index of the per-partition tombstone byte; -1 outside LV.
         private double avg;
@@ -1806,35 +1730,6 @@ public class AvgDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
             } else {
                 this.mapValueTypes = null;
                 this.tombstoneValueIndex = -1;
-            }
-        }
-
-        @Override
-        public void compactPartitionMap() {
-            if (tombstoneValueIndex < 0 || tombstoneCount == 0) {
-                return;
-            }
-            Map scratch = MapFactory.createUnorderedMap(configuration, keyColumnTypes, mapValueTypes);
-            try {
-                MapRecordCursor cursor = map.getCursor();
-                MapRecord record = map.getRecord();
-                while (cursor.hasNext()) {
-                    MapValue srcValue = record.getValue();
-                    if (srcValue.getByte(tombstoneValueIndex) == 1) {
-                        continue;
-                    }
-                    long srcKeyHash = record.keyHashCode();
-                    MapKey dstKey = scratch.withKey();
-                    record.copyToKey(dstKey);
-                    MapValue dstValue = dstKey.createValue(srcKeyHash);
-                    record.copyValue(dstValue);
-                }
-                Misc.free(map);
-                map = scratch;
-                scratch = null;
-                tombstoneCount = 0;
-            } finally {
-                Misc.free(scratch);
             }
         }
 

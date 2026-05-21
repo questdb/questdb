@@ -76,8 +76,7 @@ public class WindowFunctionUnitTest extends AbstractCairoTest {
                         2,
                         0,
                         null,
-                        false,
-                        null
+                        false
                 ),
                 Double::sum
         );
@@ -100,8 +99,7 @@ public class WindowFunctionUnitTest extends AbstractCairoTest {
                         TestDefaults.createLongFunction(x -> x.getLong(2)),
                         TestDefaults.createMemoryCARW(),
                         null,
-                        false,
-                        null
+                        false
                 ),
                 Double::sum
         );
@@ -167,8 +165,7 @@ public class WindowFunctionUnitTest extends AbstractCairoTest {
                         rangeLo,
                         rangeHi,
                         null,
-                        false,
-                        null
+                        false
                 ),
                 Long::sum,
                 CountConstWindowFunctionFactory.isRecordNotNull
@@ -218,8 +215,7 @@ public class WindowFunctionUnitTest extends AbstractCairoTest {
                         TestDefaults.createLongFunction(x -> x.getLong(2)),
                         CountDoubleWindowFunctionFactory.isRecordNotNull,
                         null,
-                        false,
-                        null
+                        false
                 ),
                 Long::sum,
                 CountDoubleWindowFunctionFactory.isRecordNotNull
@@ -244,8 +240,7 @@ public class WindowFunctionUnitTest extends AbstractCairoTest {
                         TestDefaults.createMemoryCARW(),
                         CountDoubleWindowFunctionFactory.isRecordNotNull,
                         null,
-                        false,
-                        null
+                        false
                 ),
                 Long::sum,
                 CountConstWindowFunctionFactory.isRecordNotNull
@@ -374,8 +369,7 @@ public class WindowFunctionUnitTest extends AbstractCairoTest {
                             2,
                             0,
                             null,
-                            false,
-                            null
+                            false
                     );
                 },
                 (a, b) -> a
@@ -409,8 +403,7 @@ public class WindowFunctionUnitTest extends AbstractCairoTest {
                             TestDefaults.createLongFunction(x -> x.getLong(2)),
                             TestDefaults.createMemoryCARW(),
                             null,
-                            false,
-                            null
+                            false
                     );
                 },
                 (a, b) -> a
@@ -497,8 +490,7 @@ public class WindowFunctionUnitTest extends AbstractCairoTest {
                             2,
                             0,
                             null,
-                            false,
-                            null
+                            false
                     );
                 },
                 (a, b) -> a
@@ -530,8 +522,7 @@ public class WindowFunctionUnitTest extends AbstractCairoTest {
                             TestDefaults.createLongFunction(x -> x.getLong(2)),
                             TestDefaults.createMemoryCARW(),
                             null,
-                            false,
-                            null
+                            false
                     );
                 },
                 (a, b) -> a
@@ -609,8 +600,7 @@ public class WindowFunctionUnitTest extends AbstractCairoTest {
                         MaxDoubleWindowFunctionFactory.GREATER_THAN,
                         MaxDoubleWindowFunctionFactory.NAME,
                         null,
-                        false,
-                        null
+                        false
                 ),
                 Double::max
         );
@@ -632,8 +622,7 @@ public class WindowFunctionUnitTest extends AbstractCairoTest {
                 MaxDoubleWindowFunctionFactory.GREATER_THAN,
                 MaxDoubleWindowFunctionFactory.NAME,
                 null,
-                false,
-                null
+                false
         );
         f.computeNext(TestDefaults.createRecord(columnTypes, (long) 1, 2, (long) 1));
         Assert.assertEquals(Double.NaN, f.getDouble(null), 0);
@@ -667,8 +656,7 @@ public class WindowFunctionUnitTest extends AbstractCairoTest {
                         MaxDoubleWindowFunctionFactory.GREATER_THAN,
                         MaxDoubleWindowFunctionFactory.NAME,
                         null,
-                        false,
-                        null
+                        false
                 ),
                 Double::max
         );
@@ -765,8 +753,7 @@ public class WindowFunctionUnitTest extends AbstractCairoTest {
                 MaxDoubleWindowFunctionFactory.GREATER_THAN,
                 MaxDoubleWindowFunctionFactory.NAME,
                 null,
-                false,
-                null
+                false
         );
         f.computeNext(TestDefaults.createRecord(columnTypes, (long) 1472, 6, (long) 1));
         f.computeNext(TestDefaults.createRecord(columnTypes, (long) 15169, 6, (long) 2));
@@ -792,8 +779,7 @@ public class WindowFunctionUnitTest extends AbstractCairoTest {
                 MaxDoubleWindowFunctionFactory.GREATER_THAN,
                 MaxDoubleWindowFunctionFactory.NAME,
                 null,
-                false,
-                null
+                false
         );
         long a = -1930193130;
         long b = -1137976524;
@@ -826,8 +812,7 @@ public class WindowFunctionUnitTest extends AbstractCairoTest {
                         MinDoubleWindowFunctionFactory.LESS_THAN,
                         MinDoubleWindowFunctionFactory.NAME,
                         null,
-                        false,
-                        null
+                        false
                 ),
                 Double::min
         );
@@ -849,8 +834,7 @@ public class WindowFunctionUnitTest extends AbstractCairoTest {
                 MinDoubleWindowFunctionFactory.LESS_THAN,
                 MinDoubleWindowFunctionFactory.NAME,
                 null,
-                false,
-                null
+                false
         );
         f.computeNext(TestDefaults.createRecord(columnTypes, (long) 1, 2, (long) 1));
         Assert.assertEquals(Double.NaN, f.getDouble(null), 0);
@@ -884,8 +868,7 @@ public class WindowFunctionUnitTest extends AbstractCairoTest {
                         MinDoubleWindowFunctionFactory.LESS_THAN,
                         MinDoubleWindowFunctionFactory.NAME,
                         null,
-                        false,
-                        null
+                        false
                 ),
                 Double::min
         );
@@ -982,8 +965,7 @@ public class WindowFunctionUnitTest extends AbstractCairoTest {
                 MinDoubleWindowFunctionFactory.LESS_THAN,
                 MinDoubleWindowFunctionFactory.NAME,
                 null,
-                false,
-                null
+                false
         );
         f.computeNext(TestDefaults.createRecord(columnTypes, (long) 1472, 6, (long) 1));
         f.computeNext(TestDefaults.createRecord(columnTypes, (long) 15169, 6, (long) 2));
@@ -1009,8 +991,7 @@ public class WindowFunctionUnitTest extends AbstractCairoTest {
                 MinDoubleWindowFunctionFactory.LESS_THAN,
                 MinDoubleWindowFunctionFactory.NAME,
                 null,
-                false,
-                null
+                false
         );
         long a = -1930193130;
         long b = -1137976524;
@@ -1032,8 +1013,7 @@ public class WindowFunctionUnitTest extends AbstractCairoTest {
                 1024,
                 0,
                 null,
-                false,
-                null
+                false
         );
         f.computeNext(TestDefaults.createRecord(columnTypes, (long) 1, 2, (long) 1));
         Assert.assertEquals(Double.NaN, f.getDouble(null), 0);
@@ -1077,8 +1057,7 @@ public class WindowFunctionUnitTest extends AbstractCairoTest {
                 2,
                 0,
                 null,
-                false,
-                null
+                false
         );
         f.computeNext(TestDefaults.createRecord(columnTypes, (long) 1472, 6, (long) 1));
         f.computeNext(TestDefaults.createRecord(columnTypes, (long) 15169, 6, (long) 2));
@@ -1101,8 +1080,7 @@ public class WindowFunctionUnitTest extends AbstractCairoTest {
                 1024,
                 0,
                 null,
-                false,
-                null
+                false
         );
         long a = -1930193130;
         long b = -1137976524;

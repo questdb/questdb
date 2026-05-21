@@ -174,8 +174,7 @@ public class MinDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                                 LESS_THAN,
                                 NAME,
                                 partitionByKeyTypes,
-                                liveView,
-                                configuration
+                                liveView
                         );
                     } catch (Throwable th) {
                         Misc.free(map);
@@ -270,8 +269,7 @@ public class MinDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                                 LESS_THAN,
                                 NAME,
                                 partitionByKeyTypes,
-                                liveView,
-                                configuration
+                                liveView
                         );
                     } catch (Throwable th) {
                         Misc.free(map);

@@ -41,7 +41,7 @@ public abstract class BasePartitionedBivariateWindowFunction extends BaseBivaria
     // Reusable second partition-state Map for the frontier sweep; ping-pongs with
     // map so a sweep never allocates. See BasePartitionedWindowFunction.
     protected Map compactionScratch;
-    // Non-final so compactPartitionMap can swap the Map instance. Single-writer
+    // Non-final so retainPartitions can swap the Map instance. Single-writer
     // (refresh worker), no synchronization needed.
     protected Map map;
     protected final VirtualRecord partitionByRecord;

@@ -196,8 +196,7 @@ public class MinLongWindowFunctionFactory extends AbstractWindowFunctionFactory 
                                 LESS_THAN,
                                 NAME,
                                 partitionByKeyTypes,
-                                liveView,
-                                configuration
+                                liveView
                         );
                     } catch (Throwable th) {
                         Misc.free(map);
@@ -292,8 +291,7 @@ public class MinLongWindowFunctionFactory extends AbstractWindowFunctionFactory 
                                 LESS_THAN,
                                 NAME,
                                 partitionByKeyTypes,
-                                liveView,
-                                configuration
+                                liveView
                         );
                     } catch (Throwable th) {
                         Misc.free(map);

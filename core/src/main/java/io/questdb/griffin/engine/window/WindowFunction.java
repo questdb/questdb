@@ -56,28 +56,6 @@ public interface WindowFunction extends Function {
     int TWO_PASS = 2;
     int ZERO_PASS = 0;
 
-    /**
-     * Rebuilds the function's per-partition state Map to drop tombstoned entries
-     * (partitions whose accumulator was reset by an anchor cross and which then
-     * never received another row). Companion to {@link io.questdb.cairo.lv.LiveViewWindow#compact()}
-     * which clears the anchor-map's tombstoned entries first; this method
-     * matches the function's map to the new anchor-map shape so the two stay
-     * consistent.
-     * <p>
-     * Default is a no-op: window functions that don't track per-partition
-     * tombstones (most factories until each 2b commit migrates them) keep
-     * their state Map unchanged. Migrated functions rebuild via a scratch
-     * {@link Map} and a tombstone-skipping cursor walk, mirroring
-     * {@link io.questdb.griffin.engine.functions.window.PartitionStateEvictor#rebuildKeeping}.
-     * <p>
-     * Auto-triggered from {@code LiveViewWindow.processRow} once
-     * {@code tombstoneCount} crosses {@code cairo.live.view.partition.compact.threshold}.
-     * Every migrated function family now ships tombstone bookkeeping, so the
-     * trigger fires uniformly across the LV's window functions.
-     */
-    default void compactPartitionMap() {
-    }
-
     default void computeNext(Record record) {
     }
 

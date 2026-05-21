@@ -144,10 +144,9 @@ public class LagTimestampFunctionFactory extends AbstractWindowFunctionFactory {
                                         Function defaultValue,
                                         long offset,
                                         ColumnTypes partitionByKeyTypes,
-                                        boolean liveView,
-                                        CairoConfiguration configuration) {
+                                        boolean liveView) {
             super(map, partitionByRecord, partitionBySink, memory, arg, ignoreNulls, defaultValue, offset,
-                    partitionByKeyTypes, liveView, configuration);
+                    partitionByKeyTypes, liveView);
             this.timestampDriver = ColumnType.getTimestampDriver(ColumnType.getTimestampType(arg.getType()));
             if (defaultValue != null) {
                 this.defaultValueTimestampType = ColumnType.getTimestampType(defaultValue.getType());

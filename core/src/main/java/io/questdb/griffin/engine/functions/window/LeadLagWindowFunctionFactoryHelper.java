@@ -132,8 +132,7 @@ public class LeadLagWindowFunctionFactoryHelper {
                     defaultValue,
                     offset,
                     partitionByKeyTypes,
-                    liveView,
-                    configuration);
+                    liveView);
         }
 
         MemoryARW mem = Vm.getCARWInstance(
@@ -170,8 +169,7 @@ public class LeadLagWindowFunctionFactoryHelper {
                                    Function defaultValue,
                                    long offset,
                                    ColumnTypes partitionByKeyTypes,
-                                   boolean liveView,
-                                   CairoConfiguration configuration);
+                                   boolean liveView);
     }
 
     abstract static class BaseLagFunction extends BaseWindowFunction implements Reopenable {
@@ -275,24 +273,23 @@ public class LeadLagWindowFunctionFactoryHelper {
         // sink.putLong regardless of the semantic type.
         private static final int RING_SLOT_BYTES = 8;
         protected final Function defaultValue;
-        // Reclaim list of ring-slab startOffsets evicted by compactPartitionMap.
-        // Each lag partition's ring is a fixed offset * RING_SLOT_BYTES bytes,
-        // so capacity is implicit and only the startOffset is tracked. The next
-        // computeNext that creates a partition prefers a reclaimed slab over a
-        // fresh memory.appendAddressFor allocation. Cleared in reset / toTop.
+        // Reclaim list of ring-slab startOffsets freed when a partition is
+        // dropped. Each lag partition's ring is a fixed offset * RING_SLOT_BYTES
+        // bytes, so capacity is implicit and only the startOffset is tracked. The
+        // next computeNext that creates a partition prefers a reclaimed slab over
+        // a fresh memory.appendAddressFor allocation. Cleared in reset / toTop.
         private final LongList freeList = new LongList();
         protected final boolean ignoreNulls;
         protected final MemoryARW memory;
         protected final long offset;
-        private final CairoConfiguration configuration;
         // Deep copy of the partition-by key column types. The WindowContext
         // buffer the factory hands in gets cleared between compiles; the copy
-        // outlives compilation so compactPartitionMap and the snapshot codec
-        // can still describe the Map's key shape.
+        // outlives compilation so the snapshot codec can still describe the
+        // Map's key shape.
         private final ArrayColumnTypes keyColumnTypes;
         private final boolean liveView;
-        // Full value-layout (including the tombstone slot) used when allocating
-        // the scratch Map in compactPartitionMap. Null for non-live-view compiles.
+        // Full value-layout (including the tombstone slot) describing the Map's
+        // value shape. Null for non-live-view compiles.
         private final ArrayColumnTypes mapValueTypes;
         // Value-slot index of the per-partition tombstone byte. -1 for non-LV
         // compiles where the slot is omitted.
@@ -308,15 +305,13 @@ public class LeadLagWindowFunctionFactoryHelper {
                                             Function defaultValue,
                                             long offset,
                                             ColumnTypes partitionByKeyTypes,
-                                            boolean liveView,
-                                            CairoConfiguration configuration) {
+                                            boolean liveView) {
             super(map, partitionByRecord, partitionBySink, arg);
             this.defaultValue = defaultValue;
             this.offset = offset;
             this.memory = memory;
             this.ignoreNulls = ignoreNulls;
             this.liveView = liveView;
-            this.configuration = configuration;
             if (liveView) {
                 ArrayColumnTypes keyTypesCopy = new ArrayColumnTypes();
                 for (int i = 0, n = partitionByKeyTypes.getColumnCount(); i < n; i++) {
@@ -341,39 +336,6 @@ public class LeadLagWindowFunctionFactoryHelper {
             super.close();
             Misc.free(memory);
             Misc.free(defaultValue);
-        }
-
-        @Override
-        public void compactPartitionMap() {
-            if (tombstoneValueIndex < 0 || tombstoneCount == 0) {
-                return;
-            }
-            Map scratch = MapFactory.createUnorderedMap(configuration, keyColumnTypes, mapValueTypes);
-            try {
-                MapRecordCursor cursor = map.getCursor();
-                MapRecord record = map.getRecord();
-                while (cursor.hasNext()) {
-                    MapValue srcValue = record.getValue();
-                    if (srcValue.getByte(tombstoneValueIndex) == 1) {
-                        // Capture the tombstoned partition's startOffset
-                        // (slot 0) so a future computeNext can reuse the
-                        // ring slab instead of growing memory.
-                        freeList.add(srcValue.getLong(0));
-                        continue;
-                    }
-                    long srcKeyHash = record.keyHashCode();
-                    MapKey dstKey = scratch.withKey();
-                    record.copyToKey(dstKey);
-                    MapValue dstValue = dstKey.createValue(srcKeyHash);
-                    record.copyValue(dstValue);
-                }
-                Misc.free(map);
-                map = scratch;
-                scratch = null;
-                tombstoneCount = 0;
-            } finally {
-                Misc.free(scratch);
-            }
         }
 
         @Override

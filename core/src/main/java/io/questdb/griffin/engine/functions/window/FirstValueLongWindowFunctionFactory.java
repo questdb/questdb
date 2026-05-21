@@ -230,8 +230,7 @@ public class FirstValueLongWindowFunctionFactory extends AbstractWindowFunctionF
                             initialBufferSize,
                             timestampIndex,
                             partitionByKeyTypes,
-                            liveView,
-                            configuration
+                            liveView
                     );
                 }
             } else if (framingMode == WindowExpression.FRAMING_ROWS) {
@@ -299,8 +298,7 @@ public class FirstValueLongWindowFunctionFactory extends AbstractWindowFunctionF
                                 args.get(0),
                                 mem,
                                 partitionByKeyTypes,
-                                liveView,
-                                configuration
+                                liveView
                         );
                     } catch (Throwable th) {
                         Misc.free(map);
@@ -463,8 +461,7 @@ public class FirstValueLongWindowFunctionFactory extends AbstractWindowFunctionF
                             initialBufferSize,
                             timestampIndex,
                             partitionByKeyTypes,
-                            liveView,
-                            configuration
+                            liveView
                     );
                 }
             } else if (framingMode == WindowExpression.FRAMING_ROWS) {
@@ -532,8 +529,7 @@ public class FirstValueLongWindowFunctionFactory extends AbstractWindowFunctionF
                                 args.get(0),
                                 mem,
                                 partitionByKeyTypes,
-                                liveView,
-                                configuration
+                                liveView
                         );
                     } catch (Throwable th) {
                         Misc.free(map);
@@ -722,11 +718,10 @@ public class FirstValueLongWindowFunctionFactory extends AbstractWindowFunctionF
                 int initialBufferSize,
                 int timestampIdx,
                 ColumnTypes partitionByKeyTypes,
-                boolean liveView,
-                CairoConfiguration configuration
+                boolean liveView
         ) {
             super(map, partitionByRecord, partitionBySink, rangeLo, rangeHi, arg, memory, initialBufferSize, timestampIdx,
-                    partitionByKeyTypes, liveView, configuration);
+                    partitionByKeyTypes, liveView);
         }
 
         /**
@@ -968,11 +963,10 @@ public class FirstValueLongWindowFunctionFactory extends AbstractWindowFunctionF
                 Function arg,
                 MemoryARW memory,
                 ColumnTypes partitionByKeyTypes,
-                boolean liveView,
-                CairoConfiguration configuration
+                boolean liveView
         ) {
             super(map, partitionByRecord, partitionBySink, rowsLo, rowsHi, arg, memory,
-                    partitionByKeyTypes, liveView, configuration,
+                    partitionByKeyTypes, liveView,
                     FIRST_NOT_NULL_VALUE_OVER_PARTITION_ROWS_COLUMN_TYPES_LV, 4);
         }
 
@@ -1828,7 +1822,6 @@ public class FirstValueLongWindowFunctionFactory extends AbstractWindowFunctionF
     public static class FirstValueOverPartitionRangeFrameFunction extends BasePartitionedWindowFunction implements WindowLongFunction {
 
         protected static final int RECORD_SIZE = Long.BYTES + Long.BYTES;
-        protected final CairoConfiguration configuration;
         protected final boolean frameIncludesCurrentValue;
         protected final boolean frameLoBounded;
         // list of [size, startOffset] pairs marking free space within mem
@@ -1856,8 +1849,7 @@ public class FirstValueLongWindowFunctionFactory extends AbstractWindowFunctionF
                 int initialBufferSize,
                 int timestampIdx,
                 ColumnTypes partitionByKeyTypes,
-                boolean liveView,
-                CairoConfiguration configuration
+                boolean liveView
         ) {
             super(map, partitionByRecord, partitionBySink, arg);
             frameLoBounded = rangeLo != Long.MIN_VALUE;
@@ -1870,7 +1862,6 @@ public class FirstValueLongWindowFunctionFactory extends AbstractWindowFunctionF
             frameIncludesCurrentValue = rangeHi == 0;
 
             this.liveView = liveView;
-            this.configuration = configuration;
             if (liveView) {
                 ArrayColumnTypes keyTypesCopy = new ArrayColumnTypes();
                 for (int i = 0, n = partitionByKeyTypes.getColumnCount(); i < n; i++) {
@@ -2038,41 +2029,6 @@ public class FirstValueLongWindowFunctionFactory extends AbstractWindowFunctionF
             mapValue.putLong(2, size);
             mapValue.putLong(3, capacity);
             mapValue.putLong(4, firstIdx);
-        }
-
-        @Override
-        public void compactPartitionMap() {
-            if (tombstoneValueIndex < 0 || tombstoneCount == 0) {
-                return;
-            }
-            Map scratch = MapFactory.createUnorderedMap(configuration, keyColumnTypes, mapValueTypes);
-            try {
-                MapRecordCursor cursor = map.getCursor();
-                MapRecord record = map.getRecord();
-                while (cursor.hasNext()) {
-                    MapValue srcValue = record.getValue();
-                    if (srcValue.getByte(tombstoneValueIndex) == 1) {
-                        // Reclaim the tombstoned partition's ring slab so
-                        // expandRingBuffer can reuse it on a future grow.
-                        // Slot 3 is the per-partition capacity (bounded
-                        // RANGE rings grow on demand); slot 1 is the start
-                        // offset.
-                        freeList.add(srcValue.getLong(3), srcValue.getLong(1));
-                        continue;
-                    }
-                    long srcKeyHash = record.keyHashCode();
-                    MapKey dstKey = scratch.withKey();
-                    record.copyToKey(dstKey);
-                    MapValue dstValue = dstKey.createValue(srcKeyHash);
-                    record.copyValue(dstValue);
-                }
-                Misc.free(map);
-                map = scratch;
-                scratch = null;
-                tombstoneCount = 0;
-            } finally {
-                Misc.free(scratch);
-            }
         }
 
         /**
@@ -2311,17 +2267,16 @@ public class FirstValueLongWindowFunctionFactory extends AbstractWindowFunctionF
         //number of values we need to keep to compute over frame
         // (can be bigger than frame because we've to buffer values between rowsHi and current row )
         protected final int bufferSize;
-        protected final CairoConfiguration configuration;
         protected final boolean frameIncludesCurrentValue;
         protected final boolean frameLoBounded;
         protected final int frameSize;
         // (capacity, startOffset) pairs marking free space within memory. Each
         // entry is a ring slab evicted from a tombstoned partition by
-        // compactPartitionMap. computeNext's isNew branch (in both this class
-        // and the FirstNotNullValue subclass) pops the last pair before
-        // falling back to memory.appendAddressFor. The capacity slot mirrors
-        // the bounded-RANGE freeList convention; bounded ROWS slabs are
-        // always bufferSize longs.
+        // retainPartitions (via newCompactionScratch). computeNext's isNew
+        // branch (in both this class and the FirstNotNullValue subclass) pops
+        // the last pair before falling back to memory.appendAddressFor. The
+        // capacity slot mirrors the bounded-RANGE freeList convention; bounded
+        // ROWS slabs are always bufferSize longs.
         protected final LongList freeList = new LongList();
         protected final ArrayColumnTypes keyColumnTypes;
         protected final boolean liveView;
@@ -2339,11 +2294,10 @@ public class FirstValueLongWindowFunctionFactory extends AbstractWindowFunctionF
                 Function arg,
                 MemoryARW memory,
                 ColumnTypes partitionByKeyTypes,
-                boolean liveView,
-                CairoConfiguration configuration
+                boolean liveView
         ) {
             this(map, partitionByRecord, partitionBySink, rowsLo, rowsHi, arg, memory,
-                    partitionByKeyTypes, liveView, configuration,
+                    partitionByKeyTypes, liveView,
                     FIRST_VALUE_OVER_PARTITION_ROWS_COLUMN_TYPES_LV, 3);
         }
 
@@ -2357,7 +2311,6 @@ public class FirstValueLongWindowFunctionFactory extends AbstractWindowFunctionF
                 MemoryARW memory,
                 ColumnTypes partitionByKeyTypes,
                 boolean liveView,
-                CairoConfiguration configuration,
                 ArrayColumnTypes valueTypesLv,
                 int longSlotCount
         ) {
@@ -2374,7 +2327,6 @@ public class FirstValueLongWindowFunctionFactory extends AbstractWindowFunctionF
             this.frameIncludesCurrentValue = rowsHi == 0;
             this.memory = memory;
             this.liveView = liveView;
-            this.configuration = configuration;
             if (liveView) {
                 ArrayColumnTypes keyTypesCopy = new ArrayColumnTypes();
                 for (int i = 0, n = partitionByKeyTypes.getColumnCount(); i < n; i++) {
@@ -2399,39 +2351,6 @@ public class FirstValueLongWindowFunctionFactory extends AbstractWindowFunctionF
             super.close();
             memory.close();
             freeList.clear();
-        }
-
-        @Override
-        public void compactPartitionMap() {
-            if (tombstoneValueIndex < 0 || tombstoneCount == 0) {
-                return;
-            }
-            Map scratch = MapFactory.createUnorderedMap(configuration, keyColumnTypes, mapValueTypes);
-            try {
-                MapRecordCursor cursor = map.getCursor();
-                MapRecord record = map.getRecord();
-                while (cursor.hasNext()) {
-                    MapValue srcValue = record.getValue();
-                    if (srcValue.getByte(tombstoneValueIndex) == 1) {
-                        // Reclaim the tombstoned partition's ring slab so a
-                        // future isNew partition can reuse it instead of
-                        // growing memory.
-                        freeList.add((long) bufferSize, srcValue.getLong(1));
-                        continue;
-                    }
-                    long srcKeyHash = record.keyHashCode();
-                    MapKey dstKey = scratch.withKey();
-                    record.copyToKey(dstKey);
-                    MapValue dstValue = dstKey.createValue(srcKeyHash);
-                    record.copyValue(dstValue);
-                }
-                Misc.free(map);
-                map = scratch;
-                scratch = null;
-                tombstoneCount = 0;
-            } finally {
-                Misc.free(scratch);
-            }
         }
 
         @Override
@@ -3214,7 +3133,7 @@ public class FirstValueLongWindowFunctionFactory extends AbstractWindowFunctionF
         protected final ArrayColumnTypes keyColumnTypes;
         protected final boolean liveView;
         // Full value layout (including tombstone slot) for the
-        // compactPartitionMap scratch Map. Null outside live-view mode.
+        // newCompactionScratch Map. Null outside live-view mode.
         protected final ArrayColumnTypes mapValueTypes;
         // Value-slot index of the per-partition tombstone byte; -1 outside LV.
         protected long value;
@@ -3238,35 +3157,6 @@ public class FirstValueLongWindowFunctionFactory extends AbstractWindowFunctionF
             } else {
                 this.mapValueTypes = null;
                 this.tombstoneValueIndex = -1;
-            }
-        }
-
-        @Override
-        public void compactPartitionMap() {
-            if (tombstoneValueIndex < 0 || tombstoneCount == 0) {
-                return;
-            }
-            Map scratch = MapFactory.createUnorderedMap(configuration, keyColumnTypes, mapValueTypes);
-            try {
-                MapRecordCursor cursor = map.getCursor();
-                MapRecord record = map.getRecord();
-                while (cursor.hasNext()) {
-                    MapValue srcValue = record.getValue();
-                    if (srcValue.getByte(tombstoneValueIndex) == 1) {
-                        continue;
-                    }
-                    long srcKeyHash = record.keyHashCode();
-                    MapKey dstKey = scratch.withKey();
-                    record.copyToKey(dstKey);
-                    MapValue dstValue = dstKey.createValue(srcKeyHash);
-                    record.copyValue(dstValue);
-                }
-                Misc.free(map);
-                map = scratch;
-                scratch = null;
-                tombstoneCount = 0;
-            } finally {
-                Misc.free(scratch);
             }
         }
 

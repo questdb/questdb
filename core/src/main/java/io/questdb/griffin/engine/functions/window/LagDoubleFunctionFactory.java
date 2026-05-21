@@ -123,10 +123,9 @@ public class LagDoubleFunctionFactory extends AbstractWindowFunctionFactory {
                                         Function defaultValue,
                                         long offset,
                                         ColumnTypes partitionByKeyTypes,
-                                        boolean liveView,
-                                        CairoConfiguration configuration) {
+                                        boolean liveView) {
             super(map, partitionByRecord, partitionBySink, memory, arg, ignoreNulls, defaultValue, offset,
-                    partitionByKeyTypes, liveView, configuration);
+                    partitionByKeyTypes, liveView);
         }
 
         @Override

@@ -47,15 +47,15 @@ public abstract class BasePartitionedWindowFunction extends BaseWindowFunction i
     // sweep never allocates. Null until the first sweep, or for functions that opt
     // out (newCompactionScratch returns null).
     protected Map compactionScratch;
-    // Non-final so subclasses can swap the partition state Map during
-    // anchor-driven compaction (see compactPartitionMap on WindowFunction).
+    // Non-final so retainPartitions can swap the partition state Map during
+    // the anchor-driven frontier sweep.
     protected Map map;
     // Live-view tombstone bookkeeping. Subclasses set tombstoneValueIndex in
     // their constructor (= the BYTE slot index in the partition state map's
     // value layout); -1 means "no tombstone tracking" (non-LV mode or
     // function not yet migrated). tombstoneCount tracks the number of
-    // tombstoned entries in this function's map and is consumed by
-    // compactPartitionMap to skip the rebuild when no entries need dropping.
+    // tombstoned entries in this function's map. markPartitionAlive reads it
+    // for its hot-path early-exit; retainPartitions resets it after a sweep.
     // Single-writer (refresh worker), not volatile.
     protected int tombstoneValueIndex = -1;
     protected long tombstoneCount;

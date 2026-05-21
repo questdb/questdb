@@ -157,8 +157,7 @@ public class CountConstWindowFunctionFactory extends AbstractWindowFunctionFacto
                                 null,
                                 isRecordNotNull,
                                 partitionByKeyTypes,
-                                liveView,
-                                configuration
+                                liveView
                         );
                     } catch (Throwable th) {
                         Misc.free(map);
@@ -226,8 +225,7 @@ public class CountConstWindowFunctionFactory extends AbstractWindowFunctionFacto
                                 rowsLo,
                                 rowsHi,
                                 partitionByKeyTypes,
-                                liveView,
-                                configuration
+                                liveView
                         );
                     } catch (Throwable th) {
                         Misc.free(map);
@@ -290,7 +288,6 @@ public class CountConstWindowFunctionFactory extends AbstractWindowFunctionFacto
         private final long frameSize;
         private final long rowsHi;
         private final long rowsLo;
-        private final CairoConfiguration configuration;
         private final ArrayColumnTypes keyColumnTypes;
         private final boolean liveView;
         private final ArrayColumnTypes mapValueTypes;
@@ -303,8 +300,7 @@ public class CountConstWindowFunctionFactory extends AbstractWindowFunctionFacto
                 long rowsLo,
                 long rowsHi,
                 ColumnTypes partitionByKeyTypes,
-                boolean liveView,
-                CairoConfiguration configuration
+                boolean liveView
         ) {
             super(map, partitionByRecord, partitionBySink, null);
             if (rowsLo > Long.MIN_VALUE) {
@@ -315,7 +311,6 @@ public class CountConstWindowFunctionFactory extends AbstractWindowFunctionFacto
             this.rowsHi = rowsHi;
             this.rowsLo = rowsLo;
             this.liveView = liveView;
-            this.configuration = configuration;
             if (liveView) {
                 ArrayColumnTypes keyTypesCopy = new ArrayColumnTypes();
                 for (int i = 0, n = partitionByKeyTypes.getColumnCount(); i < n; i++) {
@@ -339,35 +334,6 @@ public class CountConstWindowFunctionFactory extends AbstractWindowFunctionFacto
         @Override
         public void close() {
             super.close();
-        }
-
-        @Override
-        public void compactPartitionMap() {
-            if (tombstoneValueIndex < 0 || tombstoneCount == 0) {
-                return;
-            }
-            Map scratch = MapFactory.createUnorderedMap(configuration, keyColumnTypes, mapValueTypes);
-            try {
-                MapRecordCursor cursor = map.getCursor();
-                MapRecord record = map.getRecord();
-                while (cursor.hasNext()) {
-                    MapValue srcValue = record.getValue();
-                    if (srcValue.getByte(tombstoneValueIndex) == 1) {
-                        continue;
-                    }
-                    long srcKeyHash = record.keyHashCode();
-                    MapKey dstKey = scratch.withKey();
-                    record.copyToKey(dstKey);
-                    MapValue dstValue = dstKey.createValue(srcKeyHash);
-                    record.copyValue(dstValue);
-                }
-                Misc.free(map);
-                map = scratch;
-                scratch = null;
-                tombstoneCount = 0;
-            } finally {
-                Misc.free(scratch);
-            }
         }
 
         @Override

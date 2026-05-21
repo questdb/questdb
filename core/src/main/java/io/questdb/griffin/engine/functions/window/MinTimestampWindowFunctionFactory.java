@@ -206,8 +206,7 @@ public class MinTimestampWindowFunctionFactory extends AbstractWindowFunctionFac
                                 LESS_THAN,
                                 NAME,
                                 partitionByKeyTypes,
-                                liveView,
-                                configuration
+                                liveView
                         );
                     } catch (Throwable th) {
                         Misc.free(map);
@@ -308,8 +307,7 @@ public class MinTimestampWindowFunctionFactory extends AbstractWindowFunctionFac
                                 LESS_THAN,
                                 NAME,
                                 partitionByKeyTypes,
-                                liveView,
-                                configuration
+                                liveView
                         );
                     } catch (Throwable th) {
                         Misc.free(map);

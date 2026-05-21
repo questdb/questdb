@@ -127,8 +127,7 @@ public class LeadTimestampFunctionFactory extends AbstractWindowFunctionFactory 
                                          Function defaultValue,
                                          long offset,
                                          @SuppressWarnings("unused") ColumnTypes partitionByKeyTypes,
-                                         @SuppressWarnings("unused") boolean liveView,
-                                         @SuppressWarnings("unused") CairoConfiguration configuration) {
+                                         @SuppressWarnings("unused") boolean liveView) {
             // lead() is rejected at LIVE VIEW CREATE, so the live-view params
             // never have a meaningful value to honour - they're carried here
             // only to satisfy the shared constructor functional interface.
