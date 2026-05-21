@@ -78,9 +78,11 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
 
     public ParallelGroupByFuzzTest() {
         this.rnd = TestUtils.generateRandom(LOG);
-        this.enableParallelGroupBy = rnd.nextBoolean();
-        this.enableJitCompiler = rnd.nextBoolean();
-        this.convertToParquet = rnd.nextBoolean();
+        // Bias these to true in 80% of runs so the parallel / JIT / parquet paths,
+        // which carry most of the risk, are exercised far more often than their fallbacks.
+        this.enableParallelGroupBy = rnd.nextInt(5) != 0;
+        this.enableJitCompiler = rnd.nextInt(5) != 0;
+        this.convertToParquet = rnd.nextInt(5) != 0;
         // Pick a batch size from buckets that span the boundaries of the batched non-sharded
         // reducer relative to the page frame size (~MIN_PAGE_FRAME_MAX_ROWS rows):
         // 1 row (degenerate), well below a frame, around a frame boundary, and larger than
