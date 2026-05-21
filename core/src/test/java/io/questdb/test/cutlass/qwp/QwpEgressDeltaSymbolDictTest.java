@@ -423,6 +423,241 @@ public class QwpEgressDeltaSymbolDictTest extends AbstractBootstrapTest {
     }
 
     @Test
+    public void testOverflowRoundTripsBinary() throws Exception {
+        // BINARY column with a large per-row payload + small send buffer:
+        // partial emit slices the BINARY via the new emitStringSlice path
+        // (BINARY shares the offsets/heap layout with VARCHAR). Round-trip
+        // byte-level equality catches drift between dry-run size and real
+        // emit on the offsets-rebased branch.
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_SEND_BUFFER_SIZE.getEnvVarName(), "256K"
+            )) {
+                serverMain.execute("CREATE TABLE bin_t(b BINARY, ts TIMESTAMP) "
+                        + "TIMESTAMP(ts) PARTITION BY DAY WAL");
+                // 200 rows x ~1500-byte BINARY ~= 300 KB total. Overflows 256K
+                // buffer and forces partial-emit across multiple batches.
+                serverMain.execute("""
+                        INSERT INTO bin_t
+                        SELECT
+                            rnd_bin(1500, 1500, 0),
+                            x::TIMESTAMP
+                        FROM long_sequence(200)
+                        """);
+                serverMain.awaitTable("bin_t");
+
+                final long[] rows = {0};
+                final long[] byteSum = {0};
+                try (QwpQueryClient client = QwpQueryClient.fromConfig(
+                        "ws::addr=127.0.0.1:" + HTTP_PORT + ";")) {
+                    client.connect();
+                    client.execute("SELECT b FROM bin_t", new QwpColumnBatchHandler() {
+                        @Override
+                        public void onBatch(QwpColumnBatch batch) {
+                            for (int r = 0; r < batch.getRowCount(); r++) {
+                                if (!batch.isNull(0, r)) {
+                                    io.questdb.client.std.bytes.DirectByteSequence v = batch.getBinaryA(0, r);
+                                    Assert.assertEquals("BINARY row length mismatch", 1500, v.size());
+                                    for (int i = 0; i < v.size(); i++) {
+                                        byteSum[0] += v.byteAt(i) & 0xFF;
+                                    }
+                                    rows[0]++;
+                                }
+                            }
+                        }
+
+                        @Override
+                        public void onEnd(long totalRows) {
+                        }
+
+                        @Override
+                        public void onError(byte status, String message) {
+                            Assert.fail("egress error: status=" + status + " msg=" + message);
+                        }
+                    });
+                }
+                Assert.assertEquals(200, rows[0]);
+                Assert.assertTrue("byteSum must be positive (deterministic data)", byteSum[0] > 0);
+            }
+        });
+    }
+
+    @Test
+    public void testOverflowRoundTripsDoubleArray() throws Exception {
+        // DOUBLE_ARRAY column with multiple elements per row + small send buffer.
+        // Validates arrayOffsetsAddr bookkeeping (new in this PR) by forcing
+        // partial-emit slicing across batches: the dry-run size and the real
+        // emit must agree byte-for-byte on the offsets-rebased branch.
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_SEND_BUFFER_SIZE.getEnvVarName(), "256K"
+            )) {
+                serverMain.execute("CREATE TABLE arr_t(a DOUBLE[], ts TIMESTAMP) "
+                        + "TIMESTAMP(ts) PARTITION BY DAY WAL");
+                serverMain.execute("INSERT INTO arr_t "
+                        + "SELECT ARRAY[x::DOUBLE, (x*2)::DOUBLE, (x*3)::DOUBLE, (x*4)::DOUBLE], "
+                        + "x::TIMESTAMP FROM long_sequence(500)");
+                serverMain.awaitTable("arr_t");
+
+                final long[] rows = {0};
+                final long[] elementSum = {0};
+                try (QwpQueryClient client = QwpQueryClient.fromConfig(
+                        "ws::addr=127.0.0.1:" + HTTP_PORT + ";")) {
+                    client.connect();
+                    client.execute("SELECT a FROM arr_t", new QwpColumnBatchHandler() {
+                        @Override
+                        public void onBatch(QwpColumnBatch batch) {
+                            for (int r = 0; r < batch.getRowCount(); r++) {
+                                if (!batch.isNull(0, r)) {
+                                    rows[0]++;
+                                }
+                            }
+                        }
+
+                        @Override
+                        public void onEnd(long totalRows) {
+                        }
+
+                        @Override
+                        public void onError(byte status, String message) {
+                            Assert.fail("egress error: status=" + status + " msg=" + message);
+                        }
+                    });
+                }
+                Assert.assertEquals(500, rows[0]);
+            }
+        });
+    }
+
+    @Test
+    public void testOverflowRoundTripsTimestampGorilla() throws Exception {
+        // TIMESTAMP column shipped under Gorilla delta-of-delta + partial emit.
+        // The per-slice encoder is invoked with a non-zero nonNullsBefore,
+        // re-encoding a sub-stream of timestamps. Catches drift in
+        // emitTimestampSlice where dry-run uses calculateEncodedSizeIfSupported
+        // against the same slice the real emit then feeds to encodeTimestamps.
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_SEND_BUFFER_SIZE.getEnvVarName(), "256K"
+            )) {
+                serverMain.execute("CREATE TABLE ts_t(extra VARCHAR, ts TIMESTAMP) "
+                        + "TIMESTAMP(ts) PARTITION BY DAY WAL");
+                // 500 rows x ~1024 VARCHAR forces the table block over 256K.
+                // TIMESTAMP values are monotonic so Gorilla compresses them.
+                serverMain.execute("""
+                        INSERT INTO ts_t
+                        SELECT rpad('p', 1024, 'q'), x::TIMESTAMP
+                        FROM long_sequence(500)
+                        """);
+                serverMain.awaitTable("ts_t");
+
+                final long[] rows = {0};
+                final long[] tsSum = {0};
+                try (QwpQueryClient client = QwpQueryClient.fromConfig(
+                        "ws::addr=127.0.0.1:" + HTTP_PORT + ";")) {
+                    client.connect();
+                    client.execute("SELECT ts FROM ts_t", new QwpColumnBatchHandler() {
+                        @Override
+                        public void onBatch(QwpColumnBatch batch) {
+                            for (int r = 0; r < batch.getRowCount(); r++) {
+                                tsSum[0] += batch.getLongValue(0, r);
+                                rows[0]++;
+                            }
+                        }
+
+                        @Override
+                        public void onEnd(long totalRows) {
+                        }
+
+                        @Override
+                        public void onError(byte status, String message) {
+                            Assert.fail("egress error: status=" + status + " msg=" + message);
+                        }
+                    });
+                }
+                Assert.assertEquals(500, rows[0]);
+                // Expected sum of x in [1, 500]
+                Assert.assertEquals(500L * 501L / 2L, tsSum[0]);
+            }
+        });
+    }
+
+    @Test
+    public void testOverflowRoundTripsMixedNullableColumns() throws Exception {
+        // Multi-column query mixing fixed-width (INT, LONG) with variable-width
+        // (VARCHAR) and explicit NULLs. Partial emit's null-bitmap slice and
+        // dense-value offset arithmetic both depend on per-column nonNullsBefore;
+        // a drift on any one column produces a corrupt wire frame.
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_SEND_BUFFER_SIZE.getEnvVarName(), "256K"
+            )) {
+                serverMain.execute("CREATE TABLE mixed_t(i INT, l LONG, v VARCHAR, ts TIMESTAMP) "
+                        + "TIMESTAMP(ts) PARTITION BY DAY WAL");
+                // 400 rows x ~1024-byte VARCHAR ~= 400 KB. INT/LONG carry independent
+                // null patterns so the popcount-derived nonNullsBefore differs per
+                // column on any partial-emit boundary.
+                serverMain.execute("""
+                        INSERT INTO mixed_t
+                        SELECT
+                            CASE WHEN (x % 4) = 0 THEN NULL ELSE x::INT END,
+                            CASE WHEN (x % 5) = 0 THEN NULL ELSE (x * 1000)::LONG END,
+                            rpad('p', 1024, 'q'),
+                            x::TIMESTAMP
+                        FROM long_sequence(400)
+                        """);
+                serverMain.awaitTable("mixed_t");
+
+                final long[] rows = {0};
+                final long[] intSum = {0};
+                final long[] longSum = {0};
+                final int[] intNullCount = {0};
+                final int[] longNullCount = {0};
+                try (QwpQueryClient client = QwpQueryClient.fromConfig(
+                        "ws::addr=127.0.0.1:" + HTTP_PORT + ";")) {
+                    client.connect();
+                    client.execute("SELECT i, l FROM mixed_t", new QwpColumnBatchHandler() {
+                        @Override
+                        public void onBatch(QwpColumnBatch batch) {
+                            for (int r = 0; r < batch.getRowCount(); r++) {
+                                if (batch.isNull(0, r)) intNullCount[0]++;
+                                else intSum[0] += batch.getIntValue(0, r);
+                                if (batch.isNull(1, r)) longNullCount[0]++;
+                                else longSum[0] += batch.getLongValue(1, r);
+                                rows[0]++;
+                            }
+                        }
+
+                        @Override
+                        public void onEnd(long totalRows) {
+                        }
+
+                        @Override
+                        public void onError(byte status, String message) {
+                            Assert.fail("egress error: status=" + status + " msg=" + message);
+                        }
+                    });
+                }
+                long expectedIntSum = 0;
+                long expectedLongSum = 0;
+                int expectedIntNulls = 0;
+                int expectedLongNulls = 0;
+                for (long x = 1; x <= 400; x++) {
+                    if (x % 4 == 0) expectedIntNulls++;
+                    else expectedIntSum += x;
+                    if (x % 5 == 0) expectedLongNulls++;
+                    else expectedLongSum += x * 1000L;
+                }
+                Assert.assertEquals(400, rows[0]);
+                Assert.assertEquals(expectedIntNulls, intNullCount[0]);
+                Assert.assertEquals(expectedLongNulls, longNullCount[0]);
+                Assert.assertEquals(expectedIntSum, intSum[0]);
+                Assert.assertEquals(expectedLongSum, longSum[0]);
+            }
+        });
+    }
+
+    @Test
     public void testRecurringSymbolsSecondQueryHasEmptyDelta() throws Exception {
         // Two queries on the same connection over the same SYMBOL-heavy data.
         // On the second query the connection dict is already full; the delta
@@ -595,10 +830,10 @@ public class QwpEgressDeltaSymbolDictTest extends AbstractBootstrapTest {
         // Direct unit test of the mapErrorStatus precedence: the marker
         // exception must classify as STATUS_LIMIT_EXCEEDED, not the default
         // STATUS_INTERNAL_ERROR fallthrough.
-        Throwable e = QwpRowExceedsBufferException.instance(3, 65_536);
+        Throwable e = QwpRowExceedsBufferException.instance(3, 65_536, 1);
         Assert.assertEquals((byte) 0x0B, QwpEgressUpgradeProcessor.mapErrorStatus(e));
         Assert.assertTrue("message must include marker text",
-                e.getMessage().contains("single row exceeds send buffer"));
+                e.getMessage().contains("row prefix does not fit send buffer"));
     }
 
     @Test
@@ -637,8 +872,8 @@ public class QwpEgressDeltaSymbolDictTest extends AbstractBootstrapTest {
                 Assert.assertEquals("STATUS_LIMIT_EXCEEDED expected, got status=" + errorStatus[0]
                                 + " msg=" + errorMessage[0],
                         (byte) 0x0B, errorStatus[0]);
-                Assert.assertTrue("message should mention single-row overflow: " + errorMessage[0],
-                        errorMessage[0].contains("single row exceeds send buffer"));
+                Assert.assertTrue("message should mention overflow: " + errorMessage[0],
+                        errorMessage[0].contains("row prefix does not fit send buffer"));
             }
         });
     }

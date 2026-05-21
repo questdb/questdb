@@ -1423,7 +1423,7 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
             long schemaId,
             boolean writeFullSchema,
             int rowsToShip,
-            boolean partialEmit
+            boolean isPartialEmit
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
         // Asserts the caller bumped streamingBatchSeq (via state.onStreamingBatchSent)
         // BEFORE reaching the socket. See QwpEgressProcessorState.consumeBatchSeqCommit.
@@ -1506,27 +1506,12 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
 
         // Commits BEFORE sendFrame; see QwpEgressUpgradeProcessor.java:1492-1497.
         state.consumeStreamingCredit(qwpSize);
-        if (partialEmit) {
+        if (isPartialEmit) {
             batchBuffer.advanceDeltaStart();
         }
         batchBuffer.advanceStartRow(rowsToShip);
         metrics.markBatchSent(qwpSize, rowsToShip);
         sendFrame(rawSocket, bufAddr, qwpStart, qwpSize);
-    }
-
-    private void sendResultBatchPrefix(
-            HttpConnectionContext context,
-            QwpEgressProcessorState state,
-            long requestId,
-            long batchSeq,
-            QwpResultBatchBuffer batchBuffer,
-            long schemaId,
-            boolean writeFullSchema,
-            int rowsToShip
-    ) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        metrics.markBatchOverflowSplit();
-        sendResultBatch(context, state, requestId, batchSeq, batchBuffer,
-                schemaId, writeFullSchema, rowsToShip, true);
     }
 
     /**
@@ -1665,6 +1650,21 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
         rawSocket.send(frame1Size + ws2HeaderSize + qwp2Size);
     }
 
+    private void sendResultBatchPrefix(
+            HttpConnectionContext context,
+            QwpEgressProcessorState state,
+            long requestId,
+            long batchSeq,
+            QwpResultBatchBuffer batchBuffer,
+            long schemaId,
+            boolean writeFullSchema,
+            int rowsToShip
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException {
+        metrics.markBatchOverflowSplit();
+        sendResultBatch(context, state, requestId, batchSeq, batchBuffer,
+                schemaId, writeFullSchema, rowsToShip, true);
+    }
+
     private void sendResultEnd(
             HttpConnectionContext context,
             QwpEgressProcessorState state,
@@ -1698,8 +1698,8 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
         // Page-frame path is used when the factory supports it (typical full scans);
         // everything else comes through the RecordCursor path. Both feed the same
         // batchBuffer; the only difference is how we walk rows.
-        final boolean pageFrame = state.isStreamingPageFrame();
-        final RecordCursor cursor = pageFrame ? null : state.getStreamingCursor();
+        final boolean isPageFrame = state.isStreamingPageFrame();
+        final RecordCursor cursor = isPageFrame ? null : state.getStreamingCursor();
 
         while (true) {
             // Test-only: when the global counter is armed, fire a simulated
@@ -1771,12 +1771,10 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
             // + table-block headers.
             final int dictBudget = (bufSize * 6) / 10;
             final int dictBytesAtStart = state.getConnSymbolDict().heapBytes();
-            boolean cursorExhausted;
+            boolean isCursorExhausted;
             boolean dictCapHit = false;
-            if (pageFrame) {
-                // Per-slice cap (1024 rows) bounds dict overshoot in a single
-                // appendPageFrame to ~1024 * max-symbol-bytes; keeps the budget
-                // check meaningful when one column is a high-cardinality SYMBOL.
+            if (isPageFrame) {
+                // Per-slice cap (1024 rows) bounds dict overshoot per appendPageFrame call.
                 PageFrame frame = null;
                 while (rowsToAdd > 0 && (frame = state.advanceToPageFrame()) != null) {
                     long lo = state.getStreamingPageFrameRow();
@@ -1791,7 +1789,7 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
                         break;
                     }
                 }
-                cursorExhausted = rowsToAdd > 0 && frame == null;
+                isCursorExhausted = rowsToAdd > 0 && frame == null;
             } else {
                 boolean hasMore = true;
                 while (rowsToAdd > 0 && (hasMore = cursor.hasNext())) {
@@ -1802,7 +1800,7 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
                         break;
                     }
                 }
-                cursorExhausted = !hasMore;
+                isCursorExhausted = !hasMore;
             }
             if (dictCapHit) {
                 metrics.markBatchOverflowSplit();
@@ -1853,22 +1851,19 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
                     - preludeBytes
                     - deltaBytes;
             int rowsToShip;
-            boolean partialEmit;
+            boolean isPartialEmit;
             int fullSize = batchBuffer.computeTableBlockSize(rowsBuffered, writeFullSchema);
             if (fullSize <= budget) {
                 rowsToShip = rowsBuffered;
-                partialEmit = false;
+                isPartialEmit = false;
             } else {
                 int k = batchBuffer.findLargestEmittablePrefix(budget, writeFullSchema);
-                // Round down to the next multiple of 8 so the bitmap slice
-                // emit stays byte-aligned (§4.4). The trailing 0-7 rows roll
-                // into the next iteration.
-                k &= ~7;
                 if (k <= 0) {
-                    throw QwpRowExceedsBufferException.instance(batchBuffer.getColumnCount(), bufSize);
+                    throw QwpRowExceedsBufferException.instance(
+                            batchBuffer.getColumnCount(), bufSize, rowsBuffered);
                 }
                 rowsToShip = k;
-                partialEmit = true;
+                isPartialEmit = true;
             }
             // Advance the streaming sequence BEFORE the network send. HttpRawSocket.send commits
             // bytes to the response sink (buffer.onWrite) before flushSingle() -- which is what
@@ -1878,7 +1873,7 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
             // the same seq number, producing two batches labelled seq=N with different rows.
             long currentSeq = state.getStreamingBatchSeq();
             state.onStreamingBatchSent(rowsToShip);
-            if (cursorExhausted && !partialEmit) {
+            if (isCursorExhausted && !isPartialEmit) {
                 // Last batch on this cursor and everything fits. Compose
                 // RESULT_BATCH + RESULT_END into the send buffer and hand both
                 // frames to the kernel in a single rawSocket.send() call.
@@ -1894,7 +1889,7 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
                         batchBuffer, schemaId, writeFullSchema, totalRows, rowsToShip);
                 return;
             }
-            if (partialEmit) {
+            if (isPartialEmit) {
                 sendResultBatchPrefix(context, state, requestId, currentSeq, batchBuffer,
                         schemaId, writeFullSchema, rowsToShip);
             } else {

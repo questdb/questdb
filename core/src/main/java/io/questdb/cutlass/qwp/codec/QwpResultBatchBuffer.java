@@ -116,14 +116,12 @@ public class QwpResultBatchBuffer implements QuietCloseable {
     }
 
     /**
-     * Advances the logical start past {@code K} rows that have just been
-     * shipped. When the advance drains the live row count to zero, the scratch
-     * position counters are zeroed in place (trivial reset) so the next batch
-     * reuses the existing native heap from byte 0 -- matching today's
-     * per-batch reset shape on the happy path.
+     * Advances the logical start past {@code k} just-shipped rows. When the
+     * advance drains the live row count to zero, scratch positions reset in
+     * place so the next batch reuses the native heap from byte 0.
      */
-    public void advanceStartRow(int K) {
-        startRow += K;
+    public void advanceStartRow(int k) {
+        startRow += k;
         if (startRow == physicalRowCount) {
             for (int i = 0; i < columnCount; i++) {
                 scratches.getQuick(i).resetPositions();
@@ -523,20 +521,27 @@ public class QwpResultBatchBuffer implements QuietCloseable {
     }
 
     /**
-     * Undoes any dict entries committed by the current batch. Called from the
-     * server's error path before {@code endStreaming}: a batch that called
+     * Undoes any dict entries committed by the current batch and discards any
+     * un-shipped scratch rows. Called from the server's error path before
+     * {@code endStreaming}: a batch that called
      * {@link QwpEgressConnSymbolDict#addEntry} but never shipped its
      * {@code RESULT_BATCH} frame must not leave orphan entries in the connection
      * dict, because a subsequent query could hit the dedup map on the same bytes,
      * receive the orphan id back, and emit row payload referencing an id the
-     * client has never been taught.
+     * client has never been taught. The scratch-position reset is the matching
+     * step for the partial-emit suffix: without it the next query would skip
+     * {@code beginBatch} (because {@code getRowCount() &gt; 0}) and append into
+     * stale scratches holding ids that no longer exist in the rolled-back dict.
      * <p>
-     * Idempotent: safe to call when no batch is in flight (no-op).
+     * Idempotent: safe to call when no batch is in flight (no-op on a fresh
+     * buffer).
      */
     public void rollbackCurrentBatch() {
         if (connDict != null) {
             connDict.rollbackTo(batchDeltaStart);
         }
+        physicalRowCount = 0;
+        startRow = 0;
     }
 
     /**
@@ -627,15 +632,12 @@ public class QwpResultBatchBuffer implements QuietCloseable {
 
     /**
      * Copies the null bitmap slice for rows {@code [srcRowStart, srcRowStart +
-     * rowsToEmit)} to byte 0 of {@code dst}. Precondition: {@code srcRowStart
-     * % 8 == 0} (§4.4 alignment policy), so the source is byte-aligned and a
-     * plain memcpy suffices.
+     * rowsToEmit)} to byte 0 of {@code dst}. Supports any {@code srcRowStart}
+     * via {@link #bitMemcpyShifted}; the aligned case collapses to a memcpy
+     * inside that helper.
      */
     private static void emitNullBitmapSlice(long bitmapAddr, int srcRowStart, int rowsToEmit, long dst) {
-        assert (srcRowStart & 7) == 0 : "null bitmap slice misaligned";
-        int srcByteOff = srcRowStart >>> 3;
-        int bytes = (rowsToEmit + 7) >>> 3;
-        Vect.memcpy(dst, bitmapAddr + srcByteOff, bytes);
+        bitMemcpyShifted(dst, bitmapAddr, srcRowStart, rowsToEmit);
     }
 
     /**
@@ -671,27 +673,22 @@ public class QwpResultBatchBuffer implements QuietCloseable {
         return p + offsetsBytes + heapBytes;
     }
 
-    /**
-     * Emits the dense values slice for SYMBOL columns: varint conn-dict ids for
-     * the slice's non-null rows. Per-column dict is omitted -- new bytes ship in
-     * the message-level delta section. The hot path (no dry run) keeps the
-     * pre-slicing shape: worst-case overflow check + encode-returning-new-pointer.
-     */
     private static long emitSymbolSlice(QwpColumnScratch scratch, long p, long wireLimit,
                                         int nonNullsBefore, int sliceNonNull, boolean dryRun) {
-        final long idsAddr = scratch.symbolIdsAddr;
+        // Dry-run and the wire-overflow guard both consult the prefix-sum
+        // (O(1) per column instead of O(rows) per probe).
+        int startCum = nonNullsBefore == 0 ? 0
+                : Unsafe.getInt(scratch.symbolBytesCumAddr + 4L * nonNullsBefore);
+        int endIdx = nonNullsBefore + sliceNonNull;
+        int endCum = endIdx == 0 ? 0
+                : Unsafe.getInt(scratch.symbolBytesCumAddr + 4L * endIdx);
+        long bytes = endCum - startCum;
+        if (p + bytes > wireLimit) return -1;
         if (dryRun) {
-            // Precise sizing for prefix search: compute exact encoded length.
-            long bytes = 0;
-            for (int i = 0; i < sliceNonNull; i++) {
-                int connId = Unsafe.getInt(idsAddr + 4L * (nonNullsBefore + i));
-                bytes += QwpVarint.encodedLength(connId);
-            }
-            if (p + bytes > wireLimit) return -1;
             return p + bytes;
         }
+        final long idsAddr = scratch.symbolIdsAddr;
         for (int i = 0; i < sliceNonNull; i++) {
-            if (p + QwpVarint.MAX_VARINT_BYTES > wireLimit) return -1;
             int connId = Unsafe.getInt(idsAddr + 4L * (nonNullsBefore + i));
             p = QwpVarint.encode(p, connId);
         }
@@ -707,30 +704,38 @@ public class QwpResultBatchBuffer implements QuietCloseable {
     }
 
     /**
-     * Counts the SET bits (= null rows) in {@code [startBit, startBit + lenBits)}
-     * of {@code bitmapAddr}. Walks 8 bytes at a time via {@link Long#bitCount},
-     * with byte and tail-bit fallbacks. Precondition: {@code startBit % 8 == 0}
-     * (§4.4) so the loop reads whole bytes from offset {@code startBit >>> 3}.
+     * Counts SET bits in {@code [startBit, startBit + lenBits)}. Handles
+     * arbitrary alignment of both start and end via masked partial-byte
+     * reads at each end.
      */
     private static int nullsInRange(long bitmapAddr, int startBit, int lenBits) {
-        assert (startBit & 7) == 0 : "nullsInRange startBit misaligned";
         if (lenBits == 0) return 0;
+        int endBit = startBit + lenBits;
+        int firstByte = startBit >>> 3;
+        int lastByte = (endBit - 1) >>> 3;
+        int firstBitInFirstByte = startBit & 7;
+        if (firstByte == lastByte) {
+            // All bits in one byte.
+            int mask = ((1 << lenBits) - 1) << firstBitInFirstByte;
+            return Integer.bitCount(Unsafe.getByte(bitmapAddr + firstByte) & mask & 0xFF);
+        }
         int count = 0;
-        int byteOff = startBit >>> 3;
-        int endByteOff = (startBit + lenBits) >>> 3;
-        int tailBits = (startBit + lenBits) & 7;
-        while (byteOff + 8 <= endByteOff) {
+        // First partial byte: bits [firstBitInFirstByte, 8).
+        int firstMask = (0xFF << firstBitInFirstByte) & 0xFF;
+        count += Integer.bitCount(Unsafe.getByte(bitmapAddr + firstByte) & firstMask);
+        // Middle full bytes [firstByte + 1, lastByte).
+        int byteOff = firstByte + 1;
+        while (byteOff + 8 <= lastByte) {
             count += Long.bitCount(Unsafe.getLong(bitmapAddr + byteOff));
             byteOff += 8;
         }
-        while (byteOff < endByteOff) {
+        while (byteOff < lastByte) {
             count += Integer.bitCount(Unsafe.getByte(bitmapAddr + byteOff) & 0xFF);
             byteOff++;
         }
-        if (tailBits > 0) {
-            int mask = (1 << tailBits) - 1;
-            count += Integer.bitCount(Unsafe.getByte(bitmapAddr + endByteOff) & mask);
-        }
+        // Last partial byte: bits [0, (endBit-1)&7 + 1).
+        int lastMask = (1 << (((endBit - 1) & 7) + 1)) - 1;
+        count += Integer.bitCount(Unsafe.getByte(bitmapAddr + lastByte) & lastMask);
         return count;
     }
 
@@ -954,8 +959,6 @@ public class QwpResultBatchBuffer implements QuietCloseable {
      */
     private long emitColumnSlice(QwpColumnScratch scratch, long p, long wireLimit,
                                  int srcRowStart, int rowsToEmit, boolean dryRun) {
-        assert (srcRowStart & 7) == 0 : "emitColumnSlice srcRowStart misaligned";
-
         // Derive the dense-storage range from the null bitmap. Three cases:
         //   (a) column has no nulls anywhere -- skip popcount entirely;
         //   (b) full physical slice -- collapse to existing counters;
@@ -1138,14 +1141,26 @@ public class QwpResultBatchBuffer implements QuietCloseable {
             }
             return p + 1 + rawBytes;
         }
-        // Probe size first: -1 = delta-of-delta doesn't fit int32 anywhere;
-        // fall back to raw rather than silently truncate.
-        int gorillaBytes = QwpGorillaEncoder.calculateEncodedSizeIfSupported(sliceValuesAddr, sliceNonNull);
+        // Cache hit when (nonNullsBefore, sliceNonNull, nonNullCount) matches.
+        // nonNullCount acts as a version: any append mutates it.
+        int gorillaBytes;
+        if (scratch.cachedGorillaNonNullsBefore == nonNullsBefore
+                && scratch.cachedGorillaSliceNonNull == sliceNonNull
+                && scratch.cachedGorillaNonNullCount == scratch.nonNullCount) {
+            gorillaBytes = scratch.cachedGorillaBytes;
+        } else {
+            gorillaBytes = QwpGorillaEncoder.calculateEncodedSizeIfSupported(sliceValuesAddr, sliceNonNull);
+            scratch.cachedGorillaNonNullsBefore = nonNullsBefore;
+            scratch.cachedGorillaSliceNonNull = sliceNonNull;
+            scratch.cachedGorillaNonNullCount = scratch.nonNullCount;
+            scratch.cachedGorillaBytes = gorillaBytes;
+        }
         if (gorillaBytes >= 0 && gorillaBytes < rawBytes) {
             if (p + 1 + gorillaBytes > wireLimit) return -1;
             if (!dryRun) {
                 Unsafe.putByte(p, ENCODING_GORILLA);
-                gorillaEncoder.encodeTimestamps(p + 1, wireLimit - p - 1, sliceValuesAddr, sliceNonNull);
+                int written = gorillaEncoder.encodeTimestamps(p + 1, wireLimit - p - 1, sliceValuesAddr, sliceNonNull);
+                assert written == gorillaBytes : "Gorilla encode size drifted from probe";
             }
             return p + 1 + gorillaBytes;
         }

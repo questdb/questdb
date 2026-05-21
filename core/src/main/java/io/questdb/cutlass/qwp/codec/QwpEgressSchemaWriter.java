@@ -36,13 +36,13 @@ import io.questdb.std.Unsafe;
  */
 public final class QwpEgressSchemaWriter {
 
-    private QwpEgressSchemaWriter() {
-    }
-
     /**
      * Schema mode byte for schema reference.
      */
     public static final byte SCHEMA_MODE_REFERENCE = 0x01;
+
+    private QwpEgressSchemaWriter() {
+    }
 
     /**
      * Exact byte count {@link #writeFull} would produce for the given schema.
@@ -97,19 +97,5 @@ public final class QwpEgressSchemaWriter {
     public static long writeReference(long bufAddr, long schemaId) {
         Unsafe.putByte(bufAddr, SCHEMA_MODE_REFERENCE);
         return QwpVarint.encode(bufAddr + 1, schemaId);
-    }
-
-    /**
-     * Worst-case serialized size of a full-mode schema. Used to ensure the wire buffer
-     * has space before encoding. Reads the pre-cached UTF-8 byte length so it does
-     * not allocate.
-     */
-    public static int worstCaseFullSize(ObjList<QwpEgressColumnDef> columns) {
-        int total = 1 /* mode */ + QwpVarint.MAX_VARINT_BYTES /* schema id */;
-        for (int i = 0, n = columns.size(); i < n; i++) {
-            QwpEgressColumnDef col = columns.getQuick(i);
-            total += QwpVarint.MAX_VARINT_BYTES + col.getNameUtf8().length + 1 /* type */;
-        }
-        return total;
     }
 }

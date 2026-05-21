@@ -25,6 +25,7 @@
 package io.questdb.cutlass.qwp.codec;
 
 import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.cutlass.qwp.protocol.QwpVarint;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
@@ -80,6 +81,12 @@ final class QwpColumnScratch implements QuietCloseable {
     int arrayHeapPos;
     long arrayOffsetsAddr;       // (nonNullCount + 1) x i32; mirror of stringOffsetsAddr.
     int arrayOffsetsCapacity;    // bytes
+    // TIMESTAMP per-emit Gorilla probe cache. Keyed by nonNullCount so any
+    // append (which mutates valuesAddr) automatically invalidates the entry.
+    int cachedGorillaBytes = -1;
+    int cachedGorillaNonNullCount = -1;
+    int cachedGorillaNonNullsBefore = -1;
+    int cachedGorillaSliceNonNull = -1;
     QwpEgressColumnDef def;
     int nonNullCount;
     long nullBitmapAddr;
@@ -96,6 +103,7 @@ final class QwpColumnScratch implements QuietCloseable {
     int peakNullBitmapBytes;
     int peakStringHeapBytes;
     int peakStringOffsetsBytes;
+    int peakSymbolBytesCumBytes;
     int peakSymbolIdsBytes;
     int peakValuesBytes;
     int rowCount;
@@ -104,6 +112,10 @@ final class QwpColumnScratch implements QuietCloseable {
     int stringHeapPos;
     long stringOffsetsAddr;      // (nonNullCount + 1) x i32
     int stringOffsetsCapacity;   // bytes
+    // SYMBOL: prefix-sum of varint-encoded conn-id bytes. Slot 0 implicit 0;
+    // slot i = total wire bytes for the first i symbols.
+    long symbolBytesCumAddr;
+    int symbolBytesCumCapacity;  // bytes
     // SYMBOL: per-non-null-row connection dict id. With the per-batch dict gone
     // these are already the ids the wire will carry, so emit is a straight varint
     // pass over this array (no localToConn translation).
@@ -149,6 +161,11 @@ final class QwpColumnScratch implements QuietCloseable {
             Unsafe.free(arrayOffsetsAddr, arrayOffsetsCapacity, MemoryTag.NATIVE_HTTP_CONN);
             arrayOffsetsAddr = 0;
             arrayOffsetsCapacity = 0;
+        }
+        if (symbolBytesCumAddr != 0) {
+            Unsafe.free(symbolBytesCumAddr, symbolBytesCumCapacity, MemoryTag.NATIVE_HTTP_CONN);
+            symbolBytesCumAddr = 0;
+            symbolBytesCumCapacity = 0;
         }
     }
 
@@ -253,6 +270,19 @@ final class QwpColumnScratch implements QuietCloseable {
             arrayOffsetsCapacity = newCap;
         }
         Unsafe.putInt(arrayOffsetsAddr + 4L * slotIdx, arrayHeapPos);
+    }
+
+    void recordSymbolBytes(int connId) {
+        int slotIdx = nonNullCount + 1;
+        int needed = 4 * (slotIdx + 1);
+        if (symbolBytesCumCapacity < needed) {
+            int newCap = Math.max(symbolBytesCumCapacity * 2, Math.max(INITIAL_BYTES, needed));
+            symbolBytesCumAddr = Unsafe.realloc(symbolBytesCumAddr, symbolBytesCumCapacity, newCap, MemoryTag.NATIVE_HTTP_CONN);
+            symbolBytesCumCapacity = newCap;
+        }
+        int prevCum = nonNullCount == 0 ? 0
+                : Unsafe.getInt(symbolBytesCumAddr + 4L * nonNullCount);
+        Unsafe.putInt(symbolBytesCumAddr + 4L * slotIdx, prevCum + QwpVarint.encodedLength(connId));
     }
 
     /**
@@ -482,11 +512,15 @@ final class QwpColumnScratch implements QuietCloseable {
     void appendColumnSymbolKeys(long srcAddr, int n, SymbolTable st, QwpEgressConnSymbolDict dict) {
         int startRow = rowCount;
         ensureNullBitmapCapacity(startRow + n);
-        // Pre-grow symbol-ids buffer for the worst case (every input row is
-        // non-null) so the per-row hot path doesn't pay the capacity check on
-        // every iteration. Mirrors the pattern other appendColumn* bulk
-        // methods already use for valuesAddr.
         ensureSymbolIdsCapacity(4 * (nonNullCount + n));
+        // Pre-grow cum-bytes buffer too, mirroring the symbolIds pre-grow.
+        int cumNeeded = 4 * (nonNullCount + n + 1);
+        if (symbolBytesCumCapacity < cumNeeded) {
+            int newCap = Math.max(symbolBytesCumCapacity * 2, Math.max(INITIAL_BYTES, cumNeeded));
+            symbolBytesCumAddr = Unsafe.realloc(symbolBytesCumAddr, symbolBytesCumCapacity, newCap, MemoryTag.NATIVE_HTTP_CONN);
+            symbolBytesCumCapacity = newCap;
+        }
+        int cum = nonNullCount == 0 ? 0 : Unsafe.getInt(symbolBytesCumAddr + 4L * nonNullCount);
         IntIntHashMap k2c = connKeyToConnId;
         int nonNullWritten = 0;
         for (int i = 0; i < n; i++) {
@@ -505,6 +539,8 @@ final class QwpColumnScratch implements QuietCloseable {
                 }
                 int slot = nonNullCount + nonNullWritten;
                 Unsafe.putInt(symbolIdsAddr + 4L * slot, connId);
+                cum += QwpVarint.encodedLength(connId);
+                Unsafe.putInt(symbolBytesCumAddr + 4L * (slot + 1), cum);
                 nonNullWritten++;
             }
         }
@@ -712,6 +748,7 @@ final class QwpColumnScratch implements QuietCloseable {
     void appendSymbolConnId(int connId) {
         ensureSymbolIdsCapacity(symbolIdsCapacity == 0 ? INITIAL_BYTES : 4 * (nonNullCount + 1));
         Unsafe.putInt(symbolIdsAddr + 4L * nonNullCount, connId);
+        recordSymbolBytes(connId);
         markNonNullAndAdvanceRow();
     }
 
@@ -757,6 +794,10 @@ final class QwpColumnScratch implements QuietCloseable {
         this.valuesPos = 0;
         this.stringHeapPos = 0;
         this.arrayHeapPos = 0;
+        // Invalidate the Gorilla cache: a different batch with the same
+        // (nonNullsBefore, sliceNonNull, nonNullCount) would otherwise hit a
+        // stale entry from the previous batch's values.
+        cachedGorillaNonNullCount = -1;
         // Note: connKeyToConnId persists across batches within a single query --
         // resetting it here would force every batch to re-ship every symbol value
         // through the delta section. Only {@link #resetForNewQuery} clears it.
@@ -844,11 +885,20 @@ final class QwpColumnScratch implements QuietCloseable {
                 arrayOffsetsCapacity = target;
             }
         }
+        if (symbolBytesCumCapacity > 0 && (peakSymbolBytesCumBytes == 0
+                || symbolBytesCumCapacity >= (long) peakSymbolBytesCumBytes * SHRINK_TRIGGER_FACTOR)) {
+            target = shrinkTarget(peakSymbolBytesCumBytes);
+            if (target < symbolBytesCumCapacity) {
+                symbolBytesCumAddr = Unsafe.realloc(symbolBytesCumAddr, symbolBytesCumCapacity, target, MemoryTag.NATIVE_HTTP_CONN);
+                symbolBytesCumCapacity = target;
+            }
+        }
         peakValuesBytes = 0;
         peakNullBitmapBytes = 0;
         peakStringHeapBytes = 0;
         peakStringOffsetsBytes = 0;
         peakSymbolIdsBytes = 0;
+        peakSymbolBytesCumBytes = 0;
         peakArrayHeapBytes = 0;
         peakArrayOffsetsBytes = 0;
     }
@@ -880,6 +930,8 @@ final class QwpColumnScratch implements QuietCloseable {
         if (offsetsBytes > peakArrayOffsetsBytes) peakArrayOffsetsBytes = offsetsBytes;
         int symIdsBytes = 4 * nonNullCount;
         if (symIdsBytes > peakSymbolIdsBytes) peakSymbolIdsBytes = symIdsBytes;
+        int symCumBytes = nonNullCount > 0 ? 4 * (nonNullCount + 1) : 0;
+        if (symCumBytes > peakSymbolBytesCumBytes) peakSymbolBytesCumBytes = symCumBytes;
         int bitmapBytes = (rowCount + 7) >>> 3;
         if (bitmapBytes > peakNullBitmapBytes) peakNullBitmapBytes = bitmapBytes;
     }
@@ -911,6 +963,7 @@ final class QwpColumnScratch implements QuietCloseable {
         valuesPos = 0;
         stringHeapPos = 0;
         arrayHeapPos = 0;
+        cachedGorillaNonNullCount = -1;
         // Re-zero the null bitmap so appendNull's OR-in semantics still work.
         // Matches the bitmap-zero step in beginBatch.
         if (nullBitmapAddr != 0 && nullBitmapCapacity > 0) {

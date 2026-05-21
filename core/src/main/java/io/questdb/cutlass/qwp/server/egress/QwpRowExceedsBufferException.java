@@ -30,15 +30,11 @@ import io.questdb.std.str.Sinkable;
 import io.questdb.std.str.StringSink;
 
 /**
- * Thrown by the egress streaming loop when a single row's wire encoding would
- * exceed the send buffer, so no prefix emit can make progress.
- * {@code QwpEgressUpgradeProcessor.mapErrorStatus} maps this to
- * {@code STATUS_LIMIT_EXCEEDED} -- a data-shape failure surfaced cleanly to
- * the client rather than the generic {@code STATUS_INTERNAL_ERROR} that any
- * other RuntimeException would produce.
+ * Thrown when no row prefix fits the send buffer (a single row's wire
+ * encoding exceeds the buffer, or the table-block header alone does).
+ * Mapped to {@code STATUS_LIMIT_EXCEEDED}.
  * <p>
- * Thread-local flyweight: no allocation on the throw path. Same convention as
- * {@link io.questdb.cutlass.http.HttpException}.
+ * Thread-local flyweight, same convention as {@link io.questdb.cutlass.http.HttpException}.
  */
 public final class QwpRowExceedsBufferException extends RuntimeException
         implements Sinkable, FlyweightMessageContainer {
@@ -50,11 +46,12 @@ public final class QwpRowExceedsBufferException extends RuntimeException
     private QwpRowExceedsBufferException() {
     }
 
-    public static QwpRowExceedsBufferException instance(int columnCount, int sendBufferSize) {
+    public static QwpRowExceedsBufferException instance(int columnCount, int sendBufferSize, int rowsBuffered) {
         QwpRowExceedsBufferException ex = tlException.get();
         ex.message.clear();
-        ex.message.put("egress: single row exceeds send buffer [colCount=")
-                .put(columnCount).put(", bufferSize=").put(sendBufferSize).put(']');
+        ex.message.put("egress: row prefix does not fit send buffer [colCount=")
+                .put(columnCount).put(", bufferSize=").put(sendBufferSize)
+                .put(", rowsBuffered=").put(rowsBuffered).put(']');
         return ex;
     }
 
