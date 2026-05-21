@@ -71,6 +71,11 @@ import static io.questdb.cutlass.qwp.protocol.QwpConstants.*;
 public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
     // Cumulative ACK batch size
     private static final int ACK_BATCH_SIZE = 8;
+    // Worst-case WebSocket frame header size (2-byte base + 8-byte 64-bit
+    // extended length + 4-byte mask for client->server frames). Subtracted
+    // from the recv buffer when computing the effective batch cap so the
+    // advertised value still leaves room for the frame header on the wire.
+    private static final int MAX_WS_FRAME_HEADER_BYTES = 14;
     // HTTP response templates
     private static final byte[] BAD_REQUEST_PREFIX =
             "HTTP/1.1 400 Bad Request\r\nContent-Type: text/plain\r\nContent-Length: ".getBytes(StandardCharsets.US_ASCII);
@@ -87,6 +92,12 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
                     \r
                     """).getBytes(StandardCharsets.US_ASCII);
     // Dependencies for ILP processing (safe as instance fields — config only)
+    // Precomputed X-QWP-Max-Batch-Size header bytes, cached because the
+    // effective cap is derived from recvBufferSize (config-fixed for the
+    // lifetime of this processor) and would otherwise allocate a String and
+    // a byte[] on every handshake. Null when the cap collapses to zero,
+    // which omits the header entirely.
+    private final byte[] effectiveMaxBatchSizeBytes;
     private final CairoEngine engine;
     private final int forceRecvFragmentationChunkSize;
     // WebSocket frame parser (scratchpad — fully reset within each processWebSocketFrames call)
@@ -101,6 +112,18 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
                 .getForceRecvFragmentationChunkSize();
         this.httpConfiguration = httpConfiguration;
         this.recvBufferSize = httpConfiguration.getRecvBufferSize();
+        // Advertise the effective batch cap, not the QWP protocol ceiling. The
+        // HTTP recv buffer is the actual binding constraint on inbound
+        // WebSocket frame size, and it is checked before the QWP parser ever
+        // sees the payload -- a frame larger than recv-buffer minus the
+        // worst-case WebSocket frame header gets closed with code 1009 long
+        // before STATUS_PARSE_ERROR can fire.
+        int effectiveMaxBatchSize = Math.min(
+                Math.max(0, recvBufferSize - MAX_WS_FRAME_HEADER_BYTES),
+                QwpConstants.DEFAULT_MAX_BATCH_SIZE);
+        this.effectiveMaxBatchSizeBytes = effectiveMaxBatchSize > 0
+                ? Integer.toString(effectiveMaxBatchSize).getBytes(StandardCharsets.US_ASCII)
+                : null;
         this.maxResponseContentLength = httpConfiguration.getSendBufferSize();
     }
 
@@ -291,7 +314,9 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
                 && Utf8s.equalsIgnoreCaseAscii(durableAckHeader, QwpWebSocketHttpProcessor.HEADER_VALUE_DURABLE_ACK_ENABLED);
         boolean durableAckEnabled = durableAckRequested && engine.getDurableAckRegistry().isEnabled();
 
-        int requiredHandshakeSize = QwpWebSocketHttpProcessor.responseSize(acceptKey, negotiatedVersion, null, durableAckEnabled, roleBytes);
+        int requiredHandshakeSize = QwpWebSocketHttpProcessor.responseSize(
+                acceptKey, negotiatedVersion, null, durableAckEnabled, roleBytes,
+                effectiveMaxBatchSizeBytes);
         if (requiredHandshakeSize > bufferSize) {
             throw responseDoesNotFitSendBuffer(context.getFd(), "101 handshake response", bufferSize, requiredHandshakeSize);
         }
@@ -315,7 +340,9 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
         state.setDurableAckEnabled(durableAckEnabled);
 
         // Write the 101 Switching Protocols response (reuse the pre-computed accept key)
-        int bytesWritten = QwpWebSocketHttpProcessor.writeResponse(bufferAddr, acceptKey, negotiatedVersion, null, durableAckEnabled, roleBytes);
+        int bytesWritten = QwpWebSocketHttpProcessor.writeResponse(
+                bufferAddr, acceptKey, negotiatedVersion, null, durableAckEnabled, roleBytes,
+                effectiveMaxBatchSizeBytes);
         if (bytesWritten <= 0) {
             throw responseDoesNotFitSendBuffer(context.getFd(), "101 handshake response", bufferSize, requiredHandshakeSize);
         }

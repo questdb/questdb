@@ -920,6 +920,41 @@ public class QwpFixedWidthDecoderTest {
     }
 
     @Test
+    public void testDecodeIPv4ColumnSentinelNullNoBitmap() throws QwpParseException {
+        // QwpTableBuffer.addIPv4 javadoc: "The bit pattern 0 (i.e. 0.0.0.0) is
+        // reserved by QuestDB as the IPv4 NULL sentinel and surfaces as NULL
+        // on read regardless of the null bitmap." The encoder writes 0 inline
+        // as a value when there are no bitmap-tagged nulls; the cursor's
+        // sentinel switch is the protocol-intended null detector for this case.
+        int[] values = {0x0A000001, Numbers.IPv4_NULL, 0xFFFFFFFF};
+        int rowCount = values.length;
+        int size = 1 + rowCount * 4;
+        long address = Unsafe.malloc(size, MemoryTag.NATIVE_DEFAULT);
+        try {
+            Unsafe.putByte(address, (byte) 0); // no null bitmap
+            for (int i = 0; i < rowCount; i++) {
+                Unsafe.putInt(address + 1 + (long) i * 4, values[i]);
+            }
+
+            QwpFixedWidthColumnCursor cursor = new QwpFixedWidthColumnCursor();
+            cursor.of(address, size, rowCount, TYPE_IPV4);
+
+            cursor.advanceRow();
+            Assert.assertFalse(cursor.isNull());
+            Assert.assertEquals(0x0A000001, (int) cursor.getLong());
+
+            cursor.advanceRow();
+            Assert.assertTrue("IPv4_NULL must be reported as NULL when no bitmap is present", cursor.isNull());
+
+            cursor.advanceRow();
+            Assert.assertFalse(cursor.isNull());
+            Assert.assertEquals(0xFFFFFFFF, (int) cursor.getLong());
+        } finally {
+            Unsafe.free(address, size, MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
+    @Test
     public void testDecodeIntColumnSentinelNullNoBitmap() throws QwpParseException {
         int[] values = {42, Numbers.INT_NULL, -1};
         int rowCount = values.length;
@@ -950,6 +985,48 @@ public class QwpFixedWidthDecoderTest {
     }
 
     @Test
+    public void testDecodeLong256ColumnSentinelNullNoBitmap() throws QwpParseException {
+        // LONG256 NULL = (LONG_NULL, LONG_NULL, LONG_NULL, LONG_NULL) per
+        // Long256Impl.NULL_LONG256. With no bitmap the cursor must classify
+        // that bit pattern as NULL or downstream consumers (e.g. the
+        // LONG256->String type-conversion path) will format it as a
+        // non-null Long256 value.
+        long[][] values = {
+                {0x1L, 0x2L, 0x3L, 0x4L},
+                {Numbers.LONG_NULL, Numbers.LONG_NULL, Numbers.LONG_NULL, Numbers.LONG_NULL},
+                {-1L, -1L, -1L, -1L}
+        };
+        int rowCount = values.length;
+        int size = 1 + rowCount * 32;
+        long address = Unsafe.malloc(size, MemoryTag.NATIVE_DEFAULT);
+        try {
+            Unsafe.putByte(address, (byte) 0); // no null bitmap
+            for (int i = 0; i < rowCount; i++) {
+                long base = address + 1 + (long) i * 32;
+                Unsafe.putLong(base, values[i][0]);
+                Unsafe.putLong(base + 8, values[i][1]);
+                Unsafe.putLong(base + 16, values[i][2]);
+                Unsafe.putLong(base + 24, values[i][3]);
+            }
+
+            QwpFixedWidthColumnCursor cursor = new QwpFixedWidthColumnCursor();
+            cursor.of(address, size, rowCount, TYPE_LONG256);
+
+            cursor.advanceRow();
+            Assert.assertFalse(cursor.isNull());
+
+            cursor.advanceRow();
+            Assert.assertTrue("LONG256 NULL_LONG256 must be reported as NULL when no bitmap is present",
+                    cursor.isNull());
+
+            cursor.advanceRow();
+            Assert.assertFalse(cursor.isNull());
+        } finally {
+            Unsafe.free(address, size, MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
+    @Test
     public void testDecodeLongColumnSentinelNullNoBitmap() throws QwpParseException {
         long[] values = {42L, Numbers.LONG_NULL, -1L};
         assertLongSentinelNull(values, TYPE_LONG);
@@ -965,6 +1042,48 @@ public class QwpFixedWidthDecoderTest {
     public void testDecodeTimestampNanosColumnSentinelNullNoBitmap() throws QwpParseException {
         long[] values = {1_000_000_000L, Numbers.LONG_NULL, -1L};
         assertLongSentinelNull(values, TYPE_TIMESTAMP_NANOS);
+    }
+
+    @Test
+    public void testDecodeUuidColumnSentinelNullNoBitmap() throws QwpParseException {
+        // UUID NULL = (LONG_NULL, LONG_NULL) per Uuid.isNull(lo, hi). With no
+        // bitmap the cursor must classify that bit pattern as NULL or the
+        // UUID->String type-conversion path (WalColumnarRowAppender
+        // putFixedOtherToStringColumn / putFixedOtherToVarcharColumn ->
+        // formatFixedOtherValue) formats it as a non-null Uuid value.
+        // Layout per QwpFixedWidthColumnCursor.readCurrentValue: lo first,
+        // hi second.
+        long[][] values = {
+                {0x1234L, 0x5678L},
+                {Numbers.LONG_NULL, Numbers.LONG_NULL},
+                {-1L, -1L}
+        };
+        int rowCount = values.length;
+        int size = 1 + rowCount * 16;
+        long address = Unsafe.malloc(size, MemoryTag.NATIVE_DEFAULT);
+        try {
+            Unsafe.putByte(address, (byte) 0); // no null bitmap
+            for (int i = 0; i < rowCount; i++) {
+                long base = address + 1 + (long) i * 16;
+                Unsafe.putLong(base, values[i][0]);       // lo
+                Unsafe.putLong(base + 8, values[i][1]);   // hi
+            }
+
+            QwpFixedWidthColumnCursor cursor = new QwpFixedWidthColumnCursor();
+            cursor.of(address, size, rowCount, TYPE_UUID);
+
+            cursor.advanceRow();
+            Assert.assertFalse(cursor.isNull());
+
+            cursor.advanceRow();
+            Assert.assertTrue("UUID NULL must be reported as NULL when no bitmap is present",
+                    cursor.isNull());
+
+            cursor.advanceRow();
+            Assert.assertFalse(cursor.isNull());
+        } finally {
+            Unsafe.free(address, size, MemoryTag.NATIVE_DEFAULT);
+        }
     }
 
     private static void assertLongSentinelNull(long[] values, byte typeCode) throws QwpParseException {
