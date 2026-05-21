@@ -47,6 +47,7 @@ import io.questdb.network.PeerIsSlowToWriteException;
 import io.questdb.network.ServerDisconnectException;
 import io.questdb.network.Socket;
 import io.questdb.std.CharSequenceLongHashMap;
+import io.questdb.std.Mutable;
 import io.questdb.std.Numbers;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.Utf8Sequence;
@@ -1297,12 +1298,27 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
         }
     }
 
-    // Mutable per-connection holder for the byte count of a 4xx upgrade
-    // rejection deferred from onHeadersReady to onRequestComplete. Lazily
-    // allocated; only connections that actually trigger a reject pay the
-    // single-object cost.
-    private static final class RejectFlushTracker {
+    // Per-connection holder for the byte count of a 4xx upgrade rejection
+    // deferred from onHeadersReady to onRequestComplete. Lazily allocated;
+    // only connections that actually trigger a reject pay the single-object
+    // cost.
+    //
+    // Implements Mutable so LocalValueMap.clear() (invoked by
+    // HttpConnectionContext.reset() on every request boundary AND
+    // HttpConnectionContext.clear() on pool-return via super.clear()) resets
+    // pendingBytes to 0. Without this, a PeerDisconnectedException thrown by
+    // the staged send in onRequestComplete (which skips the
+    // pendingBytes = 0 reset) would leave a stale value on the context; the
+    // next pool reuse of that context would land a legitimate upgrade on a
+    // tracker whose pendingBytes > 0 still drives the reject branch and
+    // throws HttpException instead of finalising the 101 handshake.
+    private static final class RejectFlushTracker implements Mutable {
         int pendingBytes;
+
+        @Override
+        public void clear() {
+            pendingBytes = 0;
+        }
     }
 
 }

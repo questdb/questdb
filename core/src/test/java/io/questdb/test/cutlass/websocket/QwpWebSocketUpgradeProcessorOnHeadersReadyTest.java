@@ -71,6 +71,99 @@ public class QwpWebSocketUpgradeProcessorOnHeadersReadyTest extends AbstractCair
     }
 
     @Test
+    public void testRejectFlushTrackerDoesNotLeakAcrossContextReuse() throws Exception {
+        // Regression: RejectFlushTracker lives in the per-context REJECT_FLUSH
+        // LocalValue but implements neither Mutable nor ConnectionAware, so
+        // LocalValueMap.clear() / .disconnect() (which run on
+        // HttpConnectionContext.clear() at pool-return) both skip it. If
+        // onRequestComplete throws PeerDisconnectedException on the staged
+        // reject send, the rejectTracker.pendingBytes = 0 reset is skipped --
+        // and the next legitimate upgrade on the pooled context lands on a
+        // stale tracker whose pendingBytes > 0 still drives the reject branch
+        // in onRequestComplete, throwing HttpException instead of finalising
+        // the 101.
+        //
+        // Drive that exact sequence on one TestableContext: bad headers
+        // trigger a 400 reject staged in REJECT_FLUSH; the mock throws PDE on
+        // the staged send so the reset is skipped; context.clear() simulates
+        // pool-return; a fresh valid upgrade then runs through the same
+        // context. With the fix (tracker implements Mutable so
+        // LocalValueMap.clear() resets pendingBytes), onRequestComplete
+        // completes the protocol switch. Without the fix, it takes the
+        // stale-tracker reject branch and throws HttpException.
+        assertMemoryLeak(() -> {
+            HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
+            QwpWebSocketUpgradeProcessor processor = new QwpWebSocketUpgradeProcessor(engine, httpConfig);
+            LocalValue<QwpProcessorState> lv = getLV();
+
+            long bufferAddr = Unsafe.malloc(HANDSHAKE_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+            try (
+                    MockHttpRequestHeader header = new MockHttpRequestHeader();
+                    TestableContext context = new TestableContext(httpConfig, header, new MockRawSocket(bufferAddr, HANDSHAKE_BUFFER_SIZE))
+            ) {
+                // Run 1: missing Upgrade / Sec-WebSocket-Key headers trip the
+                // 400-bad-request branch in onHeadersReady, which writes the
+                // reject body into the response buffer and stages
+                // tracker.pendingBytes via REJECT_FLUSH.
+                MockRawSocket mock = context.getMockRawSocket();
+                mock.throwDisconnectedOnCall = 1;
+                processor.onHeadersReady(context);
+                Assert.assertEquals(
+                        "400 reject must be staged but NOT yet flushed by onHeadersReady",
+                        0, mock.sentSize);
+                try {
+                    processor.onRequestComplete(context);
+                    Assert.fail("onRequestComplete must surface the mock's PDE from the staged reject send");
+                } catch (PeerDisconnectedException expected) {
+                    // expected -- the next line in onRequestComplete that
+                    // would have set rejectTracker.pendingBytes = 0 is now
+                    // skipped, leaving the tracker stale.
+                }
+
+                // Simulate framework return-to-pool. Reset() clears the
+                // response sink, parser, and localValueMap entries that
+                // implement Mutable. The RejectFlushTracker entry should
+                // also be cleared -- that is what this test asserts.
+                context.clear();
+
+                // Run 2: same context, fresh valid handshake, mock no longer
+                // throws.
+                mock.reset();
+                mock.throwDisconnectedOnCall = -1;
+                header.setHeader("Upgrade", "websocket");
+                header.setHeader("Connection", "Upgrade");
+                header.setHeader("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ==");
+                header.setHeader("Sec-WebSocket-Version", "13");
+
+                processor.onHeadersReady(context);
+                QwpProcessorState state = lv.get(context);
+                Assert.assertNotNull("valid handshake must allocate processor state", state);
+                Assert.assertTrue("101 bytes must be staged for onRequestComplete to flush",
+                        state.isHandshakeFlushPending());
+
+                // The fix-vs-no-fix split: with the stale tracker still in
+                // place, onRequestComplete reads pendingBytes > 0, takes the
+                // reject branch on line 374, and throws
+                // HttpException("WebSocket upgrade rejected"). With the fix,
+                // the tracker was cleared on context.clear() and
+                // onRequestComplete finalises the 101 -- switchProtocol is
+                // invoked exactly as on any clean handshake.
+                processor.onRequestComplete(context);
+                Assert.assertTrue(
+                        "handshake must complete -- a stale RejectFlushTracker drove "
+                                + "the reject branch instead of finalising the 101",
+                        context.isSwitchProtocolCalled());
+                String response = readResponse(bufferAddr, mock.sentSize);
+                Assert.assertTrue(
+                        "response must be a clean 101 Switching Protocols, got: " + response,
+                        response.startsWith("HTTP/1.1 101 Switching Protocols\r\n"));
+            } finally {
+                Unsafe.free(bufferAddr, HANDSHAKE_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
+    @Test
     public void testOnHeadersReadyAdvertisesEffectiveBatchSize() throws Exception {
         // The handshake response must carry X-QWP-Max-Batch-Size with the
         // *effective* cap -- min(recvBufferSize - frame_overhead, MAX_BATCH_SIZE)
@@ -632,7 +725,9 @@ public class QwpWebSocketUpgradeProcessorOnHeadersReadyTest extends AbstractCair
     private static class MockRawSocket implements HttpRawSocket {
         private final long bufferAddress;
         private final int bufferSize;
+        private int sendCallCount;
         private int sentSize;
+        private int throwDisconnectedOnCall = -1;
 
         private MockRawSocket(long bufferAddress, int bufferSize) {
             this.bufferAddress = bufferAddress;
@@ -650,8 +745,17 @@ public class QwpWebSocketUpgradeProcessorOnHeadersReadyTest extends AbstractCair
         }
 
         @Override
-        public void send(int size) {
+        public void send(int size) throws PeerDisconnectedException {
+            sendCallCount++;
+            if (sendCallCount == throwDisconnectedOnCall) {
+                throw PeerDisconnectedException.INSTANCE;
+            }
             sentSize = size;
+        }
+
+        void reset() {
+            sendCallCount = 0;
+            sentSize = 0;
         }
     }
 
