@@ -30,7 +30,6 @@ import io.questdb.client.cutlass.qwp.client.QwpQueryClient;
 import io.questdb.client.std.str.DirectUtf8Sequence;
 import io.questdb.cutlass.qwp.server.egress.QwpEgressMetrics;
 import io.questdb.cutlass.qwp.server.egress.QwpEgressProcessorState;
-import io.questdb.test.AbstractBootstrapTest;
 import io.questdb.test.TestServerMain;
 import io.questdb.test.tools.TestUtils;
 import org.junit.After;
@@ -48,7 +47,7 @@ import org.junit.Test;
  * observable client behaviour (dict resolves across the reset, subsequent
  * queries decode normally) and the server-side metrics counters.
  */
-public class QwpEgressCacheResetWireTest extends AbstractBootstrapTest {
+public class QwpEgressCacheResetWireTest extends AbstractQwpBootstrapTest {
 
     @Before
     public void setUp() {
@@ -75,7 +74,7 @@ public class QwpEgressCacheResetWireTest extends AbstractBootstrapTest {
     public void testCacheResetFiresOnDictEntryCap() throws Exception {
         QwpEgressProcessorState.defaultMaxDictEntriesOverrideForTest = 4;
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables(
+            try (final TestServerMain serverMain = startFragmented(
                     "QDB_METRICS_ENABLED", "true")) {
                 serverMain.execute("CREATE TABLE cap_entries(sym SYMBOL, ts TIMESTAMP) "
                         + "TIMESTAMP(ts) PARTITION BY DAY WAL");
@@ -133,7 +132,7 @@ public class QwpEgressCacheResetWireTest extends AbstractBootstrapTest {
     public void testCacheResetFiresOnDictHeapCap() throws Exception {
         QwpEgressProcessorState.defaultMaxDictHeapBytesOverrideForTest = 8;
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables(
+            try (final TestServerMain serverMain = startFragmented(
                     "QDB_METRICS_ENABLED", "true")) {
                 serverMain.execute("CREATE TABLE cap_heap(sym SYMBOL, ts TIMESTAMP) "
                         + "TIMESTAMP(ts) PARTITION BY DAY WAL");
@@ -172,7 +171,7 @@ public class QwpEgressCacheResetWireTest extends AbstractBootstrapTest {
     public void testCacheResetFiresOnSchemaCap() throws Exception {
         QwpEgressProcessorState.defaultMaxSchemasOverrideForTest = 2;
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables(
+            try (final TestServerMain serverMain = startFragmented(
                     "QDB_METRICS_ENABLED", "true")) {
                 serverMain.execute("CREATE TABLE cap_schemas(a LONG, b INT, c DOUBLE, ts TIMESTAMP) "
                         + "TIMESTAMP(ts) PARTITION BY DAY WAL");
@@ -208,7 +207,7 @@ public class QwpEgressCacheResetWireTest extends AbstractBootstrapTest {
     @Test
     public void testCacheResetDoesNotFireUnderDefaults() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables(
+            try (final TestServerMain serverMain = startFragmented(
                     "QDB_METRICS_ENABLED", "true")) {
                 serverMain.execute("CREATE TABLE quiet(sym SYMBOL, ts TIMESTAMP) "
                         + "TIMESTAMP(ts) PARTITION BY DAY WAL");
@@ -246,7 +245,7 @@ public class QwpEgressCacheResetWireTest extends AbstractBootstrapTest {
     public void testConnectionStaysHealthyAfterReset() throws Exception {
         QwpEgressProcessorState.defaultMaxDictEntriesOverrideForTest = 2;
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables(
+            try (final TestServerMain serverMain = startFragmented(
                     "QDB_METRICS_ENABLED", "true")) {
                 serverMain.execute("CREATE TABLE mixed(sym SYMBOL, n LONG, ts TIMESTAMP) "
                         + "TIMESTAMP(ts) PARTITION BY DAY WAL");
@@ -332,7 +331,7 @@ public class QwpEgressCacheResetWireTest extends AbstractBootstrapTest {
     public void testNoResetMidStream() throws Exception {
         QwpEgressProcessorState.defaultMaxDictEntriesOverrideForTest = 3;
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables(
+            try (final TestServerMain serverMain = startFragmented(
                     "QDB_METRICS_ENABLED", "true")) {
                 serverMain.execute("CREATE TABLE mid(sym SYMBOL, ts TIMESTAMP) "
                         + "TIMESTAMP(ts) PARTITION BY DAY WAL");
@@ -418,4 +417,5 @@ public class QwpEgressCacheResetWireTest extends AbstractBootstrapTest {
             }
         };
     }
+
 }

@@ -50,7 +50,7 @@ import java.util.List;
  * populate a table via SQL, open {@link QwpQueryClient} against /read/v1,
  * issue a SELECT, and assert the decoded batches match.
  */
-public class QwpEgressBootstrapTest extends AbstractBootstrapTest {
+public class QwpEgressBootstrapTest extends AbstractQwpBootstrapTest {
 
     @Before
     public void setUp() {
@@ -62,7 +62,7 @@ public class QwpEgressBootstrapTest extends AbstractBootstrapTest {
     @Test
     public void testAllPrimitiveTypes() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables()) {
+            try (final TestServerMain serverMain = startFragmented()) {
                 // part_ts is a separate designated timestamp so the existing ts column can still
                 // round-trip a NULL (row 1) without violating WAL partition assignment.
                 serverMain.execute("""
@@ -156,7 +156,7 @@ public class QwpEgressBootstrapTest extends AbstractBootstrapTest {
     @Test
     public void testArrayColumns() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables()) {
+            try (final TestServerMain serverMain = startFragmented()) {
                 // QuestDB SQL only supports DOUBLE[] arrays today; LONG[] support exists in the
                 // wire format but isn't surfaced via SQL CREATE TABLE. Restrict to DOUBLE[] here.
                 serverMain.execute("CREATE TABLE arr_t(d DOUBLE[], ts TIMESTAMP) "
@@ -212,7 +212,7 @@ public class QwpEgressBootstrapTest extends AbstractBootstrapTest {
     @Test
     public void testBackToBackQueriesOnOneConnection() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables()) {
+            try (final TestServerMain serverMain = startFragmented()) {
                 serverMain.execute("CREATE TABLE cc(x LONG, ts TIMESTAMP) "
                         + "TIMESTAMP(ts) PARTITION BY DAY WAL");
                 serverMain.execute("INSERT INTO cc VALUES (1, 1::TIMESTAMP)");
@@ -255,7 +255,7 @@ public class QwpEgressBootstrapTest extends AbstractBootstrapTest {
     @Test
     public void testBinaryColumn() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables()) {
+            try (final TestServerMain serverMain = startFragmented()) {
                 serverMain.execute("CREATE TABLE bin_t(b BINARY, ts TIMESTAMP) "
                         + "TIMESTAMP(ts) PARTITION BY DAY WAL");
                 // Two non-null random binary values + one explicit NULL.
@@ -330,7 +330,7 @@ public class QwpEgressBootstrapTest extends AbstractBootstrapTest {
     @Test(timeout = 30_000)
     public void testCloseWhileExecuteDoesNotHang() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables()) {
+            try (final TestServerMain serverMain = startFragmented()) {
                 serverMain.execute("CREATE TABLE slow(x LONG, ts TIMESTAMP) "
                         + "TIMESTAMP(ts) PARTITION BY DAY WAL");
                 serverMain.execute("INSERT INTO slow SELECT x, x::TIMESTAMP FROM long_sequence(50000)");
@@ -437,7 +437,7 @@ public class QwpEgressBootstrapTest extends AbstractBootstrapTest {
     @Test
     public void testDecimal() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables()) {
+            try (final TestServerMain serverMain = startFragmented()) {
                 serverMain.execute("CREATE TABLE dec(d64 DECIMAL(18,4), d128 DECIMAL(38,6), ts TIMESTAMP) "
                         + "TIMESTAMP(ts) PARTITION BY DAY WAL");
                 serverMain.execute("INSERT INTO dec VALUES (1234.5678m, 987654321.123456m, 1::TIMESTAMP)");
@@ -597,7 +597,7 @@ public class QwpEgressBootstrapTest extends AbstractBootstrapTest {
     @Test
     public void testDropRecreateDoesNotPoisonSchemaCache() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables(
+            try (final TestServerMain serverMain = startFragmented(
                     PropertyKey.HTTP_QUERY_CACHE_ENABLED.getEnvVarName(), "true"
             )) {
                 final String table = "schema_cache_retry_t";
@@ -644,7 +644,7 @@ public class QwpEgressBootstrapTest extends AbstractBootstrapTest {
     @Test
     public void testEmptyResultSet() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables()) {
+            try (final TestServerMain serverMain = startFragmented()) {
                 serverMain.execute("CREATE TABLE empty_t(id LONG, name STRING, ts TIMESTAMP) "
                         + "TIMESTAMP(ts) PARTITION BY DAY WAL");
                 // No INSERT -- table is empty.
@@ -697,7 +697,7 @@ public class QwpEgressBootstrapTest extends AbstractBootstrapTest {
     @Test
     public void testEmptyResultSetOnReusedSchemaStillDeliversOneBatch() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables()) {
+            try (final TestServerMain serverMain = startFragmented()) {
                 serverMain.execute("CREATE TABLE reuse_t(id LONG, name STRING, ts TIMESTAMP) "
                         + "TIMESTAMP(ts) PARTITION BY DAY WAL");
                 serverMain.execute("INSERT INTO reuse_t VALUES (1, 'one', 1::TIMESTAMP), "
@@ -776,7 +776,7 @@ public class QwpEgressBootstrapTest extends AbstractBootstrapTest {
     @Test
     public void testFailedQueriesDoNotLeak() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables()) {
+            try (final TestServerMain serverMain = startFragmented()) {
                 serverMain.execute("CREATE TABLE leakcheck(x LONG, ts TIMESTAMP) "
                         + "TIMESTAMP(ts) PARTITION BY DAY WAL");
                 serverMain.execute("INSERT INTO leakcheck VALUES (1, 1::TIMESTAMP), (2, 2::TIMESTAMP), (3, 3::TIMESTAMP)");
@@ -829,7 +829,7 @@ public class QwpEgressBootstrapTest extends AbstractBootstrapTest {
     public void testFromConfigConnectString() throws Exception {
         // The fromConfig(String) factory mirrors Sender.fromConfig: schema::key=value;...
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables()) {
+            try (final TestServerMain serverMain = startFragmented()) {
                 serverMain.execute("CREATE TABLE cs(x LONG, ts TIMESTAMP) "
                         + "TIMESTAMP(ts) PARTITION BY DAY WAL");
                 serverMain.execute("INSERT INTO cs VALUES (42, 1::TIMESTAMP), (43, 2::TIMESTAMP)");
@@ -889,7 +889,7 @@ public class QwpEgressBootstrapTest extends AbstractBootstrapTest {
     @Test
     public void testGeohash() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables()) {
+            try (final TestServerMain serverMain = startFragmented()) {
                 serverMain.execute("CREATE TABLE geo(g20 GEOHASH(20b), g40 GEOHASH(40b), ts TIMESTAMP) "
                         + "TIMESTAMP(ts) PARTITION BY DAY WAL");
                 // Geohash literal: #<base-32-chars>; 4 chars = 20 bits, 8 chars = 40 bits
@@ -944,7 +944,7 @@ public class QwpEgressBootstrapTest extends AbstractBootstrapTest {
     @Test
     public void testGeohashNullAcrossAllWidths() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables()) {
+            try (final TestServerMain serverMain = startFragmented()) {
                 // 4->GEOBYTE, 8->GEOSHORT, 16->GEOINT, 40/60->GEOLONG.
                 serverMain.execute("""
                         CREATE TABLE geo_nulls(
@@ -1013,7 +1013,7 @@ public class QwpEgressBootstrapTest extends AbstractBootstrapTest {
         // inserts come back as null. A non-zero address surfaces as non-null with the address
         // bits intact.
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables()) {
+            try (final TestServerMain serverMain = startFragmented()) {
                 serverMain.execute("CREATE TABLE ipx(addr IPv4, ts TIMESTAMP) "
                         + "TIMESTAMP(ts) PARTITION BY DAY WAL");
                 serverMain.execute("""
@@ -1070,7 +1070,7 @@ public class QwpEgressBootstrapTest extends AbstractBootstrapTest {
         // Exercises: schema-reference mode (mode 0x01) after the first batch,
         // client recv-buffer growth, multi-batch reassembly on decode loop.
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables()) {
+            try (final TestServerMain serverMain = startFragmented()) {
                 serverMain.execute("CREATE TABLE big(x LONG, ts TIMESTAMP) "
                         + "TIMESTAMP(ts) PARTITION BY DAY WAL");
                 serverMain.execute(
@@ -1122,7 +1122,7 @@ public class QwpEgressBootstrapTest extends AbstractBootstrapTest {
     @Test
     public void testManyUniqueSymbolsSchemaReference() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables()) {
+            try (final TestServerMain serverMain = startFragmented()) {
                 serverMain.execute("CREATE TABLE sym_t(s SYMBOL, ts TIMESTAMP) "
                         + "TIMESTAMP(ts) PARTITION BY DAY WAL");
                 // Spans multiple batches by using 2 * MAX_ROWS_PER_BATCH rows with
@@ -1176,7 +1176,7 @@ public class QwpEgressBootstrapTest extends AbstractBootstrapTest {
     @Test
     public void testMultiBatchSeqIsMonotonic() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables()) {
+            try (final TestServerMain serverMain = startFragmented()) {
                 serverMain.execute("CREATE TABLE seqcheck(x LONG, ts TIMESTAMP) "
                         + "TIMESTAMP(ts) PARTITION BY DAY WAL");
                 // 20_000 rows across multiple batches (server caps batches at 4096 rows).
@@ -1233,7 +1233,7 @@ public class QwpEgressBootstrapTest extends AbstractBootstrapTest {
     @Test
     public void testNaNMapsToNull() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables()) {
+            try (final TestServerMain serverMain = startFragmented()) {
                 serverMain.execute("CREATE TABLE nans(d DOUBLE, f FLOAT, ts TIMESTAMP) "
                         + "TIMESTAMP(ts) PARTITION BY DAY WAL");
                 serverMain.execute("INSERT INTO nans VALUES (1.5, 2.5, 1::TIMESTAMP)");
@@ -1284,7 +1284,7 @@ public class QwpEgressBootstrapTest extends AbstractBootstrapTest {
         // execution landed, the same DROP now round-trips with a success ack
         // carrying the op type and zero rows affected.
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables()) {
+            try (final TestServerMain serverMain = startFragmented()) {
                 serverMain.execute("CREATE TABLE dummy(x LONG, ts TIMESTAMP) "
                         + "TIMESTAMP(ts) PARTITION BY DAY WAL");
                 final short[] opType = {-1};
@@ -1351,7 +1351,7 @@ public class QwpEgressBootstrapTest extends AbstractBootstrapTest {
     @Test
     public void testSelectLong() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables()) {
+            try (final TestServerMain serverMain = startFragmented()) {
                 serverMain.execute("CREATE TABLE t(x LONG, ts TIMESTAMP) "
                         + "TIMESTAMP(ts) PARTITION BY DAY WAL");
                 serverMain.execute("INSERT INTO t VALUES (1, 1::TIMESTAMP), (2, 2::TIMESTAMP), (3, 3::TIMESTAMP)");
@@ -1399,7 +1399,7 @@ public class QwpEgressBootstrapTest extends AbstractBootstrapTest {
     @Test
     public void testSelectMixedTypes() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables()) {
+            try (final TestServerMain serverMain = startFragmented()) {
                 serverMain.execute("CREATE TABLE mixed(id LONG, px DOUBLE, sym SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
                 serverMain.execute("""
                         INSERT INTO mixed VALUES
@@ -1445,7 +1445,7 @@ public class QwpEgressBootstrapTest extends AbstractBootstrapTest {
     @Test
     public void testSelectWithNulls() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables()) {
+            try (final TestServerMain serverMain = startFragmented()) {
                 serverMain.execute("CREATE TABLE n(x LONG, s STRING, ts TIMESTAMP) "
                         + "TIMESTAMP(ts) PARTITION BY DAY WAL");
                 serverMain.execute("INSERT INTO n VALUES (1, 'a', 1::TIMESTAMP), (NULL, NULL, 2::TIMESTAMP), (3, 'c', 3::TIMESTAMP)");
@@ -1500,7 +1500,7 @@ public class QwpEgressBootstrapTest extends AbstractBootstrapTest {
     @Test
     public void testSlowConsumerTriggersResumeSend() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables()) {
+            try (final TestServerMain serverMain = startFragmented()) {
                 final int totalRows = 100_000;
                 serverMain.execute("CREATE TABLE slow_t(x LONG, ts TIMESTAMP) "
                         + "TIMESTAMP(ts) PARTITION BY DAY WAL");
@@ -1563,7 +1563,7 @@ public class QwpEgressBootstrapTest extends AbstractBootstrapTest {
     @Test
     public void testSqlSyntaxError() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain ignored = startWithEnvVariables()) {
+            try (final TestServerMain ignored = startFragmented()) {
                 final byte[] errorStatus = {(byte) 0xFF};
                 final String[] errorMsg = {null};
                 try (QwpQueryClient client = QwpQueryClient.newPlainText("127.0.0.1", HTTP_PORT)) {
@@ -1610,7 +1610,7 @@ public class QwpEgressBootstrapTest extends AbstractBootstrapTest {
     @Test
     public void testStaleCachedFactoryRetriesCompile() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables()) {
+            try (final TestServerMain serverMain = startFragmented()) {
                 serverMain.execute("CREATE TABLE t(id LONG, ts TIMESTAMP) "
                         + "TIMESTAMP(ts) PARTITION BY DAY WAL");
                 serverMain.execute("INSERT INTO t VALUES (1, 0::TIMESTAMP)");
@@ -1688,7 +1688,7 @@ public class QwpEgressBootstrapTest extends AbstractBootstrapTest {
     @Test
     public void testSymbolDictResentEachQuery() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables()) {
+            try (final TestServerMain serverMain = startFragmented()) {
                 serverMain.execute("CREATE TABLE syms(s SYMBOL, ts TIMESTAMP) "
                         + "TIMESTAMP(ts) PARTITION BY DAY WAL");
                 serverMain.execute("INSERT INTO syms VALUES ('A', 1::TIMESTAMP), ('B', 2::TIMESTAMP), "
@@ -1744,7 +1744,7 @@ public class QwpEgressBootstrapTest extends AbstractBootstrapTest {
     @Test
     public void testTableNotFound() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain ignored = startWithEnvVariables()) {
+            try (final TestServerMain ignored = startFragmented()) {
                 final String[] errorMsg = {null};
                 try (QwpQueryClient client = QwpQueryClient.newPlainText("127.0.0.1", HTTP_PORT)) {
                     client.connect();
@@ -1785,7 +1785,7 @@ public class QwpEgressBootstrapTest extends AbstractBootstrapTest {
     @Test
     public void testTimestampNanos() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables()) {
+            try (final TestServerMain serverMain = startFragmented()) {
                 serverMain.execute("CREATE TABLE ts_n(ts TIMESTAMP_NS, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
                 serverMain.execute("""
                         INSERT INTO ts_n VALUES
@@ -1829,7 +1829,7 @@ public class QwpEgressBootstrapTest extends AbstractBootstrapTest {
     @Test
     public void testUuidAndLong256() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables()) {
+            try (final TestServerMain serverMain = startFragmented()) {
                 serverMain.execute("CREATE TABLE wide(u UUID, l256 LONG256, ts TIMESTAMP) "
                         + "TIMESTAMP(ts) PARTITION BY DAY WAL");
                 serverMain.execute(
@@ -1920,7 +1920,7 @@ public class QwpEgressBootstrapTest extends AbstractBootstrapTest {
 
     private void runBatchBoundary(int totalRows) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables()) {
+            try (final TestServerMain serverMain = startFragmented()) {
                 serverMain.execute("CREATE TABLE boundary_t(x LONG, ts TIMESTAMP) "
                         + "TIMESTAMP(ts) PARTITION BY DAY WAL");
                 serverMain.execute(

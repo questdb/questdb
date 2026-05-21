@@ -28,7 +28,6 @@ import io.questdb.client.cutlass.qwp.client.QwpColumnBatch;
 import io.questdb.client.cutlass.qwp.client.QwpColumnBatchHandler;
 import io.questdb.client.cutlass.qwp.client.QwpQueryClient;
 import io.questdb.client.std.str.DirectUtf8Sequence;
-import io.questdb.test.AbstractBootstrapTest;
 import io.questdb.test.TestServerMain;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -55,7 +54,7 @@ import org.junit.Test;
  *   <li>tables with no SYMBOL columns still tolerate the always-on flag.</li>
  * </ul>
  */
-public class QwpEgressDeltaSymbolDictTest extends AbstractBootstrapTest {
+public class QwpEgressDeltaSymbolDictTest extends AbstractQwpBootstrapTest {
 
     @Before
     public void setUp() {
@@ -70,7 +69,7 @@ public class QwpEgressDeltaSymbolDictTest extends AbstractBootstrapTest {
         // into the same connection-scoped dict, so only one copy of each unique
         // symbol rides the wire.
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables()) {
+            try (final TestServerMain serverMain = startFragmented()) {
                 serverMain.execute("CREATE TABLE two_sym(a SYMBOL, b SYMBOL, ts TIMESTAMP) "
                         + "TIMESTAMP(ts) PARTITION BY DAY WAL");
                 // a cycles through {X, Y, Z}; b cycles through {Y, Z, W}. Shared {Y, Z}
@@ -134,7 +133,7 @@ public class QwpEgressDeltaSymbolDictTest extends AbstractBootstrapTest {
         // client connection -- {alpha, beta, gamma} are observed, and only
         // 'gamma' ships as a new delta entry. All three round-trip correctly.
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables()) {
+            try (final TestServerMain serverMain = startFragmented()) {
                 serverMain.execute("CREATE TABLE inc(s SYMBOL, ts TIMESTAMP) "
                         + "TIMESTAMP(ts) PARTITION BY DAY WAL");
                 serverMain.execute("INSERT INTO inc VALUES ('alpha', 1::TIMESTAMP), "
@@ -237,7 +236,7 @@ public class QwpEgressDeltaSymbolDictTest extends AbstractBootstrapTest {
         // regardless of whether any SYMBOL column is present. Tables with none
         // must still round-trip correctly (empty delta section, empty dict).
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables()) {
+            try (final TestServerMain serverMain = startFragmented()) {
                 serverMain.execute("CREATE TABLE nosym(x LONG, y DOUBLE, ts TIMESTAMP) "
                         + "TIMESTAMP(ts) PARTITION BY DAY WAL");
                 serverMain.execute("INSERT INTO nosym SELECT x, x * 1.5, x::TIMESTAMP FROM long_sequence(100)");
@@ -281,7 +280,7 @@ public class QwpEgressDeltaSymbolDictTest extends AbstractBootstrapTest {
         // meaning Q2's total bytes are smaller than Q1's by the size of the
         // symbol dict entries that Q1 shipped.
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables()) {
+            try (final TestServerMain serverMain = startFragmented()) {
                 serverMain.execute("CREATE TABLE recur(s SYMBOL, ts TIMESTAMP) "
                         + "TIMESTAMP(ts) PARTITION BY DAY WAL");
                 // 60 rows, 3 unique symbols (aa, bbb, cccc) -- guaranteed total
@@ -359,7 +358,7 @@ public class QwpEgressDeltaSymbolDictTest extends AbstractBootstrapTest {
         // has to rebase every existing DirectUtf8String; this test would fail
         // with invalid pointer dereferences if it didn't.
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables()) {
+            try (final TestServerMain serverMain = startFragmented()) {
                 serverMain.execute("CREATE TABLE many(s SYMBOL, ts TIMESTAMP) "
                         + "TIMESTAMP(ts) PARTITION BY DAY WAL");
                 // First 50 rows use 's_000' .. 's_049'.
@@ -475,4 +474,5 @@ public class QwpEgressDeltaSymbolDictTest extends AbstractBootstrapTest {
         int ones = v.byteAt(4) - '0';
         return hundreds * 100 + tens * 10 + ones;
     }
+
 }

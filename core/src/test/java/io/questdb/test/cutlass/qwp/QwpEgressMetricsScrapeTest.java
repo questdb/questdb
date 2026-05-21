@@ -31,7 +31,6 @@ import io.questdb.cutlass.qwp.server.egress.QwpEgressMetrics;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.std.Os;
 import io.questdb.std.str.DirectUtf8Sink;
-import io.questdb.test.AbstractBootstrapTest;
 import io.questdb.test.TestServerMain;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -44,7 +43,7 @@ import org.junit.Test;
  * format. Tests exercise the egress endpoint with metrics enabled, run
  * representative workloads, and assert the counters advance as expected.
  */
-public class QwpEgressMetricsScrapeTest extends AbstractBootstrapTest {
+public class QwpEgressMetricsScrapeTest extends AbstractQwpBootstrapTest {
 
     @Before
     public void setUp() {
@@ -56,7 +55,7 @@ public class QwpEgressMetricsScrapeTest extends AbstractBootstrapTest {
     @Test
     public void testBytesZstdSavedCounterAdvancesWithCompression() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables(
+            try (final TestServerMain serverMain = startFragmented(
                     "QDB_METRICS_ENABLED", "true")) {
                 // Repetitive LONG payload compresses well under zstd, so savings
                 // are positive on every compressed batch.
@@ -97,7 +96,7 @@ public class QwpEgressMetricsScrapeTest extends AbstractBootstrapTest {
     @Test
     public void testBatchAndRowCountersAdvanceWithLoad() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables(
+            try (final TestServerMain serverMain = startFragmented(
                     "QDB_METRICS_ENABLED", "true")) {
                 serverMain.execute("CREATE TABLE batch_metric(x LONG, ts TIMESTAMP) "
                         + "TIMESTAMP(ts) PARTITION BY DAY WAL");
@@ -141,7 +140,7 @@ public class QwpEgressMetricsScrapeTest extends AbstractBootstrapTest {
     @Test
     public void testConnectionGaugeTracksOpenClose() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables(
+            try (final TestServerMain serverMain = startFragmented(
                     "QDB_METRICS_ENABLED", "true")) {
                 QwpEgressMetrics metrics = serverMain.getEngine().getMetrics().qwpEgressMetrics();
                 Assert.assertEquals("start at 0 with no connections", 0, metrics.connectionCountGauge().getValue());
@@ -171,7 +170,7 @@ public class QwpEgressMetricsScrapeTest extends AbstractBootstrapTest {
     @Test
     public void testDisabledMetricsAreNoOp() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables(
+            try (final TestServerMain serverMain = startFragmented(
                     "QDB_METRICS_ENABLED", "false")) {
                 serverMain.execute("CREATE TABLE nometric(x LONG, ts TIMESTAMP) "
                         + "TIMESTAMP(ts) PARTITION BY DAY WAL");
@@ -208,7 +207,7 @@ public class QwpEgressMetricsScrapeTest extends AbstractBootstrapTest {
     @Test
     public void testErroredCounterAdvancesOnQueryError() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables(
+            try (final TestServerMain serverMain = startFragmented(
                     "QDB_METRICS_ENABLED", "true")) {
                 QwpEgressMetrics metrics = serverMain.getEngine().getMetrics().qwpEgressMetrics();
                 long erroredBefore = metrics.queriesErroredCounter().getValue();
@@ -244,7 +243,7 @@ public class QwpEgressMetricsScrapeTest extends AbstractBootstrapTest {
     @Test
     public void testExecDoneAndStartedCountersAdvance() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables(
+            try (final TestServerMain serverMain = startFragmented(
                     "QDB_METRICS_ENABLED", "true")) {
                 QwpEgressMetrics metrics = serverMain.getEngine().getMetrics().qwpEgressMetrics();
                 long startedBefore = metrics.queriesStartedCount();
@@ -284,7 +283,7 @@ public class QwpEgressMetricsScrapeTest extends AbstractBootstrapTest {
     @Test
     public void testScrapeOutputExposesQwpEgressCounters() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables(
+            try (final TestServerMain serverMain = startFragmented(
                     "QDB_METRICS_ENABLED", "true")) {
                 serverMain.execute("CREATE TABLE scrape_t(x LONG, ts TIMESTAMP) "
                         + "TIMESTAMP(ts) PARTITION BY DAY WAL");
@@ -333,4 +332,5 @@ public class QwpEgressMetricsScrapeTest extends AbstractBootstrapTest {
             }
         });
     }
+
 }

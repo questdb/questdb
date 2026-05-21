@@ -28,7 +28,6 @@ import io.questdb.client.cutlass.qwp.client.QwpColumnBatch;
 import io.questdb.client.cutlass.qwp.client.QwpColumnBatchHandler;
 import io.questdb.client.cutlass.qwp.client.QwpQueryClient;
 import io.questdb.griffin.CompiledQuery;
-import io.questdb.test.AbstractBootstrapTest;
 import io.questdb.test.TestServerMain;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -50,7 +49,7 @@ import java.util.concurrent.TimeUnit;
  * with scenarios that fall out of normal user operation: runtime DDL failures,
  * type mismatches, peer disconnects mid-stream, and handshake-level rejections.
  */
-public class QwpEgressErrorCoverageTest extends AbstractBootstrapTest {
+public class QwpEgressErrorCoverageTest extends AbstractQwpBootstrapTest {
 
     // STATUS_PARSE_ERROR (0x05) and STATUS_INTERNAL_ERROR (0x06) from the
     // egress wire. Copied as literals so this test doesn't drag in the
@@ -71,7 +70,7 @@ public class QwpEgressErrorCoverageTest extends AbstractBootstrapTest {
         // classic user mistake. The compiler rejects it; we want to see the
         // rejection routed via QUERY_ERROR rather than killing the connection.
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables()) {
+            try (final TestServerMain serverMain = startFragmented()) {
                 serverMain.execute("CREATE TABLE dup(x LONG, y DOUBLE, ts TIMESTAMP) "
                         + "TIMESTAMP(ts) PARTITION BY DAY WAL");
                 try (QwpQueryClient client = QwpQueryClient.fromConfig(
@@ -120,7 +119,7 @@ public class QwpEgressErrorCoverageTest extends AbstractBootstrapTest {
         // a crash or silent success. Covers the CairoException path through
         // Operation.execute on DDL.
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain ignored = startWithEnvVariables()) {
+            try (final TestServerMain ignored = startFragmented()) {
                 try (QwpQueryClient client = QwpQueryClient.fromConfig(
                         "ws::addr=127.0.0.1:" + HTTP_PORT + ";")) {
                     client.connect();
@@ -150,7 +149,7 @@ public class QwpEgressErrorCoverageTest extends AbstractBootstrapTest {
         // connection stays usable. Accept either code and then run a
         // follow-up query to confirm liveness.
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables()) {
+            try (final TestServerMain serverMain = startFragmented()) {
                 serverMain.execute("CREATE TABLE strict(x LONG, ts TIMESTAMP) "
                         + "TIMESTAMP(ts) PARTITION BY DAY WAL");
                 try (QwpQueryClient client = QwpQueryClient.fromConfig(
@@ -209,7 +208,7 @@ public class QwpEgressErrorCoverageTest extends AbstractBootstrapTest {
             // enough for the WebSocket handshake (a few hundred bytes) and
             // SERVER_INFO probe traffic, but small enough that a multi-KB
             // SQL string forces totalFrameSize > recvBufferSize.
-            try (TestServerMain serverMain = startWithEnvVariables(
+            try (TestServerMain serverMain = startFragmented(
                     "QDB_HTTP_RECV_BUFFER_SIZE", "2048")) {
                 serverMain.execute("CREATE TABLE oversize_query(id LONG, ts TIMESTAMP) "
                         + "TIMESTAMP(ts) PARTITION BY DAY WAL");
@@ -253,7 +252,7 @@ public class QwpEgressErrorCoverageTest extends AbstractBootstrapTest {
         // partway through; must release the cursor / factory without leaking and
         // must still serve a fresh connection afterwards.
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables()) {
+            try (final TestServerMain serverMain = startFragmented()) {
                 serverMain.execute("CREATE TABLE big(x LONG, ts TIMESTAMP) "
                         + "TIMESTAMP(ts) PARTITION BY DAY WAL");
                 // 50k rows guarantees multi-batch streaming (MAX_ROWS_PER_BATCH = 4096).
@@ -355,7 +354,7 @@ public class QwpEgressErrorCoverageTest extends AbstractBootstrapTest {
         // rowsAffected = 0, not error out. Verifies the UPDATE code path
         // returns zero-rows as a first-class success.
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables()) {
+            try (final TestServerMain serverMain = startFragmented()) {
                 // Non-WAL: UPDATE's rowsAffected on WAL reports WAL-segment count, not
                 // logical rows, which would break the zero-match assertion below.
                 serverMain.execute("CREATE TABLE zu(ts TIMESTAMP, x LONG) TIMESTAMP(ts) PARTITION BY DAY");
@@ -405,7 +404,7 @@ public class QwpEgressErrorCoverageTest extends AbstractBootstrapTest {
         // handshake validation path but there's no dedicated egress test for
         // this case before now.
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain ignored = startWithEnvVariables()) {
+            try (final TestServerMain ignored = startFragmented()) {
                 byte[] keyBytes = new byte[16];
                 for (int i = 0; i < 16; i++) {
                     keyBytes[i] = (byte) (i * 31);
@@ -463,4 +462,5 @@ public class QwpEgressErrorCoverageTest extends AbstractBootstrapTest {
             }
         };
     }
+
 }

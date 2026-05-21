@@ -40,14 +40,25 @@ import io.questdb.log.LogFactory;
 import io.questdb.mp.WorkerPoolUtils;
 import io.questdb.network.PlainSocketFactory;
 import io.questdb.std.ObjHashSet;
+import io.questdb.std.Rnd;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.tools.TestUtils;
+import org.junit.Before;
 
 public class AbstractQwpWebSocketTest extends AbstractCairoTest {
 
     private static final Log LOG = LogFactory.getLog(AbstractQwpWebSocketTest.class);
+    protected int recvChunk;
+    protected int sendChunk;
+
+    @Before
+    public void setUpFragmentationChunks() {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        recvChunk = 1 + rnd.nextInt(500);
+        sendChunk = 1 + rnd.nextInt(500);
+    }
 
     protected void assertSql(String sql, String expected) {
         try {
@@ -179,24 +190,33 @@ public class AbstractQwpWebSocketTest extends AbstractCairoTest {
     }
 
     protected void runInContext(QwpTestContext r, int recvBufferSize) throws Exception {
-        runInContext(r, recvBufferSize, Integer.MAX_VALUE);
+        runInContext(r, recvBufferSize, recvChunk);
     }
 
     protected void runInContext(QwpTestContext r, int recvBufferSize, int forceRecvFragmentationChunkSize) throws Exception {
-        runInContext(r, recvBufferSize, forceRecvFragmentationChunkSize, true);
+        runInContext(r, recvBufferSize, forceRecvFragmentationChunkSize, sendChunk, true);
+    }
+
+    protected void runInContext(QwpTestContext r, int recvBufferSize, int forceRecvFragmentationChunkSize, int forceSendFragmentationChunkSize) throws Exception {
+        runInContext(r, recvBufferSize, forceRecvFragmentationChunkSize, forceSendFragmentationChunkSize, true);
     }
 
     protected void runInContextNoAutoCreate(QwpTestContext r) throws Exception {
-        runInContext(r, 65_536, Integer.MAX_VALUE, false);
+        runInContext(r, 65_536, recvChunk, sendChunk, false);
     }
 
-    private void runInContext(QwpTestContext r, int recvBufferSize, int forceRecvFragmentationChunkSize, boolean autoCreateNewColumns) throws Exception {
+    private void runInContext(QwpTestContext r, int recvBufferSize, int forceRecvFragmentationChunkSize, int forceSendFragmentationChunkSize, boolean autoCreateNewColumns) throws Exception {
         final HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(
                 configuration,
                 new DefaultHttpContextConfiguration() {
                     @Override
                     public int getForceRecvFragmentationChunkSize() {
                         return forceRecvFragmentationChunkSize;
+                    }
+
+                    @Override
+                    public int getForceSendFragmentationChunkSize() {
+                        return forceSendFragmentationChunkSize;
                     }
                 }
         ) {

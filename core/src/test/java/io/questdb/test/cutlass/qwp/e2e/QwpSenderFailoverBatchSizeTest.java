@@ -40,11 +40,13 @@ import io.questdb.log.LogFactory;
 import io.questdb.network.PlainSocketFactory;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.Os;
+import io.questdb.std.Rnd;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
+import org.junit.Before;
 import org.junit.Test;
 
 import java.net.ServerSocket;
@@ -102,6 +104,15 @@ public class QwpSenderFailoverBatchSizeTest extends AbstractCairoTest {
     // 600 KB payload comfortably exceeds B's 131058 cap and fits under A's
     // 2097138 cap, with margin for per-column metadata.
     private static final int ROW_PAYLOAD_SIZE_BYTES = 600_000;
+    private int recvChunk;
+    private int sendChunk;
+
+    @Before
+    public void setUpFragmentation() {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        recvChunk = 1 + rnd.nextInt(500);
+        sendChunk = 1 + rnd.nextInt(500);
+    }
 
     @Test
     public void testReconnectToTighterCapRefreshesServerMaxBatchSize() throws Exception {
@@ -109,8 +120,8 @@ public class QwpSenderFailoverBatchSizeTest extends AbstractCairoTest {
             int portA = pickFreePort();
             int portB = pickFreePort();
 
-            QwpSidecar serverA = new QwpSidecar(portA, RECV_BUFFER_LARGE_BYTES);
-            QwpSidecar serverB = new QwpSidecar(portB, RECV_BUFFER_SMALL_BYTES);
+            QwpSidecar serverA = new QwpSidecar(portA, RECV_BUFFER_LARGE_BYTES, recvChunk, sendChunk);
+            QwpSidecar serverB = new QwpSidecar(portB, RECV_BUFFER_SMALL_BYTES, recvChunk, sendChunk);
             try {
                 serverA.start();
                 serverB.start();
@@ -221,21 +232,35 @@ public class QwpSenderFailoverBatchSizeTest extends AbstractCairoTest {
      * {@code X-QWP-Max-Batch-Size} caps. Shares the test's {@code engine}.
      */
     private static final class QwpSidecar {
+        private final int forceRecvFragmentationChunkSize;
+        private final int forceSendFragmentationChunkSize;
         private final int port;
         private final int recvBufferSize;
         private TestWorkerPool pool;
         private boolean running;
         private HttpServer server;
 
-        QwpSidecar(int port, int recvBufferSize) {
+        QwpSidecar(int port, int recvBufferSize, int forceRecvFragmentationChunkSize, int forceSendFragmentationChunkSize) {
             this.port = port;
             this.recvBufferSize = recvBufferSize;
+            this.forceRecvFragmentationChunkSize = forceRecvFragmentationChunkSize;
+            this.forceSendFragmentationChunkSize = forceSendFragmentationChunkSize;
         }
 
         void start() throws SqlException {
             final HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(
                     configuration,
-                    new DefaultHttpContextConfiguration()
+                    new DefaultHttpContextConfiguration() {
+                        @Override
+                        public int getForceRecvFragmentationChunkSize() {
+                            return forceRecvFragmentationChunkSize;
+                        }
+
+                        @Override
+                        public int getForceSendFragmentationChunkSize() {
+                            return forceSendFragmentationChunkSize;
+                        }
+                    }
             ) {
                 @Override
                 public int getBindPort() {

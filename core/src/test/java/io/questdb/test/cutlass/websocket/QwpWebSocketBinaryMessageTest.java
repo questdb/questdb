@@ -29,8 +29,8 @@ import io.questdb.client.Sender;
 import io.questdb.client.SenderError;
 import io.questdb.client.cutlass.line.LineSenderException;
 import io.questdb.client.cutlass.qwp.client.QwpWebSocketSender;
-import io.questdb.test.AbstractBootstrapTest;
 import io.questdb.test.TestServerMain;
+import io.questdb.test.cutlass.qwp.AbstractQwpBootstrapTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
@@ -55,7 +55,7 @@ import java.util.concurrent.atomic.AtomicReference;
  * Integration tests for WebSocket binary message flow on the /write/v4 endpoint.
  * Uses JDK's java.net.http.WebSocket client.
  */
-public class QwpWebSocketBinaryMessageTest extends AbstractBootstrapTest {
+public class QwpWebSocketBinaryMessageTest extends AbstractQwpBootstrapTest {
 
     @Override
     @Before
@@ -71,7 +71,7 @@ public class QwpWebSocketBinaryMessageTest extends AbstractBootstrapTest {
         // corrupt WAL state.  After the zero-row message, real rows sent on a
         // fresh connection must land in the table.
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables(
+            try (final TestServerMain serverMain = startFragmented(
                     PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
             )) {
                 int httpPort = serverMain.getHttpServerPort();
@@ -154,7 +154,7 @@ public class QwpWebSocketBinaryMessageTest extends AbstractBootstrapTest {
     @Test
     public void testWebSocketCloseHandshake() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables(
+            try (final TestServerMain serverMain = startFragmented(
                     PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
             )) {
                 int httpPort = serverMain.getHttpServerPort();
@@ -214,7 +214,7 @@ public class QwpWebSocketBinaryMessageTest extends AbstractBootstrapTest {
     @Test
     public void testWebSocketConnectAndSendBinaryMessage() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables(
+            try (final TestServerMain serverMain = startFragmented(
                     PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
             )) {
                 int httpPort = serverMain.getHttpServerPort();
@@ -279,7 +279,7 @@ public class QwpWebSocketBinaryMessageTest extends AbstractBootstrapTest {
     @Test
     public void testWebSocketInternalErrorOnMissingTable() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables(
+            try (final TestServerMain serverMain = startFragmented(
                     PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536",
                     PropertyKey.LINE_AUTO_CREATE_NEW_TABLES.getEnvVarName(), "false"
             )) {
@@ -311,7 +311,7 @@ public class QwpWebSocketBinaryMessageTest extends AbstractBootstrapTest {
     @Test
     public void testWebSocketLargeBinaryMessage() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables(
+            try (final TestServerMain serverMain = startFragmented(
                     PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
             )) {
                 int httpPort = serverMain.getHttpServerPort();
@@ -377,7 +377,7 @@ public class QwpWebSocketBinaryMessageTest extends AbstractBootstrapTest {
     @Test
     public void testWebSocketMultipleBinaryMessages() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables(
+            try (final TestServerMain serverMain = startFragmented(
                     PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
             )) {
                 int httpPort = serverMain.getHttpServerPort();
@@ -443,7 +443,7 @@ public class QwpWebSocketBinaryMessageTest extends AbstractBootstrapTest {
     @Test
     public void testWebSocketPingPong() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables(
+            try (final TestServerMain serverMain = startFragmented(
                     PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
             )) {
                 int httpPort = serverMain.getHttpServerPort();
@@ -508,7 +508,7 @@ public class QwpWebSocketBinaryMessageTest extends AbstractBootstrapTest {
     @Test
     public void testWebSocketReconnect() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables(
+            try (final TestServerMain serverMain = startFragmented(
                     PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
             )) {
                 int httpPort = serverMain.getHttpServerPort();
@@ -567,7 +567,7 @@ public class QwpWebSocketBinaryMessageTest extends AbstractBootstrapTest {
     @Test
     public void testWebSocketSecurityErrorOnReadonlyServer() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables(
+            try (final TestServerMain serverMain = startFragmented(
                     PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536",
                     PropertyKey.HTTP_SECURITY_READONLY.getEnvVarName(), "true"
             )) {

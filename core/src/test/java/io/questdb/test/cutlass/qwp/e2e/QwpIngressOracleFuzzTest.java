@@ -675,7 +675,8 @@ public class QwpIngressOracleFuzzTest extends AbstractCairoTest {
                             String drainConnect = "ws::addr=localhost:" + port + ";sf_dir=" + mySfDir
                                     + ";initial_connect_retry=async"
                                     + ";reconnect_max_duration_millis=120000"
-                                    + ";sf_max_bytes=" + sfMaxBytes + ";";
+                                    + ";sf_max_bytes=" + sfMaxBytes
+                                    + ";close_flush_timeout_millis=60000;";
                             try (Sender sender = Sender.fromConfig(drainConnect)) {
                                 sender.flush();
                             }
@@ -938,31 +939,6 @@ public class QwpIngressOracleFuzzTest extends AbstractCairoTest {
         }
     }
 
-    private static double[] deriveDoubleArr1d(long id, double sign) {
-        return new double[]{id * sign, id * 2.0 * sign, id * 3.0 * sign};
-    }
-
-    private static double[][] deriveDoubleArr2d(long id, double sign) {
-        return new double[][]{
-                {id * sign, id * 2.0 * sign},
-                {id * 3.0 * sign, id * 4.0 * sign}
-        };
-    }
-
-    private static double[][][] deriveDoubleArr3d(long id, double sign) {
-        // 2x2x3 -> 12 elements, exercising three independent strides
-        return new double[][][]{
-                {
-                        {id * sign, id * 2.0 * sign, id * 3.0 * sign},
-                        {id * 4.0 * sign, id * 5.0 * sign, id * 6.0 * sign}
-                },
-                {
-                        {id * 7.0 * sign, id * 8.0 * sign, id * 9.0 * sign},
-                        {id * 10.0 * sign, id * 11.0 * sign, id * 12.0 * sign}
-                }
-        };
-    }
-
     /**
      * Map an id (or any long seed) to a GEOHASH bit pattern in the low
      * {@code precisionBits} bits. Top bits are masked off so the value fits
@@ -1005,6 +981,31 @@ public class QwpIngressOracleFuzzTest extends AbstractCairoTest {
             out[i] = (byte) (state ^ (state >>> 31));
         }
         return out;
+    }
+
+    private static double[] deriveDoubleArr1d(long id, double sign) {
+        return new double[]{id * sign, id * 2.0 * sign, id * 3.0 * sign};
+    }
+
+    private static double[][] deriveDoubleArr2d(long id, double sign) {
+        return new double[][]{
+                {id * sign, id * 2.0 * sign},
+                {id * 3.0 * sign, id * 4.0 * sign}
+        };
+    }
+
+    private static double[][][] deriveDoubleArr3d(long id, double sign) {
+        // 2x2x3 -> 12 elements, exercising three independent strides
+        return new double[][][]{
+                {
+                        {id * sign, id * 2.0 * sign, id * 3.0 * sign},
+                        {id * 4.0 * sign, id * 5.0 * sign, id * 6.0 * sign}
+                },
+                {
+                        {id * 7.0 * sign, id * 8.0 * sign, id * 9.0 * sign},
+                        {id * 10.0 * sign, id * 11.0 * sign, id * 12.0 * sign}
+                }
+        };
     }
 
     private static long deriveGeoHash(long seed, int precisionBits) {

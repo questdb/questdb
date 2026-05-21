@@ -30,7 +30,6 @@ import io.questdb.client.cutlass.qwp.client.QwpColumnBatchHandler;
 import io.questdb.client.cutlass.qwp.client.QwpQueryClient;
 import io.questdb.client.cutlass.qwp.client.WebSocketResponse;
 import io.questdb.client.cutlass.qwp.protocol.QwpConstants;
-import io.questdb.test.AbstractBootstrapTest;
 import io.questdb.test.TestServerMain;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -54,7 +53,7 @@ import java.util.UUID;
  * DECIMAL64 / DECIMAL128 / DECIMAL256. ARRAY, BINARY, and IPv4 are rejected
  * server-side and verified here via the client's setNull guard.
  */
-public class QwpEgressBindRoundTripTest extends AbstractBootstrapTest {
+public class QwpEgressBindRoundTripTest extends AbstractQwpBootstrapTest {
 
     @Before
     public void setUp() {
@@ -188,7 +187,7 @@ public class QwpEgressBindRoundTripTest extends AbstractBootstrapTest {
     @Test
     public void testBindErrorSurfacesViaOnError() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (TestServerMain serverMain = startWithEnvVariables()) {
+            try (TestServerMain serverMain = startFragmented()) {
                 serverMain.execute("CREATE TABLE t(c LONG, part_ts TIMESTAMP) TIMESTAMP(part_ts) PARTITION BY DAY WAL");
                 serverMain.awaitTable("t");
 
@@ -301,7 +300,7 @@ public class QwpEgressBindRoundTripTest extends AbstractBootstrapTest {
         // Sanity: when the user passes the 3-arg form with no setter, the wire
         // still encodes bind_count=0. Identical to the 2-arg overload.
         TestUtils.assertMemoryLeak(() -> {
-            try (TestServerMain serverMain = startWithEnvVariables()) {
+            try (TestServerMain serverMain = startFragmented()) {
                 serverMain.execute("CREATE TABLE t(c LONG, part_ts TIMESTAMP) TIMESTAMP(part_ts) PARTITION BY DAY WAL");
                 serverMain.execute("INSERT INTO t VALUES (42, 1::TIMESTAMP)");
                 serverMain.awaitTable("t");
@@ -398,7 +397,7 @@ public class QwpEgressBindRoundTripTest extends AbstractBootstrapTest {
         // SQL-text-keyed factory cache compiles once on the first call; every
         // subsequent call with the same text reuses the cached factory.
         TestUtils.assertMemoryLeak(() -> {
-            try (TestServerMain serverMain = startWithEnvVariables()) {
+            try (TestServerMain serverMain = startFragmented()) {
                 serverMain.execute("CREATE TABLE t(id LONG, part_ts TIMESTAMP) TIMESTAMP(part_ts) PARTITION BY DAY WAL");
                 serverMain.execute("INSERT INTO t VALUES (1, 1::TIMESTAMP), (2, 2::TIMESTAMP), (3, 3::TIMESTAMP), (4, 4::TIMESTAMP), (5, 5::TIMESTAMP)");
                 serverMain.awaitTable("t");
@@ -538,7 +537,7 @@ public class QwpEgressBindRoundTripTest extends AbstractBootstrapTest {
         // bindValues scratch must reset between calls so the second query's
         // binds don't leak state from the first.
         TestUtils.assertMemoryLeak(() -> {
-            try (TestServerMain serverMain = startWithEnvVariables()) {
+            try (TestServerMain serverMain = startFragmented()) {
                 serverMain.execute("CREATE TABLE t(id LONG, part_ts TIMESTAMP) TIMESTAMP(part_ts) PARTITION BY DAY WAL");
                 serverMain.execute("INSERT INTO t VALUES (1, 1::TIMESTAMP), (2, 2::TIMESTAMP), (3, 3::TIMESTAMP)");
                 serverMain.awaitTable("t");
@@ -595,7 +594,7 @@ public class QwpEgressBindRoundTripTest extends AbstractBootstrapTest {
             BatchAsserter asserter
     ) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (TestServerMain serverMain = startWithEnvVariables()) {
+            try (TestServerMain serverMain = startFragmented()) {
                 serverMain.execute(createSql);
                 serverMain.execute(insertSql);
                 serverMain.awaitTable("t");
@@ -631,7 +630,7 @@ public class QwpEgressBindRoundTripTest extends AbstractBootstrapTest {
             BatchAsserter asserter
     ) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (TestServerMain ignored = startWithEnvVariables()) {
+            try (TestServerMain ignored = startFragmented()) {
                 final boolean[] observed = {false};
                 try (QwpQueryClient client = QwpQueryClient.fromConfig("ws::addr=127.0.0.1:" + HTTP_PORT + ";")) {
                     client.connect();
