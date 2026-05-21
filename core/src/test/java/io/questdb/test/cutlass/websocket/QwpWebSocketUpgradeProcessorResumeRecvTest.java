@@ -563,6 +563,11 @@ public class QwpWebSocketUpgradeProcessorResumeRecvTest extends AbstractCairoTes
 
     @Test
     public void testHandshakeSendSlowToRead() throws Exception {
+        // The 101 send is deferred from onHeadersReady to onRequestComplete so a
+        // partial-write PeerIsSlowToReadException can propagate to the framework's
+        // park-on-write path rather than being converted to a fatal HttpException.
+        // The handshake bytes are staged on state in onHeadersReady; PISR fires
+        // only from onRequestComplete.
         assertMemoryLeak(() -> {
             HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
             QwpWebSocketUpgradeProcessor processor = new QwpWebSocketUpgradeProcessor(engine, httpConfig);
@@ -582,12 +587,33 @@ public class QwpWebSocketUpgradeProcessorResumeRecvTest extends AbstractCairoTes
                 header.setHeader("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ==");
                 header.setHeader("Sec-WebSocket-Version", "13");
 
+                // onHeadersReady stages bytes; it must NOT touch the socket.
+                processor.onHeadersReady(context);
+                Assert.assertEquals("onHeadersReady must not send",
+                        0, mockRawSocket.sendCallCount);
+                QwpProcessorState state = getLV().get(context);
+                Assert.assertNotNull(state);
+                Assert.assertTrue("handshake flush must be pending after onHeadersReady",
+                        state.isHandshakeFlushPending());
+                Assert.assertTrue("staged byte count must be > 0",
+                        state.getPendingHandshakeBytes() > 0);
+                Assert.assertFalse("protocol switch must wait for finalize",
+                        context.isSwitchProtocolCalled());
+
+                // onRequestComplete drives the send; PISR propagates to the framework
+                // (NOT swallowed into HttpException as the old onHeadersReady path did).
                 try {
-                    processor.onHeadersReady(context);
-                    Assert.fail("Expected HttpException");
-                } catch (HttpException e) {
-                    TestUtils.assertContains(e.getFlyweightMessage(), "blocked");
+                    processor.onRequestComplete(context);
+                    Assert.fail("Expected PeerIsSlowToReadException");
+                } catch (PeerIsSlowToReadException expected) {
+                    // expected -- framework parks the connection for write and
+                    // schedules resumeSend.
                 }
+                Assert.assertEquals(1, mockRawSocket.sendCallCount);
+                Assert.assertFalse("protocol switch must not happen on a parked send",
+                        context.isSwitchProtocolCalled());
+                Assert.assertTrue("handshake flush stays pending until resumeSend completes it",
+                        state.isHandshakeFlushPending());
             } finally {
                 Unsafe.free(sendBuf, SEND_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
             }
@@ -1139,8 +1165,12 @@ public class QwpWebSocketUpgradeProcessorResumeRecvTest extends AbstractCairoTes
                 header.setHeader("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ==");
                 header.setHeader("Sec-WebSocket-Version", "13");
 
-                // First call creates state
+                // First call creates state. onHeadersReady stages the 101 bytes;
+                // the actual send + protocol switch happens in onRequestComplete.
                 processor.onHeadersReady(context);
+                Assert.assertFalse("switchProtocol must wait for onRequestComplete",
+                        context.isSwitchProtocolCalled());
+                processor.onRequestComplete(context);
                 Assert.assertTrue(context.isSwitchProtocolCalled());
 
                 LocalValue<QwpProcessorState> lv = getLV();
@@ -1151,8 +1181,11 @@ public class QwpWebSocketUpgradeProcessorResumeRecvTest extends AbstractCairoTes
                 context.resetSwitchProtocolCalled();
                 mockRawSocket.reset();
 
-                // Second call reuses (clears) existing state
+                // Second call reuses (clears) existing state. Same two-step
+                // lifecycle: onHeadersReady stages, onRequestComplete flushes.
                 processor.onHeadersReady(context);
+                Assert.assertFalse(context.isSwitchProtocolCalled());
+                processor.onRequestComplete(context);
                 Assert.assertTrue(context.isSwitchProtocolCalled());
 
                 QwpProcessorState state2 = lv.get(context);

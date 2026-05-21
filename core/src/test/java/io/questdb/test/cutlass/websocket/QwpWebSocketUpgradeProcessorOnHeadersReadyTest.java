@@ -112,6 +112,11 @@ public class QwpWebSocketUpgradeProcessorOnHeadersReadyTest extends AbstractCair
                 header.setHeader("Sec-WebSocket-Version", "13");
 
                 processor.onHeadersReady(context);
+                // The 101 send is deferred to onRequestComplete so a partial-write
+                // PISR can park the connection rather than killing it. The
+                // response buffer is still written here, but rawSocket.send
+                // only fires from onRequestComplete.
+                processor.onRequestComplete(context);
 
                 String response = readResponse(bufferAddr, context.getMockRawSocket().sentSize);
                 String expectedHeader = "\r\nX-QWP-Max-Batch-Size: " + expectedAdvertisedCap + "\r\n";
@@ -351,6 +356,9 @@ public class QwpWebSocketUpgradeProcessorOnHeadersReadyTest extends AbstractCair
             }
 
             processor.onHeadersReady(context);
+            // onHeadersReady stages the 101 bytes; onRequestComplete performs
+            // the rawSocket.send and finalises the protocol switch.
+            processor.onRequestComplete(context);
 
             Assert.assertTrue("handshake must have switched protocol", context.isSwitchProtocolCalled());
             QwpProcessorState state = lv.get(context);
@@ -379,6 +387,9 @@ public class QwpWebSocketUpgradeProcessorOnHeadersReadyTest extends AbstractCair
             header.setHeader("Sec-WebSocket-Version", "13");
 
             processor.onHeadersReady(context);
+            // onHeadersReady stages the 101 bytes; onRequestComplete performs
+            // the rawSocket.send and finalises the protocol switch.
+            processor.onRequestComplete(context);
 
             Assert.assertTrue("handshake must have switched protocol", context.isSwitchProtocolCalled());
             Assert.assertNotNull("state must be populated after successful handshake", lv.get(context));
