@@ -856,7 +856,7 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
 
     /**
      * True between a CLOSE-frame send that parked on
-     * {@link PeerIsSlowToReadException} and the {@code resumeSend} that
+     * {@code PeerIsSlowToReadException} and the {@code resumeSend} that
      * finishes flushing the residual bytes. {@code resumeSend} consumes the
      * flag and triggers {@code gracefulCloseAndDisconnect} once the deferred
      * flush completes.
