@@ -133,7 +133,7 @@ binary multipliers).
 | `reconnect_initial_backoff_millis` | int (ms) | `100` | Initial backoff. |
 | `reconnect_max_backoff_millis` | int (ms) | `5000` | Backoff ceiling. |
 | `initial_connect_retry` | enum | `off` | `off` (canonical; alias `false`) = terminal on first failure; `on` (canonical; aliases `sync`, `true`) = same retry loop as reconnect, blocking; `async` = same retry loop in the I/O thread, non-blocking. See §13.4 (initial connect) and §13.6 (the loop pseudocode that consumes this knob). |
-| `close_flush_timeout_millis` | int (ms) | `5000` | `close()` blocks up to this long waiting for `ackedFsn >= publishedFsn`. `0` or `-1` skips the drain entirely; the pre-drain `checkError()` safety net still runs (it does no I/O and only rethrows when the error has not reached the user through any other channel). |
+| `close_flush_timeout_millis` | int (ms) | `60000` | `close()` blocks up to this long waiting for `ackedFsn >= publishedFsn`. `0` or `-1` skips the drain entirely; the pre-drain `checkError()` safety net still runs (it does no I/O and only rethrows when the error has not reached the user through any other channel). |
 
 ### 4.3 Durable-ack
 
@@ -1007,10 +1007,10 @@ returns segment bytes to the available pool when `ackedFsn` crosses
 
 `close()` semantics depend on `close_flush_timeout_millis`:
 
-- Default (`5000`): block waiting for `engine.ackedFsn() >= engine.publishedFsn()`
-  for up to 5 seconds. If the wait succeeds, all data is acked. If the
-  timeout fires, log a WARN and proceed; pending data remains on disk
-  (SF mode) or is lost (Memory mode).
+- Default (`60000`): block waiting for `engine.ackedFsn() >= engine.publishedFsn()`
+  for up to 60 seconds. If the wait succeeds, all data is acked. If the
+  timeout fires, log a WARN and throw from `close()` after shutdown cleanup;
+  pending data remains on disk (SF mode) or is lost (Memory mode).
 - `0` or `-1`: skip the drain entirely. Pending data is lost (Memory)
   or persists for the next sender to recover (SF). Producer state is
   still flushed into the engine before close() returns; only the wait

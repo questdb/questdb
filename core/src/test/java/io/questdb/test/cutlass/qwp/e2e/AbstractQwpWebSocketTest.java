@@ -141,10 +141,9 @@ public class AbstractQwpWebSocketTest extends AbstractCairoTest {
         appendAutoFlushRows(cfg, autoFlushRows);
         appendAutoFlushBytes(cfg, autoFlushBytes);
         appendAutoFlushInterval(cfg, autoFlushIntervalNanos);
-        // Default close drain timeout (5s) is too tight for fuzz tests that
-        // push hundreds of batches against a single-worker test server with
-        // concurrent ALTERs slowing down WAL apply. 60s is enough headroom
-        // without masking real problems.
+        // Keep the fuzz-test close drain budget explicit: these tests can push
+        // hundreds of batches against a single-worker test server with
+        // concurrent ALTERs slowing down WAL apply.
         cfg.append("close_flush_timeout_millis=60000;");
         return (QwpWebSocketSender) Sender.fromConfig(cfg.toString());
     }

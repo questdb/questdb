@@ -66,7 +66,7 @@ import java.util.concurrent.atomic.AtomicReference;
  *   <li>In-flight reconnect with exponential backoff and a per-outage
  *       budget ({@code reconnect_max_duration_millis}, default 5 min) —
  *       a server bounce mid-write does not break the sender.</li>
- *   <li>{@code close_flush_timeout_millis} (default 5000): close blocks
+ *   <li>{@code close_flush_timeout_millis} (default 60000): close blocks
  *       up to that many ms waiting for ACKs. Spec tests pass {@code 0}
  *       for fast close so the server can be killed mid-flight and leave
  *       genuinely-unacked frames on disk for the next sender to replay.</li>
@@ -294,7 +294,7 @@ public class QwpIngressServerRestartFuzzTest extends AbstractCairoTest {
         // To make recovery genuinely exercised we use
         // close_flush_timeout_millis=0 (fast close, no wait for ACKs) and
         // kill the server BEFORE the first sender exits. Otherwise close()
-        // would block 5s waiting for ACKs and drain everything to the
+        // would wait for ACKs and drain everything to the
         // server, leaving recovery with nothing to do.
         assertMemoryLeak(() -> {
             createTargetTable();
@@ -424,7 +424,7 @@ public class QwpIngressServerRestartFuzzTest extends AbstractCairoTest {
             try (RestartableQwpServer server = new RestartableQwpServer(engine, configuration, port)) {
                 server.start();
                 // Open one more sender against the same slot to trigger
-                // recovery and drain. close() with the default 5s flush
+                // recovery and drain. close() with the default flush
                 // timeout makes this synchronous-ish.
                 String connectFinal = "ws::addr=localhost:" + port + ";sf_dir=" + sfDir + ";";
                 try (Sender sender = Sender.fromConfig(connectFinal)) {
