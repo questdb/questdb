@@ -32,7 +32,7 @@ import static io.questdb.cutlass.qwp.protocol.QwpConstants.*;
 /**
  * Streaming cursor for fixed-width column types.
  * <p>
- * Supports: BYTE, SHORT, INT, LONG, FLOAT, DOUBLE, DATE, UUID, LONG256.
+ * Supports: BYTE, SHORT, INT, IPv4, LONG, FLOAT, DOUBLE, DATE, UUID, LONG256.
  * <p>
  * Wire format:
  * <pre>
@@ -301,8 +301,14 @@ public final class QwpFixedWidthColumnCursor implements QwpColumnCursor {
     private boolean isCurrentValueSentinelNull() {
         return switch (typeCode) {
             case TYPE_INT -> (int) currentLong == Numbers.INT_NULL;
+            case TYPE_IPV4 -> (int) currentLong == Numbers.IPv4_NULL;
             case TYPE_LONG, TYPE_DATE, TYPE_TIMESTAMP, TYPE_TIMESTAMP_NANOS -> currentLong == Numbers.LONG_NULL;
             case TYPE_FLOAT, TYPE_DOUBLE -> Double.isNaN(currentDouble);
+            case TYPE_UUID -> currentUuidLo == Numbers.LONG_NULL && currentUuidHi == Numbers.LONG_NULL;
+            case TYPE_LONG256 -> currentLong256_0 == Numbers.LONG_NULL
+                    && currentLong256_1 == Numbers.LONG_NULL
+                    && currentLong256_2 == Numbers.LONG_NULL
+                    && currentLong256_3 == Numbers.LONG_NULL;
             default -> false;
         };
     }
@@ -311,7 +317,7 @@ public final class QwpFixedWidthColumnCursor implements QwpColumnCursor {
         switch (typeCode) {
             case TYPE_BYTE -> currentLong = Unsafe.getByte(address);
             case TYPE_SHORT, TYPE_CHAR -> currentLong = Unsafe.getShort(address);
-            case TYPE_INT -> currentLong = Unsafe.getInt(address);
+            case TYPE_INT, TYPE_IPV4 -> currentLong = Unsafe.getInt(address);
             case TYPE_LONG, TYPE_DATE, TYPE_TIMESTAMP, TYPE_TIMESTAMP_NANOS -> currentLong = Unsafe.getLong(address);
             case TYPE_FLOAT -> currentDouble = Unsafe.getFloat(address);
             case TYPE_DOUBLE -> currentDouble = Unsafe.getDouble(address);
