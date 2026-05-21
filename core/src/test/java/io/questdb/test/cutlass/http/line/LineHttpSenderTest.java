@@ -851,34 +851,43 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
             // We also need to pause the batch on the first matching openRW until
             // the rename has committed its structural change to the sequencer.
             // Otherwise the batch's sequencer.nextTxn (commit) can win the race
-            // against the rename's sequencer.nextStructureTxn — both serialize
+            // against the rename's sequencer.nextStructureTxn -- both serialize
             // through the same sequencer WRITE lock, and the test depends on the
             // rename arriving first so the batch commit sees a token mismatch and
-            // is rejected via TableReferenceOutOfDateException -> 503. Only the
-            // first matching openRW is blocked, so the rename's own openRW for
-            // its wal2/0 segment is not blocked and cannot deadlock.
+            // is rejected via TableReferenceOutOfDateException -> 503.
+            //
+            // The RENAME runs synchronously on the test thread and also opens
+            // matching wal*/0 column files (its own structural-change segment).
+            // If the intercept allowed the test thread in, the test thread could
+            // win the race for the first match and park itself in execute(),
+            // letting the batch commit unhindered. Exclude the test thread so
+            // only the batch's HTTP worker can be parked.
             CountDownLatch walSegmentRolled = new CountDownLatch(1);
             CountDownLatch renameRegistered = new CountDownLatch(1);
             AtomicBoolean trackOpens = new AtomicBoolean(false);
             AtomicBoolean batchPausedOnce = new AtomicBoolean(false);
+            final Thread testThread = Thread.currentThread();
             AtomicBoolean renameRegisteredTimedOut = new AtomicBoolean(false);
 
             FilesFacade ff = new TestFilesFacadeImpl() {
                 @Override
                 public long openRW(LPSZ name, int opts) {
                     long fd = super.openRW(name, opts);
+                    // Skip the test thread entirely: it runs the RENAME, and we must never park
+                    // it. If allowed in, the test thread's own openRW for wal*/0 column files
+                    // could win the parker CAS and deadlock the rename for 60 seconds.
                     if (trackOpens.get()
+                            && Thread.currentThread() != testThread
                             && Utf8s.containsAscii(name, tableName)
                             && Utf8s.containsAscii(name, "wal")
                             && Utf8s.endsWithAscii(name, ".d")) {
-                        // Claim the pause slot BEFORE releasing the main thread.
-                        // The RENAME executed by the main thread also initializes
-                        // its own WAL segment, which opens matching .d column files.
-                        // If we counted down walSegmentRolled first, the main thread
-                        // could run RENAME and have its openRW win this slot, parking
-                        // the rename itself (deadlock) while the batch commits unparked.
-                        if (batchPausedOnce.compareAndSet(false, true)) {
-                            walSegmentRolled.countDown();
+                        // Decide who parks BEFORE counting down walSegmentRolled. If we counted
+                        // down first and then got preempted, the main thread could wake, issue
+                        // the RENAME, and a second matching openRW could win the CAS before
+                        // this one reaches it -- letting the batch commit unhindered.
+                        boolean parker = batchPausedOnce.compareAndSet(false, true);
+                        walSegmentRolled.countDown();
+                        if (parker) {
                             try {
                                 if (!renameRegistered.await(60, TimeUnit.SECONDS)) {
                                     renameRegisteredTimedOut.set(true);
