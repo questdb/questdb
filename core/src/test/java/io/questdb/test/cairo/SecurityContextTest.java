@@ -79,6 +79,8 @@ SecurityContextTest {
                             final ViewDefinition viewDefinition = new ViewDefinition();
                             viewDefinition.init(userTableToken, tableName, 0L);
                             method.invoke(sc, viewDefinition);
+                        } else if (parameters[0] == CharSequence.class) {
+                            method.invoke(sc, "test-uri");
                         } else {
                             method.invoke(sc, ONE_PARAM_ARGS);
                         }
@@ -121,6 +123,8 @@ SecurityContextTest {
                                 final ViewDefinition viewDefinition = new ViewDefinition();
                                 viewDefinition.init(userTableToken, tableName, 0L);
                                 method.invoke(sc, viewDefinition);
+                            } else if (parameters[0] == CharSequence.class) {
+                                method.invoke(sc, "test-uri");
                             } else {
                                 method.invoke(sc, ONE_PARAM_ARGS);
                             }
@@ -176,6 +180,8 @@ SecurityContextTest {
                                 final ViewDefinition viewDefinition = new ViewDefinition();
                                 viewDefinition.init(userTableToken, tableName, 0L);
                                 method.invoke(sc, viewDefinition);
+                            } else if (parameters[0] == CharSequence.class) {
+                                method.invoke(sc, "test-uri");
                             } else {
                                 method.invoke(sc, ONE_PARAM_ARGS);
                             }

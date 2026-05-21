@@ -144,6 +144,25 @@ public interface RecordMetadata extends ColumnTypes, Plannable {
     }
 
     /**
+     * Reports the order direction the underlying data is sorted on for the
+     * given column index. The optimiser consumes this to elide redundant
+     * {@code ORDER BY col} clauses when the data already arrives in the
+     * requested order.
+     * <p>
+     * Returns +1 if rows are sorted ASC on the column, -1 if DESC, or 0 if
+     * the metadata does not declare a sort on that column (the safe default
+     * - a real sort runs).
+     * <p>
+     * Implementations that don't track per-column sort order should return
+     * 0 - this is the default. Implementations that DO track it (e.g.
+     * parquet files carrying {@code sorting_columns} metadata) override
+     * to surface the file's claim.
+     */
+    default int getColumnOrderBy(int columnIndex) {
+        return 0;
+    }
+
+    /**
      * @return the numeric index of the designated timestamp column.
      */
     int getTimestampIndex();

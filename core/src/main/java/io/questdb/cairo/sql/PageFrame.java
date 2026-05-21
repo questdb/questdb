@@ -131,4 +131,43 @@ public interface PageFrame {
      * Return low row index within the frame's partition, inclusive.
      */
     long getPartitionLo();
+
+    /**
+     * Address of a native buffer holding the aux vector for a virtual column.
+     * Virtual columns are columns whose values come from outside the underlying
+     * partition data: hive partition keys synthesized from path segments,
+     * constant-value columns from native table metadata, etc.
+     * <p>
+     * Returns 0 by default to indicate the column is not virtual; downstream
+     * consumers then fall back to the standard parquet decode or native page
+     * address for this column.
+     * <p>
+     * Only consulted for {@link PartitionFormat#PARQUET} frames; native frames
+     * supply virtual values through the regular {@link #getAuxPageAddress(int)}.
+     */
+    default long getVirtualAuxPageAddress(int columnIndex) {
+        return 0;
+    }
+
+    /**
+     * Size in bytes of the buffer returned by {@link #getVirtualAuxPageAddress(int)}.
+     */
+    default long getVirtualAuxPageSize(int columnIndex) {
+        return 0;
+    }
+
+    /**
+     * Address of a native buffer holding the data vector for a virtual column.
+     * See {@link #getVirtualAuxPageAddress(int)} for the contract.
+     */
+    default long getVirtualPageAddress(int columnIndex) {
+        return 0;
+    }
+
+    /**
+     * Size in bytes of the buffer returned by {@link #getVirtualPageAddress(int)}.
+     */
+    default long getVirtualPageSize(int columnIndex) {
+        return 0;
+    }
 }

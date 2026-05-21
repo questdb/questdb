@@ -52,6 +52,11 @@ public class DenyAllSecurityContext extends ReadOnlySecurityContext {
     }
 
     @Override
+    public void authorizeReadRemoteParquet(@NotNull CharSequence uri) {
+        throw CairoException.nonCritical().put("permission denied");
+    }
+
+    @Override
     public void authorizeSelect(ViewDefinition viewDefinition) {
         throw CairoException.nonCritical().put("permission denied");
     }

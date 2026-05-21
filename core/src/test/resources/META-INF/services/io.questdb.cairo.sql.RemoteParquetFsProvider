@@ -1,0 +1,1 @@
+io.questdb.test.griffin.engine.functions.table.parquet.StubRemoteParquetFsProvider

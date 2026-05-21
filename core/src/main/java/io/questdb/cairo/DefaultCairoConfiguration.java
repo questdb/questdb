@@ -1167,6 +1167,20 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public long getParquetCacheMaxBytes() {
+        // 1 GiB default. The cache holds mmap regions whose pages count against
+        // process RSS once touched; a budget far above process memory is a foot
+        // gun on small / shared machines. Sites with large parquet datasets and
+        // plenty of RAM can raise this via cairo.parquet.cache.max.bytes.
+        return 1024L * 1024 * 1024;
+    }
+
+    @Override
+    public int getParquetCacheMaxEntries() {
+        return 1024;
+    }
+
+    @Override
     public int getSqlPivotMaxProducedColumns() {
         return 5_000;
     }
@@ -1656,8 +1670,18 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public boolean isSqlParquetHiveParallelEnabled() {
+        return true;
+    }
+
+    @Override
     public boolean isSqlParquetRowGroupPruningEnabled() {
         return true;
+    }
+
+    @Override
+    public boolean isSqlParquetVerifySortClaimEnabled() {
+        return false;
     }
 
     @Override

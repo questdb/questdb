@@ -66,6 +66,16 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
     private final IntList parquetRowGroups = new IntList();
     // Makes it possible to determine real row id, not the one relative to the page.
     private final LongList rowIdOffsets = new LongList();
+    // Virtual column buffers, populated for both NATIVE and PARQUET frames.
+    // For columns whose values come from outside the underlying source data
+    // (e.g. hive partition keys synthesised from the directory path), the
+    // implementing frame returns a non-zero buffer address here; otherwise
+    // these slots stay at 0 and downstream consumers fall back to the standard
+    // address.
+    private final DirectLongList virtualAuxPageAddresses;
+    private final DirectLongList virtualAuxPageSizes;
+    private final DirectLongList virtualPageAddresses;
+    private final DirectLongList virtualPageSizes;
     private int columnCount;
     // True in case of external parquet files, false in case of table partition files.
     private boolean external;
@@ -75,6 +85,10 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
         this.auxPageSizes = new DirectLongList(ADDRESS_LIST_INITIAL_CAPACITY, MemoryTag.NATIVE_DEFAULT, true);
         this.pageAddresses = new DirectLongList(ADDRESS_LIST_INITIAL_CAPACITY, MemoryTag.NATIVE_DEFAULT, true);
         this.pageSizes = new DirectLongList(ADDRESS_LIST_INITIAL_CAPACITY, MemoryTag.NATIVE_DEFAULT, true);
+        this.virtualAuxPageAddresses = new DirectLongList(ADDRESS_LIST_INITIAL_CAPACITY, MemoryTag.NATIVE_DEFAULT, true);
+        this.virtualAuxPageSizes = new DirectLongList(ADDRESS_LIST_INITIAL_CAPACITY, MemoryTag.NATIVE_DEFAULT, true);
+        this.virtualPageAddresses = new DirectLongList(ADDRESS_LIST_INITIAL_CAPACITY, MemoryTag.NATIVE_DEFAULT, true);
+        this.virtualPageSizes = new DirectLongList(ADDRESS_LIST_INITIAL_CAPACITY, MemoryTag.NATIVE_DEFAULT, true);
     }
 
     public void add(int frameIndex, @Transient PageFrame frame) {
@@ -105,6 +119,16 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
             }
         }
 
+        // Virtual page addresses are populated uniformly for both formats.
+        // Frames without virtual columns get 0 from the PageFrame defaults,
+        // so the overlay in PageFrameMemoryPool becomes a no-op for them.
+        for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
+            virtualPageAddresses.add(frame.getVirtualPageAddress(columnIndex));
+            virtualPageSizes.add(frame.getVirtualPageSize(columnIndex));
+            virtualAuxPageAddresses.add(frame.getVirtualAuxPageAddress(columnIndex));
+            virtualAuxPageSizes.add(frame.getVirtualAuxPageSize(columnIndex));
+        }
+
         frameSizes.add(frame.getPartitionHi() - frame.getPartitionLo());
         frameFormats.add(frame.getFormat());
         ParquetDecoder decoder = frame.getParquetDecoder();
@@ -128,6 +152,10 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
         auxPageAddresses.clear();
         pageSizes.clear();
         auxPageSizes.clear();
+        virtualPageAddresses.clear();
+        virtualPageSizes.clear();
+        virtualAuxPageAddresses.clear();
+        virtualAuxPageSizes.clear();
         rowIdOffsets.clear();
         external = false;
     }
@@ -138,6 +166,10 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
         pageSizes.close();
         auxPageAddresses.close();
         auxPageSizes.close();
+        virtualPageAddresses.close();
+        virtualPageSizes.close();
+        virtualAuxPageAddresses.close();
+        virtualAuxPageSizes.close();
     }
 
     /**
@@ -212,6 +244,27 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
         return rowIdOffsets.getQuick(frameIndex);
     }
 
+    /**
+     * Returns the flat virtual aux page addresses list. Non-zero entries
+     * indicate a column whose values should come from a frame-supplied
+     * native buffer instead of the parquet decoder or native partition file.
+     */
+    public DirectLongList getVirtualAuxPageAddresses() {
+        return virtualAuxPageAddresses;
+    }
+
+    public DirectLongList getVirtualAuxPageSizes() {
+        return virtualAuxPageSizes;
+    }
+
+    public DirectLongList getVirtualPageAddresses() {
+        return virtualPageAddresses;
+    }
+
+    public DirectLongList getVirtualPageSizes() {
+        return virtualPageSizes;
+    }
+
     public boolean isExternal() {
         return external;
     }
@@ -230,6 +283,10 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
         pageSizes.reopen();
         auxPageAddresses.reopen();
         auxPageSizes.reopen();
+        virtualPageAddresses.reopen();
+        virtualPageSizes.reopen();
+        virtualAuxPageAddresses.reopen();
+        virtualAuxPageSizes.reopen();
         // Reset frame-derived state and external flag.
         clear();
 

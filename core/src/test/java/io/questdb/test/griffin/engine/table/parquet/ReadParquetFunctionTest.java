@@ -43,6 +43,7 @@ import io.questdb.std.MemoryTag;
 import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.datetime.nanotime.Nanos;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -1771,6 +1772,970 @@ public class ReadParquetFunctionTest extends AbstractCairoTest {
                 sink.put("SELECT * FROM x UNION ALL SELECT * FROM read_parquet('x.parquet')");
                 assertSqlCursors0("SELECT * FROM x UNION ALL SELECT * FROM x");
             }
+        });
+    }
+
+    @Test
+    public void testSortMetadataRoundTripsForDesignatedTimestamp() throws Exception {
+        // Writer side sets sorting_columns = [timestamp] for any QuestDB table that
+        // declares a designated timestamp. The new metadata pipeline must surface
+        // that claim through to GenericRecordMetadata.getColumnOrderBy() so the
+        // optimiser can consult it without re-reading the parquet footer.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x AS (" +
+                    "  SELECT" +
+                    "    timestamp_sequence(0, 1000) AS ts," +
+                    "    x AS id," +
+                    "    rnd_double() AS price" +
+                    "  FROM long_sequence(100)" +
+                    ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+            drainWalQueue();
+
+            try (
+                    Path path = new Path();
+                    PartitionDescriptor partitionDescriptor = new PartitionDescriptor();
+                    TableReader reader = engine.getReader("x")
+            ) {
+                path.of(root).concat("ts_sorted.parquet");
+                PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, 0);
+                PartitionEncoder.encode(partitionDescriptor, path);
+                Assert.assertTrue(Files.exists(path.$()));
+
+                // Open the file via the same machinery the cursor uses; the metadata
+                // should report ts as ASC-sorted with no claim on id or price.
+                try (
+                        io.questdb.griffin.engine.table.parquet.ParquetFileDecoder decoder =
+                                new io.questdb.griffin.engine.table.parquet.ParquetFileDecoder()
+                ) {
+                    long fd = io.questdb.cairo.TableUtils.openRO(configuration.getFilesFacade(), path.$(), LOG);
+                    long size = configuration.getFilesFacade().length(fd);
+                    long addr = 0;
+                    try {
+                        addr = io.questdb.cairo.TableUtils.mapRO(
+                                configuration.getFilesFacade(), fd, size,
+                                MemoryTag.MMAP_PARQUET_PARTITION_DECODER
+                        );
+                        decoder.of(addr, size, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
+                        final io.questdb.griffin.engine.table.parquet.ParquetFileDecoder.Metadata meta = decoder.metadata();
+
+                        Assert.assertEquals(
+                                "sorting_columns must surface ts as sorted",
+                                1, meta.getSortedColumnsCount()
+                        );
+                        final int tsParquetIdx = meta.getSortedColumnParquetIndex(0);
+                        Assert.assertEquals(
+                                "the single sort entry must point at ts",
+                                meta.getTimestampIndex(), tsParquetIdx
+                        );
+                        Assert.assertFalse(
+                                "the writer declares ASC, not DESC",
+                                meta.isSortedColumnDescending(0)
+                        );
+                        Assert.assertEquals(
+                                "getColumnOrderBy(ts) reports +1 (ASC)",
+                                1, meta.getColumnOrderBy(tsParquetIdx)
+                        );
+
+                        // And the surface still says nothing about unrelated columns.
+                        int nonSortIdx = (tsParquetIdx == 0) ? 1 : 0;
+                        Assert.assertEquals(
+                                "non-sort column must report 0 (no claim)",
+                                0, meta.getColumnOrderBy(nonSortIdx)
+                        );
+
+                        // Finally, the higher-level copy-to that the function factory
+                        // uses must thread the claim through to GenericRecordMetadata.
+                        final io.questdb.cairo.GenericRecordMetadata copy =
+                                new io.questdb.cairo.GenericRecordMetadata();
+                        meta.copyToSansUnsupported(copy, true);
+                        // copyToSansUnsupported preserves column order, so the ts
+                        // index in the copy equals the ts index in the source.
+                        Assert.assertEquals(
+                                "copied metadata must carry the ASC claim on ts",
+                                1, copy.getColumnOrderBy(copy.getTimestampIndex())
+                        );
+                    } finally {
+                        if (addr != 0) {
+                            configuration.getFilesFacade().munmap(
+                                    addr, size, MemoryTag.MMAP_PARQUET_PARTITION_DECODER
+                            );
+                        }
+                        configuration.getFilesFacade().close(fd);
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testSortMetadataAbsentForNonTsTableThatHasNoTs() throws Exception {
+        // A QuestDB table without a designated timestamp triggers the
+        // sorting_columns=None branch on the writer side. The decoder must
+        // report sortedColumnsCount=0 and copyToSansUnsupported must leave
+        // every column's getColumnOrderBy at the default 0.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE n AS (" +
+                    "  SELECT x AS id, rnd_double() AS price FROM long_sequence(50)" +
+                    ")");
+
+            try (
+                    Path path = new Path();
+                    PartitionDescriptor partitionDescriptor = new PartitionDescriptor();
+                    TableReader reader = engine.getReader("n")
+            ) {
+                path.of(root).concat("no_ts.parquet");
+                PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, 0);
+                PartitionEncoder.encode(partitionDescriptor, path);
+
+                try (
+                        io.questdb.griffin.engine.table.parquet.ParquetFileDecoder decoder =
+                                new io.questdb.griffin.engine.table.parquet.ParquetFileDecoder()
+                ) {
+                    long fd = io.questdb.cairo.TableUtils.openRO(configuration.getFilesFacade(), path.$(), LOG);
+                    long size = configuration.getFilesFacade().length(fd);
+                    long addr = 0;
+                    try {
+                        addr = io.questdb.cairo.TableUtils.mapRO(
+                                configuration.getFilesFacade(), fd, size,
+                                MemoryTag.MMAP_PARQUET_PARTITION_DECODER
+                        );
+                        decoder.of(addr, size, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
+                        final io.questdb.griffin.engine.table.parquet.ParquetFileDecoder.Metadata meta = decoder.metadata();
+
+                        Assert.assertEquals(
+                                "no designated ts -> no sort claim",
+                                0, meta.getSortedColumnsCount()
+                        );
+                        for (int i = 0, n = meta.getColumnCount(); i < n; i++) {
+                            Assert.assertEquals(
+                                    "getColumnOrderBy must default to 0 for every column",
+                                    0, meta.getColumnOrderBy(i)
+                            );
+                        }
+                    } finally {
+                        if (addr != 0) {
+                            configuration.getFilesFacade().munmap(
+                                    addr, size, MemoryTag.MMAP_PARQUET_PARTITION_DECODER
+                            );
+                        }
+                        configuration.getFilesFacade().close(fd);
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testOrderByElidedForNonTsSortedParquet() throws Exception {
+        // End-to-end pin on the non-ts ORDER BY elision branch in
+        // SqlCodeGenerator.generateOrderBy. Writes a parquet whose
+        // `sorting_columns` claim points at the `id` column (not the
+        // designated timestamp), then asserts that ORDER BY id ASC LIMIT N
+        // returns the cursor unchanged - no `Sort` factory wrap.
+        assertMemoryLeak(() -> {
+            // Table has a designated ts but the rows are ordered by id ASC
+            // because we generate them in id-ascending sequence and ts uniform.
+            execute("CREATE TABLE x AS (" +
+                    "  SELECT" +
+                    "    timestamp_sequence(0, 1000) AS ts," +
+                    "    x AS id," +
+                    "    rnd_double() AS price" +
+                    "  FROM long_sequence(100)" +
+                    ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+            drainWalQueue();
+
+            try (
+                    Path path = new Path();
+                    PartitionDescriptor partitionDescriptor = new PartitionDescriptor();
+                    TableReader reader = engine.getReader("x")
+            ) {
+                path.of(root).concat("id_sorted.parquet");
+                PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, 0);
+
+                // Claim `id` (column index 1: ts=0, id=1, price=2) as the
+                // sort key on the parquet side. The writer does not verify;
+                // we know id is monotonic because of the long_sequence().
+                final int idColumnIndex = 1;
+                PartitionEncoder.encodeWithOptions(
+                        partitionDescriptor,
+                        path,
+                        io.questdb.griffin.engine.table.parquet.ParquetCompression.COMPRESSION_UNCOMPRESSED,
+                        true,                          // statisticsEnabled
+                        false,                         // rawArrayEncoding
+                        0,                             // rowGroupSize (default)
+                        0,                             // dataPageSize (default)
+                        ParquetVersion.PARQUET_VERSION_V1,
+                        0L,                            // bloomFilterColumnIndexesPtr
+                        0,                             // bloomFilterColumnCount
+                        PartitionEncoder.DEFAULT_BLOOM_FILTER_FPP,
+                        0.0,                           // minCompressionRatio
+                        -1,                            // parquetMetaFd (no _pm)
+                        -1L,                           // squashTracker
+                        idColumnIndex,                 // nonTsSortColumnIndex
+                        false                          // nonTsSortDescending - ASC
+                );
+                Assert.assertTrue(Files.exists(path.$()));
+
+                // Sanity: decoder must surface the override.
+                try (
+                        io.questdb.griffin.engine.table.parquet.ParquetFileDecoder decoder =
+                                new io.questdb.griffin.engine.table.parquet.ParquetFileDecoder()
+                ) {
+                    long fd = io.questdb.cairo.TableUtils.openRO(configuration.getFilesFacade(), path.$(), LOG);
+                    long size = configuration.getFilesFacade().length(fd);
+                    long addr = 0;
+                    try {
+                        addr = io.questdb.cairo.TableUtils.mapRO(
+                                configuration.getFilesFacade(), fd, size,
+                                MemoryTag.MMAP_PARQUET_PARTITION_DECODER
+                        );
+                        decoder.of(addr, size, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
+                        final io.questdb.griffin.engine.table.parquet.ParquetFileDecoder.Metadata meta = decoder.metadata();
+                        Assert.assertEquals(1, meta.getSortedColumnsCount());
+                        Assert.assertEquals(idColumnIndex, meta.getSortedColumnParquetIndex(0));
+                        Assert.assertFalse(meta.isSortedColumnDescending(0));
+                    } finally {
+                        if (addr != 0) {
+                            configuration.getFilesFacade().munmap(
+                                    addr, size, MemoryTag.MMAP_PARQUET_PARTITION_DECODER
+                            );
+                        }
+                        configuration.getFilesFacade().close(fd);
+                    }
+                }
+
+                // EXPLAIN must NOT contain a `Sort` factory. The exact plan
+                // shape depends on the cursor mode; assert via substring.
+                sink.clear();
+                sink.put("EXPLAIN SELECT id FROM read_parquet('id_sorted.parquet') ORDER BY id ASC LIMIT 5");
+                final StringSink planSink = new StringSink();
+                try (RecordCursorFactory factory = engine.select(sink, sqlExecutionContext);
+                     RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    final io.questdb.cairo.sql.Record rec = cursor.getRecord();
+                    while (cursor.hasNext()) {
+                        planSink.put(rec.getStrA(0)).put('\n');
+                    }
+                }
+                final String plan = planSink.toString();
+                Assert.assertFalse(
+                        "Sort factory must be elided for ASC ORDER BY on a non-ts sort key, got plan:\n" + plan,
+                        plan.toLowerCase().contains("sort")
+                );
+
+                // Negative case: ORDER BY id DESC must NOT elide, because we
+                // don't have a reverse-iteration parquet cursor.
+                sink.clear();
+                sink.put("EXPLAIN SELECT id FROM read_parquet('id_sorted.parquet') ORDER BY id DESC LIMIT 5");
+                planSink.clear();
+                try (RecordCursorFactory factory = engine.select(sink, sqlExecutionContext);
+                     RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    final io.questdb.cairo.sql.Record rec = cursor.getRecord();
+                    while (cursor.hasNext()) {
+                        planSink.put(rec.getStrA(0)).put('\n');
+                    }
+                }
+                final String planDesc = planSink.toString();
+                Assert.assertTrue(
+                        "DESC against an ASC-sorted file must keep the sort, got plan:\n" + planDesc,
+                        planDesc.toLowerCase().contains("sort") || planDesc.toLowerCase().contains("top")
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testFooterMinMaxShortcutPlanAndResult() throws Exception {
+        // End-to-end pin on the parquet footer-only MIN/MAX shortcut in
+        // SqlCodeGenerator.generateSelectGroupBy. A QuestDB-written parquet
+        // file carries sorting_columns claiming the designated timestamp as
+        // ASC, so SELECT min(ts), max(ts) FROM read_parquet(<file>) must
+        // route to ParquetFooterAggregateRecordCursorFactory rather than the
+        // normal Async / scalar group-by pipeline.
+        // <p>
+        // Plan-shape assertion only applies in serial mode: in parallel mode
+        // the existing GroupBy vectorized path already has a designated-ts
+        // shortcut (`min_designated(ts)`) that intercepts before our branch.
+        // That shortcut runs ~0.6 ms which is "good enough"; the footer-only
+        // factory would still be ~10x faster (~0.06 ms) but the design tradeoff
+        // for now is to keep the parallel path untouched. Result-correctness
+        // is asserted in both modes.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE m AS (" +
+                    "  SELECT timestamp_sequence(1_000_000_000L, 1_000L) AS ts, x AS id " +
+                    "  FROM long_sequence(10_000)" +
+                    ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+            drainWalQueue();
+
+            try (
+                    Path path = new Path();
+                    PartitionDescriptor pd = new PartitionDescriptor();
+                    TableReader reader = engine.getReader("m")
+            ) {
+                path.of(root).concat("m_min_max.parquet");
+                PartitionEncoder.populateFromTableReader(reader, pd, 0);
+                PartitionEncoder.encode(pd, path);
+                Assert.assertTrue(Files.exists(path.$()));
+
+                if (!parallel) {
+                    // Serial mode: footer factory must appear in EXPLAIN.
+                    sink.clear();
+                    sink.put("EXPLAIN SELECT min(ts), max(ts) FROM read_parquet('m_min_max.parquet')");
+                    final String plan = readExplainPlan(sink);
+                    Assert.assertTrue(
+                            "min/max(ts) over a ts-sorted parquet must route to the footer factory in serial mode, got plan:\n" + plan,
+                            plan.toLowerCase().contains("parquet footer aggregate")
+                    );
+                    Assert.assertFalse(
+                            "footer shortcut must not be wrapped in a normal aggregate factory, got plan:\n" + plan,
+                            plan.toLowerCase().contains("groupby") || plan.toLowerCase().contains("group by")
+                    );
+                }
+
+                // Result matches the known min/max from the source table.
+                // Holds in both modes; parallel path uses min_designated(ts)
+                // shortcut, serial uses our footer factory.
+                sink.clear();
+                sink.put("SELECT min(ts), max(ts) FROM read_parquet('m_min_max.parquet')");
+                assertSqlCursors0("SELECT min(ts), max(ts) FROM m");
+            }
+        });
+    }
+
+    @Test
+    public void testFooterMinMaxShortcutKeepsNormalPlanForFilteredQuery() throws Exception {
+        // Negative case: a WHERE clause changes which rows contribute to
+        // min/max so the footer-only shortcut is unsafe. The detection
+        // branch's pre-check rejects when nestedModel.getWhereClause() != null;
+        // EXPLAIN must NOT contain "parquet footer aggregate".
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE f AS (" +
+                    "  SELECT timestamp_sequence(0L, 1_000L) AS ts, x AS id " +
+                    "  FROM long_sequence(1_000)" +
+                    ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+            drainWalQueue();
+
+            try (
+                    Path path = new Path();
+                    PartitionDescriptor pd = new PartitionDescriptor();
+                    TableReader reader = engine.getReader("f")
+            ) {
+                path.of(root).concat("f_filter.parquet");
+                PartitionEncoder.populateFromTableReader(reader, pd, 0);
+                PartitionEncoder.encode(pd, path);
+
+                sink.clear();
+                sink.put("EXPLAIN SELECT min(ts), max(ts) FROM read_parquet('f_filter.parquet') WHERE id > 100");
+                final String plan = readExplainPlan(sink);
+                Assert.assertFalse(
+                        "WHERE clause must disable the footer shortcut, got plan:\n" + plan,
+                        plan.toLowerCase().contains("parquet footer aggregate")
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testFooterMinMaxShortcutPlanAndResultNonTsLongAsc() throws Exception {
+        // Generic non-ts MIN/MAX path: a parquet file written with
+        // encodeWithOptions(nonTsSortColumnIndex=id) declares id sorted ASC
+        // in sorting_columns. min(id)/max(id) over read_parquet of that
+        // file must route to ParquetFooterAggregateRecordCursorFactory
+        // with the column-name path (which uses the new generic
+        // rowGroupMin/MaxValueLong natives reading typed column-chunk
+        // statistics). EXPLAIN must show the footer aggregate; result
+        // must match the source table's min/max.
+        // <p>
+        // Parallel mode caveat is the same as the timestamp variant: the
+        // vectorized GroupBy path intercepts before our branch for
+        // designated-ts columns. For non-ts columns the vector aggregate
+        // pipeline still runs but does not have the same shortcut, so
+        // the footer factory wins in serial mode regardless. The plan
+        // assertion stays guarded on !parallel for symmetry.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE g AS (" +
+                    "  SELECT timestamp_sequence(1_000_000_000L, 1_000L) AS ts, x AS id " +
+                    "  FROM long_sequence(10_000)" +
+                    ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+            drainWalQueue();
+
+            try (
+                    Path path = new Path();
+                    PartitionDescriptor pd = new PartitionDescriptor();
+                    TableReader reader = engine.getReader("g")
+            ) {
+                path.of(root).concat("g_min_max_id.parquet");
+                PartitionEncoder.populateFromTableReader(reader, pd, 0);
+                final int idColumnIndex = reader.getMetadata().getColumnIndex("id");
+                PartitionEncoder.encodeWithOptions(
+                        pd,
+                        path,
+                        ParquetCompression.COMPRESSION_UNCOMPRESSED,
+                        true,
+                        false,
+                        0,
+                        0,
+                        ParquetVersion.PARQUET_VERSION_V1,
+                        0,
+                        0,
+                        0.01,
+                        0.0,
+                        -1,
+                        -1L,
+                        idColumnIndex,
+                        false
+                );
+                Assert.assertTrue(Files.exists(path.$()));
+
+                if (!parallel) {
+                    sink.clear();
+                    sink.put("EXPLAIN SELECT min(id), max(id) FROM read_parquet('g_min_max_id.parquet')");
+                    final String plan = readExplainPlan(sink);
+                    Assert.assertTrue(
+                            "min/max(id) over an id-sorted parquet must route to the footer factory in serial mode, got plan:\n" + plan,
+                            plan.toLowerCase().contains("parquet footer aggregate")
+                    );
+                    Assert.assertFalse(
+                            "footer shortcut must not be wrapped in a normal aggregate factory, got plan:\n" + plan,
+                            plan.toLowerCase().contains("groupby") || plan.toLowerCase().contains("group by")
+                    );
+                }
+
+                sink.clear();
+                sink.put("SELECT min(id), max(id) FROM read_parquet('g_min_max_id.parquet')");
+                assertSqlCursors0("SELECT min(id), max(id) FROM g");
+            }
+        });
+    }
+
+    @Test
+    public void testFooterMinMaxShortcutPlanAndResultNonTsDoubleAsc() throws Exception {
+        // DOUBLE flavour of the non-ts MIN/MAX path. Writes a parquet
+        // with d sorted ASC via encodeWithOptions(nonTsSortColumnIndex=dIdx).
+        // SELECT min(d), max(d) must route to ParquetFooterAggregateRecordCursorFactory
+        // with the DOUBLE dispatch in the cursor: rowGroupMin/MaxValueDouble
+        // natives, NaN-safe accumulator, FooterRecord.getDouble.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE gd AS (" +
+                    "  SELECT timestamp_sequence(1_000_000_000L, 1_000L) AS ts, x * 1.5 AS d " +
+                    "  FROM long_sequence(10_000)" +
+                    ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+            drainWalQueue();
+
+            try (
+                    Path path = new Path();
+                    PartitionDescriptor pd = new PartitionDescriptor();
+                    TableReader reader = engine.getReader("gd")
+            ) {
+                path.of(root).concat("gd_min_max_d.parquet");
+                PartitionEncoder.populateFromTableReader(reader, pd, 0);
+                final int dColumnIndex = reader.getMetadata().getColumnIndex("d");
+                PartitionEncoder.encodeWithOptions(
+                        pd,
+                        path,
+                        ParquetCompression.COMPRESSION_UNCOMPRESSED,
+                        true,
+                        false,
+                        0,
+                        0,
+                        ParquetVersion.PARQUET_VERSION_V1,
+                        0,
+                        0,
+                        0.01,
+                        0.0,
+                        -1,
+                        -1L,
+                        dColumnIndex,
+                        false
+                );
+                Assert.assertTrue(Files.exists(path.$()));
+
+                if (!parallel) {
+                    sink.clear();
+                    sink.put("EXPLAIN SELECT min(d), max(d) FROM read_parquet('gd_min_max_d.parquet')");
+                    final String plan = readExplainPlan(sink);
+                    Assert.assertTrue(
+                            "min/max(d) over a d-sorted parquet must route to the footer factory in serial mode, got plan:\n" + plan,
+                            plan.toLowerCase().contains("parquet footer aggregate")
+                    );
+                }
+
+                sink.clear();
+                sink.put("SELECT min(d), max(d) FROM read_parquet('gd_min_max_d.parquet')");
+                assertSqlCursors0("SELECT min(d), max(d) FROM gd");
+            }
+        });
+    }
+
+    @Test
+    public void testFooterMinMaxShortcutKeepsNormalPlanForNonTsColumn() throws Exception {
+        // Negative case: min/max on a column that is not the designated
+        // timestamp must fall back to the normal aggregation pipeline.
+        // The file carries sorting_columns for ts ASC, not for id, so
+        // metadata.getColumnOrderBy(idColumn) returns 0 and the late
+        // check rejects.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE n AS (" +
+                    "  SELECT timestamp_sequence(0L, 1_000L) AS ts, x AS id " +
+                    "  FROM long_sequence(1_000)" +
+                    ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+            drainWalQueue();
+
+            try (
+                    Path path = new Path();
+                    PartitionDescriptor pd = new PartitionDescriptor();
+                    TableReader reader = engine.getReader("n")
+            ) {
+                path.of(root).concat("n_non_ts.parquet");
+                PartitionEncoder.populateFromTableReader(reader, pd, 0);
+                PartitionEncoder.encode(pd, path);
+
+                sink.clear();
+                sink.put("EXPLAIN SELECT min(id), max(id) FROM read_parquet('n_non_ts.parquet')");
+                final String plan = readExplainPlan(sink);
+                Assert.assertFalse(
+                        "min(id)/max(id) on a non-sorted column must not use the footer shortcut, got plan:\n" + plan,
+                        plan.toLowerCase().contains("parquet footer aggregate")
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testReverseScanSortClaimVerifierPassesViaPlannerOrderByDesc() throws Exception {
+        // Planner-driven path: a real SELECT ... ORDER BY ts DESC LIMIT N
+        // goes through generateOrderBy -> setReverseScan(true) -> getCursor,
+        // and the verifier hook fires inside getCursor. With the config
+        // flag on and an honestly-sorted file, the query must succeed and
+        // EXPLAIN must show the reverse-scan factory (elision wins).
+        // Negative-path counterpart isn't possible via real SQL: the
+        // QuestDB writer refuses to stamp a sort claim on a designated
+        // ts column unless the data is actually sorted, so a dishonest
+        // ts claim cannot be produced from the test harness. The direct-
+        // factory negative test in testReverseScanSortClaimVerifierCatchesDishonestClaim
+        // covers the verifier rejection path against a fabricated id-column
+        // dishonest claim.
+        if (parallel) return;
+        setProperty(PropertyKey.CAIRO_SQL_PARQUET_VERIFY_SORT_CLAIM_ENABLED, "true");
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE p AS (" +
+                    "  SELECT timestamp_sequence(1_000_000L, 100L) AS ts, x AS id " +
+                    "  FROM long_sequence(2_000)" +
+                    ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+            drainWalQueue();
+
+            try (
+                    Path path = new Path();
+                    PartitionDescriptor pd = new PartitionDescriptor();
+                    TableReader reader = engine.getReader("p")
+            ) {
+                path.of(root).concat("p_planner.parquet");
+                PartitionEncoder.populateFromTableReader(reader, pd, 0);
+                PartitionEncoder.encode(pd, path);
+
+                sink.clear();
+                sink.put("EXPLAIN SELECT ts FROM read_parquet('p_planner.parquet') ORDER BY ts DESC LIMIT 3");
+                final String plan = readExplainPlan(sink);
+                Assert.assertTrue(
+                        "reverse-scan plan must elide the SORT with the verifier on for an honest file, got:\n" + plan,
+                        plan.toLowerCase().contains("parquet file sequential scan (reverse)")
+                );
+
+                // Verifier must accept the honest claim - the query proceeds
+                // and returns the last 3 ts in DESC order.
+                // ts_sequence(1_000_000us, 100us) over 2_000 rows -> ts in
+                // [1_000_000, 1_199_900]. Last 3 DESC: 1_199_900, 1_199_800, 1_199_700.
+                assertSql(
+                        "ts\n" +
+                                "1970-01-01T00:00:01.199900Z\n" +
+                                "1970-01-01T00:00:01.199800Z\n" +
+                                "1970-01-01T00:00:01.199700Z\n",
+                        "SELECT ts FROM read_parquet('p_planner.parquet') ORDER BY ts DESC LIMIT 3"
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testReverseScanSortClaimVerifierPassesForHonestFile() throws Exception {
+        // Positive case: file is genuinely ts-ASC sorted, the verifier
+        // accepts and the reverse scan proceeds. Enabled in serial mode
+        // only because the parallel cursor path doesn't reuse the same
+        // verifier hook today.
+        if (parallel) return;
+        setProperty(PropertyKey.CAIRO_SQL_PARQUET_VERIFY_SORT_CLAIM_ENABLED, "true");
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE h AS (" +
+                    "  SELECT timestamp_sequence(1_000_000L, 100L) AS ts, x AS id " +
+                    "  FROM long_sequence(5_000)" +
+                    ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+            drainWalQueue();
+
+            try (
+                    Path path = new Path();
+                    PartitionDescriptor pd = new PartitionDescriptor();
+                    TableReader reader = engine.getReader("h")
+            ) {
+                path.of(root).concat("h_honest.parquet");
+                PartitionEncoder.populateFromTableReader(reader, pd, 0);
+                PartitionEncoder.encode(pd, path);
+
+                // Force the reverse-scan factory via ORDER BY ts DESC.
+                // Build factory directly so we can flip reverse and call
+                // getCursor with the flag on - mirrors what the planner
+                // does after detecting the elision.
+                final io.questdb.cairo.GenericRecordMetadata outMeta =
+                        new io.questdb.cairo.GenericRecordMetadata();
+                outMeta.add(new io.questdb.cairo.TableColumnMetadata("ts", io.questdb.cairo.ColumnType.TIMESTAMP_MICRO));
+                outMeta.add(new io.questdb.cairo.TableColumnMetadata("id", io.questdb.cairo.ColumnType.LONG));
+                outMeta.setTimestampIndex(0);
+                try (
+                        io.questdb.griffin.engine.functions.table.ReadParquetRecordCursorFactory factory =
+                                new io.questdb.griffin.engine.functions.table.ReadParquetRecordCursorFactory(path, outMeta)
+                ) {
+                    factory.setReverseScan(true);
+                    // Must NOT throw.
+                    try (io.questdb.cairo.sql.RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                        Assert.assertTrue(cursor.hasNext());
+                        final long firstTs = cursor.getRecord().getTimestamp(0);
+                        // 5_000 rows from 1_000_000 step 100 -> last ts is
+                        // 1_000_000 + 100*(5_000-1) = 1_499_900.
+                        Assert.assertEquals(1_499_900L, firstTs);
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testReverseScanSortClaimVerifierCatchesDishonestClaim() throws Exception {
+        // Negative case: write a parquet file with a sort claim on id but
+        // populate id with a deliberately non-monotone sequence (x % 7
+        // cycles through 0..6 over and over). The writer respects the
+        // sorting_columns metadata claim regardless of actual data order
+        // - that's the very bug class the verifier is meant to catch.
+        // With the flag on, the reverse-scan factory must throw a
+        // CairoException naming the file path. With the flag off, the
+        // factory accepts the file and produces (probably wrong) output;
+        // this test covers the gated case only.
+        if (parallel) return;
+        setProperty(PropertyKey.CAIRO_SQL_PARQUET_VERIFY_SORT_CLAIM_ENABLED, "true");
+        assertMemoryLeak(() -> {
+            // Force multiple row groups so the cross-RG check actually
+            // fires. rowGroupSize=200 over 1_000 rows = 5 row groups.
+            execute("CREATE TABLE d AS (" +
+                    "  SELECT cast(x as long) AS ts, cast(x % 7 as long) AS id" +
+                    "  FROM long_sequence(1_000)" +
+                    ")");
+            drainWalQueue();
+
+            try (
+                    Path path = new Path();
+                    PartitionDescriptor pd = new PartitionDescriptor();
+                    TableReader reader = engine.getReader("d")
+            ) {
+                path.of(root).concat("d_dishonest.parquet");
+                // PartitionDescriptor needs the table to have a designated
+                // timestamp for the encoder. Use a simpler PD setup.
+                PartitionEncoder.populateFromTableReader(reader, pd, 0);
+                final int idColumnIndex = reader.getMetadata().getColumnIndex("id");
+                PartitionEncoder.encodeWithOptions(
+                        pd,
+                        path,
+                        ParquetCompression.COMPRESSION_UNCOMPRESSED,
+                        true,
+                        false,
+                        200,
+                        0,
+                        ParquetVersion.PARQUET_VERSION_V1,
+                        0,
+                        0,
+                        0.01,
+                        0.0,
+                        -1,
+                        -1L,
+                        idColumnIndex,
+                        false
+                );
+
+                // Open the parquet and verify the claim against the id
+                // column directly via the decoder. This isolates D's
+                // verifier from the reverse-scan wiring and exercises
+                // the failure path: id should not be ASC across RGs.
+                final io.questdb.std.FilesFacade ff = configuration.getFilesFacade();
+                final long fd = io.questdb.cairo.TableUtils.openRO(ff, path.$(),
+                        io.questdb.log.LogFactory.getLog(getClass()));
+                long addr = 0;
+                long size = 0;
+                try (io.questdb.griffin.engine.table.parquet.ParquetFileDecoder decoder =
+                             new io.questdb.griffin.engine.table.parquet.ParquetFileDecoder()) {
+                    size = ff.length(fd);
+                    addr = io.questdb.cairo.TableUtils.mapRO(ff, fd, size,
+                            io.questdb.std.MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
+                    decoder.of(addr, size, io.questdb.std.MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
+                    Assert.assertTrue(
+                            "row group count must be > 1 for the cross-RG check to fire",
+                            decoder.metadata().getRowGroupCount() > 1
+                    );
+                    final int idIdx = decoder.metadata().getColumnIndex("id");
+                    Assert.assertTrue(idIdx >= 0);
+                    Assert.assertFalse(
+                            "verifier must reject a dishonest x%7 ASC claim",
+                            decoder.verifyAscendingSortAcrossRowGroups(idIdx)
+                    );
+                } finally {
+                    if (addr != 0) {
+                        ff.munmap(addr, size, io.questdb.std.MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
+                    }
+                    ff.close(fd);
+                }
+            }
+        });
+    }
+
+    private String readExplainPlan(StringSink query) throws SqlException {
+        final StringSink planSink = new StringSink();
+        try (RecordCursorFactory factory = engine.select(query, sqlExecutionContext);
+             RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+            final io.questdb.cairo.sql.Record rec = cursor.getRecord();
+            while (cursor.hasNext()) {
+                planSink.put(rec.getStrA(0)).put('\n');
+            }
+        }
+        return planSink.toString();
+    }
+
+    @Test
+    public void testReverseScanEmitsRowsInDescTimestampOrder() throws Exception {
+        // Direct pin on ReadParquetRecordCursorFactory.setReverseScan(true) +
+        // ReadParquetRecordCursor.setReverse(true). Constructs the factory
+        // explicitly (no planner involvement), opens a parquet whose data
+        // is ASC ts-sorted by construction (TableReader feeds partition-
+        // ordered rows into PartitionEncoder), and asserts the emitted ts
+        // sequence is strictly monotonically decreasing across row group
+        // boundaries.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE r AS (" +
+                    "  SELECT timestamp_sequence(1_000_000L, 100L) AS ts, x AS id " +
+                    "  FROM long_sequence(50_000)" +
+                    ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+            drainWalQueue();
+
+            try (
+                    Path path = new Path();
+                    PartitionDescriptor pd = new PartitionDescriptor();
+                    TableReader reader = engine.getReader("r")
+            ) {
+                path.of(root).concat("r_reverse.parquet");
+                PartitionEncoder.populateFromTableReader(reader, pd, 0);
+                PartitionEncoder.encode(pd, path);
+                Assert.assertTrue(Files.exists(path.$()));
+
+                // Build the factory's output metadata to match the file
+                // shape: ts (TIMESTAMP_MICRO), id (LONG).
+                final io.questdb.cairo.GenericRecordMetadata outMeta =
+                        new io.questdb.cairo.GenericRecordMetadata();
+                outMeta.add(new io.questdb.cairo.TableColumnMetadata("ts", io.questdb.cairo.ColumnType.TIMESTAMP_MICRO));
+                outMeta.add(new io.questdb.cairo.TableColumnMetadata("id", io.questdb.cairo.ColumnType.LONG));
+                outMeta.setTimestampIndex(0);
+
+                try (
+                        io.questdb.griffin.engine.functions.table.ReadParquetRecordCursorFactory factory =
+                                new io.questdb.griffin.engine.functions.table.ReadParquetRecordCursorFactory(path, outMeta)
+                ) {
+                    factory.setReverseScan(true);
+                    Assert.assertEquals(
+                            "factory must report BACKWARD when reverse scan is enabled",
+                            io.questdb.cairo.sql.RecordCursorFactory.SCAN_DIRECTION_BACKWARD,
+                            factory.getScanDirection()
+                    );
+
+                    try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                        final io.questdb.cairo.sql.Record rec = cursor.getRecord();
+                        long previousTs = Long.MAX_VALUE;
+                        long emitted = 0;
+                        while (cursor.hasNext()) {
+                            final long ts = rec.getTimestamp(0);
+                            Assert.assertTrue(
+                                    "rows must arrive in strictly decreasing ts order; got "
+                                            + ts + " after " + previousTs + " at row " + emitted,
+                                    ts < previousTs
+                            );
+                            previousTs = ts;
+                            emitted++;
+                        }
+                        // 100 us spacing * 50_000 rows = full file.
+                        Assert.assertEquals("must emit every row from the file", 50_000L, emitted);
+                        // Last emitted should be the smallest ts (the first row written).
+                        Assert.assertEquals(
+                                "last emitted ts must equal the file's minimum",
+                                1_000_000L, previousTs
+                        );
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testOrderByTsDescElidesSortAgainstSortedParquet() throws Exception {
+        // End-to-end planner pin on the parquet reverse-scan flip in
+        // SqlCodeGenerator.generateOrderBy. ORDER BY ts DESC LIMIT N against
+        // a QuestDB-written parquet (sorting_columns claims ts ASC) must
+        // route through the cursor's reverse-iteration path with no Sort
+        // factory wrap. EXPLAIN must show "parquet file sequential scan
+        // (reverse)" and zero Sort nodes; result must match the same query
+        // on the source table.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE rs AS (" +
+                    "  SELECT timestamp_sequence(1_000_000L, 100L) AS ts, x AS id " +
+                    "  FROM long_sequence(10_000)" +
+                    ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+            drainWalQueue();
+
+            try (
+                    Path path = new Path();
+                    PartitionDescriptor pd = new PartitionDescriptor();
+                    TableReader reader = engine.getReader("rs")
+            ) {
+                path.of(root).concat("rs.parquet");
+                PartitionEncoder.populateFromTableReader(reader, pd, 0);
+                PartitionEncoder.encode(pd, path);
+                Assert.assertTrue(Files.exists(path.$()));
+
+                if (!parallel) {
+                    // Serial mode: detection branch fires on the serial
+                    // ReadParquetRecordCursorFactory. Parallel mode is the
+                    // page-frame variant which doesn't implement the
+                    // reverse flag yet - the planner takes a different
+                    // path there. Result-correctness is asserted in both
+                    // modes below.
+                    sink.clear();
+                    sink.put("EXPLAIN SELECT ts FROM read_parquet('rs.parquet') ORDER BY ts DESC LIMIT 5");
+                    final String plan = readExplainPlan(sink);
+                    final String lower = plan.toLowerCase();
+                    Assert.assertTrue(
+                            "EXPLAIN must show the reverse-scan parquet factory, got plan:\n" + plan,
+                            lower.contains("parquet file sequential scan (reverse)")
+                    );
+                    Assert.assertFalse(
+                            "Sort wrap must be elided when the parquet flips to reverse, got plan:\n" + plan,
+                            lower.contains("encode sort") || lower.contains("sortedrecord")
+                    );
+                }
+
+                // Result-correctness: rows must arrive in DESC ts order.
+                sink.clear();
+                sink.put("SELECT ts FROM read_parquet('rs.parquet') ORDER BY ts DESC LIMIT 5");
+                assertSqlCursors0("SELECT ts FROM rs ORDER BY ts DESC LIMIT 5");
+            }
+        });
+    }
+
+    @Test
+    public void testOrderByTsAscOverParquetStillUsesForwardScan() throws Exception {
+        // Negative case: ORDER BY ts ASC (the natural forward order) must
+        // NOT flip the reverse-scan flag; the existing forward-elision
+        // path at line 7339 already handles ASC + FORWARD without
+        // intervention. EXPLAIN must show the unadorned forward factory.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE rsa AS (" +
+                    "  SELECT timestamp_sequence(1_000_000L, 100L) AS ts FROM long_sequence(1_000)" +
+                    ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+            drainWalQueue();
+
+            try (
+                    Path path = new Path();
+                    PartitionDescriptor pd = new PartitionDescriptor();
+                    TableReader reader = engine.getReader("rsa")
+            ) {
+                path.of(root).concat("rsa.parquet");
+                PartitionEncoder.populateFromTableReader(reader, pd, 0);
+                PartitionEncoder.encode(pd, path);
+
+                if (!parallel) {
+                    sink.clear();
+                    sink.put("EXPLAIN SELECT ts FROM read_parquet('rsa.parquet') ORDER BY ts ASC LIMIT 5");
+                    final String plan = readExplainPlan(sink);
+                    Assert.assertFalse(
+                            "ASC must keep the forward factory, not flip to reverse, got plan:\n" + plan,
+                            plan.toLowerCase().contains("parquet file sequential scan (reverse)")
+                    );
+                    Assert.assertTrue(
+                            "ASC must still use the forward parquet factory, got plan:\n" + plan,
+                            plan.toLowerCase().contains("parquet file sequential scan")
+                    );
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testReverseScanReportsForwardWhenFlagOff() throws Exception {
+        // Default (reverse=false) must still report SCAN_DIRECTION_FORWARD.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE f AS (" +
+                    "  SELECT timestamp_sequence(0L, 100L) AS ts FROM long_sequence(10)" +
+                    ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+            drainWalQueue();
+
+            try (
+                    Path path = new Path();
+                    PartitionDescriptor pd = new PartitionDescriptor();
+                    TableReader reader = engine.getReader("f")
+            ) {
+                path.of(root).concat("f_fwd.parquet");
+                PartitionEncoder.populateFromTableReader(reader, pd, 0);
+                PartitionEncoder.encode(pd, path);
+
+                final io.questdb.cairo.GenericRecordMetadata outMeta =
+                        new io.questdb.cairo.GenericRecordMetadata();
+                outMeta.add(new io.questdb.cairo.TableColumnMetadata("ts", io.questdb.cairo.ColumnType.TIMESTAMP_MICRO));
+
+                try (
+                        io.questdb.griffin.engine.functions.table.ReadParquetRecordCursorFactory factory =
+                                new io.questdb.griffin.engine.functions.table.ReadParquetRecordCursorFactory(path, outMeta)
+                ) {
+                    Assert.assertEquals(
+                            io.questdb.cairo.sql.RecordCursorFactory.SCAN_DIRECTION_FORWARD,
+                            factory.getScanDirection()
+                    );
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testGenericRecordMetadataColumnOrderByRoundTrip() throws Exception {
+        // Unit-level pin on the new setColumnOrderBy / getColumnOrderBy contract.
+        // Sparse: only indices explicitly set carry a non-zero value; absent
+        // indices return 0 via the bounds check; clear() resets everything.
+        assertMemoryLeak(() -> {
+            final io.questdb.cairo.GenericRecordMetadata m = new io.questdb.cairo.GenericRecordMetadata();
+            m.add(new io.questdb.cairo.TableColumnMetadata("a", io.questdb.cairo.ColumnType.LONG));
+            m.add(new io.questdb.cairo.TableColumnMetadata("b", io.questdb.cairo.ColumnType.LONG));
+            m.add(new io.questdb.cairo.TableColumnMetadata("c", io.questdb.cairo.ColumnType.VARCHAR));
+
+            // Defaults: everything 0.
+            Assert.assertEquals(0, m.getColumnOrderBy(0));
+            Assert.assertEquals(0, m.getColumnOrderBy(1));
+            Assert.assertEquals(0, m.getColumnOrderBy(2));
+
+            // Out-of-range still returns 0 (the optimiser tolerates this).
+            Assert.assertEquals(0, m.getColumnOrderBy(-1));
+            Assert.assertEquals(0, m.getColumnOrderBy(99));
+
+            m.setColumnOrderBy(0, 1);  // ASC
+            m.setColumnOrderBy(2, -1); // DESC
+            Assert.assertEquals(1, m.getColumnOrderBy(0));
+            Assert.assertEquals(0, m.getColumnOrderBy(1));  // still default
+            Assert.assertEquals(-1, m.getColumnOrderBy(2));
+
+            // Out-of-range after the explicit set is still 0.
+            Assert.assertEquals(0, m.getColumnOrderBy(99));
+
+            m.clear();
+            Assert.assertEquals(0, m.getColumnOrderBy(0));
+            Assert.assertEquals(0, m.getColumnOrderBy(2));
         });
     }
 

@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.functions.table;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ParquetFileCache;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.VarcharTypeDriver;
 import io.questdb.cairo.arr.ArrayView;
@@ -85,29 +86,46 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
     private final LongList auxPtrs = new LongList();
     private final DirectIntList columns;
     private final LongList dataPtrs = new LongList();
-    private final ParquetFileDecoder decoder;
     private final FilesFacade ff;
     private final DirectLongList filterList;
     private final MemoryCARWImpl filterValues;
     // doesn't include unsupported columns
     private final RecordMetadata metadata;
+    // Engine-shared parquet cache. The cursor borrows entries via acquire()
+    // and MUST release them on close / on the next of() / ofMetadata() call.
+    private final ParquetFileCache parquetCache;
     private final @Nullable ObjList<PushdownFilterExtractor.PushdownFilterCondition> pushdownFilterConditions;
     private final ParquetRecord record;
     private final RowGroupBuffers rowGroupBuffers;
-    private long addr = 0;
+    // Currently-held cache entry. Non-null between of()/ofMetadata() and the
+    // matching closeFile(). The decoder field always tracks currentEntry.decoder
+    // - kept as a field for hot getter paths that would otherwise pay a chase.
+    private ParquetFileCache.Entry currentEntry;
     private int currentRowInRowGroup;
-    private long fd = -1;
-    private long fileSize = 0;
+    private ParquetFileDecoder decoder;
     private long filterBufEnd;
     private boolean isFilterListPrepared;
+    // When true, hasNext walks row groups from last to first and rows within
+    // a row group from rowGroupRowCount-1 down to 0. Set via {@link #setReverse}
+    // by the factory before {@code of(...)}; safe to leave false for the
+    // common forward-scan path.
+    //
+    // Correctness depends on the file being sorted ASC on the designated
+    // timestamp both across row groups AND within each row group, which is
+    // guaranteed for parquet files produced by QuestDB's writer (the
+    // TableReader feeds partition-ordered rows). The planner only flips
+    // this flag when ORDER BY ts DESC is requested on a file whose
+    // sorting_columns metadata claims ts ASC; trusting that claim is the
+    // same model used by the footer-only MIN/MAX shortcut.
+    private boolean reverse;
     private int rowGroupIndex;
     private long rowGroupRowCount;
 
-    public ReadParquetRecordCursor(FilesFacade ff, RecordMetadata metadata, @Nullable ObjList<PushdownFilterExtractor.PushdownFilterCondition> pushdownFilterConditions) {
+    public ReadParquetRecordCursor(FilesFacade ff, ParquetFileCache parquetCache, RecordMetadata metadata, @Nullable ObjList<PushdownFilterExtractor.PushdownFilterCondition> pushdownFilterConditions) {
         try {
             this.ff = ff;
+            this.parquetCache = parquetCache;
             this.metadata = metadata;
-            this.decoder = new ParquetFileDecoder();
             this.rowGroupBuffers = new RowGroupBuffers(MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
             this.columns = new DirectIntList(32, MemoryTag.NATIVE_DEFAULT);
             this.record = new ParquetRecord(metadata.getColumnCount());
@@ -217,20 +235,28 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
 
     @Override
     public void close() {
-        Misc.free(decoder);
+        // The decoder is owned by ParquetFileCache - closeFile() releases the
+        // shared ref. Do NOT free it here. Internal buffers below are owned by
+        // this cursor and must be freed.
+        closeFile();
         Misc.free(rowGroupBuffers);
         Misc.free(columns);
         Misc.free(record);
         Misc.free(filterList);
         Misc.free(filterValues);
-        if (fd != -1) {
-            ff.close(fd);
-            fd = -1;
-        }
-        if (addr != 0) {
-            ff.munmap(addr, fileSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
-            addr = 0;
-        }
+    }
+
+    /**
+     * Borrowed reference to the opened parquet decoder. Valid only after
+     * {@link #of} has succeeded and before {@link #close}; calls outside
+     * that window dereference an uninitialised or freed handle. Exposed
+     * for the factory layer's sort-claim verification hook -
+     * {@code ParquetFileDecoder.verifyAscendingSortAcrossRowGroups} runs
+     * over the decoder's metadata snapshot, so the caller does not need
+     * to manage file lifecycle.
+     */
+    public ParquetFileDecoder getDecoder() {
+        return decoder;
     }
 
     @Override
@@ -240,10 +266,19 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
 
     @Override
     public boolean hasNext() {
+        if (reverse) {
+            if (--currentRowInRowGroup >= 0) {
+                return true;
+            }
+            try {
+                return switchToPreviousRowGroup();
+            } catch (CairoException ex) {
+                throw CairoException.nonCritical().put("Error reading. Parquet file is likely corrupted");
+            }
+        }
         if (++currentRowInRowGroup < rowGroupRowCount) {
             return true;
         }
-
         try {
             return switchToNextRowGroup();
         } catch (CairoException ex) {
@@ -252,11 +287,11 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
     }
 
     public void of(LPSZ path, SqlExecutionContext executionContext) throws SqlException {
-        // Reopen the file, it could have changed
-        this.fd = TableUtils.openRO(ff, path, LOG);
-        this.fileSize = ff.length(fd);
-        this.addr = TableUtils.mapRO(ff, fd, fileSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
-        decoder.of(addr, fileSize, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
+        // Reopen the file; it could have changed since the last call, or this cursor may
+        // be reused across files by HivePartitionedReadParquetRecordCursor.
+        closeFile();
+        currentEntry = parquetCache.acquire(path, ff);
+        decoder = currentEntry.decoder;
         rowGroupBuffers.reopen();
         columns.reopen();
         columns.clear();
@@ -286,9 +321,42 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
         toTop();
     }
 
+    /**
+     * Opens just enough of a parquet file to expose its metadata via the decoder.
+     * Use when the caller only needs row counts (calculateSize) or wants to skip
+     * past whole files (skipRows) without paying to decode row groups.
+     * After this, hasNext() must not be called until of() initialises columns
+     * and filter state for actual reading.
+     */
+    public void ofMetadata(LPSZ path) {
+        closeFile();
+        currentEntry = parquetCache.acquire(path, ff);
+        decoder = currentEntry.decoder;
+        toTop();
+    }
+
     @Override
     public long preComputedStateSize() {
         return 0;
+    }
+
+    /**
+     * Flips this cursor between forward (ASC) and reverse (DESC) iteration.
+     * Call BEFORE {@link #of} on any given file; flipping mid-iteration is
+     * not supported because {@link #toTop} seeds {@code rowGroupIndex}
+     * based on the current value of {@code reverse} and a flip after the
+     * cursor has been positioned would leave the indices inconsistent.
+     * <p>
+     * Reverse iteration requires the parquet file to be sorted ASC on the
+     * designated timestamp BOTH across row groups AND within each row group.
+     * QuestDB-written parquets satisfy this by construction (TableReader
+     * feeds the writer rows in partition order, which is ts-sorted). For
+     * external files the planner gates reverse on the file's
+     * {@code sorting_columns} claim - if the claim is dishonest, DESC
+     * results will be wrong; same trust model as the MIN/MAX shortcut.
+     */
+    public void setReverse(boolean reverse) {
+        this.reverse = reverse;
     }
 
     @Override
@@ -326,9 +394,31 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
 
     @Override
     public void toTop() {
+        if (reverse) {
+            // Walk from the last row group down. switchToPreviousRowGroup
+            // pre-decrements rowGroupIndex, so seed it at rowGroupCount (one
+            // past the last row group). currentRowInRowGroup = 0 makes the
+            // first hasNext() fall into switchToPreviousRowGroup, which
+            // decodes RG[count-1] and seeds currentRowInRowGroup to
+            // rowGroupRowCount (one past the last row); the subsequent
+            // --currentRowInRowGroup yields rowGroupRowCount-1, the last row
+            // of the last row group, in DESC ts order.
+            rowGroupIndex = decoder.metadata().getRowGroupCount();
+            rowGroupRowCount = 0;
+            currentRowInRowGroup = 0;
+            return;
+        }
         rowGroupIndex = -1;
         rowGroupRowCount = -1;
         currentRowInRowGroup = -1;
+    }
+
+    private void closeFile() {
+        if (currentEntry != null) {
+            parquetCache.release(currentEntry);
+            currentEntry = null;
+        }
+        decoder = null;
     }
 
     private long getStrAddr(int col) {
@@ -359,6 +449,50 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
                 auxPtrs.add(rowGroupBuffers.getChunkAuxPtr(i));
             }
             currentRowInRowGroup = 0;
+            return true;
+        }
+        return false;
+    }
+
+    /**
+     * Mirror of {@link #switchToNextRowGroup} that walks row groups in
+     * descending index order. Decodes the next surviving row group (skipping
+     * any whose statistics let the row-group-prune filter eliminate them)
+     * and seeds {@code currentRowInRowGroup = rowGroupRowCount} so the
+     * subsequent {@code --currentRowInRowGroup} in {@link #hasNext} yields
+     * the LAST row of that row group.
+     * <p>
+     * Returns {@code false} once {@code rowGroupIndex} drops below 0,
+     * signalling the cursor has emitted every surviving row in DESC order.
+     */
+    private boolean switchToPreviousRowGroup() {
+        dataPtrs.clear();
+        auxPtrs.clear();
+        while (--rowGroupIndex >= 0) {
+            if (isFilterListPrepared && ParquetRowGroupFilter.canSkipRowGroup(
+                    rowGroupIndex,
+                    decoder,
+                    filterList,
+                    filterBufEnd
+            )) {
+                continue;
+            }
+
+            final int rowGroupSize = decoder.metadata().getRowGroupSize(rowGroupIndex);
+            rowGroupRowCount = decoder.decodeRowGroup(rowGroupBuffers, columns, rowGroupIndex, 0, rowGroupSize);
+
+            for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+                dataPtrs.add(rowGroupBuffers.getChunkDataPtr(i));
+                auxPtrs.add(rowGroupBuffers.getChunkAuxPtr(i));
+            }
+            // Mirror the forward path: switchToNextRowGroup sets
+            // currentRowInRowGroup = 0 (first valid index) and returns true,
+            // so the caller reads at 0 immediately. Reverse symmetry: seed
+            // at rowGroupRowCount - 1 (last valid index) so the caller reads
+            // the largest ts of this row group on the same return.
+            // Subsequent hasNext calls then do --currentRowInRowGroup to
+            // walk back through the buffer.
+            currentRowInRowGroup = (int) rowGroupRowCount - 1;
             return true;
         }
         return false;

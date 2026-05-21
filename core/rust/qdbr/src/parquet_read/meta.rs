@@ -1,7 +1,7 @@
 use crate::allocator::{AcVec, QdbAllocator};
 use crate::parquet::error::{ParquetError, ParquetErrorReason, ParquetResult};
 use crate::parquet::qdb_metadata::{QdbMeta, QDB_META_KEY};
-use crate::parquet_read::{ColumnMeta, ParquetDecoder};
+use crate::parquet_read::{ColumnMeta, ParquetDecoder, SortingColumnMeta};
 use nonmax::NonMaxU32;
 use parquet2::metadata::{ColumnDescriptor, FileMetaData};
 use parquet2::read::read_metadata_with_size;
@@ -15,6 +15,62 @@ use qdb_core::col_type::{
     encode_array_type, ColumnType, ColumnTypeTag, QDB_TIMESTAMP_NS_COLUMN_TYPE_FLAG,
 };
 use std::io::{Read, Seek};
+
+/// Walks the file's row groups and returns the prefix of `sorting_columns`
+/// that is identical across every row group. A column survives only if every
+/// row group reports the same `(column_idx, descending, nulls_first)` triple
+/// at the same position in its `sorting_columns` list.
+///
+/// Returns an empty vec when:
+///  - any row group has no `sorting_columns` metadata,
+///  - the file has zero row groups,
+///  - or no shared prefix exists.
+///
+/// The optimiser uses the result to elide redundant `ORDER BY` clauses for
+/// any column the file is sorted on, not just the designated timestamp.
+fn extract_sorted_columns(
+    metadata: &FileMetaData,
+    allocator: QdbAllocator,
+) -> ParquetResult<AcVec<SortingColumnMeta>> {
+    if metadata.row_groups.is_empty() {
+        return Ok(AcVec::new_in(allocator));
+    }
+    let first = match metadata.row_groups[0].sorting_columns() {
+        Some(sc) if !sc.is_empty() => sc,
+        _ => return Ok(AcVec::new_in(allocator)),
+    };
+    let max_prefix = first.len();
+    let mut shared_len = max_prefix;
+    for row_group in &metadata.row_groups[1..] {
+        let Some(sc) = row_group.sorting_columns() else {
+            shared_len = 0;
+            break;
+        };
+        let cmp_len = shared_len.min(sc.len());
+        let mut matched = 0;
+        for i in 0..cmp_len {
+            if sc[i] == first[i] {
+                matched = i + 1;
+            } else {
+                break;
+            }
+        }
+        shared_len = matched;
+        if shared_len == 0 {
+            break;
+        }
+    }
+    let mut out = AcVec::with_capacity_in(shared_len, allocator)?;
+    for entry in &first[..shared_len] {
+        out.push(SortingColumnMeta {
+            column_index: entry.column_idx,
+            descending: u8::from(entry.descending),
+            nulls_first: u8::from(entry.nulls_first),
+            _padding: 0,
+        })?;
+    }
+    Ok(out)
+}
 
 /// Extract the questdb-specific metadata from the parquet file metadata.
 /// Error if the JSON is not valid or the version is not supported.
@@ -258,6 +314,10 @@ impl ParquetDecoder {
 
         let unused_bytes = qdb_meta.as_ref().map(|m| m.unused_bytes).unwrap_or(0);
 
+        let sorted_columns = extract_sorted_columns(&metadata, allocator.clone())?;
+        let sorted_columns_count = sorted_columns.len() as u32;
+        let sorted_columns_ptr = sorted_columns.as_ptr();
+
         // TODO(eugenels): add some validation
         Ok(Self {
             allocator,
@@ -267,6 +327,9 @@ impl ParquetDecoder {
             row_group_sizes_ptr: row_group_sizes.as_ptr(),
             row_group_sizes,
             timestamp_index,
+            sorted_columns_count,
+            sorted_columns_ptr,
+            sorted_columns,
             metadata,
             qdb_meta,
             columns_ptr: columns.as_ptr(),
@@ -658,6 +721,117 @@ mod tests {
             msg.contains("out of range"),
             "error should mention 'out of range', got: {msg}"
         );
+    }
+
+    #[test]
+    fn sorted_columns_round_trip_single_asc() {
+        // A file written with `with_sorting_columns(vec![col 0, ASC])` must
+        // round-trip through ParquetDecoder as one sorted_columns entry
+        // pointing at column 0 with descending=0.
+        let tas = TestAllocatorState::new();
+        let allocator = tas.allocator();
+
+        let (data, col) = build_int_column_with_encoding(0);
+        let partition = Partition { table: "t".to_string(), columns: vec![col] };
+
+        let mut buf: Cursor<Vec<u8>> = Cursor::new(Vec::new());
+        ParquetWriter::new(&mut buf)
+            .with_statistics(true)
+            .with_row_group_size(Some(1_048_576))
+            .with_data_page_size(Some(1_048_576))
+            .with_sorting_columns(Some(vec![parquet2::metadata::SortingColumn::new(
+                0, false, false,
+            )]))
+            .finish(partition)
+            .expect("parquet writer");
+
+        buf.set_position(0);
+        let bytes: Bytes = buf.into_inner().into();
+        let mut temp_file = NamedTempFile::new().expect("temp file");
+        temp_file
+            .write_all(bytes.to_byte_slice())
+            .expect("write parquet bytes");
+
+        let path = temp_file.path().to_str().unwrap();
+        let mut file = File::open(Path::new(path)).unwrap();
+        let file_len = file.len();
+        let decoder = ParquetDecoder::read(allocator, &mut file, file_len).unwrap();
+
+        assert_eq!(
+            decoder.sorted_columns.len(),
+            1,
+            "expected exactly one sorted column"
+        );
+        let entry = &decoder.sorted_columns[0];
+        assert_eq!(entry.column_index, 0);
+        assert_eq!(
+            entry.descending, 0,
+            "sort declared ASC, descending must be 0"
+        );
+        assert_eq!(
+            entry.nulls_first, 0,
+            "sort declared nulls_first=false, must be 0"
+        );
+        assert_eq!(
+            decoder.sorted_columns_count as usize,
+            decoder.sorted_columns.len()
+        );
+        // make sure data lives until end of test
+        assert!(!data.is_empty());
+    }
+
+    #[test]
+    fn sorted_columns_round_trip_descending() {
+        // A file written with `with_sorting_columns(vec![col 0, DESC])` must
+        // surface descending=1.
+        let tas = TestAllocatorState::new();
+        let allocator = tas.allocator();
+
+        let (data, col) = build_int_column_with_encoding(0);
+        let partition = Partition { table: "t".to_string(), columns: vec![col] };
+
+        let mut buf: Cursor<Vec<u8>> = Cursor::new(Vec::new());
+        ParquetWriter::new(&mut buf)
+            .with_statistics(true)
+            .with_row_group_size(Some(1_048_576))
+            .with_data_page_size(Some(1_048_576))
+            .with_sorting_columns(Some(vec![parquet2::metadata::SortingColumn::new(
+                0, true, true,
+            )]))
+            .finish(partition)
+            .expect("parquet writer");
+
+        buf.set_position(0);
+        let bytes: Bytes = buf.into_inner().into();
+        let mut temp_file = NamedTempFile::new().expect("temp file");
+        temp_file
+            .write_all(bytes.to_byte_slice())
+            .expect("write parquet bytes");
+
+        let path = temp_file.path().to_str().unwrap();
+        let mut file = File::open(Path::new(path)).unwrap();
+        let file_len = file.len();
+        let decoder = ParquetDecoder::read(allocator, &mut file, file_len).unwrap();
+
+        assert_eq!(decoder.sorted_columns.len(), 1);
+        let entry = &decoder.sorted_columns[0];
+        assert_eq!(entry.column_index, 0);
+        assert_eq!(entry.descending, 1);
+        assert_eq!(entry.nulls_first, 1);
+        assert!(!data.is_empty());
+    }
+
+    #[test]
+    fn sorted_columns_absent_when_writer_did_not_declare() {
+        // A file written without `with_sorting_columns` must yield an empty
+        // sorted_columns vec; the optimiser falls back to a real sort.
+        let (decoder, _temp_file, _data, _tas) = round_trip_int_column(0);
+        assert_eq!(
+            decoder.sorted_columns.len(),
+            0,
+            "writer did not declare sorting; decoder must report empty"
+        );
+        assert_eq!(decoder.sorted_columns_count, 0);
     }
 
     fn create_fix_column(

@@ -361,6 +361,33 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
     }
 
     /**
+     * Returns true when this factory's pushdown evaluation is guaranteed to be
+     * <i>exact</i> for {@code filterExpr} - i.e. every row that the cursor emits
+     * already satisfies the predicate, with no false positives. The caller may
+     * then skip wrapping the cursor with a row-level filter, saving N rows worth
+     * of predicate evaluation per surviving partition / row group.
+     * <p>
+     * Default is {@code false}, which preserves the row-level filter regardless
+     * of pushdown. Implementations should only return {@code true} when the
+     * pushdown layer is a precise filter on the predicate domain (e.g. hive
+     * partition column pruning where the column value is constant per file).
+     * Statistics-based or bloom-filter row-group skipping is NOT exact - those
+     * can over-include rows and must keep the row-level filter intact.
+     * <p>
+     * Called by the SQL code generator immediately after
+     * {@link #setPushdownFilterCondition}.
+     *
+     * @param filterExpr the original WHERE expression, before pushdown extracted
+     *                   anything from it. May be {@code null}.
+     * @return {@code true} when the cursor will exactly evaluate the entire
+     * {@code filterExpr} via its pushdown machinery and the row-level filter is
+     * redundant; {@code false} otherwise.
+     */
+    default boolean isFilterFullyConsumedByPushdown(@Nullable ExpressionNode filterExpr) {
+        return false;
+    }
+
+    /**
      * Returns true if the factory stands for nothing more but a filter, so that
      * the above factory (e.g. a parallel GROUP BY one) can steal the filter.
      *

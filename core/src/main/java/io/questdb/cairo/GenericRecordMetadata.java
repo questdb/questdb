@@ -36,12 +36,20 @@ public class GenericRecordMetadata extends AbstractRecordMetadata {
     public static void copyColumns(RecordMetadata from, GenericRecordMetadata to) {
         for (int i = 0, n = from.getColumnCount(); i < n; i++) {
             to.add(from.getColumnMetadata(i));
+            final int orderBy = from.getColumnOrderBy(i);
+            if (orderBy != 0) {
+                to.setColumnOrderBy(i, orderBy);
+            }
         }
     }
 
     public static void copyColumns(RecordMetadata from, GenericRecordMetadata to, int columnCount) {
         for (int i = 0, n = Math.min(from.getColumnCount(), columnCount); i < n; i++) {
             to.add(from.getColumnMetadata(i));
+            final int orderBy = from.getColumnOrderBy(i);
+            if (orderBy != 0) {
+                to.setColumnOrderBy(i, orderBy);
+            }
         }
     }
 
@@ -164,6 +172,23 @@ public class GenericRecordMetadata extends AbstractRecordMetadata {
             columnMetadata.extendAndSet(i, meta);
             columnCount++;
         }
+    }
+
+    /**
+     * Marks the column at {@code columnIndex} as ordered in the given
+     * direction (+1 ASC, -1 DESC, 0 unsorted). Callers must have ground
+     * truth about source sort order; an incorrect claim here would lead
+     * the optimiser to elide a sort that's actually needed and emit rows
+     * out of order.
+     * <p>
+     * Sparse: only indices touched by this setter carry non-zero values;
+     * unset columns default to 0 via the bounds check in
+     * {@code getColumnOrderBy}.
+     */
+    public void setColumnOrderBy(int columnIndex, int direction) {
+        assert direction == -1 || direction == 0 || direction == 1
+                : "direction must be -1 (DESC), 0 (unsorted), or +1 (ASC)";
+        columnOrderBy.extendAndSet(columnIndex, direction);
     }
 
     public void setTimestampIndex(int index) {

@@ -126,9 +126,60 @@ public class PartitionEncoder {
             int parquetMetaFd,
             long squashTracker
     ) {
+        return encodeWithOptions(
+                descriptor,
+                destPath,
+                compressionCodec,
+                statisticsEnabled,
+                rawArrayEncoding,
+                rowGroupSize,
+                dataPageSize,
+                version,
+                bloomFilterColumnIndexesPtr,
+                bloomFilterColumnCount,
+                bloomFilterFpp,
+                minCompressionRatio,
+                parquetMetaFd,
+                squashTracker,
+                -1,
+                false
+        );
+    }
+
+    /**
+     * Encode with an explicit override for the parquet {@code sorting_columns}
+     * metadata. When {@code nonTsSortColumnIndex >= 0}, the file's claim is
+     * set to that column alone, overriding the default behaviour of "claim
+     * the designated timestamp as ASC if present, otherwise no claim". The
+     * caller MUST guarantee the data is actually sorted on the named column
+     * in the requested direction; the writer does not verify, and an
+     * inaccurate claim would mislead the read-side optimiser into eliding
+     * a sort that the user expected to run.
+     * <p>
+     * {@code -1} preserves the default (timestamp or none).
+     */
+    public static long encodeWithOptions(
+            PartitionDescriptor descriptor,
+            Path destPath,
+            long compressionCodec,
+            boolean statisticsEnabled,
+            boolean rawArrayEncoding,
+            long rowGroupSize,
+            long dataPageSize,
+            int version,
+            long bloomFilterColumnIndexesPtr,
+            int bloomFilterColumnCount,
+            double bloomFilterFpp,
+            double minCompressionRatio,
+            int parquetMetaFd,
+            long squashTracker,
+            int nonTsSortColumnIndex,
+            boolean nonTsSortDescending
+    ) {
         assert bloomFilterColumnCount >= 0;
         assert bloomFilterColumnCount == 0 || bloomFilterColumnIndexesPtr != 0;
         assert bloomFilterColumnCount == 0 || (bloomFilterFpp > 0.0 && bloomFilterFpp < 1.0);
+        assert nonTsSortColumnIndex >= -1;
 
         final Utf8Sequence tableName = descriptor.getTableName();
         final int columnCount = descriptor.getColumnCount();
@@ -158,7 +209,9 @@ public class PartitionEncoder {
                     bloomFilterFpp,
                     minCompressionRatio,
                     parquetMetaFd,
-                    squashTracker
+                    squashTracker,
+                    nonTsSortColumnIndex,
+                    nonTsSortDescending
             );
         } finally {
             descriptor.clear();
@@ -315,7 +368,9 @@ public class PartitionEncoder {
             double bloomFilterFpp,
             double minCompressionRatio,
             int parquetMetaFd,
-            long squashTracker
+            long squashTracker,
+            int nonTsSortColumnIndex,
+            boolean nonTsSortDescending
     ) throws CairoException;
 
     static {

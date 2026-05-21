@@ -186,7 +186,10 @@ public abstract class AbstractCairoTest extends AbstractTest {
     };
     @Rule
     public Timeout timeout = Timeout.builder()
-            .withTimeout(20 * 60 * 1000, TimeUnit.MILLISECONDS)
+            // Default 20 min per test. Override via -Dtest.timeout.minutes=N
+            // for long-running soak / fuzz runs. Hard floor of 1 minute so a
+            // misconfigured sysprop never disables the rule entirely.
+            .withTimeout(Math.max(1L, Long.getLong("test.timeout.minutes", 20L)) * 60 * 1000, TimeUnit.MILLISECONDS)
             .withLookingForStuckThread(true)
             .build();
 
@@ -643,6 +646,16 @@ public abstract class AbstractCairoTest extends AbstractTest {
         try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
             metadataRW.clearCache();
         }
+        // Drain refcount=0 parquet cache entries when CLOSEABLE.forEach runs
+        // (LeakCheck does this both before capturing the baseline and again
+        // before asserting fd parity). Without this, the engine-shared cache
+        // would carry cached parquet fds across test boundaries and the
+        // leak detector would report them as new openings.
+        CLOSEABLE.add(() -> {
+            if (engine != null) {
+                engine.getParquetFileCache().evictAllReleased();
+            }
+        });
         messageBus = node1.getMessageBus();
 
         node1.initGriffin(circuitBreaker);
@@ -718,6 +731,12 @@ public abstract class AbstractCairoTest extends AbstractTest {
         try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
             metadataRW.clearCache();
         }
+        // Drain the engine-shared parquet cache between tests. The cache outlives
+        // any single test (it lives with the reused engine), and leaving entries
+        // around would mark them as fd / mmap leaks against the next test's
+        // baseline. Only refcount=0 entries are evicted; if a test left a cursor
+        // open, the leak check below will surface that as a real bug.
+        engine.getParquetFileCache().evictAllReleased();
         sink.clear();
         memoryUsage = -1;
         if (inputWorkRoot != null) {

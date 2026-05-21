@@ -35,6 +35,7 @@ import io.questdb.log.LogFactory;
 import io.questdb.std.Chars;
 import io.questdb.std.DirectIntList;
 import io.questdb.std.DirectLongList;
+import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.ObjectPool;
 import io.questdb.std.Os;
@@ -56,17 +57,31 @@ public class ParquetFileDecoder implements ParquetDecoder, ParquetRowGroupSkippe
     private static final long ROW_COUNT_OFFSET;
     private static final long ROW_GROUP_COUNT_OFFSET;
     private static final long ROW_GROUP_SIZES_PTR_OFFSET;
+    private static final long SORTED_COLUMNS_COUNT_OFFSET;
+    private static final long SORTED_COLUMNS_PTR_OFFSET;
+    private static final long SORTED_COLUMN_DESCENDING_OFFSET;
+    private static final long SORTED_COLUMN_INDEX_OFFSET;
+    private static final long SORTED_COLUMN_STRUCT_SIZE;
     private static final long TIMESTAMP_INDEX_OFFSET;
     private static final long UNUSED_BYTES_OFFSET;
     private final ObjectPool<DirectString> directStringPool = new ObjectPool<>(DirectString::new, 16);
     private final Metadata metadata = new Metadata();
     private long columnsPtr;
-    private long decodeContextPtr;
+    // Volatile so the double-checked read in decodeRowGroup* and the synchronized
+    // write in ensureDecodeContext are properly published across threads. Workers
+    // call decodeRowGroup concurrently on a single decoder; without this guarantee
+    // each could observe decodeContextPtr == 0 and race to allocate, leaking one
+    // context per race.
+    private volatile long decodeContextPtr;
     private long fileAddr; // mmapped parquet file's address
     private long fileSize; // mmapped parquet file's size
     private boolean owned;
     private long ptr;
     private long rowGroupSizesPtr;
+    // Address of the native SortingColumnMeta[] (NULL when sorted_columns is empty).
+    // Read lazily in Metadata.getSortedColumnIndex/Descending; populated alongside
+    // columnsPtr/rowGroupSizesPtr in of().
+    private long sortedColumnsPtr;
 
     public static native long createDecodeContext(long addr, long fileSize);
 
@@ -115,10 +130,7 @@ public class ParquetFileDecoder implements ParquetDecoder, ParquetRowGroupSkippe
             int rowHi // high row index within the row group, exclusive
     ) {
         assert ptr != 0;
-        if (decodeContextPtr == 0) {
-            // lazy init
-            decodeContextPtr = createDecodeContext(fileAddr, fileSize);
-        }
+        ensureDecodeContext();
         return decodeRowGroup( // throws CairoException on error
                 ptr,
                 decodeContextPtr,
@@ -141,10 +153,7 @@ public class ParquetFileDecoder implements ParquetDecoder, ParquetRowGroupSkippe
             DirectLongList filteredRows
     ) {
         assert ptr != 0;
-        if (decodeContextPtr == 0) {
-            // lazy init
-            decodeContextPtr = createDecodeContext(fileAddr, fileSize);
-        }
+        ensureDecodeContext();
         decodeRowGroupWithRowFilter(
                 ptr,
                 decodeContextPtr,
@@ -170,10 +179,7 @@ public class ParquetFileDecoder implements ParquetDecoder, ParquetRowGroupSkippe
             DirectLongList filteredRows
     ) {
         assert ptr != 0;
-        if (decodeContextPtr == 0) {
-            // lazy init
-            decodeContextPtr = createDecodeContext(fileAddr, fileSize);
-        }
+        ensureDecodeContext();
         decodeRowGroupWithRowFilterFillNulls(
                 ptr,
                 decodeContextPtr,
@@ -224,6 +230,7 @@ public class ParquetFileDecoder implements ParquetDecoder, ParquetRowGroupSkippe
         ptr = create(allocator, addr, fileSize); // throws CairoException on error
         columnsPtr = Unsafe.getLong(ptr + COLUMNS_PTR_OFFSET);
         rowGroupSizesPtr = Unsafe.getLong(ptr + ROW_GROUP_SIZES_PTR_OFFSET);
+        sortedColumnsPtr = Unsafe.getLong(ptr + SORTED_COLUMNS_PTR_OFFSET);
         metadata.init();
     }
 
@@ -253,6 +260,7 @@ public class ParquetFileDecoder implements ParquetDecoder, ParquetRowGroupSkippe
         }
         this.columnsPtr = other.columnsPtr;
         this.rowGroupSizesPtr = other.rowGroupSizesPtr;
+        this.sortedColumnsPtr = other.sortedColumnsPtr;
         this.metadata.of(other.metadata);
         owned = false;
     }
@@ -267,9 +275,105 @@ public class ParquetFileDecoder implements ParquetDecoder, ParquetRowGroupSkippe
         return rowGroupMaxTimestamp(ptr, fileAddr, fileSize, rowGroupIndex, timestampColumnIndex);
     }
 
+    /**
+     * Generic counterpart to {@link #rowGroupMaxTimestamp} for any column
+     * whose storage tag is INT, LONG, DATE, or TIMESTAMP. Reads the max
+     * value from the column-chunk statistics in the parquet footer. INT
+     * stats (4-byte) are sign-extended to long. Throws if statistics are
+     * absent or the column tag is unsupported - the caller is expected
+     * to fall back to the standard aggregate path in that case.
+     */
+    public long rowGroupMaxValueLong(int rowGroupIndex, int columnIndex) {
+        assert ptr != 0;
+        return rowGroupMaxValueLong(ptr, rowGroupIndex, columnIndex);
+    }
+
+    /**
+     * DOUBLE-typed counterpart to {@link #rowGroupMaxValueLong}. Reads
+     * the f64 max value from the column-chunk statistics. The column's
+     * storage tag must be DOUBLE; other tags throw an error.
+     */
+    public double rowGroupMaxValueDouble(int rowGroupIndex, int columnIndex) {
+        assert ptr != 0;
+        return rowGroupMaxValueDouble(ptr, rowGroupIndex, columnIndex);
+    }
+
     public long rowGroupMinTimestamp(int rowGroupIndex, int timestampColumnIndex) {
         assert ptr != 0;
         return rowGroupMinTimestamp(ptr, fileAddr, fileSize, rowGroupIndex, timestampColumnIndex);
+    }
+
+    /**
+     * Min-side counterpart to {@link #rowGroupMaxValueLong}.
+     */
+    public long rowGroupMinValueLong(int rowGroupIndex, int columnIndex) {
+        assert ptr != 0;
+        return rowGroupMinValueLong(ptr, rowGroupIndex, columnIndex);
+    }
+
+    /**
+     * Min-side counterpart to {@link #rowGroupMaxValueDouble}.
+     */
+    public double rowGroupMinValueDouble(int rowGroupIndex, int columnIndex) {
+        assert ptr != 0;
+        return rowGroupMinValueDouble(ptr, rowGroupIndex, columnIndex);
+    }
+
+    /**
+     * Verifies that the parquet file's {@code sorting_columns} claim for
+     * {@code columnIndex} ASC actually holds across row group boundaries:
+     * for every adjacent pair {@code (RG[i], RG[i+1])} the per-row-group
+     * statistics must satisfy {@code RG[i].max <= RG[i+1].min}. Files with
+     * a single row group trivially pass.
+     * <p>
+     * This validation is a cheap cross-row-group hardening check for code
+     * paths that ELIDE a sort based on the file's claim (the reverse-scan
+     * shortcut, the footer-only MIN/MAX shortcut). It does NOT verify
+     * within-row-group ordering - that would need a full row decode and
+     * defeats the point of the elision. The cross-RG check catches the
+     * common bug class where a writer appends to an existing parquet
+     * without re-sorting; within-RG misorder is rare in practice and
+     * remains a trust-the-writer hazard.
+     * <p>
+     * Returns {@code true} when the claim is intact OR cannot be evaluated
+     * (e.g., column is not stat-readable - the gate falls back to trust).
+     * Returns {@code false} only when stats are present AND a violation is
+     * observed. The caller decides what to do with the result; this method
+     * has no side effects and never throws based on the data.
+     * <p>
+     * Uses {@link #rowGroupMinValueLong} / {@link #rowGroupMaxValueLong}
+     * under the hood, so only INT/LONG/DATE/TIMESTAMP storage columns are
+     * supported. Other column tags return {@code true} (cannot verify, so
+     * trust the claim).
+     */
+    public boolean verifyAscendingSortAcrossRowGroups(int columnIndex) {
+        assert ptr != 0;
+        final int rgCount = metadata.getRowGroupCount();
+        if (rgCount <= 1) {
+            return true;
+        }
+        long prevMax;
+        try {
+            prevMax = rowGroupMaxValueLong(0, columnIndex);
+        } catch (Throwable ignored) {
+            // Stats unreadable for this column - cannot verify, trust the claim.
+            return true;
+        }
+        for (int rg = 1; rg < rgCount; rg++) {
+            final long currMin;
+            final long currMax;
+            try {
+                currMin = rowGroupMinValueLong(rg, columnIndex);
+                currMax = rowGroupMaxValueLong(rg, columnIndex);
+            } catch (Throwable ignored) {
+                return true;
+            }
+            if (currMin < prevMax) {
+                return false;
+            }
+            prevMax = currMax;
+        }
+        return true;
     }
 
     private static native boolean canSkipRowGroup(
@@ -368,6 +472,18 @@ public class ParquetFileDecoder implements ParquetDecoder, ParquetRowGroupSkippe
             int timestampColumnIndex
     ) throws CairoException;
 
+    private static native long rowGroupMaxValueLong(
+            long decoderPtr,
+            int rowGroupIndex,
+            int columnIndex
+    ) throws CairoException;
+
+    private static native double rowGroupMaxValueDouble(
+            long decoderPtr,
+            int rowGroupIndex,
+            int columnIndex
+    ) throws CairoException;
+
     private static native long rowGroupMinTimestamp(
             long decoderPtr,
             long fileAddr,
@@ -376,11 +492,51 @@ public class ParquetFileDecoder implements ParquetDecoder, ParquetRowGroupSkippe
             int timestampColumnIndex
     ) throws CairoException;
 
+    private static native long rowGroupMinValueLong(
+            long decoderPtr,
+            int rowGroupIndex,
+            int columnIndex
+    ) throws CairoException;
+
+    private static native double rowGroupMinValueDouble(
+            long decoderPtr,
+            int rowGroupIndex,
+            int columnIndex
+    ) throws CairoException;
+
     private static native long rowGroupSizesPtrOffset();
+
+    private static native long sortedColumnDescendingOffset();
+
+    private static native long sortedColumnIndexOffset();
+
+    private static native long sortedColumnRecordSize();
+
+    private static native long sortedColumnsCountOffset();
+
+    private static native long sortedColumnsPtrOffset();
 
     private static native long timestampIndexOffset();
 
     private static native long unusedBytesOffset();
+
+    /**
+     * Initialises the decode context lazily and safely under concurrent callers.
+     * The double-checked read on a volatile field plus the synchronized write
+     * means workers calling {@code decodeRowGroup*} concurrently on a freshly
+     * opened decoder can no longer race to allocate two contexts.
+     */
+    private synchronized void ensureDecodeContextLocked() {
+        if (decodeContextPtr == 0) {
+            decodeContextPtr = createDecodeContext(fileAddr, fileSize);
+        }
+    }
+
+    private void ensureDecodeContext() {
+        if (decodeContextPtr == 0) {
+            ensureDecodeContextLocked();
+        }
+    }
 
     private void destroy() {
         if (owned && ptr != 0) {
@@ -388,6 +544,7 @@ public class ParquetFileDecoder implements ParquetDecoder, ParquetRowGroupSkippe
             ptr = 0;
             columnsPtr = 0;
             rowGroupSizesPtr = 0;
+            sortedColumnsPtr = 0;
         }
         if (decodeContextPtr != 0) {
             destroyDecodeContext(decodeContextPtr);
@@ -401,6 +558,10 @@ public class ParquetFileDecoder implements ParquetDecoder, ParquetRowGroupSkippe
      */
     public class Metadata {
         private final ObjList<DirectString> columnNames = new ObjList<>();
+        // Scratch buffer for parquet-index -> output-index translation in
+        // copyToSansUnsupported. Reused across files so the call doesn't
+        // allocate per invocation. Sized in copyToSansUnsupported.
+        private final IntList parquetToOutputIndex = new IntList();
 
         /**
          * Copies supported columns into the provided metadata, skipping any with Undefined type.
@@ -410,7 +571,17 @@ public class ParquetFileDecoder implements ParquetDecoder, ParquetRowGroupSkippe
             dest.clear();
             final int timestampIndex = getTimestampIndex();
             int copyTimestampIndex = -1;
-            for (int i = 0, n = getColumnCount(); i < n; i++) {
+            // Translate parquet column indices to output (post-skip) indices so
+            // the sort-order map below can be applied. Sized to the input width;
+            // entries for unsupported (skipped) columns stay at -1 and are not
+            // propagated.
+            final int sourceCount = getColumnCount();
+            parquetToOutputIndex.clear();
+            parquetToOutputIndex.setPos(sourceCount);
+            for (int i = 0; i < sourceCount; i++) {
+                parquetToOutputIndex.setQuick(i, -1);
+            }
+            for (int i = 0; i < sourceCount; i++) {
                 final String columnName = Chars.toString(getColumnName(i));
                 final int columnType = getColumnType(i);
 
@@ -439,9 +610,26 @@ public class ParquetFileDecoder implements ParquetDecoder, ParquetRowGroupSkippe
                         copyTimestampIndex = dest.getColumnCount() - 1;
                     }
                 }
+                parquetToOutputIndex.setQuick(i, dest.getColumnCount() - 1);
             }
 
             dest.setTimestampIndex(copyTimestampIndex);
+
+            // Carry parquet `sorting_columns` metadata through to the output
+            // metadata so the optimiser can elide redundant ORDER BY clauses.
+            // Only propagate columns that survived the skip pass above; an
+            // unsupported sort column has no place in dest, so it's ignored.
+            final int sortCount = getSortedColumnsCount();
+            for (int rank = 0; rank < sortCount; rank++) {
+                final int parquetIdx = getSortedColumnParquetIndex(rank);
+                if (parquetIdx < 0 || parquetIdx >= sourceCount) {
+                    continue;
+                }
+                final int outputIdx = parquetToOutputIndex.getQuick(parquetIdx);
+                if (outputIdx >= 0) {
+                    dest.setColumnOrderBy(outputIdx, isSortedColumnDescending(rank) ? -1 : 1);
+                }
+            }
         }
 
         public int getColumnCount() {
@@ -482,11 +670,58 @@ public class ParquetFileDecoder implements ParquetDecoder, ParquetRowGroupSkippe
             return Unsafe.getInt(rowGroupSizesPtr + 4L * rowGroupIndex);
         }
 
+        /**
+         * Returns the order direction the file is sorted on for the given
+         * parquet column index, or 0 if the file does not declare a sort on
+         * that column.
+         * <p>
+         * Returns +1 (ASC) or -1 (DESC) when the file's {@code sorting_columns}
+         * metadata names this column at any rank, and the same entry holds
+         * consistently across every row group.
+         * <p>
+         * The optimiser consumes this to elide redundant {@code ORDER BY col}
+         * clauses. Callers must hold a parquet-side column index, not the
+         * projected/output index.
+         */
+        public int getColumnOrderBy(int parquetColumnIndex) {
+            final int n = getSortedColumnsCount();
+            for (int i = 0; i < n; i++) {
+                if (getSortedColumnParquetIndex(i) == parquetColumnIndex) {
+                    return isSortedColumnDescending(i) ? -1 : 1;
+                }
+            }
+            return 0;
+        }
+
+        /**
+         * Parquet column index of the i-th sorted column, in the order the
+         * file declares sort precedence (rank 0 = primary key, rank 1 = tie
+         * breaker, ...). Bounds-checked at debug time only.
+         */
+        public int getSortedColumnParquetIndex(int rank) {
+            assert rank >= 0 && rank < getSortedColumnsCount();
+            return Unsafe.getInt(sortedColumnsPtr + rank * SORTED_COLUMN_STRUCT_SIZE + SORTED_COLUMN_INDEX_OFFSET);
+        }
+
+        /**
+         * Count of columns the file claims as sorted CONSISTENTLY across every
+         * row group. Zero when the file has no {@code sorting_columns}
+         * metadata or when sort is inconsistent across row groups.
+         */
+        public int getSortedColumnsCount() {
+            return Unsafe.getInt(ptr + SORTED_COLUMNS_COUNT_OFFSET);
+        }
+
         public int getTimestampIndex() {
             // The value is stored as Option<NonMaxU32> on the Rust side,
             // so we need to apply bitwise not to get the actual value.
             // None is mapped to ~0 which is u32::max or -1_i32.
             return ~Unsafe.getInt(ptr + TIMESTAMP_INDEX_OFFSET);
+        }
+
+        public boolean isSortedColumnDescending(int rank) {
+            assert rank >= 0 && rank < getSortedColumnsCount();
+            return Unsafe.getByte(sortedColumnsPtr + rank * SORTED_COLUMN_STRUCT_SIZE + SORTED_COLUMN_DESCENDING_OFFSET) != 0;
         }
 
         public long getUnusedBytes() {
@@ -527,6 +762,11 @@ public class ParquetFileDecoder implements ParquetDecoder, ParquetRowGroupSkippe
         COLUMN_RECORD_NAME_PTR_OFFSET = columnRecordNamePtrOffset();
         ROW_GROUP_SIZES_PTR_OFFSET = rowGroupSizesPtrOffset();
         ROW_GROUP_COUNT_OFFSET = rowGroupCountOffset();
+        SORTED_COLUMNS_COUNT_OFFSET = sortedColumnsCountOffset();
+        SORTED_COLUMNS_PTR_OFFSET = sortedColumnsPtrOffset();
+        SORTED_COLUMN_STRUCT_SIZE = sortedColumnRecordSize();
+        SORTED_COLUMN_INDEX_OFFSET = sortedColumnIndexOffset();
+        SORTED_COLUMN_DESCENDING_OFFSET = sortedColumnDescendingOffset();
         TIMESTAMP_INDEX_OFFSET = timestampIndexOffset();
         UNUSED_BYTES_OFFSET = unusedBytesOffset();
         COLUMN_IDS_OFFSET = columnIdsOffset();

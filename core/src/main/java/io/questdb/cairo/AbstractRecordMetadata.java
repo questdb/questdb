@@ -26,6 +26,7 @@ package io.questdb.cairo;
 
 
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.std.IntList;
 import io.questdb.std.LowerCaseCharSequenceIntHashMap;
 import io.questdb.std.Mutable;
 import io.questdb.std.ObjList;
@@ -33,6 +34,13 @@ import io.questdb.std.ObjList;
 public abstract class AbstractRecordMetadata implements RecordMetadata, Mutable {
     protected final ObjList<TableColumnMetadata> columnMetadata = new ObjList<>();
     protected final LowerCaseCharSequenceIntHashMap columnNameIndexMap = new LowerCaseCharSequenceIntHashMap();
+    // Per-column sort direction (+1 ASC, -1 DESC, 0 unsorted). Sparse - only
+    // non-zero entries matter; absent index defaults to 0 via the bounds
+    // check in getColumnOrderBy. Populated by callers that have ground truth
+    // about source sort order (e.g. parquet files carrying `sorting_columns`
+    // metadata, or in-memory tables sorted on the designated timestamp). The
+    // optimiser consumes this to elide redundant `ORDER BY col` clauses.
+    protected final IntList columnOrderBy = new IntList();
     protected int columnCount;
     protected int timestampIndex = -1;
 
@@ -40,6 +48,7 @@ public abstract class AbstractRecordMetadata implements RecordMetadata, Mutable 
     public void clear() {
         columnMetadata.clear();
         columnNameIndexMap.clear();
+        columnOrderBy.clear();
         columnCount = 0;
         timestampIndex = -1;
     }
@@ -66,6 +75,14 @@ public abstract class AbstractRecordMetadata implements RecordMetadata, Mutable 
     @Override
     public String getColumnName(int columnIndex) {
         return getColumnMetadata(columnIndex).getColumnName();
+    }
+
+    @Override
+    public int getColumnOrderBy(int columnIndex) {
+        if (columnIndex < 0 || columnIndex >= columnOrderBy.size()) {
+            return 0;
+        }
+        return columnOrderBy.getQuick(columnIndex);
     }
 
     @Override

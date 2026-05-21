@@ -177,6 +177,7 @@ public class CairoEngine implements Closeable, WriterSource {
     private final MessageBusImpl messageBus;
     private final MetadataCache metadataCache;
     private final Metrics metrics;
+    private final ParquetFileCache parquetFileCache;
     private final PartitionOverwriteControl partitionOverwriteControl = new PartitionOverwriteControl();
     private final QueryRegistry queryRegistry;
     private final ReaderPool readerPool;
@@ -297,6 +298,7 @@ public class CairoEngine implements Closeable, WriterSource {
                 enablePartitionOverwriteControl();
             }
             this.metadataCache = new MetadataCache(this);
+            this.parquetFileCache = new ParquetFileCache(configuration);
         } catch (Throwable th) {
             close();
             throw th;
@@ -597,6 +599,7 @@ public class CairoEngine implements Closeable, WriterSource {
         Misc.free(tableNameRegistry);
         Misc.free(checkpointAgent);
         Misc.free(metadataCache);
+        Misc.free(parquetFileCache);
         Misc.free(scoreboardPool);
         Misc.free(matViewStateStore);
         Misc.free(settingsStore);
@@ -894,6 +897,10 @@ public class CairoEngine implements Closeable, WriterSource {
 
     public int getNextTableId() {
         return (int) tableIdGenerator.getNextId();
+    }
+
+    public ParquetFileCache getParquetFileCache() {
+        return parquetFileCache;
     }
 
     public PartitionOverwriteControl getPartitionOverwriteControl() {

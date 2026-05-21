@@ -1707,10 +1707,89 @@ public final class TestUtils {
         URL resource = TestUtils.class.getResource(resourceName);
         assertNotNull("Someone accidentally deleted test resource " + resourceName + "?", resource);
         try {
-            return Paths.get(resource.toURI()).toFile().getAbsolutePath();
-        } catch (URISyntaxException e) {
+            java.net.URI uri = resource.toURI();
+            if ("jar".equals(uri.getScheme())) {
+                // When the test classpath comes from a test-jar (consumers
+                // depending on this module's test artifacts), Paths.get(jar:URL)
+                // raises FileSystemNotFoundException and Path.toFile() on a
+                // ZipPath raises UnsupportedOperationException. Downstream
+                // consumers (CSV import, etc.) need a real filesystem path,
+                // so extract the resource subtree to a per-JVM temp dir and
+                // hand that back. Cached so a re-lookup of the same resource
+                // doesn't re-extract.
+                return extractJarResourceToTemp(resourceName, uri);
+            }
+            return Paths.get(uri).toFile().getAbsolutePath();
+        } catch (URISyntaxException | java.io.IOException e) {
             throw new RuntimeException("Could not determine resource path", e);
         }
+    }
+
+    private static final java.util.concurrent.ConcurrentHashMap<String, String> EXTRACTED_RESOURCES = new java.util.concurrent.ConcurrentHashMap<>();
+
+    private static String extractJarResourceToTemp(String resourceName, java.net.URI jarUri) throws java.io.IOException {
+        String cached = EXTRACTED_RESOURCES.get(resourceName);
+        if (cached != null) {
+            return cached;
+        }
+        // jar:file:/path/to.jar!/csv  ->  file:/path/to.jar  +  /csv
+        String spec = jarUri.getRawSchemeSpecificPart();
+        int bang = spec.indexOf("!/");
+        if (bang < 0) {
+            throw new java.io.IOException("malformed jar URI, no '!/' separator: " + jarUri);
+        }
+        java.net.URI fileUri;
+        try {
+            fileUri = new java.net.URI(spec.substring(0, bang));
+        } catch (URISyntaxException e) {
+            throw new java.io.IOException("could not parse jar file URI from " + jarUri, e);
+        }
+        String entryPrefix = spec.substring(bang + 2);
+        if (!entryPrefix.endsWith("/")) {
+            entryPrefix += "/";
+        }
+        java.nio.file.Path tempDir = java.nio.file.Files.createTempDirectory("qdb-testres-");
+        // Mark for deletion on JVM exit. Best-effort; tests don't accumulate
+        // enough resource data to matter if a JVM crash leaves them behind.
+        tempDir.toFile().deleteOnExit();
+        java.io.File jarFile = new java.io.File(fileUri);
+        try (java.util.jar.JarFile jf = new java.util.jar.JarFile(jarFile)) {
+            java.util.Enumeration<java.util.jar.JarEntry> entries = jf.entries();
+            while (entries.hasMoreElements()) {
+                java.util.jar.JarEntry entry = entries.nextElement();
+                if (!entry.getName().startsWith(entryPrefix)) {
+                    continue;
+                }
+                // Strip the prefix so the on-disk layout mirrors the resource
+                // tree the caller asked for (e.g. resourceName="/csv" yields
+                // a temp dir whose children are the contents of /csv/, not
+                // nested under another csv/ folder).
+                String rel = entry.getName().substring(entryPrefix.length());
+                if (rel.isEmpty()) {
+                    continue;
+                }
+                java.nio.file.Path target = tempDir.resolve(rel);
+                if (entry.isDirectory()) {
+                    java.nio.file.Files.createDirectories(target);
+                    target.toFile().deleteOnExit();
+                    continue;
+                }
+                java.nio.file.Path parent = target.getParent();
+                if (parent != null) {
+                    java.nio.file.Files.createDirectories(parent);
+                }
+                try (java.io.InputStream in = jf.getInputStream(entry)) {
+                    java.nio.file.Files.copy(in, target, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+                }
+                target.toFile().deleteOnExit();
+            }
+        }
+        String abs = tempDir.toFile().getAbsolutePath();
+        // putIfAbsent in case two threads raced. Either extraction is valid;
+        // the loser's temp dir leaks until deleteOnExit fires. Tests don't
+        // run concurrently enough on this path for the leak to matter.
+        String winner = EXTRACTED_RESOURCES.putIfAbsent(resourceName, abs);
+        return winner != null ? winner : abs;
     }
 
     public static TestTimestampType getTimestampType() {
