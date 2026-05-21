@@ -32,6 +32,9 @@ import io.questdb.client.cutlass.qwp.protocol.QwpTableBuffer;
 import io.questdb.client.std.Decimal128;
 import io.questdb.client.std.Decimal256;
 import io.questdb.client.std.Decimal64;
+import io.questdb.client.std.bytes.DirectByteSlice;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Unsafe;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -218,6 +221,54 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
     }
 
     @Test
+    public void testAutoCreateBinaryColumn() throws Exception {
+        runInContext((port) -> {
+            String table = "test_qwp_auto_binary";
+            // Pre-create without the binary column so QwpWalAppender promotes
+            // TYPE_BINARY on first ingest to a BINARY column.
+            execute("CREATE TABLE " + table + " (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            byte[] payload = {0x00, 0x7F, (byte) 0x80, (byte) 0xFF, 0x10, 0x20};
+
+            try (QwpWebSocketSender sender = connectWs(port)) {
+                sender.table(table)
+                        .binaryColumn("b", payload)
+                        .at(1_000_000, ChronoUnit.MICROS);
+                // Row 2 omits the column -- implicit NULL via the null bitmap.
+                sender.table(table)
+                        .at(2_000_000, ChronoUnit.MICROS);
+                // Row 3 ships a zero-length value. QuestDB's BINARY storage
+                // layer (MemoryPARWImpl.putBin) writes the NULL_LEN sentinel
+                // when len == 0, so an empty byte[] round-trips as NULL on
+                // read -- there is no length-0 non-null BINARY in the storage
+                // contract. We send it anyway to pin that quirk in case it
+                // ever changes.
+                sender.table(table)
+                        .binaryColumn("b", new byte[0])
+                        .at(3_000_000, ChronoUnit.MICROS);
+                sender.flush();
+            }
+
+            drainWalQueue();
+            assertSql(
+                    "SELECT \"column\", type FROM table_columns('" + table + "') WHERE \"column\" = 'b'",
+                    "column\ttype\nb\tBINARY\n"
+            );
+            // length() returns -1 for NULL and the byte count otherwise.
+            // Rows 2 and 3 both surface as -1 (see comment on row 3 above).
+            assertSql(
+                    "SELECT length(b) AS len FROM " + table + " ORDER BY ts",
+                    """
+                            len
+                            6
+                            -1
+                            -1
+                            """
+            );
+        });
+    }
+
+    @Test
     public void testAutoCreateByteColumn() throws Exception {
         runInContext((port) -> {
             String table = "test_qwp_auto_byte";
@@ -267,6 +318,155 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
     }
 
     @Test
+    public void testAutoCreateGeoHashColumns() throws Exception {
+        runInContext((port) -> {
+            String table = "test_qwp_auto_geohash";
+            // Pre-create the table without geohash columns so QwpWalAppender
+            // auto-creates them at each declared precision -- the wire-side
+            // precision drives the chosen storage class:
+            //   5b  -> GEOBYTE  (GEOHASH(1c))
+            //   15b -> GEOSHORT (GEOHASH(3c))
+            //   20b -> GEOINT   (GEOHASH(4c))
+            //   35b -> GEOLONG  (GEOHASH(7c))
+            execute("CREATE TABLE " + table + " (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            try (QwpWebSocketSender sender = connectWs(port)) {
+                // Row 1: long+precision overload, hitting all four storage classes.
+                // High bits set in the long are masked by the sender; the row
+                // should round-trip the low precisionBits intact.
+                sender.table(table)
+                        .geoHashColumn("g5", 0x1FL, 5)
+                        .geoHashColumn("g15", 0x7FFFL, 15)
+                        .geoHashColumn("g20", 0xF_FFFFL, 20)
+                        .geoHashColumn("g35", 0x7_FFFF_FFFFL, 35)
+                        .at(1_000_000, ChronoUnit.MICROS);
+                // Row 2: base32 string overload; lengths derive precision as len*5.
+                // "s24se0g" lands inside GEOHASH(35b)/GEOLONG storage.
+                sender.table(table)
+                        .geoHashColumn("g5", "u")
+                        .geoHashColumn("g15", "u33")
+                        .geoHashColumn("g20", "u33d")
+                        .geoHashColumn("g35", "s24se0g")
+                        .at(2_000_000, ChronoUnit.MICROS);
+                // Row 3: skip all geohash columns -> writes implicit NULLs via the
+                // null bitmap, exercising the sparse path.
+                sender.table(table)
+                        .at(3_000_000, ChronoUnit.MICROS);
+                sender.flush();
+            }
+
+            drainWalQueue();
+            // Verify auto-created column types match the declared precisions.
+            assertSql(
+                    "SELECT \"column\", type FROM table_columns('" + table + "') WHERE \"column\" LIKE 'g%' ORDER BY \"column\"",
+                    """
+                            column\ttype
+                            g15\tGEOHASH(3c)
+                            g20\tGEOHASH(4c)
+                            g35\tGEOHASH(7c)
+                            g5\tGEOHASH(1c)
+                            """
+            );
+            // Round-trip values. Row 1 was bit-packed: 0x1F renders as 'z' (the
+            // last base32 digit), 0x7FFF / 0xFFFFF / 0x7FFFFFFFF are the all-ones
+            // payload for each precision and render to the top base32 chars.
+            assertSql(
+                    "SELECT g5, g15, g20, g35 FROM " + table + " ORDER BY ts",
+                    """
+                            g5\tg15\tg20\tg35
+                            z\tzzz\tzzzz\tzzzzzzz
+                            u\tu33\tu33d\ts24se0g
+                            \t\t\t
+                            """
+            );
+        });
+    }
+
+    @Test
+    public void testIntColumnIntoIPv4TranslatesNullSentinel() throws Exception {
+        runInContext((port) -> {
+            String table = "test_qwp_int_to_ipv4_null";
+            // The IPv4 arm of QwpWalAppender.appendToWalColumnar accepts
+            // qwpType == TYPE_INT as a legacy-client migration path (a
+            // client that predates TYPE_IPV4 can still ingest into an
+            // IPv4 column by sending int bits). But INT's NULL sentinel
+            // (Integer.MIN_VALUE = 0x80000000) is not IPv4's NULL
+            // sentinel (0 = 0.0.0.0). Without translation the bit
+            // pattern lands verbatim through putFixedColumn's no-bitmap
+            // memcpy fast path, and reads back as the valid address
+            // 128.0.0.0 -- silently changing what the user wrote (a
+            // NULL on the INT side) into a non-null IPv4 value.
+            execute("CREATE TABLE " + table + " (addr IPv4, ts TIMESTAMP) "
+                    + "TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            try (QwpWebSocketSender sender = connectWs(port)) {
+                sender.table(table)
+                        .intColumn("addr", Integer.MIN_VALUE)   // INT_NULL
+                        .at(1_000_000, ChronoUnit.MICROS);
+                // Sanity row to confirm the TYPE_INT migration path
+                // still ingests real values correctly after the fix.
+                sender.table(table)
+                        .intColumn("addr", 0x0A000001)          // 10.0.0.1
+                        .at(2_000_000, ChronoUnit.MICROS);
+                sender.flush();
+            }
+
+            drainWalQueue();
+            assertSql(
+                    "SELECT coalesce(addr::string, 'null') v FROM " + table + " ORDER BY ts",
+                    """
+                            v
+                            null
+                            10.0.0.1
+                            """
+            );
+        });
+    }
+
+    @Test
+    public void testAutoCreateIPv4Column() throws Exception {
+        runInContext((port) -> {
+            String table = "test_qwp_auto_ipv4";
+            // Pre-create the table without the IPv4 column so QwpWalAppender
+            // auto-creates it, exercising the TYPE_IPV4 branch in
+            // mapQwpTypeToQuestDB plus the IPv4 null-aware arm in
+            // WalColumnarRowAppender.putFixedColumn (a null row forces the
+            // sparse path; 0.0.0.0 is QuestDB's IPv4 NULL sentinel).
+            execute("CREATE TABLE " + table + " (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            try (QwpWebSocketSender sender = connectWs(port)) {
+                sender.table(table)
+                        .ipv4Column("addr", 0xC0A80101) // 192.168.1.1
+                        .at(1_000_000, ChronoUnit.MICROS);
+                // Same column omitted on row 2 -> auto-NULL via the writer's null-aware path.
+                sender.table(table)
+                        .at(2_000_000, ChronoUnit.MICROS);
+                // String-overload parses the dotted-quad client-side.
+                sender.table(table)
+                        .ipv4Column("addr", "10.0.0.1")
+                        .at(3_000_000, ChronoUnit.MICROS);
+                sender.flush();
+            }
+
+            drainWalQueue();
+            // Verify the column was auto-created with the right QuestDB type.
+            assertSql(
+                    "SELECT type FROM table_columns('" + table + "') WHERE column = 'addr'",
+                    "type\nIPv4\n"
+            );
+            assertSql(
+                    "SELECT coalesce(addr::string, 'null') v FROM " + table + " ORDER BY ts",
+                    """
+                            v
+                            192.168.1.1
+                            null
+                            10.0.0.1
+                            """
+            );
+        });
+    }
+
+    @Test
     public void testAutoCreateNewColumnsDisabled() throws Exception {
         runInContextNoAutoCreate((port) -> {
             String table = "test_qwp_no_auto_col";
@@ -306,6 +506,235 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             assertSql(
                     "SELECT \"column\", type FROM table_columns('" + table + "') WHERE \"column\" = 'msg'",
                     "column\ttype\nmsg\tVARCHAR\n"
+            );
+        });
+    }
+
+    @Test
+    public void testBinaryColumnFromNativePointer() throws Exception {
+        // Exercises the zero-allocation overloads binaryColumn(name, ptr, len)
+        // and binaryColumn(name, DirectByteSlice). Both must land the same
+        // bytes as the byte[] form.
+        runInContext((port) -> {
+            String table = "test_qwp_binary_ptr";
+            execute("CREATE TABLE " + table + " (b BINARY, ts TIMESTAMP) "
+                    + "TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            byte[] payload = {(byte) 0xDE, (byte) 0xAD, (byte) 0xBE, (byte) 0xEF};
+            long ptr = Unsafe.malloc(payload.length, MemoryTag.NATIVE_DEFAULT);
+            try {
+                for (int i = 0; i < payload.length; i++) {
+                    Unsafe.putByte(ptr + i, payload[i]);
+                }
+
+                try (QwpWebSocketSender sender = connectWs(port)) {
+                    sender.table(table)
+                            .binaryColumn("b", ptr, payload.length)
+                            .at(1_000_000, ChronoUnit.MICROS);
+                    DirectByteSlice slice = new DirectByteSlice().of(ptr, payload.length);
+                    sender.table(table)
+                            .binaryColumn("b", slice)
+                            .at(2_000_000, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+            } finally {
+                Unsafe.free(ptr, payload.length, MemoryTag.NATIVE_DEFAULT);
+            }
+
+            drainWalQueue();
+            assertSql(
+                    "SELECT length(b) AS len FROM " + table + " ORDER BY ts",
+                    """
+                            len
+                            4
+                            4
+                            """
+            );
+        });
+    }
+
+    @Test
+    public void testBinaryColumnValidation() throws Exception {
+        // Client-side validation of the binaryColumn API. A null reference is
+        // rejected so the NULL contract stays explicit (callers must omit the
+        // column instead, which routes through the null bitmap). Nothing here
+        // should reach the wire.
+        runInContext((port) -> {
+            try (QwpWebSocketSender sender = connectWs(port)) {
+                sender.table("dummy");
+                assertThrowsContains(() -> sender.binaryColumn("b", (byte[]) null),
+                        "BINARY value cannot be null");
+                sender.cancelRow();
+                sender.table("dummy");
+                assertThrowsContains(() ->
+                                sender.binaryColumn("b", (io.questdb.client.std.bytes.DirectByteSlice) null),
+                        "BINARY slice cannot be null");
+                sender.cancelRow();
+            }
+        });
+    }
+
+    @Test
+    public void testBinaryColumnVarcharSourceCoercesToBinary() throws Exception {
+        runInContext((port) -> {
+            String table = "test_qwp_binary_from_varchar";
+            // Pre-create the table with a BINARY column. The client only has a
+            // stringColumn(...) helper, which sends TYPE_VARCHAR; QwpWalAppender's
+            // BINARY arm accepts both TYPE_BINARY and TYPE_VARCHAR sources because
+            // their wire layouts are identical, so the raw UTF-8 bytes land as
+            // BINARY without any reinterpretation step.
+            execute("CREATE TABLE " + table + " (b BINARY, ts TIMESTAMP) "
+                    + "TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            try (QwpWebSocketSender sender = connectWs(port)) {
+                sender.table(table)
+                        .stringColumn("b", "hello") // 5 UTF-8 bytes
+                        .at(1_000_000, ChronoUnit.MICROS);
+                sender.flush();
+            }
+
+            drainWalQueue();
+            assertSql(
+                    "SELECT length(b) AS len FROM " + table,
+                    "len\n5\n"
+            );
+        });
+    }
+
+    @Test
+    public void testBinarySourceRejectedByCharTarget() throws Exception {
+        runInContext((port) -> {
+            String table = "test_qwp_char_rejects_binary";
+            // Symmetric pin to testBinarySourceRejectedByVarcharTarget: a
+            // TYPE_BINARY wire payload must not be silently reinterpreted
+            // as text when the target column is CHAR. Without the guard
+            // QwpStringColumnCursor would route through putCharColumn and
+            // pick a CHAR from the leading byte(s).
+            execute("CREATE TABLE " + table + " (v CHAR, ts TIMESTAMP) "
+                    + "TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            byte[] payload = {(byte) 0x80, (byte) 0xFF, 0x00, 0x7F};
+
+            try (QwpWebSocketSender sender = connectWs(port)) {
+                sender.table(table)
+                        .binaryColumn("v", payload)
+                        .at(1_000_000, ChronoUnit.MICROS);
+                try {
+                    sender.flush();
+                } catch (LineSenderException ignored) {
+                }
+            }
+
+            drainWalQueue();
+            assertSql(
+                    "SELECT count() FROM " + table,
+                    "count\n0\n"
+            );
+        });
+    }
+
+    @Test
+    public void testBinarySourceRejectedByStringTarget() throws Exception {
+        runInContext((port) -> {
+            String table = "test_qwp_string_rejects_binary";
+            // Symmetric pin to testBinarySourceRejectedByVarcharTarget: raw
+            // binary bytes must not land in a STRING column where
+            // Utf8s.directUtf8ToUtf16 would reinterpret them as text.
+            execute("CREATE TABLE " + table + " (v STRING, ts TIMESTAMP) "
+                    + "TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            byte[] payload = {(byte) 0x80, (byte) 0xFF, 0x00, 0x7F};
+
+            try (QwpWebSocketSender sender = connectWs(port)) {
+                sender.table(table)
+                        .binaryColumn("v", payload)
+                        .at(1_000_000, ChronoUnit.MICROS);
+                try {
+                    sender.flush();
+                } catch (LineSenderException ignored) {
+                }
+            }
+
+            drainWalQueue();
+            assertSql(
+                    "SELECT count() FROM " + table,
+                    "count\n0\n"
+            );
+        });
+    }
+
+    @Test
+    public void testBinarySourceRejectedBySymbolTarget() throws Exception {
+        runInContext((port) -> {
+            String table = "test_qwp_symbol_rejects_binary";
+            // Symmetric pin to testBinarySourceRejectedByVarcharTarget: raw
+            // binary bytes must not be interned as a symbol via
+            // putStringToSymbolColumn.
+            execute("CREATE TABLE " + table + " (v SYMBOL, ts TIMESTAMP) "
+                    + "TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            byte[] payload = {(byte) 0x80, (byte) 0xFF, 0x00, 0x7F};
+
+            try (QwpWebSocketSender sender = connectWs(port)) {
+                sender.table(table)
+                        .binaryColumn("v", payload)
+                        .at(1_000_000, ChronoUnit.MICROS);
+                try {
+                    sender.flush();
+                } catch (LineSenderException ignored) {
+                }
+            }
+
+            drainWalQueue();
+            assertSql(
+                    "SELECT count() FROM " + table,
+                    "count\n0\n"
+            );
+        });
+    }
+
+    @Test
+    public void testBinarySourceRejectedByVarcharTarget() throws Exception {
+        runInContext((port) -> {
+            String table = "test_qwp_varchar_rejects_binary";
+            // Pre-create the table with a VARCHAR column. The client sends
+            // TYPE_BINARY via binaryColumn(...), targeting that existing
+            // VARCHAR column. QwpWalAppender's VARCHAR arm pattern-matches
+            // the cursor by class (QwpStringColumnCursor handles both
+            // BINARY and VARCHAR wire layouts since they share the same
+            // offsets + bytes encoding) without checking qwpType, so today
+            // TYPE_BINARY bytes pass through putVarcharColumn unchecked and
+            // raw (possibly non-UTF-8) bytes land in a column QuestDB
+            // treats as UTF-8. The asymmetric BINARY arm has the symmetric
+            // qwpType guard (testBinaryColumnVarcharSourceCoercesToBinary
+            // pins the accepted direction); this test pins that the
+            // opposite direction is rejected.
+            execute("CREATE TABLE " + table + " (v VARCHAR, ts TIMESTAMP) "
+                    + "TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            // Non-UTF-8 bytes: 0x80 is a continuation byte without a lead,
+            // 0xFF is never valid UTF-8. If these land in a VARCHAR column
+            // they break the UTF-8 invariant the rest of QuestDB assumes.
+            byte[] payload = {(byte) 0x80, (byte) 0xFF, 0x00, 0x7F};
+
+            try (QwpWebSocketSender sender = connectWs(port)) {
+                sender.table(table)
+                        .binaryColumn("v", payload)
+                        .at(1_000_000, ChronoUnit.MICROS);
+                try {
+                    sender.flush();
+                } catch (LineSenderException ignored) {
+                    // After the fix the server may surface the coercion
+                    // failure synchronously; before the fix it silently
+                    // accepts the row. Either way the count check below
+                    // is the definitive assertion.
+                }
+            }
+
+            drainWalQueue();
+            assertSql(
+                    "SELECT count() FROM " + table,
+                    "count\n0\n"
             );
         });
     }
@@ -401,10 +830,14 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
      */
     @Test
     public void testCloseRethrowsLatchedTerminalError() throws Exception {
-        // Tight server recv buffer + no client-side row cap forces the
-        // 1000-row default batch to overflow on flush.
+        // Tight server recv buffer + a client configured to bypass the byte
+        // auto-flush (so it cannot self-clamp to the server-advertised cap)
+        // forces the 1000-row default batch to overflow on flush. When the
+        // server advertises X-QWP-Max-Batch-Size at handshake the default
+        // sender clamps to it -- this test explicitly disables that path by
+        // setting auto_flush_bytes=off so the rejection branch still fires.
         runInContext((port) -> {
-            try (QwpWebSocketSender sender = connectWs(port)) {
+            try (QwpWebSocketSender sender = connectWs(port, /*rows*/ 0, /*bytes*/ 0, /*intervalNanos*/ 0L)) {
                 for (int i = 0; i < 1500; i++) {
                     sender.table("close_rethrow")
                             .stringColumn("payload", "x".repeat(64))
@@ -1519,6 +1952,106 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
     }
 
     @Test
+    public void testCoercionToStringAndVarcharFromIPv4() throws Exception {
+        runInContext((port) -> {
+            String table = "test_qwp_ipv4_to_string_varchar";
+            // QwpFixedWidthColumnCursor reads TYPE_IPV4 wire data (4-byte
+            // int). When a client targets a pre-existing STRING or VARCHAR
+            // column with ipv4Column(...), appendToWalColumnar dispatches
+            // through the QwpFixedWidthColumnCursor arm of the STRING /
+            // VARCHAR switch. isIntegerWireType(qwpType) returns false for
+            // TYPE_IPV4 (the helper only covers BYTE/SHORT/INT/LONG), so
+            // the cursor falls into putFixedOtherToStringColumn /
+            // putFixedOtherToVarcharColumn, whose per-row formatter
+            // (formatFixedOtherValue) had no TYPE_IPV4 arm and threw
+            // "unsupported wire type for string conversion: 24" mid-row.
+            //
+            // After the fix, TYPE_IPV4 is formatted as a dotted-quad via
+            // Numbers.intToIPv4Sink and round-trips cleanly through both
+            // STRING and VARCHAR target columns. The IPv4 NULL sentinel
+            // (0) also round-trips as SQL NULL: the cursor's sentinel-null
+            // arm (added in the same series of fixes) classifies bit
+            // pattern 0 as null, so the per-row formatter is never called
+            // for that row.
+            execute("CREATE TABLE " + table + " ("
+                    + "addr_str STRING, addr_vc VARCHAR, ts TIMESTAMP"
+                    + ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            try (QwpWebSocketSender sender = connectWs(port)) {
+                sender.table(table)
+                        .ipv4Column("addr_str", 0xC0A80101)         // 192.168.1.1
+                        .ipv4Column("addr_vc", 0xC0A80101)
+                        .at(1_000_000, ChronoUnit.MICROS);
+                // Sentinel row: bit pattern 0 must surface as SQL NULL on
+                // both targets, not as "0.0.0.0".
+                sender.table(table)
+                        .ipv4Column("addr_str", 0)
+                        .ipv4Column("addr_vc", 0)
+                        .at(2_000_000, ChronoUnit.MICROS);
+                sender.flush();
+            }
+
+            drainWalQueue();
+            assertSql(
+                    "SELECT coalesce(addr_str, 'null') s, coalesce(addr_vc, 'null') v"
+                            + " FROM " + table + " ORDER BY ts",
+                    """
+                            s\tv
+                            192.168.1.1\t192.168.1.1
+                            null\tnull
+                            """);
+        });
+    }
+
+    @Test
+    public void testCoercionToStringPreservesUuidAndLong256NullSentinels() throws Exception {
+        runInContext((port) -> {
+            String table = "test_qwp_uuid_long256_null_to_string";
+            // The cursor's isCurrentValueSentinelNull arms for TYPE_UUID and
+            // TYPE_LONG256 (added alongside the IPv4 sentinel arm) flow
+            // through cursor.isNull() consumed by the per-row loops in
+            // WalColumnarRowAppender.putFixedOtherToStringColumn and
+            // putFixedOtherToVarcharColumn. testCoercionToString /
+            // testCoercionToVarchar already exercise the happy path for
+            // UUID and LONG256 with random non-sentinel values, but neither
+            // pins what happens when the NULL bit pattern reaches the
+            // formatter: it must round-trip as SQL NULL, not as the
+            // literal "00000000-0000-0000-0000-000000000000" /
+            // "0x000...000" hex render. This test pins all four cells of
+            // the {UUID, LONG256} x {STRING, VARCHAR} matrix for the
+            // type-specific NULL sentinel.
+            execute("CREATE TABLE " + table + " (" +
+                    "uuid_str STRING, uuid_vc VARCHAR, " +
+                    "l256_str STRING, l256_vc VARCHAR, " +
+                    "ts TIMESTAMP" +
+                    ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            try (QwpWebSocketSender sender = connectWs(port)) {
+                sender.table(table)
+                        // UUID NULL is (LONG_NULL, LONG_NULL) per Uuid.isNull.
+                        .uuidColumn("uuid_str", Long.MIN_VALUE, Long.MIN_VALUE)
+                        .uuidColumn("uuid_vc", Long.MIN_VALUE, Long.MIN_VALUE)
+                        // LONG256 NULL is all four longs == LONG_NULL per
+                        // Long256Impl.NULL_LONG256 static init.
+                        .long256Column("l256_str", Long.MIN_VALUE, Long.MIN_VALUE, Long.MIN_VALUE, Long.MIN_VALUE)
+                        .long256Column("l256_vc", Long.MIN_VALUE, Long.MIN_VALUE, Long.MIN_VALUE, Long.MIN_VALUE)
+                        .at(1_000_000, ChronoUnit.MICROS);
+                sender.flush();
+            }
+
+            drainWalQueue();
+            assertSql("SELECT count() FROM " + table, "count\n1\n");
+            assertSql(
+                    "SELECT uuid_str IS NULL AS u_s, uuid_vc IS NULL AS u_v,"
+                            + " l256_str IS NULL AS l_s, l256_vc IS NULL AS l_v FROM " + table,
+                    """
+                            u_s\tu_v\tl_s\tl_v
+                            true\ttrue\ttrue\ttrue
+                            """);
+        });
+    }
+
+    @Test
     public void testCoercionToSymbol() throws Exception {
         runInContext((port) -> {
             String table = "test_qwp_coerce_to_symbol";
@@ -2150,6 +2683,104 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
                             -2.25
                             0.0
                             """);
+        });
+    }
+
+    /**
+     * Regression check for the between-batch GEOHASH precision lock. When a
+     * column has zero values in a batch (every row leaves it null), the wire
+     * encoder must still emit the schema-locked precision varint rather than
+     * the writer's {@code precision = 1} fallback -- otherwise the strict
+     * server-side check added in {@code 91c0824b0d} rejects the batch as
+     * <pre>
+     *   GeoHash precision mismatch [column=g, columnType=GEOHASH(4c), wireBits=1]
+     * </pre>
+     * once the column has been auto-created at a real precision. The fix lives
+     * in {@code ColumnBuffer.reset()}, which now preserves
+     * {@code geohashPrecision} across batches.
+     */
+    @Test
+    public void testGeoHashColumnPrecisionPersistsAcrossBatches() throws Exception {
+        runInContext((port) -> {
+            String table = "test_qwp_geohash_persists_precision";
+            execute("CREATE TABLE " + table + " (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            try (QwpWebSocketSender sender = connectWs(port)) {
+                // Batch 1: write "g" with 20-bit precision. Server auto-creates
+                // GEOHASH(4c).
+                sender.table(table)
+                        .geoHashColumn("g", "u33d")
+                        .at(1_000_000, ChronoUnit.MICROS);
+                sender.flush();
+                drainWalQueue();
+
+                // Batch 2: no row writes "g". The column persists in the
+                // sender's buffer schema (reset() keeps column defs) but its
+                // geohashPrecision was reset to -1. The encoder writes
+                // precision varint = 1, which the server rejects.
+                sender.table(table)
+                        .longColumn("other", 1L)
+                        .at(2_000_000, ChronoUnit.MICROS);
+                sender.flush();
+            }
+
+            drainWalQueue();
+            // Expected once fixed: both rows ingested.
+            assertSql("SELECT count() FROM " + table, "count\n2\n");
+        });
+    }
+
+    @Test
+    public void testGeoHashColumnValidation() throws Exception {
+        // Client-side validation of the public geoHashColumn API: precision out
+        // of range, null/empty/too-long/invalid base32 string, and precision
+        // mismatch within a single column over multiple rows. None of these
+        // should reach the wire; the sender raises LineSenderException before
+        // anything is encoded.
+        runInContext((port) -> {
+            try (QwpWebSocketSender sender = connectWs(port)) {
+                sender.table("dummy");
+                assertThrowsContains(() -> sender.geoHashColumn("g", 0L, 0),
+                        "invalid GEOHASH precision");
+                sender.cancelRow();
+
+                sender.table("dummy");
+                assertThrowsContains(() -> sender.geoHashColumn("g", 0L, 61),
+                        "invalid GEOHASH precision");
+                sender.cancelRow();
+
+                sender.table("dummy");
+                assertThrowsContains(() -> sender.geoHashColumn("g", null),
+                        "GEOHASH string cannot be null");
+                sender.cancelRow();
+
+                sender.table("dummy");
+                assertThrowsContains(() -> sender.geoHashColumn("g", ""),
+                        "GEOHASH string cannot be empty");
+                sender.cancelRow();
+
+                sender.table("dummy");
+                assertThrowsContains(() -> sender.geoHashColumn("g", "0123456789abc"),
+                        "GEOHASH string exceeds 12 characters");
+                sender.cancelRow();
+
+                sender.table("dummy");
+                // 'a' is reserved (not in geohash base32 alphabet); the decoder
+                // rejects it as an invalid character.
+                assertThrowsContains(() -> sender.geoHashColumn("g", "ua"),
+                        "invalid GEOHASH string");
+                sender.cancelRow();
+
+                // Precision is locked on first value; a subsequent row at a
+                // different precision must throw before reaching the wire.
+                sender.table("dummy")
+                        .geoHashColumn("g", 0L, 20)
+                        .at(1_000_000, ChronoUnit.MICROS);
+                sender.table("dummy");
+                assertThrowsContains(() -> sender.geoHashColumn("g", 0L, 25),
+                        "GeoHash precision mismatch");
+                sender.cancelRow();
+            }
         });
     }
 
@@ -3544,6 +4175,17 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
             Assert.assertTrue("Expected error containing '" + expectedMsgPart1 +
                             "' and '" + expectedMsgPart2 + "' but got: " + msg,
                     msg != null && msg.contains(expectedMsgPart1) && msg.contains(expectedMsgPart2));
+        }
+    }
+
+    private static void assertThrowsContains(Runnable action, String expectedMsgPart) {
+        try {
+            action.run();
+            Assert.fail("Expected LineSenderException containing '" + expectedMsgPart + "'");
+        } catch (LineSenderException e) {
+            String msg = e.getMessage();
+            Assert.assertTrue("Expected LineSenderException containing '" + expectedMsgPart
+                    + "' but got: " + msg, msg != null && msg.contains(expectedMsgPart));
         }
     }
 

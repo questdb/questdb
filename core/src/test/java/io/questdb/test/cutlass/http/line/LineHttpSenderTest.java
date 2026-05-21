@@ -847,18 +847,52 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
             // large batch's first row triggers newRow(), it rolls to a new segment,
             // opening new column files via ff.openRW(). We intercept that to know
             // the server has started processing and then trigger the rename.
+            //
+            // We also need to pause the batch on the first matching openRW until
+            // the rename has committed its structural change to the sequencer.
+            // Otherwise the batch's sequencer.nextTxn (commit) can win the race
+            // against the rename's sequencer.nextStructureTxn -- both serialize
+            // through the same sequencer WRITE lock, and the test depends on the
+            // rename arriving first so the batch commit sees a token mismatch and
+            // is rejected via TableReferenceOutOfDateException -> 503.
+            //
+            // The RENAME runs synchronously on the test thread and also opens
+            // matching wal*/0 column files (its own structural-change segment).
+            // If the intercept allowed the test thread in, the test thread could
+            // win the race for the first match and park itself in execute(),
+            // letting the batch commit unhindered. Exclude the test thread so
+            // only the batch's HTTP worker can be parked.
             CountDownLatch walSegmentRolled = new CountDownLatch(1);
+            CountDownLatch renameRegistered = new CountDownLatch(1);
             AtomicBoolean trackOpens = new AtomicBoolean(false);
+            AtomicBoolean batchPausedOnce = new AtomicBoolean(false);
+            final Thread testThread = Thread.currentThread();
 
             FilesFacade ff = new TestFilesFacadeImpl() {
                 @Override
                 public long openRW(LPSZ name, int opts) {
                     long fd = super.openRW(name, opts);
+                    // Skip the test thread entirely: it runs the RENAME, and we must never park
+                    // it. If allowed in, the test thread's own openRW for wal*/0 column files
+                    // could win the parker CAS and deadlock the rename for 60 seconds.
                     if (trackOpens.get()
+                            && Thread.currentThread() != testThread
                             && Utf8s.containsAscii(name, tableName)
                             && Utf8s.containsAscii(name, "wal")
                             && Utf8s.endsWithAscii(name, ".d")) {
+                        // Decide who parks BEFORE counting down walSegmentRolled. If we counted
+                        // down first and then got preempted, the main thread could wake, issue
+                        // the RENAME, and a second matching openRW could win the CAS before
+                        // this one reaches it -- letting the batch commit unhindered.
+                        boolean parker = batchPausedOnce.compareAndSet(false, true);
                         walSegmentRolled.countDown();
+                        if (parker) {
+                            try {
+                                renameRegistered.await(60, TimeUnit.SECONDS);
+                            } catch (InterruptedException e) {
+                                Thread.currentThread().interrupt();
+                            }
+                        }
                     }
                     return fd;
                 }
@@ -947,8 +981,16 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                 Assert.assertTrue("Timed out waiting for WAL segment roll",
                         walSegmentRolled.await(60, TimeUnit.SECONDS));
 
-                // Rename the table while the server is processing the large batch
+                // Rename the table while the server is processing the large batch.
+                // The batch's first column-file openRW is parked, so this RENAME
+                // is guaranteed to register its structural change on the sequencer
+                // before the batch can call sequencer.nextTxn at commit time.
                 serverMain.execute("RENAME TABLE " + tableName + " TO " + renamedTableName);
+
+                // Unblock the batch now that the rename's structural change is on
+                // the sequencer. The batch's commit will see the new table token
+                // and the sequencer will throw TableReferenceOutOfDateException.
+                renameRegistered.countDown();
 
                 // Create a new table with the original name
                 serverMain.execute("CREATE TABLE " + tableName + " (" +
