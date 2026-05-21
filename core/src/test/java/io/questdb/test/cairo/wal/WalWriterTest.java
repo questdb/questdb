@@ -111,6 +111,7 @@ import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
+import org.junit.Assume;
 import org.junit.Test;
 
 import java.io.File;
@@ -337,6 +338,9 @@ public class WalWriterTest extends AbstractCairoTest {
 
     @Test
     public void testAddColumnsRollLargeSegment() throws Exception {
+        // The bug this guards is a Java int overflow (platform-independent); writing >2GB is
+        // very slow on the hosted Mac and Windows runners, so run on Linux only.
+        Assume.assumeTrue(Os.isLinux());
         assertMemoryLeak(() -> {
             // This test reproduces a bug where rolling a large segment file sized over 2GB
             // resulted in int overflow and commit exception.
