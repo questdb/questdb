@@ -967,6 +967,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         // - close the named entity, portal or statement
         final byte type = Unsafe.getByte(lo);
         PGPipelineEntry lookedUpPipelineEntry;
+        boolean closeUnnamedTarget;
         boolean isStatementClose = false;
         switch (type) {
             case 'S':
@@ -976,24 +977,38 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                 // reference from maps.
                 lo = lo + 1;
                 final long hi = getUtf8StrSize(lo, msgLimit, "bad prepared statement name length", pipelineCurrentEntry);
-                lookedUpPipelineEntry = removeNamedStatementFromCache(getUtf8NamedStatement(lo, hi));
+                final Utf8Sequence namedStatement = getUtf8NamedStatement(lo, hi);
+                closeUnnamedTarget = namedStatement == null;
+                lookedUpPipelineEntry = removeNamedStatementFromCache(namedStatement);
                 isStatementClose = true;
                 break;
             case 'P':
                 lo = lo + 1;
                 final long high = getUtf8StrSize(lo, msgLimit, "bad prepared portal name length (close)", pipelineCurrentEntry);
-                lookedUpPipelineEntry = removeNamedPortalFromCache(getUtf8NamedPortal(lo, high));
+                final Utf8Sequence namedPortal = getUtf8NamedPortal(lo, high);
+                closeUnnamedTarget = namedPortal == null;
+                lookedUpPipelineEntry = removeNamedPortalFromCache(namedPortal);
                 break;
             default:
                 throw msgKaput().put("invalid type for close message [type=").put(type).put(']');
         }
 
         if (lookedUpPipelineEntry == null) {
-            if (pipelineCurrentEntry == null) {
-                pipelineCurrentEntry = entryPool.next();
+            if (closeUnnamedTarget && pipelineCurrentEntry != null && !pipelineCurrentEntry.isPreparedStatement() && !pipelineCurrentEntry.isPortal()) {
+                // Close of the active unnamed statement or portal.
+                pipelineCurrentEntry.setStateClosed(true, isStatementClose);
+            } else {
+                // Missing named targets are CloseComplete no-ops. Do not mutate or
+                // release pipelineCurrentEntry: it may be a retained unnamed
+                // statement or a named entry that is still referenced from caches.
+                if (pipelineCurrentEntry == null) {
+                    pipelineCurrentEntry = entryPool.next();
+                    pipelineCurrentEntry.setStateCloseComplete(true);
+                } else {
+                    pipelineCurrentEntry.setStateCloseComplete(false);
+                }
             }
-            // we are liable to look up the current entry, depending on how protocol is used
-            // if this the case, we should not attempt to save the current entry prematurely
+            return;
         } else if (lookedUpPipelineEntry != pipelineCurrentEntry) {
             if (pipelineCurrentEntry != null) {
                 if (pipelineCurrentEntry.isDirty()) {
@@ -1543,6 +1558,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             boolean isExec = pipelineCurrentEntry.isStateExec();
             boolean isError = pipelineCurrentEntry.isError();
             boolean isClosed = pipelineCurrentEntry.isStateClosed();
+            boolean isCloseCompleteOnly = pipelineCurrentEntry.isStateCloseCompleteOnly();
             // with the sync call the existing pipeline entry will assign its own completion hooks (resume callbacks)
             while (true) {
                 try {
@@ -1596,7 +1612,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             // "cacheIfPossible" has side effects on the entry.
 
             PGPipelineEntry nextEntry = pipeline.poll();
-            if (nextEntry != null || isExec || isError || isClosed) {
+            if (nextEntry != null || isExec || isError || isClosed || isCloseCompleteOnly) {
                 if (bindingServiceConfiguredFor == pipelineCurrentEntry) {
                     bindingServiceConfiguredFor = null;
                 }

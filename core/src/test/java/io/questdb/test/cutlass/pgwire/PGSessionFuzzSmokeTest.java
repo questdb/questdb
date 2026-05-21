@@ -80,6 +80,13 @@ public class PGSessionFuzzSmokeTest extends AbstractCairoTest {
                             frame('Q', new byte[]{'s', 'e', 'l', 'e', 'c', 't', ' ', '1', 0, 'x', 0})
                     ));
                     Assert.assertEquals(0, harness.context().getPipelineEntryPoolOutieCountForFuzz());
+
+                    PGSessionFuzz.fuzzerTestOneInput(newSession(
+                            frame('P', parseBody("select~1")),
+                            frame('B', bindNamedPortalBody("p")),
+                            frame('C', closePortalBody(""))
+                    ));
+                    Assert.assertEquals(0, harness.context().getPipelineEntryPoolOutieCountForFuzz());
                 } finally {
                     PGSessionFuzz.clearHarness(harness);
                 }
@@ -91,6 +98,22 @@ public class PGSessionFuzzSmokeTest extends AbstractCairoTest {
         final byte[] body = new byte[8];
         int p = 0;
         body[p++] = 0; // unnamed portal
+        body[p++] = 0; // unnamed prepared statement
+        putShort(body, p, 0); // parameter format code count
+        p += Short.BYTES;
+        putShort(body, p, 0); // parameter value count
+        p += Short.BYTES;
+        putShort(body, p, 0); // result format code count
+        return body;
+    }
+
+    private static byte[] bindNamedPortalBody(String portalName) {
+        final byte[] portalNameBytes = portalName.getBytes(StandardCharsets.UTF_8);
+        final byte[] body = new byte[portalNameBytes.length + 1 + 1 + 3 * Short.BYTES];
+        int p = 0;
+        System.arraycopy(portalNameBytes, 0, body, p, portalNameBytes.length);
+        p += portalNameBytes.length;
+        body[p++] = 0;
         body[p++] = 0; // unnamed prepared statement
         putShort(body, p, 0); // parameter format code count
         p += Short.BYTES;
@@ -120,6 +143,14 @@ public class PGSessionFuzzSmokeTest extends AbstractCairoTest {
 
     private static byte[] closeBadKindBody() {
         return new byte[]{'Z', 0};
+    }
+
+    private static byte[] closePortalBody(String portalName) {
+        final byte[] portalNameBytes = portalName.getBytes(StandardCharsets.UTF_8);
+        final byte[] body = new byte[1 + portalNameBytes.length + 1];
+        body[0] = 'P';
+        System.arraycopy(portalNameBytes, 0, body, 1, portalNameBytes.length);
+        return body;
     }
 
     private static byte[] describePortalBody() {

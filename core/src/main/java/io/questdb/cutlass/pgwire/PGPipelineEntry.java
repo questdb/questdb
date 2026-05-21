@@ -202,6 +202,8 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     private boolean stateBind;
     private boolean stateClosed;
     private int stateDesc;
+    private int stateCloseCompleteCount;
+    private boolean stateCloseCompleteOnly;
     private boolean stateExec = false;
     private boolean stateSuspended = false;
     // boolean state, bitset?
@@ -343,6 +345,8 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         stateBind = false;
         stateClosed = false;
         stateDesc = SYNC_DESC_NONE;
+        stateCloseCompleteCount = 0;
+        stateCloseCompleteOnly = false;
         stateExec = false;
         stateParse = false;
         stateSuspended = false;
@@ -504,6 +508,10 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
 
     public boolean isStateClosed() {
         return stateClosed;
+    }
+
+    public boolean isStateCloseCompleteOnly() {
+        return stateCloseCompleteOnly;
     }
 
     public boolean isStateExec() {
@@ -860,6 +868,9 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             if (stateClosed) {
                 outSimpleMsg(utf8Sink, MESSAGE_TYPE_CLOSE_COMPLETE);
             }
+            for (int i = 0; i < stateCloseCompleteCount; i++) {
+                outSimpleMsg(utf8Sink, MESSAGE_TYPE_CLOSE_COMPLETE);
+            }
 
             if (isError()) {
                 outError(utf8Sink, pendingWriters);
@@ -1003,6 +1014,11 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         if (isStatementClose) {
             this.namedStatement = null;
         }
+    }
+
+    public void setStateCloseComplete(boolean closeCompleteOnly) {
+        stateCloseCompleteCount++;
+        stateCloseCompleteOnly = closeCompleteOnly;
     }
 
     public void setStateDesc(int stateDesc) {
@@ -3404,6 +3420,8 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         stateParse = false;
         stateBind = false;
         stateDesc = SYNC_DESC_NONE;
+        stateCloseCompleteCount = 0;
+        stateCloseCompleteOnly = false;
         stateExec = false;
         stateClosed = false;
         arrayViewPool.clear();
@@ -3552,7 +3570,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     }
 
     boolean isDirty() {
-        return error || stateSync != SYNC_PARSE || stateParse || stateBind || stateDesc != SYNC_DESC_NONE || stateExec || stateClosed;
+        return error || stateSync != SYNC_PARSE || stateParse || stateBind || stateDesc != SYNC_DESC_NONE || stateCloseCompleteCount > 0 || stateExec || stateClosed;
     }
 
     // When we pick up SQL (insert or select) from cache we have to check that the SQL was compiled with
