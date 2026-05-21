@@ -85,6 +85,17 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
 
     @Test
     public void testAsyncModeLargeNumberOfRows() throws Exception {
+        // 25M-row async ingest is a throughput / correctness-at-scale test,
+        // not a fragmentation test. AbstractQwpWebSocketTest's @Before picks
+        // random send/recv fragmentation chunks in [1, 500]; on an unlucky
+        // seed (e.g. chunk = a handful of bytes), the per-send overhead on
+        // the wire path makes the I/O thread the producer's bottleneck and
+        // the cursor ring fills well before the inner loop finishes, then
+        // appendBlocking throws after 30s. Dedicated fuzz / protocol tests
+        // cover fragmentation; pin both chunks high here so the seed cannot
+        // turn this test into a wire-throughput stress test in disguise.
+        sendChunk = Integer.MAX_VALUE;
+        recvChunk = Integer.MAX_VALUE;
         runInContext((port) -> {
             try (QwpWebSocketSender sender = connectWs(port)) {
                 for (int i = 0; i < 25_000_000; i++) {
