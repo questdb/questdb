@@ -172,6 +172,23 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
     private PageFrameMemoryPool pageFrameMemoryPool;
     private PageFrameMemoryRecord pageFrameMemoryRecord;
     /**
+     * Cache-reset bitmask the upcoming query applies locally on the server
+     * but has NOT yet emitted on the wire. Set by
+     * {@code applyCacheResetForUpcomingQuery} in handleQueryRequest before
+     * the cursor is opened; consumed by {@code emitPendingCacheReset} at
+     * the top of streamResults, after {@code state.beginStreaming} has
+     * flipped {@code streamingActive=true}.
+     * <p>
+     * Splitting "apply locally" from "emit on the wire" lets the wire-send
+     * sit inside a streaming-active region. If the send parks on
+     * {@code PeerIsSlowToReadException} under a small send fragmentation
+     * cap, {@code resumeSend} can re-enter {@code streamResults} and the
+     * query continues; emitting from {@code handleQueryRequest} (the
+     * earlier shape) abandoned the query because {@code resumeSend} saw
+     * {@code streamingActive=false} and returned.
+     */
+    private byte pendingCacheResetMask;
+    /**
      * True between a CLOSE-frame send that parked on
      * {@code PeerIsSlowToReadException} (either the {@code handleClose} echo
      * or a {@code sendFatalClose} diagnostic) and the {@code resumeSend} that
@@ -512,6 +529,7 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
         recvBufferLen = 0;
         wsHandshakeSent = false;
         handshakeFlushPending = false;
+        pendingCacheResetMask = 0;
         pendingDisconnectAfterFlush = false;
         pendingHandshakeBytes = 0;
         fd = -1;
@@ -753,6 +771,10 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
         return negotiatedVersion;
     }
 
+    public byte getPendingCacheResetMask() {
+        return pendingCacheResetMask;
+    }
+
     public int getPendingHandshakeBytes() {
         return pendingHandshakeBytes;
     }
@@ -959,6 +981,10 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
 
     public void setHandshakeFlushPending(boolean pending) {
         this.handshakeFlushPending = pending;
+    }
+
+    public void setPendingCacheResetMask(byte mask) {
+        this.pendingCacheResetMask = mask;
     }
 
     public void setPendingDisconnectAfterFlush(boolean pending) {

@@ -242,6 +242,108 @@ public class QwpEgressCacheResetWireTest extends AbstractQwpBootstrapTest {
      * that relies on a freshly populated dict.
      */
     @Test
+    public void testConnectionStaysHealthyAfterResetUnderTinySendChunk() throws Exception {
+        // Regression: the CACHE_RESET frame used to be written and sent from
+        // handleQueryRequest, BEFORE state.beginStreaming flipped
+        // streamingActive=true. Under a small send fragmentation cap the
+        // inline rawSocket.send threw PeerIsSlowToReadException after the
+        // first chunk; the framework parked-on-write, resumeSend drained the
+        // residual CACHE_RESET bytes onto the wire, then saw
+        // streamingActive=false and returned. The query was never compiled,
+        // never streamed -- the client hung waiting for a response that
+        // would never come, eventually surfacing as a peer disconnect when
+        // the test framework's timeout tore the connection down (CI build
+        // 235034: testConnectionStaysHealthyAfterReset, 300 s before
+        // assertion).
+        // Pin both fragmentation knobs to 1 byte to force the split
+        // deterministically. The CACHE_RESET frame is a handful of bytes;
+        // chunk=1 guarantees PISR on the inline send and exercises the
+        // staged-emit / streamResults-emit path end-to-end.
+        sendChunk = 1;
+        recvChunk = 1;
+        QwpEgressProcessorState.defaultMaxDictEntriesOverrideForTest = 2;
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startFragmented()) {
+                serverMain.execute("CREATE TABLE mixed_tiny(sym SYMBOL, ts TIMESTAMP) "
+                        + "TIMESTAMP(ts) PARTITION BY DAY WAL");
+                serverMain.execute("""
+                        INSERT INTO mixed_tiny
+                        SELECT CASE WHEN x % 3 = 0 THEN 'alpha'
+                                    WHEN x % 3 = 1 THEN 'beta'
+                                    ELSE 'gamma' END,
+                               x::TIMESTAMP
+                        FROM long_sequence(60)
+                        """);
+                serverMain.awaitTable("mixed_tiny");
+
+                try (QwpQueryClient client = QwpQueryClient.fromConfig(
+                        "ws::addr=127.0.0.1:" + HTTP_PORT + ";")) {
+                    client.connect();
+
+                    // Query 1: trips dict cap (3 distinct symbols, cap=2).
+                    // No CACHE_RESET emitted yet -- this query establishes
+                    // the over-cap condition that the NEXT query will reset.
+                    final int[] rows1 = {0};
+                    final java.util.Set<String> set1 = new java.util.HashSet<>();
+                    client.execute("SELECT sym FROM mixed_tiny", new QwpColumnBatchHandler() {
+                        @Override
+                        public void onBatch(QwpColumnBatch batch) {
+                            for (int r = 0; r < batch.getRowCount(); r++) {
+                                DirectUtf8Sequence v = batch.getStrA(0, r);
+                                Assert.assertNotNull(v);
+                                set1.add(v.toString());
+                                rows1[0]++;
+                            }
+                        }
+
+                        @Override
+                        public void onEnd(long total) {
+                        }
+
+                        @Override
+                        public void onError(byte status, String message) {
+                            Assert.fail("q1 must succeed: " + message);
+                        }
+                    });
+                    Assert.assertEquals(60, rows1[0]);
+                    Assert.assertEquals(java.util.Set.of("alpha", "beta", "gamma"), set1);
+
+                    // Query 2: handleQueryRequest stages the CACHE_RESET,
+                    // beginStreaming flips streamingActive=true, the first
+                    // call into streamResults emits the staged CACHE_RESET.
+                    // Under chunk=1 the send parks on PISR -- the fix is
+                    // that resumeSend re-enters streamResults from the
+                    // streaming-active region and the query completes.
+                    final int[] rows2 = {0};
+                    final java.util.Set<String> set2 = new java.util.HashSet<>();
+                    client.execute("SELECT sym FROM mixed_tiny", new QwpColumnBatchHandler() {
+                        @Override
+                        public void onBatch(QwpColumnBatch batch) {
+                            for (int r = 0; r < batch.getRowCount(); r++) {
+                                DirectUtf8Sequence v = batch.getStrA(0, r);
+                                Assert.assertNotNull(v);
+                                set2.add(v.toString());
+                                rows2[0]++;
+                            }
+                        }
+
+                        @Override
+                        public void onEnd(long total) {
+                        }
+
+                        @Override
+                        public void onError(byte status, String message) {
+                            Assert.fail("q2 after reset must succeed under tiny send chunk: " + message);
+                        }
+                    });
+                    Assert.assertEquals(60, rows2[0]);
+                    Assert.assertEquals(set1, set2);
+                }
+            }
+        });
+    }
+
+    @Test
     public void testConnectionStaysHealthyAfterReset() throws Exception {
         QwpEgressProcessorState.defaultMaxDictEntriesOverrideForTest = 2;
         TestUtils.assertMemoryLeak(() -> {

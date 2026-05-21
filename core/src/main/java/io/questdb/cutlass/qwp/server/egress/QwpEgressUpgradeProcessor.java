@@ -992,13 +992,15 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
             requestId = decoder.requestId;
             metrics.markQueryStarted();
             // Check connection-scoped cache caps BEFORE processing the new
-            // query. If any soft cap is over, emit a CACHE_RESET and flush the
-            // indicated caches so the query about to start allocates fresh
-            // ids (schema) / fresh dict entries. Doing this here -- between
-            // queries, not between batches -- guarantees the reset fires at
-            // a clean frame boundary and never interleaves with a RESULT_BATCH
-            // already staged in the response buffer.
-            maybeEmitCacheReset(context, state);
+            // query. If any soft cap is over, apply the matching local reset
+            // so the upcoming findOrAllocateSchemaId and cursor allocations
+            // see a fresh cache; stash the bitmask so streamResults emits the
+            // CACHE_RESET frame once streamingActive=true (which keeps the
+            // wire-send recoverable through resumeSend on PISR). Doing the
+            // apply here -- between queries, not between batches -- guarantees
+            // the reset fires at a clean frame boundary and never interleaves
+            // with a RESULT_BATCH already staged in the response buffer.
+            applyCacheResetForUpcomingQuery(context, state);
             LOG.info().$("Egress QUERY_REQUEST [fd=").$(context.getFd())
                     .$(", requestId=").$(requestId)
                     .$(", sqlLen=").$(decoder.sql.length()).I$();
@@ -1223,19 +1225,64 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
     }
 
     /**
-     * Checks whether any connection-scoped cache has exceeded its soft cap and,
-     * if so, emits a {@code CACHE_RESET} frame and applies the matching server-
-     * side reset so both peers stay in lockstep. Called at query-completion
-     * boundaries (after {@code RESULT_END}, {@code EXEC_DONE}, or
-     * {@code QUERY_ERROR}) -- never mid-stream, because resetting the dict or
-     * the schema cache mid-stream would invalidate ids referenced by in-flight
-     * RESULT_BATCH frames.
+     * Step 1 of the cache-reset emission. Checks whether any connection-scoped
+     * cache has exceeded its soft cap; if so, applies the matching server-side
+     * reset NOW so that subsequent steps in {@code handleQueryRequest} (most
+     * importantly {@code findOrAllocateSchemaId} and the cursor's first batch)
+     * allocate against a fresh cache, and stashes the bitmask on state for
+     * {@link #emitPendingCacheReset} to emit on the wire once
+     * {@code streamingActive=true}.
+     * <p>
+     * Splitting "apply locally" from "emit on the wire" keeps the wire-send
+     * inside a streaming-active region so a PISR park is recoverable via
+     * {@code resumeSend} -> {@code streamResults}. Emitting from
+     * {@code handleQueryRequest} -- the earlier shape -- abandoned the query
+     * on PISR because {@code resumeSend} saw {@code streamingActive=false},
+     * drained the CACHE_RESET bytes, and returned; the QUERY_REQUEST was
+     * never processed and the client hung waiting for a response.
+     * <p>
+     * Called at query-completion boundaries (after {@code RESULT_END},
+     * {@code EXEC_DONE}, or {@code QUERY_ERROR}) -- never mid-stream, because
+     * resetting the dict or the schema cache mid-stream would invalidate ids
+     * referenced by in-flight RESULT_BATCH frames.
      */
-    private void maybeEmitCacheReset(
+    private void applyCacheResetForUpcomingQuery(
             HttpConnectionContext context,
             QwpEgressProcessorState state
-    ) throws PeerDisconnectedException, PeerIsSlowToReadException {
+    ) {
         byte resetMask = state.computeCacheResetMask();
+        if (resetMask == 0) {
+            return;
+        }
+        state.applyCacheReset(resetMask);
+        state.setPendingCacheResetMask(resetMask);
+        if ((resetMask & QwpEgressMsgKind.RESET_MASK_DICT) != 0) {
+            metrics.markCacheResetDict();
+        }
+        if ((resetMask & QwpEgressMsgKind.RESET_MASK_SCHEMAS) != 0) {
+            metrics.markCacheResetSchemas();
+        }
+        LOG.debug().$("Egress cache reset staged [fd=").$(context.getFd())
+                .$(", mask=0x").$(Integer.toHexString(resetMask & 0xFF))
+                .I$();
+    }
+
+    /**
+     * Step 2 of the cache-reset emission. Writes the CACHE_RESET frame using
+     * the bitmask staged by {@link #applyCacheResetForUpcomingQuery} and
+     * sends it. Clears the staged mask BEFORE the send so that a PISR park
+     * (residual bytes drained by {@code resumeResponseSend}) does not cause a
+     * re-entry through {@code streamResults} to double-emit the frame.
+     * <p>
+     * Called at the top of {@link #streamResults}, before the first batch.
+     * The CACHE_RESET frame ordering invariant (must arrive before any
+     * RESULT_BATCH for the new query) is satisfied: this site runs after
+     * {@code beginStreaming} but strictly before {@code beginBatch} on the
+     * first iteration.
+     */
+    private void emitPendingCacheReset(HttpConnectionContext context, QwpEgressProcessorState state)
+            throws PeerDisconnectedException, PeerIsSlowToReadException {
+        byte resetMask = state.getPendingCacheResetMask();
         if (resetMask == 0) {
             return;
         }
@@ -1248,22 +1295,12 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
         int qwpSize = (int) (bodyEnd - qwpStart);
         int qwpPayloadLen = qwpSize - QwpConstants.HEADER_SIZE;
         QwpEgressFrameWriter.patchPayloadLength(qwpStart, qwpPayloadLen);
-        // Apply the local reset BEFORE sending. rawSocket.send commits bytes
-        // to the response sink before it attempts the flush that may throw
-        // PeerIsSlowToReadException; bytes queued that way flush on resume,
-        // so the client is guaranteed to see the CACHE_RESET frame once the
-        // connection drains. Applying the reset first keeps server and client
-        // views aligned even on the parked-send path.
-        state.applyCacheReset(resetMask);
-        if ((resetMask & QwpEgressMsgKind.RESET_MASK_DICT) != 0) {
-            metrics.markCacheResetDict();
-        }
-        if ((resetMask & QwpEgressMsgKind.RESET_MASK_SCHEMAS) != 0) {
-            metrics.markCacheResetSchemas();
-        }
-        LOG.debug().$("Egress cache reset [fd=").$(context.getFd())
-                .$(", mask=0x").$(Integer.toHexString(resetMask & 0xFF))
-                .I$();
+        // Clear the staged mask BEFORE the send. On PISR the residual bytes
+        // live in the framework send buffer (resumeResponseSend drains them);
+        // resumeSend then re-enters streamResults, and a non-zero mask there
+        // would re-write the same CACHE_RESET on top of the already-buffered
+        // bytes and double-emit it on the wire.
+        state.setPendingCacheResetMask((byte) 0);
         sendFrame(rawSocket, bufAddr, qwpStart, qwpSize);
     }
 
@@ -1695,6 +1732,17 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
      */
     private void streamResults(HttpConnectionContext context, QwpEgressProcessorState state)
             throws PeerDisconnectedException, PeerIsSlowToReadException {
+        // Flush any CACHE_RESET frame staged by handleQueryRequest before
+        // streaming the first batch. The frame must reach the client before
+        // any RESULT_BATCH from the new query so the client drops its dict /
+        // schema caches under the same id space the server is about to reuse.
+        // Running inside the streaming-active region means a PISR park here
+        // re-enters through resumeSend -> streamResults and the query
+        // continues; running it inside handleQueryRequest (the previous shape)
+        // would abandon the query on PISR because resumeSend saw
+        // streamingActive=false. Idempotent: getPendingCacheResetMask returns
+        // 0 once consumed, so resumeSend re-entries skip the emit.
+        emitPendingCacheReset(context, state);
         QwpResultBatchBuffer batchBuffer = state.getBatchBuffer();
         ObjList<QwpEgressColumnDef> columnDefs = state.borrowColumnDefs(state.getStreamingColumnCount());
         long requestId = state.getStreamingRequestId();
