@@ -125,19 +125,29 @@ import io.questdb.std.str.Utf8Sequence;
 public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietCloseable {
 
     /**
-     * Phase 1 batch cap. Size-based cap is indirectly enforced by the rawSocket
-     * send buffer capacity (rejections become QUERY_ERROR). Larger batches
-     * amortise per-batch overhead (schema-reference emit, WS header, send
-     * syscall, client queue hand-off) across more rows, which is the dominant
-     * per-byte throughput lever once the per-row emit cost has been
-     * columnarised. Client cap is 1_048_576 so there is ample headroom for
-     * future raises if wider schemas benefit.
+     * Phase 1 row cap on a single batch. The size cap is enforced separately
+     * by {@link #dynamicBatchRowCap}, which scales this value down for wide
+     * schemas so a single batch can't outgrow the rawSocket send buffer.
+     * Larger batches amortise per-batch overhead (schema-reference emit, WS
+     * header, send syscall, client queue hand-off) across more rows, which is
+     * the dominant per-byte throughput lever once the per-row emit cost has
+     * been columnarised. Client cap is 1_048_576 so there is ample headroom
+     * for future raises if wider schemas benefit.
      * <p>
      * Exposed as public only so batch-boundary tests can pin their assertions
      * against the live value; bumping this constant won't silently turn tests
      * into no-ops.
      */
     public static final int MAX_ROWS_PER_BATCH = 16_384;
+    /**
+     * Floor on the dynamic batch row cap. A query whose per-row footprint
+     * estimate is larger than the send buffer would otherwise compute a cap
+     * of zero and stall the stream entirely. Sixteen rows still amortises
+     * per-batch overhead acceptably and lets the residual
+     * {@code STATUS_LIMIT_EXCEEDED} path surface any single row that truly
+     * exceeds the send buffer.
+     */
+    private static final int MIN_BATCH_ROWS = 16;
     private static final Log LOG = LogFactory.getLog(QwpEgressUpgradeProcessor.class);
     private static final LocalValue<QwpEgressProcessorState> LV = new LocalValue<>();
     private static final NoOpAssociativeCache<RecordCursorFactory> NO_OP_SELECT_CACHE = new NoOpAssociativeCache<>();
@@ -594,6 +604,122 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
             } catch (Throwable ignored) {
             }
         }
+    }
+
+    /**
+     * Scales {@link #MAX_ROWS_PER_BATCH} down so a single batch's worst-case
+     * wire size fits inside the rawSocket send buffer for the given column
+     * set. Returns at least {@link #MIN_BATCH_ROWS} so the stream can always
+     * make progress; if a single row still overshoots, the
+     * {@code STATUS_LIMIT_EXCEEDED} path in {@link #sendResultBatch}
+     * surfaces it as a typed error.
+     * <p>
+     * The byte budget is the send buffer minus the WebSocket frame header
+     * reservation, the QWP message header, and a small slack for the
+     * RESULT_BATCH prelude and per-batch delta section. Underestimating
+     * here is safe -- residual overshoot from outlier rows falls through to
+     * a typed error and the next batch contains fewer rows. Overestimating
+     * (i.e. allowing too many rows) is the bug this method prevents and is
+     * what the regression test pins.
+     */
+    private static int dynamicBatchRowCap(ObjList<QwpEgressColumnDef> columnDefs, int sendBufferSize) {
+        // Reserve at the head of the send buffer:
+        //   1) the WebSocket frame header + the QWP message header;
+        //   2) a flat slack for the RESULT_BATCH prelude (msg header +
+        //      request id + batch seq) and small framing overheads;
+        //   3) the delta section, dominated by first-sight SYMBOL dict
+        //      entries. Cardinality is unknown a priori, so reserve a
+        //      per-SYMBOL-column allowance large enough to absorb a
+        //      few thousand unique entries per column without bleeding
+        //      into the row budget.
+        int symbolDeltaReserve = 0;
+        for (int i = 0, n = columnDefs.size(); i < n; i++) {
+            if (columnDefs.getQuick(i).getWireType() == QwpConstants.TYPE_SYMBOL) {
+                // ~2 KiB per symbol column accommodates the typical
+                // 100-200 unique values per column on the first batch
+                // without overshooting; high-cardinality columns may
+                // still trip STATUS_LIMIT_EXCEEDED on the first batch,
+                // which is the correct typed signal for "send buffer
+                // too small for this workload".
+                symbolDeltaReserve += 2048;
+            }
+        }
+        final int frameOverhead = QwpEgressFrameWriter.WS_HEADER_RESERVATION
+                + QwpConstants.HEADER_SIZE
+                + 4096
+                + symbolDeltaReserve;
+        final int byteBudget = Math.max(MIN_BATCH_ROWS, sendBufferSize - frameOverhead);
+        final int perRowBytes = estimateMaxBytesPerRow(columnDefs);
+        // perRowBytes >= 1 by construction (every column contributes >= 1
+        // byte), so the divisor can't be zero.
+        final int dynamicCap = Math.max(MIN_BATCH_ROWS, byteBudget / perRowBytes);
+        return Math.min(MAX_ROWS_PER_BATCH, dynamicCap);
+    }
+
+    /**
+     * Conservative per-row byte estimate for a query's column set. Used by
+     * {@link #dynamicBatchRowCap} to size the row cap so wide schemas don't
+     * overshoot the send buffer.
+     * <p>
+     * Per-column contribution: actual fixed width for fixed-width types,
+     * plus a soft cap for variable-width types (VARCHAR / STRING / BINARY /
+     * SYMBOL / GEOHASH / arrays). Each column also contributes a small
+     * per-row overhead (null bitmap bit, offset entries) folded into the
+     * returned value.
+     */
+    private static int estimateMaxBytesPerRow(ObjList<QwpEgressColumnDef> columnDefs) {
+        int bytes = 0;
+        for (int i = 0, n = columnDefs.size(); i < n; i++) {
+            final byte wireType = columnDefs.getQuick(i).getWireType();
+            final int fixed = QwpConstants.getFixedTypeSize(wireType);
+            if (fixed > 0) {
+                bytes += fixed;
+            } else if (wireType == QwpConstants.TYPE_BOOLEAN) {
+                // Bit-packed; round up to a whole byte per row to keep the
+                // arithmetic simple and pessimistic.
+                bytes += 1;
+            } else if (wireType == QwpConstants.TYPE_VARCHAR
+                    || wireType == QwpConstants.TYPE_BINARY) {
+                // 4-byte offset entry plus a pessimistic soft cap for the
+                // payload. Values larger than the soft cap still fall
+                // through to STATUS_LIMIT_EXCEEDED; sizing the cap at 256
+                // covers typical short-to-medium string / blob columns
+                // without under-filling batches and keeps a comfortable
+                // safety margin for the rnd_varchar(48, 80) workload that
+                // the fuzz suite produces.
+                bytes += 4 + 256;
+            } else if (wireType == QwpConstants.TYPE_SYMBOL) {
+                // Per-row payload is just the connection-scoped id as a
+                // varint (5 bytes worst case). First sight of a value also
+                // ships a dict entry in the batch's delta section, which is
+                // amortised across rows and bounded by the column's
+                // cardinality. Account for it indirectly via the global
+                // SYMBOL delta reserve in dynamicBatchRowCap rather than
+                // multiplying per-row.
+                bytes += 8;
+            } else if (wireType == QwpConstants.TYPE_GEOHASH) {
+                // GEOHASH is precision_bits / 8 bytes per value, with a
+                // varint precision prefix shared across the column.
+                bytes += 8;
+            } else if (wireType == QwpConstants.TYPE_DOUBLE_ARRAY
+                    || wireType == QwpConstants.TYPE_LONG_ARRAY) {
+                // Arrays are genuinely unbounded per row. Pick a soft cap
+                // that keeps typical 1-D / 2-D arrays comfortable; outlier
+                // rows surface as STATUS_LIMIT_EXCEEDED rather than masking
+                // as STATUS_INTERNAL_ERROR.
+                bytes += 128;
+            } else {
+                // Unknown variable-width type: conservative soft cap so a
+                // future type addition doesn't silently bypass the budget.
+                bytes += 32;
+            }
+            // Per-column framing overhead (null bitmap bit rounded up to a
+            // byte, plus a small constant for offset / scale prefixes).
+            bytes += 2;
+        }
+        // Per-row floor so single-column tables don't compute absurdly
+        // large dynamic caps.
+        return Math.max(8, bytes);
     }
 
     /**
@@ -1551,11 +1677,11 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
         long bufLimit = bufAddr + bufSize;
         int deltaSize = batchBuffer.emitDeltaSection(preludeEnd, bufLimit);
         if (deltaSize < 0) {
-            throw HttpException.instance("egress: batch too large for send buffer");
+            throw CairoException.critical(0).put("egress: batch too large for send buffer").setOutOfMemory(true);
         }
         int tableBlockSize = batchBuffer.emitTableBlock(preludeEnd + deltaSize, bufLimit, schemaId, writeFullSchema);
         if (tableBlockSize < 0) {
-            throw HttpException.instance("egress: batch too large for send buffer");
+            throw CairoException.critical(0).put("egress: batch too large for send buffer").setOutOfMemory(true);
         }
         long qwpEnd = preludeEnd + deltaSize + tableBlockSize;
 
@@ -1655,11 +1781,11 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
         long bufLimit = bufAddr + bufSize;
         int deltaSize = batchBuffer.emitDeltaSection(preludeEnd, bufLimit);
         if (deltaSize < 0) {
-            throw HttpException.instance("egress: batch too large for send buffer");
+            throw CairoException.critical(0).put("egress: batch too large for send buffer").setOutOfMemory(true);
         }
         int tableBlockSize = batchBuffer.emitTableBlock(preludeEnd + deltaSize, bufLimit, schemaId, writeFullSchema);
         if (tableBlockSize < 0) {
-            throw HttpException.instance("egress: batch too large for send buffer");
+            throw CairoException.critical(0).put("egress: batch too large for send buffer").setOutOfMemory(true);
         }
         long qwp1End = preludeEnd + deltaSize + tableBlockSize;
 
@@ -1839,11 +1965,18 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
             // Passing the symbol-table source lets the batch buffer pick up native
             // SymbolTables for SYMBOL columns, taking the getInt-based fast path.
             batchBuffer.beginBatch(columnDefs, state.getStreamingSymbolTableSource(), state.getConnSymbolDict());
-            // Effective cap = server MAX clamped against any client preference
-            // set during the handshake. Read once per batch so a later config
-            // change (e.g. a hypothetical PER-QUERY knob) would not partially
-            // apply within the inner loop.
-            final int batchCap = state.getMaxBatchRows();
+            // Effective cap = min of:
+            //   - server MAX clamped against any client preference set during
+            //     the handshake;
+            //   - dynamic schema-aware cap that scales down for wide schemas
+            //     so a single batch's worst-case wire size fits the rawSocket
+            //     send buffer.
+            // Read once per batch so a later config change (e.g. a
+            // hypothetical PER-QUERY knob) would not partially apply within
+            // the inner loop.
+            final int batchCap = Math.min(
+                    state.getMaxBatchRows(),
+                    dynamicBatchRowCap(columnDefs, context.getRawResponseSocket().getBufferSize()));
             int rowsThisBatch = 0;
             if (pageFrame) {
                 // Columnar fast path: walk frames and hand each slice to the batch
