@@ -43,8 +43,8 @@ import io.questdb.std.Numbers;
  * <p>
  * Routing (V1 interim, max-disk-ts): the cursor drains the disk side first,
  * tracking the maximum disk timestamp, then iterates the pinned in-mem buffer
- * rows whose timestamp is strictly greater than that maximum. This is NOT the
- * RFC's seam_ts routing (which would make in-mem authoritative for
+ * rows whose timestamp is strictly greater than that maximum. This is NOT
+ * seam_ts routing (which would make in-mem authoritative for
  * {@code ts >= seam_ts}); the buffer records a seamTs but the read path does
  * not consult it. Inline apply commits the disk tier and stages the in-mem
  * rows in the same refresh cycle, so disk always covers the in-mem tier and the

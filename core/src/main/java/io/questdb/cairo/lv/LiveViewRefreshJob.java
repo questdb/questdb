@@ -2590,6 +2590,10 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         } finally {
             instance.unlockAfterRefresh();
             instance.tryCloseIfDropped();
+            // If this view was invalidated concurrently while this cycle held
+            // the refresh latch (so the invalidator's own free lost the CAS),
+            // free its runtime state now that the latch is released.
+            instance.tryFreeRuntimeStateIfInvalid();
         }
         // Invalidate outside the refresh latch: invalidateLiveView's
         // freeze-aware synchronized block parks on the instance monitor when a

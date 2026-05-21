@@ -1184,6 +1184,59 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testInvalidationFreesRuntimeState() throws Exception {
+        // An INVALID view frees its non-cursor-pinned runtime state (compiled
+        // factory, anchor window, anchor function, in-mem tier) instead of
+        // pinning it until DROP / shutdown. The view stays in the registry and
+        // queryable from the on-disk tier.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms IN MEMORY 1h AS " +
+                    "SELECT ts, sym, sum(x) OVER w AS s FROM base " +
+                    "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
+            execute("INSERT INTO base (ts, sym, x) VALUES " +
+                    "('2026-11-01T00:00:10.000000Z', 'a', 1.0), " +
+                    "('2026-11-01T00:00:20.000000Z', 'a', 2.0)");
+            drainWalQueue();
+
+            LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(instance);
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+            }
+
+            // After a refresh the anchored LV holds all four runtime-state fields.
+            Assert.assertNotNull("compiled factory populated after refresh", instance.getCompiledFactory());
+            Assert.assertNotNull("anchor window populated after refresh", instance.getAnchorWindow());
+            Assert.assertNotNull("anchor function populated after refresh", instance.getAnchorFunction());
+            Assert.assertNotNull("in-mem tier populated after refresh", instance.getInMemoryTier());
+
+            // Invalidate. The unified path frees the runtime state.
+            engine.invalidateLiveView(instance, "test free runtime state");
+            Assert.assertTrue("view must be invalid", instance.isInvalid());
+            Assert.assertNull("invalidation frees the compiled factory", instance.getCompiledFactory());
+            Assert.assertNull("invalidation frees the anchor window", instance.getAnchorWindow());
+            Assert.assertNull("invalidation frees the anchor function", instance.getAnchorFunction());
+            Assert.assertNull("invalidation frees the in-mem tier", instance.getInMemoryTier());
+
+            // The view stays queryable from the on-disk tier and reports INVALID.
+            assertSql(
+                    "ts\tsym\ts\n" +
+                            "2026-11-01T00:00:10.000000Z\ta\t1.0\n" +
+                            "2026-11-01T00:00:20.000000Z\ta\t3.0\n",
+                    "SELECT ts, sym, s FROM lv ORDER BY ts"
+            );
+            assertSql(
+                    "view_status\n" +
+                            "invalid\n",
+                    "SELECT view_status FROM live_views() WHERE view_name = 'lv'"
+            );
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
     public void testWriterStallWhenBothSlotsPinned() throws Exception {
         // When both slots are reader-pinned, the
         // slow-path tryAcquireWrite returns null and the refresh worker
@@ -9136,7 +9189,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
 
     @Test
     public void testMaterializedViewAcceptedAsBase() throws Exception {
-        // A materialized view is a valid live-view base per the RFC (WAL-backed,
+        // A materialized view is a valid live-view base (WAL-backed,
         // designated timestamp). The live-on-live reject must NOT fire for it.
         setProperty(PropertyKey.DEV_MODE_ENABLED, "true");
         assertMemoryLeak(() -> {

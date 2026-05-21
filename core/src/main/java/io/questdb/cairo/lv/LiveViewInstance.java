@@ -868,6 +868,45 @@ public class LiveViewInstance implements QuietCloseable {
         }
     }
 
+    /**
+     * Frees the refresh-worker-internal runtime state of an invalidated view -
+     * {@link #compiledFactory}, {@link #anchorWindow}, {@link #anchorFunction},
+     * and {@link #inMemoryTier} - so an INVALID view releases them promptly
+     * rather than pinning them until DROP or shutdown. The view stays in the
+     * registry and queryable: reads serve from the on-disk tier via {@code TableReader},
+     * which consults none of these fields ({@code LiveViewRecordCursor} only
+     * reads {@link #getInMemoryTier()}, and a null tier routes the cursor
+     * disk-only), and a cursor that pinned an in-mem slot before invalidation
+     * keeps it alive via the tier's deferred-close protocol.
+     * <p>
+     * {@link #isClosed} is deliberately NOT set: that flag drives registry
+     * visibility and would flip the lifecycle to DROPPING, but an invalid view
+     * must keep reporting INVALID.
+     * <p>
+     * Mirrors {@link #tryCloseIfDropped()}: CAS-acquires the refresh latch and
+     * frees only when no refresh cycle is in flight. On CAS failure the caller
+     * relies on the refresh worker's finally hook to retry once the in-flight
+     * cycle completes. Idempotent - the freed fields become null, so repeat
+     * calls (and a later {@code tryCloseIfDropped} / {@code close}) are no-ops.
+     */
+    public void tryFreeRuntimeStateIfInvalid() {
+        if (isClosed || !stateReader.isInvalid()) {
+            return;
+        }
+        if (!refreshLatch.compareAndSet(false, true)) {
+            // Refresh in flight; the worker's finally hook retries.
+            return;
+        }
+        try {
+            compiledFactory = Misc.free(compiledFactory);
+            anchorWindow = Misc.free(anchorWindow);
+            anchorFunction = Misc.free(anchorFunction);
+            inMemoryTier = Misc.free(inMemoryTier);
+        } finally {
+            refreshLatch.set(false);
+        }
+    }
+
     public boolean tryLockForRefresh() {
         return refreshLatch.compareAndSet(false, true);
     }

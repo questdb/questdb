@@ -2003,6 +2003,10 @@ public class CairoEngine implements Closeable, WriterSource {
                         .$(", error=").$(t).I$();
             }
         }
+        // Free refresh-worker-internal runtime state now that the view is
+        // INVALID. Best-effort: if a refresh cycle is in flight the latch CAS
+        // fails and the worker's finally hook frees it once the cycle ends.
+        instance.tryFreeRuntimeStateIfInvalid();
     }
 
     public void invalidateLiveViewsForBaseTable(TableToken baseTableToken, String reason) {
@@ -2063,6 +2067,10 @@ public class CairoEngine implements Closeable, WriterSource {
                                 .$(", error=").$(t).I$();
                     }
                 }
+                // Free refresh-worker-internal runtime state now that the view
+                // is INVALID. Best-effort: a refresh cycle in flight defers the
+                // free to the worker's finally hook (latch CAS fails here).
+                instance.tryFreeRuntimeStateIfInvalid();
             }
         }
     }
