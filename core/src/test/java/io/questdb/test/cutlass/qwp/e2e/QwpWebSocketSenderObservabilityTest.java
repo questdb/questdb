@@ -54,7 +54,9 @@ import java.util.concurrent.atomic.AtomicLong;
  */
 public class QwpWebSocketSenderObservabilityTest extends AbstractQwpWebSocketTest {
 
-    /** Exercises {@link QwpWebSocketSender#getActiveBackgroundDrainers()}. */
+    /**
+     * Exercises {@link QwpWebSocketSender#getActiveBackgroundDrainers()}.
+     */
     @Test
     public void testGetActiveBackgroundDrainersZeroWhenNotStarted() throws Exception {
         runInContext((port) -> {
@@ -64,7 +66,9 @@ public class QwpWebSocketSenderObservabilityTest extends AbstractQwpWebSocketTes
         });
     }
 
-    /** Exercises {@link QwpWebSocketSender#getDroppedConnectionNotifications()}. */
+    /**
+     * Exercises {@link QwpWebSocketSender#getDroppedConnectionNotifications()}.
+     */
     @Test
     public void testGetDroppedConnectionNotificationsZeroInNormalFlow() throws Exception {
         runInContext((port) -> {
@@ -91,7 +95,9 @@ public class QwpWebSocketSenderObservabilityTest extends AbstractQwpWebSocketTes
         });
     }
 
-    /** Exercises {@link QwpWebSocketSender#getDroppedErrorNotifications()}. */
+    /**
+     * Exercises {@link QwpWebSocketSender#getDroppedErrorNotifications()}.
+     */
     @Test
     public void testGetDroppedErrorNotificationsZeroInNormalFlow() throws Exception {
         runInContext((port) -> {
@@ -106,7 +112,9 @@ public class QwpWebSocketSenderObservabilityTest extends AbstractQwpWebSocketTes
         });
     }
 
-    /** Exercises {@link QwpWebSocketSender#getTotalBackgroundDrainersFailed()}. */
+    /**
+     * Exercises {@link QwpWebSocketSender#getTotalBackgroundDrainersFailed()}.
+     */
     @Test
     public void testGetTotalBackgroundDrainersFailedZeroWhenNotStarted() throws Exception {
         runInContext((port) -> {
@@ -116,7 +124,9 @@ public class QwpWebSocketSenderObservabilityTest extends AbstractQwpWebSocketTes
         });
     }
 
-    /** Exercises {@link QwpWebSocketSender#getTotalBackgroundDrainersSucceeded()}. */
+    /**
+     * Exercises {@link QwpWebSocketSender#getTotalBackgroundDrainersSucceeded()}.
+     */
     @Test
     public void testGetTotalBackgroundDrainersSucceededZeroWhenNotStarted() throws Exception {
         runInContext((port) -> {
@@ -306,7 +316,9 @@ public class QwpWebSocketSenderObservabilityTest extends AbstractQwpWebSocketTes
         });
     }
 
-    /** Catch-all for the error handler that fails the test if it ever fires. */
+    /**
+     * Catch-all for the error handler that fails the test if it ever fires.
+     */
     @SuppressWarnings("unused")
     private static SenderErrorHandler failOnError() {
         return err -> Assert.fail("unexpected SenderError: category=" + err.getCategory()

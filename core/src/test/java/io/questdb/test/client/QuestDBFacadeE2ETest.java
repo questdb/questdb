@@ -321,9 +321,9 @@ public class QuestDBFacadeE2ETest extends AbstractBootstrapTest {
 
     /**
      * Same thread, many sequential queries. Asserts:
-     *  - {@link QuestDB#query()} returns the same per-thread instance every call
-     *  - state resets between submits (no SQL/handler carryover)
-     *  - back-to-back submits with binds reuse the same {@link Completion}
+     * - {@link QuestDB#query()} returns the same per-thread instance every call
+     * - state resets between submits (no SQL/handler carryover)
+     * - back-to-back submits with binds reuse the same {@link Completion}
      */
     @Test
     public void testManySequentialQueriesOnSameThread() throws Exception {
@@ -654,7 +654,9 @@ public class QuestDBFacadeE2ETest extends AbstractBootstrapTest {
         });
     }
 
-    /** Convenience handler that fails the test on error and ignores end. */
+    /**
+     * Convenience handler that fails the test on error and ignores end.
+     */
     private static class CollectingHandler implements QwpColumnBatchHandler {
         @Override
         public void onBatch(QwpColumnBatch batch) {
