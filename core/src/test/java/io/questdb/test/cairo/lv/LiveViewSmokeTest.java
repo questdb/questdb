@@ -7494,6 +7494,98 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testO3ResetsInMemoryTier() throws Exception {
+        // After an O3 replay rewrites the on-disk tier, the in-mem tier still
+        // holds the pre-replay output rows for the rewritten range. The refresh
+        // worker resets the in-mem tier so a post-O3 cursor falls through to the
+        // now-correct on-disk tier; the next normal cycle republishes it. Under
+        // the current max-disk-ts routing the stale rows would be masked anyway,
+        // so this guards the latent gap that activates once the cursor adopts
+        // seam_ts routing (Phase 3a completion) or the Phase 4 hand-off ring lets
+        // the in-mem tier outrun disk.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            // IN MEMORY 1h keeps every test row resident in the in-mem tier.
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms IN MEMORY 1h AS " +
+                    "SELECT ts, sym, sum(x) OVER w AS s FROM base " +
+                    "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                // Two in-order batches: four rows land in the in-mem tier; the
+                // batch-1 head sits at maxTs=20.
+                setCurrentMicros(0L);
+                execute("INSERT INTO base (ts, sym, x) VALUES " +
+                        "('2026-11-01T00:00:10.000000Z', 'a', 1.0), " +
+                        "('2026-11-01T00:00:20.000000Z', 'a', 2.0)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                setCurrentMicros(150_000L);
+                execute("INSERT INTO base (ts, sym, x) VALUES " +
+                        "('2026-11-01T00:00:30.000000Z', 'a', 3.0), " +
+                        "('2026-11-01T00:00:40.000000Z', 'a', 4.0)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull(lv);
+                LiveViewInMemoryTier tier = lv.getInMemoryTier();
+                Assert.assertNotNull("in-mem tier must be allocated after refresh", tier);
+                Assert.assertEquals(
+                        "in-mem tier holds all four in-order rows before O3",
+                        4,
+                        tier.getSlot(tier.getPublishedIdx()).rowCount()
+                );
+
+                // O3 row at ts=25 sits inside the in-mem-resident range and
+                // strictly above headMaxTs=20, so it drives a head-hit replay
+                // that rewrites the on-disk tier.
+                setCurrentMicros(400_000L);
+                execute("INSERT INTO base (ts, sym, x) VALUES " +
+                        "('2026-11-01T00:00:25.000000Z', 'a', 5.0)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                // The replay reset the in-mem tier: the published slot is empty.
+                Assert.assertEquals(
+                        "O3 replay must reset the in-mem tier",
+                        0,
+                        tier.getSlot(tier.getPublishedIdx()).rowCount()
+                );
+
+                // Reads are correct post-O3 (served from the rewritten on-disk
+                // tier): cumulative sum across all five rows in ts order.
+                assertSql(
+                        "ts\tsym\ts\n" +
+                                "2026-11-01T00:00:10.000000Z\ta\t1.0\n" +
+                                "2026-11-01T00:00:20.000000Z\ta\t3.0\n" +
+                                "2026-11-01T00:00:25.000000Z\ta\t8.0\n" +
+                                "2026-11-01T00:00:30.000000Z\ta\t11.0\n" +
+                                "2026-11-01T00:00:40.000000Z\ta\t15.0\n",
+                        "SELECT ts, sym, s FROM lv ORDER BY ts"
+                );
+
+                // A subsequent in-order commit republishes the in-mem tier.
+                setCurrentMicros(600_000L);
+                execute("INSERT INTO base (ts, sym, x) VALUES " +
+                        "('2026-11-01T00:00:50.000000Z', 'a', 6.0)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+                Assert.assertTrue(
+                        "next normal cycle republishes the in-mem tier",
+                        tier.getSlot(tier.getPublishedIdx()).rowCount() > 0
+                );
+            }
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
     public void testO3AtHeadMaxTimestampBoundaryIsNotDropped() throws Exception {
         // Boundary case: an O3 row whose ts is EXACTLY the head's maxTimestamp.
         // Head-hit eligibility must be strict (headMaxTs < lateRowTs): the head

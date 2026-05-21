@@ -939,6 +939,13 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         } else {
             o3HeadMissReplay(instance, windowFactory, baseToken, advanceTo);
         }
+
+        // The replay rewrote the on-disk tier (REPLACE_RANGE); the in-mem tier
+        // still holds the pre-replay output rows for the rewritten range. Reset
+        // it so a post-O3 cursor falls through to the now-correct on-disk tier
+        // until the next refresh cycle republishes a fresh (subset-of-disk)
+        // buffer. See resetInMemoryTier.
+        resetInMemoryTier(instance);
     }
 
     /**
@@ -2385,6 +2392,53 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * which logs at LOG.critical level. Subsequent cycles re-attempt the persist
      * the next time the in-memory state advances.
      */
+    /**
+     * Resets the in-mem tier to empty after an O3 replay. The replay rewrote
+     * the on-disk tier (REPLACE_RANGE), but the in-mem tier still holds the
+     * pre-replay output rows for the rewritten range. Under the current
+     * max-disk-ts cursor routing those stale rows are already masked (the replay
+     * raised the max disk ts to cover them), so this reset is defensive: it
+     * keeps the in-mem tier from serving stale rows the moment the cursor adopts
+     * seam_ts routing or the Phase 4 hand-off ring lets the in-mem tier outrun
+     * disk. The next normal refresh cycle republishes a fresh, subset-of-disk
+     * in-mem buffer.
+     * <p>
+     * Mirrors {@link #publishToInMemoryTier}'s acquire protocol but publishes an
+     * empty buffer: fast-path clears the published slot in place when no reader
+     * pins it; slow-path swaps in an empty non-published slot. When both slots
+     * are reader-pinned the reset is skipped this cycle - the pinned readers see
+     * a frozen, self-consistent snapshot regardless, and the stale rows stay
+     * masked under max-disk-ts routing until a later cycle supersedes them.
+     */
+    private void resetInMemoryTier(LiveViewInstance instance) {
+        LiveViewInMemoryTier tier = instance.getInMemoryTier();
+        if (tier == null) {
+            return;
+        }
+        int publishedIdx = tier.getPublishedIdx();
+        // Fast-path: clear the published slot in place when no reader pins it.
+        // A successful 0 -> -1 CAS proves there are no active read pins, and the
+        // writer sentinel keeps new readers spinning until reset() + release.
+        LiveViewInMemoryBuffer acquired = tier.tryAcquireWrite(publishedIdx);
+        if (acquired != null) {
+            acquired.reset();
+            tier.releaseWriteWithoutPublish(publishedIdx);
+            return;
+        }
+        // Slow-path: a reader pins the published slot. Empty the non-published
+        // slot and swap to it; the old slot's pinned readers keep their frozen
+        // rows until they release.
+        int writeIdx = 1 - publishedIdx;
+        LiveViewInMemoryBuffer writeSlot = tier.tryAcquireWrite(writeIdx);
+        if (writeSlot == null) {
+            LOG.info().$("live view in-mem tier reset skipped, both slots pinned [view=")
+                    .$(instance.getDefinition().getViewName()).I$();
+            return;
+        }
+        writeSlot.reset();
+        tier.publishSwap(writeIdx);
+    }
+
     private void persistState(LiveViewInstance instance) {
         TableToken token = instance.getLiveViewToken();
         // Synchronize on the instance: ApplyWal2TableJob also rewrites _lv.s when it

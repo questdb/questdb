@@ -41,14 +41,23 @@ import io.questdb.std.Numbers;
  * visible to the refresh worker's slow-path {@code tryAcquireWrite} ensures
  * the writer trails rather than progressing past a slow reader.
  * <p>
- * Seam_ts routing: after the disk cursor exhausts, the cursor
- * iterates the pinned in-mem buffer rows whose timestamp is strictly greater
- * than the maximum timestamp seen on the disk side. In the current
- * inline-apply architecture the in-mem tier is at most one cycle behind disk
- * and almost always a subset, so the in-mem iteration produces zero rows in
- * steady state; the routing logic engages only in narrow races (cursor opens
- * between disk apply and in-mem publish) and in a future hand-off ring regime
- * that decouples apply from per-notification refresh.
+ * Routing (V1 interim, max-disk-ts): the cursor drains the disk side first,
+ * tracking the maximum disk timestamp, then iterates the pinned in-mem buffer
+ * rows whose timestamp is strictly greater than that maximum. This is NOT the
+ * RFC's seam_ts routing (which would make in-mem authoritative for
+ * {@code ts >= seam_ts}); the buffer records a seamTs but the read path does
+ * not consult it. Inline apply commits the disk tier and stages the in-mem
+ * rows in the same refresh cycle, so disk always covers the in-mem tier and the
+ * {@code ts > maxDiskTs} predicate is never satisfied in steady state - the
+ * in-mem tier is read-inert (populated but not read). The routing engages only
+ * in narrow races (a cursor opening between disk apply and in-mem publish).
+ * O3 replay rewrites the disk tier and resets the in-mem tier (the refresh
+ * worker empties it - see {@code LiveViewRefreshJob.resetInMemoryTier}), so a
+ * post-O3 cursor reads the rewritten rows from disk. Full seam_ts routing, the
+ * union {@code size()}, in-mem rowIds, and the atomic O3 in-mem rebuild are
+ * deferred to the benchmark-gated Phase 3a completion; until then the in-mem
+ * tier gives no read benefit (its freshness payoff needs the Phase 4 hand-off
+ * ring that lets it outrun disk).
  * <p>
  * The in-mem tier stores the full output row, so the cursor routes through it
  * only when the read projects every output column in declared order (see
