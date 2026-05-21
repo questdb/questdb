@@ -100,13 +100,6 @@ public class LiveViewWindow implements QuietCloseable {
     private final Function anchorExpression;
     private final int anchorValueType;
     private final CairoConfiguration cairoConfiguration;
-    // Cached snapshot of cairo.live.view.partition.compact.threshold so the
-    // per-row auto-trigger inside processRow does not chase the configuration
-    // on every call. Auto-trigger fires whenever tombstoneCount exceeds this
-    // value, dispatching compactPartitionMap() to every WindowFunction so the
-    // anchor map and the per-function partition maps shed their tombstoned
-    // entries in lockstep.
-    private final int compactThreshold;
     private final ObjList<WindowFunction> functions;
     // Static reference to the anchor map's key-column types. Held so compact()
     // can allocate a replacement Map with the same shape without re-deriving
@@ -138,7 +131,6 @@ public class LiveViewWindow implements QuietCloseable {
         this.anchorMap = anchorMap;
         this.partitionKeySink = partitionKeySink;
         this.functions = functions;
-        this.compactThreshold = cairoConfiguration.getLiveViewPartitionCompactThreshold();
     }
 
     /**
@@ -320,34 +312,17 @@ public class LiveViewWindow implements QuietCloseable {
             // First row for this partition - anchor map didn't carry it yet. Functions
             // either have no per-partition state yet (in which case resetPartition is
             // a no-op) or have stale state from a prior partition that was evicted -
-            // resetting it is the safe default. The new partition is alive by
-            // definition since this row is creating it; write a 0 tombstone slot
-            // explicitly rather than relying on createValue() value-byte zero-fill,
-            // which OrderedMap does not guarantee (Unsafe.realloc / Unsafe.malloc /
-            // clear() can all leave stale bytes in the heap region the new entry
-            // lands on).
+            // resetting it is the safe default. Write a 0 tombstone slot explicitly
+            // rather than relying on createValue() value-byte zero-fill, which
+            // OrderedMap does not guarantee (Unsafe.realloc / Unsafe.malloc / clear()
+            // can all leave stale bytes in the heap region the new entry lands on);
+            // a stale 1 would make the anchor snapshot drop a live partition.
             value.putByte(SLOT_TOMBSTONE, (byte) 0);
             shouldReset = true;
         } else {
-            // Visiting an existing partition is evidence the partition is alive again -
-            // clear any prior tombstone so the compaction trigger does not reclaim it.
-            if (value.getByte(SLOT_TOMBSTONE) == 1) {
-                value.putByte(SLOT_TOMBSTONE, (byte) 0);
-                tombstoneCount--;
-            }
             byte initialized = value.getByte(SLOT_INITIALIZED);
             long lastAnchor = value.getLong(SLOT_ANCHOR_VALUE);
             shouldReset = initialized == 0 || lastAnchor != currentAnchor;
-        }
-
-        // Dispatch markPartitionAlive on every function BEFORE resetPartition so the
-        // anchor-cross row clears any prior tombstone bit first, then resetPartition
-        // (re-)sets it. Without this ordering, resetPartition's tombstone-set would
-        // be cancelled by computeNext's clear on the same row and the function-side
-        // tombstoneCount would never grow. Functions without tombstone tracking get
-        // the default no-op and pay only the dispatch cost.
-        for (int i = 0, n = functions.size(); i < n; i++) {
-            functions.getQuick(i).markPartitionAlive(record);
         }
 
         if (shouldReset) {
@@ -356,26 +331,20 @@ public class LiveViewWindow implements QuietCloseable {
             }
             value.putLong(SLOT_ANCHOR_VALUE, currentAnchor);
             value.putByte(SLOT_INITIALIZED, (byte) 1);
-            // Tombstone semantics: an anchor crossing on an EXISTING partition resets
-            // its accumulator to identity. We mark the entry as tombstoned, on the
-            // assumption that the partition might go silent after the crossing. A
-            // subsequent row visiting the partition clears the bit in the branch
-            // above; if no row arrives within the residence window, the compaction
-            // trigger reclaims the entry. Fresh partitions (isNew=true)
-            // are not tombstoned - the first row that creates them is also reviving
-            // them.
-            if (!isNewPartition) {
-                value.putByte(SLOT_TOMBSTONE, (byte) 1);
-                tombstoneCount++;
-            }
         }
-        // Auto-trigger lives at the end of processRow so all map mutations above
-        // observe the still-current MapValue handle. compact() rebuilds the
-        // anchor map (and each per-function partition map) in a fresh allocation
-        // and swaps references, invalidating the local `value` reference, so it
-        // must be the last operation on this row.
-        if (tombstoneCount > compactThreshold) {
-            compact();
+
+        // markPartitionAlive runs AFTER resetPartition so the anchor-cross row's reset
+        // (which sets a per-function tombstone bit) is immediately cancelled. The
+        // partition is alive in its new bucket: this same row's computeNext
+        // repopulates the accumulator, so the partition's state is NOT identity and
+        // must never be dropped by compaction or skipped by a snapshot. Leaving the
+        // tombstone set (as an earlier design did) let compaction and checkpoint
+        // writes discard a live mid-bucket partition, and a later same-bucket row then
+        // restarted the accumulator from identity - silently wrong output. Reset-driven
+        // tombstones therefore never persist; map-growth compaction is left to a future
+        // age/retention-based design that can drop partitions without losing live state.
+        for (int i = 0, n = functions.size(); i < n; i++) {
+            functions.getQuick(i).markPartitionAlive(record);
         }
     }
 

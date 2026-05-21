@@ -3342,134 +3342,16 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testAnchorMapCompactRebuildsWithoutTombstones() throws Exception {
-        // compact() can be called directly to exercise the scaffolding without
-        // the auto-trigger wiring that adds tombstone
-        // tracking to each window function's own Map. This test calls compact()
-        // directly to verify the rebuild correctly drops tombstoned entries
-        // and preserves alive ones. End-to-end LV output correctness under
-        // compaction is exercised once 2b coordinates anchor-map + function-map
-        // sweeps.
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE base (ts TIMESTAMP, x INT, sym SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
-                    "SELECT ts, sym, sum(x) OVER w AS s FROM base " +
-                    "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
-
-            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
-                setCurrentMicros(0L);
-                // 4 partitions on day 1; day 2 crosses 'a' and 'b' (both
-                // tombstoned), then 'b' is revisited so its tombstone clears.
-                // End state: 'a' tombstoned, 'b'/'c'/'d' alive (count=1, size=4).
-                execute("INSERT INTO base (ts, x, sym) VALUES " +
-                        "('2026-08-01T00:00:00.000000Z', 10, 'a'), " +
-                        "('2026-08-01T01:00:00.000000Z', 20, 'b'), " +
-                        "('2026-08-01T02:00:00.000000Z', 30, 'c'), " +
-                        "('2026-08-01T03:00:00.000000Z', 40, 'd'), " +
-                        "('2026-08-02T00:00:00.000000Z', 11, 'a'), " +
-                        "('2026-08-02T01:00:00.000000Z', 22, 'b'), " +
-                        "('2026-08-02T02:00:00.000000Z', 23, 'b')");
-                drainWalQueue();
-                drainJob(job);
-                drainWalQueue();
-
-                LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
-                LiveViewWindow window = lv.getAnchorWindow();
-                Assert.assertNotNull("anchor window must be built after refresh", window);
-                Assert.assertEquals(1L, window.getTombstoneCount());
-                Assert.assertEquals(4L, window.getAnchorMapSize());
-
-                window.compact();
-
-                Assert.assertEquals(
-                        "compaction drops tombstoned 'a' entry",
-                        3L,
-                        window.getAnchorMapSize()
-                );
-                Assert.assertEquals(
-                        "tombstoneCount resets to 0 after compaction",
-                        0L,
-                        window.getTombstoneCount()
-                );
-            }
-
-            execute("DROP LIVE VIEW lv");
-        });
-    }
-
-    @Test
-    public void testAnchorMapTombstoneTracking() throws Exception {
-        // Per-row tombstone semantics inside a single refresh cycle: an
-        // anchor crossing on an existing partition flags its anchor-map entry
-        // tombstoned; the flag clears when a subsequent row revisits the
-        // partition. Cross-cycle tracking is moot - the cursor wrapper
-        // resets anchor state at the top of each cycle.
+    public void testManualCompactDoesNotDropLiveState() throws Exception {
+        // A manual compact() must never drop a partition that still holds live
+        // current-bucket accumulator state. Reset-driven tombstoning is disabled
+        // (markPartitionAlive cancels the bit resetPartition sets on the same
+        // anchor-cross row), so a just-crossed partition is never a compaction
+        // candidate. After compact(), a later same-bucket row must continue the
+        // accumulator rather than restart it from identity.
         //
-        // The default cairo.live.view.partition.compact.threshold is 100K,
-        // well above the single tombstone this test produces, so the
-        // assertion observes raw tombstone bookkeeping rather than the
-        // post-compaction state. See testCompactionFiresUnderPartitionChurn
-        // for the auto-trigger path.
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE base (ts TIMESTAMP, x INT, sym SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
-                    "SELECT ts, sym, sum(x) OVER w AS s FROM base " +
-                    "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
-
-            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
-                setCurrentMicros(0L);
-                // 'a' crosses but sees no follow-up - stays tombstoned.
-                // 'b' crosses and the next row revisits it - tombstone cleared.
-                // 'c' and 'd' never cross - stay alive.
-                // count at cycle end: 1 ('a' only). size: 4. count > size/2 (2)?
-                // no. Compaction does not fire.
-                execute("INSERT INTO base (ts, x, sym) VALUES " +
-                        "('2026-08-01T00:00:00.000000Z', 10, 'a'), " +
-                        "('2026-08-01T01:00:00.000000Z', 20, 'b'), " +
-                        "('2026-08-01T02:00:00.000000Z', 30, 'c'), " +
-                        "('2026-08-01T03:00:00.000000Z', 40, 'd'), " +
-                        "('2026-08-02T00:00:00.000000Z', 11, 'a'), " +
-                        "('2026-08-02T01:00:00.000000Z', 22, 'b'), " +
-                        "('2026-08-02T02:00:00.000000Z', 23, 'b')");
-                drainWalQueue();
-                drainJob(job);
-                drainWalQueue();
-
-                LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
-                LiveViewWindow window = lv.getAnchorWindow();
-                Assert.assertNotNull("anchor window must be built after refresh", window);
-                Assert.assertEquals(
-                        "only 'a' stays tombstoned; 'b' was revisited, 'c'/'d' never crossed",
-                        1L,
-                        window.getTombstoneCount()
-                );
-                Assert.assertEquals(
-                        "all four partitions still in the map (no compaction at default threshold)",
-                        4L,
-                        window.getAnchorMapSize()
-                );
-            }
-
-            execute("DROP LIVE VIEW lv");
-        });
-    }
-
-    @Test
-    public void testCompactionFiresUnderPartitionChurn() throws Exception {
-        // With the threshold set low, an anchor-cross run that
-        // accumulates more tombstones than the threshold allows must trigger
-        // compact() from processRow. The trigger fires inside processRow
-        // AFTER the current row's anchor-map mutation but BEFORE the row
-        // continues into computeNext on each function, so the anchor map
-        // ends the cycle empty (all three tombstoned entries dropped) while
-        // each function map's view of the current row's partition is
-        // re-created by computeNext on the same row.
-        //
-        // Uses INT partition keys (sym=1, 2, 3) rather than SYMBOL because
-        // SYMBOL columns expose local-WAL-segment indices through the LV's
-        // per-partition RecordSink, which collide across separate WAL
-        // segments and confuse the post-cycle assertions.
-        setProperty(PropertyKey.CAIRO_LIVE_VIEW_PARTITION_COMPACT_THRESHOLD, 2);
+        // INT partition keys side-step the per-WAL-segment SYMBOL index collision
+        // that confuses cross-segment partition lookups.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT, sym INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
@@ -3478,13 +3360,70 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
 
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 setCurrentMicros(0L);
-                // Three partitions seeded on day 1, then anchor-crossed on day 2
-                // with no follow-up rows. Each cross adds one tombstone:
-                //   row 4 -> tombstoneCount=1, 1 > 2 ? no
-                //   row 5 -> tombstoneCount=2, 2 > 2 ? no
-                //   row 6 -> tombstoneCount=3, 3 > 2 ? yes -> compact() fires
-                // After compaction (inside row 6's processRow), the anchor
-                // map drops all three tombstoned entries.
+                // Day 1 seeds sym 1, 2. Day 2 crosses both (first row of the new
+                // bucket: sym 1 -> 11, sym 2 -> 22). Neither is tombstoned.
+                execute("INSERT INTO base (ts, x, sym) VALUES " +
+                        "('2026-08-01T00:00:00.000000Z', 10, 1), " +
+                        "('2026-08-01T01:00:00.000000Z', 20, 2), " +
+                        "('2026-08-02T00:00:00.000000Z', 11, 1), " +
+                        "('2026-08-02T01:00:00.000000Z', 22, 2)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
+                LiveViewWindow window = lv.getAnchorWindow();
+                Assert.assertNotNull("anchor window must be built after refresh", window);
+                Assert.assertEquals("reset-driven tombstones are disabled", 0L, window.getTombstoneCount());
+                Assert.assertEquals(2L, window.getAnchorMapSize());
+
+                // Force a manual compaction. It must keep both live partitions.
+                window.compact();
+                Assert.assertEquals(
+                        "compact() keeps live partitions (no reset-driven tombstones to drop)",
+                        2L,
+                        window.getAnchorMapSize()
+                );
+                Assert.assertEquals(0L, window.getTombstoneCount());
+
+                // A later same-bucket (day 2) row for sym 1 must continue the
+                // day-2 accumulator: 11 + 5 = 16, not restart at 5.
+                setCurrentMicros(200_000L);
+                execute("INSERT INTO base (ts, x, sym) VALUES ('2026-08-02T03:00:00.000000Z', 5, 1)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                assertSql(
+                        "ts\tsym\ts\n" +
+                                "2026-08-02T00:00:00.000000Z\t1\t11.0\n" +
+                                "2026-08-02T03:00:00.000000Z\t1\t16.0\n",
+                        "SELECT ts, sym, s FROM lv WHERE sym = 1 AND ts >= '2026-08-02' ORDER BY ts"
+                );
+            }
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testResetDrivenTombstonesDisabled() throws Exception {
+        // Anchor crossings must not accumulate tombstones: the reset-driven
+        // tombstone (which a just-crossed, still-live partition would otherwise
+        // carry) is cancelled on the same row, so the anchor map keeps every
+        // partition and the per-window tombstone count stays zero. End-to-end
+        // output stays correct across the day boundary.
+        //
+        // INT partition keys side-step the per-WAL-segment SYMBOL index collision.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT, sym INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+                    "SELECT ts, sym, sum(x) OVER w AS s FROM base " +
+                    "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                setCurrentMicros(0L);
+                // Day 1 seeds sym 1, 2, 3. Day 2 crosses all three.
                 execute("INSERT INTO base (ts, x, sym) VALUES " +
                         "('2026-08-01T00:00:00.000000Z', 10, 1), " +
                         "('2026-08-01T01:00:00.000000Z', 20, 2), " +
@@ -3500,19 +3439,16 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                 LiveViewWindow window = lv.getAnchorWindow();
                 Assert.assertNotNull("anchor window must be built after refresh", window);
                 Assert.assertEquals(
-                        "auto-trigger fired, dropping all tombstoned entries",
-                        0L,
-                        window.getAnchorMapSize()
-                );
-                Assert.assertEquals(
-                        "tombstoneCount resets to 0 after auto-trigger",
+                        "no reset-driven tombstones accumulate across anchor crossings",
                         0L,
                         window.getTombstoneCount()
                 );
+                Assert.assertEquals(
+                        "all three partitions stay in the anchor map",
+                        3L,
+                        window.getAnchorMapSize()
+                );
 
-                // End-to-end correctness: day-1 partial sums (10, 20, 30) plus
-                // day-2 partial sums (11, 22, 33) with no carry-over from day 1.
-                // sum(INT) returns DOUBLE in QuestDB.
                 assertSql(
                         "ts\tsym\ts\n" +
                                 "2026-08-01T00:00:00.000000Z\t1\t10.0\n" +
@@ -3523,25 +3459,91 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                                 "2026-08-02T02:00:00.000000Z\t3\t33.0\n",
                         "SELECT ts, sym, s FROM lv ORDER BY ts, sym"
                 );
+            }
 
-                // Day-3 revival of sym=1 enters via the isNewPartition branch
-                // (day-2 entry was dropped from the anchor map by the
-                // auto-trigger). Advancing the test clock past the
-                // FLUSH-EVERY 100ms gate lets the next refresh tick run.
-                setCurrentMicros(200_000L);
-                execute("INSERT INTO base (ts, x, sym) VALUES ('2026-08-03T00:00:00.000000Z', 7, 1)");
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testHighChurnSameBucketFollowupNoDataLoss() throws Exception {
+        // Regression: a low compaction threshold once let many simultaneous
+        // anchor crossings drop partitions whose accumulator had just been
+        // repopulated by the crossing row's computeNext, so a later same-bucket
+        // row restarted the accumulator from identity and produced wrong output.
+        // With reset-driven tombstoning disabled, a same-bucket follow-up must
+        // continue the day-2 accumulator regardless of the threshold.
+        //
+        // INT partition keys side-step the per-WAL-segment SYMBOL index collision.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_PARTITION_COMPACT_THRESHOLD, 2);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT, sym INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+                    "SELECT ts, sym, sum(x) OVER w AS s FROM base " +
+                    "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                setCurrentMicros(0L);
+                // Day 1 seeds sym 1, 2, 3. Day 2 crosses all three (the old
+                // buggy auto-trigger would have fired here and dropped the live
+                // day-2 state of sym 1 and sym 2).
+                execute("INSERT INTO base (ts, x, sym) VALUES " +
+                        "('2026-08-01T00:00:00.000000Z', 10, 1), " +
+                        "('2026-08-01T01:00:00.000000Z', 20, 2), " +
+                        "('2026-08-01T02:00:00.000000Z', 30, 3), " +
+                        "('2026-08-02T00:00:00.000000Z', 11, 1), " +
+                        "('2026-08-02T01:00:00.000000Z', 22, 2), " +
+                        "('2026-08-02T02:00:00.000000Z', 33, 3)");
                 drainWalQueue();
                 drainJob(job);
                 drainWalQueue();
 
+                LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
+                LiveViewWindow window = lv.getAnchorWindow();
+                Assert.assertNotNull("anchor window must be built after refresh", window);
                 Assert.assertEquals(
-                        "post-revival anchor map carries the single new entry",
-                        1L,
+                        "no reset-driven tombstones accumulate even under churn",
+                        0L,
+                        window.getTombstoneCount()
+                );
+                Assert.assertEquals(
+                        "all three partitions retained (compaction never drops live state)",
+                        3L,
                         window.getAnchorMapSize()
                 );
+
+                // Same-bucket (day 2) follow-ups for every partition must
+                // continue, not restart: sym 1 -> 11+5=16, sym 2 -> 22+6=28,
+                // sym 3 -> 33+7=40.
+                setCurrentMicros(200_000L);
+                execute("INSERT INTO base (ts, x, sym) VALUES " +
+                        "('2026-08-02T03:00:00.000000Z', 5, 1), " +
+                        "('2026-08-02T04:00:00.000000Z', 6, 2), " +
+                        "('2026-08-02T05:00:00.000000Z', 7, 3)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
                 assertSql(
                         "ts\tsym\ts\n" +
-                                "2026-08-03T00:00:00.000000Z\t1\t7.0\n",
+                                "2026-08-02T00:00:00.000000Z\t1\t11.0\n" +
+                                "2026-08-02T01:00:00.000000Z\t2\t22.0\n" +
+                                "2026-08-02T02:00:00.000000Z\t3\t33.0\n" +
+                                "2026-08-02T03:00:00.000000Z\t1\t16.0\n" +
+                                "2026-08-02T04:00:00.000000Z\t2\t28.0\n" +
+                                "2026-08-02T05:00:00.000000Z\t3\t40.0\n",
+                        "SELECT ts, sym, s FROM lv WHERE ts >= '2026-08-02' ORDER BY ts, sym"
+                );
+
+                // Day-3 row for sym 1 starts a fresh bucket (correct reset).
+                setCurrentMicros(400_000L);
+                execute("INSERT INTO base (ts, x, sym) VALUES ('2026-08-03T00:00:00.000000Z', 9, 1)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+                assertSql(
+                        "ts\tsym\ts\n" +
+                                "2026-08-03T00:00:00.000000Z\t1\t9.0\n",
                         "SELECT ts, sym, s FROM lv WHERE ts >= '2026-08-03' ORDER BY ts"
                 );
             }
@@ -3721,25 +3723,16 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testRingSlabReclaimUnderChurn() throws Exception {
-        // A bounded-ROWS aggregate carries a per-partition ring
-        // slab inside MemoryARW. compactPartitionMap captures
-        // (capacity, startOffset) of each dropped slab into a freeList that
-        // the next isNew partition pops from before falling back to
-        // memory.appendAddressFor. Bounded frames cannot share a WINDOW with
-        // an ANCHOR clause, but they sit alongside an anchored WINDOW in the
-        // same SELECT and LiveViewWindow dispatches resetPartition /
-        // markPartitionAlive / compactPartitionMap to every function in the
-        // SELECT regardless of which WINDOW it belongs to. Driving repeated
-        // churn through the auto-trigger reuses the freeList; the observable
-        // signature is that the bounded function's partition map shrinks
-        // after each auto-trigger (down to the row that triggered the
-        // compact, re-added by computeNext) rather than growing with each
-        // anchor cross.
+    public void testMixedAnchoredBoundedWindowAcrossAnchorBoundary() throws Exception {
+        // Regression: in a view that mixes an anchored WINDOW with a bounded
+        // ROWS/RANGE WINDOW, the anchor reset must NOT touch the bounded window.
+        // The LV anchor runtime previously dispatched resetPartition to every
+        // window function in the SELECT, so a bounded sum/avg was zeroed at each
+        // anchor crossing and lost the rows that straddled the boundary. The
+        // anchored result (row_number) must still reset per bucket while the
+        // bounded result (ROWS 1 PRECEDING) must keep spanning the boundary.
         //
-        // Uses INT partition keys to side-step the per-WAL-segment SYMBOL
-        // index collision that confuses cross-segment partition lookups.
-        setProperty(PropertyKey.CAIRO_LIVE_VIEW_PARTITION_COMPACT_THRESHOLD, 2);
+        // INT partition keys side-step the per-WAL-segment SYMBOL index collision.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT, sym INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
@@ -3753,87 +3746,42 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
 
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 setCurrentMicros(0L);
-                // Day 1 seeds 1, 2, 3 (one row each so the bounded ring
-                // allocates a slab per partition). Day 2 crosses anchor for
-                // all three without follow-up rows; on row 6 the per-row
-                // auto-trigger fires compact() (tombstoneCount=3 > 2),
-                // sweeping the anchor map and each function's partition map.
-                // computeNext for row 6's partition (sym=3) re-adds a single
-                // entry to every function map afterward; the bounded sum
-                // pops sym=3's freelist slab to back the ring.
                 execute("INSERT INTO base (ts, x, sym) VALUES " +
                         "('2026-09-01T00:00:00.000000Z', 10, 1), " +
-                        "('2026-09-01T01:00:00.000000Z', 20, 2), " +
-                        "('2026-09-01T02:00:00.000000Z', 30, 3), " +
+                        "('2026-09-01T01:00:00.000000Z', 100, 2), " +
                         "('2026-09-02T00:00:00.000000Z', 11, 1), " +
-                        "('2026-09-02T01:00:00.000000Z', 22, 2), " +
-                        "('2026-09-02T02:00:00.000000Z', 33, 3)");
+                        "('2026-09-02T01:00:00.000000Z', 110, 2), " +
+                        "('2026-09-02T02:00:00.000000Z', 12, 1)");
                 drainWalQueue();
                 drainJob(job);
                 drainWalQueue();
 
                 LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
                 LiveViewWindow window = lv.getAnchorWindow();
+                Assert.assertNotNull("anchor window must be built after refresh", window);
+                // The anchor window owns only the anchored (unbounded) function;
+                // the bounded sum is not in its reset-dispatch set.
                 Assert.assertEquals(
-                        "auto-trigger swept the anchor map",
-                        0L,
-                        window.getAnchorMapSize()
-                );
-                Assert.assertEquals(
-                        "tombstoneCount resets after auto-trigger",
-                        0L,
-                        window.getTombstoneCount()
-                );
-
-                // Locate the bounded sum by class name; compactPartitionMap
-                // swaps the underlying Map instance, so re-fetch via
-                // getPartitionMap() on every assertion rather than caching
-                // the Map reference.
-                WindowFunction boundedSum = null;
-                ObjList<WindowFunction> funcs = window.getFunctions();
-                for (int i = 0, n = funcs.size(); i < n; i++) {
-                    WindowFunction f = funcs.getQuick(i);
-                    if (Chars.equals(f.getClass().getSimpleName(), "SumOverPartitionRowsFrameFunction")) {
-                        boundedSum = f;
-                        break;
-                    }
-                }
-                Assert.assertNotNull("bounded-ROWS sum exposes a partition map", boundedSum);
-                Assert.assertEquals(
-                        "bounded sum's partition map holds only the row-6 partition that computeNext re-added after compact",
+                        "anchor window resets only its own (unbounded) functions",
                         1L,
-                        boundedSum.getPartitionMap().size()
+                        (long) window.getFunctions().size()
+                );
+                Assert.assertTrue(
+                        "the bounded ROWS sum must not be in the anchor reset set",
+                        window.getFunctions().getQuick(0).getClass().getSimpleName().contains("RowNumber")
                 );
 
-                // Drive a second churn cycle. Day 3 seeds a fresh partition
-                // sym=4 alongside 1, 2; day 4 crosses anchor on three of
-                // them, firing the auto-trigger again. If the freeList path
-                // were leaking slabs, the bounded sum's MemoryARW would grow
-                // unboundedly; from the observable side, the function map's
-                // post-cycle size resolves to two entries (sym=3 left over
-                // from cycle 1's row-6 re-create, plus whichever partition
-                // triggered the cycle-2 compact, re-added by computeNext).
-                setCurrentMicros(200_000L);
-                execute("INSERT INTO base (ts, x, sym) VALUES " +
-                        "('2026-09-03T00:00:00.000000Z', 40, 1), " +
-                        "('2026-09-03T01:00:00.000000Z', 50, 2), " +
-                        "('2026-09-03T02:00:00.000000Z', 60, 4), " +
-                        "('2026-09-04T00:00:00.000000Z', 44, 1), " +
-                        "('2026-09-04T01:00:00.000000Z', 55, 2), " +
-                        "('2026-09-04T02:00:00.000000Z', 66, 4)");
-                drainWalQueue();
-                drainJob(job);
-                drainWalQueue();
-
-                Assert.assertEquals(
-                        "anchor map swept again on cycle 2",
-                        0L,
-                        window.getAnchorMapSize()
-                );
-                Assert.assertEquals(
-                        "bounded sum's partition map size stays bounded across churn cycles, evidencing slab reclaim",
-                        2L,
-                        boundedSum.getPartitionMap().size()
+                // rn resets at the day boundary; s (ROWS 1 PRECEDING) spans it:
+                //   sym 1: 10 -> 21 (10+11) -> 23 (11+12)
+                //   sym 2: 100 -> 210 (100+110)
+                assertSql(
+                        "ts\tsym\trn\ts\n" +
+                                "2026-09-01T00:00:00.000000Z\t1\t1\t10.0\n" +
+                                "2026-09-01T01:00:00.000000Z\t2\t1\t100.0\n" +
+                                "2026-09-02T00:00:00.000000Z\t1\t1\t21.0\n" +
+                                "2026-09-02T01:00:00.000000Z\t2\t1\t210.0\n" +
+                                "2026-09-02T02:00:00.000000Z\t1\t2\t23.0\n",
+                        "SELECT ts, sym, rn, s FROM lv ORDER BY ts, sym"
                 );
             }
 

@@ -44,6 +44,13 @@ import io.questdb.std.ObjList;
  * - all functions and their framing clause do support stream-ed processing (single pass)
  */
 public class WindowRecordCursorFactory extends AbstractRecordCursorFactory {
+    // Subset of windowFunctions whose frame is UNBOUNDED PRECEDING ... CURRENT ROW.
+    // For a live view these are exactly the functions that belong to an anchored
+    // named WINDOW (a bare unbounded window is rejected at CREATE, and at most one
+    // anchored window is allowed), so the live-view ANCHOR runtime resets only
+    // these and never touches a bounded ROWS/RANGE window's state. Null for
+    // non-live-view compiles, which never consult it.
+    private final ObjList<WindowFunction> anchorableWindowFunctions;
     private final RecordCursorFactory base;
     private final WindowRecordCursor cursor;
     private final ObjList<Function> functions;
@@ -56,9 +63,19 @@ public class WindowRecordCursorFactory extends AbstractRecordCursorFactory {
             GenericRecordMetadata metadata,
             ObjList<Function> functions
     ) {
+        this(base, metadata, functions, null);
+    }
+
+    public WindowRecordCursorFactory(
+            RecordCursorFactory base,
+            GenericRecordMetadata metadata,
+            ObjList<Function> functions,
+            ObjList<WindowFunction> anchorableWindowFunctions
+    ) {
         super(metadata);
         this.base = base;
         this.functions = functions;
+        this.anchorableWindowFunctions = anchorableWindowFunctions;
 
         windowFunctions = new ObjList<>();
         for (int i = 0, n = functions.size(); i < n; i++) {
@@ -78,6 +95,18 @@ public class WindowRecordCursorFactory extends AbstractRecordCursorFactory {
     @Override
     public boolean followedOrderByAdvice() {
         return base.followedOrderByAdvice();
+    }
+
+    /**
+     * Returns the subset of window functions whose frame is UNBOUNDED PRECEDING ...
+     * CURRENT ROW — the functions a live view's ANCHOR clause resets. Returns
+     * {@code null} for non-live-view compiles. The live-view layer dispatches
+     * {@code resetPartition}/{@code markPartitionAlive} only to these so a bounded
+     * ROWS/RANGE window declared alongside an anchored window is never reset at the
+     * anchored window's bucket crossings.
+     */
+    public ObjList<WindowFunction> getAnchorableWindowFunctions() {
+        return anchorableWindowFunctions;
     }
 
     @Override

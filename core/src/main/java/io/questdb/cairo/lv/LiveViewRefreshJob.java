@@ -356,6 +356,17 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 executionContext.setLiveViewCompile(false);
             }
             WindowRecordCursorFactory wf = unwrapWindowFactory(compiledFactory);
+            // Reset only the anchored WINDOW's functions (UNBOUNDED PRECEDING ... CURRENT
+            // ROW frames). A bounded ROWS/RANGE window declared alongside the anchored one
+            // must keep sliding across anchor crossings -- dispatching resetPartition to it
+            // would zero its frame at every bucket boundary and corrupt its output.
+            ObjList<WindowFunction> anchoredFunctions = wf.getAnchorableWindowFunctions();
+            if (anchoredFunctions == null || anchoredFunctions.size() == 0) {
+                throw CairoException.critical(0)
+                        .put("live view anchored window has no unbounded window functions [view=")
+                        .put(instance.getDefinition().getViewName())
+                        .put(']');
+            }
             window = LiveViewWindow.build(
                     engine.getConfiguration(),
                     compiler.getAsm(),
@@ -363,7 +374,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     projectedMeta,
                     spec.partitionColumnNames,
                     fn,
-                    wf.getWindowFunctions()
+                    anchoredFunctions
             );
             // Commit the anchor Function and window together, only after the full
             // machinery builds. A failure before this point must not leave a
