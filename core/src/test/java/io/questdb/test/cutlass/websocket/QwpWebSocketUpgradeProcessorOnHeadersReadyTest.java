@@ -35,6 +35,7 @@ import io.questdb.cutlass.http.HttpRequestHeader;
 import io.questdb.cutlass.http.LocalValue;
 import io.questdb.cutlass.qwp.codec.QwpEgressMsgKind;
 import io.questdb.cutlass.qwp.codec.QwpServerInfoProvider;
+import io.questdb.cutlass.qwp.protocol.QwpConstants;
 import io.questdb.cutlass.qwp.server.QwpProcessorState;
 import io.questdb.cutlass.qwp.server.QwpWebSocketUpgradeProcessor;
 import io.questdb.network.PeerDisconnectedException;
@@ -67,6 +68,64 @@ public class QwpWebSocketUpgradeProcessorOnHeadersReadyTest extends AbstractCair
     @Test
     public void testOnHeadersReadyAcceptsStandaloneRole() throws Exception {
         assertMemoryLeak(() -> assertHandshakeAcceptedForRole(QwpEgressMsgKind.ROLE_STANDALONE, "STANDALONE"));
+    }
+
+    @Test
+    public void testOnHeadersReadyAdvertisesEffectiveBatchSize() throws Exception {
+        // The handshake response must carry X-QWP-Max-Batch-Size with the
+        // *effective* cap -- min(recvBufferSize - frame_overhead, MAX_BATCH_SIZE)
+        // -- so a wide-row client clamps to the value the server will actually
+        // accept on the wire rather than the QWP protocol ceiling. Advertising
+        // the protocol ceiling alone leaves clients hitting 1009 close on
+        // default deployments where recvBufferSize is well below 16 MB.
+        //
+        // Pin the advertised value against a fixed recvBufferSize so a drift
+        // in MAX_WS_FRAME_HEADER_BYTES (currently 14; if it changed to 10 a
+        // re-derived expected would silently track it and the wire contract
+        // could regress unobserved) fails this test instead of passing.
+        assertMemoryLeak(() -> {
+            // 128 KiB recv buffer; chosen well under DEFAULT_MAX_BATCH_SIZE so
+            // the test exercises the recv-buffer-minus-frame-overhead branch
+            // of the cap formula rather than the protocol ceiling branch.
+            final int recvBufferSize = 128 * 1024;
+            // Derivation: min(131072 - 14, 16 MiB) = min(131058, 16 MiB) = 131058.
+            // Updating MAX_WS_FRAME_HEADER_BYTES on the server side must be
+            // accompanied by updating this literal.
+            final int expectedAdvertisedCap = 131058;
+
+            HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration) {
+                @Override
+                public int getRecvBufferSize() {
+                    return recvBufferSize;
+                }
+            };
+            QwpWebSocketUpgradeProcessor processor = new QwpWebSocketUpgradeProcessor(engine, httpConfig);
+
+            long bufferAddr = Unsafe.malloc(HANDSHAKE_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+            try (
+                    MockHttpRequestHeader header = new MockHttpRequestHeader();
+                    TestableContext context = new TestableContext(httpConfig, header, new MockRawSocket(bufferAddr, HANDSHAKE_BUFFER_SIZE))
+            ) {
+                header.setHeader("Upgrade", "websocket");
+                header.setHeader("Connection", "Upgrade");
+                header.setHeader("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ==");
+                header.setHeader("Sec-WebSocket-Version", "13");
+
+                processor.onHeadersReady(context);
+
+                String response = readResponse(bufferAddr, context.getMockRawSocket().sentSize);
+                String expectedHeader = "\r\nX-QWP-Max-Batch-Size: " + expectedAdvertisedCap + "\r\n";
+                Assert.assertTrue(
+                        "response must carry X-QWP-Max-Batch-Size = " + expectedAdvertisedCap
+                                + ", got: " + response,
+                        response.contains(expectedHeader));
+                Assert.assertTrue(
+                        "advertised value must not exceed QWP protocol ceiling",
+                        expectedAdvertisedCap <= QwpConstants.DEFAULT_MAX_BATCH_SIZE);
+            } finally {
+                Unsafe.free(bufferAddr, HANDSHAKE_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
     }
 
     @Test
