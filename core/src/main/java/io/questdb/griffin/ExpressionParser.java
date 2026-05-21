@@ -263,6 +263,14 @@ public class ExpressionParser {
         return false;
     }
 
+    private ExpressionNode getDotQualifier(int lastPos) throws SqlException {
+        final ExpressionNode en = opStack.peek();
+        if (en == null || en.type == ExpressionNode.CONTROL || en.type == ExpressionNode.OPERATION || en.type == ExpressionNode.SET_OPERATION) {
+            throw SqlException.$(lastPos, "qualifier expected");
+        }
+        return en;
+    }
+
     private @Nullable CharSequence createGeoHashConst(GenericLexer lexer, CharSequence tok, int lastPos) throws SqlException {
         CharSequence geohashTok = GenericLexer.immutableOf(tok);
         // optional / bits '/dd', '/d'
@@ -852,7 +860,9 @@ public class ExpressionParser {
         while ((node = opStack.pop()) != null && node.type != ExpressionNode.CONTROL) {
             argStackDepth = onNode(listener, node, argStackDepth, prevBranch);
         }
-        assert node != null : "opStack is empty at ','";
+        if (node == null) {
+            throw SqlException.$(lastPos, "',' misplaced");
+        }
         opStack.push(node);
         return argStackDepth;
     }
@@ -1988,10 +1998,7 @@ public class ExpressionParser {
 
                         if (prevBranch == BRANCH_DOT) {
                             // this deals with 'table.column' situations
-                            ExpressionNode en = opStack.peek();
-                            if (en == null) {
-                                throw SqlException.$(lastPos, "qualifier expected");
-                            }
+                            ExpressionNode en = getDotQualifier(lastPos);
                             // two possibilities here:
                             // 1. 'a.b'
                             // 2. 'a. b'

@@ -65,6 +65,15 @@ public class ExpressionParserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testArgumentCannotStartQuotedIdentifierDereference() {
+        assertFail(
+                "s(.\"\"/c,e.f)",
+                3,
+                "qualifier expected"
+        );
+    }
+
+    @Test
     public void testArrayCast() throws SqlException {
         x("'{1, 2, 3, 4}' double[] cast", "cast('{1, 2, 3, 4}' as double[])");
     }
