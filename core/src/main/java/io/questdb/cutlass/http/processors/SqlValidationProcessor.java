@@ -344,6 +344,10 @@ public class SqlValidationProcessor implements HttpRequestProcessor, HttpRequest
                 throw SqlException.$(0, e.getFlyweightMessage());
             }
         } finally {
+            // validationOnly switches the whole security context to a no-op view that bypasses
+            // authorization, so make sure it never outlives this request even though the next
+            // with() call would also reset it.
+            sqlExecutionContext.setValidationOnly(false);
             state.setContainsSecret(sqlExecutionContext.containsSecret());
         }
     }

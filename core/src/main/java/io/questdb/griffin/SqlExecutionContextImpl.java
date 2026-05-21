@@ -435,6 +435,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         this.cacheHit = false;
         this.allowNonDeterministicFunction = true;
         this.validationOnly = false;
+        this.validationSecurityContext = null;
         this.timestampRequiredStack.clear();
         this.hasIntervalStack.clear();
         this.intervalModelObjStack.clear();
