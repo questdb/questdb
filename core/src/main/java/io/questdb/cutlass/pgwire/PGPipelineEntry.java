@@ -177,7 +177,9 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     private long parameterValueArenaLo;
     private long parameterValueArenaPtr = 0;
     private PGPipelineEntry parentPreparedStatementPipelineEntry;
+    private boolean pendingProtocolResponseCopy;
     private boolean portal = false;
+    private boolean borrowedFactory;
     // the name of the prepared statement as used by "deallocate" SQL
     // not to be confused with prepared statements that come on the
     // PostgresSQL wire.
@@ -311,13 +313,18 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         pgResultSetColumnNames.clear();
         pgResultSetColumnTypes.clear();
         namedPortals.clear();
-        isCopy = false;
         cacheHit = false;
         cursor = Misc.free(cursor);
         error = false;
         empty = false;
         errorMessagePosition = 0;
-        factory = Misc.free(factory);
+        if (borrowedFactory) {
+            factory = null;
+            borrowedFactory = false;
+        } else {
+            factory = Misc.free(factory);
+        }
+        isCopy = false;
         msgBindParameterValueCount = 0;
         msgBindSelectFormatCodeCount = 0;
         outResendResumePoint = -1;
@@ -329,6 +336,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             // no need to set lo and hi to 0, as they are not used after the pointer is freed
         }
         parentPreparedStatementPipelineEntry = null;
+        pendingProtocolResponseCopy = false;
         portal = false;
         namedPortal = null;
         namedStatement = null;
@@ -500,6 +508,10 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
 
     public boolean isPreparedStatement() {
         return namedStatement != null;
+    }
+
+    public boolean isPendingProtocolResponseCopy() {
+        return pendingProtocolResponseCopy;
     }
 
     public boolean isSuspended() {
@@ -3561,6 +3573,42 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         }
     }
 
+    void copyPendingProtocolStateFrom(PGPipelineEntry that) {
+        assert !that.stateExec;
+        copyOf(that);
+        factory = that.factory;
+        borrowedFactory = true;
+        pendingProtocolResponseCopy = true;
+        error = that.error;
+        errorMessagePosition = that.errorMessagePosition;
+        if (error) {
+            errorMessageSink.clear();
+            errorMessageSink.put(that.errorMessageSink);
+        }
+        msgBindParameterFormatCodes.clear();
+        msgBindParameterValueCount = that.msgBindParameterValueCount;
+        for (int i = 0; i < msgBindParameterValueCount; i++) {
+            if (that.msgBindParameterFormatCodes.get(i)) {
+                msgBindParameterFormatCodes.set(i);
+            }
+        }
+        msgBindSelectFormatCodes.clear();
+        msgBindSelectFormatCodeCount = that.msgBindSelectFormatCodeCount;
+        for (int i = 0; i < msgBindSelectFormatCodeCount; i++) {
+            if (that.msgBindSelectFormatCodes.get(i)) {
+                msgBindSelectFormatCodes.set(i);
+            }
+        }
+        namedPortal = that.namedPortal;
+        portal = that.portal;
+        stateParse = that.stateParse;
+        stateBind = that.stateBind;
+        stateDesc = that.stateDesc;
+        stateCloseCompleteCount = that.stateCloseCompleteCount;
+        stateCloseCompleteOnly = that.stateCloseCompleteOnly;
+        stateClosed = that.stateClosed;
+    }
+
     void copyStateFrom(PGPipelineEntry that) {
         stateParse = that.stateParse;
         stateBind = that.stateBind;
@@ -3641,7 +3689,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         //    See: https://github.com/questdb/questdb/issues/6123 and CheckBindVarsInBatchedQueriesAreConsistent C# test in the Compat module
 
         // INSERTs, UPDATE, ALTER, etc. use binding variables at the EXEC time only -> we don't have to populate it before SYNC
-        if (!hasResultSet() || isError()) {
+        if (pendingProtocolResponseCopy || !hasResultSet() || isError()) {
             return false;
         }
         copyParameterValuesToBindVariableService(

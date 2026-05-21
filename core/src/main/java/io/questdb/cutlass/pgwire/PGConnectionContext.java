@@ -307,7 +307,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         do {
             if (pipelineCurrentEntry != null) {
                 // do not return named portals and statements, since they are returned later
-                if (!pipelineCurrentEntry.isPreparedStatement() && !pipelineCurrentEntry.isPortal()) {
+                if (pipelineCurrentEntry.isCopy || (!pipelineCurrentEntry.isPreparedStatement() && !pipelineCurrentEntry.isPortal())) {
                     releaseToPool(pipelineCurrentEntry);
                 }
             }
@@ -485,7 +485,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         do {
             if (pipelineCurrentEntry != null) {
                 // do not return named portals and statements, since they are returned later
-                if (!pipelineCurrentEntry.isPreparedStatement() && !pipelineCurrentEntry.isPortal()) {
+                if (pipelineCurrentEntry.isCopy || (!pipelineCurrentEntry.isPreparedStatement() && !pipelineCurrentEntry.isPortal())) {
                     releaseToPool(pipelineCurrentEntry);
                 }
             }
@@ -858,11 +858,6 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                     .put(']');
         }
 
-        // "bind" is asking us to create portal. We take the conservative approach and assume
-        // that the prepared statement and the portal can be interleaved in the pipeline. For that
-        // not to fail, these have to be separate factories and pipeline entries
-        pipelineCurrentEntry.setStateBind(true);
-
         if (namedPortal != null) {
             LOG.info().$("create portal [name=").$(namedPortal).I$();
             int index = namedPortals.keyIndex(namedPortal);
@@ -870,50 +865,69 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                 // intern the name of the portal, the name will be cached in a list
                 Utf8String immutableNamedPortal = Utf8String.newInstance(namedPortal);
 
-                // the current pipeline entry could either be named or unnamed
-                // we only have to clone the named entries, in case they are interleaved in the
-                // pipelines.
-                if (pipelineCurrentEntry.isPreparedStatement()) {
-                    // the pipeline is named, and we must not attempt to reuse it
-                    // as the portal, so we are making a new entry
+                final boolean currentEntryIsPreparedStatement = pipelineCurrentEntry.isPreparedStatement();
+                if (currentEntryIsPreparedStatement || pipelineCurrentEntry.isPortal()) {
+                    final PGPipelineEntry sourceEntry = pipelineCurrentEntry;
+                    PGPipelineEntry pendingSourceResponseEntry = null;
                     PGPipelineEntry pe = entryPool.next();
-                    // the parameter types have to be copied from the parent
-                    pe.msgParseCopyParameterTypesFrom(pipelineCurrentEntry);
-
-                    int cachedStatus = CACHE_MISS;
-                    final TypesAndSelect tas = tasCache.poll(pipelineCurrentEntry.getSqlText());
-                    if (tas != null) {
-                        if (pe.msgParseReconcileParameterTypes(tas)) {
-                            pe.ofCachedSelect(pipelineCurrentEntry.getSqlText(), tas);
-                            cachedStatus = CACHE_HIT_SELECT_VALID;
-                        } else {
-                            tas.close();
-                            cachedStatus = CACHE_HIT_SELECT_INVALID;
+                    try {
+                        if (!currentEntryIsPreparedStatement && sourceEntry.isDirty()) {
+                            pendingSourceResponseEntry = entryPool.next();
+                            pendingSourceResponseEntry.copyPendingProtocolStateFrom(sourceEntry);
                         }
+
+                        // the parameter types have to be copied from the source
+                        pe.msgParseCopyParameterTypesFrom(sourceEntry);
+
+                        int cachedStatus = CACHE_MISS;
+                        final TypesAndSelect tas = tasCache.poll(sourceEntry.getSqlText());
+                        if (tas != null) {
+                            if (pe.msgParseReconcileParameterTypes(tas)) {
+                                pe.ofCachedSelect(sourceEntry.getSqlText(), tas);
+                                cachedStatus = CACHE_HIT_SELECT_VALID;
+                            } else {
+                                tas.close();
+                                cachedStatus = CACHE_HIT_SELECT_INVALID;
+                            }
+                        }
+
+                        if (cachedStatus != CACHE_HIT_SELECT_VALID) {
+                            // When parameter types are not supplied we will assume that the types are STRING
+                            // this is done by default, when CairoEngine compiles the SQL text. Assuming we're
+                            // compiling the SQL from scratch.
+                            pe.compileNewSQL(
+                                    sourceEntry.getSqlText(),
+                                    engine,
+                                    sqlExecutionContext,
+                                    taiPool,
+                                    false
+                            );
+                        }
+                    } catch (PGMessageProcessingException ex) {
+                        releaseToPool(pe);
+                        if (pendingSourceResponseEntry != null) {
+                            releaseToPool(pendingSourceResponseEntry);
+                        }
+                        throw msgKaput().put(ex.getFlyweightMessage());
                     }
 
-                    if (cachedStatus != CACHE_HIT_SELECT_VALID) {
-                        // When parameter types are not supplied we will assume that the types are STRING
-                        // this is done by default, when CairoEngine compiles the SQL text. Assuming we're
-                        // compiling the SQL from scratch.
-                        pe.compileNewSQL(
-                                pipelineCurrentEntry.getSqlText(),
-                                engine,
-                                sqlExecutionContext,
-                                taiPool,
-                                false
-                        );
+                    if (currentEntryIsPreparedStatement) {
+                        pe.copyStateFrom(sourceEntry);
+                        pe.setParentPreparedStatement(sourceEntry);
+                        // Keep the reference to the portal name on the prepared statement before we overwrite the
+                        // reference. Keeping list of portal names is required in case the client closes the prepared
+                        // statement. We will also be required to close all the portals.
+                        sourceEntry.bindPortalName(immutableNamedPortal);
+                        sourceEntry.clearState();
+                    } else {
+                        if (pendingSourceResponseEntry != null) {
+                            pipeline.add(pendingSourceResponseEntry);
+                        }
+                        // The source portal stays in namedPortals, while the pending
+                        // protocol responses are emitted by the copy queued above.
+                        sourceEntry.clearState();
                     }
-
-                    pe.setParentPreparedStatement(pipelineCurrentEntry);
-                    pe.copyStateFrom(pipelineCurrentEntry);
-                    // Keep the reference to the portal name on the prepared statement before we overwrite the
-                    // reference. Keeping list of portal names is required in case the client closes the prepared
-                    // statement. We will also be required to close all the portals.
-                    pipelineCurrentEntry.bindPortalName(immutableNamedPortal);
-                    pipelineCurrentEntry.clearState();
                     pipelineCurrentEntry = pe;
-                    pipelineCurrentEntry.setStateBind(true);
                 }
                 // else:
                 // portal is being created from "parse" message (i am not 100% the client will be
@@ -927,6 +941,10 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             }
         }
 
+        // "bind" is asking us to create portal. We take the conservative approach and assume
+        // that the prepared statement and the portal can be interleaved in the pipeline. For that
+        // not to fail, these have to be separate factories and pipeline entries
+        pipelineCurrentEntry.setStateBind(true);
         pipelineCurrentEntry.msgBindCopyParameterFormatCodes(
                 parameterFormatCodesLo,
                 msgLimit,
@@ -1552,6 +1570,12 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
 
     // Send responses from the pipeline entries we have accumulated so far.
     private void syncPipeline() throws PeerIsSlowToReadException, PeerDisconnectedException {
+        if (pipelineCurrentEntry != null
+                && !pipeline.isEmpty()
+                && pipeline.peek().isPendingProtocolResponseCopy()) {
+            pipeline.add(pipelineCurrentEntry);
+            pipelineCurrentEntry = pipeline.poll();
+        }
         while (pipelineCurrentEntry != null || (pipelineCurrentEntry = pipeline.poll()) != null) {
             // we need to store stateExec flag now
             // because syncing the entry will clear the flag
@@ -1559,6 +1583,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             boolean isError = pipelineCurrentEntry.isError();
             boolean isClosed = pipelineCurrentEntry.isStateClosed();
             boolean isCloseCompleteOnly = pipelineCurrentEntry.isStateCloseCompleteOnly();
+            boolean isPendingProtocolResponseCopy = pipelineCurrentEntry.isPendingProtocolResponseCopy();
             // with the sync call the existing pipeline entry will assign its own completion hooks (resume callbacks)
             while (true) {
                 try {
@@ -1612,7 +1637,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             // "cacheIfPossible" has side effects on the entry.
 
             PGPipelineEntry nextEntry = pipeline.poll();
-            if (nextEntry != null || isExec || isError || isClosed || isCloseCompleteOnly) {
+            if (nextEntry != null || isExec || isError || isClosed || isCloseCompleteOnly || isPendingProtocolResponseCopy) {
                 if (bindingServiceConfiguredFor == pipelineCurrentEntry) {
                     bindingServiceConfiguredFor = null;
                 }

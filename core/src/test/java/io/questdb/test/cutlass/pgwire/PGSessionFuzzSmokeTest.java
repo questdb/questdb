@@ -87,11 +87,98 @@ public class PGSessionFuzzSmokeTest extends AbstractCairoTest {
                             frame('C', closePortalBody(""))
                     ));
                     Assert.assertEquals(0, harness.context().getPipelineEntryPoolOutieCountForFuzz());
+
+                    PGSessionFuzz.fuzzerTestOneInput(newSession(
+                            frame('P', parseBody("select~1")),
+                            frame('B', bindNamedPortalBody("p")),
+                            frame('B', bindNamedPortalBody("q"))
+                    ));
+                    Assert.assertEquals(0, harness.context().getPipelineEntryPoolOutieCountForFuzz());
+
+                    PGSessionFuzz.fuzzerTestOneInput(newSession(
+                            frame('P', parseBody("select~1")),
+                            frame('B', bindNamedPortalBody("p")),
+                            frame('B', bindNamedPortalBody("q")),
+                            frame('C', closePortalBody("p")),
+                            frame('S', new byte[0])
+                    ));
+                    Assert.assertEquals(0, harness.context().getPipelineEntryPoolOutieCountForFuzz());
+
+                    assertTwoNamedPortalBindResponses(harness);
+                    Assert.assertEquals(0, harness.context().getPipelineEntryPoolOutieCountForFuzz());
+
+                    assertFirstPortalExecutesAfterQueuedBindResponse(harness);
+                    Assert.assertEquals(0, harness.context().getPipelineEntryPoolOutieCountForFuzz());
+
+                    assertCleanPortalRebindDoesNotRepeatBindResponse(harness);
+                    Assert.assertEquals(0, harness.context().getPipelineEntryPoolOutieCountForFuzz());
+
+                    assertParameterizedPendingBindResponseDoesNotReadCopiedValues(harness);
+                    Assert.assertEquals(0, harness.context().getPipelineEntryPoolOutieCountForFuzz());
                 } finally {
                     PGSessionFuzz.clearHarness(harness);
                 }
             }
         });
+    }
+
+    private static void assertCleanPortalRebindDoesNotRepeatBindResponse(PGFuzzHarness harness) throws Exception {
+        parseFrame(harness, frame('P', parseBody("select~1")));
+        parseFrame(harness, frame('B', bindNamedPortalBody("p")));
+        parseFrame(harness, frame('S', new byte[0]));
+        parseFrame(harness, frame('B', bindNamedPortalBody("q")));
+        parseFrame(harness, frame('S', new byte[0]));
+        harness.assertOutputFramesWellFormed();
+        Assert.assertEquals("12Z2Z", harness.outputFrameTypes());
+        Assert.assertEquals(0, harness.countOutputFrames((byte) 'E'));
+        Assert.assertEquals(2, harness.countOutputFrames((byte) '2'));
+        harness.reset();
+    }
+
+    private static void assertFirstPortalExecutesAfterQueuedBindResponse(PGFuzzHarness harness) throws Exception {
+        parseFrame(harness, frame('P', parseBody("select~1")));
+        parseFrame(harness, frame('B', bindNamedPortalBody("p")));
+        parseFrame(harness, frame('B', bindNamedPortalBody("q")));
+        parseFrame(harness, frame('S', new byte[0]));
+        parseFrame(harness, frame('E', executePortalBody("p")));
+        parseFrame(harness, frame('S', new byte[0]));
+        harness.assertOutputFramesWellFormed();
+        final String frameTypes = harness.outputFrameTypes();
+        Assert.assertTrue(frameTypes, frameTypes.startsWith("122"));
+        Assert.assertEquals(0, harness.countOutputFrames((byte) 'E'));
+        Assert.assertEquals(1, harness.countOutputFrames((byte) 'C'));
+        Assert.assertEquals(1, harness.countOutputFrames((byte) 'D'));
+        Assert.assertTrue(frameTypes, frameTypes.indexOf('D') > 2);
+        Assert.assertTrue(frameTypes, frameTypes.indexOf('C') > frameTypes.indexOf('D'));
+        harness.reset();
+    }
+
+    private static void assertParameterizedPendingBindResponseDoesNotReadCopiedValues(PGFuzzHarness harness) throws Exception {
+        parseFrame(harness, frame('P', parseBody("select $1::int")));
+        parseFrame(harness, frame('B', bindNamedPortalTextParamBody("p", "7")));
+        parseFrame(harness, frame('B', bindNamedPortalTextParamBody("q", "8")));
+        parseFrame(harness, frame('S', new byte[0]));
+        parseFrame(harness, frame('E', executePortalBody("p")));
+        parseFrame(harness, frame('S', new byte[0]));
+        harness.assertOutputFramesWellFormed();
+        final String frameTypes = harness.outputFrameTypes();
+        Assert.assertTrue(frameTypes, frameTypes.startsWith("122"));
+        Assert.assertEquals(0, harness.countOutputFrames((byte) 'E'));
+        Assert.assertEquals(1, harness.countOutputFrames((byte) 'C'));
+        Assert.assertEquals(1, harness.countOutputFrames((byte) 'D'));
+        harness.reset();
+    }
+
+    private static void assertTwoNamedPortalBindResponses(PGFuzzHarness harness) throws Exception {
+        parseFrame(harness, frame('P', parseBody("select~1")));
+        parseFrame(harness, frame('B', bindNamedPortalBody("p")));
+        parseFrame(harness, frame('B', bindNamedPortalBody("q")));
+        parseFrame(harness, frame('S', new byte[0]));
+        harness.assertOutputFramesWellFormed();
+        Assert.assertTrue(harness.outputFrameTypes(), harness.outputFrameTypes().startsWith("122"));
+        Assert.assertEquals(1, harness.countOutputFrames((byte) '1'));
+        Assert.assertEquals(2, harness.countOutputFrames((byte) '2'));
+        harness.reset();
     }
 
     private static byte[] bindBody() {
@@ -119,6 +206,27 @@ public class PGSessionFuzzSmokeTest extends AbstractCairoTest {
         p += Short.BYTES;
         putShort(body, p, 0); // parameter value count
         p += Short.BYTES;
+        putShort(body, p, 0); // result format code count
+        return body;
+    }
+
+    private static byte[] bindNamedPortalTextParamBody(String portalName, String paramValue) {
+        final byte[] portalNameBytes = portalName.getBytes(StandardCharsets.UTF_8);
+        final byte[] paramBytes = paramValue.getBytes(StandardCharsets.UTF_8);
+        final byte[] body = new byte[portalNameBytes.length + 1 + 1 + 2 * Short.BYTES + Integer.BYTES + paramBytes.length + Short.BYTES];
+        int p = 0;
+        System.arraycopy(portalNameBytes, 0, body, p, portalNameBytes.length);
+        p += portalNameBytes.length;
+        body[p++] = 0;
+        body[p++] = 0; // unnamed prepared statement
+        putShort(body, p, 0); // parameter format code count
+        p += Short.BYTES;
+        putShort(body, p, 1); // parameter value count
+        p += Short.BYTES;
+        putInt(body, p, paramBytes.length);
+        p += Integer.BYTES;
+        System.arraycopy(paramBytes, 0, body, p, paramBytes.length);
+        p += paramBytes.length;
         putShort(body, p, 0); // result format code count
         return body;
     }
@@ -164,6 +272,14 @@ public class PGSessionFuzzSmokeTest extends AbstractCairoTest {
         return body;
     }
 
+    private static byte[] executePortalBody(String portalName) {
+        final byte[] portalNameBytes = portalName.getBytes(StandardCharsets.UTF_8);
+        final byte[] body = new byte[portalNameBytes.length + 1 + Integer.BYTES];
+        System.arraycopy(portalNameBytes, 0, body, 0, portalNameBytes.length);
+        putInt(body, portalNameBytes.length + 1, 0);
+        return body;
+    }
+
     private static Frame frame(int type, byte[] body) {
         return new Frame(type, body);
     }
@@ -200,6 +316,11 @@ public class PGSessionFuzzSmokeTest extends AbstractCairoTest {
         body[p++] = 0;
         putShort(body, p, 0); // parameter type count
         return body;
+    }
+
+    private static void parseFrame(PGFuzzHarness harness, Frame frame) throws Exception {
+        harness.copyFrame((byte) frame.type, frame.body, 0, frame.body.length);
+        harness.context().parseMessageForFuzz(harness.inputBuffer(), 5 + frame.body.length);
     }
 
     private static void putInt(byte[] bytes, int offset, int value) {

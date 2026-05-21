@@ -206,6 +206,32 @@ final class PGFuzzHarness implements Closeable {
         }
     }
 
+    int countOutputFrames(byte type) {
+        int count = 0;
+        int p = 0;
+        final int n = socketFactory.getOutputSize();
+        while (p < n) {
+            final int len = socketFactory.getOutputInt(p + 1);
+            if (socketFactory.getOutputByte(p) == (type & 0xff)) {
+                count++;
+            }
+            p += 1 + len;
+        }
+        return count;
+    }
+
+    String outputFrameTypes() {
+        final StringBuilder types = new StringBuilder();
+        int p = 0;
+        final int n = socketFactory.getOutputSize();
+        while (p < n) {
+            final int len = socketFactory.getOutputInt(p + 1);
+            types.append((char) socketFactory.getOutputByte(p));
+            p += 1 + len;
+        }
+        return types.toString();
+    }
+
     void copyInput(byte[] input) {
         if (input.length > INPUT_BUFFER_SIZE) {
             throw new IllegalArgumentException("input too large");
