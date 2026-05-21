@@ -307,7 +307,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         do {
             if (pipelineCurrentEntry != null) {
                 // do not return named portals and statements, since they are returned later
-                if (pipelineCurrentEntry.isCopy || (!pipelineCurrentEntry.isPreparedStatement() && !pipelineCurrentEntry.isPortal())) {
+                if (isReleasableAbandonedEntry(pipelineCurrentEntry)) {
                     releaseToPool(pipelineCurrentEntry);
                 }
             }
@@ -564,10 +564,10 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
 
     private void deallocateNamedStatement(Utf8Sequence statementName) {
         PGPipelineEntry pe = removeNamedStatementFromCache(statementName);
-
-        // the entry with a named prepared statement must be returned back to the pool
-        // otherwise we will leak memory until the connection is closed.
-        releaseToPool(pe);
+        if (pe != null) {
+            closeNamedStatementPortals(pe);
+            preserveClosedNamedEntryResponseBeforeRelease(pe, true);
+        }
     }
 
     private void doSendWithRetries(int bufferOffset, int bufferSize) throws PeerDisconnectedException, PeerIsSlowToReadException {
@@ -998,6 +998,9 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                 final Utf8Sequence namedStatement = getUtf8NamedStatement(lo, hi);
                 closeUnnamedTarget = namedStatement == null;
                 lookedUpPipelineEntry = removeNamedStatementFromCache(namedStatement);
+                if (lookedUpPipelineEntry != null) {
+                    closeNamedStatementPortals(lookedUpPipelineEntry);
+                }
                 isStatementClose = true;
                 break;
             case 'P':
@@ -1028,6 +1031,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             }
             return;
         } else if (lookedUpPipelineEntry != pipelineCurrentEntry) {
+            final boolean reuseLookedUpEntry = preservePendingProtocolStateBeforeReuse(lookedUpPipelineEntry, isStatementClose);
             if (pipelineCurrentEntry != null) {
                 if (pipelineCurrentEntry.isDirty()) {
                     addPipelineEntry();
@@ -1035,7 +1039,13 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                     releaseToPoolIfAbandoned(pipelineCurrentEntry);
                 }
             }
-            pipelineCurrentEntry = lookedUpPipelineEntry;
+            if (reuseLookedUpEntry) {
+                pipelineCurrentEntry = lookedUpPipelineEntry;
+            } else {
+                pipelineCurrentEntry = entryPool.next();
+                pipelineCurrentEntry.setStateCloseComplete(true);
+                return;
+            }
         }
 
         pipelineCurrentEntry.setStateClosed(true, isStatementClose);
@@ -1497,23 +1507,6 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             if (index < 0) {
                 PGPipelineEntry pe = namedStatements.valueAt(index);
                 namedStatements.removeAt(index);
-                // also remove entries for the matching portal names
-                ObjList<Utf8String> portalNames = pe.getNamedPortals();
-                for (int i = 0, n = portalNames.size(); i < n; i++) {
-                    int portalKeyIndex = namedPortals.keyIndex(portalNames.getQuick(i));
-                    if (portalKeyIndex < 0) {
-                        // release the entry, it must not be referenced from anywhere other than
-                        // this list (we enforce portal name uniqueness)
-                        Misc.free(namedPortals.valueAt(portalKeyIndex));
-                        namedPortals.removeAt(portalKeyIndex);
-                    } else {
-                        // else: do not make a fuss if portal name does not exist
-                        LOG.debug()
-                                .$("ignoring non-existent portal [portalName=").$(portalNames.getQuick(i))
-                                .$(", namedStatement=").$(namedStatement)
-                                .I$();
-                    }
-                }
                 return pe;
             }
         }
@@ -1739,12 +1732,124 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
 
     void releaseToPoolIfAbandoned(PGPipelineEntry pe) {
         if (pe != null) {
-            if (pe.isCopy || (!pe.isPreparedStatement() && !pe.isPortal())) {
+            if (isReleasableAbandonedEntry(pe)) {
                 releaseToPool(pe);
             } else {
                 pe.clearState();
             }
         }
+    }
+
+    private boolean isReleasableAbandonedEntry(@NotNull PGPipelineEntry pe) {
+        return !isRetainedNamedEntry(pe) && (pe.isCopy || (!pe.isPreparedStatement() && !pe.isPortal()));
+    }
+
+    private boolean isRetainedNamedEntry(@NotNull PGPipelineEntry pe) {
+        Utf8String namedStatement = pe.getNamedStatement();
+        if (namedStatement != null && namedStatements.get(namedStatement) == pe) {
+            return true;
+        }
+        Utf8String namedPortal = pe.getNamedPortal();
+        return namedPortal != null && namedPortals.get(namedPortal) == pe;
+    }
+
+    private void closeNamedStatementPortals(PGPipelineEntry statementEntry) {
+        ObjList<Utf8String> portalNames = statementEntry.getNamedPortals();
+        for (int i = 0, n = portalNames.size(); i < n; i++) {
+            Utf8String portalName = portalNames.getQuick(i);
+            int portalKeyIndex = namedPortals.keyIndex(portalName);
+            if (portalKeyIndex < 0) {
+                PGPipelineEntry portalEntry = namedPortals.valueAt(portalKeyIndex);
+                namedPortals.removeAt(portalKeyIndex);
+                preserveClosedNamedEntryResponseBeforeRelease(portalEntry, false);
+            } else {
+                // else: do not make a fuss if portal name does not exist
+                LOG.debug()
+                        .$("ignoring non-existent portal [portalName=").$(portalName)
+                        .$(", namedStatement=").$(statementEntry.getNamedStatement())
+                        .I$();
+            }
+        }
+        portalNames.clear();
+    }
+
+    private void preserveClosedNamedEntryResponseBeforeRelease(PGPipelineEntry pe, boolean isStatementClose) {
+        pe.detachClosedNamedEntry(isStatementClose);
+        if (pe == pipelineCurrentEntry) {
+            if (pe.isDirty()) {
+                addPipelineEntry();
+            } else {
+                pipelineCurrentEntry = null;
+                releaseToPool(pe);
+            }
+            return;
+        }
+        if (pe.isDirty()) {
+            if (pe.isStateExec()) {
+                if (!isQueuedPipelineEntry(pe)) {
+                    pipeline.add(pe);
+                }
+                return;
+            }
+            PGPipelineEntry pendingProtocolState = entryPool.next();
+            pendingProtocolState.copyPendingProtocolStateFrom(pe);
+            pe.clearState();
+            if (!replaceQueuedPipelineEntry(pe, pendingProtocolState)) {
+                pipeline.add(pendingProtocolState);
+            }
+        } else {
+            replaceQueuedPipelineEntry(pe, null);
+        }
+        releaseToPool(pe);
+    }
+
+    private boolean preservePendingProtocolStateBeforeReuse(PGPipelineEntry pe, boolean isStatementClose) {
+        if (pe.isDirty()) {
+            if (pe.isStateExec()) {
+                if (isQueuedPipelineEntry(pe)) {
+                    pe.detachClosedNamedEntry(isStatementClose);
+                    return false;
+                }
+                return true;
+            }
+            PGPipelineEntry pendingProtocolState = entryPool.next();
+            pendingProtocolState.copyPendingProtocolStateFrom(pe);
+            pe.clearState();
+            if (!replaceQueuedPipelineEntry(pe, pendingProtocolState)) {
+                pipeline.add(pendingProtocolState);
+            }
+        } else {
+            replaceQueuedPipelineEntry(pe, null);
+        }
+        return true;
+    }
+
+    private boolean isQueuedPipelineEntry(PGPipelineEntry targetEntry) {
+        boolean found = false;
+        for (int i = 0, n = pipeline.size(); i < n; i++) {
+            PGPipelineEntry entry = pipeline.poll();
+            if (entry == targetEntry) {
+                found = true;
+            }
+            pipeline.add(entry);
+        }
+        return found;
+    }
+
+    private boolean replaceQueuedPipelineEntry(PGPipelineEntry oldEntry, @Nullable PGPipelineEntry newEntry) {
+        boolean replaced = false;
+        for (int i = 0, n = pipeline.size(); i < n; i++) {
+            PGPipelineEntry entry = pipeline.poll();
+            if (entry == oldEntry) {
+                if (newEntry != null) {
+                    pipeline.add(newEntry);
+                }
+                replaced = true;
+            } else {
+                pipeline.add(entry);
+            }
+        }
+        return replaced;
     }
 
     void sendBuffer(int offset, int size) throws PeerDisconnectedException, PeerIsSlowToReadException {

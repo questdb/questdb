@@ -236,6 +236,10 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             @NotNull AssociativeCache<TypesAndSelect> tasCache,
             @NotNull SimpleAssociativeCache<TypesAndInsert> taiCache
     ) {
+        if (pendingProtocolResponseCopy) {
+            return;
+        }
+
         if (isPortal()) {
             return;
         }
@@ -1013,6 +1017,15 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
 
     public void setReturnRowCountLimit(int rowCountLimit) {
         this.sqlReturnRowCountLimit = rowCountLimit;
+    }
+
+    void detachClosedNamedEntry(boolean isStatementClose) {
+        namedPortal = null;
+        portal = false;
+        parentPreparedStatementPipelineEntry = null;
+        if (isStatementClose) {
+            namedStatement = null;
+        }
     }
 
     public void setStateBind(boolean stateBind) {
@@ -3604,6 +3617,9 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         stateParse = that.stateParse;
         stateBind = that.stateBind;
         stateDesc = that.stateDesc;
+        if (stateDesc != SYNC_DESC_NONE && pgResultSetColumnTypes.size() == 0 && factory != null) {
+            copyPgResultSetColumnTypesAndNames();
+        }
         stateCloseCompleteCount = that.stateCloseCompleteCount;
         stateCloseCompleteOnly = that.stateCloseCompleteOnly;
         stateClosed = that.stateClosed;
