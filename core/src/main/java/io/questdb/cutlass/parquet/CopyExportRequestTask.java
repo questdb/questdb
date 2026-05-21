@@ -27,6 +27,7 @@ package io.questdb.cutlass.parquet;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ReaderScanProfile;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.SymbolMapReader;
 import io.questdb.cairo.sql.BindVariableService;
@@ -332,8 +333,10 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
 
     public void setUpStreamPartitionParquetExporter() {
         if (pageFrameCursor != null) {
-            // Enable streaming mode to use MADV_DONTNEED on mmap, avoiding page cache exhaustion
-            pageFrameCursor.setStreamingMode(true);
+            // SEQUENTIAL_EVICT: MADV_SEQUENTIAL/DONTNEED hints plus a hard
+            // cleanup backstop on pool return so the pooled reader doesn't
+            // accumulate mappings from a multi-partition export.
+            pageFrameCursor.setScanProfile(ReaderScanProfile.SEQUENTIAL_EVICT);
             streamPartitionParquetExporter.setUp();
         }
     }
@@ -344,8 +347,10 @@ public class CopyExportRequestTask implements Mutable, QuietCloseable {
         this.pageFrameCursor = pageFrameCursor;
         this.metadata = metadata;
         this.descending = descending;
-        // Enable streaming mode to use MADV_DONTNEED on mmap, avoiding page cache exhaustion
-        pageFrameCursor.setStreamingMode(true);
+        // SEQUENTIAL_EVICT: MADV_SEQUENTIAL/DONTNEED hints plus a hard
+        // cleanup backstop on pool return so the pooled reader doesn't
+        // accumulate mappings from a multi-partition export.
+        pageFrameCursor.setScanProfile(ReaderScanProfile.SEQUENTIAL_EVICT);
         streamPartitionParquetExporter.setUp();
     }
 
