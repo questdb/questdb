@@ -1,0 +1,2 @@
+# StartupMessage with a key that is not NUL-terminated within the declared message.
+0000000c 00030000 75736572

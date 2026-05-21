@@ -1,0 +1,8 @@
+# Session input format:
+#   step-count-minus-one, then repeated selector, two-byte body length, body.
+04
+00 000c 00 73656c6563742031 00 0000
+01 0008 0000 0000 0000 0000
+02 0002 5000
+03 0005 00 00000000
+04 0000

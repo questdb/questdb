@@ -36,6 +36,23 @@ import org.junit.Test;
 public class CyclicalAstTest extends AbstractCairoTest {
 
     @Test
+    public void testReassociateConstantsExit() {
+        ExpressionNode parent = ExpressionNode.FACTORY.newInstance();
+        parent.type = ExpressionNode.OPERATION;
+        parent.token = "+";
+        parent.paramCount = 2;
+        parent.lhs = ExpressionNode.FACTORY.newInstance().of(ExpressionNode.CONSTANT, "1", 0, 0);
+        parent.rhs = parent;
+
+        try {
+            parent.reassociateConstants(false);
+            Assert.fail();
+        } catch (CairoException e) {
+            TestUtils.assertContains("detected a recursive expression AST", e.getFlyweightMessage());
+        }
+    }
+
+    @Test
     public void testTraverseExit() throws SqlException {
         PostOrderTreeTraversalAlgo algo = new PostOrderTreeTraversalAlgo();
 

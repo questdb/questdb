@@ -1,1 +1,13 @@
 *.json        text eol=lf
+pgwire-corpus/**/*.bin binary
+pgwire-corpus/**/*.pghex text eol=lf
+pgwire-session-corpus/**/*.bin binary
+pgwire-session-corpus/**/*.pghex text eol=lf
+pgwire-startup-corpus/**/*.bin binary
+pgwire-startup-corpus/**/*.pghex text eol=lf
+pgwire-cleartext-auth-corpus/**/*.bin binary
+pgwire-cleartext-auth-corpus/**/*.pghex text eol=lf
+pgwire-servermain-corpus/**/*.bin binary
+pgwire-servermain-corpus/**/*.pghex text eol=lf
+pgwire-differential-corpus/**/*.bin binary
+pgwire-differential-corpus/**/*.pghex text eol=lf

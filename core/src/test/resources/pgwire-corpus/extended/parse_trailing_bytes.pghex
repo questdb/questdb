@@ -1,0 +1,2 @@
+# Parse with a valid statement name/query/count prefix followed by trailing bytes.
+50 00 00 00 10 0f 27 00 00 00 00 00 31 00 00 00

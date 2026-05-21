@@ -1,0 +1,2 @@
+# Header shorter than type + int32 length.
+50 00 00

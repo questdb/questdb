@@ -1,0 +1,4 @@
+# SSLRequest rejected by ServerMain pgwire, then a valid cleartext login.
+00000008 04d2162f
+00000014 00030000 75736572 00 61646d696e 00 00
+70 0000000a 7175657374 00

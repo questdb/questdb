@@ -25,6 +25,7 @@
 package io.questdb.test.griffin;
 
 import io.questdb.griffin.ExpressionParser;
+import io.questdb.griffin.GeoHashUtil;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.Chars;
@@ -203,6 +204,7 @@ public class ExpressionParserTest extends AbstractCairoTest {
 
         // Extreme whitespace variations
         assertException("select null::double\t\t\t[]", 22, "array type requires no whitespace: expected 'double[]' but found 'double\t\t\t []'");
+        assertException("select null::\u001e[]", 13, "type definition is expected");
 
         // NBSP is NOT picked up by Character.isWhitespace()
         assertException("select null::int\u00A0[]", 13, "invalid constant: int []"); // Non-breaking space
@@ -1132,6 +1134,11 @@ public class ExpressionParserTest extends AbstractCairoTest {
         assertFail("#sp052w92p1p8/xx", 14, "missing bits size for GEOHASH constant");
         assertFail("#sp052w92p1p8/1x", 14, "missing bits size for GEOHASH constant");
         assertFail("#sp052w92p1p8/x1", 14, "missing bits size for GEOHASH constant");
+    }
+
+    @Test
+    public void testGeoHashEmptyBitConstantNotValid() throws SqlException {
+        Assert.assertNull(GeoHashUtil.parseGeoHashConstant(0, "##", 2));
     }
 
     @Test

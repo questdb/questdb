@@ -1,0 +1,3 @@
+# PasswordMessage declares a full body but omits the terminating NUL.
+00000014 00030000 75736572 00 61646d696e 00 00
+70 00000009 7175657374

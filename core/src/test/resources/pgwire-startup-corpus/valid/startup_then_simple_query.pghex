@@ -1,0 +1,3 @@
+# StartupMessage: len=19, protocol=3.0, user=fuzz; then Simple Query select 1.
+00000013 00030000 75736572 00 66757a7a 00 00
+51 0000000d 73656c6563742031 00

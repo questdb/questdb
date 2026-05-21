@@ -531,7 +531,11 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             return ex;
         }
 
-        assert args != null;
+        if (args == null) {
+            return ex.put("too few arguments for '").put(node.token)
+                    .put("' [found=0,expected=").put(op.type)
+                    .put(']');
+        }
 
         // Unary operator with the specific argument types not found.
         // function, not an operator, is not found

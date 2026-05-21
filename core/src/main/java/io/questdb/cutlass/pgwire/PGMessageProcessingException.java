@@ -37,6 +37,7 @@ public class PGMessageProcessingException extends Exception implements Flyweight
 
     private static final StackTraceElement[] EMPTY_STACK_TRACE = {};
     private static final io.questdb.std.ThreadLocal<PGMessageProcessingException> tlException = new ThreadLocal<>(PGMessageProcessingException::new);
+    private Throwable flyweightCause;
     private StringSink message;
     private PGPipelineEntry pe;
 
@@ -44,9 +45,14 @@ public class PGMessageProcessingException extends Exception implements Flyweight
         PGMessageProcessingException ex = tlException.get();
         // This is to have correct stack trace in local debugging with -ea option
         assert (ex = new PGMessageProcessingException()) != null;
+        ex.flyweightCause = null;
         ex.message = pe.getErrorMessageSink();
         ex.pe = pe;
         return ex;
+    }
+
+    public Throwable getFlyweightCause() {
+        return flyweightCause;
     }
 
     @Override
@@ -63,6 +69,7 @@ public class PGMessageProcessingException extends Exception implements Flyweight
     }
 
     public PGMessageProcessingException put(Throwable e) {
+        flyweightCause = e;
         if (e instanceof FlyweightMessageContainer) {
             message.put(((FlyweightMessageContainer) e).getFlyweightMessage());
             pe.setErrorMessagePosition(((FlyweightMessageContainer) e).getPosition());

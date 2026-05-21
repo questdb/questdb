@@ -1,0 +1,6 @@
+# Bind without Parse, Execute missing portal, bad Close kind, then Terminate.
+03
+01 0008 0000 0000 0000 0000
+03 0005 00 00000000
+06 0002 5a00
+07 0000

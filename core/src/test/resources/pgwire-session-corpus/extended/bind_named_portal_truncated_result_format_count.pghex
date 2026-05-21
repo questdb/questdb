@@ -1,0 +1,5 @@
+# Named portal Bind with a truncated result-format count.
+# The portal must not be registered before the whole Bind body is validated.
+01
+00 000c 00 73656c6563742031 00 0000
+01 0008 0c00 00 0000 0000 00

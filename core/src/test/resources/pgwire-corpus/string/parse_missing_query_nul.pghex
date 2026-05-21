@@ -1,0 +1,2 @@
+# Parse with statement NUL and query bytes but no terminating query NUL.
+50 00 00 00 0d 00 73 65 6c 65 63 74 20 31

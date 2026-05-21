@@ -1,0 +1,2 @@
+# Parse unnamed statement: select 1, zero parameter types.
+50 00 00 00 10 00 73 65 6c 65 63 74 20 31 00 00 00

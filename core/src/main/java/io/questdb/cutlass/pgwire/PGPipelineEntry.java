@@ -570,16 +570,8 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                 parameterValueArenaLo = parameterValueArenaPtr;
                 parameterValueArenaHi = parameterValueArenaPtr + sz;
             }
-            long len = Math.min(valueAreaSize, msgLimit);
-            Vect.memcpy(parameterValueArenaLo, lo, len);
-            if (len < valueAreaSize) {
-                parameterValueArenaLo += len;
-                // todo: create "receive" state machine in the context, so that client messages can be split
-                //       across multiple recv buffers
-                throw PGMessageProcessingException.INSTANCE;
-            } else {
-                parameterValueArenaLo = parameterValueArenaPtr;
-            }
+            Vect.memcpy(parameterValueArenaLo, lo, valueAreaSize);
+            parameterValueArenaLo = parameterValueArenaPtr;
         }
         return lo + valueAreaSize;
     }
@@ -1346,7 +1338,12 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                 final int valueSize = getInt(lo, msgLimit, "malformed bind variable");
                 lo += Integer.BYTES;
                 if (valueSize > 0) {
+                    if (lo > msgLimit - valueSize) {
+                        throw kaput().put("malformed bind variable");
+                    }
                     lo += valueSize;
+                } else if (valueSize < -1) {
+                    throw kaput().put("invalid bind variable length [value=").put(valueSize).put(']');
                 }
             }
             return lo - l;

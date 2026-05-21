@@ -1,0 +1,2 @@
+# Fake authenticator consumes the stream as startup when declared length exceeds available bytes.
+00010000 00030000 75736572 00 66757a7a 00 00

@@ -1,0 +1,3 @@
+# StartupMessage followed by a Parse frame with invalid declared length 0.
+00000013 00030000 75736572 00 66757a7a 00 00
+50 00000000

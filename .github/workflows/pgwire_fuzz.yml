@@ -1,0 +1,151 @@
+name: PGWire Fuzz
+
+on:
+  pull_request:
+    types: [synchronize, opened, reopened]
+    paths:
+      - ".github/workflows/pgwire_fuzz.yml"
+      - "ci/pgwire-fuzz-issue-body.sh"
+      - "ci/run-pgwire-fuzz.sh"
+      - "core/src/main/java/io/questdb/cutlass/pgwire/**"
+      - "core/src/test/java/io/questdb/test/cutlass/pgwire/**"
+      - "core/src/test/resources/.gitattributes"
+      - "core/src/test/resources/pgwire-*/**"
+  schedule:
+    - cron: "35 1 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  corpus-replay:
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: "temurin"
+          java-version: "25"
+          cache: "maven"
+      - name: Compile core
+        run: mvn -B -pl core -DskipTests compile
+      - name: Replay pgwire fuzz corpora
+        run: >
+          mvn -B -pl core
+          -Dtest=PGParseMessageCorpusTest,PGParseMessageFuzzSmokeTest,PGMessageRoundTripOracleTest,PGSessionFuzzCorpusTest,PGSessionFuzzSmokeTest,PGStartupSessionFuzzCorpusTest,PGCleartextAuthFuzzCorpusTest,PGServerMainFuzzSmokeTest,PGServerMainFuzzCorpusTest,PGDifferentialFuzzSmokeTest,PGDifferentialFuzzCorpusTest,PGStandaloneFuzzBootstrapSmokeTest
+          test
+
+  fuzz-smoke:
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 270
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [parse, session, startup, cleartext, servermain]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: "temurin"
+          java-version: "25"
+          cache: "maven"
+      - uses: actions/cache@v4
+        with:
+          path: core/target/jazzer
+          key: jazzer-v0.30.0-${{ runner.os }}-${{ runner.arch }}
+      - name: Run standalone Jazzer target
+        run: |
+          seconds=300
+          if [[ "${{ github.event_name }}" == "schedule" ]]; then
+            seconds=14400
+          fi
+          ci/run-pgwire-fuzz.sh --download-jazzer --target "${{ matrix.target }}" --time "$seconds"
+      - name: Upload fuzz artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pgwire-fuzz-${{ matrix.target }}-artifacts
+          path: core/target/pgwire-fuzz/artifacts/
+          retention-days: 5
+      - name: File nightly failure issue
+        if: failure() && github.event_name == 'schedule'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TARGET: ${{ matrix.target }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          title="Nightly pgwire fuzz failure: ${TARGET}"
+          body_file="$(mktemp)"
+          ARTIFACT_DIR="core/target/pgwire-fuzz/artifacts" bash ci/pgwire-fuzz-issue-body.sh > "$body_file"
+          issue="$(gh issue list --state open --search "${title} in:title" --json number --jq '.[0].number // empty')"
+          if [[ -n "$issue" ]]; then
+            gh issue comment "$issue" --body-file "$body_file"
+          else
+            gh issue create --title "$title" --body-file "$body_file"
+          fi
+
+  differential-smoke:
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 270
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: "temurin"
+          java-version: "25"
+          cache: "maven"
+      - uses: actions/cache@v4
+        with:
+          path: core/target/jazzer
+          key: jazzer-v0.30.0-${{ runner.os }}-${{ runner.arch }}
+      - name: Run differential Jazzer target
+        env:
+          QDB_PGWIRE_POSTGRES_HOST: 127.0.0.1
+          QDB_PGWIRE_POSTGRES_PORT: 5432
+        run: |
+          seconds=300
+          if [[ "${{ github.event_name }}" == "schedule" ]]; then
+            seconds=14400
+          fi
+          ci/run-pgwire-fuzz.sh --download-jazzer --target differential --time "$seconds"
+      - name: Upload fuzz artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pgwire-fuzz-differential-artifacts
+          path: core/target/pgwire-fuzz/artifacts/
+          retention-days: 5
+      - name: File nightly failure issue
+        if: failure() && github.event_name == 'schedule'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TARGET: differential
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          title="Nightly pgwire fuzz failure: differential"
+          body_file="$(mktemp)"
+          ARTIFACT_DIR="core/target/pgwire-fuzz/artifacts" bash ci/pgwire-fuzz-issue-body.sh > "$body_file"
+          issue="$(gh issue list --state open --search "${title} in:title" --json number --jq '.[0].number // empty')"
+          if [[ -n "$issue" ]]; then
+            gh issue comment "$issue" --body-file "$body_file"
+          else
+            gh issue create --title "$title" --body-file "$body_file"
+          fi

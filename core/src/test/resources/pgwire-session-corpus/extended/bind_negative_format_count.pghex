@@ -1,0 +1,8 @@
+# Valid Parse followed by malformed Bind with negative parameter-format count.
+# This used to move the Bind cursor backwards and crash in native memcpy.
+04
+00 000c 00 73656c6563742033 00 0000
+01 0008 01fd 00 ff00 f6ff
+01 0002 5000
+03 0005 00 00000004
+00 0004

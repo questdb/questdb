@@ -220,7 +220,9 @@ public class ExpressionParser {
         // Array type declaration context - strict whitespace validation
         if (lastPos > 0 && Character.isWhitespace(lexer.getContent().charAt(lastPos - 1))) {
             int hi = Chars.indexOfNonWhitespace(lexer.getContent(), en.position, lastPos, -1);
-            assert hi != -1;
+            if (hi == -1) {
+                throw SqlException.position(en.position).put("type definition is expected");
+            }
             throw SqlException.position(lastPos)
                     .put("array type requires no whitespace: expected '")
                     // hi is a non-whitespace char index, hence + 1

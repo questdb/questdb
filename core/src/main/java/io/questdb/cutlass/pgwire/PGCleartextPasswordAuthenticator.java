@@ -418,7 +418,10 @@ public class PGCleartextPasswordAuthenticator implements SocketAuthenticator {
             return SocketAuthenticator.NEEDS_READ;
         }
         byte msgType = Unsafe.getByte(recvBufReadPos);
-        assert msgType == MESSAGE_TYPE_PASSWORD_MESSAGE;
+        if (msgType != MESSAGE_TYPE_PASSWORD_MESSAGE) {
+            LOG.error().$("bad password message type [msgType=").$(msgType).$(']').$();
+            throw PGMessageProcessingException.INSTANCE;
+        }
 
         int msgLen = getIntUnsafe(recvBufReadPos + 1);
         // msgLen includes itself (4 bytes) + at least a 1-byte null-terminated password.
@@ -451,12 +454,24 @@ public class PGCleartextPasswordAuthenticator implements SocketAuthenticator {
     private void processStartupMessage(int msgLen) throws PGMessageProcessingException {
         long msgLimit = (recvBufStart + msgLen);
         long lo = recvBufReadPos;
+        if (msgLen < Integer.BYTES * 2 + Byte.BYTES || Unsafe.getByte(msgLimit - 1) != 0) {
+            LOG.error().$("malformed startup message [msgLen=").$(msgLen).$(']').$();
+            throw PGMessageProcessingException.INSTANCE;
+        }
 
         // there is an extra byte at the end, and it has to be 0
         while (lo < msgLimit - 1) {
             final long nameLo = lo;
             final long nameHi = PGConnectionContext.getUtf8StrSize(lo, msgLimit, "malformed property name", null);
+            if (nameHi == nameLo) {
+                LOG.error().$("malformed property name").$();
+                throw PGMessageProcessingException.INSTANCE;
+            }
             final long valueLo = nameHi + 1;
+            if (valueLo >= msgLimit) {
+                LOG.error().$("malformed property value").$();
+                throw PGMessageProcessingException.INSTANCE;
+            }
             final long valueHi = PGConnectionContext.getUtf8StrSize(valueLo, msgLimit, "malformed property value", null);
             lo = valueHi + 1;
 
@@ -493,6 +508,12 @@ public class PGCleartextPasswordAuthenticator implements SocketAuthenticator {
         characterStore.clear();
         recvBufReadPos = msgLimit;
         compactRecvBuf();
+        if (username == null || username.length() == 0) {
+            LOG.info().$("invalid startup username [user=").$(username).$(']').$();
+            prepareErrorResponse("invalid username/password");
+            state = State.WRITE_AND_AUTH_FAILURE;
+            return;
+        }
         prepareLoginResponse();
         state = State.WRITE_AND_EXPECT_PASSWORD_MESSAGE;
     }

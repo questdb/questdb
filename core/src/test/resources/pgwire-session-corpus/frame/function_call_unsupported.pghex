@@ -1,0 +1,3 @@
+# PostgreSQL FunctionCall is valid protocol, but QuestDB does not implement it.
+00
+08 0000

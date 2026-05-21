@@ -1,0 +1,2 @@
+# Invalid: length includes itself and must be at least 1 in QuestDB's parser guard.
+50 00 00 00 00

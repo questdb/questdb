@@ -8191,7 +8191,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 QueryColumn queryColumn = columns.getQuick(i);
                 CharSequence columnName = queryColumn.getAlias();
                 int index = metadata.getColumnIndexQuiet(queryColumn.getAst().token);
-                assert index > -1 : "wtf? " + queryColumn.getAst().token;
+                if (index < 0) {
+                    Misc.free(factory);
+                    throw SqlException.invalidColumn(queryColumn.getAst().position, queryColumn.getAst().token);
+                }
 
                 int updateColumnIndex = updateColumnNames.indexOf(columnName);
                 int updateColumnType = updateColumnTypes.get(updateColumnIndex);
@@ -8276,7 +8279,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         for (int i = 0; i < selectColumnCount; i++) {
             final QueryColumn queryColumn = columns.getQuick(i);
             int index = metadata.getColumnIndexQuiet(queryColumn.getAst().token);
-            assert index > -1 : "wtf? " + queryColumn.getAst().token;
+            if (index < 0) {
+                Misc.free(factory);
+                throw SqlException.invalidColumn(queryColumn.getAst().position, queryColumn.getAst().token);
+            }
             columnCrossIndex.add(index);
 
             if (queryColumn.getAlias() == null) {

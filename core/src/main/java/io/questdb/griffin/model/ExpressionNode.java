@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.model;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.griffin.OperatorExpression;
 import io.questdb.griffin.OperatorRegistry;
 import io.questdb.griffin.SqlKeywords;
@@ -31,6 +32,7 @@ import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.Mutable;
 import io.questdb.std.Numbers;
+import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
 import io.questdb.std.ObjectFactory;
 import io.questdb.std.ObjectPool;
@@ -370,6 +372,21 @@ public class ExpressionNode implements Mutable, Sinkable {
      * {@code false} otherwise
      */
     public boolean reassociateConstants(boolean cairoSqlLegacyOperatorPrecedence) {
+        return reassociateConstants(cairoSqlLegacyOperatorPrecedence, new ObjHashSet<>());
+    }
+
+    private boolean reassociateConstants(boolean cairoSqlLegacyOperatorPrecedence, ObjHashSet<ExpressionNode> path) {
+        if (!path.add(this)) {
+            throw CairoException.nonCritical().put("detected a recursive expression AST");
+        }
+        try {
+            return reassociateConstants0(cairoSqlLegacyOperatorPrecedence, path);
+        } finally {
+            path.remove(this);
+        }
+    }
+
+    private boolean reassociateConstants0(boolean cairoSqlLegacyOperatorPrecedence, ObjHashSet<ExpressionNode> path) {
         if (type == CONSTANT) {
             isConstantExpression = true;
             return true;
@@ -380,15 +397,15 @@ public class ExpressionNode implements Mutable, Sinkable {
             for (int i = 0; i < paramCount; i++) {
                 // Every args child is guaranteed non-null by the expression parser (ExpressionParser.onNode)
                 // and no later transformation violates this invariant.
-                args.getQuick(i).reassociateConstants(cairoSqlLegacyOperatorPrecedence);
+                args.getQuick(i).reassociateConstants(cairoSqlLegacyOperatorPrecedence, path);
             }
             return false;
         }
 
         // Recurse bottom-up. Each child caches its result in isConstantExpression,
         // so grandchild constancy checks below are O(1) field reads.
-        boolean lhsConst = lhs != null && lhs.reassociateConstants(cairoSqlLegacyOperatorPrecedence);
-        boolean rhsConst = rhs != null && rhs.reassociateConstants(cairoSqlLegacyOperatorPrecedence);
+        boolean lhsConst = lhs != null && lhs.reassociateConstants(cairoSqlLegacyOperatorPrecedence, path);
+        boolean rhsConst = rhs != null && rhs.reassociateConstants(cairoSqlLegacyOperatorPrecedence, path);
 
         if (type != OPERATION || paramCount != 2) {
             return false;

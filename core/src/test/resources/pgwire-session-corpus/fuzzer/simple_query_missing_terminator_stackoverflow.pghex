@@ -1,0 +1,3 @@
+# Session fuzzer reproducer for malformed simple-query frames that used to
+# compile binary bytes after an embedded NUL and could overflow the compiler stack.
+040f300973656c656374203100000000002100007a00000030087e0973656c6563747e2d36363636363636363636363636363636363636007a7e30000800000973

@@ -86,6 +86,7 @@ import io.questdb.std.str.Utf8String;
 import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
 import java.util.ArrayDeque;
 import java.util.function.Consumer;
@@ -464,6 +465,61 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         this.authenticator = authenticator;
     }
 
+    @TestOnly
+    public void assumeAuthenticatedForFuzz(@NotNull SecurityContext securityContext) {
+        sqlExecutionContext.with(securityContext, bindVariableService, rnd, getFd(), circuitBreaker);
+    }
+
+    @TestOnly
+    public int getPipelineEntryPoolOutieCountForFuzz() {
+        return entryPool.getOutieCount();
+    }
+
+    @TestOnly
+    public void parseMessageForFuzz(long address, int len) throws PGMessageProcessingException, PeerIsSlowToReadException, PeerDisconnectedException {
+        parseMessage(address, len);
+    }
+
+    @TestOnly
+    public void resetForFuzz() {
+        do {
+            if (pipelineCurrentEntry != null) {
+                // do not return named portals and statements, since they are returned later
+                if (!pipelineCurrentEntry.isPreparedStatement() && !pipelineCurrentEntry.isPortal()) {
+                    releaseToPool(pipelineCurrentEntry);
+                }
+            }
+        } while ((pipelineCurrentEntry = pipeline.poll()) != null);
+
+        freePipelineEntriesFrom(namedStatements, true);
+        freePipelineEntriesFrom(namedPortals, false);
+
+        prepareForNewQuery();
+        clearRecvBuffer();
+        clearWriters();
+        Misc.clear(bindVariableTypes);
+        Misc.clear(sqlTextCharacterStore);
+        Misc.clear(bindVariableValuesCharacterStore);
+        Misc.clear(pendingWriters);
+        Misc.clear(taiCache);
+        responseUtf8Sink.reset();
+        responseUtf8Sink.bookmarkPtr = sendBufferPtr;
+        bufferRemainingOffset = 0;
+        bufferRemainingSize = 0;
+        freezeRecvBuffer = false;
+        resumeCallback = null;
+        tlsSessionStarting = false;
+        totalReceived = 0;
+        transactionState = IMPLICIT_TRANSACTION;
+        bindingServiceConfiguredFor = null;
+    }
+
+    @TestOnly
+    public void resetAuthenticatorForFuzz() {
+        Misc.clear(authenticator);
+        authenticator.init(socket, recvBuffer, recvBuffer + recvBufferSize, sendBuffer, sendBufferLimit);
+    }
+
     @Override
     public void setSqlTimeout(long sqlTimeout) {
         if (sqlTimeout > 0) {
@@ -561,19 +617,35 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     }
 
     @Nullable
-    private Utf8Sequence getUtf8NamedPortal(long lo, long hi) {
+    private Utf8Sequence getUtf8NamedPortal(long lo, long hi) throws PGMessageProcessingException {
         if (hi - lo > 0) {
-            return directUtf8NamedPortal.of(lo, hi);
+            return getUtf8NamedPortal(lo, hi, "invalid UTF8 bytes in portal name");
         }
         return null;
     }
 
+    private Utf8Sequence getUtf8NamedPortal(long lo, long hi, CharSequence errorMessage) throws PGMessageProcessingException {
+        directUtf8NamedPortal.of(lo, hi);
+        if (Utf8s.validateUtf8(directUtf8NamedPortal) == -1) {
+            throw msgKaput().put(errorMessage);
+        }
+        return directUtf8NamedPortal;
+    }
+
     @Nullable
-    private Utf8Sequence getUtf8NamedStatement(long lo, long hi) {
+    private Utf8Sequence getUtf8NamedStatement(long lo, long hi) throws PGMessageProcessingException {
         if (hi - lo > 0) {
-            return directUtf8NamedStatement.of(lo, hi);
+            return getUtf8NamedStatement(lo, hi, "invalid UTF8 bytes in prepared statement name");
         }
         return null;
+    }
+
+    private Utf8Sequence getUtf8NamedStatement(long lo, long hi, CharSequence errorMessage) throws PGMessageProcessingException {
+        directUtf8NamedStatement.of(lo, hi);
+        if (Utf8s.validateUtf8(directUtf8NamedStatement) == -1) {
+            throw msgKaput().put(errorMessage);
+        }
+        return directUtf8NamedStatement;
     }
 
     private void handleAuthentication()
@@ -706,6 +778,8 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             pipelineCurrentEntry = null;
         }
 
+        final long bodyLo = lo;
+
         // portal name
         long hi = getUtf8StrSize(lo, msgLimit, "bad portal name length (bind)", pipelineCurrentEntry);
         Utf8Sequence namedPortal = getUtf8NamedPortal(lo, hi);
@@ -731,11 +805,63 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             pipelineCurrentEntry.closeSuspendedCursor();
         }
 
-        pipelineCurrentEntry.setStateBind(true);
+        // Parameter format count. These formats are BigEndian "short" values of 0 or 1,
+        // 0 = text, 1 = binary. Meaning that parameter values in the bind message are
+        // provided either as text or binary.
+        final long parameterFormatCodeCountLo = hi + 1;
+        final short parameterFormatCodeCount = pipelineCurrentEntry.getShort(
+                parameterFormatCodeCountLo,
+                msgLimit,
+                "could not read parameter format code count"
+        );
+        if (parameterFormatCodeCount < 0) {
+            throw msgKaput()
+                    .put("invalid parameter format code count [count=").put(parameterFormatCodeCount)
+                    .put(", offset=").put(parameterFormatCodeCountLo - bodyLo)
+                    .put(']');
+        }
+
+        final long parameterFormatCodesLo = parameterFormatCodeCountLo + Short.BYTES;
+        final long parameterValueCountLo = parameterFormatCodesLo + parameterFormatCodeCount * (long) Short.BYTES;
+        final short parameterValueCount = pipelineCurrentEntry.getShort(
+                parameterValueCountLo,
+                msgLimit,
+                "could not read parameter value count"
+        );
+        if (parameterValueCount < 0) {
+            throw msgKaput()
+                    .put("invalid parameter value count [count=").put(parameterValueCount)
+                    .put(", offset=").put(parameterValueCountLo - bodyLo)
+                    .put(']');
+        }
+
+        final long parameterValuesLo = parameterValueCountLo + Short.BYTES;
+        final long parameterValuesHi = msgBindParameterValuesHi(parameterValuesLo, msgLimit, parameterValueCount);
+        final short columnFormatCodeCount = pipelineCurrentEntry.getShort(parameterValuesHi, msgLimit, "could not read result set column format codes");
+        if (columnFormatCodeCount < 0) {
+            throw msgKaput()
+                    .put("invalid result set column format code count [count=").put(columnFormatCodeCount)
+                    .put(", offset=").put(parameterValuesHi - bodyLo)
+                    .put(']');
+        }
+        final long columnFormatCodesLo = parameterValuesHi + Short.BYTES;
+        final long columnFormatCodesHi = columnFormatCodesLo + columnFormatCodeCount * (long) Short.BYTES;
+        if (columnFormatCodesHi > msgLimit) {
+            throw msgKaput()
+                    .put("could not read result set column format codes [count=").put(columnFormatCodeCount)
+                    .put(", remaining=").put(msgLimit - columnFormatCodesLo)
+                    .put(']');
+        }
+        if (columnFormatCodesHi != msgLimit) {
+            throw msgKaput()
+                    .put("unexpected trailing bytes in bind message [remaining=").put(msgLimit - columnFormatCodesHi)
+                    .put(']');
+        }
 
         // "bind" is asking us to create portal. We take the conservative approach and assume
         // that the prepared statement and the portal can be interleaved in the pipeline. For that
         // not to fail, these have to be separate factories and pipeline entries
+        pipelineCurrentEntry.setStateBind(true);
 
         if (namedPortal != null) {
             LOG.info().$("create portal [name=").$(namedPortal).I$();
@@ -801,40 +927,39 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             }
         }
 
-        // Parameter format count. These formats are BigEndian "short" values of 0 or 1,
-        // 0 = text, 1 = binary. Meaning that parameter values in the bind message are
-        // provided either as text or binary.
-        lo = hi + 1;
-        final short parameterFormatCodeCount = pipelineCurrentEntry.getShort(
-                lo,
-                msgLimit,
-                "could not read parameter format code count"
-        );
-        lo += Short.BYTES;
-
-        final short parameterValueCount = pipelineCurrentEntry.getShort(
-                lo + parameterFormatCodeCount * Short.BYTES,
-                msgLimit,
-                "could not read parameter value count"
-        );
-
         pipelineCurrentEntry.msgBindCopyParameterFormatCodes(
-                lo,
+                parameterFormatCodesLo,
                 msgLimit,
                 parameterFormatCodeCount,
                 parameterValueCount
         );
 
-        lo += parameterFormatCodeCount * Short.BYTES;
-        lo += Short.BYTES;
-
         // Copy parameter values to the pipeline's arena. The value area size of the
         // bind message is variable, and is dependent on storage method of parameter values.
         // Before we copy value, we have to compute size of the area.
-        lo = pipelineCurrentEntry.msgBindCopyParameterValuesArea(lo, msgLimit);
-        short columnFormatCodeCount = pipelineCurrentEntry.getShort(lo, msgLimit, "could not read result set column format codes");
-        lo += Short.BYTES;
-        pipelineCurrentEntry.msgBindCopySelectFormatCodes(lo, columnFormatCodeCount);
+        pipelineCurrentEntry.msgBindCopyParameterValuesArea(parameterValuesLo, msgLimit);
+        pipelineCurrentEntry.msgBindCopySelectFormatCodes(columnFormatCodesLo, columnFormatCodeCount);
+    }
+
+    private long msgBindParameterValuesHi(long lo, long msgLimit, short parameterValueCount) throws PGMessageProcessingException {
+        for (int j = 0; j < parameterValueCount; j++) {
+            final int valueSize;
+            if (lo + Integer.BYTES <= msgLimit) {
+                valueSize = getIntUnsafe(lo);
+            } else {
+                throw msgKaput().put("malformed bind variable");
+            }
+            lo += Integer.BYTES;
+            if (valueSize > 0) {
+                if (lo > msgLimit - valueSize) {
+                    throw msgKaput().put("malformed bind variable");
+                }
+                lo += valueSize;
+            } else if (valueSize < -1) {
+                throw msgKaput().put("invalid bind variable length [value=").put(valueSize).put(']');
+            }
+        }
+        return lo;
     }
 
     private void msgClose(long lo, long msgLimit) throws PGMessageProcessingException {
@@ -1021,10 +1146,11 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         // different from the number of bind variables in the SQL. At this point
         // we will copy into the pipeline entry whatever was provided
         short parameterTypeCount = pipelineCurrentEntry.getShort(lo, msgLimit, "could not read parameter type count");
+        lo += Short.BYTES;
 
         // process parameter types
         if (parameterTypeCount > 0) {
-            if (lo + Short.BYTES + parameterTypeCount * 4L > msgLimit) {
+            if (lo + parameterTypeCount * (long) Integer.BYTES > msgLimit) {
                 throw msgKaput()
                         .put("could not read parameters [parameterCount=").put(parameterTypeCount)
                         .put(", offset=").put(lo - address)
@@ -1035,11 +1161,19 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             // copy argument types into the last pipeline entry
             // the entry will also maintain count of these argument types to aid
             // validation of the "bind" message.
-            pipelineCurrentEntry.msgParseCopyParameterTypesFromMsg(lo + Short.BYTES, parameterTypeCount);
+            pipelineCurrentEntry.msgParseCopyParameterTypesFromMsg(lo, parameterTypeCount);
+            lo += parameterTypeCount * (long) Integer.BYTES;
         } else if (parameterTypeCount < 0) {
             throw msgKaput()
                     .put("invalid parameter count [parameterCount=").put(parameterTypeCount)
                     .put(", offset=").put(lo - address);
+        }
+
+        if (lo != msgLimit) {
+            throw msgKaput()
+                    .put("unexpected trailing bytes in parse message [remaining=").put(msgLimit - lo)
+                    .put(", offset=").put(lo - address)
+                    .put(']');
         }
 
         // At this point parameters may or may not be defined.
@@ -1107,8 +1241,19 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             return;
         }
 
+        final long hi = getStringLengthTedious(lo, limit);
+        if (hi < 0) {
+            throw msgKaput().put("bad query text length");
+        }
+        if (hi + 1 != limit) {
+            throw msgKaput()
+                    .put("unexpected trailing bytes in query message [remaining=").put(limit - hi - 1)
+                    .put(", offset=").put(hi - lo + 1)
+                    .put(']');
+        }
+
         CharacterStoreEntry e = sqlTextCharacterStore.newEntry();
-        if (!Utf8s.utf8ToUtf16(lo, limit - 1, e)) {
+        if (!Utf8s.utf8ToUtf16(lo, hi, e)) {
             throw msgKaput().put("invalid UTF8 bytes in parse query");
         }
         sqlExecutionContext.initNow();
@@ -1213,8 +1358,9 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             throw PGMessageProcessingException.INSTANCE;
         }
 
-        // msgLen does not take into account type byte
-        if (msgLen > len - 1) {
+        // msgLen does not take into account type byte.
+        final long frameLen = (long) msgLen + 1L;
+        if (frameLen > len) {
             // When this happens we need to shift our receive buffer left
             // to fit this message. Outer function will do that if we
             // just exit.
@@ -1224,8 +1370,8 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
 
 
         // we have enough to read entire message
-        recvBufferReadOffset += msgLen + 1;
-        final long msgLimit = address + msgLen + 1;
+        recvBufferReadOffset += frameLen;
+        final long msgLimit = address + frameLen;
         final long msgLo = address + PREFIXED_MESSAGE_HEADER_LEN; // 8 is offset where name value pairs begin
 
         // this check is exactly the same as the one run inside security context on every permission checks.
