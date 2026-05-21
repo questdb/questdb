@@ -331,7 +331,7 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
             } catch (SqlException e) {
                 Assert.assertTrue(
                         e.getMessage(),
-                        e.getMessage().contains("live views are not allowed as base tables")
+                        e.getMessage().contains("live views are not allowed as base tables in V1")
                 );
                 // Position must point at the base table name, not the view
                 // name.
@@ -8621,6 +8621,28 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                 Assert.fail("expected now() anchor reject");
             } catch (SqlException e) {
                 Assert.assertTrue(e.getMessage(), e.getMessage().contains("must be deterministic"));
+            }
+        });
+    }
+
+    @Test
+    public void testRejectAnchorWithNonLiteralPartitionBy() throws Exception {
+        // V1 anchored windows require PARTITION BY to reference base columns
+        // directly (literals). An expression in PARTITION BY (here x + 1)
+        // cannot be reconstructed at refresh time from the persisted column
+        // names, so CREATE rejects it.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            try {
+                execute("CREATE LIVE VIEW lv FLUSH EVERY 1s AS " +
+                        "SELECT ts, x, sum(x) OVER w AS s FROM base " +
+                        "WINDOW w AS (PARTITION BY x + 1 ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
+                Assert.fail("expected non-literal PARTITION BY reject");
+            } catch (SqlException e) {
+                Assert.assertTrue(
+                        e.getMessage(),
+                        e.getMessage().contains("ANCHOR currently requires PARTITION BY to reference base columns directly")
+                );
             }
         });
     }

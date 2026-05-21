@@ -74,9 +74,9 @@ import org.jetbrains.annotations.NotNull;
  * <p>
  * Limitations:
  * <ul>
- *     <li>Anchor expressions must return a {@code TIMESTAMP} or {@code LONG}
- *     (the most common calendar-period anchor case). Other primitive return
- *     types land alongside migration of more functions.</li>
+ *     <li>Anchor expressions must return a {@code TIMESTAMP}, {@code LONG}, or
+ *     {@code INT} (the most common calendar-period anchor case). Other primitive
+ *     and composite return types are rejected at CREATE.</li>
  *     <li>One {@code LiveViewWindow} per LV — multi-window LVs with different
  *     anchors are rejected at CREATE (deferred validation).</li>
  *     <li>{@link #functions} is the full set of window functions in the SELECT.
@@ -189,7 +189,7 @@ public class LiveViewWindow implements QuietCloseable {
      *     <li>{@code partitionColumnNames} is empty (an anchored WINDOW requires at
      *     least one partition column).</li>
      *     <li>any partition column is not present in {@code projectedMetadata}.</li>
-     *     <li>the anchor expression's return type is not TIMESTAMP or LONG.</li>
+     *     <li>the anchor expression's return type is not TIMESTAMP, LONG, or INT.</li>
      * </ul>
      */
     public static LiveViewWindow build(
@@ -254,8 +254,13 @@ public class LiveViewWindow implements QuietCloseable {
         int tag = ColumnType.tagOf(returnType);
         if (tag != ColumnType.TIMESTAMP && tag != ColumnType.LONG && tag != ColumnType.INT) {
             Misc.free(map);
+            // Same wording as the CREATE-time check in
+            // CairoEngine.validateAnchorReturnType. CREATE validates this, but
+            // restart re-compiles the persisted anchor SQL without re-running
+            // CREATE validation, so this guards a return type that changed
+            // across releases (e.g. a function whose result type was widened).
             throw CairoException.nonCritical()
-                    .put("live-view ANCHOR EXPRESSION must return TIMESTAMP, LONG, or INT, got ")
+                    .put("ANCHOR EXPRESSION must return TIMESTAMP, LONG, or INT; got ")
                     .put(ColumnType.nameOf(returnType));
         }
         return new LiveViewWindow(configuration, windowName, anchorExpression, returnType, mapKeyTypes, map, sink, functions);
