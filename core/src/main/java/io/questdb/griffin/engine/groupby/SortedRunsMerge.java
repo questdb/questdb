@@ -108,15 +108,15 @@ public final class SortedRunsMerge {
      * {@code MapValue} write access) leave their cache keys valid across the
      * sort.
      *
-     * @param allocator    supplies the auxiliary buffer; freed best-effort at
-     *                     the end of the call (reclaimed when the cursor
-     *                     closes regardless)
-     * @param runScratch   reusable {@link LongList} for run descriptors;
-     *                     cleared on entry; caller owns its lifecycle
-     * @param entriesPtr   address of the first entry
-     * @param entryCount   number of entries in the buffer
-     * @param entryStride  bytes per entry; the 8-byte sort key sits at
-     *                     offset 0 of each entry
+     * @param allocator   supplies the auxiliary buffer; freed best-effort at
+     *                    the end of the call (reclaimed when the cursor
+     *                    closes regardless)
+     * @param runScratch  reusable {@link LongList} for run descriptors;
+     *                    cleared on entry; caller owns its lifecycle
+     * @param entriesPtr  address of the first entry
+     * @param entryCount  number of entries in the buffer
+     * @param entryStride bytes per entry; the 8-byte sort key sits at
+     *                    offset 0 of each entry
      */
     public static void compactInPlace(
             GroupByAllocator allocator,
