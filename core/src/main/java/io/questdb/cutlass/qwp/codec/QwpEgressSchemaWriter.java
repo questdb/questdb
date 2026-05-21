@@ -45,6 +45,29 @@ public final class QwpEgressSchemaWriter {
     public static final byte SCHEMA_MODE_REFERENCE = 0x01;
 
     /**
+     * Exact byte count {@link #writeFull} would produce for the given schema.
+     * Mirrors writeFull's layout step-by-step using {@link QwpVarint#encodedLength}
+     * so dry-run sizing matches the real emit byte-for-byte.
+     */
+    public static int exactFullSize(long schemaId, ObjList<QwpEgressColumnDef> columns) {
+        int total = 1 /* mode */ + QwpVarint.encodedLength(schemaId);
+        for (int i = 0, n = columns.size(); i < n; i++) {
+            QwpEgressColumnDef col = columns.getQuick(i);
+            int nameLen = col.getNameUtf8().length;
+            total += QwpVarint.encodedLength(nameLen) + nameLen + 1 /* wire type */;
+        }
+        return total;
+    }
+
+    /**
+     * Exact byte count {@link #writeReference} would produce for the given
+     * schema id: one mode byte + the schemaId varint.
+     */
+    public static int exactReferenceSize(long schemaId) {
+        return 1 + QwpVarint.encodedLength(schemaId);
+    }
+
+    /**
      * Writes a full-mode schema (mode 0x00 + schema_id + per-column definitions).
      * Column name is UTF-8 encoded (pre-cached on the column def); length is
      * varint-prefixed.

@@ -93,13 +93,44 @@ public class QwpResultBatchBuffer implements QuietCloseable {
     // the appendRow hot loop so the inner iteration reads from plain arrays instead
     // of ObjList.getQuick + def getter chains per cell.
     private QwpEgressColumnDef[] defsArr = EMPTY_DEFS;
+    private int physicalRowCount;
     private int[] qdbTypesArr = EMPTY_INTS;
-    private int rowCount;
     private QwpColumnScratch[] scratchesArr = EMPTY_SCRATCHES;
+    private int startRow;
     private SymbolTable[] symbolTablesArr = EMPTY_SYMBOL_TABLES;
     private byte[] wireTypesArr = EMPTY_WIRE_TYPES;
 
     public QwpResultBatchBuffer() {
+    }
+
+    /**
+     * Advances {@code batchDeltaStart} to {@code connDict.size()}. Called from
+     * inside the send functions after a successful partial-emit frame so the
+     * subsequent emit's delta section ships no overlap with the bytes already
+     * sent.
+     */
+    public void advanceDeltaStart() {
+        if (connDict != null) {
+            batchDeltaStart = connDict.size();
+        }
+    }
+
+    /**
+     * Advances the logical start past {@code K} rows that have just been
+     * shipped. When the advance drains the live row count to zero, the scratch
+     * position counters are zeroed in place (trivial reset) so the next batch
+     * reuses the existing native heap from byte 0 -- matching today's
+     * per-batch reset shape on the happy path.
+     */
+    public void advanceStartRow(int K) {
+        startRow += K;
+        if (startRow == physicalRowCount) {
+            for (int i = 0; i < columnCount; i++) {
+                scratches.getQuick(i).resetPositions();
+            }
+            physicalRowCount = 0;
+            startRow = 0;
+        }
     }
 
     /**
@@ -244,7 +275,7 @@ public class QwpResultBatchBuffer implements QuietCloseable {
                     perColumnRowLoop(record, lo, hi, ci);
             }
         }
-        rowCount += rows;
+        physicalRowCount += rows;
     }
 
     /**
@@ -263,7 +294,7 @@ public class QwpResultBatchBuffer implements QuietCloseable {
         for (int ci = 0; ci < n; ci++) {
             appendCell(record, ci, scs[ci], wts[ci], qts[ci], defs[ci], sts[ci]);
         }
-        rowCount++;
+        physicalRowCount++;
     }
 
     /**
@@ -282,7 +313,8 @@ public class QwpResultBatchBuffer implements QuietCloseable {
     ) {
         this.columns = columns;
         this.columnCount = columns.size();
-        this.rowCount = 0;
+        this.physicalRowCount = 0;
+        this.startRow = 0;
         this.connDict = connDict;
         this.batchDeltaStart = connDict.size();
         while (scratches.size() < columnCount) {
@@ -329,8 +361,45 @@ public class QwpResultBatchBuffer implements QuietCloseable {
         Misc.freeObjListIfCloseable(scratches);
         scratches.clear();
         columns = null;
-        rowCount = 0;
+        physicalRowCount = 0;
+        startRow = 0;
         columnCount = 0;
+    }
+
+    /**
+     * Returns the exact number of bytes {@link #emitDeltaSection} would produce
+     * for the current batch's pending dict entries
+     * ({@code [batchDeltaStart, connDict.size())}). Mirrors the emit byte
+     * layout step-by-step via {@link QwpVarint#encodedLength}; tests guarantee
+     * the two stay in sync.
+     */
+    public int computeDeltaSize() {
+        final int deltaStart = batchDeltaStart;
+        final int deltaCount = connDict.size() - deltaStart;
+        long bytes = QwpVarint.encodedLength(deltaStart) + QwpVarint.encodedLength(deltaCount);
+        if (deltaCount == 0) {
+            return (int) bytes;
+        }
+        int prevEnd = connDict.entryStart(deltaStart);
+        for (int i = 0; i < deltaCount; i++) {
+            int endOff = connDict.entryEnd(deltaStart + i);
+            int entryLen = endOff - prevEnd;
+            bytes += QwpVarint.encodedLength(entryLen) + entryLen;
+            prevEnd = endOff;
+        }
+        return (int) bytes;
+    }
+
+    /**
+     * Returns the exact number of bytes {@link #emitTableBlockPrefix} would
+     * produce for {@code rowsToEmit} logical rows starting at {@code startRow}.
+     * Uses {@link #emitTableBlockImpl} in dry-run mode so emit and size share
+     * the same byte-layout source -- no drift risk.
+     */
+    public int computeTableBlockSize(int rowsToEmit, boolean writeFullSchema) {
+        // wireLimit = Long.MAX_VALUE so the dry run can never report overflow;
+        // schemaId is unused by the size math, pass 0.
+        return emitTableBlockImpl(0L, Long.MAX_VALUE, startRow, rowsToEmit, 0L, writeFullSchema, true);
     }
 
     /**
@@ -372,35 +441,56 @@ public class QwpResultBatchBuffer implements QuietCloseable {
     }
 
     /**
-     * Emits the full table block body for this batch starting at {@code wireBuf}:
-     * name_length (=0) + row_count + column_count + schema + column data sections.
+     * Emits the full table block body for the rows currently buffered
+     * (physical rows {@code [0, physicalRowCount)}) starting at {@code wireBuf}.
+     * Convenience wrapper over {@link #emitTableBlockImpl} for the happy path.
      *
      * @return number of bytes written, or -1 if the data would overflow wireLimit
      */
     public int emitTableBlock(long wireBuf, long wireLimit, long schemaId, boolean writeFullSchema) {
-        long p = wireBuf;
-        // Preflight the fixed prelude: 1 byte empty-name + rowCount varint +
-        // columnCount varint. QwpVarint.encode has no internal bound check and
-        // can emit up to MAX_VARINT_BYTES per value; without the guard this
-        // loop walks past wireLimit whenever the caller's budget is tight.
-        if (p + 1 + 2L * QwpVarint.MAX_VARINT_BYTES > wireLimit) return -1;
-        // Anonymous result-set: empty name
-        Unsafe.putByte(p++, (byte) 0);
-        p = QwpVarint.encode(p, rowCount);
-        p = QwpVarint.encode(p, columnCount);
-        if (writeFullSchema) {
-            int needed = QwpEgressSchemaWriter.worstCaseFullSize(columns);
-            if (p + needed > wireLimit) return -1;
-            p = QwpEgressSchemaWriter.writeFull(p, schemaId, columns);
-        } else {
-            if (p + 1 + QwpVarint.MAX_VARINT_BYTES > wireLimit) return -1;
-            p = QwpEgressSchemaWriter.writeReference(p, schemaId);
+        return emitTableBlockImpl(wireBuf, wireLimit, 0, physicalRowCount, schemaId, writeFullSchema, false);
+    }
+
+    /**
+     * Emits a prefix of the currently buffered rows: {@code rowsToEmit} logical
+     * rows starting at {@code startRow}. The slice's wire layout is
+     * byte-identical to a freshly built batch of that size -- decoder is
+     * unchanged. Used by the partial-emit path when the full buffered batch
+     * doesn't fit in the wire frame.
+     *
+     * @return number of bytes written, or -1 if the data would overflow wireLimit
+     */
+    public int emitTableBlockPrefix(long wireBuf, long wireLimit, int rowsToEmit,
+                                    long schemaId, boolean writeFullSchema) {
+        return emitTableBlockImpl(wireBuf, wireLimit, startRow, rowsToEmit, schemaId, writeFullSchema, false);
+    }
+
+    /**
+     * Binary-searches the largest {@code K} in {@code [0, getRowCount()]} such
+     * that {@link #computeTableBlockSize}{@code (K, writeFullSchema) <= budget}.
+     * <p>
+     * Return values:
+     * <ul>
+     *   <li>{@code K == getRowCount()}: every buffered row fits, take the happy path;</li>
+     *   <li>{@code 0 < K < getRowCount()}: ship a partial emit of {@code K} rows;</li>
+     *   <li>{@code K == 0}: the table-block header fits but no row does. Caller
+     *       must treat as single-row overflow;</li>
+     *   <li>{@code K == -1}: even the empty header overflows the budget --
+     *       pathological send-buffer config.</li>
+     * </ul>
+     */
+    public int findLargestEmittablePrefix(long budget, boolean writeFullSchema) {
+        int hi = getRowCount();
+        if (computeTableBlockSize(0, writeFullSchema) > budget) return -1;
+        if (hi == 0) return 0;
+        if (computeTableBlockSize(hi, writeFullSchema) <= budget) return hi;
+        int lo = 0;
+        while (lo < hi) {
+            int mid = (lo + hi + 1) >>> 1;
+            if (computeTableBlockSize(mid, writeFullSchema) <= budget) lo = mid;
+            else hi = mid - 1;
         }
-        for (int ci = 0; ci < columnCount; ci++) {
-            p = emitColumn(scratches.getQuick(ci), p, wireLimit);
-            if (p < 0) return -1;
-        }
-        return (int) (p - wireBuf);
+        return lo;
     }
 
     public int getColumnCount() {
@@ -408,14 +498,15 @@ public class QwpResultBatchBuffer implements QuietCloseable {
     }
 
     public int getRowCount() {
-        return rowCount;
+        return physicalRowCount - startRow;
     }
 
     public void reset() {
         for (int i = 0, n = scratches.size(); i < n; i++) {
             scratches.getQuick(i).beginBatch(null);
         }
-        rowCount = 0;
+        physicalRowCount = 0;
+        startRow = 0;
         columnCount = 0;
         columns = null;
     }
@@ -489,33 +580,119 @@ public class QwpResultBatchBuffer implements QuietCloseable {
             }
         }
         scratch.arrayHeapPos += totalBytes;
+        scratch.recordArrayOffset();
         scratch.markNonNullAndAdvanceRow();
     }
 
-    private static long emitStringColumn(QwpColumnScratch scratch, long p, long wireLimit) {
-        int nonNull = scratch.nonNullCount;
-        long offsetsBytes = 4L * (nonNull + 1);
-        long bytesBytes = scratch.stringHeapPos;
-        if (p + offsetsBytes + bytesBytes > wireLimit) return -1;
-        // offset[0] = 0; offsets[1..nonNull] were populated during append.
-        Unsafe.putInt(p, 0);
-        // Copy offsets[1..nonNull] from scratch.stringOffsetsAddr (which stores them at indices 1..nonNull)
-        // to p + 4 .. p + 4 * nonNull + 4.
-        Vect.memcpy(p + 4L, scratch.stringOffsetsAddr + 4L, 4L * nonNull);
-        Vect.memcpy(p + offsetsBytes, scratch.stringHeapAddr, bytesBytes);
-        return p + offsetsBytes + bytesBytes;
+    /**
+     * Copies {@code lenBits} bits from {@code src} starting at bit
+     * {@code srcBitOffset} to bit 0 of {@code dst}. Aligned case ({@code
+     * srcBitOffset % 8 == 0}) is a plain memcpy; misaligned uses per-byte
+     * stitching of two source bytes. Output bits past {@code lenBits} are zeroed
+     * in the trailing partial byte so the wire format matches a freshly built
+     * dense bitmap.
+     */
+    private static void bitMemcpyShifted(long dst, long src, int srcBitOffset, int lenBits) {
+        if (lenBits == 0) return;
+        int srcByteOff = srcBitOffset >>> 3;
+        int shift = srcBitOffset & 7;
+        int fullBytes = lenBits >>> 3;
+        int tailBits = lenBits & 7;
+        if (shift == 0) {
+            if (fullBytes > 0) Vect.memcpy(dst, src + srcByteOff, fullBytes);
+            if (tailBits > 0) {
+                int mask = (1 << tailBits) - 1;
+                int b = Unsafe.getByte(src + srcByteOff + fullBytes) & mask;
+                Unsafe.putByte(dst + fullBytes, (byte) b);
+            }
+            return;
+        }
+        int invShift = 8 - shift;
+        for (int i = 0; i < fullBytes; i++) {
+            int cur = Unsafe.getByte(src + srcByteOff + i) & 0xFF;
+            int next = Unsafe.getByte(src + srcByteOff + i + 1) & 0xFF;
+            Unsafe.putByte(dst + i, (byte) ((cur >>> shift) | (next << invShift)));
+        }
+        if (tailBits > 0) {
+            int cur = Unsafe.getByte(src + srcByteOff + fullBytes) & 0xFF;
+            int out = cur >>> shift;
+            if (tailBits > invShift) {
+                int next = Unsafe.getByte(src + srcByteOff + fullBytes + 1) & 0xFF;
+                out |= next << invShift;
+            }
+            int mask = (1 << tailBits) - 1;
+            Unsafe.putByte(dst + fullBytes, (byte) (out & mask));
+        }
     }
 
-    private static long emitSymbolColumn(QwpColumnScratch scratch, long p, long wireLimit) {
-        // Per-column dict is omitted -- bytes for new entries went out already in
-        // the message-level delta section. Per-row payload is just the connection
-        // dict ids, which appendRow already stored into symbolIdsAddr (no
-        // translation required).
-        final int nonNull = scratch.nonNullCount;
+    /**
+     * Copies the null bitmap slice for rows {@code [srcRowStart, srcRowStart +
+     * rowsToEmit)} to byte 0 of {@code dst}. Precondition: {@code srcRowStart
+     * % 8 == 0} (§4.4 alignment policy), so the source is byte-aligned and a
+     * plain memcpy suffices.
+     */
+    private static void emitNullBitmapSlice(long bitmapAddr, int srcRowStart, int rowsToEmit, long dst) {
+        assert (srcRowStart & 7) == 0 : "null bitmap slice misaligned";
+        int srcByteOff = srcRowStart >>> 3;
+        int bytes = (rowsToEmit + 7) >>> 3;
+        Vect.memcpy(dst, bitmapAddr + srcByteOff, bytes);
+    }
+
+    /**
+     * Emits the dense values slice for STRING/VARCHAR/BINARY columns:
+     * {@code (sliceNonNull + 1) x i32} rebased offsets followed by the
+     * concatenated UTF-8 bytes of the slice's non-null rows.
+     */
+    private static long emitStringSlice(QwpColumnScratch scratch, long p, long wireLimit,
+                                        int nonNullsBefore, int sliceNonNull, boolean dryRun) {
+        int baseOff = (nonNullsBefore == 0) ? 0
+                : Unsafe.getInt(scratch.stringOffsetsAddr + (long) nonNullsBefore * 4);
+        int endIdx = nonNullsBefore + sliceNonNull;
+        int endOff = (endIdx == 0) ? 0
+                : Unsafe.getInt(scratch.stringOffsetsAddr + (long) endIdx * 4);
+        int heapBytes = endOff - baseOff;
+        long offsetsBytes = 4L * (sliceNonNull + 1);
+        if (p + offsetsBytes + heapBytes > wireLimit) return -1;
+        if (!dryRun) {
+            Unsafe.putInt(p, 0);
+            if (nonNullsBefore == 0) {
+                // Fast path: stored offsets already match the wire layout (baseOff = 0).
+                Vect.memcpy(p + 4L, scratch.stringOffsetsAddr + 4L, 4L * sliceNonNull);
+            } else {
+                long dst = p + 4L;
+                for (int i = 1; i <= sliceNonNull; i++) {
+                    int physOff = Unsafe.getInt(scratch.stringOffsetsAddr + (long) (nonNullsBefore + i) * 4);
+                    Unsafe.putInt(dst, physOff - baseOff);
+                    dst += 4;
+                }
+            }
+            Vect.memcpy(p + offsetsBytes, scratch.stringHeapAddr + baseOff, heapBytes);
+        }
+        return p + offsetsBytes + heapBytes;
+    }
+
+    /**
+     * Emits the dense values slice for SYMBOL columns: varint conn-dict ids for
+     * the slice's non-null rows. Per-column dict is omitted -- new bytes ship in
+     * the message-level delta section. The hot path (no dry run) keeps the
+     * pre-slicing shape: worst-case overflow check + encode-returning-new-pointer.
+     */
+    private static long emitSymbolSlice(QwpColumnScratch scratch, long p, long wireLimit,
+                                        int nonNullsBefore, int sliceNonNull, boolean dryRun) {
         final long idsAddr = scratch.symbolIdsAddr;
-        for (int i = 0; i < nonNull; i++) {
+        if (dryRun) {
+            // Precise sizing for prefix search: compute exact encoded length.
+            long bytes = 0;
+            for (int i = 0; i < sliceNonNull; i++) {
+                int connId = Unsafe.getInt(idsAddr + 4L * (nonNullsBefore + i));
+                bytes += QwpVarint.encodedLength(connId);
+            }
+            if (p + bytes > wireLimit) return -1;
+            return p + bytes;
+        }
+        for (int i = 0; i < sliceNonNull; i++) {
             if (p + QwpVarint.MAX_VARINT_BYTES > wireLimit) return -1;
-            int connId = Unsafe.getInt(idsAddr + 4L * i);
+            int connId = Unsafe.getInt(idsAddr + 4L * (nonNullsBefore + i));
             p = QwpVarint.encode(p, connId);
         }
         return p;
@@ -529,11 +706,60 @@ public class QwpResultBatchBuffer implements QuietCloseable {
         scratch.appendNullColumn(n);
     }
 
+    /**
+     * Counts the SET bits (= null rows) in {@code [startBit, startBit + lenBits)}
+     * of {@code bitmapAddr}. Walks 8 bytes at a time via {@link Long#bitCount},
+     * with byte and tail-bit fallbacks. Precondition: {@code startBit % 8 == 0}
+     * (§4.4) so the loop reads whole bytes from offset {@code startBit >>> 3}.
+     */
+    private static int nullsInRange(long bitmapAddr, int startBit, int lenBits) {
+        assert (startBit & 7) == 0 : "nullsInRange startBit misaligned";
+        if (lenBits == 0) return 0;
+        int count = 0;
+        int byteOff = startBit >>> 3;
+        int endByteOff = (startBit + lenBits) >>> 3;
+        int tailBits = (startBit + lenBits) & 7;
+        while (byteOff + 8 <= endByteOff) {
+            count += Long.bitCount(Unsafe.getLong(bitmapAddr + byteOff));
+            byteOff += 8;
+        }
+        while (byteOff < endByteOff) {
+            count += Integer.bitCount(Unsafe.getByte(bitmapAddr + byteOff) & 0xFF);
+            byteOff++;
+        }
+        if (tailBits > 0) {
+            int mask = (1 << tailBits) - 1;
+            count += Integer.bitCount(Unsafe.getByte(bitmapAddr + endByteOff) & mask);
+        }
+        return count;
+    }
+
     private static long readGeoBits(Record record, int col, int precisionBits) {
         if (precisionBits <= 7) return record.getGeoByte(col);
         if (precisionBits <= 15) return record.getGeoShort(col);
         if (precisionBits <= 31) return record.getGeoInt(col);
         return record.getGeoLong(col);
+    }
+
+    /**
+     * Returns the fixed byte width per non-null value for "generic fixed-width"
+     * wire types (BYTE, SHORT, CHAR, INT, IPV4, FLOAT, LONG, DOUBLE, UUID,
+     * LONG256). Types with a per-column prefix byte (GEOHASH, DECIMAL,
+     * TIMESTAMP family) are handled in dedicated branches and never reach this
+     * helper.
+     */
+    private static int wireTypeFixedSize(byte wireType) {
+        return switch (wireType) {
+            case QwpConstants.TYPE_BYTE -> 1;
+            case QwpConstants.TYPE_SHORT, QwpConstants.TYPE_CHAR -> 2;
+            case QwpConstants.TYPE_INT, QwpConstants.TYPE_IPV4, QwpConstants.TYPE_FLOAT -> 4;
+            case QwpConstants.TYPE_LONG, QwpConstants.TYPE_DOUBLE -> 8;
+            case QwpConstants.TYPE_UUID -> 16;
+            case QwpConstants.TYPE_LONG256 -> 32;
+            default -> throw CairoException.nonCritical()
+                    .put("QWP egress emit: unsupported fixed-width wire type [code=")
+                    .put(wireType & 0xFF).put(']');
+        };
     }
 
     /**
@@ -716,112 +942,219 @@ public class QwpResultBatchBuffer implements QuietCloseable {
     }
 
     /**
-     * Writes one column to the wire buffer starting at {@code p}. Layout:
-     * null flag + optional bitmap, then the type-specific payload (bit-packed
-     * BOOLEAN; VARCHAR / BINARY offsets + bytes; SYMBOL ids; GEOHASH precision +
-     * values; DOUBLE / LONG arrays; DECIMAL scale + values; TIMESTAMP family
-     * with Gorilla or raw; generic fixed-width memcpy for BYTE / SHORT / INT /
-     * CHAR / LONG / FLOAT / DOUBLE / UUID / LONG256). Returns the write pointer
-     * past the column, or {@code -1} if {@code wireLimit} would be exceeded.
+     * Emits one column for rows {@code [srcRowStart, srcRowStart + rowsToEmit)}
+     * starting at {@code p}. Layout: null-flag byte + optional bitmap slice,
+     * then the type-specific payload restricted to the slice's non-null rows.
+     * When {@code dryRun} is true, computes the byte advance without writing
+     * to {@code p} -- used by {@link #computeTableBlockSize} as the single
+     * source of truth for prefix sizing.
+     * <p>
+     * Returns the post-write pointer or {@code -1} if {@code wireLimit} would
+     * be exceeded.
      */
-    private long emitColumn(QwpColumnScratch scratch, long p, long wireLimit) {
-        // 1. Null flag + optional bitmap
+    private long emitColumnSlice(QwpColumnScratch scratch, long p, long wireLimit,
+                                 int srcRowStart, int rowsToEmit, boolean dryRun) {
+        assert (srcRowStart & 7) == 0 : "emitColumnSlice srcRowStart misaligned";
+
+        // Derive the dense-storage range from the null bitmap. Three cases:
+        //   (a) column has no nulls anywhere -- skip popcount entirely;
+        //   (b) full physical slice -- collapse to existing counters;
+        //   (c) general slice -- bitmap popcount.
+        int nonNullsBefore;
+        int sliceNonNull;
         if (scratch.nullCount == 0) {
-            if (p >= wireLimit) return -1;
-            Unsafe.putByte(p++, (byte) 0);
+            nonNullsBefore = srcRowStart;
+            sliceNonNull = rowsToEmit;
+        } else if (srcRowStart == 0 && rowsToEmit == physicalRowCount) {
+            nonNullsBefore = 0;
+            sliceNonNull = scratch.nonNullCount;
         } else {
-            int bitmapBytes = (rowCount + 7) >>> 3;
-            if (p + 1 + bitmapBytes > wireLimit) return -1;
-            Unsafe.putByte(p++, (byte) 1);
-            Vect.memcpy(p, scratch.nullBitmapAddr, bitmapBytes);
-            p += bitmapBytes;
+            nonNullsBefore = srcRowStart - nullsInRange(scratch.nullBitmapAddr, 0, srcRowStart);
+            sliceNonNull = rowsToEmit - nullsInRange(scratch.nullBitmapAddr, srcRowStart, rowsToEmit);
+        }
+        boolean hasNulls = sliceNonNull < rowsToEmit;
+        int nullBitmapBytes = (rowsToEmit + 7) >>> 3;
+
+        // 1. Null-flag byte + optional bitmap slice. Matches the pre-slicing
+        //    layout: flag byte 0 means "no bitmap follows", flag byte 1 means
+        //    the bitmap covers `rowsToEmit` rows starting at the slice's row 0.
+        if (hasNulls) {
+            if (p + 1 + nullBitmapBytes > wireLimit) return -1;
+            if (!dryRun) {
+                Unsafe.putByte(p, (byte) 1);
+                emitNullBitmapSlice(scratch.nullBitmapAddr, srcRowStart, rowsToEmit, p + 1);
+            }
+            p += 1 + nullBitmapBytes;
+        } else {
+            if (p >= wireLimit) return -1;
+            if (!dryRun) Unsafe.putByte(p, (byte) 0);
+            p++;
         }
 
+        // 2. Type-specific payload restricted to the slice's non-null rows.
         byte wire = scratch.def.getWireType();
-        int nonNull = scratch.nonNullCount;
-
         if (wire == QwpConstants.TYPE_BOOLEAN) {
-            int bytes = (nonNull + 7) >>> 3;
+            int bytes = (sliceNonNull + 7) >>> 3;
             if (p + bytes > wireLimit) return -1;
-            Vect.memcpy(p, scratch.valuesAddr, bytes);
+            if (!dryRun) bitMemcpyShifted(p, scratch.valuesAddr, nonNullsBefore, sliceNonNull);
             return p + bytes;
         }
         if (wire == QwpConstants.TYPE_VARCHAR || wire == QwpConstants.TYPE_BINARY) {
             // Both share the same wire layout: (N+1) x uint32 offsets + concatenated bytes.
             // BINARY differs from VARCHAR only in that the bytes are opaque (no UTF-8 contract).
-            return emitStringColumn(scratch, p, wireLimit);
+            return emitStringSlice(scratch, p, wireLimit, nonNullsBefore, sliceNonNull, dryRun);
         }
         if (wire == QwpConstants.TYPE_SYMBOL) {
-            return emitSymbolColumn(scratch, p, wireLimit);
+            return emitSymbolSlice(scratch, p, wireLimit, nonNullsBefore, sliceNonNull, dryRun);
         }
         if (wire == QwpConstants.TYPE_GEOHASH) {
-            if (p + QwpVarint.MAX_VARINT_BYTES > wireLimit) return -1;
-            p = QwpVarint.encode(p, scratch.def.getPrecisionBits());
-            if (p + scratch.valuesPos > wireLimit) return -1;
-            Vect.memcpy(p, scratch.valuesAddr, scratch.valuesPos);
-            return p + scratch.valuesPos;
+            int precBits = scratch.def.getPrecisionBits();
+            int precBytes = (precBits + 7) >>> 3;
+            int precVarintBytes = QwpVarint.encodedLength(precBits);
+            long dataBytes = (long) sliceNonNull * precBytes;
+            if (p + precVarintBytes + dataBytes > wireLimit) return -1;
+            if (!dryRun) {
+                p = QwpVarint.encode(p, precBits);
+                Vect.memcpy(p, scratch.valuesAddr + (long) nonNullsBefore * precBytes, dataBytes);
+                return p + dataBytes;
+            }
+            return p + precVarintBytes + dataBytes;
         }
         if (wire == QwpConstants.TYPE_DOUBLE_ARRAY || wire == QwpConstants.TYPE_LONG_ARRAY) {
-            if (p + scratch.arrayHeapPos > wireLimit) return -1;
-            Vect.memcpy(p, scratch.arrayHeapAddr, scratch.arrayHeapPos);
-            return p + scratch.arrayHeapPos;
+            int baseOff = (nonNullsBefore == 0) ? 0
+                    : Unsafe.getInt(scratch.arrayOffsetsAddr + (long) nonNullsBefore * 4);
+            int endIdx = nonNullsBefore + sliceNonNull;
+            int endOff = (endIdx == 0) ? 0
+                    : Unsafe.getInt(scratch.arrayOffsetsAddr + (long) endIdx * 4);
+            int heapBytes = endOff - baseOff;
+            if (p + heapBytes > wireLimit) return -1;
+            if (!dryRun) Vect.memcpy(p, scratch.arrayHeapAddr + baseOff, heapBytes);
+            return p + heapBytes;
         }
-
-        // Decimal: scale byte prefix, then dense values
         if (wire == QwpConstants.TYPE_DECIMAL64
                 || wire == QwpConstants.TYPE_DECIMAL128
                 || wire == QwpConstants.TYPE_DECIMAL256) {
-            if (p + 1 > wireLimit) return -1;
-            Unsafe.putByte(p++, (byte) scratch.def.getScale());
-            if (p + scratch.valuesPos > wireLimit) return -1;
-            Vect.memcpy(p, scratch.valuesAddr, scratch.valuesPos);
-            return p + scratch.valuesPos;
+            int elemSize = (wire == QwpConstants.TYPE_DECIMAL64) ? 8
+                    : (wire == QwpConstants.TYPE_DECIMAL128) ? 16 : 32;
+            long dataBytes = (long) sliceNonNull * elemSize;
+            if (p + 1 + dataBytes > wireLimit) return -1;
+            if (!dryRun) {
+                Unsafe.putByte(p, (byte) scratch.def.getScale());
+                Vect.memcpy(p + 1, scratch.valuesAddr + (long) nonNullsBefore * elemSize, dataBytes);
+            }
+            return p + 1 + dataBytes;
         }
-
-        // Timestamp-ish types: prefix a per-column encoding byte and try Gorilla.
-        // Fall back to raw int64s when delta-of-delta overflows int32 (unordered
-        // or jumpy timestamps) or when the bitstream wouldn't save space.
         if (wire == QwpConstants.TYPE_TIMESTAMP
                 || wire == QwpConstants.TYPE_TIMESTAMP_NANOS
                 || wire == QwpConstants.TYPE_DATE) {
-            return emitTimestampColumn(scratch, p, wireLimit, nonNull);
+            return emitTimestampSlice(scratch, p, wireLimit, nonNullsBefore, sliceNonNull, dryRun);
         }
 
-        // Generic fixed-width (BYTE/SHORT/INT/CHAR/LONG/FLOAT/DOUBLE/UUID/LONG256)
-        if (p + scratch.valuesPos > wireLimit) return -1;
-        Vect.memcpy(p, scratch.valuesAddr, scratch.valuesPos);
-        return p + scratch.valuesPos;
+        // Generic fixed-width (BYTE/SHORT/CHAR/INT/IPV4/FLOAT/LONG/DOUBLE/UUID/LONG256).
+        int elemSize = wireTypeFixedSize(wire);
+        long dataBytes = (long) sliceNonNull * elemSize;
+        if (p + dataBytes > wireLimit) return -1;
+        if (!dryRun) Vect.memcpy(p, scratch.valuesAddr + (long) nonNullsBefore * elemSize, dataBytes);
+        return p + dataBytes;
     }
 
-    private long emitTimestampColumn(QwpColumnScratch scratch, long p, long wireLimit, int nonNull) {
-        if (p >= wireLimit) return -1;
-        // nonNull * 8 is carried as long throughout: int multiplication would
-        // overflow if MAX_ROWS_PER_BATCH is ever raised past ~2^28. Today the
-        // cap is 4096, so no overflow can happen -- the cast is defence in depth.
-        long rawBytes = (long) nonNull * 8L;
-        // 0, 1, 2 values have no delta-of-delta to emit; ship raw int64s under the
-        // uncompressed discriminator so the decoder sees a consistent layout.
-        if (nonNull < 3) {
-            Unsafe.putByte(p++, ENCODING_UNCOMPRESSED);
-            if (p + rawBytes > wireLimit) return -1;
-            if (rawBytes > 0) {
-                Vect.memcpy(p, scratch.valuesAddr, rawBytes);
-            }
-            return p + rawBytes;
+    /**
+     * Single source of truth for table-block emit. Writes the wire layout for
+     * rows {@code [srcRowStart, srcRowStart + rowsToEmit)} at {@code wireBuf}:
+     * empty-name byte + rowsToEmit varint + columnCount varint + schema
+     * (full or reference) + one column-slice per column. When {@code dryRun}
+     * is true, computes the byte count without writing -- the same code path
+     * powers both {@link #emitTableBlock} / {@link #emitTableBlockPrefix} and
+     * {@link #computeTableBlockSize}, eliminating drift between emit and
+     * size estimation.
+     *
+     * @return number of bytes written / computed, or -1 if {@code wireLimit}
+     * would be exceeded (dry runs called with MAX_VALUE never return -1).
+     */
+    private int emitTableBlockImpl(long wireBuf, long wireLimit, int srcRowStart, int rowsToEmit,
+                                   long schemaId, boolean writeFullSchema, boolean dryRun) {
+        long p = wireBuf;
+        // Preflight the fixed prelude: 1 byte empty-name + rowsToEmit varint +
+        // columnCount varint. QwpVarint.encode has no internal bound check and
+        // can emit up to MAX_VARINT_BYTES per value; the guard prevents walking
+        // past wireLimit when the caller's budget is tight.
+        if (p + 1 + 2L * QwpVarint.MAX_VARINT_BYTES > wireLimit) return -1;
+        if (!dryRun) {
+            Unsafe.putByte(p, (byte) 0);
+            p++;
+            p = QwpVarint.encode(p, rowsToEmit);
+            p = QwpVarint.encode(p, columnCount);
+        } else {
+            p += 1 + QwpVarint.encodedLength(rowsToEmit) + QwpVarint.encodedLength(columnCount);
         }
-        // Probe first: -1 = delta-of-delta doesn't fit int32 anywhere; fall back
-        // to raw rather than silently truncate.
-        int gorillaBytes = QwpGorillaEncoder.calculateEncodedSizeIfSupported(scratch.valuesAddr, nonNull);
+        if (writeFullSchema) {
+            int exact = QwpEgressSchemaWriter.exactFullSize(schemaId, columns);
+            if (p + exact > wireLimit) return -1;
+            if (!dryRun) {
+                long newP = QwpEgressSchemaWriter.writeFull(p, schemaId, columns);
+                assert newP - p == exact : "writeFull byte count drifted from exactFullSize";
+                p = newP;
+            } else {
+                p += exact;
+            }
+        } else {
+            int exact = QwpEgressSchemaWriter.exactReferenceSize(schemaId);
+            if (p + exact > wireLimit) return -1;
+            if (!dryRun) {
+                long newP = QwpEgressSchemaWriter.writeReference(p, schemaId);
+                assert newP - p == exact : "writeReference byte count drifted from exactReferenceSize";
+                p = newP;
+            } else {
+                p += exact;
+            }
+        }
+        for (int ci = 0; ci < columnCount; ci++) {
+            p = emitColumnSlice(scratches.getQuick(ci), p, wireLimit,
+                    srcRowStart, rowsToEmit, dryRun);
+            if (p < 0) return -1;
+        }
+        return (int) (p - wireBuf);
+    }
+
+    /**
+     * Emits the dense values slice for TIMESTAMP / TIMESTAMP_NANOS / DATE
+     * columns: per-column encoding discriminator byte followed by either
+     * Gorilla delta-of-delta or raw int64s, computed over the slice's non-null
+     * values. Heuristic per slice -- short slices and Gorilla failures fall
+     * back to RAW.
+     */
+    private long emitTimestampSlice(QwpColumnScratch scratch, long p, long wireLimit,
+                                    int nonNullsBefore, int sliceNonNull, boolean dryRun) {
+        if (p >= wireLimit) return -1;
+        long sliceValuesAddr = scratch.valuesAddr + (long) nonNullsBefore * 8L;
+        long rawBytes = (long) sliceNonNull * 8L;
+        // 0, 1, 2 values have no delta-of-delta to emit; ship raw int64s under
+        // the uncompressed discriminator so the decoder sees a consistent layout.
+        if (sliceNonNull < 3) {
+            if (p + 1 + rawBytes > wireLimit) return -1;
+            if (!dryRun) {
+                Unsafe.putByte(p, ENCODING_UNCOMPRESSED);
+                if (rawBytes > 0) Vect.memcpy(p + 1, sliceValuesAddr, rawBytes);
+            }
+            return p + 1 + rawBytes;
+        }
+        // Probe size first: -1 = delta-of-delta doesn't fit int32 anywhere;
+        // fall back to raw rather than silently truncate.
+        int gorillaBytes = QwpGorillaEncoder.calculateEncodedSizeIfSupported(sliceValuesAddr, sliceNonNull);
         if (gorillaBytes >= 0 && gorillaBytes < rawBytes) {
             if (p + 1 + gorillaBytes > wireLimit) return -1;
-            Unsafe.putByte(p++, ENCODING_GORILLA);
-            int written = gorillaEncoder.encodeTimestamps(p, wireLimit - p, scratch.valuesAddr, nonNull);
-            return p + written;
+            if (!dryRun) {
+                Unsafe.putByte(p, ENCODING_GORILLA);
+                gorillaEncoder.encodeTimestamps(p + 1, wireLimit - p - 1, sliceValuesAddr, sliceNonNull);
+            }
+            return p + 1 + gorillaBytes;
         }
         if (p + 1 + rawBytes > wireLimit) return -1;
-        Unsafe.putByte(p++, ENCODING_UNCOMPRESSED);
-        Vect.memcpy(p, scratch.valuesAddr, rawBytes);
-        return p + rawBytes;
+        if (!dryRun) {
+            Unsafe.putByte(p, ENCODING_UNCOMPRESSED);
+            Vect.memcpy(p + 1, sliceValuesAddr, rawBytes);
+        }
+        return p + 1 + rawBytes;
     }
 
     /**

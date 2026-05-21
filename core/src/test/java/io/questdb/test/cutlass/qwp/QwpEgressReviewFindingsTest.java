@@ -137,7 +137,6 @@ public class QwpEgressReviewFindingsTest {
                     // branch has its own preflight, the prelude (name + row + col
                     // varints) does not.
                     int written = batch.emitTableBlock(buf, wireLimit, 0L, false);
-
                     byte guardAfter = Unsafe.getByte(wireLimit);
                     Assert.assertEquals(
                             "emitTableBlock returned " + written + " on a wireLimit that"

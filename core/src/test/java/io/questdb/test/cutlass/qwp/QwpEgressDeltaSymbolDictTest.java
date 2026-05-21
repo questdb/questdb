@@ -24,10 +24,13 @@
 
 package io.questdb.test.cutlass.qwp;
 
+import io.questdb.PropertyKey;
 import io.questdb.client.cutlass.qwp.client.QwpColumnBatch;
 import io.questdb.client.cutlass.qwp.client.QwpColumnBatchHandler;
 import io.questdb.client.cutlass.qwp.client.QwpQueryClient;
 import io.questdb.client.std.str.DirectUtf8Sequence;
+import io.questdb.cutlass.qwp.server.egress.QwpEgressUpgradeProcessor;
+import io.questdb.cutlass.qwp.server.egress.QwpRowExceedsBufferException;
 import io.questdb.test.AbstractBootstrapTest;
 import io.questdb.test.TestServerMain;
 import io.questdb.test.tools.TestUtils;
@@ -62,6 +65,49 @@ public class QwpEgressDeltaSymbolDictTest extends AbstractBootstrapTest {
         super.setUp();
         TestUtils.unchecked(() -> createDummyConfiguration());
         dbPath.parent().$();
+    }
+
+    @Test
+    public void testLargeSymbolDictRoundTripsWithoutOverflow() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables()) {
+                serverMain.execute("CREATE TABLE big_dict(s SYMBOL, ts TIMESTAMP) "
+                        + "TIMESTAMP(ts) PARTITION BY DAY WAL");
+                serverMain.execute("""
+                        INSERT INTO big_dict
+                        SELECT 'long_long_long_long_long_long_long_long_sym_' || lpad(x::STRING, 96, '0'), x::TIMESTAMP
+                        FROM long_sequence(20_000)
+                        """);
+                serverMain.awaitTable("big_dict");
+
+                final String[] errorMessage = {null};
+                final byte[] errorStatus = {0};
+                final long[] rowsObserved = {0};
+                try (QwpQueryClient client = QwpQueryClient.fromConfig(
+                        "ws::addr=127.0.0.1:" + HTTP_PORT + ";")) {
+                    client.connect();
+                    client.execute("SELECT s FROM big_dict", new QwpColumnBatchHandler() {
+                        @Override
+                        public void onBatch(QwpColumnBatch batch) {
+                            rowsObserved[0] += batch.getRowCount();
+                        }
+
+                        @Override
+                        public void onEnd(long totalRows) {
+                        }
+
+                        @Override
+                        public void onError(byte status, String message) {
+                            errorStatus[0] = status;
+                            errorMessage[0] = message;
+                        }
+                    });
+                }
+                Assert.assertNull("query should not error but got status=" + errorStatus[0]
+                        + " msg=" + errorMessage[0], errorMessage[0]);
+                Assert.assertEquals(20_000, rowsObserved[0]);
+            }
+        });
     }
 
     @Test
@@ -274,6 +320,109 @@ public class QwpEgressDeltaSymbolDictTest extends AbstractBootstrapTest {
     }
 
     @Test
+    public void testOverflowPreservesBooleanWithNulls() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_SEND_BUFFER_SIZE.getEnvVarName(), "256K"
+            )) {
+                serverMain.execute("CREATE TABLE bools(b BOOLEAN, padding VARCHAR, ts TIMESTAMP) "
+                        + "TIMESTAMP(ts) PARTITION BY DAY WAL");
+                serverMain.execute("""
+                        INSERT INTO bools
+                        SELECT
+                            CASE WHEN (x % 3) = 0 THEN true
+                                 WHEN (x % 3) = 1 THEN false
+                                 ELSE null END,
+                            rpad('p', 1024, 'q'),
+                            x::TIMESTAMP
+                        FROM long_sequence(500)
+                        """);
+                serverMain.awaitTable("bools");
+
+                final long[] rows = {0};
+                final int[] trueCount = {0};
+                final int[] falseCount = {0};
+                final int[] nullCount = {0};
+                try (QwpQueryClient client = QwpQueryClient.fromConfig(
+                        "ws::addr=127.0.0.1:" + HTTP_PORT + ";")) {
+                    client.connect();
+                    client.execute("SELECT b FROM bools", new QwpColumnBatchHandler() {
+                        @Override
+                        public void onBatch(QwpColumnBatch batch) {
+                            for (int r = 0; r < batch.getRowCount(); r++) {
+                                if (batch.isNull(0, r)) {
+                                    nullCount[0]++;
+                                } else if (batch.getBoolValue(0, r)) {
+                                    trueCount[0]++;
+                                } else {
+                                    falseCount[0]++;
+                                }
+                                rows[0]++;
+                            }
+                        }
+
+                        @Override
+                        public void onEnd(long totalRows) {
+                        }
+
+                        @Override
+                        public void onError(byte status, String message) {
+                            Assert.fail("egress error: status=" + status + " msg=" + message);
+                        }
+                    });
+                }
+                Assert.assertEquals(500, rows[0]);
+                Assert.assertEquals(500 / 3, trueCount[0]);
+                Assert.assertEquals(167 + 167, falseCount[0]);
+                Assert.assertEquals(0, nullCount[0]);
+            }
+        });
+    }
+
+    @Test
+    public void testOverflowSplitsBumpMetric() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables("QDB_METRICS_ENABLED", "true")) {
+                serverMain.execute("CREATE TABLE m(s SYMBOL, ts TIMESTAMP) "
+                        + "TIMESTAMP(ts) PARTITION BY DAY WAL");
+                serverMain.execute("""
+                        INSERT INTO m
+                        SELECT 'long_long_long_long_long_long_long_long_sym_' || lpad(x::STRING, 96, '0'), x::TIMESTAMP
+                        FROM long_sequence(20_000)
+                        """);
+                serverMain.awaitTable("m");
+
+                long before = serverMain.getEngine().getMetrics().qwpEgressMetrics().batchOverflowSplitCount();
+                final long[] rows = {0};
+                try (QwpQueryClient client = QwpQueryClient.fromConfig(
+                        "ws::addr=127.0.0.1:" + HTTP_PORT + ";")) {
+                    client.connect();
+                    client.execute("SELECT s FROM m", new QwpColumnBatchHandler() {
+                        @Override
+                        public void onBatch(QwpColumnBatch batch) {
+                            rows[0] += batch.getRowCount();
+                        }
+
+                        @Override
+                        public void onEnd(long totalRows) {
+                        }
+
+                        @Override
+                        public void onError(byte status, String message) {
+                            Assert.fail("egress error: status=" + status + " msg=" + message);
+                        }
+                    });
+                }
+                long after = serverMain.getEngine().getMetrics().qwpEgressMetrics().batchOverflowSplitCount();
+                Assert.assertEquals(20_000, rows[0]);
+                Assert.assertTrue("overflow metric must have incremented [before=" + before
+                                + ", after=" + after + ']',
+                        after > before);
+            }
+        });
+    }
+
+    @Test
     public void testRecurringSymbolsSecondQueryHasEmptyDelta() throws Exception {
         // Two queries on the same connection over the same SYMBOL-heavy data.
         // On the second query the connection dict is already full; the delta
@@ -437,6 +586,59 @@ public class QwpEgressDeltaSymbolDictTest extends AbstractBootstrapTest {
                 for (int i = 1; i <= 100; i++) {
                     Assert.assertEquals("q2 bucket " + i, 1, q2Observed[i]);
                 }
+            }
+        });
+    }
+
+    @Test
+    public void testRowExceedsBufferExceptionMapsToLimitExceeded() {
+        // Direct unit test of the mapErrorStatus precedence: the marker
+        // exception must classify as STATUS_LIMIT_EXCEEDED, not the default
+        // STATUS_INTERNAL_ERROR fallthrough.
+        Throwable e = QwpRowExceedsBufferException.instance(3, 65_536);
+        Assert.assertEquals((byte) 0x0B, QwpEgressUpgradeProcessor.mapErrorStatus(e));
+        Assert.assertTrue("message must include marker text",
+                e.getMessage().contains("single row exceeds send buffer"));
+    }
+
+    @Test
+    public void testSingleRowExceedsSendBufferReportsLimitExceeded() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_SEND_BUFFER_SIZE.getEnvVarName(), "256K"
+            )) {
+                serverMain.execute("CREATE TABLE giant(v VARCHAR, ts TIMESTAMP) "
+                        + "TIMESTAMP(ts) PARTITION BY DAY WAL");
+                serverMain.execute("INSERT INTO giant VALUES (rpad('x', 400_000, 'y'), 1::TIMESTAMP)");
+                serverMain.awaitTable("giant");
+
+                final String[] errorMessage = {null};
+                final byte[] errorStatus = {0};
+                try (QwpQueryClient client = QwpQueryClient.fromConfig(
+                        "ws::addr=127.0.0.1:" + HTTP_PORT + ";")) {
+                    client.connect();
+                    client.execute("SELECT v FROM giant", new QwpColumnBatchHandler() {
+                        @Override
+                        public void onBatch(QwpColumnBatch batch) {
+                        }
+
+                        @Override
+                        public void onEnd(long totalRows) {
+                        }
+
+                        @Override
+                        public void onError(byte status, String message) {
+                            errorStatus[0] = status;
+                            errorMessage[0] = message;
+                        }
+                    });
+                }
+                Assert.assertNotNull("expected single-row overflow error", errorMessage[0]);
+                Assert.assertEquals("STATUS_LIMIT_EXCEEDED expected, got status=" + errorStatus[0]
+                                + " msg=" + errorMessage[0],
+                        (byte) 0x0B, errorStatus[0]);
+                Assert.assertTrue("message should mention single-row overflow: " + errorMessage[0],
+                        errorMessage[0].contains("single row exceeds send buffer"));
             }
         });
     }

@@ -78,6 +78,8 @@ final class QwpColumnScratch implements QuietCloseable {
     long arrayHeapAddr;
     int arrayHeapCapacity;
     int arrayHeapPos;
+    long arrayOffsetsAddr;       // (nonNullCount + 1) x i32; mirror of stringOffsetsAddr.
+    int arrayOffsetsCapacity;    // bytes
     QwpEgressColumnDef def;
     int nonNullCount;
     long nullBitmapAddr;
@@ -90,6 +92,7 @@ final class QwpColumnScratch implements QuietCloseable {
     // needs and should shrink at query boundary -- prevents a one-off wide
     // batch from permanently retaining megabytes of native memory.
     int peakArrayHeapBytes;
+    int peakArrayOffsetsBytes;
     int peakNullBitmapBytes;
     int peakStringHeapBytes;
     int peakStringOffsetsBytes;
@@ -141,6 +144,11 @@ final class QwpColumnScratch implements QuietCloseable {
             Unsafe.free(arrayHeapAddr, arrayHeapCapacity, MemoryTag.NATIVE_HTTP_CONN);
             arrayHeapAddr = 0;
             arrayHeapCapacity = 0;
+        }
+        if (arrayOffsetsAddr != 0) {
+            Unsafe.free(arrayOffsetsAddr, arrayOffsetsCapacity, MemoryTag.NATIVE_HTTP_CONN);
+            arrayOffsetsAddr = 0;
+            arrayOffsetsCapacity = 0;
         }
     }
 
@@ -229,6 +237,22 @@ final class QwpColumnScratch implements QuietCloseable {
             stringOffsetsCapacity = newCap;
         }
         Unsafe.putInt(stringOffsetsAddr + 4L * slotIdx, stringHeapPos);
+    }
+
+    /**
+     * ARRAY: record the end-offset of the array bytes just written. Mirror of
+     * {@link #recordStringOffset}, sharing the slot-{@code nonNullCount + 1}
+     * convention with the implicit zero at slot 0.
+     */
+    void recordArrayOffset() {
+        int slotIdx = nonNullCount + 1;
+        int needed = 4 * (slotIdx + 1);
+        if (arrayOffsetsCapacity < needed) {
+            int newCap = Math.max(arrayOffsetsCapacity * 2, Math.max(INITIAL_BYTES, needed));
+            arrayOffsetsAddr = Unsafe.realloc(arrayOffsetsAddr, arrayOffsetsCapacity, newCap, MemoryTag.NATIVE_HTTP_CONN);
+            arrayOffsetsCapacity = newCap;
+        }
+        Unsafe.putInt(arrayOffsetsAddr + 4L * slotIdx, arrayHeapPos);
     }
 
     /**
@@ -812,12 +836,21 @@ final class QwpColumnScratch implements QuietCloseable {
                 arrayHeapCapacity = target;
             }
         }
+        if (arrayOffsetsCapacity > 0 && (peakArrayOffsetsBytes == 0
+                || arrayOffsetsCapacity >= (long) peakArrayOffsetsBytes * SHRINK_TRIGGER_FACTOR)) {
+            target = shrinkTarget(peakArrayOffsetsBytes);
+            if (target < arrayOffsetsCapacity) {
+                arrayOffsetsAddr = Unsafe.realloc(arrayOffsetsAddr, arrayOffsetsCapacity, target, MemoryTag.NATIVE_HTTP_CONN);
+                arrayOffsetsCapacity = target;
+            }
+        }
         peakValuesBytes = 0;
         peakNullBitmapBytes = 0;
         peakStringHeapBytes = 0;
         peakStringOffsetsBytes = 0;
         peakSymbolIdsBytes = 0;
         peakArrayHeapBytes = 0;
+        peakArrayOffsetsBytes = 0;
     }
 
     /**
@@ -844,6 +877,7 @@ final class QwpColumnScratch implements QuietCloseable {
         if (arrayHeapPos > peakArrayHeapBytes) peakArrayHeapBytes = arrayHeapPos;
         int offsetsBytes = nonNullCount > 0 ? 4 * (nonNullCount + 1) : 0;
         if (offsetsBytes > peakStringOffsetsBytes) peakStringOffsetsBytes = offsetsBytes;
+        if (offsetsBytes > peakArrayOffsetsBytes) peakArrayOffsetsBytes = offsetsBytes;
         int symIdsBytes = 4 * nonNullCount;
         if (symIdsBytes > peakSymbolIdsBytes) peakSymbolIdsBytes = symIdsBytes;
         int bitmapBytes = (rowCount + 7) >>> 3;
@@ -860,5 +894,27 @@ final class QwpColumnScratch implements QuietCloseable {
     void markNonNullAndAdvanceRow() {
         nonNullCount++;
         rowCount++;
+    }
+
+    /**
+     * Zeroes the in-batch position counters in place so the next batch reuses
+     * the existing native heap allocations from byte 0. Pre-query state shaped
+     * by {@link #beginBatch} (def, capacities, connKeyToConnId map) is left
+     * intact -- this is intentionally cheaper than {@link #beginBatch} so the
+     * happy-path batching loop pays a constant per-iteration cost identical to
+     * today's per-batch reset.
+     */
+    void resetPositions() {
+        rowCount = 0;
+        nonNullCount = 0;
+        nullCount = 0;
+        valuesPos = 0;
+        stringHeapPos = 0;
+        arrayHeapPos = 0;
+        // Re-zero the null bitmap so appendNull's OR-in semantics still work.
+        // Matches the bitmap-zero step in beginBatch.
+        if (nullBitmapAddr != 0 && nullBitmapCapacity > 0) {
+            Unsafe.setMemory(nullBitmapAddr, nullBitmapCapacity, (byte) 0);
+        }
     }
 }
