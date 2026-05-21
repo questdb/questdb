@@ -54,13 +54,14 @@ import io.questdb.cairo.vm.api.MemoryARW;
 import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.cairo.vm.api.MemoryMA;
 import io.questdb.cairo.vm.api.MemoryMARW;
+import io.questdb.cairo.wal.TableWriterPressureControl;
+import io.questdb.cairo.wal.WalTxnDetails;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.seq.TableTransactionLogFile;
 import io.questdb.cairo.wal.seq.TableTransactionLogV1;
+import io.questdb.cairo.wal.seq.TransactionLogCursor;
 import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.griffin.engine.ops.AlterOperationBuilder;
-import io.questdb.griffin.engine.table.parquet.PartitionDescriptor;
-import io.questdb.griffin.engine.table.parquet.PartitionEncoder;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Chars;
@@ -1947,6 +1948,96 @@ public class TableWriterTest extends AbstractCairoTest {
             } catch (CairoException ignore) {
             }
         }
+    }
+
+    @Test
+    public void testHousekeepDrainsAsyncCommandQueueOnCommit() throws Exception {
+        // Regression test for the housekeep() command-queue drain. A command published to
+        // the writer's async queue while the writer is busy (e.g. a storage policy command
+        // published to a writer held by a hot WAL apply loop, which never ticks the command
+        // queue itself) must be applied on the next commit rather than sitting unprocessed
+        // until the writer is returned to the pool. housekeep() runs on every commit and
+        // drains the queue.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tbl (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY");
+            TableToken token = engine.verifyTableName("tbl");
+
+            try (TableWriter writer = getWriter(token)) {
+                // Publish an ADD COLUMN command to the writer's own queue without ticking it.
+                AlterOperationBuilder builder = new AlterOperationBuilder();
+                builder.ofAddColumn(0, token, token.getTableId())
+                        .ofAddColumn("y", 0, ColumnType.INT, 0, false, IndexType.NONE, 0);
+                AlterOperation alterOp = builder.build();
+                alterOp.withSecurityContext(AllowAllSecurityContext.INSTANCE);
+                writer.publishAsyncWriterCommand(alterOp);
+
+                // The command is queued, not yet applied.
+                Assert.assertEquals(2, writer.getMetadata().getColumnCount());
+
+                // Commit some data. housekeep() runs on commit and must drain the queue,
+                // applying the queued ADD COLUMN. Without the drain the column stays missing.
+                TableWriter.Row row = writer.newRow(0L);
+                row.putInt(1, 42);
+                row.append();
+                writer.commit();
+
+                Assert.assertEquals(3, writer.getMetadata().getColumnCount());
+                Assert.assertTrue(writer.getColumnIndex("y") >= 0);
+            }
+        });
+    }
+
+    @Test
+    public void testHousekeepDrainsAsyncCommandQueueOnWalApply() throws Exception {
+        // Regression test for the housekeep() command-queue drain on the WAL apply path.
+        // The WAL apply loop holds the writer across many commits and never ticks the command
+        // queue itself. A command published while the writer is busy (e.g. a storage policy
+        // command published to a writer held by a hot WAL apply loop) must be applied on the
+        // next WAL commit via housekeep(), rather than sitting unprocessed until the writer is
+        // finally returned to the pool. The apply runs on a writer this test holds, so the
+        // pool-return tick (which would also drain the queue) cannot mask the bug.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tbl (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO tbl VALUES ('2022-02-24T00:00:00.000000Z', 1)");
+            drainWalQueue();
+
+            // Queue a second WAL transaction but do not apply it through the pool yet.
+            execute("INSERT INTO tbl VALUES ('2022-02-25T00:00:00.000000Z', 2)");
+
+            TableToken token = engine.verifyTableName("tbl");
+            try (TableWriter writer = getWriter(token)) {
+                // Publish an ADD COLUMN command to the held writer's queue without ticking it,
+                // mimicking a command published while the apply loop owns the writer.
+                AlterOperationBuilder builder = new AlterOperationBuilder();
+                builder.ofAddColumn(0, token, token.getTableId())
+                        .ofAddColumn("y", 0, ColumnType.INT, 0, false, IndexType.NONE, 0);
+                AlterOperation alterOp = builder.build();
+                alterOp.withSecurityContext(AllowAllSecurityContext.INSTANCE);
+                writer.publishAsyncWriterCommand(alterOp);
+                Assert.assertEquals(2, writer.getMetadata().getColumnCount());
+
+                // Apply the pending WAL transaction on the held writer. commitWalInsertTransactions()
+                // runs housekeep(), which must drain the queued ADD COLUMN.
+                final long seqTxn = writer.getAppliedSeqTxn() + 1;
+                try (TransactionLogCursor cursor = engine.getTableSequencerAPI().getCursor(token, writer.getAppliedSeqTxn())) {
+                    writer.readWalTxnDetails(cursor);
+                }
+                final WalTxnDetails details = writer.getWalTnxDetails();
+                final int walId = details.getWalId(seqTxn);
+                final int segmentId = details.getSegmentId(seqTxn);
+                try (Path walPath = new Path()) {
+                    walPath.of(configuration.getDbRoot()).concat(token).slash()
+                            .putAscii(WalUtils.WAL_NAME_BASE).put(walId).slash().put(segmentId);
+                    writer.commitWalInsertTransactions(walPath, seqTxn, TableWriterPressureControl.EMPTY);
+                }
+
+                // Without the housekeep drain the column would still be missing after the commit.
+                Assert.assertEquals(3, writer.getMetadata().getColumnCount());
+                Assert.assertTrue(writer.getColumnIndex("y") >= 0);
+                // The WAL transaction itself was applied.
+                Assert.assertEquals(seqTxn, writer.getAppliedSeqTxn());
+            }
+        });
     }
 
     @Test
