@@ -1426,6 +1426,11 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
         }
 
         @Override
+        protected Map newCompactionScratch() {
+            return MapFactory.createUnorderedMap(configuration, keyColumnTypes, mapValueTypes);
+        }
+
+        @Override
         public void computeNext(Record record) {
             // Welford's online algorithm: map stores [0]=mean, [1]=m2, [2]=count
             partitionByRecord.of(record);

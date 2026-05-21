@@ -359,6 +359,8 @@ public class RankFunctionFactory extends AbstractWindowFunctionFactory {
         private ArrayColumnTypes chainColumnTypes;
         private int chainTypeIndex;
         private int columnIndex;
+        // Reusable second map for the live-view frontier sweep; ping-pongs with map.
+        private Map compactionScratch;
         // Value-layout index of the lastActivityTs slot (live view). Lives
         // at chainTypeIndex + 2 when present, or is -1 for regular queries where
         // the slot is omitted.
@@ -409,6 +411,7 @@ public class RankFunctionFactory extends AbstractWindowFunctionFactory {
         public void close() {
             super.close();
             Misc.free(map);
+            Misc.free(compactionScratch);
             Misc.freeObjList(partitionByRecord.getFunctions());
             Misc.freeObjList(rankMaps);
         }
@@ -440,6 +443,23 @@ public class RankFunctionFactory extends AbstractWindowFunctionFactory {
             } finally {
                 Misc.free(scratch);
             }
+        }
+
+        @Override
+        public void retainPartitions(Map survivingKeys) {
+            // RankOverPartitionFunction implements WindowFunction directly (no
+            // BasePartitionedWindowFunction), so it overrides retainPartitions itself.
+            // The reusable scratch ping-pongs with map; only the first sweep allocates.
+            if (compactionScratch == null) {
+                compactionScratch = MapFactory.createUnorderedMap(configuration, keyColumnTypes, mapValueTypes);
+            } else {
+                compactionScratch.clear();
+            }
+            PartitionStateEvictor.rebuildKeepingMembers(map, compactionScratch, survivingKeys);
+            Map old = map;
+            map = compactionScratch;
+            compactionScratch = old;
+            tombstoneCount = 0;
         }
 
         @Override
@@ -683,6 +703,7 @@ public class RankFunctionFactory extends AbstractWindowFunctionFactory {
         @Override
         public void reset() {
             Misc.free(map);
+            compactionScratch = Misc.free(compactionScratch);
             Misc.freeObjListAndKeepObjects(rankMaps);
             rank = 0;
             sizeAfterLastEvict = 0;

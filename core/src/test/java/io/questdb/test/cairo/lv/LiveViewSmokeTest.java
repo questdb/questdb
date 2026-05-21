@@ -3553,6 +3553,87 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFrontierSweepDropsStalePartitionsAndRevivesCorrectly() throws Exception {
+        // The frontier sweep reclaims partitions whose bucket has fallen two
+        // buckets behind the current one, shrinking both the anchor map and each
+        // function's partition map (via the reused ping-pong scratch -- no
+        // per-sweep allocation). A dropped partition that later revives does so in
+        // a new bucket and starts fresh, which is the correct anchored-window reset.
+        //
+        // INT partition keys side-step the per-WAL-segment SYMBOL index collision.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_PARTITION_COMPACT_THRESHOLD, 2);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT, sym INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+                    "SELECT ts, sym, sum(x) OVER w AS s FROM base " +
+                    "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                setCurrentMicros(0L);
+                // Day 1 seeds sym 1, 2, 3. sym 2 and 3 never trade again (they
+                // will fall behind the frontier). sym 1 trades on day 2 and day 3.
+                execute("INSERT INTO base (ts, x, sym) VALUES " +
+                        "('2026-08-01T00:00:00.000000Z', 10, 1), " +
+                        "('2026-08-01T01:00:00.000000Z', 20, 2), " +
+                        "('2026-08-01T02:00:00.000000Z', 30, 3)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                setCurrentMicros(200_000L);
+                execute("INSERT INTO base (ts, x, sym) VALUES ('2026-08-02T00:00:00.000000Z', 11, 1)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
+                LiveViewWindow window = lv.getAnchorWindow();
+                Assert.assertNotNull(window);
+                // Frontier advanced day1 -> day2 (prevFrontier=day1). The sweep keeps
+                // current+previous bucket, so sym 2 and 3 (still on day 1 = prev) stay.
+                Assert.assertEquals("all partitions retained at the first advance", 3L, window.getAnchorMapSize());
+
+                // Day 3 for sym 1 advances the frontier day2 -> day3 (prevFrontier=day2).
+                // sym 2 and 3 are now on day 1, which is below the previous bucket,
+                // so the sweep drops them from the anchor map AND the sum's map.
+                setCurrentMicros(400_000L);
+                execute("INSERT INTO base (ts, x, sym) VALUES ('2026-08-03T00:00:00.000000Z', 12, 1)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                Assert.assertEquals("stale sym 2 and 3 swept; only sym 1 remains", 1L, window.getAnchorMapSize());
+                Assert.assertEquals(
+                        "the sum function map shrank in lockstep (reused scratch, no leak)",
+                        1L,
+                        window.getFunctions().getQuick(0).getPartitionMap().size()
+                );
+
+                // sym 2 revives on day 3 -- a brand new bucket, so it starts fresh
+                // at 99 (not 20 + 99). sym 1's day-3 running sum is just 12.
+                setCurrentMicros(600_000L);
+                execute("INSERT INTO base (ts, x, sym) VALUES ('2026-08-03T01:00:00.000000Z', 99, 2)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                assertSql(
+                        "ts\tsym\ts\n" +
+                                "2026-08-01T00:00:00.000000Z\t1\t10.0\n" +
+                                "2026-08-01T01:00:00.000000Z\t2\t20.0\n" +
+                                "2026-08-01T02:00:00.000000Z\t3\t30.0\n" +
+                                "2026-08-02T00:00:00.000000Z\t1\t11.0\n" +
+                                "2026-08-03T00:00:00.000000Z\t1\t12.0\n" +
+                                "2026-08-03T01:00:00.000000Z\t2\t99.0\n",
+                        "SELECT ts, sym, s FROM lv ORDER BY ts, sym"
+                );
+            }
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
     public void testCrossCycleAnchorMapPreserved() throws Exception {
         // A second refresh cycle that hits no anchor crossings
         // must not wipe the anchor map populated by the first cycle. Before

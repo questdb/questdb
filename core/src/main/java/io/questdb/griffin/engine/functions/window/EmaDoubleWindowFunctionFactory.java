@@ -330,6 +330,11 @@ public class EmaDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         }
 
         @Override
+        protected Map newCompactionScratch() {
+            return MapFactory.createUnorderedMap(configuration, keyColumnTypes, mapValueTypes);
+        }
+
+        @Override
         public void computeNext(Record record) {
             // map stores:
             // 0 - ema (double)
@@ -607,6 +612,11 @@ public class EmaDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
             } finally {
                 Misc.free(scratch);
             }
+        }
+
+        @Override
+        protected Map newCompactionScratch() {
+            return MapFactory.createUnorderedMap(configuration, keyColumnTypes, mapValueTypes);
         }
 
         @Override

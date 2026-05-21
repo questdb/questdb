@@ -41,6 +41,12 @@ import io.questdb.std.Misc;
 public abstract class BasePartitionedWindowFunction extends BaseWindowFunction implements Reopenable {
     protected final VirtualRecord partitionByRecord;
     protected final RecordSink partitionBySink;
+    // Reusable second partition-state Map for the frontier sweep. Allocated once
+    // (lazily, via newCompactionScratch) the first time retainPartitions runs, then
+    // cleared and reused on every subsequent sweep -- the two maps ping-pong so a
+    // sweep never allocates. Null until the first sweep, or for functions that opt
+    // out (newCompactionScratch returns null).
+    protected Map compactionScratch;
     // Non-final so subclasses can swap the partition state Map during
     // anchor-driven compaction (see compactPartitionMap on WindowFunction).
     protected Map map;
@@ -65,6 +71,7 @@ public abstract class BasePartitionedWindowFunction extends BaseWindowFunction i
     public void close() {
         super.close();
         Misc.free(map);
+        Misc.free(compactionScratch);
         Misc.freeObjList(partitionByRecord.getFunctions());
     }
 
@@ -114,8 +121,35 @@ public abstract class BasePartitionedWindowFunction extends BaseWindowFunction i
     }
 
     @Override
+    public void retainPartitions(Map survivingKeys) {
+        if (compactionScratch == null) {
+            // First sweep: allocate the reusable second map once. A null factory
+            // result means the function opts out of frontier compaction; its map
+            // keeps every partition (still correct -- a behind-frontier partition
+            // that revives does so in a new bucket and resetPartition zeroes it).
+            compactionScratch = newCompactionScratch();
+            if (compactionScratch == null) {
+                return;
+            }
+        } else {
+            // Discard the previous sweep's old map (held here as scratch) before
+            // reuse. Clearing up front -- rather than after the swap -- keeps the
+            // scratch consistent even if a prior sweep threw mid-rebuild.
+            compactionScratch.clear();
+        }
+        PartitionStateEvictor.rebuildKeepingMembers(map, compactionScratch, survivingKeys);
+        // Ping-pong: the rebuilt scratch becomes the live map; the old live map
+        // becomes the scratch for the next sweep. No allocation, no free.
+        Map old = map;
+        map = compactionScratch;
+        compactionScratch = old;
+        tombstoneCount = 0;
+    }
+
+    @Override
     public void reset() {
         Misc.free(map);
+        compactionScratch = Misc.free(compactionScratch);
         tombstoneCount = 0;
     }
 
@@ -141,5 +175,16 @@ public abstract class BasePartitionedWindowFunction extends BaseWindowFunction i
         super.toTop();
         Misc.clear(map);
         tombstoneCount = 0;
+    }
+
+    /**
+     * Returns a fresh, empty partition-state {@link Map} with this function's exact
+     * key/value layout, or {@code null} to opt out of the live-view frontier sweep.
+     * Anchored (UNBOUNDED PRECEDING ... CURRENT ROW) functions override this so
+     * {@link #retainPartitions(Map)} can rebuild the map keeping only the partitions
+     * the anchor map kept. The default {@code null} leaves the map untouched.
+     */
+    protected Map newCompactionScratch() {
+        return null;
     }
 }

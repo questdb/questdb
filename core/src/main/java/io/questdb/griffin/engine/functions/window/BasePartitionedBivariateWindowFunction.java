@@ -38,6 +38,9 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Misc;
 
 public abstract class BasePartitionedBivariateWindowFunction extends BaseBivariateWindowFunction implements Reopenable {
+    // Reusable second partition-state Map for the frontier sweep; ping-pongs with
+    // map so a sweep never allocates. See BasePartitionedWindowFunction.
+    protected Map compactionScratch;
     // Non-final so compactPartitionMap can swap the Map instance. Single-writer
     // (refresh worker), no synchronization needed.
     protected Map map;
@@ -65,6 +68,7 @@ public abstract class BasePartitionedBivariateWindowFunction extends BaseBivaria
     public void close() {
         super.close();
         Misc.free(map);
+        Misc.free(compactionScratch);
         Misc.freeObjList(partitionByRecord.getFunctions());
     }
 
@@ -105,6 +109,24 @@ public abstract class BasePartitionedBivariateWindowFunction extends BaseBivaria
     @Override
     public void reset() {
         Misc.free(map);
+        compactionScratch = Misc.free(compactionScratch);
+        tombstoneCount = 0;
+    }
+
+    @Override
+    public void retainPartitions(Map survivingKeys) {
+        if (compactionScratch == null) {
+            compactionScratch = newCompactionScratch();
+            if (compactionScratch == null) {
+                return;
+            }
+        } else {
+            compactionScratch.clear();
+        }
+        PartitionStateEvictor.rebuildKeepingMembers(map, compactionScratch, survivingKeys);
+        Map old = map;
+        map = compactionScratch;
+        compactionScratch = old;
         tombstoneCount = 0;
     }
 
@@ -113,5 +135,14 @@ public abstract class BasePartitionedBivariateWindowFunction extends BaseBivaria
         super.toTop();
         Misc.clear(map);
         tombstoneCount = 0;
+    }
+
+    /**
+     * Mirrors {@link BasePartitionedWindowFunction#newCompactionScratch()}: a fresh
+     * empty Map with this function's layout, or {@code null} to opt out of the
+     * live-view frontier sweep.
+     */
+    protected Map newCompactionScratch() {
+        return null;
     }
 }

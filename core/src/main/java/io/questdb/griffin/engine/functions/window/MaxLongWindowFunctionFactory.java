@@ -2557,6 +2557,11 @@ public class MaxLongWindowFunctionFactory extends AbstractWindowFunctionFactory 
             }
         }
 
+        @Override
+        protected Map newCompactionScratch() {
+            return MapFactory.createUnorderedMap(configuration, keyColumnTypes, mapValueTypes);
+        }
+
         /**
          * Advance aggregation for the current record: update and store the per-partition maximum.
          * <p>

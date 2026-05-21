@@ -80,4 +80,39 @@ public final class PartitionStateEvictor {
         }
         return kept;
     }
+
+    /**
+     * Iterates {@code src} and copies each entry whose key is present in
+     * {@code survivingKeys} into {@code dst}; entries absent from
+     * {@code survivingKeys} are dropped. {@code dst} must be empty on entry and
+     * built with the same key/value layout as {@code src}; {@code survivingKeys}
+     * must use the same key layout and {@link Map} implementation as {@code src}
+     * (the caller verifies this), because the membership probe copies {@code src}'s
+     * record key into a {@code survivingKeys} key via
+     * {@link MapRecord#copyToKey(MapKey)}, which casts to the concrete impl key.
+     * Returns the number of entries copied.
+     * <p>
+     * The live-view anchor runtime uses this to keep each anchored window
+     * function's partition map in lockstep with the anchor map after a
+     * frontier-gated sweep drops partitions whose bucket has fallen behind.
+     */
+    public static long rebuildKeepingMembers(Map src, Map dst, Map survivingKeys) {
+        MapRecordCursor cursor = src.getCursor();
+        MapRecord record = src.getRecord();
+        long kept = 0;
+        while (cursor.hasNext()) {
+            MapKey probeKey = survivingKeys.withKey();
+            record.copyToKey(probeKey);
+            if (probeKey.findValue() == null) {
+                continue;
+            }
+            long srcKeyHash = record.keyHashCode();
+            MapKey dstKey = dst.withKey();
+            record.copyToKey(dstKey);
+            MapValue dstValue = dstKey.createValue(srcKeyHash);
+            record.copyValue(dstValue);
+            kept++;
+        }
+        return kept;
+    }
 }

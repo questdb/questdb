@@ -347,6 +347,11 @@ public class VwemaDoubleWindowFunctionFactory extends AbstractWindowFunctionFact
         }
 
         @Override
+        protected Map newCompactionScratch() {
+            return MapFactory.createUnorderedMap(configuration, keyColumnTypes, mapValueTypes);
+        }
+
+        @Override
         public void computeNext(Record record) {
             // map stores:
             // 0 - numerator (double)
@@ -755,6 +760,11 @@ public class VwemaDoubleWindowFunctionFactory extends AbstractWindowFunctionFact
             } finally {
                 Misc.free(scratch);
             }
+        }
+
+        @Override
+        protected Map newCompactionScratch() {
+            return MapFactory.createUnorderedMap(configuration, keyColumnTypes, mapValueTypes);
         }
 
         @Override

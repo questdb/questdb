@@ -1680,6 +1680,11 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
         }
 
         @Override
+        protected Map newCompactionScratch() {
+            return MapFactory.createUnorderedMap(configuration, keyColumnTypes, mapValueTypes);
+        }
+
+        @Override
         public void computeNext(Record record) {
             // Welford's online algorithm: map stores [0]=meanX, [1]=sumXX, [2]=meanY, [3]=sumYY, [4]=sumXY, [5]=count
             partitionByRecord.of(record);

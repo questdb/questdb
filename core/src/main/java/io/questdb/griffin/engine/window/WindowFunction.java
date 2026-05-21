@@ -483,6 +483,23 @@ public interface WindowFunction extends Function {
         );
     }
 
+    /**
+     * Rebuilds the per-partition state {@link Map} to keep only partitions whose
+     * key is present in {@code survivingKeys}, dropping the rest. The live-view
+     * ANCHOR runtime ({@link io.questdb.cairo.lv.LiveViewWindow#compact()}) calls
+     * this after a frontier-gated sweep drops anchor-map partitions whose bucket
+     * has fallen behind the retained window, so each function's map stays in
+     * lockstep with the anchor map.
+     * <p>
+     * {@code survivingKeys} is the rebuilt anchor map; it shares this function's
+     * partition-by key layout and {@link Map} implementation — the caller verifies
+     * the impl match before dispatching, so the membership probe
+     * ({@link io.questdb.griffin.engine.functions.window.PartitionStateEvictor#rebuildKeepingMembers})
+     * never casts across impls. Default no-op for functions without per-partition state.
+     */
+    default void retainPartitions(Map survivingKeys) {
+    }
+
     /*
       Set index of record chain column used to store window function result.
      */

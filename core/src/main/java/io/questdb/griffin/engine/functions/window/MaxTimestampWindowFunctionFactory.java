@@ -2586,6 +2586,11 @@ public class MaxTimestampWindowFunctionFactory extends AbstractWindowFunctionFac
             }
         }
 
+        @Override
+        protected Map newCompactionScratch() {
+            return MapFactory.createUnorderedMap(configuration, keyColumnTypes, mapValueTypes);
+        }
+
         /**
          * Process the given record and update the per-partition maximum timestamp.
          * <p>

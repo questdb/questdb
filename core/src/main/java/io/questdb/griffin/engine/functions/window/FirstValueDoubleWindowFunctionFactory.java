@@ -2628,6 +2628,11 @@ public class FirstValueDoubleWindowFunctionFactory extends AbstractWindowFunctio
         }
 
         @Override
+        protected Map newCompactionScratch() {
+            return MapFactory.createUnorderedMap(configuration, keyColumnTypes, mapValueTypes);
+        }
+
+        @Override
         public void computeNext(Record record) {
             partitionByRecord.of(record);
             MapKey key = map.withKey();

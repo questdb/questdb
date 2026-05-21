@@ -145,6 +145,9 @@ public class RowNumberFunctionFactory implements FunctionFactory {
         private final int tsColumnIndex;
         private final ColumnTypes valueColumnTypes;
         private int columnIndex;
+        // Reusable second map for the live-view frontier sweep; ping-pongs with map
+        // so a sweep never allocates. Allocated once on the first sweep.
+        private Map compactionScratch;
         private Map map;
         private long rowNumber;
         private long sizeAfterLastEvict;
@@ -176,6 +179,7 @@ public class RowNumberFunctionFactory implements FunctionFactory {
         @Override
         public void close() {
             Misc.free(map);
+            Misc.free(compactionScratch);
             Misc.freeObjList(partitionByRecord.getFunctions());
         }
 
@@ -206,6 +210,23 @@ public class RowNumberFunctionFactory implements FunctionFactory {
             } finally {
                 Misc.free(scratch);
             }
+        }
+
+        @Override
+        public void retainPartitions(Map survivingKeys) {
+            // RowNumber implements WindowFunction directly (no BasePartitionedWindowFunction),
+            // so it overrides retainPartitions itself. The reusable scratch ping-pongs
+            // with map; only the first sweep allocates.
+            if (compactionScratch == null) {
+                compactionScratch = MapFactory.createUnorderedMap(configuration, keyColumnTypes, valueColumnTypes);
+            } else {
+                compactionScratch.clear();
+            }
+            PartitionStateEvictor.rebuildKeepingMembers(map, compactionScratch, survivingKeys);
+            Map old = map;
+            map = compactionScratch;
+            compactionScratch = old;
+            tombstoneCount = 0;
         }
 
         @Override
@@ -334,6 +355,7 @@ public class RowNumberFunctionFactory implements FunctionFactory {
         @Override
         public void reset() {
             map.close();
+            compactionScratch = Misc.free(compactionScratch);
             sizeAfterLastEvict = 0;
             tombstoneCount = 0;
         }
