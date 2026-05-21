@@ -41,6 +41,7 @@ import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cutlass.qwp.load.QwpRow;
 import io.questdb.test.cutlass.qwp.load.QwpTable;
 import io.questdb.test.tools.TestUtils;
+import org.junit.Before;
 import org.junit.Test;
 
 import java.io.File;
@@ -110,6 +111,22 @@ public class QwpIngressOracleFuzzTest extends AbstractCairoTest {
     };
     private static final String TABLE_NAME = "qwp_oracle_fuzz";
     private static final String TS_COLUMN = "ts";
+    private int recvChunk;
+    private int sendChunk;
+
+    @Before
+    public void setUp() {
+        super.setUp();
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        // Independent recv / send fragmentation chunks (asymmetric, min=1).
+        // Mirrors QwpSenderFuzzTest + QwpEgressFragmentationFuzzTest:
+        // chunk=1 makes every wire byte its own socket event, exposing
+        // park-resume bugs in the WS parser and the SF replay path.
+        recvChunk = 1 + rnd.nextInt(500);
+        sendChunk = 1 + rnd.nextInt(500);
+        LOG.info().$("QwpIngressOracleFuzzTest fragmentation recvChunk=").$(recvChunk)
+                .$(", sendChunk=").$(sendChunk).$();
+    }
 
     @Test
     public void testOracleAsyncConnectQueuesBeforeServerStarts() throws Exception {
@@ -159,7 +176,7 @@ public class QwpIngressOracleFuzzTest extends AbstractCairoTest {
 
             // Server stays unbuilt for now. We bind the port only once
             // the producers have queued their rows.
-            try (RestartableQwpServer server = new RestartableQwpServer(engine, configuration, port)) {
+            try (RestartableQwpServer server = new RestartableQwpServer(engine, configuration, port, recvChunk, sendChunk)) {
                 AtomicReferenceArray<Throwable> producerErrors = new AtomicReferenceArray<>(producerCount);
                 CountDownLatch producersDone = new CountDownLatch(producerCount);
                 CountDownLatch allEnqueued = new CountDownLatch(producerCount);
@@ -313,7 +330,7 @@ public class QwpIngressOracleFuzzTest extends AbstractCairoTest {
                 sfDirs[p] = freshSfDir("oracle-multi-p" + p);
             }
 
-            try (RestartableQwpServer server = new RestartableQwpServer(engine, configuration, port)) {
+            try (RestartableQwpServer server = new RestartableQwpServer(engine, configuration, port, recvChunk, sendChunk)) {
                 server.start();
 
                 AtomicReferenceArray<Throwable> producerErrors = new AtomicReferenceArray<>(producerCount);
@@ -476,7 +493,7 @@ public class QwpIngressOracleFuzzTest extends AbstractCairoTest {
                 sfDirs[p] = freshSfDir("oracle-poison-p" + p);
             }
 
-            try (RestartableQwpServer server = new RestartableQwpServer(engine, configuration, port)) {
+            try (RestartableQwpServer server = new RestartableQwpServer(engine, configuration, port, recvChunk, sendChunk)) {
                 server.start();
 
                 AtomicReferenceArray<Throwable> producerErrors = new AtomicReferenceArray<>(producerCount);
@@ -607,7 +624,7 @@ public class QwpIngressOracleFuzzTest extends AbstractCairoTest {
                 sfDirs[p] = freshSfDir("oracle-restart-p" + p);
             }
 
-            try (RestartableQwpServer server = new RestartableQwpServer(engine, configuration, port)) {
+            try (RestartableQwpServer server = new RestartableQwpServer(engine, configuration, port, recvChunk, sendChunk)) {
                 server.start();
 
                 AtomicReferenceArray<Throwable> producerErrors = new AtomicReferenceArray<>(producerCount);
@@ -687,6 +704,180 @@ public class QwpIngressOracleFuzzTest extends AbstractCairoTest {
                         bouncerDone.countDown();
                     }
                 }, "qwp-oracle-restart-bouncer");
+
+                for (Thread t : producers) t.start();
+                bouncer.start();
+
+                if (!bouncerDone.await(120, TimeUnit.SECONDS)) {
+                    throw new AssertionError("bouncer timed out");
+                }
+                if (bouncerError.get() != null) {
+                    throw new AssertionError("bouncer failed", bouncerError.get());
+                }
+
+                if (!producersDone.await(300, TimeUnit.SECONDS)) {
+                    throw new AssertionError("producers timed out");
+                }
+                for (int p = 0; p < producerCount; p++) {
+                    Throwable t = producerErrors.get(p);
+                    if (t != null) {
+                        throw new AssertionError("producer " + p + " failed", t);
+                    }
+                }
+
+                drainWalQueue();
+                engine.awaitTable(TABLE_NAME, 60, TimeUnit.SECONDS);
+
+                assertOracle(oracle);
+                assertSlotsPurged(sfDirs, slotCapFor(sfMaxBytes));
+            }
+        });
+    }
+
+    /**
+     * Regression for the QWP ingress handshake send-fragmentation bug fixed in
+     * {@code QwpWebSocketUpgradeProcessor.onHeadersReady} / {@code onRequestComplete}.
+     * <p>
+     * Before the fix, {@code onHeadersReady} called {@code rawSocket.send(bytesWritten)}
+     * directly and converted a partial-send {@code PeerIsSlowToReadException} into a
+     * fatal {@code HttpException("WebSocket 101 handshake blocked")}. The
+     * {@code HttpRequestProcessor} contract forbids PISR from {@code onHeadersReady},
+     * so when the send buffer was capped at a small size (here {@code sendChunk=125})
+     * the ~220-byte 101 response had to be split and the second-fragment send killed
+     * the connection. The client then waited forever for a handshake that never
+     * completed -- its drain at {@code close()} timed out with
+     * {@code publishedFsn=N, ackedFsn=-1}.
+     * <p>
+     * The fix defers the {@code rawSocket.send} from {@code onHeadersReady} to
+     * {@code onRequestComplete} (which is allowed to throw PISR), and finalises the
+     * protocol switch in {@code resumeSend} after the framework's park-on-write
+     * resumes the residual flush.
+     * <p>
+     * Both the master {@link Rnd} seed AND the fragmentation chunks are pinned so
+     * this regression case is bit-for-bit reproducible -- changing the chunks back
+     * to wide (or symmetric) values would mask the bug. The asymmetry
+     * ({@code recvChunk=460}, {@code sendChunk=125}) is the load-bearing detail:
+     * symmetric fragmentation at the same chunk doesn't always hit the second-send
+     * branch.
+     */
+    @Test
+    public void testOracleSenderRestartReplaysAcrossBouncesAsymmetricFragmentationRegression() throws Exception {
+        // Frozen chunks: shadows the per-instance recvChunk/sendChunk from
+        // setUp() so the random pick can't mask the regression.
+        final int regressionRecvChunk = 460;
+        final int regressionSendChunk = 125;
+        assertMemoryLeak(() -> {
+            Rnd master = TestUtils.generateRandom(LOG, 1951343273690333L, 1779330804963L);
+            createTargetTable();
+            int port = RestartableQwpServer.pickFreePort();
+
+            int producerCount = 2 + master.nextInt(2);              // 2..3
+            int rowsPerProducer = 600 + master.nextInt(900);        // 600..1499
+            int bounces = 1 + master.nextInt(2);                    // 1..2
+            long sfMaxBytes = pickSfMaxBytes(master);
+            LOG.info().$("restart-replay regression sf_max_bytes=").$(sfMaxBytes)
+                    .$(", recvChunk=").$(regressionRecvChunk)
+                    .$(", sendChunk=").$(regressionSendChunk).$();
+
+            long baseTsMicros = 1_700_000_000_000_000L;
+            QwpTable oracle = new QwpTable(TABLE_NAME);
+            QwpRow[][] perProducerRows = new QwpRow[producerCount][rowsPerProducer];
+            Rnd[] lifetimeRnds = new Rnd[producerCount];
+            for (int p = 0; p < producerCount; p++) {
+                lifetimeRnds[p] = new Rnd(master.nextLong(), master.nextLong());
+            }
+            Rnd bouncerRnd = new Rnd(master.nextLong(), master.nextLong());
+            long globalIdx = 0;
+            for (int p = 0; p < producerCount; p++) {
+                Rnd genRnd = new Rnd(master.nextLong(), master.nextLong());
+                for (int r = 0; r < rowsPerProducer; r++) {
+                    long id = globalIdx;
+                    long ts = baseTsMicros + globalIdx;
+                    QwpRow row = generateRow(genRnd, id, ts);
+                    perProducerRows[p][r] = row;
+                    oracle.addRow(row);
+                    globalIdx++;
+                }
+            }
+
+            String[] sfDirs = new String[producerCount];
+            for (int p = 0; p < producerCount; p++) {
+                sfDirs[p] = freshSfDir("oracle-restart-regression-p" + p);
+            }
+
+            try (RestartableQwpServer server = new RestartableQwpServer(
+                    engine, configuration, port, regressionRecvChunk, regressionSendChunk)) {
+                server.start();
+
+                AtomicReferenceArray<Throwable> producerErrors = new AtomicReferenceArray<>(producerCount);
+                CountDownLatch producersDone = new CountDownLatch(producerCount);
+                AtomicReference<Throwable> bouncerError = new AtomicReference<>();
+                CountDownLatch bouncerDone = new CountDownLatch(1);
+
+                Thread[] producers = new Thread[producerCount];
+                for (int p = 0; p < producerCount; p++) {
+                    final int pp = p;
+                    final QwpRow[] myRows = perProducerRows[pp];
+                    final String mySfDir = sfDirs[pp];
+                    final Rnd rnd = lifetimeRnds[pp];
+                    producers[p] = new Thread(() -> {
+                        try {
+                            int written = 0;
+                            while (written < myRows.length) {
+                                int chunk = 30 + rnd.nextInt(200);
+                                int end = Math.min(written + chunk, myRows.length);
+                                String connect = "ws::addr=localhost:" + port + ";sf_dir=" + mySfDir
+                                        + ";initial_connect_retry=async"
+                                        + ";reconnect_max_duration_millis=120000"
+                                        + ";sf_max_bytes=" + sfMaxBytes
+                                        + ";close_flush_timeout_millis=0;";
+                                try (Sender sender = Sender.fromConfig(connect)) {
+                                    for (int i = written; i < end; i++) {
+                                        myRows[i].publishTo(sender, TABLE_NAME, ID_COLUMN);
+                                    }
+                                    if (rnd.nextBoolean()) {
+                                        sender.flush();
+                                    }
+                                }
+                                written = end;
+                            }
+                            // Final drain pass with default close_flush_timeout: this is
+                            // the close() that historically threw the
+                            // "drain timed out [publishedFsn=N, ackedFsn=-1]" exception
+                            // because the server-side handshake never completed under
+                            // sendChunk=125.
+                            String drainConnect = "ws::addr=localhost:" + port + ";sf_dir=" + mySfDir
+                                    + ";initial_connect_retry=async"
+                                    + ";reconnect_max_duration_millis=120000"
+                                    + ";sf_max_bytes=" + sfMaxBytes + ";";
+                            try (Sender sender = Sender.fromConfig(drainConnect)) {
+                                sender.flush();
+                            }
+                        } catch (Throwable t) {
+                            producerErrors.set(pp, t);
+                        } finally {
+                            producersDone.countDown();
+                            Path.clearThreadLocals();
+                        }
+                    }, "qwp-oracle-restart-regression-p" + pp);
+                }
+
+                Thread bouncer = new Thread(() -> {
+                    try {
+                        Os.sleep(200);
+                        for (int i = 0; i < bounces; i++) {
+                            LOG.info().$("restart-regression bounce ").$(i + 1).$('/').$(bounces).$();
+                            server.stop();
+                            Os.sleep(80 + bouncerRnd.nextInt(120));
+                            server.start();
+                            Os.sleep(300 + bouncerRnd.nextInt(400));
+                        }
+                    } catch (Throwable t) {
+                        bouncerError.set(t);
+                    } finally {
+                        bouncerDone.countDown();
+                    }
+                }, "qwp-oracle-restart-regression-bouncer");
 
                 for (Thread t : producers) t.start();
                 bouncer.start();

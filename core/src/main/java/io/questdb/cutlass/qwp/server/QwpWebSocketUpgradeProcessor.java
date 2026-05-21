@@ -319,32 +319,41 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
         if (bytesWritten <= 0) {
             throw responseDoesNotFitSendBuffer(context.getFd(), "101 handshake response", bufferSize, requiredHandshakeSize);
         }
-        try {
-            rawSocket.send(bytesWritten);
-        } catch (PeerIsSlowToReadException e) {
-            // Handshake blocked — shouldn't happen on a fresh connection.
-            // Throw HttpException so handleClientRecv disconnects the connection
-            // rather than leaving the buffer in an inconsistent state.
-            throw HttpException.instance("WebSocket 101 handshake blocked");
-        }
-        // PeerDisconnectedException propagates to handleClientRecv → disconnectHttp()
-        state.setWsHandshakeSent(true);
-        LOG.info().$("WebSocket handshake sent [fd=").$(context.getFd()).I$();
-
-        // Switch to WebSocket protocol - this tells the framework to bypass HTTP parsing
-        context.switchProtocol();
+        // The HttpRequestProcessor contract forbids PeerIsSlowToReadException
+        // from onHeadersReady, so we defer the raw-socket send to
+        // onRequestComplete where PISR propagates cleanly into the framework's
+        // park-on-write path. State carries the byte count across the two
+        // calls (the framework invokes them back-to-back in handleClientRecv).
+        // Without this deferral a small send-fragmentation cap (e.g.
+        // DEBUG_HTTP_FORCE_SEND_FRAGMENTATION_CHUNK_SIZE=125 with a ~220-byte
+        // response) would partial-send and silently drop the rest, leaving
+        // the client waiting on a handshake that never completes.
+        state.setPendingHandshakeBytes(bytesWritten);
+        state.setHandshakeFlushPending(true);
     }
 
     @Override
-    public void onRequestComplete(HttpConnectionContext context) {
-        // For WebSocket, after the handshake is sent, we just return normally.
-        // The framework will call reset() and then loop back to handleClientRecv().
-        // Since we called switchProtocol() in onHeadersReady, the framework will
-        // delegate to resumeRecv instead of parsing more HTTP requests.
+    public void onRequestComplete(HttpConnectionContext context)
+            throws PeerDisconnectedException, PeerIsSlowToReadException {
         QwpProcessorState state = LV.get(context);
-        if (state != null && state.isWsHandshakeSent()) {
-            LOG.debug().$("WebSocket handshake complete, ready for frames [fd=").$(context.getFd()).I$();
+        if (state == null || !state.isHandshakeFlushPending()) {
+            // Either we're already past the handshake (post-protocol-switch
+            // onRequestComplete after a recv cycle) or onHeadersReady
+            // short-circuited (validation error / role reject) without
+            // setting the deferred flush.
+            if (state != null && state.isWsHandshakeSent()) {
+                LOG.debug().$("WebSocket handshake complete, ready for frames [fd=").$(context.getFd()).I$();
+            }
+            return;
         }
+        HttpRawSocket rawSocket = context.getRawResponseSocket();
+        // rawSocket.send may park us when send fragmentation forces a
+        // multi-fragment write. PISR propagates to handleClientRecv which
+        // parks the connection for write and schedules resumeSend; resumeSend
+        // finalises the protocol switch after the rest of the handshake
+        // bytes flush.
+        rawSocket.send(state.getPendingHandshakeBytes());
+        finalizeHandshake(context, state);
     }
 
     @Override
@@ -431,6 +440,17 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
             throw ServerDisconnectException.INSTANCE;
         }
 
+        // If the 101 handshake response was parked mid-write (small send
+        // fragmentation cap), flush the residual bytes first and finalise
+        // the protocol switch. The connection is still in HTTP mode at this
+        // point; finalizeHandshake() flips to WebSocket so the next recv
+        // parses frames rather than HTTP.
+        if (state.isHandshakeFlushPending()) {
+            context.resumeResponseSend();
+            finalizeHandshake(context, state);
+            return;
+        }
+
         switch (state.getSendState()) {
             case QwpProcessorState.SEND_STATE_READY -> {
             }
@@ -494,6 +514,16 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
                 throw ServerDisconnectException.INSTANCE;
             }
         }
+    }
+
+    private static void finalizeHandshake(HttpConnectionContext context, QwpProcessorState state) {
+        state.setWsHandshakeSent(true);
+        state.setHandshakeFlushPending(false);
+        state.setPendingHandshakeBytes(0);
+        LOG.info().$("WebSocket handshake sent [fd=").$(context.getFd()).I$();
+        // Switch to WebSocket protocol -- the framework now routes recvs to
+        // resumeRecv (frame parser) instead of HTTP request parsing.
+        context.switchProtocol();
     }
 
     private static int badRequestResponseSize(String reason) {

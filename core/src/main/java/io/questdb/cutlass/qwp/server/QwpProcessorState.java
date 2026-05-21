@@ -93,10 +93,22 @@ public class QwpProcessorState implements QuietCloseable, ConnectionAware {
     private byte deferredErrorStatus;
     private boolean durableAckEnabled;
     private long fd = -1;
+    // Whether onHeadersReady wrote the 101 bytes into the send buffer but
+    // deferred the actual rawSocket.send to onRequestComplete. Set true in
+    // onHeadersReady, cleared in finalizeHandshake() after the send (and any
+    // resumeSend re-flush) completes. The contract that onHeadersReady cannot
+    // throw PeerIsSlowToReadException means a small send-fragmentation cap
+    // (DEBUG_HTTP_FORCE_SEND_FRAGMENTATION_CHUNK_SIZE) could otherwise drop
+    // the second-fragment send without ever surfacing to the park/resume path.
+    private boolean handshakeFlushPending;
     private long highestProcessedSequence = -1;
     private long lastAckedSequence = -1;
     private long messageSequence;
     private byte negotiatedVersion = QwpConstants.VERSION_1;
+    // Bytes that onHeadersReady staged in the raw response buffer waiting to
+    // be flushed by onRequestComplete. Carried across the two calls so
+    // resumeSend can finalise after a parked write.
+    private int pendingHandshakeBytes;
     private int recvBufferLen;
     private long resumeAckSequence = -1;
     private SecurityContext securityContext;
@@ -169,6 +181,8 @@ public class QwpProcessorState implements QuietCloseable, ConnectionAware {
         currentStatus = Status.OK;
         bufferPosition = 0;
         streamingDecoder.reset();
+        handshakeFlushPending = false;
+        pendingHandshakeBytes = 0;
     }
 
     @Override
@@ -299,6 +313,10 @@ public class QwpProcessorState implements QuietCloseable, ConnectionAware {
         return durableAckEnabled;
     }
 
+    public boolean isHandshakeFlushPending() {
+        return handshakeFlushPending;
+    }
+
     public boolean isOk() {
         return currentStatus == Status.OK;
     }
@@ -313,6 +331,10 @@ public class QwpProcessorState implements QuietCloseable, ConnectionAware {
 
     public boolean isWsHandshakeSent() {
         return wsHandshakeSent;
+    }
+
+    public int getPendingHandshakeBytes() {
+        return pendingHandshakeBytes;
     }
 
     public long nextMessageSequence() {
@@ -620,6 +642,14 @@ public class QwpProcessorState implements QuietCloseable, ConnectionAware {
 
     public void setNegotiatedVersion(byte negotiatedVersion) {
         this.negotiatedVersion = negotiatedVersion;
+    }
+
+    public void setHandshakeFlushPending(boolean pending) {
+        this.handshakeFlushPending = pending;
+    }
+
+    public void setPendingHandshakeBytes(int bytes) {
+        this.pendingHandshakeBytes = bytes;
     }
 
     public void setRecvBufferLen(int recvBufferLen) {

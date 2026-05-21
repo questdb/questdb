@@ -53,15 +53,37 @@ public final class RestartableQwpServer implements AutoCloseable {
     private static final Log LOG = LogFactory.getLog(RestartableQwpServer.class);
     private final CairoConfiguration cairoConfiguration;
     private final CairoEngine engine;
+    private final int forceRecvFragmentationChunkSize;
+    private final int forceSendFragmentationChunkSize;
     private final int port;
     private final AtomicBoolean running = new AtomicBoolean();
     private HttpServer server;
     private TestWorkerPool workerPool;
 
     public RestartableQwpServer(CairoEngine engine, CairoConfiguration cairoConfiguration, int port) {
+        this(engine, cairoConfiguration, port, Integer.MAX_VALUE, Integer.MAX_VALUE);
+    }
+
+    /**
+     * Overload that forces per-socket recv / send fragmentation at the HTTP
+     * context level. Pass {@link Integer#MAX_VALUE} for either side to leave
+     * that direction unfragmented. The chunk sizes are stored on this
+     * instance, so they persist across {@link #stop()} / {@link #start()}
+     * cycles -- restart-fuzz tests get the same fragmentation behaviour on
+     * every restart.
+     */
+    public RestartableQwpServer(
+            CairoEngine engine,
+            CairoConfiguration cairoConfiguration,
+            int port,
+            int forceRecvFragmentationChunkSize,
+            int forceSendFragmentationChunkSize
+    ) {
         this.engine = engine;
         this.cairoConfiguration = cairoConfiguration;
         this.port = port;
+        this.forceRecvFragmentationChunkSize = forceRecvFragmentationChunkSize;
+        this.forceSendFragmentationChunkSize = forceSendFragmentationChunkSize;
     }
 
     /**
@@ -87,7 +109,17 @@ public final class RestartableQwpServer implements AutoCloseable {
         }
         HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(
                 cairoConfiguration,
-                new DefaultHttpContextConfiguration()
+                new DefaultHttpContextConfiguration() {
+                    @Override
+                    public int getForceRecvFragmentationChunkSize() {
+                        return forceRecvFragmentationChunkSize;
+                    }
+
+                    @Override
+                    public int getForceSendFragmentationChunkSize() {
+                        return forceSendFragmentationChunkSize;
+                    }
+                }
         ) {
             @Override
             public int getBindPort() {
