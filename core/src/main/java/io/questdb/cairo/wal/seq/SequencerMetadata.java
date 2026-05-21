@@ -260,25 +260,21 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
 
     public void open(Path path, int pathLen, TableToken tableToken) {
         reset();
-        openSmallFile(ff, path, pathLen, roMetaMem, META_FILE_NAME, MemoryTag.MMAP_SEQUENCER_METADATA);
+        open0(path, pathLen, tableToken);
+    }
 
-        // get written data size
-        if (!readonly) {
-            metaMem.jumpTo(SEQ_META_OFFSET_WAL_VERSION);
-            int size = metaMem.getInt(0);
-            metaMem.jumpTo(size);
-        }
-
-        loadSequencerMetadata(path, roMetaMem);
-        structureVersion.set(roMetaMem.getLong(SEQ_META_OFFSET_STRUCTURE_VERSION));
-        columnCount = columnMetadata.size();
-        timestampIndex = roMetaMem.getInt(SEQ_META_OFFSET_TIMESTAMP_INDEX);
-        tableId = roMetaMem.getInt(SEQ_META_TABLE_ID);
-        this.tableToken = tableToken;
-
-        if (readonly) {
-            // close early
-            roMetaMem.close();
+    public void openTableSequencerMetadata(Path path, int pathLen, TableToken tableToken) {
+        try {
+            open(path, pathLen, tableToken);
+        } catch (CairoException ex) {
+            if (ex.isMetadataVersionMismatch()
+                    || ex.isSequencerMetadataOpenFailed()
+                    || (!ex.isFileCannotRead() && !ex.isFileTooSmall() && !ex.isMetadataValidation())) {
+                throw ex;
+            }
+            final int errno = ex.getErrno();
+            final String message = ex.getFlyweightMessage().toString();
+            throw CairoException.sequencerMetadataOpenFailed(tableToken, errno, message);
         }
     }
 
@@ -369,6 +365,29 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
 
         this.structureVersion.set(0);
         columnCount = columnMetadata.size();
+    }
+
+    private void open0(Path path, int pathLen, TableToken tableToken) {
+        openSmallFile(ff, path, pathLen, roMetaMem, META_FILE_NAME, MemoryTag.MMAP_SEQUENCER_METADATA);
+
+        // get written data size
+        if (!readonly) {
+            metaMem.jumpTo(SEQ_META_OFFSET_WAL_VERSION);
+            int size = metaMem.getInt(0);
+            metaMem.jumpTo(size);
+        }
+
+        loadSequencerMetadata(path, roMetaMem);
+        structureVersion.set(roMetaMem.getLong(SEQ_META_OFFSET_STRUCTURE_VERSION));
+        columnCount = columnMetadata.size();
+        timestampIndex = roMetaMem.getInt(SEQ_META_OFFSET_TIMESTAMP_INDEX);
+        tableId = roMetaMem.getInt(SEQ_META_TABLE_ID);
+        this.tableToken = tableToken;
+
+        if (readonly) {
+            // close early
+            roMetaMem.close();
+        }
     }
 
     private void loadSequencerMetadata(Utf8Sequence metaPath, MemoryMR metaMem) {

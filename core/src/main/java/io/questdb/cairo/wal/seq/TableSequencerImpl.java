@@ -37,7 +37,6 @@ import io.questdb.cairo.wal.WalUtils;
 import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.Chars;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
@@ -54,9 +53,7 @@ import static io.questdb.cairo.wal.WalUtils.SEQ_DIR;
 import static io.questdb.cairo.wal.WalUtils.WAL_INDEX_FILE_NAME;
 
 public class TableSequencerImpl implements TableSequencer {
-    private static final String FILE_TOO_SMALL_MESSAGE = "File is too small";
     private static final Log LOG = LogFactory.getLog(TableSequencerImpl.class);
-    private static final String METADATA_VERSION_MISMATCH_MESSAGE = "metadata version does not match runtime version";
     private final static BinaryAlterSerializer alterCommandWalFormatter = new BinaryAlterSerializer();
     private final CairoEngine engine;
     private final SequencerMetadata metadata;
@@ -134,7 +131,9 @@ public class TableSequencerImpl implements TableSequencer {
             if (ex.isTableDropped()) {
                 throw ex;
             }
-            if (ex.isFileCannotRead() && engine.getTableTokenByDirName(tableToken.getDirName()) == null) {
+            final boolean droppedTableMetadataMissing = (ex.isFileCannotRead() || ex.isSequencerMetadataOpenFailed())
+                    && engine.getTableTokenByDirName(tableToken.getDirName()) == null;
+            if (droppedTableMetadataMissing) {
                 LOG.info().$("could not open sequencer, table is dropped [table=").$(tableToken)
                         .$(", path=").$(path)
                         .$(", error=").$safe(ex.getMessage())
@@ -469,13 +468,6 @@ public class TableSequencerImpl implements TableSequencer {
         path.trimTo(rootLen);
     }
 
-    private boolean isRecoverableSequencerMetadataOpenFailure(CairoException ex) {
-        // Future-format metadata is not a torn write; rebuilding it with this binary would risk downgrading it.
-        return ex.isFileCannotRead()
-                || Chars.startsWith(ex.getFlyweightMessage(), FILE_TOO_SMALL_MESSAGE)
-                || (ex.isMetadataValidation() && !Chars.contains(ex.getFlyweightMessage(), METADATA_VERSION_MISMATCH_MESSAGE));
-    }
-
     private long nextTxn(
             int walId,
             int segmentId,
@@ -505,9 +497,9 @@ public class TableSequencerImpl implements TableSequencer {
 
     private void openOrRecoverMetadata(long committedStructureVersion) {
         try {
-            metadata.open(path, rootLen, tableToken);
+            metadata.openTableSequencerMetadata(path, rootLen, tableToken);
         } catch (CairoException ex) {
-            if (tableTransactionLog.isDropped() || !isRecoverableSequencerMetadataOpenFailure(ex)) {
+            if (tableTransactionLog.isDropped() || !ex.isSequencerMetadataOpenFailed()) {
                 throw ex;
             }
             LOG.critical().$("could not open sequencer metadata, rebuilding from transaction log [table=").$(tableToken)

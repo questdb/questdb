@@ -39,6 +39,7 @@ import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.cairo.wal.WalPurgeJob;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.WalWriter;
+import io.questdb.cairo.wal.seq.SequencerMetadata;
 import io.questdb.cairo.wal.seq.TableTransactionLog;
 import io.questdb.cairo.wal.seq.TableTransactionLogFile;
 import io.questdb.cairo.wal.seq.TransactionLogCursor;
@@ -247,6 +248,17 @@ public class TableSequencerImplTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testOpenRebuildsCreateTimeCoveringIndexV1() throws Exception {
+        testOpenRebuildsCreateTimeCoveringIndex();
+    }
+
+    @Test
+    public void testOpenRebuildsCreateTimeCoveringIndexV2() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, 10);
+        testOpenRebuildsCreateTimeCoveringIndex();
+    }
+
+    @Test
     public void testOpenRebuildsSequencerMetaAheadOfTxnLogV1() throws Exception {
         testOpenRebuildsSequencerMetaAheadOfTxnLog();
     }
@@ -269,17 +281,6 @@ public class TableSequencerImplTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testOpenRebuildsCreateTimeCoveringIndexV1() throws Exception {
-        testOpenRebuildsCreateTimeCoveringIndex();
-    }
-
-    @Test
-    public void testOpenRebuildsCreateTimeCoveringIndexV2() throws Exception {
-        node1.setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, 10);
-        testOpenRebuildsCreateTimeCoveringIndex();
-    }
-
-    @Test
     public void testOpenRecoversCommittedRenameWhenRegistryAlreadyRenamedV1() throws Exception {
         testOpenRecoversCommittedRenameWhenRegistryAlreadyRenamed();
     }
@@ -299,6 +300,37 @@ public class TableSequencerImplTest extends AbstractCairoTest {
     public void testOpenRepairsSequencerMetaBehindTxnLogV2() throws Exception {
         node1.setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, 10);
         testOpenRepairsSequencerMetaBehindTxnLog();
+    }
+
+    @Test
+    public void testOpenSequencerAfterDropWithBrokenMetaTranslatesToTableDropped() throws Exception {
+        assertMemoryLeak(() -> {
+            String tableName = testName.getMethodName();
+            execute("create table " + tableName + " (i int, ts timestamp) timestamp(ts) partition by day WAL");
+            TableToken staleToken = engine.verifyTableName(tableName);
+
+            execute("drop table " + tableName);
+            drainWalQueue();
+
+            Assert.assertNull(
+                    "test setup: dropped table reverse-map entry is still present",
+                    engine.getTableTokenByDirName(staleToken.getDirName())
+            );
+
+            rewriteSequencerMetaSize(staleToken, 0);
+            engine.clear();
+
+            try {
+                engine.getTableSequencerAPI().getNextWalId(staleToken);
+                Assert.fail("Expected CairoException with isTableDropped()");
+            } catch (CairoException ex) {
+                Assert.assertTrue(
+                        "Expected isTableDropped() but got errno=" + ex.getErrno()
+                                + ", msg=" + ex.getFlyweightMessage(),
+                        ex.isTableDropped()
+                );
+            }
+        });
     }
 
     @Test
@@ -373,6 +405,27 @@ public class TableSequencerImplTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testOpenTableSequencerMetadataWrapsBrokenMeta() throws Exception {
+        assertMemoryLeak(() -> {
+            String tableName = testName.getMethodName();
+            TableToken tableToken = createWalTable(tableName);
+            addIntColumn(tableToken, "c1");
+            engine.clear();
+            rewriteSequencerMetaSize(tableToken, 0);
+
+            try (Path path = new Path(); SequencerMetadata metadata = new SequencerMetadata(configuration, true)) {
+                pathToSequencerPath(path, tableToken);
+                CairoException ex = Assert.assertThrows(
+                        CairoException.class,
+                        () -> metadata.openTableSequencerMetadata(path, path.size(), tableToken)
+                );
+                Assert.assertTrue(ex.isSequencerMetadataOpenFailed());
+                TestUtils.assertContains(ex.getFlyweightMessage(), "File is too small");
+            }
+        });
+    }
+
+    @Test
     public void testReloadRebuildsSequencerMetaAheadOfTxnLogV1() throws Exception {
         testReloadRebuildsSequencerMetaAheadOfTxnLog();
     }
@@ -429,6 +482,24 @@ public class TableSequencerImplTest extends AbstractCairoTest {
         }
     }
 
+    private void assertInitialSequencerMetadataCoveringIndexIncludes(TableToken tableToken, String indexedColumn, String coveringColumn) {
+        try (Path path = new Path(); TableReaderMetadata metadata = new TableReaderMetadata(engine.getConfiguration())) {
+            pathToSequencerFile(path, tableToken, WalUtils.INITIAL_META_FILE_NAME);
+            metadata.loadMetadata(path.$());
+            int indexedColumnIndex = metadata.getColumnIndexQuiet(indexedColumn);
+            int coveringColumnIndex = metadata.getColumnIndexQuiet(coveringColumn);
+            Assert.assertTrue("expected initial indexed column to exist: " + indexedColumn, indexedColumnIndex > -1);
+            Assert.assertTrue("expected initial covering column to exist: " + coveringColumn, coveringColumnIndex > -1);
+
+            IntList coveringIndices = metadata.getColumnMetadata(indexedColumnIndex).getCoveringColumnIndices();
+            Assert.assertNotNull("expected initial INCLUDE list to exist for column: " + indexedColumn, coveringIndices);
+            Assert.assertTrue(
+                    "expected initial INCLUDE list for " + indexedColumn + " to contain " + coveringColumn,
+                    coveringIndices.contains(metadata.getWriterIndex(coveringColumnIndex))
+            );
+        }
+    }
+
     private void assertMaxStructureVersion(TableToken tableToken, long expectedStructureVersion) {
         try (Path path = new Path()) {
             pathToSequencerPath(path, tableToken);
@@ -436,18 +507,6 @@ public class TableSequencerImplTest extends AbstractCairoTest {
                     expectedStructureVersion,
                     TableTransactionLog.readMaxStructureVersion(engine.getConfiguration().getFilesFacade(), path)
             );
-        }
-    }
-
-    private void assertSequencerMetadata(TableToken tableToken, long expectedVersion, String[] presentColumns, String[] absentColumns) {
-        try (TableRecordMetadata metadata = engine.getSequencerMetadata(tableToken)) {
-            Assert.assertEquals(expectedVersion, metadata.getMetadataVersion());
-            for (int i = 0, n = presentColumns.length; i < n; i++) {
-                assertColumn(metadata, presentColumns[i], true);
-            }
-            for (int i = 0, n = absentColumns.length; i < n; i++) {
-                assertColumn(metadata, absentColumns[i], false);
-            }
         }
     }
 
@@ -467,6 +526,24 @@ public class TableSequencerImplTest extends AbstractCairoTest {
         }
     }
 
+    private void assertSequencerMetadata(TableToken tableToken, long expectedVersion, String[] presentColumns, String[] absentColumns) {
+        try (TableRecordMetadata metadata = engine.getSequencerMetadata(tableToken)) {
+            Assert.assertEquals(expectedVersion, metadata.getMetadataVersion());
+            for (int i = 0, n = presentColumns.length; i < n; i++) {
+                assertColumn(metadata, presentColumns[i], true);
+            }
+            for (int i = 0, n = absentColumns.length; i < n; i++) {
+                assertColumn(metadata, absentColumns[i], false);
+            }
+        }
+    }
+
+    private void assertSequencerTableName(TableToken tableToken, String expectedTableName) {
+        try (TableRecordMetadata metadata = engine.getSequencerMetadata(tableToken)) {
+            Assert.assertEquals(expectedTableName, metadata.getTableToken().getTableName());
+        }
+    }
+
     private void assertTableCoveringIndexIncludes(String tableName, String indexedColumn, String coveringColumn) {
         try (TableReader reader = engine.getReader(tableName)) {
             TableRecordMetadata metadata = reader.getMetadata();
@@ -481,30 +558,6 @@ public class TableSequencerImplTest extends AbstractCairoTest {
                     "expected table INCLUDE list for " + indexedColumn + " to contain " + coveringColumn,
                     coveringIndices.contains(metadata.getWriterIndex(coveringColumnIndex))
             );
-        }
-    }
-
-    private void assertInitialSequencerMetadataCoveringIndexIncludes(TableToken tableToken, String indexedColumn, String coveringColumn) {
-        try (Path path = new Path(); TableReaderMetadata metadata = new TableReaderMetadata(engine.getConfiguration())) {
-            pathToSequencerFile(path, tableToken, WalUtils.INITIAL_META_FILE_NAME);
-            metadata.loadMetadata(path.$());
-            int indexedColumnIndex = metadata.getColumnIndexQuiet(indexedColumn);
-            int coveringColumnIndex = metadata.getColumnIndexQuiet(coveringColumn);
-            Assert.assertTrue("expected initial indexed column to exist: " + indexedColumn, indexedColumnIndex > -1);
-            Assert.assertTrue("expected initial covering column to exist: " + coveringColumn, coveringColumnIndex > -1);
-
-            IntList coveringIndices = metadata.getColumnMetadata(indexedColumnIndex).getCoveringColumnIndices();
-            Assert.assertNotNull("expected initial INCLUDE list to exist for column: " + indexedColumn, coveringIndices);
-            Assert.assertTrue(
-                    "expected initial INCLUDE list for " + indexedColumn + " to contain " + coveringColumn,
-                    coveringIndices.contains(metadata.getWriterIndex(coveringColumnIndex))
-            );
-        }
-    }
-
-    private void assertSequencerTableName(TableToken tableToken, String expectedTableName) {
-        try (TableRecordMetadata metadata = engine.getSequencerMetadata(tableToken)) {
-            Assert.assertEquals(expectedTableName, metadata.getTableToken().getTableName());
         }
     }
 
@@ -654,6 +707,7 @@ public class TableSequencerImplTest extends AbstractCairoTest {
                 engine.getTableSequencerAPI().openSequencer(tableToken);
                 Assert.fail("Expected sequencer open to fail");
             } catch (CairoException ex) {
+                Assert.assertTrue(ex.isMetadataVersionMismatch());
                 TestUtils.assertContains(
                         ex.getFlyweightMessage(),
                         "metadata version does not match runtime version"
@@ -683,6 +737,28 @@ public class TableSequencerImplTest extends AbstractCairoTest {
             addIntColumn(tableToken, "c3");
             assertSequencerMetadata(tableToken, 2, new String[]{"c1", "c3"}, new String[]{"c2"});
             assertMaxStructureVersion(tableToken, 2);
+        });
+    }
+
+    private void testOpenRebuildsCreateTimeCoveringIndex() throws Exception {
+        assertMemoryLeak(() -> {
+            String tableName = testName.getMethodName();
+            TableToken tableToken = createWalTableWithCoveringIndex(tableName);
+            assertTableCoveringIndexIncludes(tableName, "sym", "price");
+            assertInitialSequencerMetadataCoveringIndexIncludes(tableToken, "sym", "price");
+
+            engine.clear();
+            rewriteSequencerMetaSize(tableToken, 0);
+
+            engine.getTableSequencerAPI().openSequencer(tableToken);
+            engine.clear();
+            assertSequencerMetadata(tableToken, 0, new String[]{"sym", "price"}, new String[0]);
+            assertSequencerCoveringIndexIncludes(tableToken, "sym", "price");
+
+            addIntColumn(tableToken, "c1");
+            assertSequencerMetadata(tableToken, 1, new String[]{"sym", "price", "c1"}, new String[0]);
+            assertSequencerCoveringIndexIncludes(tableToken, "sym", "price");
+            assertMaxStructureVersion(tableToken, 1);
         });
     }
 
@@ -723,28 +799,6 @@ public class TableSequencerImplTest extends AbstractCairoTest {
             addIntColumn(tableToken, "c3");
             assertSequencerMetadata(tableToken, 3, new String[]{"c1", "c2", "c3"}, new String[0]);
             assertMaxStructureVersion(tableToken, 3);
-        });
-    }
-
-    private void testOpenRebuildsCreateTimeCoveringIndex() throws Exception {
-        assertMemoryLeak(() -> {
-            String tableName = testName.getMethodName();
-            TableToken tableToken = createWalTableWithCoveringIndex(tableName);
-            assertTableCoveringIndexIncludes(tableName, "sym", "price");
-            assertInitialSequencerMetadataCoveringIndexIncludes(tableToken, "sym", "price");
-
-            engine.clear();
-            rewriteSequencerMetaSize(tableToken, 0);
-
-            engine.getTableSequencerAPI().openSequencer(tableToken);
-            engine.clear();
-            assertSequencerMetadata(tableToken, 0, new String[]{"sym", "price"}, new String[0]);
-            assertSequencerCoveringIndexIncludes(tableToken, "sym", "price");
-
-            addIntColumn(tableToken, "c1");
-            assertSequencerMetadata(tableToken, 1, new String[]{"sym", "price", "c1"}, new String[0]);
-            assertSequencerCoveringIndexIncludes(tableToken, "sym", "price");
-            assertMaxStructureVersion(tableToken, 1);
         });
     }
 
