@@ -937,7 +937,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     }
 
     private void alterTableAddColumn(
-            SecurityContext securityContext,
+            SqlExecutionContext executionContext,
             int tableNamePosition,
             TableToken tableToken,
             TableRecordMetadata tableMetadata
@@ -1034,13 +1034,13 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
             semicolonPos = Chars.equals(tok, ';') ? lexer.lastTokenPosition() : -1;
             if (semicolonPos < 0 && !Chars.equals(tok, ',')) {
-                addColumnSuffix(securityContext, tok, tableToken, alterOperationBuilder);
+                addColumnSuffix(executionContext, tok, tableToken, alterOperationBuilder);
                 compiledQuery.ofAlter(alterOperationBuilder.build());
                 return;
             }
         } while (true);
 
-        addColumnSuffix(securityContext, null, tableToken, alterOperationBuilder);
+        addColumnSuffix(executionContext, null, tableToken, alterOperationBuilder);
         compiledQuery.ofAlter(alterOperationBuilder.build());
         if (alterOperationBuilder.getExtraStrInfo().size() == 0) {
             // there is no column to add, set the done flag to avoid execution of the query
@@ -2262,7 +2262,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
             if (isAddKeyword(tok)) {
                 securityContext.authorizeAlterTableAddColumn(tableToken);
-                alterTableAddColumn(executionContext.getSecurityContext(), tableNamePosition, tableToken, tableMetadata);
+                alterTableAddColumn(executionContext, tableNamePosition, tableToken, tableMetadata);
             } else if (isConvertKeyword(tok)) {
                 tok = expectToken(lexer, "'partition'");
                 if (!isPartitionKeyword(tok)) {
@@ -5152,7 +5152,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     }
 
     protected void addColumnSuffix(
-            @Transient SecurityContext securityContext,
+            @Transient SqlExecutionContext executionContext,
             @Nullable CharSequence tok,
             TableToken tableToken,
             AlterOperationBuilder alterOperationBuilder
