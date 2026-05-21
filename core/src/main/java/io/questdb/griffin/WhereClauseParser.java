@@ -2801,6 +2801,10 @@ public final class WhereClauseParser implements Mutable {
         // a rollback, collapseIntrinsicNodes would later drop those branches
         // and leave a half-collapsed OR (lhs/rhs == null while paramCount == 2),
         // which crashes the FunctionParser post-order traversal.
+        // The rollback below only covers the graceful non-extractable return. A
+        // leaf parse that throws SqlException leaves the model partially stamped,
+        // but that aborts the whole compile and clear() resets the parser before
+        // the next statement, so the half-stamped model is never reused.
         orIntrinsicNodes.clear();
         final int savedIntrinsicValue = model.intrinsicValue;
         if (extractOrTimestampIntervals(timestampDriver, model, node, true, functionParser, metadata, executionContext)) {

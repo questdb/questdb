@@ -77,6 +77,44 @@ public class PageFrameReduceTaskTest extends AbstractTest {
     }
 
     @Test
+    public void testBuildErrorPreservesCriticalErrno() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final CairoConfiguration configuration = new DefaultTestCairoConfiguration(root);
+            PageFrameReduceTask task = new PageFrameReduceTask(configuration, MemoryTag.NATIVE_DEFAULT);
+            try {
+                task.setErrorMsg(CairoException.critical(42).position(7).put("disk on fire"));
+                RuntimeException re = task.buildError();
+                Assert.assertTrue(re instanceof CairoException);
+                CairoException ce = (CairoException) re;
+                Assert.assertEquals("errno must round-trip", 42, ce.getErrno());
+                Assert.assertTrue("critical worker error must stay critical", ce.isCritical());
+                Assert.assertEquals(7, ce.getPosition());
+                TestUtils.assertContains(ce.getFlyweightMessage(), "disk on fire");
+            } finally {
+                Misc.free(task);
+            }
+        });
+    }
+
+    @Test
+    public void testBuildErrorPreservesNonCriticalErrno() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final CairoConfiguration configuration = new DefaultTestCairoConfiguration(root);
+            PageFrameReduceTask task = new PageFrameReduceTask(configuration, MemoryTag.NATIVE_DEFAULT);
+            try {
+                task.setErrorMsg(CairoException.nonCritical().put("bad value"));
+                RuntimeException re = task.buildError();
+                Assert.assertTrue(re instanceof CairoException);
+                CairoException ce = (CairoException) re;
+                Assert.assertEquals(CairoException.NON_CRITICAL, ce.getErrno());
+                Assert.assertFalse("non-critical worker error must stay non-critical", ce.isCritical());
+            } finally {
+                Misc.free(task);
+            }
+        });
+    }
+
+    @Test
     public void testBuildErrorPreservesImplicitCastException() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             final CairoConfiguration configuration = new DefaultTestCairoConfiguration(root);

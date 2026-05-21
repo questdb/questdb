@@ -54,6 +54,7 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
     private final DirectLongList filteredRows; // Used for TYPE_FILTER and TYPE_WINDOW_JOIN.
     private final PageFrameMemoryPool frameMemoryPool;
     private final long frameQueueCapacity;
+    private int errno = CairoException.NON_CRITICAL;
     private byte errorKind = AsyncQueryErrorKind.KIND_NONE;
     private int errorMessagePosition;
     private long filteredRowCount;
@@ -121,7 +122,9 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
                     ImplicitCastException.instance().position(errorMessagePosition).put(errorMsg);
             case AsyncQueryErrorKind.KIND_NUMERIC ->
                     NumericException.instance().position(errorMessagePosition).put(errorMsg);
-            default -> CairoException.nonCritical()
+            // critical(errno) preserves the worker's errno and, with it, isCritical();
+            // errno == NON_CRITICAL reduces to the previous nonCritical() behaviour.
+            default -> CairoException.critical(errno)
                     .position(errorMessagePosition)
                     .put(errorMsg)
                     .setCancellation(isCancelled)
@@ -238,6 +241,7 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
         filteredRowCount = 0;
         errorMsg.clear();
         errorMessagePosition = 0;
+        errno = CairoException.NON_CRITICAL;
         errorKind = AsyncQueryErrorKind.KIND_NONE;
         isCancelled = false;
         isInterrupted = false;
@@ -296,6 +300,7 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
         }
 
         if (th instanceof CairoException ce) {
+            errno = ce.getErrno();
             isCancelled = ce.isCancellation();
             isInterrupted = ce.isInterruption();
             isOutOfMemory = ce.isOutOfMemory();

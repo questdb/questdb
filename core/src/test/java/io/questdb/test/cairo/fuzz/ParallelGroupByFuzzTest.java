@@ -36,6 +36,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.DefaultSqlExecutionCircuitBreakerConfiguration;
+import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
@@ -1163,6 +1164,31 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                         k4\t1026.5\t420600.0
                         """
         );
+    }
+
+    @Test
+    public void testParallelGroupByAggregatesOverNonParallelArg() throws Exception {
+        // twap / mode(BOOLEAN) / sparkline / last(ARRAY) must derive supportsParallelism()
+        // from their argument. Wrapping the arg through ::SYMBOL (non-parallel, per-instance
+        // cache) must drop the plan from Async Group By to serial GroupBy while keeping the
+        // same result -- the ::SYMBOL round-trip is identity for these integer inputs.
+        Assume.assumeTrue(enableParallelGroupBy);
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new WorkerPool(() -> 4);
+            TestUtils.execute(
+                    pool,
+                    (_, compiler, ctx) -> {
+                        execute(compiler, "CREATE TABLE x (ts TIMESTAMP, i INT, v DOUBLE) timestamp(ts) PARTITION BY DAY", ctx);
+                        execute(compiler, "INSERT INTO x SELECT x::timestamp, x::int, x::double FROM long_sequence(" + ROW_COUNT + ")", ctx);
+                        assertNonParallelArgForcesSerial(compiler, ctx, "twap(v, ts)", "twap((v)::SYMBOL::DOUBLE, ts)");
+                        assertNonParallelArgForcesSerial(compiler, ctx, "mode(i >= 0)", "mode(((i)::SYMBOL::INT) >= 0)");
+                        assertNonParallelArgForcesSerial(compiler, ctx, "sparkline(v)", "sparkline((v)::SYMBOL::DOUBLE)");
+                        assertNonParallelArgForcesSerial(compiler, ctx, "last(ARRAY[v])", "last(ARRAY[(v)::SYMBOL::DOUBLE])");
+                    },
+                    configuration,
+                    LOG
+            );
+        });
     }
 
     @Test
@@ -5156,6 +5182,26 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                     LOG
             );
         });
+    }
+
+    static void assertNonParallelArgForcesSerial(
+            SqlCompiler compiler,
+            SqlExecutionContext sqlExecutionContext,
+            String plainAgg,
+            String castAgg
+    ) throws SqlException {
+        final String plainSql = "SELECT " + plainAgg + " FROM x";
+        final String castSql = "SELECT " + castAgg + " FROM x";
+        final StringSink plan = new StringSink();
+        TestUtils.printSql(compiler, sqlExecutionContext, "EXPLAIN " + plainSql, plan);
+        Assert.assertTrue("plain form must run via Async Group By: " + plainAgg + "\n" + plan,
+                plan.toString().contains("Async Group By"));
+        plan.clear();
+        TestUtils.printSql(compiler, sqlExecutionContext, "EXPLAIN " + castSql, plan);
+        Assert.assertFalse("non-parallel arg must force serial group by: " + castAgg + "\n" + plan,
+                plan.toString().contains("Async Group By"));
+        // The forced-serial result must equal the parallel reference.
+        TestUtils.assertSqlCursors(compiler, sqlExecutionContext, plainSql, castSql, LOG);
     }
 
     static void assertQueries(CairoEngine engine, SqlExecutionContext sqlExecutionContext, String... queriesAndExpectedResults) throws SqlException {

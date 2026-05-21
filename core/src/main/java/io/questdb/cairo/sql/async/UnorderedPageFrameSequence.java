@@ -83,6 +83,7 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> implements Close
     private final MCSequence reduceSubSeq;
     private final UnorderedPageFrameReducer reducer;
     private final WorkStealingStrategy workStealingStrategy;
+    private int errno = CairoException.NON_CRITICAL;
     private byte errorKind = AsyncQueryErrorKind.KIND_NONE;
     private int errorMessagePosition;
     private int frameCount;
@@ -149,7 +150,9 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> implements Close
                     ImplicitCastException.instance().position(errorMessagePosition).put(errorMsg);
             case AsyncQueryErrorKind.KIND_NUMERIC ->
                     NumericException.instance().position(errorMessagePosition).put(errorMsg);
-            default -> CairoException.nonCritical()
+            // critical(errno) preserves the worker's errno and, with it, isCritical();
+            // errno == NON_CRITICAL reduces to the previous nonCritical() behaviour.
+            default -> CairoException.critical(errno)
                     .position(errorMessagePosition)
                     .put(errorMsg)
                     .setCancellation(isCancelled)
@@ -347,6 +350,7 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> implements Close
             workStealingStrategy.of(reduceStartedCounter);
             errorMsg.clear();
             errorMessagePosition = 0;
+            errno = CairoException.NON_CRITICAL;
             errorKind = AsyncQueryErrorKind.KIND_NONE;
             isCancelled = false;
             isInterrupted = false;
@@ -396,6 +400,7 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> implements Close
         if (th instanceof CairoException e) {
             errorMsg.put(e.getFlyweightMessage());
             errorMessagePosition = e.getPosition();
+            errno = e.getErrno();
             isCancelled = e.isCancellation();
             isInterrupted = e.isInterruption();
             isOutOfMemory = e.isOutOfMemory();
