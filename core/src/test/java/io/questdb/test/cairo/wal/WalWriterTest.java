@@ -1858,9 +1858,11 @@ public class WalWriterTest extends AbstractCairoTest {
             public long getPageSize() {
                 RuntimeException e = new RuntimeException("Test failure");
                 e.fillInStackTrace();
-                final StackTraceElement[] stackTrace = e.getStackTrace();
-                if (stackTrace[4].getClassName().endsWith("TableSequencerImpl")) {
-                    throw e;
+                for (StackTraceElement frame : e.getStackTrace()) {
+                    if ("io.questdb.cairo.wal.seq.SequencerMetadata".equals(frame.getClassName())
+                            && "openTableSequencerMetadata".equals(frame.getMethodName())) {
+                        throw e;
+                    }
                 }
                 return Files.PAGE_SIZE;
             }
