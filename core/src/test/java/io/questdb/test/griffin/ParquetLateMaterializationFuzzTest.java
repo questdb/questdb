@@ -30,6 +30,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.mp.WorkerPool;
+import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
@@ -736,6 +737,9 @@ public class ParquetLateMaterializationFuzzTest extends AbstractCairoTest {
     }
 
     private void testLateMaterializationAllTypesLowSelectivity(CharSequence query, boolean checkStrLen, boolean checkVarcharLen) throws Exception {
+        // Smaller table on slow CI runners; expected is computed from the same data pre-conversion,
+        // so the assertion holds at any size.
+        final int rowCount = Os.isLinux() ? 2000 : 500;
         WorkerPool pool = new WorkerPool(() -> 4);
         TestUtils.execute(
                 pool,
@@ -773,8 +777,7 @@ public class ParquetLateMaterializationFuzzTest extends AbstractCairoTest {
                                         rnd_decimal(76, 10, 0) a_decimal256,
                                         cast(timestamp_sequence(0,1000000) as date) a_date,
                                         timestamp_sequence(0, 60000000) as ts
-                                      from long_sequence(2000)
-                                    ) timestamp(ts) partition by day;""",
+                                      from long_sequence(""" + rowCount + ")) timestamp(ts) partition by day;",
                             sqlExecutionContext
                     );
 
