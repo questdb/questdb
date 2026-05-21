@@ -31,7 +31,9 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.mp.WorkerPool;
+import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.Os;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
@@ -67,6 +69,37 @@ public class TestServerMain extends ServerMain {
         } catch (SqlException e) {
             throw new AssertionError(e);
         }
+    }
+
+    /**
+     * Drains pending WAL work synchronously before delegating to {@link ServerMain#close()}.
+     * <p>
+     * Without this drain, the engine's worker pool can still be processing a dropped-table
+     * cleanup (e.g., {@code ApplyWal2TableJob} blocked acquiring the reader-pool lock)
+     * when {@code super.close()} returns. The closing of those writers releases cached
+     * file descriptors moments later -- right inside the next test's
+     * {@code assertMemoryLeak()} window -- and the next test fails {@code LeakCheck}
+     * with cached/OS fd counts that drop below the baseline it captured at start.
+     * Running the drain here makes any pending drop notifications get processed on the
+     * current thread, so all cached fds tied to dropped tables are released before close
+     * completes.
+     */
+    @Override
+    public void close() {
+        if (!hasBeenClosed()) {
+            try {
+                TestUtils.drainWalQueue(getEngine());
+            } catch (Throwable ignore) {
+                // Best-effort drain: any failure here must not mask the original
+                // test outcome. super.close() still runs below.
+            }
+        }
+        super.close();
+        // Safety net: even after super.close() returns, wait for the process-global
+        // FD cache to stabilise. If anything (a halted-but-not-yet-joined worker,
+        // a deferred pool entry teardown) is still closing cached files, give it a
+        // brief window to finish so the next test's LeakCheck baseline is clean.
+        awaitFdCountStable();
     }
 
     public void compile(String sql) {
@@ -105,6 +138,33 @@ public class TestServerMain extends ServerMain {
         engine.resetNameRegistryMemory();
         resetQueryCache();
         engine.setUp();
+    }
+
+    private static void awaitFdCountStable() {
+        // Poll until cached/OS file descriptor counts stop changing for
+        // STABLE_FOR_MS, or give up after TIMEOUT_MS. The thresholds are loose
+        // on purpose: this guards a race that's normally over in a few ms, so
+        // the long timeout is just a backstop against undiscovered hangs.
+        final long stableForMs = 50;
+        final long timeoutMs = 5_000;
+        final long deadline = System.currentTimeMillis() + timeoutMs;
+        long lastCached = -1;
+        long lastOs = -1;
+        long stableSinceMs = System.currentTimeMillis();
+        while (System.currentTimeMillis() < deadline) {
+            long cached = Files.getOpenCachedFileCount();
+            long os = Files.getOpenFileCount();
+            if (cached == lastCached && os == lastOs) {
+                if (System.currentTimeMillis() - stableSinceMs >= stableForMs) {
+                    return;
+                }
+            } else {
+                lastCached = cached;
+                lastOs = os;
+                stableSinceMs = System.currentTimeMillis();
+            }
+            Os.sleep(5);
+        }
     }
 
     private void ensureContext() {
