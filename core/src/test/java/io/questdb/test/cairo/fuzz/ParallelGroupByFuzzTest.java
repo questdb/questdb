@@ -78,11 +78,11 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
 
     public ParallelGroupByFuzzTest() {
         this.rnd = TestUtils.generateRandom(LOG);
-        // Bias these to true in 80% of runs so the parallel / JIT / parquet paths,
-        // which carry most of the risk, are exercised far more often than their fallbacks.
-        this.enableParallelGroupBy = rnd.nextInt(5) != 0;
-        this.enableJitCompiler = rnd.nextInt(5) != 0;
-        this.convertToParquet = rnd.nextInt(5) != 0;
+        // Bias these to true so the parallel / JIT / parquet paths, which carry most of the risk,
+        // are exercised far more often than their fallbacks.
+        this.enableParallelGroupBy = rnd.nextInt(5) != 0; // 80%
+        this.enableJitCompiler = rnd.nextInt(5) != 0;     // 80%
+        this.convertToParquet = rnd.nextInt(3) != 0;      // 66%
         // Pick a batch size from buckets that span the boundaries of the batched non-sharded
         // reducer relative to the page frame size (~MIN_PAGE_FRAME_MAX_ROWS rows):
         // 1 row (degenerate), well below a frame, around a frame boundary, and larger than
@@ -1170,10 +1170,11 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
 
     @Test
     public void testParallelGroupByAggregatesOverNonParallelArg() throws Exception {
-        // twap / mode(BOOLEAN) / sparkline / last(ARRAY) must derive supportsParallelism()
-        // from their argument. Wrapping the arg through ::SYMBOL (non-parallel, per-instance
-        // cache) must drop the plan from Async Group By to serial GroupBy while keeping the
-        // same result -- the ::SYMBOL round-trip is identity for these integer inputs.
+        // Regression test: twap / mode(BOOLEAN) / sparkline / last(ARRAY) must derive
+        // supportsParallelism() from their argument. Wrapping the arg through ::SYMBOL
+        // (non-parallel, per-instance cache) must drop the plan from Async Group By to
+        // serial GroupBy while keeping the same result - the ::SYMBOL round-trip is
+        // identity for these integer inputs.
         Assume.assumeTrue(enableParallelGroupBy);
         assertMemoryLeak(() -> {
             final WorkerPool pool = new WorkerPool(() -> 4);
