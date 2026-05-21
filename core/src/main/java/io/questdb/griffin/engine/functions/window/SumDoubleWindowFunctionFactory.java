@@ -588,6 +588,18 @@ public class SumDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         }
 
         @Override
+        public ColumnTypes getSnapshotKeyColumnTypes() {
+            return keyColumnTypes;
+        }
+
+        @Override
+        public int getSnapshotKeyStartIndex() {
+            return mapValueTypes != null
+                    ? mapValueTypes.getColumnCount()
+                    : SUM_COLUMN_TYPES.getColumnCount();
+        }
+
+        @Override
         public void markPartitionAlive(Record record) {
             if (tombstoneValueIndex < 0 || tombstoneCount == 0) {
                 return;
@@ -660,6 +672,18 @@ public class SumDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         }
 
         @Override
+        public long restorePartitionState(MemoryR source, long offset, MapValue value, int formatVersion) {
+            value.putDouble(0, source.getDouble(offset));
+            offset += Double.BYTES;
+            value.putLong(1, source.getLong(offset));
+            offset += Long.BYTES;
+            if (tombstoneValueIndex >= 0) {
+                value.putByte(tombstoneValueIndex, (byte) 0);
+            }
+            return offset;
+        }
+
+        @Override
         public void snapshot(MemoryA sink) {
             // Two-pass walk: count non-tombstoned partitions, then emit each.
             MapRecordCursor cursor = map.getCursor();
@@ -701,6 +725,12 @@ public class SumDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         @Override
         public int snapshotMinSupportedVersion() {
             return 1;
+        }
+
+        @Override
+        public void snapshotPartitionState(MemoryA sink, MapValue value) {
+            sink.putDouble(value.getDouble(0));
+            sink.putLong(value.getLong(1));
         }
 
         @Override

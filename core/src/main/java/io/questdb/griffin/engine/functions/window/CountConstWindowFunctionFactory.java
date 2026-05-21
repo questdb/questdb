@@ -382,6 +382,17 @@ public class CountConstWindowFunctionFactory extends AbstractWindowFunctionFacto
             return map;
         }
 
+        @Override
+        public ColumnTypes getSnapshotKeyColumnTypes() {
+            return keyColumnTypes;
+        }
+
+        @Override
+        public int getSnapshotKeyStartIndex() {
+            return mapValueTypes != null
+                    ? mapValueTypes.getColumnCount()
+                    : CountFunctionFactoryHelper.COUNT_COLUMN_TYPES.getColumnCount();
+        }
 
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
@@ -439,6 +450,16 @@ public class CountConstWindowFunctionFactory extends AbstractWindowFunctionFacto
         }
 
         @Override
+        public long restorePartitionState(MemoryR source, long offset, MapValue value, int formatVersion) {
+            value.putLong(0, source.getLong(offset));
+            offset += Long.BYTES;
+            if (tombstoneValueIndex >= 0) {
+                value.putByte(tombstoneValueIndex, (byte) 0);
+            }
+            return offset;
+        }
+
+        @Override
         public void snapshot(MemoryA sink) {
             MapRecordCursor cursor = map.getCursor();
             MapRecord record = map.getRecord();
@@ -478,6 +499,11 @@ public class CountConstWindowFunctionFactory extends AbstractWindowFunctionFacto
         @Override
         public int snapshotMinSupportedVersion() {
             return 1;
+        }
+
+        @Override
+        public void snapshotPartitionState(MemoryA sink, MapValue value) {
+            sink.putLong(value.getLong(0));
         }
 
         @Override
