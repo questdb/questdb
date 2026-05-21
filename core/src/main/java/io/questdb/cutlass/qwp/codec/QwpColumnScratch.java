@@ -322,6 +322,42 @@ final class QwpColumnScratch implements QuietCloseable {
     }
 
     /**
+     * BOOLEAN column-top fill: appends {@code n} false values without
+     * touching the null bitmap. BOOLEAN has no NULL representation on the
+     * wire (egress spec sec 11.5: a wire row for BOOLEAN "has the null
+     * bitmap bit clear"), so a page-frame with no backing storage for this
+     * column ships literal false values, not nulls. Clears bits
+     * [nonNullCount, nonNullCount + n) in {@link #valuesAddr} and any
+     * trailing positions in the last byte that the next mid-byte
+     * {@link #appendBool} would OR into; preserves bits below
+     * {@code nonNullCount} that earlier appends already committed.
+     */
+    void appendColumnBooleanZero(int n) {
+        if (n <= 0) {
+            return;
+        }
+        int startBit = nonNullCount;
+        int lastBit = startBit + n - 1;
+        int firstByte = startBit >>> 3;
+        int lastByte = lastBit >>> 3;
+        int firstBitInFirstByte = startBit & 7;
+        ensureValuesCapacity(lastByte + 1);
+        if (firstBitInFirstByte != 0) {
+            int preserveMask = (1 << firstBitInFirstByte) - 1;
+            long firstAddr = valuesAddr + firstByte;
+            byte cur = Unsafe.getByte(firstAddr);
+            Unsafe.putByte(firstAddr, (byte) (cur & preserveMask));
+            if (lastByte > firstByte) {
+                Unsafe.setMemory(valuesAddr + firstByte + 1, lastByte - firstByte, (byte) 0);
+            }
+        } else {
+            Unsafe.setMemory(valuesAddr + firstByte, lastByte - firstByte + 1, (byte) 0);
+        }
+        nonNullCount += n;
+        rowCount += n;
+    }
+
+    /**
      * No-null fixed-width column bulk append: BYTE / SHORT / CHAR columns
      * have no sentinel and never contribute to the null bitmap, so we copy
      * the whole block into {@code valuesAddr} in one {@code memcpy}.
@@ -330,6 +366,26 @@ final class QwpColumnScratch implements QuietCloseable {
         int bytes = n * typeSize;
         ensureValuesCapacity(valuesPos + bytes);
         Vect.memcpy(valuesAddr + valuesPos, srcAddr, bytes);
+        valuesPos += bytes;
+        nonNullCount += n;
+        rowCount += n;
+    }
+
+    /**
+     * Fixed-width column-top fill: appends {@code n} zero values into
+     * {@link #valuesAddr} without touching the null bitmap. BYTE / SHORT /
+     * CHAR have no NULL representation on the wire (egress spec sec 11.5:
+     * a wire row for these types "has the null bitmap bit clear"), so a
+     * page-frame with no backing storage for one of these columns ships
+     * literal zeros, not nulls.
+     */
+    void appendColumnFixedZero(int n, int typeSize) {
+        if (n <= 0) {
+            return;
+        }
+        int bytes = n * typeSize;
+        ensureValuesCapacity(valuesPos + bytes);
+        Unsafe.setMemory(valuesAddr + valuesPos, bytes, (byte) 0);
         valuesPos += bytes;
         nonNullCount += n;
         rowCount += n;
