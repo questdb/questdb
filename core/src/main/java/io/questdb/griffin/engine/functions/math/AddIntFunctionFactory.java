@@ -48,16 +48,23 @@ public class AddIntFunctionFactory implements FunctionFactory {
 
     private static class AddIntFunc extends IntFunction implements ArithmeticBinaryFunction {
         final Function left;
+        private final boolean leftIsNullConstant;
         final Function right;
+        private final boolean rightIsNullConstant;
 
         public AddIntFunc(Function left, Function right) {
             super();
             this.left = left;
             this.right = right;
+            this.leftIsNullConstant = isIntNullConstant(left);
+            this.rightIsNullConstant = isIntNullConstant(right);
         }
 
         @Override
         public int getInt(Record rec) {
+            if (leftIsNullConstant || rightIsNullConstant) {
+                return Numbers.INT_NULL;
+            }
             final int left = this.left.getInt(rec);
             final int right = this.right.getInt(rec);
 
@@ -75,6 +82,9 @@ public class AddIntFunctionFactory implements FunctionFactory {
 
         @Override
         public long getLong(Record rec) {
+            if (leftIsNullConstant || rightIsNullConstant) {
+                return Numbers.LONG_NULL;
+            }
             final int left = this.left.getInt(rec);
             final int right = this.right.getInt(rec);
 
@@ -95,13 +105,17 @@ public class AddIntFunctionFactory implements FunctionFactory {
             boolean leftIsConstant = left.isConstant();
             boolean rightIsConstant = right.isConstant();
             return leftIsConstant && rightIsConstant
-                    || (leftIsConstant && left.getInt(null) == Numbers.INT_NULL)
-                    || (rightIsConstant && right.getInt(null) == Numbers.INT_NULL);
+                    || leftIsNullConstant
+                    || rightIsNullConstant;
         }
 
         @Override
         public void toPlan(PlanSink sink) {
             sink.val(left).val('+').val(right);
+        }
+
+        private static boolean isIntNullConstant(Function function) {
+            return function.isConstant() && function.getInt(null) == Numbers.INT_NULL;
         }
     }
 }

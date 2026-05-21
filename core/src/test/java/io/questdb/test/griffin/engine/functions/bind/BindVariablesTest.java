@@ -47,6 +47,7 @@ import io.questdb.griffin.engine.functions.math.AddDoubleFunctionFactory;
 import io.questdb.griffin.engine.functions.math.AddFloatFunctionFactory;
 import io.questdb.griffin.engine.functions.math.AddIntFunctionFactory;
 import io.questdb.griffin.engine.functions.math.AddLongFunctionFactory;
+import io.questdb.griffin.engine.functions.math.DivIntFunctionFactory;
 import io.questdb.griffin.engine.functions.math.SubIntFunctionFactory;
 import io.questdb.griffin.engine.functions.str.ConcatFunctionFactory;
 import io.questdb.griffin.engine.functions.str.LengthBinFunctionFactory;
@@ -57,6 +58,7 @@ import io.questdb.griffin.engine.functions.str.ToLowercaseFunctionFactory;
 import io.questdb.griffin.engine.functions.str.ToUppercaseFunctionFactory;
 import io.questdb.std.Long256;
 import io.questdb.std.Long256Impl;
+import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
@@ -557,6 +559,12 @@ public class BindVariablesTest extends BaseFunctionFactoryTest {
     }
 
     @Test
+    public void testIntIndexedPlusConstantNullDoesNotEvaluateUninitializedBind() throws SqlException {
+        assertIndexedPlusConstantNull("$1 + (1 / 0)");
+        assertIndexedPlusConstantNull("(1 / 0) + $1");
+    }
+
+    @Test
     public void testLeadWindowFunction() throws SqlException {
         bindVariableService.setTimestamp("ts", 123456);
 
@@ -935,6 +943,23 @@ public class BindVariablesTest extends BaseFunctionFactoryTest {
                     75b30bf9-e4cc-48b9-9658-97d4a2307622
                     """);
         });
+    }
+
+    private void assertIndexedPlusConstantNull(String expression) throws SqlException {
+        Function func = expr(expression)
+                .withFunction(new AddIntFunctionFactory())
+                .withFunction(new DivIntFunctionFactory())
+                .$();
+
+        func.init(null, sqlExecutionContext);
+        Assert.assertEquals(Numbers.INT_NULL, func.getInt(builder.getRecord()));
+
+        bindVariableService.setInt(0, 42);
+        func.init(null, sqlExecutionContext);
+        Assert.assertEquals(Numbers.INT_NULL, func.getInt(builder.getRecord()));
+
+        func.close();
+        bindVariableService.clear();
     }
 
     private FunctionBuilder expr(String expression) {
