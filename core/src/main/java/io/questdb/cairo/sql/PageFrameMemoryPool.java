@@ -518,7 +518,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             if (filteredRows.size() != 0) {
                 currentRowGroupBuffer.decodeRemainingColumns(
                         activeDecoder,
-                        filterColumnIndexes.size(),
+                        filterColumnIndexes,
                         parquetColumns,
                         rowGroupIndex,
                         rowGroupLo,
@@ -572,7 +572,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
 
         public void decodeRemainingColumns(
                 ParquetDecoder decoder,
-                int columnOffset,
+                IntHashSet filterColumnIndexes,
                 DirectIntList parquetColumns,
                 int rowGroup,
                 int rowLo,
@@ -581,12 +581,13 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
                 boolean fillWithNulls
         ) {
             if (parquetColumns.size() > 0) {
+                final int columnOffset = filterColumnIndexes.size();
                 if (fillWithNulls) {
                     decoder.decodeRowGroupWithRowFilterFillNulls(rowGroupBuffers, columnOffset, parquetColumns, rowGroup, rowLo, rowHi, filteredRows);
                 } else {
                     decoder.decodeRowGroupWithRowFilter(rowGroupBuffers, columnOffset, parquetColumns, rowGroup, rowLo, rowHi, filteredRows);
                 }
-                remapRemainingColumns(columnOffset);
+                remapRemainingColumns(columnOffset, filterColumnIndexes);
             }
         }
 
@@ -645,10 +646,17 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             }
         }
 
-        private void remapRemainingColumns(int columnOffset) {
+        private void remapRemainingColumns(int columnOffset, IntHashSet filterColumnIndexes) {
             final ColumnMapping columnMapping = addressCache.getColumnMapping();
             final int readParquetColumnCount = columnMapping.getColumnCount();
             for (int q = 0; q < readParquetColumnCount; q++) {
+                // Filter columns hold full data read by absolute index; never overwrite
+                // them with the compacted buffer when a remaining column shares their
+                // parquet column. Guard only: the optimizer keeps filters below
+                // duplicating projections, so the late-mat frame has no duplicate today.
+                if (filterColumnIndexes.contains(q)) {
+                    continue;
+                }
                 final int writerIndex = columnMapping.getWriterIndex(q);
                 final int parquetIdx = columnIdToParquetIdx.get(writerIndex);
                 if (parquetIdx < 0) {

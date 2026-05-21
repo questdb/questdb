@@ -94,6 +94,18 @@ public class DivIntFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public long getLong(Record rec) {
+            // Recurse via getLong() so nested INT arithmetic computes at long width,
+            // matching the JIT; getInt() would let an inner product wrap mod 2^32 first.
+            final long l = left.getLong(rec);
+            final long r = right.getLong(rec);
+            if (l == Numbers.LONG_NULL || r == Numbers.LONG_NULL || r == 0) {
+                return Numbers.LONG_NULL;
+            }
+            return l / r;
+        }
+
+        @Override
         public Function getRight() {
             return right;
         }

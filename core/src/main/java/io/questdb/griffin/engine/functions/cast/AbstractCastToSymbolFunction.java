@@ -47,19 +47,23 @@ public abstract class AbstractCastToSymbolFunction extends SymbolFunction implem
     protected final Function arg;
     protected final StringSink sink = new StringSink();
     /**
-     * Map for symbol table shortcuts. The sentinel is {@link Numbers#INT_NULL}
-     * rather than the default {@code -1} so that {@code -1} (the value {@code
-     * length()} returns for a null symbol/string) can be stored as a key without
-     * colliding with the "empty slot" marker. {@code INT_NULL} itself never
-     * reaches this map because it is filtered upstream in {@code getInt()} /
-     * {@code getSymbol()}.
+     * Map for symbol table shortcuts. The default sentinel is {@link Numbers#INT_NULL}
+     * (not {@code -1}) so {@code -1}, which {@code length()} returns for a null, can be a
+     * key; INT_NULL never reaches the map for INT/BYTE/SHORT/CHAR casts (filtered upstream).
+     * The FLOAT cast supplies its own NaN-based sentinel since
+     * {@code Float.floatToIntBits(-0.0f) == INT_NULL}.
      */
-    protected final IntIntHashMap symbolTableShortcut = new IntIntHashMap(16, 0.5, Numbers.INT_NULL);
+    protected final IntIntHashMap symbolTableShortcut;
     protected final ObjList<String> symbols = new ObjList<>();
     protected int next = 1;
 
     public AbstractCastToSymbolFunction(Function arg) {
+        this(arg, Numbers.INT_NULL);
+    }
+
+    protected AbstractCastToSymbolFunction(Function arg, int noKeyValue) {
         this.arg = arg;
+        this.symbolTableShortcut = new IntIntHashMap(16, 0.5, noKeyValue);
         symbols.add(null);
     }
 

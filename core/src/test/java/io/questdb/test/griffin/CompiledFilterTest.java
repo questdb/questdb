@@ -733,6 +733,38 @@ public class CompiledFilterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNestedIntArithmeticWidenedToLongInLongContextViaDivision() throws Exception {
+        assertMemoryLeak(() -> {
+            // Division sibling of testNestedIntArithmeticWidenedToLongInLongContext.
+            // DivInt.getLong inherited IntFunction.getLong = intToLong(getInt()), so the
+            // inner 732674 * c5 wrapped at int32 before the outer divide and cast widened
+            // to long, while the JIT widens every narrow operand up front. After the fix
+            // DivInt.getLong recurses via .getLong, keeping the product at long width.
+            execute("CREATE TABLE x (c0 LONG, c5 INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO x VALUES " +
+                    "(0, 10000, '2024-01-01T00:00:00.000000Z')," +
+                    " (-200_000_000, 10000, '2024-01-01T00:00:00.000001Z')," +
+                    " (2_000_000_000, 10000, '2024-01-01T00:00:00.000002Z')");
+
+            // 732674 * 10000 = 7_326_740_000L (overflows int32); / 7 = 1_046_677_142L.
+            // c0 = 0 and c0 = -200_000_000 satisfy c0 <= rhs -> count 2. Pre-fix the inner
+            // mul wrapped to -1_263_194_592 at int32, so rhs became -180_456_370 and only
+            // c0 = -200_000_000 matched, giving count 1 on the Java filter while JIT
+            // (with widening) returned 2.
+            String sql = "SELECT count(*) FROM x WHERE c0 <= ((732674 * c5) / 7)";
+            sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
+            assertSql("count\n2\n", sql);
+            sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_ENABLED);
+            assertSql("count\n2\n", sql);
+
+            try (RecordCursorFactory factory = select(sql)) {
+                Assert.assertTrue("nested INT division in LONG context must still JIT",
+                        factory.usesCompiledFilter());
+            }
+        });
+    }
+
+    @Test
     public void testIntArithmeticWrapsAtInt32InMixedLongDoubleContext() throws Exception {
         assertMemoryLeak(() -> {
             // The fuzzer hit a JIT/Java divergence on a predicate of shape

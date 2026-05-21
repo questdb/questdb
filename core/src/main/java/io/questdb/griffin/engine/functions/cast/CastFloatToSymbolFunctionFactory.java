@@ -40,6 +40,10 @@ import io.questdb.std.Transient;
 import io.questdb.std.str.StringSink;
 
 public class CastFloatToSymbolFunctionFactory implements FunctionFactory {
+    // floatToIntBits(-0.0f) == INT_NULL, so the default sentinel would make every -0.0f
+    // row collide with the empty slot. floatToIntBits canonicalises NaN to 0x7FC00000,
+    // so 0x7FC00001 is a key it can never produce.
+    private static final int NO_KEY_SENTINEL = 0x7FC00001;
 
     @Override
     public String getSignature() {
@@ -66,7 +70,7 @@ public class CastFloatToSymbolFunctionFactory implements FunctionFactory {
     private static class Func extends AbstractCastToSymbolFunction {
 
         public Func(Function arg) {
-            super(arg);
+            super(arg, NO_KEY_SENTINEL);
         }
 
         @Override

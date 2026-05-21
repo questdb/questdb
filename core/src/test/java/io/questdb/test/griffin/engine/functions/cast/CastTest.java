@@ -3796,6 +3796,38 @@ public class CastTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFloatToSymbolHandlesNegativeZeroAsKey() throws Exception {
+        // CastFloatToSymbol keys its symbol-table shortcut by Float.floatToIntBits(),
+        // and floatToIntBits(-0.0f) == Numbers.INT_NULL -- the default empty-slot
+        // sentinel of the shared IntIntHashMap. A real -0.0f used to collide with the
+        // empty slot, so every -0.0f row produced a fresh symbol id: the symbols list
+        // grew unbounded and approx_count_distinct (which hashes the id) over-counted.
+        // The FLOAT cast now uses a NaN bit pattern floatToIntBits can never produce.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (f FLOAT)");
+            execute("INSERT INTO t VALUES " +
+                    "(-0.0), (-0.0), (-0.0), (-0.0), (-0.0), (0.0), (0.0), (0.0), (1.5), (1.5)");
+            // -0.0 stays a distinct symbol from 0.0 (QuestDB prints the sign), matching
+            // the constant-folded cast and CastDoubleToSymbol.
+            assertQueryNoLeakCheck(
+                    "s\tc\n-0.0\t5\n0.0\t3\n1.5\t2\n",
+                    "SELECT (f)::SYMBOL AS s, count() AS c FROM t ORDER BY s",
+                    null,
+                    true,
+                    true
+            );
+            // approx_count_distinct hashes the symbol id; the id must be stable per value.
+            assertQueryNoLeakCheck(
+                    "approx_count_distinct\n3\n",
+                    "SELECT approx_count_distinct((f)::SYMBOL) FROM t",
+                    null,
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
     public void testFloatToSymbolIndexBehaviour() throws Exception {
         assertQuery(
                 """
