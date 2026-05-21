@@ -2190,6 +2190,82 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDropPartitionOnBaseIsTransparentToLiveView() throws Exception {
+        // DROP PARTITION on the base is transparent to the LV (same contract as
+        // TRUNCATE, see testTruncateOnBaseIsTransparentToLiveView): the view
+        // stays ACTIVE, its derived rows are preserved, and the refresh worker
+        // walks past the DROP PARTITION seqTxn (advancing last_processed_seqTxn
+        // and lv_consumed_seqTxn) without rewriting LV state. Pre-fix,
+        // ApplyWal2TableJob's CMD_ALTER_TABLE branch forwarded executeAlter's
+        // mat-view invalidation reason to invalidateLiveViewsForBaseTable,
+        // flipping every dependent LV to INVALID on the first base partition
+        // drop -- which broke any base using DROP PARTITION or TTL retention.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 200ms AS " +
+                    "SELECT ts, x, row_number() OVER () AS rn FROM base");
+
+            execute(
+                    "INSERT INTO base (ts, x) VALUES " +
+                            "('2026-04-01T00:00:00.000000Z', 1)," +
+                            "('2026-04-02T00:00:00.000000Z', 2)"
+            );
+            drainWalQueue();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+            }
+            drainWalQueue();
+
+            LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(instance);
+            assertSql("count\n2\n", "SELECT count() FROM lv");
+            long preFloor = instance.getStateReader().getLvConsumedSeqTxn();
+
+            execute("ALTER TABLE base DROP PARTITION LIST '2026-04-01'");
+            drainWalQueue();
+            // FLUSH EVERY 200ms would otherwise rate-limit the back-to-back
+            // refresh cycle and the walk-past would not run until 200ms later.
+            instance.setLastFlushTimeUs(Numbers.LONG_NULL);
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+            }
+            drainWalQueue();
+
+            Assert.assertFalse(
+                    "LV must stay valid after DROP PARTITION on base",
+                    instance.isInvalid()
+            );
+            assertSql(
+                    "view_status\nactive\n",
+                    "SELECT view_status FROM live_views() WHERE view_name = 'lv'"
+            );
+            // The dropped base partition does not retract already-computed LV
+            // rows: the view's derived output is preserved.
+            assertSql("count\n2\n", "SELECT count() FROM lv");
+
+            long postFloor = instance.getStateReader().getLvConsumedSeqTxn();
+            Assert.assertTrue(
+                    "lv_consumed_seqTxn must advance past the DROP PARTITION seqTxn [pre=" + preFloor
+                            + ", post=" + postFloor + ']',
+                    postFloor > preFloor
+            );
+
+            // Forward inserts past the LV's latestSeenTs continue to flow
+            // through the normal path; the DROP PARTITION did not reset state.
+            execute("INSERT INTO base (ts, x) VALUES ('2026-04-03T00:00:00.000000Z', 3)");
+            drainWalQueue();
+            instance.setLastFlushTimeUs(Numbers.LONG_NULL);
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+            }
+            drainWalQueue();
+            assertSql("count\n3\n", "SELECT count() FROM lv");
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
     public void testApplyPersistFailureDoesNotAdvanceFloor() throws Exception {
         // Regression: pre-fix, advanceLiveViewConsumedSeqTxn mutated the in-memory
         // floor before persisting _lv.s and silently swallowed any persist error,

@@ -812,7 +812,19 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                             if (matViewInvalidationReason != null) {
                                 mvRefreshTask.operation = MatViewRefreshTask.INVALIDATE;
                                 mvRefreshTask.invalidationReason = matViewInvalidationReason;
-                                engine.invalidateLiveViewsForBaseTable(tableWriter.getTableToken(), matViewInvalidationReason);
+                                // Mat views re-aggregate base data, so base data removal
+                                // legitimately invalidates them above. Live views must NOT
+                                // be invalidated here: the non-structural alters routed
+                                // through this branch (DROP/DETACH/ATTACH PARTITION, SET
+                                // PARAM, ...) never change a live view's column projection,
+                                // and base data removal (DROP PARTITION, base TTL) is
+                                // transparent to live views. A live view is a forward-computed
+                                // row stream, not a re-derivable aggregate, so removing old
+                                // base data does not retract its already-computed rows; the
+                                // refresh worker walks past these non-data commits on its own.
+                                // Schema changes that DO touch a referenced column travel the
+                                // structural path and invalidate live views narrowly via
+                                // invalidateLiveViewsForBaseSchemaChange.
                             }
                             return;
                         case CMD_UPDATE_TABLE:
