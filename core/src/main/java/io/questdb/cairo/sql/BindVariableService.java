@@ -42,6 +42,7 @@ import io.questdb.std.str.Utf8Sequence;
  * is used. Once type is set, bind variable can be assigned value only from a compatible type.
  */
 public interface BindVariableService extends Mutable {
+    int MAX_INDEXED_VARIABLE_COUNT = Short.MAX_VALUE;
 
     int define(int variableIndex, int type, int position) throws SqlException;
 

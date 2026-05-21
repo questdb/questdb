@@ -85,6 +85,46 @@ public class BindVariableServiceImplTest {
     }
 
     @Test
+    public void testDefineRejectsTooLargeIndexedVariable() throws Exception {
+        assertMemoryLeak(() -> {
+            try {
+                bindVariableService.define(BindVariableService.MAX_INDEXED_VARIABLE_COUNT, ColumnType.DOUBLE, 7);
+                Assert.fail();
+            } catch (SqlException e) {
+                TestUtils.assertContains(
+                        e.getFlyweightMessage(),
+                        "invalid bind variable index [value=" + BindVariableService.MAX_INDEXED_VARIABLE_COUNT + "]"
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testDefineAcceptsMaxIndexedVariable() throws Exception {
+        assertMemoryLeak(() -> {
+            final int index = BindVariableService.MAX_INDEXED_VARIABLE_COUNT - 1;
+            bindVariableService.define(index, ColumnType.DOUBLE, 0);
+            Assert.assertEquals(BindVariableService.MAX_INDEXED_VARIABLE_COUNT, bindVariableService.getIndexedVariableCount());
+            Assert.assertEquals(ColumnType.DOUBLE, bindVariableService.getFunction(index).getType());
+        });
+    }
+
+    @Test
+    public void testSetRejectsTooLargeIndexedVariable() throws Exception {
+        assertMemoryLeak(() -> {
+            try {
+                bindVariableService.setDouble(BindVariableService.MAX_INDEXED_VARIABLE_COUNT, 1.0);
+                Assert.fail();
+            } catch (SqlException e) {
+                TestUtils.assertContains(
+                        e.getFlyweightMessage(),
+                        "invalid bind variable index [value=" + BindVariableService.MAX_INDEXED_VARIABLE_COUNT + "]"
+                );
+            }
+        });
+    }
+
+    @Test
     public void testBooleanIndexedOverride() throws Exception {
         assertMemoryLeak(() -> {
             bindVariableService.setLong(0, 10);

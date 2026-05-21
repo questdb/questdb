@@ -283,6 +283,7 @@ public class BindVariableServiceImpl implements BindVariableService {
 
     @Override
     public int define(int index, int type, int position) throws SqlException {
+        validateIndexedVariableIndex(index, position);
         // check if the function already defined as this type
         // to avoid overhead of re-defining each variable
         Function function = getFunction(index);
@@ -384,7 +385,7 @@ public class BindVariableServiceImpl implements BindVariableService {
     @Override
     public Function getFunction(int index) {
         final int n = indexedVariables.size();
-        if (index < n) {
+        if (index > -1 && index < n) {
             return indexedVariables.getQuick(index);
         }
         return null;
@@ -402,7 +403,7 @@ public class BindVariableServiceImpl implements BindVariableService {
 
     @Override
     public void setArray(int index, ArrayView value) throws SqlException {
-        indexedVariables.extendPos(index + 1);
+        extendIndexedVariables(index);
         // variable exists
         Function function = indexedVariables.getQuick(index);
         if (function != null) {
@@ -435,7 +436,7 @@ public class BindVariableServiceImpl implements BindVariableService {
 
     @Override
     public void setBin(int index, BinarySequence value) throws SqlException {
-        indexedVariables.extendPos(index + 1);
+        extendIndexedVariables(index);
         Function function = indexedVariables.getQuick(index);
         if (function == null) {
             indexedVariables.setQuick(index, new BinBindVariable(value));
@@ -465,7 +466,7 @@ public class BindVariableServiceImpl implements BindVariableService {
 
     @Override
     public void setBoolean(int index, boolean value) throws SqlException {
-        indexedVariables.extendPos(index + 1);
+        extendIndexedVariables(index);
         // variable exists
         Function function = indexedVariables.getQuick(index);
         if (function != null) {
@@ -490,7 +491,7 @@ public class BindVariableServiceImpl implements BindVariableService {
 
     @Override
     public void setByte(int index, byte value) throws SqlException {
-        indexedVariables.extendPos(index + 1);
+        extendIndexedVariables(index);
         // variable exists
         Function function = indexedVariables.getQuick(index);
         if (function != null) {
@@ -525,7 +526,7 @@ public class BindVariableServiceImpl implements BindVariableService {
 
     @Override
     public void setChar(int index, char value) throws SqlException {
-        indexedVariables.extendPos(index + 1);
+        extendIndexedVariables(index);
         // variable exists
         Function function = indexedVariables.getQuick(index);
         if (function != null) {
@@ -555,7 +556,7 @@ public class BindVariableServiceImpl implements BindVariableService {
 
     @Override
     public void setDate(int index, long value) throws SqlException {
-        indexedVariables.extendPos(index + 1);
+        extendIndexedVariables(index);
         // variable exists
         Function function = indexedVariables.getQuick(index);
         if (function != null) {
@@ -581,7 +582,7 @@ public class BindVariableServiceImpl implements BindVariableService {
 
     @Override
     public void setDecimal(int index, long hh, long hl, long lh, long ll, int type) throws SqlException {
-        indexedVariables.extendPos(index + 1);
+        extendIndexedVariables(index);
         Function function = indexedVariables.getQuick(index);
         if (function != null) {
             setDecimal(function, hh, hl, lh, ll, type, index, null);
@@ -615,7 +616,7 @@ public class BindVariableServiceImpl implements BindVariableService {
 
     @Override
     public void setDouble(int index, double value) throws SqlException {
-        indexedVariables.extendPos(index + 1);
+        extendIndexedVariables(index);
         // variable exists
         Function function = indexedVariables.getQuick(index);
         if (function != null) {
@@ -645,7 +646,7 @@ public class BindVariableServiceImpl implements BindVariableService {
 
     @Override
     public void setFloat(int index, float value) throws SqlException {
-        indexedVariables.extendPos(index + 1);
+        extendIndexedVariables(index);
         // variable exists
         Function function = indexedVariables.getQuick(index);
         if (function != null) {
@@ -671,7 +672,7 @@ public class BindVariableServiceImpl implements BindVariableService {
 
     @Override
     public void setGeoHash(int index, long value, int type) throws SqlException {
-        indexedVariables.extendPos(index + 1);
+        extendIndexedVariables(index);
         // variable exists
         Function function = indexedVariables.getQuick(index);
         if (function != null) {
@@ -695,7 +696,7 @@ public class BindVariableServiceImpl implements BindVariableService {
 
     @Override
     public void setIPv4(int index, int value) {
-        indexedVariables.extendPos(index + 1);
+        extendIndexedVariablesUnchecked(index);
         // variable exists
         Function function = indexedVariables.getQuick(index);
         if (function != null) {
@@ -708,7 +709,7 @@ public class BindVariableServiceImpl implements BindVariableService {
 
     @Override
     public void setIPv4(int index, CharSequence value) {
-        indexedVariables.extendPos(index + 1);
+        extendIndexedVariablesUnchecked(index);
         // variable exists
         Function function = indexedVariables.getQuick(index);
         if (function != null) {
@@ -738,7 +739,7 @@ public class BindVariableServiceImpl implements BindVariableService {
 
     @Override
     public void setInt(int index, int value) throws SqlException {
-        indexedVariables.extendPos(index + 1);
+        extendIndexedVariables(index);
         // variable exists
         Function function = indexedVariables.getQuick(index);
         if (function != null) {
@@ -768,7 +769,7 @@ public class BindVariableServiceImpl implements BindVariableService {
 
     @Override
     public void setLong(int index, long value) throws SqlException {
-        indexedVariables.extendPos(index + 1);
+        extendIndexedVariables(index);
         // variable exists
         Function function = indexedVariables.getQuick(index);
         if (function != null) {
@@ -818,7 +819,7 @@ public class BindVariableServiceImpl implements BindVariableService {
 
     @Override
     public void setLong256(int index, long l0, long l1, long l2, long l3) throws SqlException {
-        indexedVariables.extendPos(index + 1);
+        extendIndexedVariables(index);
         // variable exists
         Function function = indexedVariables.getQuick(index);
         if (function != null) {
@@ -849,7 +850,7 @@ public class BindVariableServiceImpl implements BindVariableService {
 
     @Override
     public void setShort(int index, short value) throws SqlException {
-        indexedVariables.extendPos(index + 1);
+        extendIndexedVariables(index);
         // variable exists
         Function function = indexedVariables.getQuick(index);
         if (function != null) {
@@ -879,7 +880,7 @@ public class BindVariableServiceImpl implements BindVariableService {
 
     @Override
     public void setStr(int index, CharSequence value) throws SqlException {
-        indexedVariables.extendPos(index + 1);
+        extendIndexedVariables(index);
         // variable exists
         Function function = indexedVariables.getQuick(index);
         if (function != null) {
@@ -934,7 +935,7 @@ public class BindVariableServiceImpl implements BindVariableService {
 
     @Override
     public void setTimestampWithType(int index, int timestampType, long value) throws SqlException {
-        indexedVariables.extendPos(index + 1);
+        extendIndexedVariables(index);
         // variable exists
         Function function = indexedVariables.getQuick(index);
         if (function != null) {
@@ -950,7 +951,7 @@ public class BindVariableServiceImpl implements BindVariableService {
 
     @Override
     public void setUuid(int index, long lo, long hi) throws SqlException {
-        indexedVariables.extendPos(index + 1);
+        extendIndexedVariables(index);
         // variable exists
         Function function = indexedVariables.getQuick(index);
         if (function != null) {
@@ -984,7 +985,7 @@ public class BindVariableServiceImpl implements BindVariableService {
 
     @Override
     public void setVarchar(int index, @Transient Utf8Sequence value) throws SqlException {
-        indexedVariables.extendPos(index + 1);
+        extendIndexedVariables(index);
         // variable exists
         Function function = indexedVariables.getQuick(index);
         if (function != null) {
@@ -1612,7 +1613,7 @@ public class BindVariableServiceImpl implements BindVariableService {
     }
 
     private void setArrayType(int index, int colType) throws SqlException {
-        indexedVariables.extendPos(index + 1);
+        extendIndexedVariables(index);
         // variable exists
         Function function = indexedVariables.getQuick(index);
         if (function == null) {
@@ -1652,6 +1653,24 @@ public class BindVariableServiceImpl implements BindVariableService {
             }
         } else {
             indexedVariables.extendAndSet(index, UndefinedFunction.INSTANCE);
+        }
+    }
+
+    private void extendIndexedVariables(int index) throws SqlException {
+        validateIndexedVariableIndex(index, 0);
+        indexedVariables.extendPos(index + 1);
+    }
+
+    private void extendIndexedVariablesUnchecked(int index) {
+        if (index < 0 || index >= BindVariableService.MAX_INDEXED_VARIABLE_COUNT) {
+            throw CairoException.nonCritical().put("invalid bind variable index [value=").put(index).put(']');
+        }
+        indexedVariables.extendPos(index + 1);
+    }
+
+    private static void validateIndexedVariableIndex(int index, int position) throws SqlException {
+        if (index < 0 || index >= BindVariableService.MAX_INDEXED_VARIABLE_COUNT) {
+            throw SqlException.$(position, "invalid bind variable index [value=").put(index).put(']');
         }
     }
 }

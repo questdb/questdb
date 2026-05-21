@@ -1626,7 +1626,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
         // get variable index from token
         try {
             final int variableIndex = Numbers.parseInt(name, 1, name.length());
-            if (variableIndex < 1) {
+            if (variableIndex < 1 || variableIndex > BindVariableService.MAX_INDEXED_VARIABLE_COUNT) {
                 throw SqlException.$(position, "invalid bind variable index [value=").put(variableIndex).put(']');
             }
             return createIndexParameter(variableIndex - 1, position);

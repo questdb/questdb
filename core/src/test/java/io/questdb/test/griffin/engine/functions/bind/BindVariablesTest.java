@@ -29,6 +29,7 @@ import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.NanosTimestampDriver;
 import io.questdb.cairo.TableColumnMetadata;
+import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
@@ -389,6 +390,33 @@ public class BindVariablesTest extends BaseFunctionFactoryTest {
         } catch (SqlException e) {
             TestUtils.assertContains(e.getFlyweightMessage(), "invalid bind variable index");
         }
+    }
+
+    @Test
+    public void testExplicitlyIndexedTooLargeIndex() throws SqlException {
+        bindVariableService.setDouble(0, 42.0);
+
+        try {
+            expr("$" + (BindVariableService.MAX_INDEXED_VARIABLE_COUNT + 1) + " + $1")
+                    .withFunction(new AddDoubleFunctionFactory())
+                    .$();
+            Assert.fail();
+        } catch (SqlException e) {
+            TestUtils.assertContains(
+                    e.getFlyweightMessage(),
+                    "invalid bind variable index [value=" + (BindVariableService.MAX_INDEXED_VARIABLE_COUNT + 1) + "]"
+            );
+        }
+    }
+
+    @Test
+    public void testExplicitlyIndexedMaxIndexAccepted() throws SqlException {
+        bindVariableService.setDouble(0, 42.0);
+
+        Function func = expr("$" + BindVariableService.MAX_INDEXED_VARIABLE_COUNT + " + $1")
+                .withFunction(new AddDoubleFunctionFactory())
+                .$();
+        func.close();
     }
 
     @Test
