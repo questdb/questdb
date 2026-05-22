@@ -69,37 +69,6 @@ public class TestServerMain extends ServerMain {
         }
     }
 
-    /**
-     * Drains pending WAL work synchronously before delegating to {@link ServerMain#close()}.
-     * <p>
-     * Without this drain, the engine's worker pool can still be processing a dropped-table
-     * cleanup (e.g., {@code ApplyWal2TableJob} blocked acquiring the reader-pool lock)
-     * when {@code super.close()} returns. The closing of those writers releases cached
-     * file descriptors moments later -- right inside the next test's
-     * {@code assertMemoryLeak()} window -- and the next test fails {@code LeakCheck}
-     * with cached/OS fd counts that drop below the baseline it captured at start.
-     * Running the drain here makes any pending drop notifications get processed on the
-     * current thread, so all cached fds tied to dropped tables are released before close
-     * completes.
-     */
-    @Override
-    public void close() {
-        if (!hasBeenClosed()) {
-            try {
-                TestUtils.drainWalQueue(getEngine());
-            } catch (Throwable ignore) {
-                // Best-effort drain: any failure here must not mask the original
-                // test outcome. super.close() still runs below.
-            }
-        }
-        super.close();
-        // Safety net: even after super.close() returns, wait for the process-global
-        // FD cache to stabilise. If anything (a halted-but-not-yet-joined worker,
-        // a deferred pool entry teardown) is still closing cached files, give it a
-        // brief window to finish so the next test's LeakCheck baseline is clean.
-        TestUtils.awaitFdCountStable();
-    }
-
     public void compile(String sql) {
         try {
             if (sqlExecutionContext == null) {
