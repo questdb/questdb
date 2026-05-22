@@ -31,6 +31,9 @@ import io.questdb.cairo.sql.WindowSPI;
 import io.questdb.cairo.vm.api.MemoryARW;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
+import io.questdb.std.Decimal128;
+import io.questdb.std.Decimal256;
+import io.questdb.std.Decimals;
 import io.questdb.std.LongList;
 import io.questdb.std.Misc;
 import io.questdb.std.Unsafe;
@@ -154,6 +157,156 @@ public abstract class AbstractWindowFunctionFactory implements FunctionFactory {
 
         @Override
         public void toTop() {
+        }
+    }
+
+    static class Decimal128NullFunction extends BaseNullFunction implements WindowDecimal128Function {
+        private final int type;
+
+        Decimal128NullFunction(Function arg, String name, long rowLo, long rowHi, boolean isRange, VirtualRecord partitionByRecord, int type) {
+            super(arg, name, rowLo, rowHi, isRange, partitionByRecord);
+            this.type = type;
+        }
+
+        @Override
+        public void getDecimal128(Record rec, Decimal128 sink) {
+            sink.ofRawNull();
+        }
+
+        @Override
+        public int getType() {
+            return type;
+        }
+
+        @Override
+        public void pass1(Record record, long recordOffset, WindowSPI spi) {
+            long addr = spi.getAddress(recordOffset, columnIndex);
+            Unsafe.putLong(addr, Decimals.DECIMAL128_HI_NULL);
+            Unsafe.putLong(addr + Long.BYTES, Decimals.DECIMAL128_LO_NULL);
+        }
+    }
+
+    static class Decimal16NullFunction extends BaseNullFunction implements WindowDecimal16Function {
+        private final int type;
+
+        Decimal16NullFunction(Function arg, String name, long rowLo, long rowHi, boolean isRange, VirtualRecord partitionByRecord, int type) {
+            super(arg, name, rowLo, rowHi, isRange, partitionByRecord);
+            this.type = type;
+        }
+
+        @Override
+        public short getDecimal16(Record rec) {
+            return Decimals.DECIMAL16_NULL;
+        }
+
+        @Override
+        public int getType() {
+            return type;
+        }
+
+        @Override
+        public void pass1(Record record, long recordOffset, WindowSPI spi) {
+            Unsafe.putShort(spi.getAddress(recordOffset, columnIndex), Decimals.DECIMAL16_NULL);
+        }
+    }
+
+    static class Decimal256NullFunction extends BaseNullFunction implements WindowDecimal256Function {
+        private final int type;
+
+        Decimal256NullFunction(Function arg, String name, long rowLo, long rowHi, boolean isRange, VirtualRecord partitionByRecord, int type) {
+            super(arg, name, rowLo, rowHi, isRange, partitionByRecord);
+            this.type = type;
+        }
+
+        @Override
+        public void getDecimal256(Record rec, Decimal256 sink) {
+            sink.ofRawNull();
+        }
+
+        @Override
+        public int getType() {
+            return type;
+        }
+
+        @Override
+        public void pass1(Record record, long recordOffset, WindowSPI spi) {
+            long addr = spi.getAddress(recordOffset, columnIndex);
+            Unsafe.putLong(addr, Decimals.DECIMAL256_HH_NULL);
+            Unsafe.putLong(addr + Long.BYTES, Decimals.DECIMAL256_HL_NULL);
+            Unsafe.putLong(addr + 2 * Long.BYTES, Decimals.DECIMAL256_LH_NULL);
+            Unsafe.putLong(addr + 3 * Long.BYTES, Decimals.DECIMAL256_LL_NULL);
+        }
+    }
+
+    static class Decimal32NullFunction extends BaseNullFunction implements WindowDecimal32Function {
+        private final int type;
+
+        Decimal32NullFunction(Function arg, String name, long rowLo, long rowHi, boolean isRange, VirtualRecord partitionByRecord, int type) {
+            super(arg, name, rowLo, rowHi, isRange, partitionByRecord);
+            this.type = type;
+        }
+
+        @Override
+        public int getDecimal32(Record rec) {
+            return Decimals.DECIMAL32_NULL;
+        }
+
+        @Override
+        public int getType() {
+            return type;
+        }
+
+        @Override
+        public void pass1(Record record, long recordOffset, WindowSPI spi) {
+            Unsafe.putInt(spi.getAddress(recordOffset, columnIndex), Decimals.DECIMAL32_NULL);
+        }
+    }
+
+    static class Decimal64NullFunction extends BaseNullFunction implements WindowDecimal64Function {
+        private final int type;
+
+        Decimal64NullFunction(Function arg, String name, long rowLo, long rowHi, boolean isRange, VirtualRecord partitionByRecord, int type) {
+            super(arg, name, rowLo, rowHi, isRange, partitionByRecord);
+            this.type = type;
+        }
+
+        @Override
+        public long getDecimal64(Record rec) {
+            return Decimals.DECIMAL64_NULL;
+        }
+
+        @Override
+        public int getType() {
+            return type;
+        }
+
+        @Override
+        public void pass1(Record record, long recordOffset, WindowSPI spi) {
+            Unsafe.putLong(spi.getAddress(recordOffset, columnIndex), Decimals.DECIMAL64_NULL);
+        }
+    }
+
+    static class Decimal8NullFunction extends BaseNullFunction implements WindowDecimal8Function {
+        private final int type;
+
+        Decimal8NullFunction(Function arg, String name, long rowLo, long rowHi, boolean isRange, VirtualRecord partitionByRecord, int type) {
+            super(arg, name, rowLo, rowHi, isRange, partitionByRecord);
+            this.type = type;
+        }
+
+        @Override
+        public byte getDecimal8(Record rec) {
+            return Decimals.DECIMAL8_NULL;
+        }
+
+        @Override
+        public int getType() {
+            return type;
+        }
+
+        @Override
+        public void pass1(Record record, long recordOffset, WindowSPI spi) {
+            Unsafe.putByte(spi.getAddress(recordOffset, columnIndex), Decimals.DECIMAL8_NULL);
         }
     }
 
