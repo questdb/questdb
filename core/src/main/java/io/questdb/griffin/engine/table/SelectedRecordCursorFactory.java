@@ -56,8 +56,8 @@ import org.jetbrains.annotations.Nullable;
 public final class SelectedRecordCursorFactory extends AbstractRecordCursorFactory {
     private final RecordCursorFactory base;
     private final IntList columnCrossIndex;
-    private final boolean crossedIndex;
     private final SelectedRecordCursor cursor;
+    private final boolean needsProjection;
     private SelectedPageFrameCursor pageFrameCursor;
     private ObjList<SelectedRecordCursor> sharedCursors;
     private SelectedTimeFrameCursor timeFrameCursor;
@@ -67,7 +67,12 @@ public final class SelectedRecordCursorFactory extends AbstractRecordCursorFacto
         this.base = base;
         this.columnCrossIndex = columnCrossIndex;
         this.cursor = new SelectedRecordCursor(columnCrossIndex, base.recordCursorSupportsRandomAccess());
-        this.crossedIndex = isCrossedIndex(columnCrossIndex);
+        // True when the cursor must wrap its base to expose only the projected columns.
+        // isCrossedIndex covers reorder; the size check covers drop-only-with-identity-mapping
+        // (kept columns are at base[0..size-1]). Without the size check, page frame consumers
+        // that iterate by base columnMapping size would walk past the projected metadata.
+        this.needsProjection = isCrossedIndex(columnCrossIndex)
+                || columnCrossIndex.size() != base.getMetadata().getColumnCount();
     }
 
     public static boolean isCrossedIndex(IntList columnCrossIndex) {
@@ -119,7 +124,7 @@ public final class SelectedRecordCursorFactory extends AbstractRecordCursorFacto
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         final RecordCursor baseCursor = base.getCursor(executionContext);
-        if (!crossedIndex) {
+        if (!needsProjection) {
             return baseCursor;
         }
         try {
@@ -139,7 +144,7 @@ public final class SelectedRecordCursorFactory extends AbstractRecordCursorFacto
     @Override
     public PageFrameCursor getPageFrameCursor(SqlExecutionContext executionContext, int order) throws SqlException {
         PageFrameCursor baseCursor = base.getPageFrameCursor(executionContext, order);
-        if (baseCursor == null || !crossedIndex) {
+        if (baseCursor == null || !needsProjection) {
             return baseCursor;
         }
         if (pageFrameCursor == null) {
@@ -155,7 +160,7 @@ public final class SelectedRecordCursorFactory extends AbstractRecordCursorFacto
 
     @Override
     public RecordCursor getSharedCursor(SqlExecutionContext executionContext, int sharedId) throws SqlException {
-        if (!crossedIndex) {
+        if (!needsProjection) {
             return base.getSharedCursor(executionContext, sharedId);
         }
         if (sharedCursors == null) {
@@ -174,7 +179,7 @@ public final class SelectedRecordCursorFactory extends AbstractRecordCursorFacto
     @Override
     public TimeFrameCursor getTimeFrameCursor(SqlExecutionContext executionContext) throws SqlException {
         TimeFrameCursor baseCursor = base.getTimeFrameCursor(executionContext);
-        if (baseCursor == null || !crossedIndex) {
+        if (baseCursor == null || !needsProjection) {
             return baseCursor;
         }
         if (timeFrameCursor == null) {
@@ -201,7 +206,7 @@ public final class SelectedRecordCursorFactory extends AbstractRecordCursorFacto
     @Override
     public ConcurrentTimeFrameCursor newTimeFrameCursor() {
         ConcurrentTimeFrameCursor baseCursor = base.newTimeFrameCursor();
-        if (baseCursor == null || !crossedIndex) {
+        if (baseCursor == null || !needsProjection) {
             return baseCursor;
         }
         return new SelectedConcurrentTimeFrameCursor(baseCursor, getMetadata().getTimestampIndex());
@@ -474,6 +479,7 @@ public final class SelectedRecordCursorFactory extends AbstractRecordCursorFacto
 
     private static class SelectedPageFrameCursor implements TablePageFrameCursor {
         private final IntList columnCrossIndex;
+        private final ColumnMapping columnMapping = new ColumnMapping();
         private final SelectedPageFrame pageFrame;
         private TablePageFrameCursor baseCursor;
 
@@ -494,7 +500,7 @@ public final class SelectedRecordCursorFactory extends AbstractRecordCursorFacto
 
         @Override
         public ColumnMapping getColumnMapping() {
-            return baseCursor.getColumnMapping();
+            return columnMapping;
         }
 
         @Override
@@ -566,8 +572,21 @@ public final class SelectedRecordCursorFactory extends AbstractRecordCursorFacto
             baseCursor.toTop();
         }
 
-        public SelectedPageFrameCursor wrap(TablePageFrameCursor baseCursor) {
+        private SelectedPageFrameCursor wrap(TablePageFrameCursor baseCursor) {
             this.baseCursor = baseCursor;
+            // Project the base column mapping through columnCrossIndex so that this cursor's
+            // mapping stays parallel with the projected metadata. Page frame consumers like
+            // PageFrameAddressCache assume mapping[i] corresponds to metadata column i.
+            final ColumnMapping baseMapping = baseCursor.getColumnMapping();
+            columnMapping.clear();
+            for (int i = 0, n = columnCrossIndex.size(); i < n; i++) {
+                final int basePos = columnCrossIndex.getQuick(i);
+                columnMapping.addColumn(
+                        baseMapping.getColumnIndex(basePos),
+                        baseMapping.getWriterIndex(basePos),
+                        baseMapping.getOriginalWriterIndex(basePos)
+                );
+            }
             return this;
         }
     }
