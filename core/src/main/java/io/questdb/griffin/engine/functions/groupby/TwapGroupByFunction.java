@@ -67,12 +67,13 @@ import org.jetbrains.annotations.NotNull;
  * {@link io.questdb.griffin.engine.PerWorkerLocks}, not by the worker's
  * identity, so under cross-query work-stealing a single slot's buffer can
  * accumulate batches in non-monotonic order. {@code computeNext} therefore
- * records the exact per-frame batch boundaries (see {@link SortedRunsMerge}):
- * a new batch starts whenever the page frame changes, detected from the row
- * id ({@code rowId >>> 44} is the frame index). The boundaries let merge and
- * read time sort the buffer by permuting whole batches, with no element-wise
- * merge. A group that only ever sees one frame keeps its descriptor buffer
- * unallocated.
+ * records per-frame batch boundaries (see {@link SortedRunsMerge}): a new
+ * batch starts at a gap or an out-of-order frame, while consecutive in-order
+ * frames extend the current batch (the page frame is read from the row id,
+ * {@code rowId >>> 44}). The boundaries let merge and read time sort the
+ * buffer by permuting whole batches, with no element-wise merge. A group
+ * whose frames arrive as a single consecutive run keeps its descriptor
+ * buffer unallocated.
  * <p>
  * The final TWAP is computed from the compacted, fully sorted buffer in
  * {@link #getDouble(Record)}.
@@ -169,12 +170,18 @@ public class TwapGroupByFunction extends DoubleFunction implements GroupByFuncti
             mapValue.putLong(valueIndex + 6, rowId >>> 44);
             return;
         }
-        // A page frame change starts a new batch. Frames map to slots by lock
-        // acquisition, so a slot can observe frames out of rowId order; the
-        // descriptor buffer records the exact per-frame boundaries.
+        // Frames map to slots by lock acquisition, so a slot can observe
+        // frames out of rowId order. A consecutive frame (lastFrameId + 1)
+        // continues the current batch: its keys follow on contiguously and
+        // the batch stays a contiguous frame interval, so it remains
+        // key-disjoint from every other batch. A gap or an out-of-order
+        // frame starts a new batch.
         long frameId = rowId >>> 44;
-        if (frameId != mapValue.getLong(valueIndex + 6)) {
-            SortedRunsMerge.appendBatchStart(allocator, mapValue, valueIndex + 3, count);
+        long lastFrameId = mapValue.getLong(valueIndex + 6);
+        if (frameId != lastFrameId) {
+            if (frameId != lastFrameId + 1) {
+                SortedRunsMerge.appendBatchStart(allocator, mapValue, valueIndex + 3, count);
+            }
             mapValue.putLong(valueIndex + 6, frameId);
         }
         // Append observation, growing the buffer if needed

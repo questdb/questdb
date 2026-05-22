@@ -44,20 +44,23 @@ import io.questdb.std.Vect;
  *
  * <h2>Batch model</h2>
  *
- * <p>Each {@code computeNext} loop over one page frame appends a contiguous,
- * key-sorted run of entries - a <b>batch</b>. The owning function records the
- * exact batch boundaries as it appends: a new batch starts whenever the page
- * frame changes, detected from the high bits of the row id
- * ({@code rowId >>> 44} is the frame index). Because page frames cover disjoint,
- * contiguous row-id ranges, distinct batches never overlap in key range.
+ * <p>A <b>batch</b> is a contiguous, key-sorted run of entries spanning one or
+ * more consecutive page frames. The owning function tracks each row's page
+ * frame from the high bits of the row id ({@code rowId >>> 44} is the frame
+ * index) and records a batch boundary only when a frame is not the immediate
+ * successor of the previous one - a gap or an out-of-order frame; consecutive
+ * in-order frames extend the current batch. Each batch therefore spans a
+ * contiguous interval of frame indices, and because page frames cover
+ * disjoint, contiguous row-id ranges, distinct batches never overlap in key
+ * range - the invariant the whole-batch permutation below depends on.
  *
  * <p>The boundaries live in a per-group <b>descriptor buffer</b>: a native array
  * of {@code descCount} ascending entry offsets, where descriptor {@code i} is
  * the start offset of batch {@code i} and batch {@code i} spans
  * {@code [desc[i], desc[i+1])} (the last batch runs to {@code entryCount}). The
  * descriptor buffer is allocated lazily by {@link #appendBatchStart}: a group
- * that only ever sees one frame keeps {@code descPtr == 0} and needs no
- * descriptor buffer at all.
+ * whose frames arrive as a single consecutive run keeps {@code descPtr == 0}
+ * and needs no descriptor buffer at all.
  *
  * <h2>Algorithm</h2>
  *

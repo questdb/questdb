@@ -55,15 +55,15 @@ import org.jetbrains.annotations.Nullable;
  * <b>Parallelism strategy.</b> Same pattern as {@link TwapGroupByFunction}.
  * Each per-slot function instance accumulates observations into a native
  * buffer through its own {@link GroupByAllocator}. A single {@code computeNext}
- * loop processes one page frame in rowId order, appending one rowId-sorted
- * batch. Under parallel GROUP BY a slot can accumulate batches in non-monotonic
- * order (frames map to slots by lock acquisition, not worker identity), so
- * {@code computeNext} records the exact per-frame batch boundaries: a new batch
- * starts whenever the page frame changes, detected from the row id
- * ({@code rowId >>> 44} is the frame index). The boundaries let merge and
+ * loop processes one page frame in rowId order. Under parallel GROUP BY a slot
+ * can accumulate frames in non-monotonic order (frames map to slots by lock
+ * acquisition, not worker identity), so {@code computeNext} records per-frame
+ * batch boundaries: a new batch starts at a gap or an out-of-order frame,
+ * while consecutive in-order frames extend the current batch (the page frame
+ * is read from the row id, {@code rowId >>> 44}). The boundaries let merge and
  * render time sort the buffer by permuting whole batches, with no element-wise
- * merge. A group that only ever sees one frame keeps its descriptor buffer
- * unallocated. See {@link SortedRunsMerge}.
+ * merge. A group whose frames arrive as a single consecutive run keeps its
+ * descriptor buffer unallocated. See {@link SortedRunsMerge}.
  * <p>
  * <b>MapValue layout</b> (7 slots):
  * <pre>
@@ -210,12 +210,18 @@ public class SparklineGroupByFunction extends VarcharFunction implements UnaryFu
                     .put(name).put("() result exceeds max size of ")
                     .put((long) maxValues * 3).put(" bytes");
         }
-        // A page frame change starts a new batch. Frames map to slots by lock
-        // acquisition, so a slot can observe frames out of rowId order; the
-        // descriptor buffer records the exact per-frame boundaries.
+        // Frames map to slots by lock acquisition, so a slot can observe
+        // frames out of rowId order. A consecutive frame (lastFrameId + 1)
+        // continues the current batch: its keys follow on contiguously and
+        // the batch stays a contiguous frame interval, so it remains
+        // key-disjoint from every other batch. A gap or an out-of-order
+        // frame starts a new batch.
         long frameId = rowId >>> 44;
-        if (frameId != mapValue.getLong(valueIndex + 6)) {
-            SortedRunsMerge.appendBatchStart(allocator, mapValue, valueIndex + 3, count);
+        long lastFrameId = mapValue.getLong(valueIndex + 6);
+        if (frameId != lastFrameId) {
+            if (frameId != lastFrameId + 1) {
+                SortedRunsMerge.appendBatchStart(allocator, mapValue, valueIndex + 3, count);
+            }
             mapValue.putLong(valueIndex + 6, frameId);
         }
         long capacity = mapValue.getLong(valueIndex + 2);
