@@ -86,34 +86,22 @@ public class LtDecimalFunctionFactory implements FunctionFactory {
         final int rightScale = ColumnType.getDecimalScale(rightType);
 
         if (leftPrecision == rightPrecision && leftScale == rightScale) {
-            switch (ColumnType.tagOf(leftType)) {
-                case ColumnType.DECIMAL8:
-                    return new UnscaledDecimal8Func(left, right);
-                case ColumnType.DECIMAL16:
-                    return new UnscaledDecimal16Func(left, right);
-                case ColumnType.DECIMAL32:
-                    return new UnscaledDecimal32Func(left, right);
-                case ColumnType.DECIMAL64:
-                    return new UnscaledDecimal64Func(left, right);
-                case ColumnType.DECIMAL128:
-                    return new UnscaledDecimal128Func(left, right);
-                default:
-                    return new UnscaledDecimal256Func(left, right);
-            }
+            return switch (ColumnType.tagOf(leftType)) {
+                case ColumnType.DECIMAL8 -> new UnscaledDecimal8Func(left, right);
+                case ColumnType.DECIMAL16 -> new UnscaledDecimal16Func(left, right);
+                case ColumnType.DECIMAL32 -> new UnscaledDecimal32Func(left, right);
+                case ColumnType.DECIMAL64 -> new UnscaledDecimal64Func(left, right);
+                case ColumnType.DECIMAL128 -> new UnscaledDecimal128Func(left, right);
+                default -> new UnscaledDecimal256Func(left, right);
+            };
         }
 
         final int maxPrecision = Math.max(leftPrecision, rightPrecision);
-        switch (Decimals.getStorageSizePow2(maxPrecision)) {
-            case 0:
-            case 1:
-            case 2:
-            case 3:
-                return new Decimal64Func(left, right);
-            case 4:
-                return new Decimal128Func(left, right);
-            default:
-                return new Decimal256Func(left, right);
-        }
+        return switch (Decimals.getStorageSizePow2(maxPrecision)) {
+            case 0, 1, 2, 3 -> new Decimal64Func(left, right);
+            case 4 -> new Decimal128Func(left, right);
+            default -> new Decimal256Func(left, right);
+        };
     }
 
     private static class Decimal128Func extends CompareDecimal128Function {
@@ -199,7 +187,7 @@ public class LtDecimalFunctionFactory implements FunctionFactory {
             right.getDecimal128(rec, decimalRight);
 
             if (decimalLeft.isNull() || decimalRight.isNull()) {
-                return false;
+                return negated && decimalLeft.isNull() == decimalRight.isNull();
             }
             long aHi = decimalLeft.getHigh();
             long bHi = decimalRight.getHigh();
@@ -226,7 +214,9 @@ public class LtDecimalFunctionFactory implements FunctionFactory {
             final long a = left.getDecimal16(rec);
             final long b = right.getDecimal16(rec);
             if (a == Decimals.DECIMAL16_NULL || b == Decimals.DECIMAL16_NULL) {
-                return false;
+                // At least one side is the NULL sentinel; since the sentinel is
+                // reserved, a == b iff both sides are NULL.
+                return negated && a == b;
             }
             return negated == (a >= b);
         }
@@ -246,7 +236,7 @@ public class LtDecimalFunctionFactory implements FunctionFactory {
             right.getDecimal256(rec, decimalRight);
 
             if (decimalLeft.isNull() || decimalRight.isNull()) {
-                return false;
+                return negated && decimalLeft.isNull() == decimalRight.isNull();
             }
             long aHH = decimalLeft.getHh();
             long bHH = decimalRight.getHh();
@@ -285,7 +275,8 @@ public class LtDecimalFunctionFactory implements FunctionFactory {
             final long a = left.getDecimal32(rec);
             final long b = right.getDecimal32(rec);
             if (a == Decimals.DECIMAL32_NULL || b == Decimals.DECIMAL32_NULL) {
-                return false;
+                // See UnscaledDecimal16Func.getBool for the simplification.
+                return negated && a == b;
             }
             return negated == (a >= b);
         }
@@ -302,7 +293,8 @@ public class LtDecimalFunctionFactory implements FunctionFactory {
             final long a = left.getDecimal64(rec);
             final long b = right.getDecimal64(rec);
             if (a == Decimals.DECIMAL64_NULL || b == Decimals.DECIMAL64_NULL) {
-                return false;
+                // See UnscaledDecimal16Func.getBool for the simplification.
+                return negated && a == b;
             }
             return negated == (a >= b);
         }
@@ -319,7 +311,8 @@ public class LtDecimalFunctionFactory implements FunctionFactory {
             final long a = left.getDecimal8(rec);
             final long b = right.getDecimal8(rec);
             if (a == Decimals.DECIMAL8_NULL || b == Decimals.DECIMAL8_NULL) {
-                return false;
+                // See UnscaledDecimal16Func.getBool for the simplification.
+                return negated && a == b;
             }
             return negated == (a >= b);
         }

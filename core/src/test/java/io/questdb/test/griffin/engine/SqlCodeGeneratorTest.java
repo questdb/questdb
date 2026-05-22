@@ -58,42 +58,9 @@ import org.junit.Ignore;
 import org.junit.Test;
 
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.IntFunction;
 
 public class SqlCodeGeneratorTest extends AbstractCairoTest {
-
-    public static boolean expectedUnionCastMatrixIsSymmetrical(int[][] expected) {
-        int n = expected.length;
-
-        // Check if the matrix is square
-        for (int[] row : expected) {
-            if (row.length != n) {
-                System.err.println("Matrix is not square.");
-                return false;
-            }
-        }
-
-        boolean symmetrical = true;
-
-        final java.util.function.IntFunction<String> fmtType = (int columnType) -> String.format("%d/%s", columnType, ColumnType.nameOf(columnType));
-
-        for (int i = 0; i < n; i++) {
-            // Check upper triangular vs lower triangular
-            for (int j = 0; j < i; j++) {
-                if (expected[i][j] != expected[j][i]) {
-                    System.err.printf("* Discrepancy at `expected[%s][%s] == %s`, but `expected[%s][%s] == %s`\n",
-                            fmtType.apply(i),
-                            fmtType.apply(j),
-                            fmtType.apply(expected[i][j]),
-                            fmtType.apply(j),
-                            fmtType.apply(i),
-                            fmtType.apply(expected[j][i]));
-                    symmetrical = false;
-                }
-            }
-        }
-
-        return symmetrical;
-    }
 
     @Test
     public void testAliasedColumnFollowedByWildcard() throws Exception {
@@ -191,7 +158,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         " long_sequence(1200000)" +
                         ") timestamp(k) partition by DAY",
                 "k",
-                false,
+                true,
                 true
         );
     }
@@ -212,7 +179,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         " long_sequence(1200000)" +
                         ") timestamp(k)",
                 "k",
-                false,
+                true,
                 true
         );
     }
@@ -233,7 +200,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         " long_sequence(1200000)" +
                         ") timestamp(k) partition by DAY",
                 "k",
-                false,
+                true,
                 true
         );
     }
@@ -254,7 +221,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         " long_sequence(0)" +
                         ") timestamp(k)",
                 "k",
-                false,
+                true,
                 true
         );
     }
@@ -1260,7 +1227,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         " from long_sequence(50)" +
                         ") timestamp(timestamp)",
                 null,
-                false
+                true
         );
     }
 
@@ -1375,7 +1342,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 "select * from x o where o.b in ('HYRX','PEHN', null) and a < a",
                 "create table x as (select rnd_double(0)*100 a, rnd_symbol(5,4,4,1) b, timestamp_sequence(0, 1000000000) k from long_sequence(20)), index(b)",
                 null,
-                false
+                true
         );
     }
 
@@ -1601,7 +1568,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                             " long_sequence(20)" +
                             "),index(b) timestamp(k) partition by DAY",
                     "k",
-                    false,
+                    true,
                     true
             );
             // these value are also ok because ddl2 is present, there is another round of check for that
@@ -2376,7 +2343,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 "select t7.c0 from t7 where t7.c0 > t7.c0",
                 "create table t7 as (select 42 as c0 from long_sequence(1))",
                 null,
-                false,
+                true,
                 false
         );
     }
@@ -4704,7 +4671,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                             " from long_sequence(200)" +
                             ") timestamp(k) partition by DAY",
                     "k",
-                    false,
+                    true,
                     true
             );
             // this is good
@@ -6190,7 +6157,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 "select t7.c0 from t7 where t7.c0 < t7.c0",
                 "create table t7 as (select 42 as c0 from long_sequence(1))",
                 null,
-                false,
+                true,
                 false
         );
     }
@@ -6331,7 +6298,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         " long_sequence(1200000)" +
                         ") timestamp(k) partition by DAY",
                 "k",
-                false,
+                true,
                 true
         );
     }
@@ -6352,7 +6319,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         " long_sequence(120)" +
                         ") timestamp(k) partition by DAY",
                 "k",
-                false,
+                true,
                 true
         );
     }
@@ -6373,7 +6340,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         " long_sequence(1200000)" +
                         ") timestamp(k) partition by DAY",
                 "k",
-                false,
+                true,
                 true
         );
     }
@@ -6394,7 +6361,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         " long_sequence(120)" +
                         ") timestamp(k) partition by DAY",
                 "k",
-                false,
+                true,
                 true
         );
     }
@@ -8537,7 +8504,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         " from long_sequence(5)" +
                         ") timestamp(k) partition by DAY",
                 null,
-                false,
+                true,
                 false
         );
     }
@@ -8657,7 +8624,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         " long_sequence(1200000)" +
                         ") timestamp(k) partition by DAY",
                 "k",
-                false,
+                true,
                 true
         );
     }
@@ -8678,7 +8645,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         " long_sequence(1200000)" +
                         ") timestamp(k)",
                 "k",
-                false,
+                true,
                 true
         );
     }
@@ -8749,7 +8716,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         " long_sequence(1200000)" +
                         ") timestamp(k) partition by DAY",
                 "k",
-                false,
+                true,
                 true
         );
     }
@@ -9095,7 +9062,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         " long_sequence(120)" +
                         ") timestamp(k) partition by DAY",
                 "k",
-                false,
+                true,
                 true
         );
     }
@@ -9195,6 +9162,31 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testVirtualColumnRejectsNonTimestampModelTimestampIndex() throws Exception {
+        assertMemoryLeak(() -> {
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                final String query = "SELECT x + 1 AS ts FROM long_sequence(1)";
+                final ExecutionModel executionModel = compiler.generateExecutionModel(query, sqlExecutionContext);
+                Assert.assertEquals(ExecutionModel.QUERY, executionModel.getModelType());
+
+                final IQueryModel model = (IQueryModel) executionModel;
+                model.setTimestampColumnIndex(0);
+
+                RecordCursorFactory factory = null;
+                try {
+                    factory = compiler.generateSelectWithRetries(model, null, sqlExecutionContext, false);
+                    Assert.fail("expected timestamp validation to reject non-TIMESTAMP column");
+                } catch (SqlException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "TIMESTAMP column is required but not provided");
+                    Assert.assertEquals(9, e.getPosition());
+                } finally {
+                    Misc.free(factory);
+                }
+            }
+        });
+    }
+
+    @Test
     public void testVirtualColumnWithDateaddTimestampMetadata() throws Exception {
         // Test that when using dateadd on timestamp column, the result metadata has correct timestamp
         // even without explicit timestamp(ts) clause
@@ -9217,31 +9209,6 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 Assert.assertTrue(cursor.hasNext());
                 // First row: 2022-01-15T12:00:00 - 1h = 2022-01-15T11:00:00 = 1642244400000000 microseconds
                 Assert.assertEquals(100.0, record.getDouble(1), 0.001);
-            }
-        });
-    }
-
-    @Test
-    public void testVirtualColumnRejectsNonTimestampModelTimestampIndex() throws Exception {
-        assertMemoryLeak(() -> {
-            try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                final String query = "SELECT x + 1 AS ts FROM long_sequence(1)";
-                final ExecutionModel executionModel = compiler.generateExecutionModel(query, sqlExecutionContext);
-                Assert.assertEquals(ExecutionModel.QUERY, executionModel.getModelType());
-
-                final IQueryModel model = (IQueryModel) executionModel;
-                model.setTimestampColumnIndex(0);
-
-                RecordCursorFactory factory = null;
-                try {
-                    factory = compiler.generateSelectWithRetries(model, null, sqlExecutionContext, false);
-                    Assert.fail("expected timestamp validation to reject non-TIMESTAMP column");
-                } catch (SqlException e) {
-                    TestUtils.assertContains(e.getFlyweightMessage(), "TIMESTAMP column is required but not provided");
-                    Assert.assertEquals(9, e.getPosition());
-                } finally {
-                    Misc.free(factory);
-                }
             }
         });
     }
@@ -9529,6 +9496,40 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                     true
             );
         });
+    }
+
+    private static boolean expectedUnionCastMatrixIsSymmetrical(int[][] expected) {
+        int n = expected.length;
+
+        // Check if the matrix is square
+        for (int[] row : expected) {
+            if (row.length != n) {
+                System.err.println("Matrix is not square.");
+                return false;
+            }
+        }
+
+        boolean symmetrical = true;
+
+        final IntFunction<String> fmtType = (int columnType) -> String.format("%d/%s", columnType, ColumnType.nameOf(columnType));
+
+        for (int i = 0; i < n; i++) {
+            // Check upper triangular vs lower triangular
+            for (int j = 0; j < i; j++) {
+                if (expected[i][j] != expected[j][i]) {
+                    System.err.printf("* Discrepancy at `expected[%s][%s] == %s`, but `expected[%s][%s] == %s`\n",
+                            fmtType.apply(i),
+                            fmtType.apply(j),
+                            fmtType.apply(expected[i][j]),
+                            fmtType.apply(j),
+                            fmtType.apply(i),
+                            fmtType.apply(expected[j][i]));
+                    symmetrical = false;
+                }
+            }
+        }
+
+        return symmetrical;
     }
 
     private static void printExpectedUnionCastMatrix(int[][] expected) {

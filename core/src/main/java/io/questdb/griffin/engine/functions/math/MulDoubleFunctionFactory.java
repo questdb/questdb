@@ -31,7 +31,9 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.DoubleFunction;
+import io.questdb.griffin.engine.functions.constants.DoubleConstant;
 import io.questdb.std.IntList;
+import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
 
@@ -50,7 +52,19 @@ public class MulDoubleFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) {
-        return new Func(args.getQuick(0), args.getQuick(1));
+        final Function left = args.getQuick(0);
+        final Function right = args.getQuick(1);
+        // null * x and x * null always evaluate to null. Fold at construction time so the
+        // non-null operand is never read at all at runtime.
+        if (left.isNullConstant()) {
+            Misc.free(right);
+            return DoubleConstant.NULL;
+        }
+        if (right.isNullConstant()) {
+            Misc.free(left);
+            return DoubleConstant.NULL;
+        }
+        return new Func(left, right);
     }
 
     private static final class Func extends DoubleFunction implements ArithmeticBinaryFunction {

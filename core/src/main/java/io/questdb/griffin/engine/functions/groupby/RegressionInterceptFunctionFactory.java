@@ -203,7 +203,7 @@ public class RegressionInterceptFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean supportsParallelism() {
-            return true;
+            return BinaryFunction.super.supportsParallelism();
         }
 
         protected void aggregate(MapValue mapValue, double y, double x) {
