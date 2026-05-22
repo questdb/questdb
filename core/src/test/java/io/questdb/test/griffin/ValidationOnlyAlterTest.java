@@ -27,21 +27,26 @@ package io.questdb.test.griffin;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.ErrorTag;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.idx.PostingIndexUtils;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.std.Files;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
-// Validation-only compilation must not mutate server state. These tests cover the ALTER
+import static io.questdb.cairo.TableUtils.COLUMN_NAME_TXN_NONE;
+
+// Validation-only compilation must not mutate server state. These tests cover the compile
 // paths whose side effect runs inline during compilation (not via deferred operation
-// execution): SET TYPE writes the WAL convert file, while SUSPEND / RESUME WAL toggle the
-// sequencer's suspended flag. Each test validates the statement (asserting no mutation),
-// then runs it for real (asserting the mutation takes effect).
+// execution): ALTER TABLE SET TYPE writes the WAL convert file, SUSPEND / RESUME WAL toggle
+// the sequencer's suspended flag, and REINDEX rebuilds index files. Each test validates the
+// statement (asserting no mutation), then runs it for real (asserting the mutation takes effect).
 public class ValidationOnlyAlterTest extends AbstractCairoTest {
 
     @Before
@@ -49,6 +54,35 @@ public class ValidationOnlyAlterTest extends AbstractCairoTest {
         // SUSPEND WAL is gated on dev mode; enable it so validation reaches the suspend path.
         setProperty(PropertyKey.DEV_MODE_ENABLED, "true");
         super.setUp();
+    }
+
+    @Test
+    public void testValidateReindexDoesNotReindex() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE rix (ts TIMESTAMP, sym SYMBOL INDEX TYPE POSTING, v DOUBLE) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("INSERT INTO rix VALUES ('2024-01-01T00:00:00','A',1.0),('2024-01-01T01:00:00','B',2.0)");
+            engine.releaseAllWriters();
+
+            final TableToken token = engine.verifyTableName("rix");
+            final FilesFacade ff = configuration.getFilesFacade();
+            try (Path path = new Path()) {
+                path.of(configuration.getDbRoot()).concat(token).concat("2024-01-01");
+                final int plen = path.size();
+
+                final LPSZ keyFile = PostingIndexUtils.keyFileName(path.trimTo(plen), "sym", COLUMN_NAME_TXN_NONE);
+                Assert.assertTrue("setup: index key file must exist", ff.exists(keyFile));
+
+                // Remove the index key file so a rebuild is detectable.
+                Assert.assertTrue(ff.removeQuiet(keyFile));
+                Assert.assertFalse(ff.exists(PostingIndexUtils.keyFileName(path.trimTo(plen), "sym", COLUMN_NAME_TXN_NONE)));
+
+                validate("REINDEX TABLE rix COLUMN sym LOCK EXCLUSIVE");
+                Assert.assertFalse("validation must not rebuild the index", ff.exists(PostingIndexUtils.keyFileName(path.trimTo(plen), "sym", COLUMN_NAME_TXN_NONE)));
+
+                execute("REINDEX TABLE rix COLUMN sym LOCK EXCLUSIVE");
+                Assert.assertTrue("real reindex must rebuild the index", ff.exists(PostingIndexUtils.keyFileName(path.trimTo(plen), "sym", COLUMN_NAME_TXN_NONE)));
+            }
+        });
     }
 
     @Test
