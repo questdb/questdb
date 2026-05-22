@@ -26,6 +26,7 @@ package io.questdb.cairo.sql.async;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.sql.PageFrameAddressCache;
 import io.questdb.cairo.sql.PageFrameMemory;
 import io.questdb.cairo.sql.PageFrameMemoryPool;
@@ -36,6 +37,7 @@ import io.questdb.std.FlyweightMessageContainer;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
+import io.questdb.std.NumericException;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
@@ -52,6 +54,8 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
     private final DirectLongList filteredRows; // Used for TYPE_FILTER and TYPE_WINDOW_JOIN.
     private final PageFrameMemoryPool frameMemoryPool;
     private final long frameQueueCapacity;
+    private int errno = CairoException.NON_CRITICAL;
+    private byte errorKind = AsyncQueryErrorKind.KIND_NONE;
     private int errorMessagePosition;
     private long filteredRowCount;
     private int frameIndex = Integer.MAX_VALUE;
@@ -62,6 +66,7 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
     // Valid for TYPE_FILTER only. When set, only filteredRowCount field is initialized by the filter,
     // i.e. filteredRows can't be used.
     private boolean isCountOnly;
+    private boolean isInterrupted;
     private boolean isOutOfMemory;
     private byte taskType;
 
@@ -103,6 +108,31 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
         }
     }
 
+    /**
+     * Builds the typed exception to re-throw at the collector. The kind is the class
+     * of the throwable captured by the worker via {@link #setErrorMsg(Throwable)};
+     * {@link ImplicitCastException} and {@link NumericException} are preserved so
+     * callers (and the fuzzer oracle) can recognise legitimate user-facing errors.
+     * All other throwables fall back to a non-critical {@link CairoException}, which
+     * preserves the pre-existing behaviour for truly unexpected errors (e.g. NPE).
+     */
+    public RuntimeException buildError() {
+        return switch (errorKind) {
+            case AsyncQueryErrorKind.KIND_IMPLICIT_CAST ->
+                    ImplicitCastException.instance().position(errorMessagePosition).put(errorMsg);
+            case AsyncQueryErrorKind.KIND_NUMERIC ->
+                    NumericException.instance().position(errorMessagePosition).put(errorMsg);
+            // critical(errno) preserves the worker's errno and, with it, isCritical();
+            // errno == NON_CRITICAL reduces to the previous nonCritical() behaviour.
+            default -> CairoException.critical(errno)
+                    .position(errorMessagePosition)
+                    .put(errorMsg)
+                    .setCancellation(isCancelled)
+                    .setInterruption(isInterrupted)
+                    .setOutOfMemory(isOutOfMemory);
+        };
+    }
+
     @Override
     public void clear() {
         filteredRowCount = 0;
@@ -135,14 +165,6 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
      */
     public DirectLongList getDataAddresses() {
         return dataAddresses;
-    }
-
-    public int getErrorMessagePosition() {
-        return errorMessagePosition;
-    }
-
-    public CharSequence getErrorMsg() {
-        return errorMsg;
     }
 
     public long getFilteredRowCount() {
@@ -218,7 +240,11 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
         filteredRows.clear();
         filteredRowCount = 0;
         errorMsg.clear();
+        errorMessagePosition = 0;
+        errno = CairoException.NON_CRITICAL;
+        errorKind = AsyncQueryErrorKind.KIND_NONE;
         isCancelled = false;
+        isInterrupted = false;
         isOutOfMemory = false;
     }
 
@@ -265,18 +291,22 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
     }
 
     public void setErrorMsg(Throwable th) {
-        if (th instanceof FlyweightMessageContainer) {
-            errorMsg.put(((FlyweightMessageContainer) th).getFlyweightMessage());
+        if (th instanceof FlyweightMessageContainer fmc) {
+            errorMsg.put(fmc.getFlyweightMessage());
+            errorMessagePosition = fmc.getPosition();
         } else {
             final String msg = th.getMessage();
             errorMsg.put(msg != null ? msg : exceptionMessage);
         }
 
         if (th instanceof CairoException ce) {
+            errno = ce.getErrno();
             isCancelled = ce.isCancellation();
+            isInterrupted = ce.isInterruption();
             isOutOfMemory = ce.isOutOfMemory();
-            errorMessagePosition = ce.getPosition();
         }
+
+        errorKind = AsyncQueryErrorKind.of(th);
     }
 
     public void setFilteredRowCount(long filteredRowCount) {

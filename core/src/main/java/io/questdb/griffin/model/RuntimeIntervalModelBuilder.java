@@ -30,6 +30,7 @@ import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.LongList;
+import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
@@ -80,6 +81,21 @@ public class RuntimeIntervalModelBuilder implements Mutable {
     public void clear() {
         staticIntervals.clear();
         dynamicRangeList.clear();
+        intervalApplied = false;
+        clearBetweenParsing();
+    }
+
+    /**
+     * Frees Functions accumulated in dynamicRangeList before clearing. Use only on rollback paths
+     * where ownership has not been transferred to a RuntimeIntervalModel via {@link #build()};
+     * otherwise this double-frees Functions still owned by the built model.
+     */
+    public void freeAndClear() {
+        if (betweenBoundaryFunc != null && dynamicRangeList.indexOf(betweenBoundaryFunc) < 0) {
+            betweenBoundaryFunc.close();
+        }
+        Misc.freeObjListAndClear(dynamicRangeList);
+        staticIntervals.clear();
         intervalApplied = false;
         clearBetweenParsing();
     }

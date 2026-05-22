@@ -64,17 +64,28 @@ public class SymbolNotEqualsValueTest extends AbstractCairoTest {
     @Test
     public void testNotEquals1SymbolsWithConstantFilter() throws Exception {
         final String expected = "k\tj\tprice\tts\n";
-
-        assertQuery("k\tj\tprice\tts\n", "select sym k, sym2 j, price, ts from x where sym != 'ABB' and 2 = 1", "create table x (\n" +
-                "    sym symbol cache index,\n" +
-                "    sym2 symbol cache index,\n" +
-                "    price double,\n" +
-                "    ts timestamp\n" +
-                ") timestamp(ts) partition by DAY", "ts", "insert into x select * from (select rnd_symbol('ABB', 'HBC', 'DXR') sym, \n" +
-                "        rnd_symbol('D', 'E', 'F') sym2, \n" +
-                "        rnd_double() price, \n" +
-                "        timestamp_sequence(172800000000, 360000000) ts \n" +
-                "        from long_sequence(10)) timestamp (ts)", expected, false, true, false);
+        assertQuery(
+                expected,
+                "select sym k, sym2 j, price, ts from x where sym != 'ABB' and 2 = 1",
+                """
+                        create table x (
+                            sym symbol cache index,
+                            sym2 symbol cache index,
+                            price double,
+                            ts timestamp
+                        ) timestamp(ts) partition by DAY""",
+                "ts",
+                """
+                        insert into x select * from (select rnd_symbol('ABB', 'HBC', 'DXR') sym,
+                                rnd_symbol('D', 'E', 'F') sym2,
+                                rnd_double() price,
+                                timestamp_sequence(172800000000, 360000000) ts
+                                from long_sequence(10)) timestamp (ts)""",
+                expected,
+                true,
+                true,
+                false
+        );
     }
 
     @Test

@@ -122,7 +122,7 @@ public class AllNotEqStrFunctionFactoryTest extends AbstractCairoTest {
                 "select * from long_sequence(1) where null <> all('{abc,xyz}'::text[])",
                 null,
                 null,
-                false,
+                true,
                 true
         );
     }
