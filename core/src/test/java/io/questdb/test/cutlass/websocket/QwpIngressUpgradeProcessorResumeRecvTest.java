@@ -75,9 +75,10 @@ public class QwpIngressUpgradeProcessorResumeRecvTest extends AbstractCairoTest 
     @Test
     public void testAckBlocked() throws Exception {
         // When a PING arrives and the ACK flush gets PeerIsSlowToReadException,
-        // handlePing swallows it (same pattern as handleClose). State ends up
-        // in RESUME_ACK, pong is skipped, and resumeRecv completes normally.
-        // recv returns -1 on the next call and throws ServerDisconnectException.
+        // handlePing propagates the exception so the framework parks the
+        // connection for write and resumeSend can drain the residual ACK
+        // bytes. The send state machine sits in RESUME_ACK until the drain
+        // completes, and the pong is not attempted on this recv cycle.
         assertMemoryLeak(() -> {
             HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
             QwpIngressUpgradeProcessor processor = new QwpIngressUpgradeProcessor(engine, httpConfig);
@@ -98,12 +99,11 @@ public class QwpIngressUpgradeProcessorResumeRecvTest extends AbstractCairoTest 
                 // Set up pending ACK: highestProcessed > lastAcked
                 state.setHighestProcessedSequence(5);
 
-                processor.resumeRecv(context);
                 try {
                     processor.resumeRecv(context);
-                    Assert.fail("Expected ServerDisconnectException");
-                } catch (ServerDisconnectException e) {
-                    // expected: ack backpressure swallowed, recv returns -1
+                    Assert.fail("Expected PeerIsSlowToReadException");
+                } catch (PeerIsSlowToReadException e) {
+                    // expected: ack send parked, framework will reschedule for write
                 }
                 Assert.assertTrue(state.isSending());
                 // Deferred error should NOT be set (ACK only, no error)
@@ -854,6 +854,10 @@ public class QwpIngressUpgradeProcessorResumeRecvTest extends AbstractCairoTest 
 
     @Test
     public void testPingSendFails() throws Exception {
+        // When the pong send hits PeerDisconnectedException, handlePing
+        // propagates it; resumeRecv's PeerDisconnectedException handler
+        // converts it to ServerDisconnectException so the dispatcher tears
+        // the connection down on the same recv cycle.
         assertMemoryLeak(() -> {
             HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
             QwpIngressUpgradeProcessor processor = new QwpIngressUpgradeProcessor(engine, httpConfig);
@@ -870,14 +874,12 @@ public class QwpIngressUpgradeProcessorResumeRecvTest extends AbstractCairoTest 
             )) {
                 setupState(httpConfig, context);
 
-                // handlePing catches the PeerDisconnectedException internally
-                processor.resumeRecv(context);
                 try {
-                    // recv continues, socket returns -1 → disconnect
                     processor.resumeRecv(context);
                     Assert.fail("Expected ServerDisconnectException");
                 } catch (ServerDisconnectException e) {
-                    // expected: pong failure swallowed, then socket returns -1
+                    // expected: pong send hit PeerDisconnectedException,
+                    // resumeRecv converts to ServerDisconnectException
                 }
             } finally {
                 Unsafe.free(recvBuf, RECV_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);

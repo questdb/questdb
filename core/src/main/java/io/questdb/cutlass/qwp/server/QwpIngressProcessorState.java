@@ -65,6 +65,7 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
     static final int SEND_STATE_RESUME_DURABLE_ACK_THEN_CLOSE = 8;
     static final int SEND_STATE_RESUME_DURABLE_ACK_THEN_ERROR = 5;
     static final int SEND_STATE_RESUME_ERROR = 2;
+    static final int SEND_STATE_RESUME_PONG = 9;
     private static final Log LOG = LogFactory.getLog(QwpIngressProcessorState.class);
     private final QwpTudCache.CommittedTxnConsumer committedTxnConsumer = this::recordCommittedTable;
     private final LineHttpProcessorConfiguration configuration;
@@ -530,6 +531,15 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
     }
 
     /**
+     * Records that a PONG send was blocked by a full OS buffer.
+     * Transitions from READY to RESUME_PONG; the framework parks the
+     * connection for write so resumeSend can drain the parked bytes.
+     */
+    public void onPongBlocked() {
+        sendState = SEND_STATE_RESUME_PONG;
+    }
+
+    /**
      * Completes a resumed ACK send that was previously blocked.
      */
     public void onResumeAckComplete() {
@@ -549,6 +559,15 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
 
     public void onResumeErrorComplete() {
         clearDeferredError();
+        sendState = SEND_STATE_READY;
+    }
+
+    /**
+     * Completes a resumed PONG send that was previously blocked. No further
+     * follow-up work is required -- the pong frame is the entire response,
+     * so the connection just returns to READY for the next recv cycle.
+     */
+    public void onResumePongComplete() {
         sendState = SEND_STATE_READY;
     }
 

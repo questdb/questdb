@@ -997,17 +997,27 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
         }
     }
 
-    private void handlePing(HttpConnectionContext context, long payload, int length) {
-        try {
-            HttpRawSocket rawSocket = context.getRawResponseSocket();
-            int frameSize = WebSocketFrameWriter.headerSize(length, false) + length;
-            if (frameSize <= rawSocket.getBufferSize()) {
-                int written = WebSocketFrameWriter.writePongFrame(rawSocket.getBufferAddress(), payload, length);
-                rawSocket.send(written);
-            }
-        } catch (PeerDisconnectedException | PeerIsSlowToReadException e) {
-            LOG.debug().$("Egress failed to send pong [fd=").$(context.getFd()).I$();
+    private void handlePing(HttpConnectionContext context, long payload, int length)
+            throws PeerDisconnectedException, PeerIsSlowToReadException {
+        HttpRawSocket rawSocket = context.getRawResponseSocket();
+        int frameSize = WebSocketFrameWriter.headerSize(length, false) + length;
+        if (frameSize > rawSocket.getBufferSize()) {
+            // PING payloads are RFC-capped at 125 bytes, so a real client
+            // cannot trigger this. Log loudly and drop instead of crashing.
+            LOG.error().$("Egress pong frame exceeds response buffer [fd=").$(context.getFd())
+                    .$(", frameSize=").$(frameSize)
+                    .$(", bufferSize=").$(rawSocket.getBufferSize()).I$();
+            return;
         }
+        int written = WebSocketFrameWriter.writePongFrame(rawSocket.getBufferAddress(), payload, length);
+        // PeerDisconnected / PeerIsSlowToRead must propagate. Swallowing
+        // PISR here leaves the partially-written pong parked in the
+        // response sink with no one to drain it, since the framework only
+        // re-arms the fd for write when the exception escapes -- the
+        // client then waits indefinitely for the pong. PeerDisconnected
+        // converts to ServerDisconnectException in resumeRecv.
+        rawSocket.send(written);
+        LOG.debug().$("Egress WebSocket pong sent [fd=").$(context.getFd()).I$();
     }
 
     private void handleQueryRequest(

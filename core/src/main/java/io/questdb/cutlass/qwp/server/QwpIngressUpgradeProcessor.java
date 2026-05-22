@@ -610,6 +610,11 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
                 LOG.debug().$("Resumed CLOSE frame sent [fd=").$(context.getFd()).I$();
                 gracefulCloseAndDisconnect(context);
             }
+            case QwpIngressProcessorState.SEND_STATE_RESUME_PONG -> {
+                context.resumeResponseSend();
+                state.onResumePongComplete();
+                LOG.debug().$("Resumed pong frame sent [fd=").$(context.getFd()).I$();
+            }
             default -> {
                 LOG.critical().$("Invalid WebSocket send state [fd=").$(context.getFd())
                         .$(", state=").$(state.getSendState()).I$();
@@ -748,6 +753,10 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
                 // frame on top of an in-flight ACK. Let the caller proceed.
                     LOG.debug().$("Pending fatal close superseded by peer close [fd=").$(context.getFd())
                             .$(", state=").$(state.getSendState()).I$();
+            case QwpIngressProcessorState.SEND_STATE_RESUME_PONG -> {
+                context.resumeResponseSend();
+                state.onResumePongComplete();
+            }
             default -> {
                 LOG.critical().$("Invalid WebSocket send state during close [fd=").$(context.getFd())
                         .$(", state=").$(state.getSendState()).I$();
@@ -931,39 +940,56 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
         }
     }
 
-    private void handlePing(HttpConnectionContext context, QwpIngressProcessorState state, long payload, int length) {
+    private void handlePing(HttpConnectionContext context, QwpIngressProcessorState state, long payload, int length)
+            throws PeerDisconnectedException, PeerIsSlowToReadException {
         // PING is a documented flush point for pending ACK/durable-ACK frames.
         // A client may send PING specifically to prod the server into emitting
         // acks for commits whose uploads have completed since the last message.
-        try {
-            flushPendingAck(context, state);
-        } catch (PeerDisconnectedException | PeerIsSlowToReadException e) {
-            // Best effort — if the ACK/durable-ACK can't be sent, proceed
-            // without throwing so the caller doesn't abort ping handling.
-            // PeerIsSlowToReadException transitions into a resume state,
-            // so the isSendReady() check below skips the pong. The client
-            // may retry ping or the ACK will flush on the next drain.
-        }
+        // flushPendingAck either drains everything or transitions the send
+        // state machine to RESUME_ACK and rethrows PISR; the latter must
+        // propagate so the framework parks the connection for write. Without
+        // that, the parked ACK bytes would sit unsent in the response sink
+        // until the next unrelated write.
+        flushPendingAck(context, state);
 
-        // Can only send pong when buffer is clear
+        // Can only send pong when the response sink is clear. If a prior ACK
+        // is still draining we skip the pong rather than interleave bytes;
+        // the client either retries the ping or relies on the next ACK send
+        // cycle to flush.
         if (!state.isSendReady()) {
             LOG.debug().$("Skipping pong, buffer busy [fd=").$(context.getFd()).I$();
             return;
         }
 
-        try {
-            HttpRawSocket rawSocket = context.getRawResponseSocket();
-            long bufferAddr = rawSocket.getBufferAddress();
-            int bufferSize = rawSocket.getBufferSize();
+        HttpRawSocket rawSocket = context.getRawResponseSocket();
+        long bufferAddr = rawSocket.getBufferAddress();
+        int bufferSize = rawSocket.getBufferSize();
 
-            int frameSize = WebSocketFrameWriter.headerSize(length, false) + length;
-            if (frameSize <= bufferSize) {
-                int written = WebSocketFrameWriter.writePongFrame(bufferAddr, payload, length);
-                rawSocket.send(written);
-                LOG.debug().$("WebSocket pong sent [fd=").$(context.getFd()).I$();
-            }
-        } catch (PeerDisconnectedException | PeerIsSlowToReadException e) {
-            LOG.debug().$("Failed to send pong [fd=").$(context.getFd()).I$();
+        int frameSize = WebSocketFrameWriter.headerSize(length, false) + length;
+        if (frameSize > bufferSize) {
+            // Pong larger than the response sink buffer: drop quietly, same
+            // as the previous behaviour. PING payloads are capped at 125
+            // bytes by the RFC, so a real client cannot trigger this.
+            LOG.error().$("Pong frame exceeds response buffer [fd=").$(context.getFd())
+                    .$(", frameSize=").$(frameSize)
+                    .$(", bufferSize=").$(bufferSize).I$();
+            return;
+        }
+        int written = WebSocketFrameWriter.writePongFrame(bufferAddr, payload, length);
+        try {
+            rawSocket.send(written);
+            LOG.debug().$("WebSocket pong sent [fd=").$(context.getFd()).I$();
+        } catch (PeerIsSlowToReadException e) {
+            // The send-fragmentation path can park mid-write when the chunk
+            // cap is smaller than the pong frame. Transition into
+            // RESUME_PONG and let the exception propagate so the framework
+            // schedules a write and resumeSend can drain the residual bytes
+            // via context.resumeResponseSend(). Swallowing the exception
+            // here would leak the parked tail and the client would never
+            // see the pong.
+            state.onPongBlocked();
+            LOG.debug().$("Pong send blocked, deferring to resume [fd=").$(context.getFd()).I$();
+            throw e;
         }
     }
 
