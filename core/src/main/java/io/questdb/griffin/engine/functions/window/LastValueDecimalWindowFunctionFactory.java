@@ -4503,7 +4503,7 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
                 firstIdx = 0;
                 if (!scratch.isNull()) {
                     memory.putLong(startOffset, timestamp);
-                    memory.putDecimal128(startOffset + Long.BYTES, scratch);
+                    memory.putDecimal128(startOffset + Long.BYTES, scratch.getHigh(), scratch.getLow());
                     size = 1;
                     if (frameIncludesCurrentValue) {
                         lastValue.copyFrom(scratch);
@@ -4543,7 +4543,7 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
                         firstIdx = memoryDesc.firstIdx;
                     }
                     memory.putLong(startOffset + ((firstIdx + size) % capacity) * RECORD_SIZE, timestamp);
-                    memory.putDecimal128(startOffset + ((firstIdx + size) % capacity) * RECORD_SIZE + Long.BYTES, scratch);
+                    memory.putDecimal128(startOffset + ((firstIdx + size) % capacity) * RECORD_SIZE + Long.BYTES, scratch.getHigh(), scratch.getLow());
                     size++;
                 }
 
@@ -4641,7 +4641,7 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
                 Decimal128 nullScratch = new Decimal128();
                 nullScratch.ofRawNull();
                 for (int i = 0; i < bufferSize; i++) {
-                    memory.putDecimal128(startOffset + (long) i * 16L, nullScratch);
+                    memory.putDecimal128(startOffset + (long) i * 16L, nullScratch.getHigh(), nullScratch.getLow());
                 }
             } else {
                 value.getDecimal128(0, lastValue);
@@ -4686,7 +4686,7 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
             value.putDecimal128(0, cacheValue);
             value.putLong(2, (loIdx + 1) % bufferSize);
             value.putLong(3, startOffset);
-            memory.putDecimal128(startOffset + loIdx * 16L, scratch);
+            memory.putDecimal128(startOffset + loIdx * 16L, scratch.getHigh(), scratch.getLow());
         }
 
         @Override
@@ -4806,7 +4806,7 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
                     capacity <<= 1;
                 }
                 memory.putLong(startOffset + ((firstIdx + size) % capacity) * RECORD_SIZE, timestamp);
-                memory.putDecimal128(startOffset + ((firstIdx + size) % capacity) * RECORD_SIZE + Long.BYTES, scratch);
+                memory.putDecimal128(startOffset + ((firstIdx + size) % capacity) * RECORD_SIZE + Long.BYTES, scratch.getHigh(), scratch.getLow());
                 size++;
             }
 
@@ -4913,7 +4913,7 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
                     cacheValue.ofRawNull();
                 }
             }
-            buffer.putDecimal128((long) loIdx * 16L, scratch);
+            buffer.putDecimal128((long) loIdx * 16L, scratch.getHigh(), scratch.getLow());
             loIdx = (loIdx + 1) % bufferSize;
         }
 
@@ -4995,7 +4995,7 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
             Decimal128 nullScratch = new Decimal128();
             nullScratch.ofRawNull();
             for (int i = 0; i < bufferSize; i++) {
-                buffer.putDecimal128((long) i * 16L, nullScratch);
+                buffer.putDecimal128((long) i * 16L, nullScratch.getHigh(), nullScratch.getLow());
             }
         }
     }
@@ -5064,7 +5064,7 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
                 startOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
                 firstIdx = 0;
                 memory.putLong(startOffset, timestamp);
-                memory.putDecimal128(startOffset + Long.BYTES, scratch);
+                memory.putDecimal128(startOffset + Long.BYTES, scratch.getHigh(), scratch.getLow());
                 size = 1;
                 lastValue.ofRawNull();
             } else {
@@ -5118,7 +5118,7 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
                     firstIdx = memoryDesc.firstIdx;
                 }
                 memory.putLong(startOffset + ((firstIdx + size) % capacity) * RECORD_SIZE, timestamp);
-                memory.putDecimal128(startOffset + ((firstIdx + size) % capacity) * RECORD_SIZE + Long.BYTES, scratch);
+                memory.putDecimal128(startOffset + ((firstIdx + size) % capacity) * RECORD_SIZE + Long.BYTES, scratch.getHigh(), scratch.getLow());
                 size++;
             }
 
@@ -5243,7 +5243,7 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
                 Decimal128 nullScratch = new Decimal128();
                 nullScratch.ofRawNull();
                 for (int i = 0; i < bufferSize; i++) {
-                    memory.putDecimal128(startOffset + (long) i * 16L, nullScratch);
+                    memory.putDecimal128(startOffset + (long) i * 16L, nullScratch.getHigh(), nullScratch.getLow());
                 }
             } else {
                 loIdx = value.getLong(0);
@@ -5252,7 +5252,7 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
 
             memory.getDecimal128(startOffset + loIdx % bufferSize * 16L, lastValue);
             value.putLong(0, (loIdx + 1) % bufferSize);
-            memory.putDecimal128(startOffset + loIdx % bufferSize * 16L, scratch);
+            memory.putDecimal128(startOffset + loIdx % bufferSize * 16L, scratch.getHigh(), scratch.getLow());
         }
 
         @Override
@@ -5424,7 +5424,7 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
                 capacity <<= 1;
             }
             memory.putLong(startOffset + ((firstIdx + size) % capacity) * RECORD_SIZE, timestamp);
-            memory.putDecimal128(startOffset + ((firstIdx + size) % capacity) * RECORD_SIZE + Long.BYTES, scratch);
+            memory.putDecimal128(startOffset + ((firstIdx + size) % capacity) * RECORD_SIZE + Long.BYTES, scratch.getHigh(), scratch.getLow());
             size++;
         }
 
@@ -5531,7 +5531,7 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
         public void computeNext(Record record) {
             buffer.getDecimal128((long) loIdx * 16L, lastValue);
             arg.getDecimal128(record, scratch);
-            buffer.putDecimal128((long) loIdx * 16L, scratch);
+            buffer.putDecimal128((long) loIdx * 16L, scratch.getHigh(), scratch.getLow());
             loIdx = (loIdx + 1) % bufferSize;
         }
 
@@ -5609,7 +5609,7 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
             Decimal128 nullScratch = new Decimal128();
             nullScratch.ofRawNull();
             for (int i = 0; i < bufferSize; i++) {
-                buffer.putDecimal128((long) i * 16L, nullScratch);
+                buffer.putDecimal128((long) i * 16L, nullScratch.getHigh(), nullScratch.getLow());
             }
         }
     }
@@ -9808,7 +9808,7 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
                 firstIdx = 0;
                 if (!scratch.isNull()) {
                     memory.putLong(startOffset, timestamp);
-                    memory.putDecimal256(startOffset + Long.BYTES, scratch);
+                    memory.putDecimal256(startOffset + Long.BYTES, scratch.getHh(), scratch.getHl(), scratch.getLh(), scratch.getLl());
                     size = 1;
                     if (frameIncludesCurrentValue) {
                         lastValue.copyRaw(scratch);
@@ -9848,7 +9848,7 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
                         firstIdx = memoryDesc.firstIdx;
                     }
                     memory.putLong(startOffset + ((firstIdx + size) % capacity) * RECORD_SIZE, timestamp);
-                    memory.putDecimal256(startOffset + ((firstIdx + size) % capacity) * RECORD_SIZE + Long.BYTES, scratch);
+                    memory.putDecimal256(startOffset + ((firstIdx + size) % capacity) * RECORD_SIZE + Long.BYTES, scratch.getHh(), scratch.getHl(), scratch.getLh(), scratch.getLl());
                     size++;
                 }
 
@@ -9946,7 +9946,7 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
                 Decimal256 nullScratch = new Decimal256();
                 nullScratch.ofRawNull();
                 for (int i = 0; i < bufferSize; i++) {
-                    memory.putDecimal256(startOffset + (long) i * 32L, nullScratch);
+                    memory.putDecimal256(startOffset + (long) i * 32L, nullScratch.getHh(), nullScratch.getHl(), nullScratch.getLh(), nullScratch.getLl());
                 }
             } else {
                 value.getDecimal256(0, lastValue);
@@ -9995,7 +9995,7 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
             value.putDecimal256(0, cacheValue);
             value.putLong(2, (loIdx + 1) % bufferSize);
             value.putLong(3, startOffset);
-            memory.putDecimal256(startOffset + loIdx * 32L, scratch);
+            memory.putDecimal256(startOffset + loIdx * 32L, scratch.getHh(), scratch.getHl(), scratch.getLh(), scratch.getLl());
         }
 
         @Override
@@ -10117,7 +10117,7 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
                     capacity <<= 1;
                 }
                 memory.putLong(startOffset + ((firstIdx + size) % capacity) * RECORD_SIZE, timestamp);
-                memory.putDecimal256(startOffset + ((firstIdx + size) % capacity) * RECORD_SIZE + Long.BYTES, scratch);
+                memory.putDecimal256(startOffset + ((firstIdx + size) % capacity) * RECORD_SIZE + Long.BYTES, scratch.getHh(), scratch.getHl(), scratch.getLh(), scratch.getLl());
                 size++;
             }
 
@@ -10228,7 +10228,7 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
                     cacheValue.ofRawNull();
                 }
             }
-            buffer.putDecimal256((long) loIdx * 32L, scratch);
+            buffer.putDecimal256((long) loIdx * 32L, scratch.getHh(), scratch.getHl(), scratch.getLh(), scratch.getLl());
             loIdx = (loIdx + 1) % bufferSize;
         }
 
@@ -10312,7 +10312,7 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
             Decimal256 nullScratch = new Decimal256();
             nullScratch.ofRawNull();
             for (int i = 0; i < bufferSize; i++) {
-                buffer.putDecimal256((long) i * 32L, nullScratch);
+                buffer.putDecimal256((long) i * 32L, nullScratch.getHh(), nullScratch.getHl(), nullScratch.getLh(), nullScratch.getLl());
             }
         }
     }
@@ -10739,7 +10739,7 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
                 startOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
                 firstIdx = 0;
                 memory.putLong(startOffset, timestamp);
-                memory.putDecimal256(startOffset + Long.BYTES, scratch);
+                memory.putDecimal256(startOffset + Long.BYTES, scratch.getHh(), scratch.getHl(), scratch.getLh(), scratch.getLl());
                 size = 1;
                 lastValue.ofRawNull();
             } else {
@@ -10793,7 +10793,7 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
                     firstIdx = memoryDesc.firstIdx;
                 }
                 memory.putLong(startOffset + ((firstIdx + size) % capacity) * RECORD_SIZE, timestamp);
-                memory.putDecimal256(startOffset + ((firstIdx + size) % capacity) * RECORD_SIZE + Long.BYTES, scratch);
+                memory.putDecimal256(startOffset + ((firstIdx + size) % capacity) * RECORD_SIZE + Long.BYTES, scratch.getHh(), scratch.getHl(), scratch.getLh(), scratch.getLl());
                 size++;
             }
 
@@ -10920,7 +10920,7 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
                 Decimal256 nullScratch = new Decimal256();
                 nullScratch.ofRawNull();
                 for (int i = 0; i < bufferSize; i++) {
-                    memory.putDecimal256(startOffset + (long) i * 32L, nullScratch);
+                    memory.putDecimal256(startOffset + (long) i * 32L, nullScratch.getHh(), nullScratch.getHl(), nullScratch.getLh(), nullScratch.getLl());
                 }
             } else {
                 loIdx = value.getLong(0);
@@ -10929,7 +10929,7 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
 
             memory.getDecimal256(startOffset + loIdx % bufferSize * 32L, lastValue);
             value.putLong(0, (loIdx + 1) % bufferSize);
-            memory.putDecimal256(startOffset + loIdx % bufferSize * 32L, scratch);
+            memory.putDecimal256(startOffset + loIdx % bufferSize * 32L, scratch.getHh(), scratch.getHl(), scratch.getLh(), scratch.getLl());
         }
 
         @Override
@@ -11103,7 +11103,7 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
                 capacity <<= 1;
             }
             memory.putLong(startOffset + ((firstIdx + size) % capacity) * RECORD_SIZE, timestamp);
-            memory.putDecimal256(startOffset + ((firstIdx + size) % capacity) * RECORD_SIZE + Long.BYTES, scratch);
+            memory.putDecimal256(startOffset + ((firstIdx + size) % capacity) * RECORD_SIZE + Long.BYTES, scratch.getHh(), scratch.getHl(), scratch.getLh(), scratch.getLl());
             size++;
         }
 
@@ -11212,7 +11212,7 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
         public void computeNext(Record record) {
             buffer.getDecimal256((long) loIdx * 32L, lastValue);
             arg.getDecimal256(record, scratch);
-            buffer.putDecimal256((long) loIdx * 32L, scratch);
+            buffer.putDecimal256((long) loIdx * 32L, scratch.getHh(), scratch.getHl(), scratch.getLh(), scratch.getLl());
             loIdx = (loIdx + 1) % bufferSize;
         }
 
@@ -11292,7 +11292,7 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
             Decimal256 nullScratch = new Decimal256();
             nullScratch.ofRawNull();
             for (int i = 0; i < bufferSize; i++) {
-                buffer.putDecimal256((long) i * 32L, nullScratch);
+                buffer.putDecimal256((long) i * 32L, nullScratch.getHh(), nullScratch.getHl(), nullScratch.getLh(), nullScratch.getLl());
             }
         }
     }

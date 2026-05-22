@@ -1648,7 +1648,7 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                 }
                 if (!scratch.isNull()) {
                     memory.putLong(startOffset, timestamp);
-                    memory.putDecimal128(startOffset + Long.BYTES, scratch);
+                    memory.putDecimal128(startOffset + Long.BYTES, scratch.getHigh(), scratch.getLow());
                     if (frameIncludesCurrentValue) {
                         maxMin.copyFrom(scratch);
                         frameSize = 1;
@@ -1659,7 +1659,7 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                         size = 1;
                     }
                     if (frameLoBounded && frameIncludesCurrentValue) {
-                        dequeMemory.putDecimal128(dequeStartOffset, scratch);
+                        dequeMemory.putDecimal128(dequeStartOffset, scratch.getHigh(), scratch.getLow());
                         dequeEndIndex++;
                     }
                 } else {
@@ -1713,7 +1713,7 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                         firstIdx = memoryDesc.firstIdx;
                     }
                     memory.putLong(startOffset + ((firstIdx + size) % capacity) * RECORD_SIZE, timestamp);
-                    memory.putDecimal128(startOffset + ((firstIdx + size) % capacity) * RECORD_SIZE + Long.BYTES, scratch);
+                    memory.putDecimal128(startOffset + ((firstIdx + size) % capacity) * RECORD_SIZE + Long.BYTES, scratch.getHigh(), scratch.getLow());
                     size++;
                 }
 
@@ -1742,7 +1742,7 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                                 dequeStartIndex = memoryDesc.firstIdx;
                                 dequeEndIndex = dequeStartIndex + memoryDesc.size;
                             }
-                            dequeMemory.putDecimal128(dequeStartOffset + (dequeEndIndex % dequeCapacity) * DEQUE_RECORD_SIZE, value);
+                            dequeMemory.putDecimal128(dequeStartOffset + (dequeEndIndex % dequeCapacity) * DEQUE_RECORD_SIZE, value.getHigh(), value.getLow());
                             dequeEndIndex++;
                             frameSize++;
                         } else {
@@ -1954,12 +1954,12 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                 Decimal128 nullScratch = new Decimal128();
                 nullScratch.ofRawNull();
                 for (int i = 0; i < bufferSize; i++) {
-                    memory.putDecimal128(startOffset + (long) i * 16L, nullScratch);
+                    memory.putDecimal128(startOffset + (long) i * 16L, nullScratch.getHigh(), nullScratch.getLow());
                 }
                 if (frameLoBounded) {
                     dequeStartOffset = dequeMemory.appendAddressFor((long) dequeBufferSize * 16L) - dequeMemory.getPageAddress(0);
                     if (!scratch.isNull() && frameIncludesCurrentValue) {
-                        dequeMemory.putDecimal128(dequeStartOffset, scratch);
+                        dequeMemory.putDecimal128(dequeStartOffset, scratch.getHigh(), scratch.getLow());
                         dequeEndIndex++;
                     }
                 } else {
@@ -1988,7 +1988,7 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                                 break;
                             }
                         }
-                        dequeMemory.putDecimal128(dequeStartOffset + (dequeEndIndex % dequeBufferSize) * 16L, hiValue);
+                        dequeMemory.putDecimal128(dequeStartOffset + (dequeEndIndex % dequeBufferSize) * 16L, hiValue.getHigh(), hiValue.getLow());
                         dequeEndIndex++;
                         dequeMemory.getDecimal128(dequeStartOffset + (dequeStartIndex % dequeBufferSize) * 16L, maxMin);
                     } else {
@@ -2029,7 +2029,7 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                 value.putLong(3, dequeStartIndex);
                 value.putLong(4, dequeEndIndex);
             }
-            memory.putDecimal128(startOffset + loIdx * 16L, scratch);
+            memory.putDecimal128(startOffset + loIdx * 16L, scratch.getHigh(), scratch.getLow());
         }
 
         @Override
@@ -2225,7 +2225,7 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                     capacity <<= 1;
                 }
                 memory.putLong(startOffset + ((firstIdx + size) % capacity) * RECORD_SIZE, timestamp);
-                memory.putDecimal128(startOffset + ((firstIdx + size) % capacity) * RECORD_SIZE + Long.BYTES, scratch);
+                memory.putDecimal128(startOffset + ((firstIdx + size) % capacity) * RECORD_SIZE + Long.BYTES, scratch.getHigh(), scratch.getLow());
                 size++;
             }
 
@@ -2262,7 +2262,7 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                             dequeEndIndex = dequeStartIndex + dequeCapacity;
                             dequeCapacity <<= 1;
                         }
-                        dequeMemory.putDecimal128(dequeStartOffset + (dequeEndIndex % dequeCapacity) * 16L, value);
+                        dequeMemory.putDecimal128(dequeStartOffset + (dequeEndIndex % dequeCapacity) * 16L, value.getHigh(), value.getLow());
                         dequeEndIndex++;
                         frameSize++;
                     } else {
@@ -2483,7 +2483,7 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                             break;
                         }
                     }
-                    dequeMemory.putDecimal128((dequeEndIndex % dequeBufferSize) * 16L, hiValue);
+                    dequeMemory.putDecimal128((dequeEndIndex % dequeBufferSize) * 16L, hiValue.getHigh(), hiValue.getLow());
                     dequeEndIndex++;
                     dequeMemory.getDecimal128((dequeStartIndex % dequeBufferSize) * 16L, maxMin);
                 } else {
@@ -2514,7 +2514,7 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                 }
             }
             count = Math.min(count + 1, bufferSize);
-            buffer.putDecimal128((long) loIdx * 16L, scratch);
+            buffer.putDecimal128((long) loIdx * 16L, scratch.getHigh(), scratch.getLow());
             loIdx = (loIdx + 1) % bufferSize;
         }
 
@@ -2607,7 +2607,7 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             Decimal128 nullScratch = new Decimal128();
             nullScratch.ofRawNull();
             for (int i = 0; i < bufferSize; i++) {
-                buffer.putDecimal128((long) i * 16L, nullScratch);
+                buffer.putDecimal128((long) i * 16L, nullScratch.getHigh(), nullScratch.getLow());
             }
             if (dequeMemory != null) {
                 dequeMemory.appendAddressFor((long) dequeBufferSize * 16L);
@@ -3227,7 +3227,7 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                 }
                 if (!scratch.isNull()) {
                     memory.putLong(startOffset, timestamp);
-                    memory.putDecimal256(startOffset + Long.BYTES, scratch);
+                    memory.putDecimal256(startOffset + Long.BYTES, scratch.getHh(), scratch.getHl(), scratch.getLh(), scratch.getLl());
                     if (frameIncludesCurrentValue) {
                         maxMin.copyRaw(scratch);
                         frameSize = 1;
@@ -3238,7 +3238,7 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                         size = 1;
                     }
                     if (frameLoBounded && frameIncludesCurrentValue) {
-                        dequeMemory.putDecimal256(dequeStartOffset, scratch);
+                        dequeMemory.putDecimal256(dequeStartOffset, scratch.getHh(), scratch.getHl(), scratch.getLh(), scratch.getLl());
                         dequeEndIndex++;
                     }
                 } else {
@@ -3292,7 +3292,7 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                         firstIdx = memoryDesc.firstIdx;
                     }
                     memory.putLong(startOffset + ((firstIdx + size) % capacity) * RECORD_SIZE, timestamp);
-                    memory.putDecimal256(startOffset + ((firstIdx + size) % capacity) * RECORD_SIZE + Long.BYTES, scratch);
+                    memory.putDecimal256(startOffset + ((firstIdx + size) % capacity) * RECORD_SIZE + Long.BYTES, scratch.getHh(), scratch.getHl(), scratch.getLh(), scratch.getLl());
                     size++;
                 }
 
@@ -3321,7 +3321,7 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                                 dequeStartIndex = memoryDesc.firstIdx;
                                 dequeEndIndex = dequeStartIndex + memoryDesc.size;
                             }
-                            dequeMemory.putDecimal256(dequeStartOffset + (dequeEndIndex % dequeCapacity) * DEQUE_RECORD_SIZE, value);
+                            dequeMemory.putDecimal256(dequeStartOffset + (dequeEndIndex % dequeCapacity) * DEQUE_RECORD_SIZE, value.getHh(), value.getHl(), value.getLh(), value.getLl());
                             dequeEndIndex++;
                             frameSize++;
                         } else {
@@ -3535,12 +3535,12 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                 Decimal256 nullScratch = new Decimal256();
                 nullScratch.ofRawNull();
                 for (int i = 0; i < bufferSize; i++) {
-                    memory.putDecimal256(startOffset + (long) i * 32L, nullScratch);
+                    memory.putDecimal256(startOffset + (long) i * 32L, nullScratch.getHh(), nullScratch.getHl(), nullScratch.getLh(), nullScratch.getLl());
                 }
                 if (frameLoBounded) {
                     dequeStartOffset = dequeMemory.appendAddressFor((long) dequeBufferSize * 32L) - dequeMemory.getPageAddress(0);
                     if (!scratch.isNull() && frameIncludesCurrentValue) {
-                        dequeMemory.putDecimal256(dequeStartOffset, scratch);
+                        dequeMemory.putDecimal256(dequeStartOffset, scratch.getHh(), scratch.getHl(), scratch.getLh(), scratch.getLl());
                         dequeEndIndex++;
                     }
                 } else {
@@ -3569,7 +3569,7 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                                 break;
                             }
                         }
-                        dequeMemory.putDecimal256(dequeStartOffset + (dequeEndIndex % dequeBufferSize) * 32L, hiValue);
+                        dequeMemory.putDecimal256(dequeStartOffset + (dequeEndIndex % dequeBufferSize) * 32L, hiValue.getHh(), hiValue.getHl(), hiValue.getLh(), hiValue.getLl());
                         dequeEndIndex++;
                         dequeMemory.getDecimal256(dequeStartOffset + (dequeStartIndex % dequeBufferSize) * 32L, maxMin);
                     } else {
@@ -3610,7 +3610,7 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                 value.putLong(3, dequeStartIndex);
                 value.putLong(4, dequeEndIndex);
             }
-            memory.putDecimal256(startOffset + loIdx * 32L, scratch);
+            memory.putDecimal256(startOffset + loIdx * 32L, scratch.getHh(), scratch.getHl(), scratch.getLh(), scratch.getLl());
         }
 
         @Override
@@ -3808,7 +3808,7 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                     capacity <<= 1;
                 }
                 memory.putLong(startOffset + ((firstIdx + size) % capacity) * RECORD_SIZE, timestamp);
-                memory.putDecimal256(startOffset + ((firstIdx + size) % capacity) * RECORD_SIZE + Long.BYTES, scratch);
+                memory.putDecimal256(startOffset + ((firstIdx + size) % capacity) * RECORD_SIZE + Long.BYTES, scratch.getHh(), scratch.getHl(), scratch.getLh(), scratch.getLl());
                 size++;
             }
 
@@ -3845,7 +3845,7 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                             dequeEndIndex = dequeStartIndex + dequeCapacity;
                             dequeCapacity <<= 1;
                         }
-                        dequeMemory.putDecimal256(dequeStartOffset + (dequeEndIndex % dequeCapacity) * 32L, value);
+                        dequeMemory.putDecimal256(dequeStartOffset + (dequeEndIndex % dequeCapacity) * 32L, value.getHh(), value.getHl(), value.getLh(), value.getLl());
                         dequeEndIndex++;
                         frameSize++;
                     } else {
@@ -4068,7 +4068,7 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                             break;
                         }
                     }
-                    dequeMemory.putDecimal256((dequeEndIndex % dequeBufferSize) * 32L, hiValue);
+                    dequeMemory.putDecimal256((dequeEndIndex % dequeBufferSize) * 32L, hiValue.getHh(), hiValue.getHl(), hiValue.getLh(), hiValue.getLl());
                     dequeEndIndex++;
                     dequeMemory.getDecimal256((dequeStartIndex % dequeBufferSize) * 32L, maxMin);
                 } else {
@@ -4099,7 +4099,7 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                 }
             }
             count = Math.min(count + 1, bufferSize);
-            buffer.putDecimal256((long) loIdx * 32L, scratch);
+            buffer.putDecimal256((long) loIdx * 32L, scratch.getHh(), scratch.getHl(), scratch.getLh(), scratch.getLl());
             loIdx = (loIdx + 1) % bufferSize;
         }
 
@@ -4194,7 +4194,7 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             Decimal256 nullScratch = new Decimal256();
             nullScratch.ofRawNull();
             for (int i = 0; i < bufferSize; i++) {
-                buffer.putDecimal256((long) i * 32L, nullScratch);
+                buffer.putDecimal256((long) i * 32L, nullScratch.getHh(), nullScratch.getHl(), nullScratch.getLh(), nullScratch.getLl());
             }
             if (dequeMemory != null) {
                 dequeMemory.appendAddressFor((long) dequeBufferSize * 32L);

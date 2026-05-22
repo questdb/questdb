@@ -175,7 +175,7 @@ public class LeadDecimalFunctionFactory extends AbstractWindowFunctionFactory {
             arg.getDecimal128(record, scratch);
             boolean respectNull = !ignoreNulls || !scratch.isNull();
             if (respectNull) {
-                buffer.putDecimal128((long) loIdx * 16L, scratch);
+                buffer.putDecimal128((long) loIdx * 16L, scratch.getHigh(), scratch.getLow());
             }
             long addr = spi.getAddress(recordOffset, columnIndex);
             Unsafe.putLong(addr, leadValue.getHigh());
@@ -253,7 +253,7 @@ public class LeadDecimalFunctionFactory extends AbstractWindowFunctionFactory {
                 Decimal128 nullScratch = new Decimal128();
                 nullScratch.ofRawNull();
                 for (long i = 0; i < offset; i++) {
-                    memory.putDecimal128(startOffset + i * 16L, nullScratch);
+                    memory.putDecimal128(startOffset + i * 16L, nullScratch.getHigh(), nullScratch.getLow());
                 }
             } else {
                 startOffset = mapValue.getLong(0);
@@ -274,7 +274,7 @@ public class LeadDecimalFunctionFactory extends AbstractWindowFunctionFactory {
             }
             boolean respectNulls = !ignoreNulls || !scratch.isNull();
             if (respectNulls) {
-                memory.putDecimal128(startOffset + firstIdx * 16L, scratch);
+                memory.putDecimal128(startOffset + firstIdx * 16L, scratch.getHigh(), scratch.getLow());
                 firstIdx++;
                 count++;
             }
@@ -349,7 +349,7 @@ public class LeadDecimalFunctionFactory extends AbstractWindowFunctionFactory {
             arg.getDecimal256(record, scratch);
             boolean respectNull = !ignoreNulls || !scratch.isNull();
             if (respectNull) {
-                buffer.putDecimal256((long) loIdx * 32L, scratch);
+                buffer.putDecimal256((long) loIdx * 32L, scratch.getHh(), scratch.getHl(), scratch.getLh(), scratch.getLl());
             }
             long addr = spi.getAddress(recordOffset, columnIndex);
             Unsafe.putLong(addr, leadValue.getHh());
@@ -429,7 +429,7 @@ public class LeadDecimalFunctionFactory extends AbstractWindowFunctionFactory {
                 Decimal256 nullScratch = new Decimal256();
                 nullScratch.ofRawNull();
                 for (long i = 0; i < offset; i++) {
-                    memory.putDecimal256(startOffset + i * 32L, nullScratch);
+                    memory.putDecimal256(startOffset + i * 32L, nullScratch.getHh(), nullScratch.getHl(), nullScratch.getLh(), nullScratch.getLl());
                 }
             } else {
                 startOffset = mapValue.getLong(0);
@@ -450,7 +450,7 @@ public class LeadDecimalFunctionFactory extends AbstractWindowFunctionFactory {
             }
             boolean respectNulls = !ignoreNulls || !scratch.isNull();
             if (respectNulls) {
-                memory.putDecimal256(startOffset + firstIdx * 32L, scratch);
+                memory.putDecimal256(startOffset + firstIdx * 32L, scratch.getHh(), scratch.getHl(), scratch.getLh(), scratch.getLl());
                 firstIdx++;
                 count++;
             }

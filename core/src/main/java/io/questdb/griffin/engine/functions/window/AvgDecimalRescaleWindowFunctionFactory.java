@@ -6231,7 +6231,7 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
                 firstIdx = 0;
                 if (!isNull) {
                     memory.putLong(startOffset, timestamp);
-                    memory.putDecimal128(startOffset + Long.BYTES, scratch);
+                    memory.putDecimal128(startOffset + Long.BYTES, scratch.getHigh(), scratch.getLow());
                     if (frameIncludesCurrentValue) {
                         acc.ofRaw(inHigh, inLow);
                         frameSize = 1;
@@ -6286,7 +6286,7 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
                     long slotOffset = startOffset + ((firstIdx + size) % capacity) * RECORD_SIZE;
                     memory.putLong(slotOffset, timestamp);
                     scratch.ofRaw(inHigh, inLow);
-                    memory.putDecimal128(slotOffset + Long.BYTES, scratch);
+                    memory.putDecimal128(slotOffset + Long.BYTES, scratch.getHigh(), scratch.getLow());
                     size++;
                 }
 

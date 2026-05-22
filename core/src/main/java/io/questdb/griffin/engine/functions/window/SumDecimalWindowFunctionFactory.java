@@ -4089,229 +4089,62 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         }
 
         @Override
-        throw SqlException.$(position, "sum(DECIMAL256) is not yet implemented");
-            this.frameLoBounded = rangeLo != Long.MIN_VALUE;
-            this.maxDiff = frameLoBounded ? Math.abs(rangeLo) : Long.MAX_VALUE;
-            this.minDiff = Math.abs(rangeHi);
-            this.memory = memory;
-            this.initialBufferSize = initialBufferSize;
-            this.timestampIndex = timestampIdx;
-            this.frameIncludesCurrentValue = rangeHi == 0;
-            this.type = type;
-            this.position = position;
-        }
-
-        @Override
-        public void close() {
-            super.close();
-            memory.close();
-            freeList.clear();
-        }
-
-        @Override
-        public void computeNext(Record record) {
-            partitionByRecord.of(record);
-            MapKey key = map.withKey();
-            key.put(partitionByRecord, partitionBySink);
-            MapValue mapValue = key.createValue();
-
-            long frameSize;
-            long startOffset;
-            long size;
-            long capacity;
-            long firstIdx;
-            long timestamp = record.getTimestamp(timestampIndex);
-            arg.getDecimal128(record, scratch);
-            boolean isNull = scratch.isNull();
-
-            if (mapValue.isNew()) {
-                capacity = initialBufferSize;
-                startOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
-                firstIdx = 0;
-                if (!isNull) {
-                    memory.putLong(startOffset, timestamp);
-                    memory.putDecimal128(startOffset + Long.BYTES, scratch);
-                    if (frameIncludesCurrentValue) {
-                        acc.ofRaw(scratch.getHigh(), scratch.getLow());
-                        value.copyRaw(acc);
-                        frameSize = 1;
-                        size = frameLoBounded ? 1 : 0;
-                    } else {
-                        acc.ofRaw(0);
-                        value.ofRawNull();
-                        frameSize = 0;
-                        size = 1;
-                    }
-                } else {
-                    size = 0;
-                    acc.ofRaw(0);
-                    value.ofRawNull();
-                    frameSize = 0;
-                }
-            } else {
-                mapValue.getDecimal256(0, acc);
-                frameSize = mapValue.getLong(4);
-                startOffset = mapValue.getLong(5);
-                size = mapValue.getLong(6);
-                capacity = mapValue.getLong(7);
-                firstIdx = mapValue.getLong(8);
-
-                long newFirstIdx = firstIdx;
-                if (frameLoBounded) {
-                    for (long i = 0, n = size; i < n; i++) {
-                        long idx = (firstIdx + i) % capacity;
-                        long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                        if (Math.abs(timestamp - ts) > maxDiff) {
-                            if (frameSize > 0) {
-                                memory.getDecimal128(startOffset + idx * RECORD_SIZE + Long.BYTES, scratch);
-                                long h = scratch.getHigh();
-                                acc.subtract(h < 0 ? -1L : 0L, h < 0 ? -1L : 0L, h, scratch.getLow(), ColumnType.getDecimalScale(type));
-                                frameSize--;
-                            }
-                            newFirstIdx = (idx + 1) % capacity;
-                            size--;
-                        } else {
-                            break;
-                        }
-                    }
-                }
-                firstIdx = newFirstIdx;
-
-                if (!isNull) {
-                    if (size == capacity) {
-                        memoryDesc.reset(capacity, startOffset, size, firstIdx, freeList);
-                        expandRingBuffer(memory, memoryDesc, RECORD_SIZE);
-                        capacity = memoryDesc.capacity;
-                        startOffset = memoryDesc.startOffset;
-                        firstIdx = memoryDesc.firstIdx;
-                    }
-                    memory.putLong(startOffset + ((firstIdx + size) % capacity) * RECORD_SIZE, timestamp);
-                    memory.putDecimal128(startOffset + ((firstIdx + size) % capacity) * RECORD_SIZE + Long.BYTES, scratch);
-                    size++;
-                }
-
-                if (frameLoBounded) {
-                    for (long i = frameSize; i < size; i++) {
-                        long idx = (firstIdx + i) % capacity;
-                        long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                        long diff = Math.abs(ts - timestamp);
-                        if (diff <= maxDiff && diff >= minDiff) {
-                            memory.getDecimal128(startOffset + idx * RECORD_SIZE + Long.BYTES, scratch);
-                            try {
-                                Decimal256.uncheckedAdd(acc, scratch);
-                            } catch (NumericException e) {
-                                throw CairoException.nonCritical().position(position).put("sum aggregation failed: ").put(e.getFlyweightMessage());
-                            }
-                            frameSize++;
-                        } else {
-                            break;
-                        }
-                    }
-                } else {
-                    newFirstIdx = firstIdx;
-                    for (long i = 0, n = size; i < n; i++) {
-                        long idx = (firstIdx + i) % capacity;
-                        long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                        if (Math.abs(timestamp - ts) >= minDiff) {
-                            memory.getDecimal128(startOffset + idx * RECORD_SIZE + Long.BYTES, scratch);
-                            try {
-                                Decimal256.uncheckedAdd(acc, scratch);
-                            } catch (NumericException e) {
-                                throw CairoException.nonCritical().position(position).put("sum aggregation failed: ").put(e.getFlyweightMessage());
-                            }
-                            frameSize++;
-                            newFirstIdx = (idx + 1) % capacity;
-                            size--;
-                        } else {
-                            break;
-                        }
-                    }
-                    firstIdx = newFirstIdx;
-                }
-
-                if (frameSize != 0) {
-                    value.copyRaw(acc);
-                } else {
-                    value.ofRawNull();
-                }
-            }
-
-            mapValue.putDecimal256(0, acc);
-            mapValue.putLong(4, frameSize);
-            mapValue.putLong(5, startOffset);
-            mapValue.putLong(6, size);
-            mapValue.putLong(7, capacity);
-            mapValue.putLong(8, firstIdx);
-        }
-
-        @Override
-        public void getDecimal256(Record rec, Decimal256 sink) {
-            sink.copyRaw(value);
-        }
-
-        @Override
-        public String getName() {
-            return NAME;
-        }
-
-        @Override
-        public int getPassCount() {
-            return WindowFunction.ZERO_PASS;
-        }
-
-        @Override
         public int getType() {
             return type;
         }
 
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
-            computeNext(record);
+            partitionByRecord.of(record);
+            MapKey key = map.withKey();
+            key.put(partitionByRecord, partitionBySink);
+            MapValue mv = key.createValue();
+            arg.getDecimal128(record, scratch);
+            if (!scratch.isNull()) {
+                if (mv.isNew()) {
+                    acc.ofRaw(scratch.getHigh(), scratch.getLow());
+                    mv.putDecimal256(0, acc);
+                    mv.putBool(1, false);
+                } else if (mv.getBool(1)) {
+                    acc.ofRaw(scratch.getHigh(), scratch.getLow());
+                    mv.putDecimal256(0, acc);
+                    mv.putBool(1, false);
+                } else {
+                    mv.getDecimal256(0, acc);
+                    try {
+                        Decimal256.uncheckedAdd(acc, scratch);
+                    } catch (NumericException e) {
+                        throw CairoException.nonCritical().position(position).put("sum aggregation failed: ").put(e.getFlyweightMessage());
+                    }
+                    mv.putDecimal256(0, acc);
+                }
+            } else if (mv.isNew()) {
+                Decimal256 nullVal = new Decimal256();
+                nullVal.ofRawNull();
+                mv.putDecimal256(0, nullVal);
+                mv.putBool(1, true);
+            }
+        }
+
+        @Override
+        public void pass2(Record record, long recordOffset, WindowSPI spi) {
+            partitionByRecord.of(record);
+            MapKey key = map.withKey();
+            key.put(partitionByRecord, partitionBySink);
+            MapValue mv = key.findValue();
             long addr = spi.getAddress(recordOffset, columnIndex);
-            Unsafe.putLong(addr, value.getHh());
-            Unsafe.putLong(addr + Long.BYTES, value.getHl());
-            Unsafe.putLong(addr + 2 * Long.BYTES, value.getLh());
-            Unsafe.putLong(addr + 3 * Long.BYTES, value.getLl());
-        }
-
-        @Override
-        public void reopen() {
-            super.reopen();
-            value.ofRawNull();
-        }
-
-        @Override
-        public void reset() {
-            super.reset();
-            memory.close();
-            freeList.clear();
-        }
-
-        @Override
-        public void toPlan(PlanSink sink) {
-            sink.val(getName());
-            sink.val('(').val(arg).val(')');
-            sink.val(" over (partition by ").val(partitionByRecord.getFunctions());
-            sink.val(" range between ");
-            if (frameLoBounded) {
-                sink.val(maxDiff);
+            if (mv != null && !mv.getBool(1)) {
+                mv.getDecimal256(0, acc);
+                Unsafe.putLong(addr, acc.getHh());
+                Unsafe.putLong(addr + Long.BYTES, acc.getHl());
+                Unsafe.putLong(addr + 2 * Long.BYTES, acc.getLh());
+                Unsafe.putLong(addr + 3 * Long.BYTES, acc.getLl());
             } else {
-                sink.val("unbounded");
+                Unsafe.putLong(addr, Decimals.DECIMAL256_HH_NULL);
+                Unsafe.putLong(addr + Long.BYTES, Decimals.DECIMAL256_HL_NULL);
+                Unsafe.putLong(addr + 2 * Long.BYTES, Decimals.DECIMAL256_LH_NULL);
+                Unsafe.putLong(addr + 3 * Long.BYTES, Decimals.DECIMAL256_LL_NULL);
             }
-            sink.val(" preceding and ");
-            if (minDiff == 0) {
-                sink.val("current row");
-            } else {
-                sink.val(minDiff).val(" preceding");
-            }
-            sink.val(')');
-        }
-
-        @Override
-        public void toTop() {
-            super.toTop();
-            memory.truncate();
-            freeList.clear();
         }
     }
 
@@ -4393,7 +4226,8 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                     memory.putLong(slotOffset + Long.BYTES, inHigh);
                     memory.putLong(slotOffset + Long.BYTES + Long.BYTES, inLow);
                     if (frameIncludesCurrentValue) {
-                        acc.copyRaw(scratch);
+                        long signExt = inHigh < 0 ? -1L : 0L;
+                        acc.ofRaw(signExt, signExt, inHigh, inLow);
                         value.copyRaw(acc);
                         frameSize = 1;
                         size = frameLoBounded ? 1 : 0;

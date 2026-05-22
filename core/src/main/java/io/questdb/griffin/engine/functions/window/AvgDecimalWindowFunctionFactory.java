@@ -3920,7 +3920,7 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                 firstIdx = 0;
                 if (!isNull) {
                     memory.putLong(startOffset, timestamp);
-                    memory.putDecimal128(startOffset + Long.BYTES, scratch);
+                    memory.putDecimal128(startOffset + Long.BYTES, scratch.getHigh(), scratch.getLow());
                     if (frameIncludesCurrentValue) {
                         acc.ofRaw(scratch.getHigh(), scratch.getLow());
                         value.copyFrom(scratch);
@@ -3979,7 +3979,7 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                     memory.putLong(slotOffset, timestamp);
                     scratch.ofRaw(value.isNull() ? 0L : value.getHigh(), value.isNull() ? 0L : value.getLow());
                     arg.getDecimal128(record, scratch);
-                    memory.putDecimal128(slotOffset + Long.BYTES, scratch);
+                    memory.putDecimal128(slotOffset + Long.BYTES, scratch.getHigh(), scratch.getLow());
                     size++;
                 }
 
