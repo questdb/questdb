@@ -283,11 +283,14 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
         if (state.isWsHandshakeSent()) {
             metrics.connectionCountGauge().dec();
         }
-        try {
-            state.onDisconnected();
-        } finally {
-            LV.set(context, null);
-        }
+        // Leave the state instance in the LocalValueMap slot. onDisconnected
+        // releases the per-connection resources (cursor / factory / dict /
+        // schema cache / zstd CCtx) via clear(); the connection-scoped native
+        // scaffolding (pageFrameMemoryPool, pageFrameAddressCache,
+        // zstdCompressScratch) is sized to the HttpConnectionContext and gets
+        // reused by the next connection that lands on this context. The
+        // LocalValueMap invokes close() at HTTP context teardown.
+        state.onDisconnected();
     }
 
     @Override
