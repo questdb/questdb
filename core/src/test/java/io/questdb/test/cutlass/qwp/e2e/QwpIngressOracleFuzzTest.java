@@ -682,7 +682,7 @@ public class QwpIngressOracleFuzzTest extends AbstractCairoTest {
                             String drainConnect = "ws::addr=localhost:" + port + ";sf_dir=" + mySfDir
                                     + ";initial_connect_retry=async"
                                     + ";reconnect_max_duration_millis=120000"
-                                    + ";close_flush_timeout_millis=120000"
+                                    + ";close_flush_timeout_millis=60000"
                                     + ";sf_max_bytes=" + sfMaxBytes + ";";
                             try (Sender sender = Sender.fromConfig(drainConnect)) {
                                 sender.flush();
