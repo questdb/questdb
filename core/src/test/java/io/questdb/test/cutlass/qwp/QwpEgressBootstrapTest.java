@@ -405,24 +405,29 @@ public class QwpEgressBootstrapTest extends AbstractReusedServerQwpEgressTest {
      * connection; this regression test instead asserts the state guard directly.
      */
     @Test
-    public void testConcurrentQueryRejectedInPhaseOne() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            io.questdb.cairo.CairoConfiguration cfg = new DefaultTestCairoConfiguration(root);
-            try (QwpEgressProcessorState state = new QwpEgressProcessorState(cfg)) {
-                Assert.assertFalse("state starts inactive", state.isStreamingActive());
-                // Simulate a streaming-active state without actual native resources by
-                // calling beginStreaming with null factory/cursor. The defensive endStreaming
-                // inside beginStreaming is idempotent for null.
-                state.beginStreaming(1L, null, null, 0, 0, false, 0L, null);
-                Assert.assertTrue(state.isStreamingActive());
-                // A second beginStreaming must not double-free (endStreaming handles nulls)
-                // and must transition to the new requestId cleanly.
-                state.beginStreaming(2L, null, null, 0, 0, false, 0L, null);
-                Assert.assertTrue(state.isStreamingActive());
-                state.endStreaming();
-                Assert.assertFalse(state.isStreamingActive());
-            }
-        });
+    public void testConcurrentQueryRejectedInPhaseOne() {
+        // No assertMemoryLeak here: this test drives QwpEgressProcessorState purely in memory
+        // (beginStreaming/endStreaming with null factory/cursor) and opens no files of its own.
+        // A per-test FD snapshot would race the shared server's background threads (e.g. async WAL
+        // purge of tables dropped by the previous test's resetState), flagging a phantom leak when
+        // an unrelated server-owned descriptor is closed mid-test. The state object is closed via
+        // try-with-resources, and AbstractReusedServerQwpEgressTest's class-level bracket already
+        // verifies FD and native-memory baselines across the whole class.
+        io.questdb.cairo.CairoConfiguration cfg = new DefaultTestCairoConfiguration(root);
+        try (QwpEgressProcessorState state = new QwpEgressProcessorState(cfg)) {
+            Assert.assertFalse("state starts inactive", state.isStreamingActive());
+            // Simulate a streaming-active state without actual native resources by
+            // calling beginStreaming with null factory/cursor. The defensive endStreaming
+            // inside beginStreaming is idempotent for null.
+            state.beginStreaming(1L, null, null, 0, 0, false, 0L, null);
+            Assert.assertTrue(state.isStreamingActive());
+            // A second beginStreaming must not double-free (endStreaming handles nulls)
+            // and must transition to the new requestId cleanly.
+            state.beginStreaming(2L, null, null, 0, 0, false, 0L, null);
+            Assert.assertTrue(state.isStreamingActive());
+            state.endStreaming();
+            Assert.assertFalse(state.isStreamingActive());
+        }
     }
 
     @Test
@@ -595,7 +600,6 @@ public class QwpEgressBootstrapTest extends AbstractReusedServerQwpEgressTest {
                 final String createSql = "CREATE TABLE " + table
                         + "(v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL";
                 final String insertSql = "INSERT INTO " + table + " VALUES (1, 1::TIMESTAMP)";
-                final String selectSql = "SELECT v FROM " + table;
 
                 // Seed: create the table and run the SELECT once so the
                 // server compiles a RecordCursorFactory and parks it in
@@ -605,7 +609,7 @@ public class QwpEgressBootstrapTest extends AbstractReusedServerQwpEgressTest {
                 serverMain.awaitTable(table);
                 try (QwpQueryClient seed = QwpQueryClient.newPlainText("127.0.0.1", HTTP_PORT)) {
                     seed.connect();
-                    assertSelectReturnsOneRow(seed, selectSql, "seed");
+                    assertSelectReturnsOneRow(seed, "seed");
                 }
 
                 // Trigger: DROP+CREATE (same name + shape -> new internal table
@@ -620,7 +624,7 @@ public class QwpEgressBootstrapTest extends AbstractReusedServerQwpEgressTest {
                     serverMain.awaitTable(table);
                     try (QwpQueryClient trigger = QwpQueryClient.newPlainText("127.0.0.1", HTTP_PORT)) {
                         trigger.connect();
-                        assertSelectReturnsOneRow(trigger, selectSql, "trigger-" + i);
+                        assertSelectReturnsOneRow(trigger, "trigger-" + i);
                     }
                 }
             }
@@ -761,8 +765,10 @@ public class QwpEgressBootstrapTest extends AbstractReusedServerQwpEgressTest {
     /**
      * Regression / defense-in-depth for C1: many queries that fail at various stages
      * of the server-side handle path (compile error, table-not-found, non-SELECT)
-     * must not leak native resources. assertMemoryLeak catches any leaked factory,
-     * cursor, or buffer scratch.
+     * must not leak native resources. This runs against the shared server, so it relies
+     * on AbstractReusedServerQwpEgressTest's class-level FD/native-memory bracket to catch
+     * any leaked factory, cursor, or buffer scratch rather than a per-test assertMemoryLeak
+     * (whose FD snapshot would race the shared server's background threads).
      */
     @Test
     public void testFailedQueriesDoNotLeak() throws Exception {
@@ -1895,10 +1901,10 @@ public class QwpEgressBootstrapTest extends AbstractReusedServerQwpEgressTest {
         });
     }
 
-    private static void assertSelectReturnsOneRow(QwpQueryClient client, String sql, String label) {
+    private static void assertSelectReturnsOneRow(QwpQueryClient client, String label) {
         final long[] sum = {0};
         final long[] rows = {0};
-        client.execute(sql, new QwpColumnBatchHandler() {
+        client.execute("SELECT v FROM schema_cache_retry_t", new QwpColumnBatchHandler() {
             @Override
             public void onBatch(QwpColumnBatch batch) {
                 int n = batch.getRowCount();
