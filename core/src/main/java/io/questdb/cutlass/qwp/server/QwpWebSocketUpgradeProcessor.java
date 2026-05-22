@@ -430,6 +430,8 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
         int recvBufferSize = context.getRecvBufferSize();
 
         try {
+            processBufferedFrames(context, state);
+
             int recvBufferLen = state.getRecvBufferLen();
             if (recvBufferLen >= recvBufferSize) {
                 // Buffer is full, but the parser still needs more data — the frame
@@ -620,6 +622,7 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
                     .$(", deferredErrStatus=").$(state.getDeferredErrorStatus())
                     .I$();
         }
+        processBufferedFrames(context, state);
     }
 
     private static void finalizeHandshake(HttpConnectionContext context, QwpProcessorState state) {
@@ -1066,6 +1069,13 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
                     .I$();
         }
 
+    }
+
+    private void processBufferedFrames(HttpConnectionContext context, QwpProcessorState state)
+            throws ServerDisconnectException, PeerDisconnectedException, PeerIsSlowToReadException {
+        if (state.isSendReady() && state.getRecvBufferLen() > 0) {
+            processWebSocketFrames(context, state, context.getRecvBuffer(), state.getRecvBufferLen());
+        }
     }
 
     private void rejectFragmentedFrame(HttpConnectionContext context, QwpProcessorState state, int opcode)
