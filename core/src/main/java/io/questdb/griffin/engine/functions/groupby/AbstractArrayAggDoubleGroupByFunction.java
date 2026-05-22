@@ -280,8 +280,6 @@ public abstract class AbstractArrayAggDoubleGroupByFunction extends ArrayFunctio
 
         long destPtr = destValue.getLong(valueIndex);
         int destCount = (destPtr == 0) ? 0 : Unsafe.getInt(destPtr);
-        checkCapacityLimit(destCount);
-        checkCapacityLimit(srcCount);
         int mergedCount = destCount + srcCount;
         checkCapacityLimit(mergedCount);
         long mergedPtr = allocator.malloc(HEADER_SIZE + (long) mergedCount * ENTRY_SIZE);

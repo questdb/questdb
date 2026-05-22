@@ -247,6 +247,62 @@ public class ArrayAggDoubleGroupByFunctionFactoryTest extends AbstractCairoTest 
     }
 
     @Test
+    public void testGroupByNullKeyParallel() throws Exception {
+        // NULL-key buckets must accumulate consistently across worker boundaries
+        // and survive the parallel merge phase. Run on a 4-worker pool with small
+        // page frames so the NULL group is touched by every worker, then assert
+        // both element count and array_sum (order-independent value check) for
+        // each group including NULL.
+        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 100);
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new WorkerPool(() -> 4);
+            TestUtils.execute(pool, (engine, _, sqlExecutionContext) -> {
+                engine.execute("CREATE TABLE tab (grp SYMBOL, val DOUBLE)", sqlExecutionContext);
+                // 2000 rows: every 3rd has a NULL key (positions 0, 3, 6, ...).
+                // grp values cycle through g0..g4 for non-null rows.
+                // Each row contributes one element, so a group with N rows
+                // contributes N elements with total = sum of row positions.
+                StringBuilder sb = new StringBuilder("INSERT INTO tab VALUES\n");
+                int nullRows = 0;
+                long nullSum = 0;
+                int[] grpRows = new int[5];
+                long[] grpSums = new long[5];
+                for (int i = 0; i < 2_000; i++) {
+                    if (i > 0) {
+                        sb.append(",\n");
+                    }
+                    if (i % 3 == 0) {
+                        sb.append("(null, ").append(i).append(".0)");
+                        nullRows++;
+                        nullSum += i;
+                    } else {
+                        int g = (i % 5);
+                        sb.append("('g").append(g).append("', ").append(i).append(".0)");
+                        grpRows[g]++;
+                        grpSums[g] += i;
+                    }
+                }
+                engine.execute(sb.toString(), sqlExecutionContext);
+                StringBuilder expected = new StringBuilder("grp\tcnt\ttotal\n");
+                expected.append('\t').append(nullRows).append('\t')
+                        .append((double) nullSum).append('\n');
+                for (int g = 0; g < 5; g++) {
+                    expected.append('g').append(g).append('\t').append(grpRows[g])
+                            .append('\t').append((double) grpSums[g]).append('\n');
+                }
+                TestUtils.assertSql(
+                        engine,
+                        sqlExecutionContext,
+                        "SELECT grp, array_count(array_agg(val)) cnt, array_sum(array_agg(val)) total " +
+                                "FROM tab ORDER BY grp",
+                        sink,
+                        expected
+                );
+            }, configuration, LOG);
+        });
+    }
+
+    @Test
     public void testImplicitCastFromInt() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tab (val INT)");
