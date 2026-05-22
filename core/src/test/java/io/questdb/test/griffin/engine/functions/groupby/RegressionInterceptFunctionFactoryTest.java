@@ -127,6 +127,26 @@ public class RegressionInterceptFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRegrInterceptExplainPlan() throws Exception {
+        // EXPLAIN renders the function via getName(), which is otherwise not
+        // invoked by the data-path tests. Pins the function name shown in
+        // query plans and SHOW FUNCTIONS output.
+        assertMemoryLeak(() -> {
+            execute("create table tbl1 (x double, y double)");
+            assertPlanNoLeakCheck(
+                    "select regr_intercept(y, x) from tbl1",
+                    "Async Group By workers: 1\n" +
+                            "  vectorized: false\n" +
+                            "  values: [regr_intercept(y,x)]\n" +
+                            "  filter: null\n" +
+                            "    PageFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: tbl1\n"
+            );
+        });
+    }
+
+    @Test
     public void testRegrInterceptFloatValues() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table tbl1 as (select cast(x as float) x, cast(x as float) y from long_sequence(100))");

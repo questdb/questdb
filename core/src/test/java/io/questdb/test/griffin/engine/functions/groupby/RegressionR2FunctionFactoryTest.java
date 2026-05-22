@@ -123,6 +123,26 @@ public class RegressionR2FunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRegrR2ExplainPlan() throws Exception {
+        // EXPLAIN renders the function via getName(), which is otherwise
+        // not invoked by the data-path tests. Pins the function name shown
+        // in query plans and SHOW FUNCTIONS output.
+        assertMemoryLeak(() -> {
+            execute("create table tbl1 (x double, y double)");
+            assertPlanNoLeakCheck(
+                    "select regr_r2(y, x) from tbl1",
+                    "Async Group By workers: 1\n" +
+                            "  vectorized: false\n" +
+                            "  values: [regr_r2(y,x)]\n" +
+                            "  filter: null\n" +
+                            "    PageFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: tbl1\n"
+            );
+        });
+    }
+
+    @Test
     public void testRegrR2FloatValues() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table tbl1 as (select cast(x as float) x, cast(x as float) y from long_sequence(100))");
@@ -138,8 +158,13 @@ public class RegressionR2FunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testRegrR2GroupByMultipleGroups() throws Exception {
-        // Multiple groups exercise the merge() path. Each group has y = x => r^2 = 1.0
-        // for group A (perfect line) and constant Y for group B (r^2 = 1.0 by SQL:2003).
+        // Single-threaded multi-group GROUP BY: confirms the per-key aggregate
+        // state is kept separate across groups. With 1000 rows and the default
+        // page-frame size the whole table fits in one frame, so this test does
+        // NOT exercise the parallel merge() path; that coverage lives in
+        // RegressionR2ParallelGroupByTest. Group A is a perfect line y = x
+        // (r^2 = 1.0); group B has constant Y with varying X (Syy = 0, Sxx > 0
+        // returns 1.0 by SQL:2003 §10.9).
         assertMemoryLeak(() -> {
             execute(
                     "create table tbl1 as (" +
