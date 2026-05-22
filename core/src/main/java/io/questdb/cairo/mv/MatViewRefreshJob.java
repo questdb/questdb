@@ -81,10 +81,6 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
     private final FixedOffsetIntervalIterator fixedOffsetIterator = new FixedOffsetIntervalIterator();
     private final MatViewGraph graph;
     private final LongList intervals = new LongList();
-    // The base table txn the most recent refreshIncremental0() examined (its reader's seqTxn), or
-    // Numbers.LONG_NULL if it did not open a reader. Read by refreshDependentViewsIncremental() to
-    // acknowledge the base txn that all refreshed views actually caught up to.
-    private long lastExaminedBaseTxn = Numbers.LONG_NULL;
     private final MicrosecondClock microsecondClock;
     private final RefreshContext refreshContext = new RefreshContext();
     private final MatViewRefreshSqlExecutionContext refreshSqlExecutionContext;
@@ -1172,13 +1168,12 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
 
                 try (WalWriter walWriter = engine.getWalWriter(viewToken)) {
                     try {
-                        lastExaminedBaseTxn = Numbers.LONG_NULL;
-                        refreshed |= refreshIncremental0(baseTableToken, viewDefinition, viewState, walWriter, refreshTriggerTimestamp);
-                        if (lastExaminedBaseTxn != Numbers.LONG_NULL) {
-                            minExaminedToTxn = minExaminedToTxn != Numbers.LONG_NULL
-                                    ? Math.min(minExaminedToTxn, lastExaminedBaseTxn)
-                                    : lastExaminedBaseTxn;
-                        }
+                        final long result = refreshIncremental0(baseTableToken, viewDefinition, viewState, walWriter, refreshTriggerTimestamp);
+                        refreshed |= (result & 1L) != 0;
+                        final long examinedBaseTxn = result >> 1;
+                        minExaminedToTxn = minExaminedToTxn != Numbers.LONG_NULL
+                                ? Math.min(minExaminedToTxn, examinedBaseTxn)
+                                : examinedBaseTxn;
                     } catch (Throwable th) {
                         refreshFailState(viewDefinition, viewState, walWriter, th);
                     }
@@ -1277,7 +1272,10 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             }
 
             try {
-                return refreshIncremental0(baseTableToken, viewDefinition, viewState, walWriter, refreshTriggerTimestamp);
+                // The examined base txn is only needed when refreshing dependent views; here we just
+                // return the "refreshed" flag from bit 0.
+                final long result = refreshIncremental0(baseTableToken, viewDefinition, viewState, walWriter, refreshTriggerTimestamp);
+                return (result & 1L) != 0;
             } catch (Throwable th) {
                 LOG.error()
                         .$("could not perform incremental refresh [view=").$(viewToken)
@@ -1308,7 +1306,12 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         }
     }
 
-    private boolean refreshIncremental0(
+    // Returns a packed long: the examined base table txn (the reader's seqTxn) in bits 63..1 and the
+    // "refreshed" flag in bit 0. The examined txn lets refreshDependentViewsIncremental() acknowledge
+    // only the base txn that was actually examined. Every non-throwing return opens the reader first,
+    // so the examined txn is always valid; the txn-sanity throw below is handled by the caller without
+    // reading the result.
+    private long refreshIncremental0(
             @NotNull TableToken baseTableToken,
             @NotNull MatViewDefinition viewDefinition,
             @NotNull MatViewState viewState,
@@ -1326,9 +1329,6 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         try (TableReader baseTableReader = engine.getReader(baseTableToken)) {
             final long fromBaseTxn = viewState.getLastRefreshBaseTxn();
             final long toBaseTxn = baseTableReader.getSeqTxn();
-            // Record the base txn this refresh examines, even on the early-out paths below, so the
-            // caller can acknowledge only what was actually examined.
-            lastExaminedBaseTxn = toBaseTxn;
             if (fromBaseTxn > toBaseTxn) {
                 final TableToken viewToken = viewDefinition.getMatViewToken();
                 throw CairoException.nonCritical().put("unexpected txn numbers, base table may have been renamed [view=").put(viewToken.getTableName())
@@ -1338,7 +1338,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             }
             if (viewDefinition.getPeriodLength() == 0 && fromBaseTxn > -1 && fromBaseTxn == toBaseTxn) {
                 // Non-period mat view which is already up-to-date.
-                return false;
+                return toBaseTxn << 1;
             }
 
             // Operate SQL on a fixed reader that has known max transaction visible. The reader
@@ -1348,7 +1348,8 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             refreshSqlExecutionContext.of(baseTableReader);
             try {
                 final RefreshContext refreshContext = findRefreshIntervals(baseTableReader, viewDefinition, viewState, walWriter, fromBaseTxn);
-                return insertAsSelect(viewDefinition, viewState, walWriter, refreshContext, refreshTriggerTimestamp);
+                final boolean refreshed = insertAsSelect(viewDefinition, viewState, walWriter, refreshContext, refreshTriggerTimestamp);
+                return (toBaseTxn << 1) | (refreshed ? 1L : 0L);
             } finally {
                 refreshSqlExecutionContext.clearReader();
                 engine.attachReader(baseTableReader);
