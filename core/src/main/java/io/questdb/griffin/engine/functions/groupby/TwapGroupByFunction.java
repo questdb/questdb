@@ -105,6 +105,19 @@ public class TwapGroupByFunction extends DoubleFunction implements GroupByFuncti
     }
 
     @Override
+    public void clear() {
+        // cachedPtr is a native address into the GroupByAllocator. When the
+        // enclosing factory is reused across cursor runs the allocator is
+        // reset and the same address may be handed out again - a stale cache
+        // entry would then return the previous run's TWAP for unrelated data.
+        // computeFirst also zeroes cachedPtr on every new group, but in the
+        // parallel keyed path the owner's instance sees groups only via
+        // merge() and getDouble() and would miss that reset.
+        cachedPtr = 0;
+        cachedValue = 0;
+    }
+
+    @Override
     public void computeFirst(MapValue mapValue, Record record, long rowId) {
         cachedPtr = 0;
         double price = priceFunc.getDouble(record);
