@@ -926,6 +926,20 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
         streamingCreditSuspended = true;
     }
 
+    /**
+     * OR-merges {@code additionalBits} into the staged {@code CACHE_RESET}
+     * mask. Used by the egress processor when a soft cap trips and a fresh
+     * mask must accumulate on top of any bits already staged by an earlier
+     * query whose {@code emitPendingCacheReset} never ran (non-SELECT path
+     * via {@code executeNonSelect}, or a SELECT that failed between
+     * {@code findOrAllocateSchemaId} and {@code emitPendingCacheReset}).
+     * Plain assignment would silently drop the prior bits and let the client
+     * fall out of sync with the server's already-cleared caches.
+     */
+    public void mergePendingCacheResetMask(byte additionalBits) {
+        pendingCacheResetMask |= additionalBits;
+    }
+
     public void of(long fd, SecurityContext securityContext) {
         this.fd = fd;
         this.securityContext = securityContext;

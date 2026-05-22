@@ -1422,7 +1422,14 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
             return;
         }
         state.applyCacheReset(resetMask);
-        state.setPendingCacheResetMask(resetMask);
+        // OR-merge rather than overwrite: an earlier query may have staged
+        // bits whose CACHE_RESET frame never went out (a non-SELECT routed
+        // through executeNonSelect, or a SELECT that threw between
+        // findOrAllocateSchemaId and emitPendingCacheReset). Overwriting
+        // would drop those bits while the server-side caches they cleared
+        // stay cleared -- the client would keep its stale entries and the
+        // next batch's deltaStart would land out of sync with connDictSize.
+        state.mergePendingCacheResetMask(resetMask);
         if ((resetMask & QwpEgressMsgKind.RESET_MASK_DICT) != 0) {
             metrics.markCacheResetDict();
         }

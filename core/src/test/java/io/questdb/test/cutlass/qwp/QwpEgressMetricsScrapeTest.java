@@ -24,6 +24,7 @@
 
 package io.questdb.test.cutlass.qwp;
 
+import io.questdb.PropertyKey;
 import io.questdb.client.cutlass.qwp.client.QwpColumnBatch;
 import io.questdb.client.cutlass.qwp.client.QwpColumnBatchHandler;
 import io.questdb.client.cutlass.qwp.client.QwpQueryClient;
@@ -50,6 +51,50 @@ public class QwpEgressMetricsScrapeTest extends AbstractQwpBootstrapTest {
         super.setUp();
         TestUtils.unchecked(() -> createDummyConfiguration());
         dbPath.parent().$();
+    }
+
+    @Test
+    public void testBatchAndRowCountersAdvanceWithLoad() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startFragmented(
+                    "QDB_METRICS_ENABLED", "true")) {
+                serverMain.execute("CREATE TABLE batch_metric(x LONG, ts TIMESTAMP) "
+                        + "TIMESTAMP(ts) PARTITION BY DAY WAL");
+                serverMain.execute("INSERT INTO batch_metric "
+                        + "SELECT x, x::TIMESTAMP FROM long_sequence(50_000)");
+                serverMain.awaitTable("batch_metric");
+                QwpEgressMetrics metrics = serverMain.getEngine().getMetrics().qwpEgressMetrics();
+                long batchesBefore = metrics.batchesSentCount();
+                long rowsBefore = metrics.rowsStreamedCounter().getValue();
+                long bytesBefore = metrics.bytesSentCounter().getValue();
+
+                try (QwpQueryClient client = QwpQueryClient.fromConfig(
+                        "ws::addr=127.0.0.1:" + HTTP_PORT + ";")) {
+                    client.connect();
+                    client.execute("SELECT x FROM batch_metric", new QwpColumnBatchHandler() {
+                        @Override
+                        public void onBatch(QwpColumnBatch batch) {
+                        }
+
+                        @Override
+                        public void onEnd(long totalRows) {
+                        }
+
+                        @Override
+                        public void onError(byte status, String message) {
+                            Assert.fail("must succeed: " + message);
+                        }
+                    });
+                }
+
+                long batchesDelta = metrics.batchesSentCount() - batchesBefore;
+                long rowsDelta = metrics.rowsStreamedCounter().getValue() - rowsBefore;
+                long bytesDelta = metrics.bytesSentCounter().getValue() - bytesBefore;
+                Assert.assertTrue("at least one batch must be counted", batchesDelta >= 1);
+                Assert.assertEquals("rows_streamed must match row count", 50_000, rowsDelta);
+                Assert.assertTrue("bytes_sent must advance", bytesDelta > 0);
+            }
+        });
     }
 
     @Test
@@ -94,45 +139,48 @@ public class QwpEgressMetricsScrapeTest extends AbstractQwpBootstrapTest {
     }
 
     @Test
-    public void testBatchAndRowCountersAdvanceWithLoad() throws Exception {
+    public void testConnectionGaugeDecrementsOnSendPathDisconnect() throws Exception {
+        // Deterministic regression test for a connection-gauge leak that the
+        // randomised fragmentation in the sibling test only caught on specific
+        // seeds. Sequence:
+        //   1. Client sends WebSocket CLOSE and shuts its socket down.
+        //   2. Server's handleClose writes the 4-byte CLOSE echo through
+        //      sendBuffer. With sendChunk=1, sendBuffer flushes the first byte
+        //      and throws PeerIsSlowToReadException because more is pending --
+        //      the connection parks on write with pendingDisconnectAfterFlush
+        //      set.
+        //   3. The framework calls resumeSend; the drain hits EPIPE because
+        //      the peer is gone, and PeerDisconnectedException escapes before
+        //      gracefulCloseAndDisconnect can run.
+        //   4. handleClientSend used to swallow that into a dispatcher
+        //      disconnect without calling onConnectionClosed on the
+        //      protocol-switched processor, so the gauge stayed at 1.
+        // After the fix, handleClientSend's send-path disconnect calls
+        // onConnectionClosed when the connection is protocol-switched, so the
+        // gauge returns to 0.
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startFragmented(
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.DEBUG_HTTP_FORCE_SEND_FRAGMENTATION_CHUNK_SIZE.getEnvVarName(), "1",
                     "QDB_METRICS_ENABLED", "true")) {
-                serverMain.execute("CREATE TABLE batch_metric(x LONG, ts TIMESTAMP) "
-                        + "TIMESTAMP(ts) PARTITION BY DAY WAL");
-                serverMain.execute("INSERT INTO batch_metric "
-                        + "SELECT x, x::TIMESTAMP FROM long_sequence(50_000)");
-                serverMain.awaitTable("batch_metric");
                 QwpEgressMetrics metrics = serverMain.getEngine().getMetrics().qwpEgressMetrics();
-                long batchesBefore = metrics.batchesSentCount();
-                long rowsBefore = metrics.rowsStreamedCounter().getValue();
-                long bytesBefore = metrics.bytesSentCounter().getValue();
+                Assert.assertEquals("start at 0 with no connections", 0, metrics.connectionCountGauge().getValue());
 
                 try (QwpQueryClient client = QwpQueryClient.fromConfig(
                         "ws::addr=127.0.0.1:" + HTTP_PORT + ";")) {
                     client.connect();
-                    client.execute("SELECT x FROM batch_metric", new QwpColumnBatchHandler() {
-                        @Override
-                        public void onBatch(QwpColumnBatch batch) {
-                        }
-
-                        @Override
-                        public void onEnd(long totalRows) {
-                        }
-
-                        @Override
-                        public void onError(byte status, String message) {
-                            Assert.fail("must succeed: " + message);
-                        }
-                    });
+                    long deadline = System.nanoTime() + 5_000_000_000L;
+                    while (metrics.connectionCountGauge().getValue() == 0 && System.nanoTime() < deadline) {
+                        Os.pause();
+                    }
+                    Assert.assertEquals("one active connection", 1, metrics.connectionCountGauge().getValue());
                 }
 
-                long batchesDelta = metrics.batchesSentCount() - batchesBefore;
-                long rowsDelta = metrics.rowsStreamedCounter().getValue() - rowsBefore;
-                long bytesDelta = metrics.bytesSentCounter().getValue() - bytesBefore;
-                Assert.assertTrue("at least one batch must be counted", batchesDelta >= 1);
-                Assert.assertEquals("rows_streamed must match row count", 50_000, rowsDelta);
-                Assert.assertTrue("bytes_sent must advance", bytesDelta > 0);
+                long deadline = System.nanoTime() + 5_000_000_000L;
+                while (metrics.connectionCountGauge().getValue() != 0 && System.nanoTime() < deadline) {
+                    Os.pause();
+                }
+                Assert.assertEquals("gauge returns to 0 after send-path disconnect",
+                        0, metrics.connectionCountGauge().getValue());
             }
         });
     }

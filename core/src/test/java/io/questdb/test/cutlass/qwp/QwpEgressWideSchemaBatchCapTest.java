@@ -62,6 +62,72 @@ public class QwpEgressWideSchemaBatchCapTest extends AbstractBootstrapTest {
     }
 
     /**
+     * Pins the residual overflow arm of the batch-cap fix: when a single
+     * row's payload exceeds the rawSocket send buffer (even at the
+     * {@code MIN_BATCH_ROWS} floor of {@code dynamicBatchRowCap}),
+     * {@code emitTableBlock} returns -1 and the throw site converts that
+     * into {@code CairoException.setOutOfMemory(true)}.
+     * {@code mapErrorStatus} translates it to {@code STATUS_LIMIT_EXCEEDED
+     * (0x0B)} on the wire, which the C client reports as
+     * {@code line_reader_error_server_limit_exceeded = 19} rather than the
+     * masking {@code server_internal_error = 16}.
+     * <p>
+     * Companion to {@link #testWideSchemaQueryDoesNotOverflowBatch} which
+     * pins the happy path; together they cover both arms of the cap fix.
+     */
+    @Test
+    public void testSingleRowExceedingSendBufferReportsLimitExceeded() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            // The egress handshake reserves an upper bound for the SERVER_INFO
+            // frame (~131 KB worst-case for the cluster + node id strings), so
+            // the send buffer cannot drop below that and still complete the WS
+            // upgrade. 160 KiB clears the handshake check; a 256-KiB VARCHAR
+            // row then overflows the post-handshake RESULT_BATCH budget and
+            // forces emitTableBlock to return -1.
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    "QDB_HTTP_SEND_BUFFER_SIZE", "163840")) {
+                serverMain.execute("CREATE TABLE one_big_row(v VARCHAR, ts TIMESTAMP) "
+                        + "TIMESTAMP(ts) PARTITION BY DAY WAL");
+                final StringBuilder bigValue = new StringBuilder(262_144);
+                bigValue.repeat("x", 262_144);
+                serverMain.execute("INSERT INTO one_big_row VALUES ('"
+                        + bigValue + "'::VARCHAR, 1::TIMESTAMP)");
+                serverMain.awaitTable("one_big_row");
+
+                final byte[] status = {0};
+                final String[] message = {null};
+                try (QwpQueryClient client = QwpQueryClient.fromConfig(
+                        "ws::addr=127.0.0.1:" + HTTP_PORT + ";")) {
+                    client.connect();
+                    client.execute("SELECT * FROM one_big_row", new QwpColumnBatchHandler() {
+                        @Override
+                        public void onBatch(QwpColumnBatch batch) {
+                            Assert.fail("unexpected batch: a 256 KiB row cannot fit a 160 KiB send buffer");
+                        }
+
+                        @Override
+                        public void onEnd(long rows) {
+                            Assert.fail("unexpected end: expected STATUS_LIMIT_EXCEEDED instead");
+                        }
+
+                        @Override
+                        public void onError(byte s, String m) {
+                            status[0] = s;
+                            message[0] = m;
+                        }
+                    });
+                }
+                Assert.assertEquals(
+                        "expected STATUS_LIMIT_EXCEEDED (0x0B), got 0x"
+                                + Integer.toHexString(status[0] & 0xff)
+                                + " msg=" + message[0],
+                        (byte) 0x0B, status[0]);
+                TestUtils.assertContains(message[0], "batch too large for send buffer");
+            }
+        });
+    }
+
+    /**
      * Wide-schema SELECT must complete cleanly without surfacing a batch
      * overflow error. Builds a 41-column table (20 VARCHAR + 10 BINARY +
      * 5 UUID + 5 LONG256 + ts) and ingests 4000 rows. Total payload

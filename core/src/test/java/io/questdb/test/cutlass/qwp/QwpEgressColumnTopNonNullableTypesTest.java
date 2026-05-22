@@ -53,8 +53,15 @@ import org.junit.Test;
  * below executes the trigger scenario end-to-end and pins both
  * {@code isNull == false} and the zero-value semantics so the server can
  * never silently regress back to bitmap mode for these types.
+ * <p>
+ * Row count {@link #COLUMN_TOP_ROWS} is chosen to span many bytes of the
+ * BOOLEAN bitmap and to leave the last byte only partially used (8195 bits
+ * = 1024 bytes plus 3 trailing bits), so the column-top fill paths exercise
+ * multi-byte memset, capacity growth, and a non-byte-aligned tail.
  */
 public class QwpEgressColumnTopNonNullableTypesTest extends AbstractBootstrapTest {
+
+    private static final int COLUMN_TOP_ROWS = 8195;
 
     @Before
     public void setUp() {
@@ -64,15 +71,84 @@ public class QwpEgressColumnTopNonNullableTypesTest extends AbstractBootstrapTes
     }
 
     @Test
+    public void testBooleanColumnTopAndBackedMixed() throws Exception {
+        // Mixes a multi-byte column-top fill with a backed-storage frame that
+        // starts at a non-byte-aligned bit position. With 1023 column-top
+        // rows, the boolean scratch arrives at the backed frame with
+        // nonNullCount = 1023 (firstBitInFirstByte = 7), forcing
+        // appendColumnBoolean to OR its first row into the partial last byte
+        // left behind by appendColumnBooleanZero. Verifies both regions
+        // round-trip correctly.
+        final int columnTopRows = 1023;
+        final int backedRows = 2049;
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables()) {
+                serverMain.execute("CREATE TABLE ct(ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                // Day 0: 1023 rows with no col backing.
+                serverMain.execute("INSERT INTO ct SELECT x::TIMESTAMP FROM long_sequence(" + columnTopRows + ")");
+                serverMain.awaitTable("ct");
+                serverMain.execute("ALTER TABLE ct ADD COLUMN col BOOLEAN");
+                serverMain.awaitTable("ct");
+                // Day 1: backed rows with alternating col values starting at x=1 (false), x=2 (true), ...
+                serverMain.execute(
+                        "INSERT INTO ct(ts, col) SELECT (86_400_000_000 + x)::TIMESTAMP, " +
+                                "CASE WHEN x % 2 = 0 THEN true ELSE false END FROM long_sequence(" + backedRows + ")");
+                serverMain.awaitTable("ct");
+
+                final int[] totalRows = {0};
+                try (QwpQueryClient client = QwpQueryClient.fromConfig(
+                        "ws::addr=127.0.0.1:" + HTTP_PORT + ";")) {
+                    client.connect();
+                    client.execute("SELECT col FROM ct ORDER BY ts", new QwpColumnBatchHandler() {
+                        @Override
+                        public void onBatch(QwpColumnBatch batch) {
+                            int n = batch.getRowCount();
+                            for (int r = 0; r < n; r++) {
+                                int abs = totalRows[0] + r;
+                                Assert.assertFalse(
+                                        "row " + abs + " must not report null (wire-egress.md sec 11.5)",
+                                        batch.isNull(0, r));
+                                if (abs < columnTopRows) {
+                                    Assert.assertFalse(
+                                            "column-top row " + abs + " must read as false",
+                                            batch.getBoolValue(0, r));
+                                } else {
+                                    // Backed x = abs - columnTopRows + 1; col = (x % 2 == 0)
+                                    int x = abs - columnTopRows + 1;
+                                    Assert.assertEquals(
+                                            "backed row " + abs + " (x=" + x + ")",
+                                            (x % 2) == 0, batch.getBoolValue(0, r));
+                                }
+                            }
+                            totalRows[0] += n;
+                        }
+
+                        @Override
+                        public void onEnd(long rows) {
+                        }
+
+                        @Override
+                        public void onError(byte status, String message) {
+                            Assert.fail("egress error: " + message);
+                        }
+                    });
+                }
+                Assert.assertEquals(columnTopRows + backedRows, totalRows[0]);
+            }
+        });
+    }
+
+    @Test
     public void testBooleanColumnTopShipsFalseNotNulls() throws Exception {
-        runColumnTopTest("BOOLEAN", batch -> {
+        runColumnTopTest("BOOLEAN", (batch, rowsBefore) -> {
             int n = batch.getRowCount();
             for (int r = 0; r < n; r++) {
+                int abs = rowsBefore + r;
                 Assert.assertFalse(
-                        "BOOLEAN row " + r + " must not report null (wire-egress.md sec 11.5)",
+                        "BOOLEAN row " + abs + " must not report null (wire-egress.md sec 11.5)",
                         batch.isNull(0, r));
                 Assert.assertFalse(
-                        "BOOLEAN row " + r + " (column-top) must read as false",
+                        "BOOLEAN row " + abs + " (column-top) must read as false",
                         batch.getBoolValue(0, r));
             }
         });
@@ -80,14 +156,15 @@ public class QwpEgressColumnTopNonNullableTypesTest extends AbstractBootstrapTes
 
     @Test
     public void testByteColumnTopShipsZeroNotNulls() throws Exception {
-        runColumnTopTest("BYTE", batch -> {
+        runColumnTopTest("BYTE", (batch, rowsBefore) -> {
             int n = batch.getRowCount();
             for (int r = 0; r < n; r++) {
+                int abs = rowsBefore + r;
                 Assert.assertFalse(
-                        "BYTE row " + r + " must not report null (wire-egress.md sec 11.5)",
+                        "BYTE row " + abs + " must not report null (wire-egress.md sec 11.5)",
                         batch.isNull(0, r));
                 Assert.assertEquals(
-                        "BYTE row " + r + " (column-top) must read as 0",
+                        "BYTE row " + abs + " (column-top) must read as 0",
                         (byte) 0, batch.getByteValue(0, r));
             }
         });
@@ -95,14 +172,15 @@ public class QwpEgressColumnTopNonNullableTypesTest extends AbstractBootstrapTes
 
     @Test
     public void testCharColumnTopShipsZeroNotNulls() throws Exception {
-        runColumnTopTest("CHAR", batch -> {
+        runColumnTopTest("CHAR", (batch, rowsBefore) -> {
             int n = batch.getRowCount();
             for (int r = 0; r < n; r++) {
+                int abs = rowsBefore + r;
                 Assert.assertFalse(
-                        "CHAR row " + r + " must not report null (wire-egress.md sec 11.5)",
+                        "CHAR row " + abs + " must not report null (wire-egress.md sec 11.5)",
                         batch.isNull(0, r));
                 Assert.assertEquals(
-                        "CHAR row " + r + " (column-top) must read as (char) 0",
+                        "CHAR row " + abs + " (column-top) must read as (char) 0",
                         (char) 0, batch.getCharValue(0, r));
             }
         });
@@ -110,14 +188,15 @@ public class QwpEgressColumnTopNonNullableTypesTest extends AbstractBootstrapTes
 
     @Test
     public void testShortColumnTopShipsZeroNotNulls() throws Exception {
-        runColumnTopTest("SHORT", batch -> {
+        runColumnTopTest("SHORT", (batch, rowsBefore) -> {
             int n = batch.getRowCount();
             for (int r = 0; r < n; r++) {
+                int abs = rowsBefore + r;
                 Assert.assertFalse(
-                        "SHORT row " + r + " must not report null (wire-egress.md sec 11.5)",
+                        "SHORT row " + abs + " must not report null (wire-egress.md sec 11.5)",
                         batch.isNull(0, r));
                 Assert.assertEquals(
-                        "SHORT row " + r + " (column-top) must read as 0",
+                        "SHORT row " + abs + " (column-top) must read as 0",
                         (short) 0, batch.getShortValue(0, r));
             }
         });
@@ -125,18 +204,21 @@ public class QwpEgressColumnTopNonNullableTypesTest extends AbstractBootstrapTes
 
     /**
      * Drives the column-top scenario for {@code typeName}: creates a WAL
-     * table with only a TIMESTAMP, ingests a small batch (so the partition
-     * has backing storage), ALTER TABLE ADD COLUMN of the type under test,
-     * then SELECTs the new column over QWP and runs {@code asserter} on
-     * each batch. The pre-existing rows have no backing storage for the
-     * added column, so the columnar fast-path's {@code base == 0} branch
-     * fires for every frame -- the buggy code path before the fix.
+     * table with only a TIMESTAMP, ingests {@link #COLUMN_TOP_ROWS} rows
+     * (so the partition has backing storage), ALTER TABLE ADD COLUMN of the
+     * type under test, then SELECTs the new column over QWP and runs
+     * {@code asserter} on each batch. The pre-existing rows have no backing
+     * storage for the added column, so the columnar fast-path's
+     * {@code base == 0} branch fires for every frame -- the buggy code path
+     * before the fix. The row count crosses many byte boundaries (so the
+     * multi-byte memset / memcpy paths run) and is not a multiple of 8
+     * (so the BOOLEAN bitmap's tail byte is only partially written).
      */
     private void runColumnTopTest(String typeName, BatchAsserter asserter) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startWithEnvVariables()) {
                 serverMain.execute("CREATE TABLE ct(ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
-                serverMain.execute("INSERT INTO ct SELECT x::TIMESTAMP FROM long_sequence(7)");
+                serverMain.execute("INSERT INTO ct SELECT x::TIMESTAMP FROM long_sequence(" + COLUMN_TOP_ROWS + ")");
                 serverMain.awaitTable("ct");
                 serverMain.execute("ALTER TABLE ct ADD COLUMN col " + typeName);
                 serverMain.awaitTable("ct");
@@ -148,7 +230,7 @@ public class QwpEgressColumnTopNonNullableTypesTest extends AbstractBootstrapTes
                     client.execute("SELECT col FROM ct", new QwpColumnBatchHandler() {
                         @Override
                         public void onBatch(QwpColumnBatch batch) {
-                            asserter.check(batch);
+                            asserter.check(batch, totalRows[0]);
                             totalRows[0] += batch.getRowCount();
                         }
 
@@ -162,13 +244,13 @@ public class QwpEgressColumnTopNonNullableTypesTest extends AbstractBootstrapTes
                         }
                     });
                 }
-                Assert.assertEquals(7, totalRows[0]);
+                Assert.assertEquals(COLUMN_TOP_ROWS, totalRows[0]);
             }
         });
     }
 
     @FunctionalInterface
     private interface BatchAsserter {
-        void check(QwpColumnBatch batch);
+        void check(QwpColumnBatch batch, int rowsBefore);
     }
 }
