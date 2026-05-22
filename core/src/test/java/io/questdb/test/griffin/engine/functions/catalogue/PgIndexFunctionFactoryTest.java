@@ -36,7 +36,7 @@ public class PgIndexFunctionFactoryTest extends AbstractCairoTest {
                 "pg_index;",
                 "create table x(a int)",
                 null,
-                false,
+                true,
                 true
         );
     }
@@ -48,7 +48,7 @@ public class PgIndexFunctionFactoryTest extends AbstractCairoTest {
                 "pg_catalog.pg_index;",
                 "create table x(a int)",
                 null,
-                false,
+                true,
                 true
         );
     }
