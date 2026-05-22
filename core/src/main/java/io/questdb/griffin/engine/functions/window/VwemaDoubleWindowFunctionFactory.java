@@ -414,6 +414,18 @@ public class VwemaDoubleWindowFunctionFactory extends AbstractWindowFunctionFact
         }
 
         @Override
+        public ColumnTypes getSnapshotKeyColumnTypes() {
+            return keyColumnTypes;
+        }
+
+        @Override
+        public int getSnapshotKeyStartIndex() {
+            return mapValueTypes != null
+                    ? mapValueTypes.getColumnCount()
+                    : VWEMA_COLUMN_TYPES.getColumnCount();
+        }
+
+        @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
             Unsafe.putDouble(spi.getAddress(recordOffset, columnIndex), vwema);
@@ -475,6 +487,22 @@ public class VwemaDoubleWindowFunctionFactory extends AbstractWindowFunctionFact
         }
 
         @Override
+        public long restorePartitionState(MemoryR source, long offset, MapValue value, int formatVersion) {
+            value.putDouble(0, source.getDouble(offset));
+            offset += Double.BYTES;
+            value.putDouble(1, source.getDouble(offset));
+            offset += Double.BYTES;
+            value.putLong(2, source.getLong(offset));
+            offset += Long.BYTES;
+            value.putLong(3, source.getLong(offset));
+            offset += Long.BYTES;
+            if (tombstoneValueIndex >= 0) {
+                value.putByte(tombstoneValueIndex, (byte) 0);
+            }
+            return offset;
+        }
+
+        @Override
         public void snapshot(MemoryA sink) {
             MapRecordCursor cursor = map.getCursor();
             MapRecord record = map.getRecord();
@@ -517,6 +545,14 @@ public class VwemaDoubleWindowFunctionFactory extends AbstractWindowFunctionFact
         @Override
         public int snapshotMinSupportedVersion() {
             return 1;
+        }
+
+        @Override
+        public void snapshotPartitionState(MemoryA sink, MapValue value) {
+            sink.putDouble(value.getDouble(0));
+            sink.putDouble(value.getDouble(1));
+            sink.putLong(value.getLong(2));
+            sink.putLong(value.getLong(3));
         }
 
         @Override
@@ -812,6 +848,18 @@ public class VwemaDoubleWindowFunctionFactory extends AbstractWindowFunctionFact
         }
 
         @Override
+        public ColumnTypes getSnapshotKeyColumnTypes() {
+            return keyColumnTypes;
+        }
+
+        @Override
+        public int getSnapshotKeyStartIndex() {
+            return mapValueTypes != null
+                    ? mapValueTypes.getColumnCount()
+                    : VWEMA_COLUMN_TYPES.getColumnCount();
+        }
+
+        @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
             Unsafe.putDouble(spi.getAddress(recordOffset, columnIndex), vwema);
@@ -873,6 +921,22 @@ public class VwemaDoubleWindowFunctionFactory extends AbstractWindowFunctionFact
         }
 
         @Override
+        public long restorePartitionState(MemoryR source, long offset, MapValue value, int formatVersion) {
+            value.putDouble(0, source.getDouble(offset));
+            offset += Double.BYTES;
+            value.putDouble(1, source.getDouble(offset));
+            offset += Double.BYTES;
+            value.putLong(2, source.getLong(offset));
+            offset += Long.BYTES;
+            value.putLong(3, source.getLong(offset));
+            offset += Long.BYTES;
+            if (tombstoneValueIndex >= 0) {
+                value.putByte(tombstoneValueIndex, (byte) 0);
+            }
+            return offset;
+        }
+
+        @Override
         public void snapshot(MemoryA sink) {
             MapRecordCursor cursor = map.getCursor();
             MapRecord record = map.getRecord();
@@ -915,6 +979,14 @@ public class VwemaDoubleWindowFunctionFactory extends AbstractWindowFunctionFact
         @Override
         public int snapshotMinSupportedVersion() {
             return 1;
+        }
+
+        @Override
+        public void snapshotPartitionState(MemoryA sink, MapValue value) {
+            sink.putDouble(value.getDouble(0));
+            sink.putDouble(value.getDouble(1));
+            sink.putLong(value.getLong(2));
+            sink.putLong(value.getLong(3));
         }
 
         @Override
