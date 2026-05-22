@@ -3144,6 +3144,69 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testIncrementalPeriodRefreshCommitsWatermarkWhenBaseTxnAdvances() throws Exception {
+        // A period mat view consuming a new base txn whose rows all fall in an incomplete period
+        // produces no rows, but the no-rows path in insertAsSelect must still commit the advanced
+        // base txn watermark. Pins the "legit advance still commits" direction of the watermark
+        // guard (commitBaseTxn > lastRefreshBaseTxn); without it the view would re-examine the same
+        // txns indefinitely.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table base_price (" +
+                            "sym varchar, price double, ts #TIMESTAMP" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            currentMicros = parseFloorPartialTimestamp("2000-01-01T00:00:00.000000Z");
+            execute(
+                    "create materialized view price_1h refresh immediate period (length 1d) as " +
+                            "select sym, last(price) as price, ts from base_price sample by 1d"
+            );
+            // Complete period (1999-12-31) plus a row in the still-incomplete 2000-01-01 period.
+            execute(
+                    "insert into base_price(sym, price, ts) values ('gbpusd', 1.320, '1999-12-31T09:01')" +
+                            ",('gbpusd', 1.321, '2000-01-01T13:02')"
+            );
+            drainWalQueue();
+            currentMicros = parseFloorPartialTimestamp("2000-01-01T00:00:00.000000Z");
+            drainQueues();
+
+            // First refresh consumed base txn 1 and completed the 1999-12-31 period.
+            assertQueryNoLeakCheck(
+                    "refresh_base_table_txn\n1\n",
+                    "select refresh_base_table_txn from materialized_views where view_name = 'price_1h'",
+                    null
+            );
+
+            // New row, still inside the incomplete 2000-01-01 period: a new base txn, but no newly
+            // complete period and no rows for the view.
+            execute("insert into base_price(sym, price, ts) values ('gbpusd', 1.322, '2000-01-01T14:00')");
+            drainWalQueue();
+            currentMicros = parseFloorPartialTimestamp("2000-01-01T23:59:59.999999Z");
+            execute("refresh materialized view price_1h incremental");
+            drainQueues();
+
+            // No rows were added to the view...
+            assertQueryNoLeakCheck(
+                    replaceExpectedTimestamp(
+                            """
+                                    sym\tprice\tts
+                                    gbpusd\t1.32\t1999-12-31T00:00:00.000000Z
+                                    """),
+                    "price_1h order by sym"
+            );
+            // ...but the base txn watermark advanced to 2, committed via the no-rows path.
+            assertQueryNoLeakCheck(
+                    """
+                            view_status\trefresh_base_table_txn
+                            valid\t2
+                            """,
+                    "select view_status, refresh_base_table_txn from materialized_views where view_name = 'price_1h'",
+                    null
+            );
+        });
+    }
+
+    @Test
     public void testIncrementalRefreshOnExistingTable() throws Exception {
         setProperty(PropertyKey.CAIRO_WAL_SEGMENT_ROLLOVER_ROW_COUNT, 10);
         assertMemoryLeak(() -> {
@@ -4648,10 +4711,12 @@ public class MatViewTest extends AbstractCairoTest {
 
     @Test
     public void testNoOpIncrementalRefreshDoesNotCommitWal() throws Exception {
-        // A non-period mat view takes the "already up-to-date" early-out in refreshIncremental0
-        // (getPeriodLength() == 0 && fromBaseTxn == toBaseTxn), so a no-new-data incremental refresh
-        // writes no WAL transaction. Pins the non-period path; the insertAsSelect watermark guard is
-        // only needed for period views (see testNoOpIncrementalPeriodRefreshDoesNotCommitWal).
+        // A non-period no-op incremental refresh must write no WAL transaction. Today the
+        // refreshIncremental0 early-out (getPeriodLength() == 0 && fromBaseTxn == toBaseTxn)
+        // short-circuits before insertAsSelect, so this pins the observable behavior rather than the
+        // guard itself: a future refactor removing the early-out can't silently reintroduce no-op WAL
+        // commits for non-period views (see testNoOpIncrementalPeriodRefreshDoesNotCommitWal for the
+        // period path that does reach the guard).
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp(
                     "create table base_price (" +
