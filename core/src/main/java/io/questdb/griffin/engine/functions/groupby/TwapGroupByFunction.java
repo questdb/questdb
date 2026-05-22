@@ -60,25 +60,30 @@ import org.jetbrains.annotations.NotNull;
  * Instead, each per-slot {@link GroupByFunction} instance records all
  * (timestamp, price) observations into a native buffer through its own
  * {@link GroupByAllocator}. A single {@code computeNext} loop processes one
- * page frame's rows in timestamp order, producing one sorted run per frame.
+ * page frame's rows in timestamp order, appending one key-sorted batch.
  * However, the slot a frame lands on is determined by lock acquisition in
  * {@link io.questdb.griffin.engine.PerWorkerLocks}, not by the worker's
  * identity, so under cross-query work-stealing a single slot's buffer can
- * accumulate frames in non-monotonic order. The buffer is therefore best
- * modelled as a concatenation of disjoint sorted runs whose key (timestamp)
- * ranges do not overlap, since each frame covers a contiguous rowId range
- * and frames are dispatched chronologically on TS-ordered data. See
- * {@link SortedRunsMerge} for the run-permutation compaction that
- * exploits this property at merge and read time.
+ * accumulate batches in non-monotonic order. {@code computeNext} therefore
+ * records the exact per-frame batch boundaries (see {@link SortedRunsMerge}):
+ * a new batch starts whenever the page frame changes, detected from the row
+ * id ({@code rowId >>> 44} is the frame index). The boundaries let merge and
+ * read time sort the buffer by permuting whole batches, with no element-wise
+ * merge. A group that only ever sees one frame keeps its descriptor buffer
+ * unallocated.
  * <p>
  * The final TWAP is computed from the compacted, fully sorted buffer in
  * {@link #getDouble(Record)}.
  * <p>
- * <b>MapValue layout</b> (3 slots):
+ * <b>MapValue layout</b> (7 slots):
  * <pre>
- *   +0  LONG    native buffer pointer (0 = no observations)
+ *   +0  LONG    entry buffer pointer (0 = no observations)
  *   +1  LONG    observation count
- *   +2  LONG    buffer capacity in entries
+ *   +2  LONG    entry buffer capacity in entries
+ *   +3  LONG    descriptor buffer pointer (0 = single batch)
+ *   +4  LONG    descriptor count
+ *   +5  LONG    descriptor buffer capacity in entries
+ *   +6  LONG    frame index of the most recently appended entry
  * </pre>
  * <b>Buffer entry layout</b> (16 bytes each):
  * <pre>
@@ -90,7 +95,7 @@ public class TwapGroupByFunction extends DoubleFunction implements GroupByFuncti
     private static final long ENTRY_SIZE = 16;
     private static final long INITIAL_CAPACITY = 16;
     private final Function priceFunc;
-    // Scratch list for run descriptors used by SortedRunsMerge. Not
+    // Scratch list for batch records used by SortedRunsMerge. Not
     // thread-safe; each per-slot function instance owns its own.
     private final LongList runScratch = new LongList(16);
     private final Function tsFunc;
@@ -123,18 +128,20 @@ public class TwapGroupByFunction extends DoubleFunction implements GroupByFuncti
         double price = priceFunc.getDouble(record);
         long ts = tsFunc.getLong(record);
         if (Double.isNaN(price) || ts == Numbers.LONG_NULL) {
-            // NULL observation — initialize empty state
-            mapValue.putLong(valueIndex, 0);
-            mapValue.putLong(valueIndex + 1, 0);
-            mapValue.putLong(valueIndex + 2, 0);
+            // NULL observation - initialize empty state
+            setNull(mapValue);
         } else {
-            // Allocate buffer and store first observation
+            // Allocate buffer and store first observation as the first batch
             long ptr = allocator.malloc(INITIAL_CAPACITY * ENTRY_SIZE);
             Unsafe.putLong(ptr, ts);
             Unsafe.putDouble(ptr + 8, price);
             mapValue.putLong(valueIndex, ptr);
             mapValue.putLong(valueIndex + 1, 1);
             mapValue.putLong(valueIndex + 2, INITIAL_CAPACITY);
+            mapValue.putLong(valueIndex + 3, 0);             // descPtr: single implicit batch
+            mapValue.putLong(valueIndex + 4, 0);             // descCount
+            mapValue.putLong(valueIndex + 5, 0);             // descCapacity
+            mapValue.putLong(valueIndex + 6, rowId >>> 44);  // lastFrameId
         }
     }
 
@@ -147,39 +154,50 @@ public class TwapGroupByFunction extends DoubleFunction implements GroupByFuncti
         }
         long count = mapValue.getLong(valueIndex + 1);
         if (count <= 0) {
-            // First valid observation after initial NULLs
+            // First valid observation after initial NULLs - starts the first batch
             long ptr = allocator.malloc(INITIAL_CAPACITY * ENTRY_SIZE);
             Unsafe.putLong(ptr, ts);
             Unsafe.putDouble(ptr + 8, price);
             mapValue.putLong(valueIndex, ptr);
             mapValue.putLong(valueIndex + 1, 1);
             mapValue.putLong(valueIndex + 2, INITIAL_CAPACITY);
-        } else {
-            // Append observation, growing the buffer if needed
-            long capacity = mapValue.getLong(valueIndex + 2);
-            long ptr = mapValue.getLong(valueIndex);
-            if (count >= capacity) {
-                long newCapacity = capacity * 2;
-                long newPtr = allocator.malloc(newCapacity * ENTRY_SIZE);
-                Vect.memcpy(newPtr, ptr, count * ENTRY_SIZE);
-                ptr = newPtr;
-                mapValue.putLong(valueIndex, ptr);
-                mapValue.putLong(valueIndex + 2, newCapacity);
-            }
-            long offset = count * ENTRY_SIZE;
-            Unsafe.putLong(ptr + offset, ts);
-            Unsafe.putDouble(ptr + offset + 8, price);
-            mapValue.putLong(valueIndex + 1, count + 1);
+            mapValue.putLong(valueIndex + 3, 0);
+            mapValue.putLong(valueIndex + 4, 0);
+            mapValue.putLong(valueIndex + 5, 0);
+            mapValue.putLong(valueIndex + 6, rowId >>> 44);
+            return;
         }
+        // A page frame change starts a new batch. Frames map to slots by lock
+        // acquisition, so a slot can observe frames out of rowId order; the
+        // descriptor buffer records the exact per-frame boundaries.
+        long frameId = rowId >>> 44;
+        if (frameId != mapValue.getLong(valueIndex + 6)) {
+            SortedRunsMerge.appendBatchStart(allocator, mapValue, valueIndex + 3, count);
+            mapValue.putLong(valueIndex + 6, frameId);
+        }
+        // Append observation, growing the buffer if needed
+        long capacity = mapValue.getLong(valueIndex + 2);
+        long ptr = mapValue.getLong(valueIndex);
+        if (count >= capacity) {
+            long newCapacity = capacity * 2;
+            long newPtr = allocator.malloc(newCapacity * ENTRY_SIZE);
+            Vect.memcpy(newPtr, ptr, count * ENTRY_SIZE);
+            ptr = newPtr;
+            mapValue.putLong(valueIndex, ptr);
+            mapValue.putLong(valueIndex + 2, newCapacity);
+        }
+        long offset = count * ENTRY_SIZE;
+        Unsafe.putLong(ptr + offset, ts);
+        Unsafe.putDouble(ptr + offset + 8, price);
+        mapValue.putLong(valueIndex + 1, count + 1);
     }
 
     /**
-     * Computes TWAP from the observation buffer. Before integration, ensures
-     * the buffer is a single sorted run via
-     * {@link SortedRunsMerge#compactInPlace}: under parallel GROUP BY the
-     * buffer may be a concatenation of disjoint sorted runs (one per frame
-     * landing on this slot), and the step-function integration relies on
-     * monotonic timestamps.
+     * Computes TWAP from the observation buffer. Before integration, sorts the
+     * buffer by timestamp via {@link SortedRunsMerge#compactInPlace}: under
+     * parallel GROUP BY the buffer is a concatenation of per-frame batches that
+     * a slot may have appended out of order, and the step-function integration
+     * relies on monotonic timestamps.
      * <p>
      * The result is memoized per buffer pointer so that repeated calls within
      * the same SQL projection avoid re-scanning the buffer. The compaction
@@ -200,7 +218,11 @@ public class TwapGroupByFunction extends DoubleFunction implements GroupByFuncti
         if (ptr == cachedPtr) {
             return cachedValue;
         }
-        SortedRunsMerge.compactInPlace(allocator, runScratch, ptr, count, ENTRY_SIZE);
+        SortedRunsMerge.compactInPlace(
+                allocator, runScratch, ptr, count,
+                rec.getLong(valueIndex + 3), rec.getLong(valueIndex + 4),
+                ENTRY_SIZE
+        );
         double result;
         if (count == 1) {
             result = Unsafe.getDouble(ptr + 8);
@@ -266,9 +288,13 @@ public class TwapGroupByFunction extends DoubleFunction implements GroupByFuncti
     @Override
     public void initValueTypes(ArrayColumnTypes columnTypes) {
         this.valueIndex = columnTypes.getColumnCount();
-        columnTypes.add(ColumnType.LONG);   // +0: buffer pointer
+        columnTypes.add(ColumnType.LONG);   // +0: entry buffer pointer
         columnTypes.add(ColumnType.LONG);   // +1: count
-        columnTypes.add(ColumnType.LONG);   // +2: buffer capacity
+        columnTypes.add(ColumnType.LONG);   // +2: entry buffer capacity
+        columnTypes.add(ColumnType.LONG);   // +3: descriptor buffer pointer
+        columnTypes.add(ColumnType.LONG);   // +4: descriptor count
+        columnTypes.add(ColumnType.LONG);   // +5: descriptor buffer capacity
+        columnTypes.add(ColumnType.LONG);   // +6: last frame index
     }
 
     @Override
@@ -291,14 +317,13 @@ public class TwapGroupByFunction extends DoubleFunction implements GroupByFuncti
      * Combines the source slot's observation buffer with the destination's
      * into a single sorted buffer allocated in the destination's allocator
      * (the owner's allocator on the non-sharded merge path, a per-worker
-     * allocator on the sharded one). Both inputs are treated as
-     * concatenations of disjoint sorted runs (one run per page frame); the
-     * combined run set still satisfies the disjointness invariant because
-     * different frames cover disjoint rowId ranges. See
-     * {@link SortedRunsMerge} for the algorithm and the assertion that
-     * fails loudly under {@code -ea} if disjointness ever breaks.
+     * allocator on the sharded one). Each input is a sequence of per-frame
+     * batches; {@link SortedRunsMerge#compactInto} sorts the combined batch
+     * set by timestamp and concatenates the batches, with no element-wise
+     * merge. The merged buffer carries its own descriptor buffer so a
+     * higher-level merge can interleave it with another partial result.
      * <p>
-     * The old destination buffer is abandoned and reclaimed when the
+     * The old destination buffers are abandoned and reclaimed when the
      * allocator is closed.
      */
     @Override
@@ -308,21 +333,34 @@ public class TwapGroupByFunction extends DoubleFunction implements GroupByFuncti
             return;
         }
         long srcPtr = srcValue.getLong(valueIndex);
+        long srcDescPtr = srcValue.getLong(valueIndex + 3);
+        long srcDescCount = srcValue.getLong(valueIndex + 4);
         long destCount = destValue.getLong(valueIndex + 1);
         long destPtr = destCount > 0 ? destValue.getLong(valueIndex) : 0;
+        long destDescPtr = destCount > 0 ? destValue.getLong(valueIndex + 3) : 0;
+        long destDescCount = destCount > 0 ? destValue.getLong(valueIndex + 4) : 0;
+
         long mergedCount = destCount + srcCount;
+        long destBatches = destCount <= 0 ? 0 : (destDescPtr == 0 ? 1 : destDescCount);
+        long srcBatches = srcDescPtr == 0 ? 1 : srcDescCount;
+        long mergedBatches = destBatches + srcBatches;
+
         long mergedPtr = allocator.malloc(mergedCount * ENTRY_SIZE);
+        // A single-batch result needs no descriptor buffer.
+        long mergedDescPtr = mergedBatches > 1 ? allocator.malloc(mergedBatches * Long.BYTES) : 0;
         SortedRunsMerge.compactInto(
-                allocator,
                 runScratch,
-                mergedPtr,
-                destPtr, destCount,
-                srcPtr, srcCount,
+                mergedPtr, mergedDescPtr,
+                destPtr, destCount, destDescPtr, destDescCount,
+                srcPtr, srcCount, srcDescPtr, srcDescCount,
                 ENTRY_SIZE
         );
         destValue.putLong(valueIndex, mergedPtr);
         destValue.putLong(valueIndex + 1, mergedCount);
         destValue.putLong(valueIndex + 2, mergedCount);
+        destValue.putLong(valueIndex + 3, mergedDescPtr);
+        destValue.putLong(valueIndex + 4, mergedDescPtr != 0 ? mergedBatches : 0);
+        destValue.putLong(valueIndex + 5, mergedDescPtr != 0 ? mergedBatches : 0);
     }
 
     @Override
@@ -335,6 +373,10 @@ public class TwapGroupByFunction extends DoubleFunction implements GroupByFuncti
         mapValue.putLong(valueIndex, 0);
         mapValue.putLong(valueIndex + 1, 0);
         mapValue.putLong(valueIndex + 2, 0);
+        mapValue.putLong(valueIndex + 3, 0);
+        mapValue.putLong(valueIndex + 4, 0);
+        mapValue.putLong(valueIndex + 5, 0);
+        mapValue.putLong(valueIndex + 6, 0);
     }
 
     @Override

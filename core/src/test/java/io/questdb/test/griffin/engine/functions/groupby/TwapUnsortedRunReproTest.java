@@ -78,6 +78,80 @@ public class TwapUnsortedRunReproTest extends AbstractCairoTest {
     private static final int ROWS = 5_000;
     private static final double EXPECTED_TWAP = 2500.0;
 
+    /**
+     * Keyed counterpart of {@link #testParallelTwapMatchesUnderContention}: a
+     * GROUP BY over a SYMBOL key drives the {@code computeKeyedBatch} reduce
+     * path, and the low sharding threshold forces the sharded merge path. Every
+     * key shares the same (ts, price) sequence, so every group's TWAP is
+     * exactly 2500.0; a deviation means the per-frame batch descriptors were
+     * not honoured on the keyed path.
+     */
+    @Test
+    public void testParallelKeyedTwapMatchesUnderContention() throws Exception {
+        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 50);
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_ENABLED, "true");
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_WORK_STEALING_THRESHOLD, 1);
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_SHARDING_THRESHOLD, 2);
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_BATCH_SIZE, 8);
+
+        final int keyCount = 4;
+        assertMemoryLeak(() -> {
+            try (WorkerPool pool = new WorkerPool(() -> 2)) {
+                TestUtils.execute(pool, (engine, compiler, sqlExecutionContext) -> {
+                    engine.execute(
+                            "CREATE TABLE tab (key SYMBOL, price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR",
+                            sqlExecutionContext
+                    );
+                    StringBuilder sb = new StringBuilder("INSERT INTO tab VALUES\n");
+                    boolean first = true;
+                    for (int i = 0; i < ROWS; i++) {
+                        for (int k = 0; k < keyCount; k++) {
+                            if (!first) {
+                                sb.append(",\n");
+                            }
+                            first = false;
+                            sb.append("('k").append(k).append("', ")
+                                    .append((double) (i + 1)).append(", ").append((long) i * 1000).append(')');
+                        }
+                    }
+                    engine.execute(sb.toString(), sqlExecutionContext);
+
+                    final CyclicBarrier barrier = new CyclicBarrier(NUM_THREADS);
+                    final SOCountDownLatch latch = new SOCountDownLatch(NUM_THREADS);
+                    final Map<Integer, Throwable> errors = new ConcurrentHashMap<>();
+                    final AtomicInteger mismatches = new AtomicInteger();
+
+                    for (int t = 0; t < NUM_THREADS; t++) {
+                        final int threadId = t;
+                        new Thread(() -> {
+                            try {
+                                TestUtils.await(barrier);
+                                for (int iter = 0; iter < NUM_ITERATIONS; iter++) {
+                                    mismatches.addAndGet(countKeyedTwapMismatches(engine, sqlExecutionContext, keyCount));
+                                }
+                            } catch (Throwable th) {
+                                errors.put(threadId, th);
+                            } finally {
+                                latch.countDown();
+                            }
+                        }, "twap-keyed-" + threadId).start();
+                    }
+                    latch.await();
+
+                    for (Map.Entry<Integer, Throwable> e : errors.entrySet()) {
+                        e.getValue().printStackTrace(System.out);
+                    }
+                    Assert.assertTrue("thread errors: " + errors, errors.isEmpty());
+                    Assert.assertEquals(
+                            "every group's twap() must be exactly 2500.0 regardless of per-slot frame "
+                                    + "ordering on the keyed (computeKeyedBatch + sharded merge) reduce path",
+                            0, mismatches.get()
+                    );
+                }, configuration, LOG);
+            }
+        });
+    }
+
     @Test
     public void testParallelTwapMatchesUnderContention() throws Exception {
         setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 50);
@@ -225,6 +299,28 @@ public class TwapUnsortedRunReproTest extends AbstractCairoTest {
                 }, configuration, LOG);
             }
         });
+    }
+
+    // Runs the keyed twap query and returns the number of groups whose twap
+    // deviates from the exact expected value; a wrong group count also counts
+    // as a mismatch so a dropped group is caught.
+    private static int countKeyedTwapMismatches(CairoEngine engine, SqlExecutionContext ctx, int expectedGroups) throws Exception {
+        int mismatches = 0;
+        int groups = 0;
+        try (RecordCursorFactory factory = engine.select("SELECT key, twap(price, ts) FROM tab", ctx);
+             RecordCursor cursor = factory.getCursor(ctx)) {
+            final Record record = cursor.getRecord();
+            while (cursor.hasNext()) {
+                groups++;
+                if (record.getDouble(1) != EXPECTED_TWAP) {
+                    mismatches++;
+                }
+            }
+        }
+        if (groups != expectedGroups) {
+            mismatches++;
+        }
+        return mismatches;
     }
 
     private static TwapGroupByFunction findOwnerTwapFunction(RecordCursorFactory factory) throws Exception {

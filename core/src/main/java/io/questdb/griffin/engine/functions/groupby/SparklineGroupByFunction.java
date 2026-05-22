@@ -55,19 +55,25 @@ import org.jetbrains.annotations.Nullable;
  * <b>Parallelism strategy.</b> Same pattern as {@link TwapGroupByFunction}.
  * Each per-slot function instance accumulates observations into a native
  * buffer through its own {@link GroupByAllocator}. A single {@code computeNext}
- * loop processes one page frame in rowId order, producing one sorted run.
- * Under parallel GROUP BY a slot can accumulate frames in non-monotonic order
- * (frames are mapped to slots by lock acquisition, not worker identity), so
- * the buffer is modelled as a concatenation of disjoint sorted runs keyed on
- * rowId: different frames cover disjoint, contiguous rowId ranges by
- * construction. See {@link SortedRunsMerge} for the run-permutation
- * compaction applied at merge and render time.
+ * loop processes one page frame in rowId order, appending one rowId-sorted
+ * batch. Under parallel GROUP BY a slot can accumulate batches in non-monotonic
+ * order (frames map to slots by lock acquisition, not worker identity), so
+ * {@code computeNext} records the exact per-frame batch boundaries: a new batch
+ * starts whenever the page frame changes, detected from the row id
+ * ({@code rowId >>> 44} is the frame index). The boundaries let merge and
+ * render time sort the buffer by permuting whole batches, with no element-wise
+ * merge. A group that only ever sees one frame keeps its descriptor buffer
+ * unallocated. See {@link SortedRunsMerge}.
  * <p>
- * <b>MapValue layout</b> (3 slots):
+ * <b>MapValue layout</b> (7 slots):
  * <pre>
  *   +0  LONG   pair buffer pointer (0 = no observations)
  *   +1  LONG   observation count
- *   +2  LONG   buffer capacity in entries
+ *   +2  LONG   pair buffer capacity in entries
+ *   +3  LONG   descriptor buffer pointer (0 = single batch)
+ *   +4  LONG   descriptor count
+ *   +5  LONG   descriptor buffer capacity in entries
+ *   +6  LONG   frame index of the most recently appended entry
  * </pre>
  * <b>Pair entry layout</b> (16 bytes each):
  * <pre>
@@ -86,7 +92,7 @@ public class SparklineGroupByFunction extends VarcharFunction implements UnaryFu
     private final int maxValues;
     private final @Nullable Function minFunc;
     private final String name;
-    // Scratch list for run descriptors used by SortedRunsMerge. Not
+    // Scratch list for batch records used by SortedRunsMerge. Not
     // thread-safe; each per-slot function instance owns its own.
     private final LongList runScratch = new LongList(16);
     // A and B need independent flyweights because sort's comparator
@@ -164,9 +170,7 @@ public class SparklineGroupByFunction extends VarcharFunction implements UnaryFu
         cachedPairPtrB = 0;
         final double value = arg.getDouble(record);
         if (Double.isNaN(value)) {
-            mapValue.putLong(valueIndex, 0);
-            mapValue.putLong(valueIndex + 1, 0);
-            mapValue.putLong(valueIndex + 2, 0);
+            setNull(mapValue);
             return;
         }
         long ptr = allocator.malloc(INITIAL_CAPACITY * ENTRY_SIZE);
@@ -175,6 +179,10 @@ public class SparklineGroupByFunction extends VarcharFunction implements UnaryFu
         mapValue.putLong(valueIndex, ptr);
         mapValue.putLong(valueIndex + 1, 1);
         mapValue.putLong(valueIndex + 2, INITIAL_CAPACITY);
+        mapValue.putLong(valueIndex + 3, 0);             // descPtr: single implicit batch
+        mapValue.putLong(valueIndex + 4, 0);             // descCount
+        mapValue.putLong(valueIndex + 5, 0);             // descCapacity
+        mapValue.putLong(valueIndex + 6, rowId >>> 44);  // lastFrameId
     }
 
     @Override
@@ -191,12 +199,24 @@ public class SparklineGroupByFunction extends VarcharFunction implements UnaryFu
             mapValue.putLong(valueIndex, ptr);
             mapValue.putLong(valueIndex + 1, 1);
             mapValue.putLong(valueIndex + 2, INITIAL_CAPACITY);
+            mapValue.putLong(valueIndex + 3, 0);
+            mapValue.putLong(valueIndex + 4, 0);
+            mapValue.putLong(valueIndex + 5, 0);
+            mapValue.putLong(valueIndex + 6, rowId >>> 44);
             return;
         }
         if (count >= maxValues) {
             throw CairoException.nonCritical().position(functionPosition)
                     .put(name).put("() result exceeds max size of ")
                     .put((long) maxValues * 3).put(" bytes");
+        }
+        // A page frame change starts a new batch. Frames map to slots by lock
+        // acquisition, so a slot can observe frames out of rowId order; the
+        // descriptor buffer records the exact per-frame boundaries.
+        long frameId = rowId >>> 44;
+        if (frameId != mapValue.getLong(valueIndex + 6)) {
+            SortedRunsMerge.appendBatchStart(allocator, mapValue, valueIndex + 3, count);
+            mapValue.putLong(valueIndex + 6, frameId);
         }
         long capacity = mapValue.getLong(valueIndex + 2);
         long ptr = mapValue.getLong(valueIndex);
@@ -232,7 +252,7 @@ public class SparklineGroupByFunction extends VarcharFunction implements UnaryFu
         if (ptr == cachedPairPtrA) {
             return viewA.of(cachedRenderPtrA, cachedRenderPtrA + cachedRenderLenA);
         }
-        final long outBytes = renderForPtr(ptr, (int) count);
+        final long outBytes = renderForPtr(ptr, rec.getLong(valueIndex + 3), rec.getLong(valueIndex + 4), (int) count);
         final long out = lastRenderPtr;
         cachedPairPtrA = ptr;
         cachedRenderPtrA = out;
@@ -259,7 +279,7 @@ public class SparklineGroupByFunction extends VarcharFunction implements UnaryFu
             cachedRenderLenB = cachedRenderLenA;
             return viewB.of(cachedRenderPtrA, cachedRenderPtrA + cachedRenderLenA);
         }
-        final long outBytes = renderForPtr(ptr, (int) count);
+        final long outBytes = renderForPtr(ptr, rec.getLong(valueIndex + 3), rec.getLong(valueIndex + 4), (int) count);
         final long out = lastRenderPtr;
         cachedPairPtrB = ptr;
         cachedRenderPtrB = out;
@@ -291,7 +311,11 @@ public class SparklineGroupByFunction extends VarcharFunction implements UnaryFu
         this.valueIndex = columnTypes.getColumnCount();
         columnTypes.add(ColumnType.LONG); // +0 pair buffer pointer
         columnTypes.add(ColumnType.LONG); // +1 count
-        columnTypes.add(ColumnType.LONG); // +2 capacity (entries)
+        columnTypes.add(ColumnType.LONG); // +2 pair buffer capacity (entries)
+        columnTypes.add(ColumnType.LONG); // +3 descriptor buffer pointer
+        columnTypes.add(ColumnType.LONG); // +4 descriptor count
+        columnTypes.add(ColumnType.LONG); // +5 descriptor buffer capacity
+        columnTypes.add(ColumnType.LONG); // +6 last frame index
     }
 
     @Override
@@ -319,12 +343,13 @@ public class SparklineGroupByFunction extends VarcharFunction implements UnaryFu
      * Combines the source slot's observation buffer with the destination's
      * into a single sorted buffer allocated in the destination's allocator
      * (the owner's on the non-sharded merge path, a per-worker on the
-     * sharded one). Both inputs are concatenations of disjoint sorted
-     * runs (one per page frame); the combined run set still satisfies the
-     * disjointness invariant because different frames cover disjoint
-     * rowId ranges. See {@link SortedRunsMerge}.
+     * sharded one). Each input is a sequence of per-frame batches;
+     * {@link SortedRunsMerge#compactInto} sorts the combined batch set by
+     * rowId and concatenates the batches, with no element-wise merge. The
+     * merged buffer carries its own descriptor buffer so a higher-level
+     * merge can interleave it with another partial result.
      * <p>
-     * The old destination buffer is abandoned; the allocator reclaims it
+     * The old destination buffers are abandoned; the allocator reclaims them
      * when the cursor closes.
      */
     @Override
@@ -334,21 +359,34 @@ public class SparklineGroupByFunction extends VarcharFunction implements UnaryFu
             return;
         }
         long srcPtr = srcValue.getLong(valueIndex);
+        long srcDescPtr = srcValue.getLong(valueIndex + 3);
+        long srcDescCount = srcValue.getLong(valueIndex + 4);
         long destCount = destValue.getLong(valueIndex + 1);
         long destPtr = destCount > 0 ? destValue.getLong(valueIndex) : 0;
+        long destDescPtr = destCount > 0 ? destValue.getLong(valueIndex + 3) : 0;
+        long destDescCount = destCount > 0 ? destValue.getLong(valueIndex + 4) : 0;
+
         long mergedCount = destCount + srcCount;
+        long destBatches = destCount <= 0 ? 0 : (destDescPtr == 0 ? 1 : destDescCount);
+        long srcBatches = srcDescPtr == 0 ? 1 : srcDescCount;
+        long mergedBatches = destBatches + srcBatches;
+
         long mergedPtr = allocator.malloc(mergedCount * ENTRY_SIZE);
+        // A single-batch result needs no descriptor buffer.
+        long mergedDescPtr = mergedBatches > 1 ? allocator.malloc(mergedBatches * Long.BYTES) : 0;
         SortedRunsMerge.compactInto(
-                allocator,
                 runScratch,
-                mergedPtr,
-                destPtr, destCount,
-                srcPtr, srcCount,
+                mergedPtr, mergedDescPtr,
+                destPtr, destCount, destDescPtr, destDescCount,
+                srcPtr, srcCount, srcDescPtr, srcDescCount,
                 ENTRY_SIZE
         );
         destValue.putLong(valueIndex, mergedPtr);
         destValue.putLong(valueIndex + 1, mergedCount);
         destValue.putLong(valueIndex + 2, mergedCount);
+        destValue.putLong(valueIndex + 3, mergedDescPtr);
+        destValue.putLong(valueIndex + 4, mergedDescPtr != 0 ? mergedBatches : 0);
+        destValue.putLong(valueIndex + 5, mergedDescPtr != 0 ? mergedBatches : 0);
     }
 
     @Override
@@ -361,6 +399,10 @@ public class SparklineGroupByFunction extends VarcharFunction implements UnaryFu
         mapValue.putLong(valueIndex, 0);
         mapValue.putLong(valueIndex + 1, 0);
         mapValue.putLong(valueIndex + 2, 0);
+        mapValue.putLong(valueIndex + 3, 0);
+        mapValue.putLong(valueIndex + 4, 0);
+        mapValue.putLong(valueIndex + 5, 0);
+        mapValue.putLong(valueIndex + 6, 0);
     }
 
     @Override
@@ -420,14 +462,13 @@ public class SparklineGroupByFunction extends VarcharFunction implements UnaryFu
     // Renders the pair buffer at `ptr` into a fresh allocator-backed
     // output buffer. Writes the output pointer into {@link #lastRenderPtr}
     // and returns the byte length.
-    private long renderForPtr(long ptr, int size) {
-        // Under parallel GROUP BY the buffer may be a concatenation of
-        // disjoint sorted runs in non-monotonic order. Compact it in place
-        // to a single sorted run so the value sequence walked below
-        // reflects rowId order, not slot-acquisition order. The pointer is
-        // preserved across compaction, so the caller's cache key stays
-        // valid.
-        SortedRunsMerge.compactInPlace(allocator, runScratch, ptr, size, ENTRY_SIZE);
+    private long renderForPtr(long ptr, long descPtr, long descCount, int size) {
+        // Under parallel GROUP BY the buffer is a concatenation of per-frame
+        // batches a slot may have appended out of order. Sort it in place so
+        // the value sequence walked below reflects rowId order, not
+        // slot-acquisition order. The pointer is preserved across compaction,
+        // so the caller's cache key stays valid.
+        SortedRunsMerge.compactInPlace(allocator, runScratch, ptr, size, descPtr, descCount, ENTRY_SIZE);
         // Single-pass min+max when either is auto. Halves the pre-render
         // scan cost vs two separate full walks.
         double userMin = minFunc != null ? minFunc.getDouble(null) : Double.NaN;
