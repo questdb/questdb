@@ -454,7 +454,7 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
 
             // Optional section: index types (backward compatible)
             if (memSize > offset + 8 + 4) {
-                long indexTypeCheckSum = checkSum * 31 + 0x494E4458; // "INDX" salt
+                long indexTypeCheckSum = checkSum * 31 + SEQ_META_INDEX_TYPE_CHECKSUM_SALT;
                 long storedCheckSum = metaMem.getLong(offset);
                 offset += Long.BYTES;
                 if (storedCheckSum == indexTypeCheckSum) {
@@ -474,7 +474,7 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
 
             // Optional section: covering column indices (backward compatible)
             if (memSize > offset + 8 + 4) {
-                long coverCheckSum = checkSum * 31 + 0x434F5652; // "COVR" salt
+                long coverCheckSum = checkSum * 31 + SEQ_META_COVERING_COLUMN_CHECKSUM_SALT;
                 long storedCoverSum = metaMem.getLong(offset);
                 offset += Long.BYTES;
                 if (storedCoverSum == coverCheckSum) {
@@ -560,43 +560,7 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
             checkSum = checkSum * 31 + getColumnName(i).hashCode();
         }
 
-        // write column order
-        metaMem.putLong(checkSum);
-        metaMem.putInt(readColumnOrder.size());
-        for (int i = 0, n = readColumnOrder.size(); i < n; i++) {
-            metaMem.putInt(readColumnOrder.get(i));
-        }
-
-        // write index types (optional section, backward compatible)
-        long indexTypeCheckSum = checkSum * 31 + 0x494E4458; // "INDX" salt
-        metaMem.putLong(indexTypeCheckSum);
-        metaMem.putInt(columnCount);
-        for (int i = 0; i < columnCount; i++) {
-            metaMem.putByte(getColumnMetadata(i).getIndexType());
-        }
-
-        // write covering column indices (optional section, backward compatible)
-        long coverCheckSum = checkSum * 31 + 0x434F5652; // "COVR" salt
-        metaMem.putLong(coverCheckSum);
-        // Count how many columns have covering indices
-        int coveringColumnCount = 0;
-        for (int i = 0; i < columnCount; i++) {
-            IntList indices = getColumnMetadata(i).getCoveringColumnIndices();
-            if (indices != null && indices.size() > 0) {
-                coveringColumnCount++;
-            }
-        }
-        metaMem.putInt(coveringColumnCount);
-        for (int i = 0; i < columnCount; i++) {
-            IntList indices = getColumnMetadata(i).getCoveringColumnIndices();
-            if (indices != null && indices.size() > 0) {
-                metaMem.putInt(i); // column index
-                metaMem.putInt(indices.size());
-                for (int j = 0, n = indices.size(); j < n; j++) {
-                    metaMem.putInt(indices.getQuick(j));
-                }
-            }
-        }
+        writeSequencerMetadataOptionalSections(metaMem, columnCount, checkSum, this, readColumnOrder);
 
         // update metadata size
         metaMem.putInt(0, (int) metaMem.getAppendOffset());

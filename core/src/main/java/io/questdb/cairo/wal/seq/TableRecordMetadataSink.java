@@ -44,6 +44,10 @@ public interface TableRecordMetadataSink extends Mutable {
             @Transient IntList coveringColumnIndices
     );
 
+    default boolean requiresFullReadColumnOrder() {
+        return false;
+    }
+
     void of(
             TableToken tableToken,
             int tableId,

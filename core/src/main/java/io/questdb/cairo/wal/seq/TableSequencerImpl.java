@@ -277,7 +277,7 @@ public class TableSequencerImpl implements TableSequencer {
                 compressedTimestampIndex,
                 metadata.getMetadataVersion(),
                 compressedColumnCount,
-                reorderNeeded ? metadata.getReadColumnOrder() : null
+                reorderNeeded || sink.requiresFullReadColumnOrder() ? metadata.getReadColumnOrder() : null
         );
 
         return tableTransactionLog.lastTxn();
