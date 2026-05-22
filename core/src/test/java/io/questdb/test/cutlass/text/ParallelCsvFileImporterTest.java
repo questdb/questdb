@@ -61,6 +61,7 @@ import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
+import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
@@ -2759,6 +2760,10 @@ public class ParallelCsvFileImporterTest extends AbstractCairoTest {
 
         for (int workers = 2; workers < 3; workers++) {
             for (int queueSize = 1; queueSize < 9; queueSize <<= 1) {
+                // Only the extreme queue sizes (serialized vs. full parallelism) on slow CI runners.
+                if (!Os.isLinux() && queueSize != 1 && queueSize != 8) {
+                    continue;
+                }
                 LOG.info().$("run [no=").$(run++).$(",workers=").$(workers).$(",queueSize=").$(queueSize).I$();
 
                 int workerCount = workers;

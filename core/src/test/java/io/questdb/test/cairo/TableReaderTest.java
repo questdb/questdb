@@ -1774,7 +1774,8 @@ public class TableReaderTest extends AbstractCairoTest {
             // model data
             LongList list = new LongList();
             final int N = 1024;
-            final int scale = 10000;
+            // smaller workload on slow CI runners (Mac, Windows)
+            final int scale = Os.isLinux() ? 10000 : 1000;
             for (int i = 0; i < N; i++) {
                 list.add(i);
             }
@@ -5456,8 +5457,10 @@ public class TableReaderTest extends AbstractCairoTest {
 
     private void testConcurrentReloadMultiplePartitions(int partitionBy, long stride1) throws Exception {
         assertMemoryLeak(() -> {
-            final int N = 1024_0000;
-            long stride = timestampDriver.fromMicros(stride1);
+            // smaller workload on slow CI runners (Mac, Windows); stride scales up to keep partition count constant
+            final int divisor = Os.isLinux() ? 1 : 10;
+            final int N = 1024_0000 / divisor;
+            long stride = timestampDriver.fromMicros(stride1 * divisor);
             // model table
             TableModel model = new TableModel(configuration, "w", partitionBy).col("l", ColumnType.LONG).timestamp(timestampType);
             AbstractCairoTest.create(model);

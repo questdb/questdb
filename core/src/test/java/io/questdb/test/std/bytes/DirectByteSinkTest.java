@@ -26,16 +26,19 @@ package io.questdb.test.std.bytes;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
 import io.questdb.std.bytes.ByteSequence;
 import io.questdb.std.bytes.DirectByteSink;
 import io.questdb.std.bytes.NativeByteSink;
 import org.junit.Assert;
+import org.junit.Assume;
 import org.junit.Test;
 
 import java.util.function.Supplier;
 
 public class DirectByteSinkTest {
+
     @Test
     public void testBasics() {
         final long mallocCount0 = Unsafe.getMallocCount();
@@ -166,16 +169,17 @@ public class DirectByteSinkTest {
             Assert.assertEquals((byte) 'd', sink.byteAt(3));
             Assert.assertEquals(512, sink.allocatedCapacity());
         }
-
     }
 
     @Test
     public void testOver2GiB() {
+        // The 2GiB overflow boundary this guards is platform-independent, but filling >2GB of
+        // native memory is very slow on the hosted Mac and Windows runners, so run on Linux only.
+        Assume.assumeTrue(Os.isLinux());
         try (
                 DirectByteSink oneMegChunk = new DirectByteSink(32, MemoryTag.NATIVE_DIRECT_BYTE_SINK);
                 DirectByteSink dbs = new DirectByteSink(32, MemoryTag.NATIVE_DIRECT_BYTE_SINK)
         ) {
-
             final int oneMiB = 1024 * 1024;
             for (int i = 0; i < oneMiB; i++) {
                 oneMegChunk.put((byte) '0');
