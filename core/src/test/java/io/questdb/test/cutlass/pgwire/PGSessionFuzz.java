@@ -29,13 +29,22 @@ import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
 import org.jetbrains.annotations.TestOnly;
 
+import java.util.Arrays;
+
 public final class PGSessionFuzz {
+    private static final char[] HEX = "0123456789abcdef".toCharArray();
+    private static final int HISTORY_SIZE = 8;
+    private static final int MAX_HISTORY_HEX_BYTES = 1024;
     private static final int MAX_BODY_LEN = 4096;
     private static final int MAX_INPUT_LEN = 1 << 16;
     private static final int MAX_STEPS = 32;
     private static final byte[] VALID_TYPES = {'P', 'B', 'D', 'E', 'S', 'Q', 'C', 'X', 'F', 'H'};
 
     private static PGFuzzHarness harness;
+    private static final byte[][] recentInputs = new byte[HISTORY_SIZE][];
+    private static final int[] recentInputLengths = new int[HISTORY_SIZE];
+    private static int recentInputCursor;
+    private static long recentInputSequence;
 
     private PGSessionFuzz() {
     }
@@ -49,11 +58,13 @@ public final class PGSessionFuzz {
     static void clearHarness(PGFuzzHarness expectedHarness) {
         if (harness == expectedHarness) {
             harness = null;
+            clearRecentInputs();
         }
     }
 
     @TestOnly
     static void setHarness(PGFuzzHarness harness) {
+        clearRecentInputs();
         PGSessionFuzz.harness = harness;
     }
 
@@ -62,6 +73,7 @@ public final class PGSessionFuzz {
             return;
         }
 
+        recordInput(input);
         try {
             final FuzzInput data = new FuzzInput(input);
             int steps = 1 + (data.consumeUnsignedByte() & (MAX_STEPS - 1));
@@ -82,7 +94,7 @@ public final class PGSessionFuzz {
                 } catch (PeerDisconnectedException expected) {
                     break;
                 } catch (PGMessageProcessingException expected) {
-                    h.rethrowUnexpectedProcessingError(expected, "session", input, step, type, bodyOffset, bodyLen);
+                    h.rethrowUnexpectedProcessingError(expected, "session", input, step, type, bodyOffset, bodyLen, recentInputsDiagnostic());
                     // Protocol-level rejection and send backpressure are fine.
                 } catch (PeerIsSlowToReadException expected) {
                     // Protocol-level rejection and send backpressure are fine.
@@ -108,6 +120,53 @@ public final class PGSessionFuzz {
             return data.consumeByte();
         }
         return (byte) selector;
+    }
+
+    private static void appendHex(StringBuilder sink, byte[] bytes, int length) {
+        final int hi = Math.min(length, MAX_HISTORY_HEX_BYTES);
+        for (int i = 0; i < hi; i++) {
+            int value = bytes[i] & 0xff;
+            sink.append(HEX[value >>> 4]).append(HEX[value & 0x0f]);
+        }
+        if (hi < length) {
+            sink.append("...");
+        }
+    }
+
+    private static void clearRecentInputs() {
+        Arrays.fill(recentInputs, null);
+        Arrays.fill(recentInputLengths, 0);
+        recentInputCursor = 0;
+        recentInputSequence = 0;
+    }
+
+    private static void recordInput(byte[] input) {
+        byte[] copy = recentInputs[recentInputCursor];
+        if (copy == null || copy.length < input.length) {
+            copy = Arrays.copyOf(input, input.length);
+            recentInputs[recentInputCursor] = copy;
+        } else {
+            System.arraycopy(input, 0, copy, 0, input.length);
+        }
+        recentInputLengths[recentInputCursor] = input.length;
+        recentInputCursor = (recentInputCursor + 1) % HISTORY_SIZE;
+        recentInputSequence++;
+    }
+
+    private static String recentInputsDiagnostic() {
+        StringBuilder sink = new StringBuilder();
+        sink.append("recentInputs=[seq=").append(recentInputSequence);
+        final int count = (int) Math.min(recentInputSequence, HISTORY_SIZE);
+        for (int i = count - 1; i >= 0; i--) {
+            final int index = (recentInputCursor + HISTORY_SIZE - 1 - i) % HISTORY_SIZE;
+            final byte[] input = recentInputs[index];
+            if (input != null) {
+                final int length = recentInputLengths[index];
+                sink.append(", -").append(i).append(":len=").append(length).append(",hex=");
+                appendHex(sink, input, length);
+            }
+        }
+        return sink.append(']').toString();
     }
 
     private static final class FuzzInput {

@@ -29,6 +29,7 @@ import io.questdb.Metrics;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.ColumnType;
 import io.questdb.std.Misc;
+import io.questdb.std.Os;
 import io.questdb.test.TestServerMain;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.TestOnly;
@@ -47,6 +48,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 
 final class PGServerMainFuzzSupport {
+    private static final int CONNECT_ATTEMPTS = 8;
     private static final int CONNECT_TIMEOUT_MS = 250;
     private static final Object LOCK = new Object();
     private static final int MAX_OUTPUT_SIZE = 64 * 1024;
@@ -174,6 +176,19 @@ final class PGServerMainFuzzSupport {
     }
 
     private static Socket openSocket() throws IOException {
+        SocketTimeoutException timeout = null;
+        for (int i = 0; i < CONNECT_ATTEMPTS; i++) {
+            try {
+                return openSocketOnce();
+            } catch (SocketTimeoutException e) {
+                timeout = e;
+                Os.sleep(10);
+            }
+        }
+        throw timeout;
+    }
+
+    private static Socket openSocketOnce() throws IOException {
         final Socket socket = new Socket();
         try {
             socket.connect(new InetSocketAddress(InetAddress.getLoopbackAddress(), port), CONNECT_TIMEOUT_MS);

@@ -1,0 +1,3 @@
+# ServerMain fuzzer artifact that exposed transient loopback connect timeouts
+# under high malformed-handshake load. The input itself should not crash.
+00003f0014007500730a0365720000700000000a6261647000770061646d696e0000700a000062006164707700

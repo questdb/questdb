@@ -265,7 +265,7 @@ final class PGFuzzHarness implements Closeable {
     }
 
     void rethrowUnexpectedProcessingError(PGMessageProcessingException ex, String target, byte[] input) {
-        rethrowUnexpectedProcessingError(ex, target, input, -1, (byte) 0, -1, -1);
+        rethrowUnexpectedProcessingError(ex, target, input, -1, (byte) 0, -1, -1, null);
     }
 
     void rethrowUnexpectedProcessingError(
@@ -276,6 +276,19 @@ final class PGFuzzHarness implements Closeable {
             byte type,
             int bodyOffset,
             int bodyLength
+    ) {
+        rethrowUnexpectedProcessingError(ex, target, input, step, type, bodyOffset, bodyLength, null);
+    }
+
+    void rethrowUnexpectedProcessingError(
+            PGMessageProcessingException ex,
+            String target,
+            byte[] input,
+            int step,
+            byte type,
+            int bodyOffset,
+            int bodyLength,
+            CharSequence extraDiagnostics
     ) {
         final Throwable cause = ex.getFlyweightCause();
         if (!(cause instanceof Error)) {
@@ -304,6 +317,9 @@ final class PGFuzzHarness implements Closeable {
         }
         message.append(", inputHex=");
         appendHex(message, input, 0, input.length);
+        if (extraDiagnostics != null && extraDiagnostics.length() > 0) {
+            message.append(", ").append(extraDiagnostics);
+        }
         message.append(']');
         throw new AssertionError(message.toString(), cause);
     }
