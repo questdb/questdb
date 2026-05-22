@@ -30,6 +30,7 @@ import org.junit.Test;
 
 import java.io.ByteArrayOutputStream;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Path;
 
 public class PGSessionFuzzSmokeTest extends AbstractCairoTest {
 
@@ -132,6 +133,31 @@ public class PGSessionFuzzSmokeTest extends AbstractCairoTest {
                 }
             }
         });
+    }
+
+    @Test
+    public void testSequentialMalformedSubqueriesDoNotOverflowCompilerStack() throws Exception {
+        assertMemoryLeak(() -> {
+            try (PGFuzzHarness harness = new PGFuzzHarness(engine)) {
+                PGSessionFuzz.setHarness(harness);
+                try {
+                    PGSessionFuzz.fuzzerTestOneInput(hexInput(
+                            "040f7e0973656c6563747e332d36312b24323c360a7e7825303f360f7e0973656c6563747e37362d3b2e363132303324320a25347c350036008736360973"
+                    ));
+                    Assert.assertEquals(0, harness.context().getPipelineEntryPoolOutieCountForFuzz());
+                    PGSessionFuzz.fuzzerTestOneInput(hexInput(
+                            "040f7e0973656c6563747e332d2432362c310f7e0973656c6563747e39747e391b1b1b747e302d242b36363239313434343625303c36003600873636097b"
+                    ));
+                    Assert.assertEquals(0, harness.context().getPipelineEntryPoolOutieCountForFuzz());
+                } finally {
+                    PGSessionFuzz.clearHarness(harness);
+                }
+            }
+        });
+    }
+
+    private static byte[] hexInput(String hex) {
+        return PGFuzzCorpus.decodeHex(hex, Path.of("PGSessionFuzzSmokeTest"));
     }
 
     private static void assertCleanPortalRebindDoesNotRepeatBindResponse(PGFuzzHarness harness) throws Exception {

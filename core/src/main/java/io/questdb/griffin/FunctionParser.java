@@ -118,6 +118,7 @@ import io.questdb.griffin.engine.functions.constants.TimestampConstant;
 import io.questdb.griffin.engine.functions.constants.UuidConstant;
 import io.questdb.griffin.engine.functions.constants.VarcharConstant;
 import io.questdb.griffin.model.ExpressionNode;
+import io.questdb.griffin.model.IQueryModel;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Chars;
@@ -132,6 +133,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
+import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
 import org.jetbrains.annotations.NotNull;
@@ -154,6 +156,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
     private final Long256Impl long256Sink = new Long256Impl();
     private final ArrayDeque<RecordMetadata> metadataStack = new ArrayDeque<>();
     private final IntList mutableArgPositions = new IntList();
+    private final ObjHashSet<IQueryModel> activeCursorModels = new ObjHashSet<>();
     private final ObjList<Function> mutableArgs = new ObjList<>();
     private final IntStack positionStack = new IntStack();
     private final PostOrderTreeTraversalAlgo traverseAlgo = new PostOrderTreeTraversalAlgo();
@@ -223,6 +226,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
     public void clear() {
         this.positionStack.clear();
         this.functionStack.clear();
+        this.activeCursorModels.clear();
         this.sqlExecutionContext = null;
     }
 
@@ -737,12 +741,20 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
 
     private Function createCursorFunction(ExpressionNode node) throws SqlException {
         assert node.queryModel != null;
-        // Make sure to override timestamp required flag from base query.
-        sqlExecutionContext.pushTimestampRequiredFlag(false);
+        final IQueryModel queryModel = node.queryModel;
+        if (!activeCursorModels.add(queryModel)) {
+            throw SqlException.$(node.position, "detected a recursive query model");
+        }
         try {
-            return new CursorFunction(sqlCodeGenerator.generate(node.queryModel, sqlExecutionContext));
+            // Make sure to override timestamp required flag from base query.
+            sqlExecutionContext.pushTimestampRequiredFlag(false);
+            try {
+                return new CursorFunction(sqlCodeGenerator.generate(queryModel, sqlExecutionContext));
+            } finally {
+                sqlExecutionContext.popTimestampRequiredFlag();
+            }
         } finally {
-            sqlExecutionContext.popTimestampRequiredFlag();
+            activeCursorModels.remove(queryModel);
         }
     }
 
