@@ -107,11 +107,18 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
             // DATE -> TIMESTAMP_NS scales x1_000_000 (ms -> ns) via the post-decode
             // nano-scaling branch in PageFrameMemoryPool.openParquet.
             // Sub-second millisecond precision exercised with .999Z.
+            // '9999-12-31T23:59:59.999Z' = 253_402_300_799_999 ms; multiplied by
+            // 1_000_000 for TIMESTAMP_NS this overflows i64. Both paths must wrap
+            // identically (native uses unchecked C++ multiply in convert_ms_to_ns,
+            // parquet uses wrapping_mul in scale_i64_in_place); see fuzz failure
+            // where the parquet decoder previously returned LONG NULL on overflow
+            // while the native ALTER produced a wrapped value.
             String values = """
                     ('2020-06-15T12:00:00.000Z', '2024-01-01T00:00:01.000000Z'),
                     ('1970-01-01T00:00:00.000Z', '2024-01-01T00:00:02.000000Z'),
                     ('2020-06-15T12:00:00.999Z', '2024-01-01T00:00:03.000000Z'),
-                    (NULL, '2024-01-01T00:00:04.000000Z')""";
+                    ('9999-12-31T23:59:59.999Z', '2024-01-01T00:00:04.000000Z'),
+                    (NULL, '2024-01-01T00:00:05.000000Z')""";
             for (String target : new String[]{"BOOLEAN", "BYTE", "SHORT", "INT", "LONG", "TIMESTAMP", "TIMESTAMP_NS", "FLOAT", "DOUBLE"}) {
                 assertConversion("DATE", target, values);
             }

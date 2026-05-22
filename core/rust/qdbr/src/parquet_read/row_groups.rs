@@ -462,11 +462,12 @@ fn contract_to_bool<T: Default + PartialEq + Copy>(
 
 /// Multiply or divide every non-null i64 in the buffer by `factor`.
 ///
-/// Multiplication uses `checked_mul` because `factor` comes from `_pm` metadata
-/// over a JNI boundary: a corrupted scale value paired with a large input would
-/// silently wrap to a plausible-looking timestamp instead of failing loudly.
-/// On overflow the value is replaced with the LONG NULL sentinel, matching the
-/// convention used elsewhere on conversion failure.
+/// Multiplication uses `wrapping_mul` to match the native ALTER COLUMN TYPE
+/// path in `core/src/main/c/share/converters.cpp` (e.g. `convert_ms_to_ns`),
+/// which scales with plain C++ signed multiplication and wraps on overflow.
+/// Both paths must produce identical results for the same input or a lazy
+/// parquet read of a type-converted column diverges from the eager native
+/// rewrite; see ParquetColumnTypeConversionTest#testDateToOtherFixedTypes.
 pub(super) fn scale_i64_in_place(data: &mut AcVec<u8>, factor: i64, divide: bool) {
     let count = data.len() / size_of::<i64>();
     let ptr = data.as_mut_ptr() as *mut i64;
@@ -477,8 +478,7 @@ pub(super) fn scale_i64_in_place(data: &mut AcVec<u8>, factor: i64, divide: bool
         } else if divide {
             val / factor
         } else {
-            val.checked_mul(factor)
-                .unwrap_or(qdb_core::col_type::nulls::LONG)
+            val.wrapping_mul(factor)
         };
         unsafe { ptr.add(i).write_unaligned(converted) };
     }
