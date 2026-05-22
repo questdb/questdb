@@ -289,6 +289,10 @@ public class QwpProcessorState implements QuietCloseable, ConnectionAware {
         return pendingAckSeqTxns;
     }
 
+    public int getPendingHandshakeBytes() {
+        return pendingHandshakeBytes;
+    }
+
     public int getRecvBufferLen() {
         return recvBufferLen;
     }
@@ -331,10 +335,6 @@ public class QwpProcessorState implements QuietCloseable, ConnectionAware {
 
     public boolean isWsHandshakeSent() {
         return wsHandshakeSent;
-    }
-
-    public int getPendingHandshakeBytes() {
-        return pendingHandshakeBytes;
     }
 
     public long nextMessageSequence() {
@@ -636,16 +636,16 @@ public class QwpProcessorState implements QuietCloseable, ConnectionAware {
         this.durableAckEnabled = durableAckEnabled;
     }
 
+    public void setHandshakeFlushPending(boolean pending) {
+        this.handshakeFlushPending = pending;
+    }
+
     public void setHighestProcessedSequence(long highestProcessedSequence) {
         this.highestProcessedSequence = highestProcessedSequence;
     }
 
     public void setNegotiatedVersion(byte negotiatedVersion) {
         this.negotiatedVersion = negotiatedVersion;
-    }
-
-    public void setHandshakeFlushPending(boolean pending) {
-        this.handshakeFlushPending = pending;
     }
 
     public void setPendingHandshakeBytes(int bytes) {

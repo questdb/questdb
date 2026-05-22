@@ -80,7 +80,32 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
     // HTTP response templates
     private static final byte[] BAD_REQUEST_PREFIX =
             "HTTP/1.1 400 Bad Request\r\nContent-Type: text/plain\r\nContent-Length: ".getBytes(StandardCharsets.US_ASCII);
+    // HTTP_HEADER_END is declared out of alphabetical order on purpose: the
+    // BAD_REQUEST_RESPONSE_* initializers below read it via
+    // precomputeBadRequestResponse, and Java initializes static fields in
+    // textual order. Moving HTTP_HEADER_END below the BAD_REQUEST_RESPONSE_*
+    // block would leave it null at the time the precomputation runs.
     private static final byte[] HTTP_HEADER_END = "\r\n\r\n".getBytes(StandardCharsets.US_ASCII);
+    // Precomputed full 400 Bad Request responses for each handshake validation
+    // error. validateHandshake returns one of the ERROR_ singletons by reference,
+    // and the reject path memcpys the matching response directly into the send
+    // buffer. Replaces a per-reject triple-allocation (reason.getBytes +
+    // Integer.toString + contentLength.getBytes) with a zero-GC lookup so
+    // probe / attack traffic does not produce GC pressure on the connect path.
+    private static final byte[] BAD_REQUEST_RESPONSE_CONNECTION_MUST_CONTAIN_UPGRADE =
+            precomputeBadRequestResponse(QwpWebSocketHttpProcessor.ERROR_CONNECTION_MUST_CONTAIN_UPGRADE);
+    private static final byte[] BAD_REQUEST_RESPONSE_INVALID_SEC_WEBSOCKET_KEY =
+            precomputeBadRequestResponse(QwpWebSocketHttpProcessor.ERROR_INVALID_SEC_WEBSOCKET_KEY);
+    private static final byte[] BAD_REQUEST_RESPONSE_INVALID_UPGRADE_HEADER_VALUE =
+            precomputeBadRequestResponse(QwpWebSocketHttpProcessor.ERROR_INVALID_UPGRADE_HEADER_VALUE);
+    private static final byte[] BAD_REQUEST_RESPONSE_MISSING_CONNECTION_HEADER =
+            precomputeBadRequestResponse(QwpWebSocketHttpProcessor.ERROR_MISSING_CONNECTION_HEADER);
+    private static final byte[] BAD_REQUEST_RESPONSE_MISSING_SEC_WEBSOCKET_KEY_HEADER =
+            precomputeBadRequestResponse(QwpWebSocketHttpProcessor.ERROR_MISSING_SEC_WEBSOCKET_KEY_HEADER);
+    private static final byte[] BAD_REQUEST_RESPONSE_MISSING_UPGRADE_HEADER =
+            precomputeBadRequestResponse(QwpWebSocketHttpProcessor.ERROR_MISSING_UPGRADE_HEADER);
+    private static final byte[] BAD_REQUEST_RESPONSE_ORIGIN_HEADER_NOT_ALLOWED =
+            precomputeBadRequestResponse(QwpWebSocketHttpProcessor.ERROR_ORIGIN_HEADER_NOT_ALLOWED);
     private static final Log LOG = LogFactory.getLog(QwpWebSocketUpgradeProcessor.class);
     private static final LocalValue<QwpProcessorState> LV = new LocalValue<>();
     // Carries the byte count of a 4xx upgrade rejection staged in the raw
@@ -145,6 +170,19 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
      * @return the number of bytes written, or -1 if buffer too small
      */
     public static int writeBadRequestResponse(long buffer, int bufferSize, String reason) {
+        // Fast path: validateHandshake returns one of the ERROR_ singletons, so
+        // the connect path always hits this lookup and avoids any allocation.
+        byte[] precomputed = precomputedBadRequestResponse(reason);
+        if (precomputed != null) {
+            if (precomputed.length > bufferSize) {
+                return -1;
+            }
+            Unsafe.copyMemory(precomputed, Unsafe.BYTE_OFFSET, null, buffer, precomputed.length);
+            return precomputed.length;
+        }
+
+        // Slow path: arbitrary reason text (tests, future callers). Builds the
+        // response with the customary getBytes / Integer.toString allocations.
         byte[] reasonBytes = reason.getBytes(StandardCharsets.UTF_8);
         String contentLength = String.valueOf(reasonBytes.length);
         byte[] contentLengthBytes = contentLength.getBytes(StandardCharsets.US_ASCII);
@@ -233,14 +271,16 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
         } catch (PeerDisconnectedException | PeerIsSlowToReadException e) {
             // Connection is closing anyway, ignore
         } finally {
-            try {
-                state.onDisconnected();
-            } finally {
-                // Free native resources (bufferAddress, ddlMem, path, symbolCachePool).
-                // set(null) calls Misc.freeIfCloseable(state) → state.close() and removes
-                // the entry so that localValueMap.disconnect() won't call onDisconnected() again.
-                LV.set(context, null);
-            }
+            // Leave the state instance in the LocalValueMap slot. onDisconnected
+            // resets the per-connection scoreboard (recv buffer length, sequence
+            // counters, ACK / durable maps, send state, symbol cache) so the
+            // next connection that lands on this context starts clean; the
+            // connection-scoped native scaffolding (bufferAddress and the
+            // pre-allocated decoder / appender / tudCache sub-objects) is sized
+            // to the HttpConnectionContext and gets reused without paying the
+            // re-allocation cost on every reconnect. LocalValueMap.close()
+            // invokes state.close() at HTTP context teardown.
+            state.onDisconnected();
         }
     }
 
@@ -589,6 +629,10 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
     }
 
     private static int badRequestResponseSize(String reason) {
+        byte[] precomputed = precomputedBadRequestResponse(reason);
+        if (precomputed != null) {
+            return precomputed.length;
+        }
         return badRequestResponseSize(reason.getBytes(StandardCharsets.UTF_8).length);
     }
 
@@ -597,6 +641,50 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
                 + Integer.toString(reasonByteCount).length()
                 + HTTP_HEADER_END.length
                 + reasonByteCount;
+    }
+
+    private static byte[] precomputeBadRequestResponse(String reason) {
+        byte[] reasonBytes = reason.getBytes(StandardCharsets.US_ASCII);
+        byte[] contentLengthBytes = Integer.toString(reasonBytes.length).getBytes(StandardCharsets.US_ASCII);
+        byte[] result = new byte[BAD_REQUEST_PREFIX.length + contentLengthBytes.length
+                + HTTP_HEADER_END.length + reasonBytes.length];
+        int offset = 0;
+        System.arraycopy(BAD_REQUEST_PREFIX, 0, result, offset, BAD_REQUEST_PREFIX.length);
+        offset += BAD_REQUEST_PREFIX.length;
+        System.arraycopy(contentLengthBytes, 0, result, offset, contentLengthBytes.length);
+        offset += contentLengthBytes.length;
+        System.arraycopy(HTTP_HEADER_END, 0, result, offset, HTTP_HEADER_END.length);
+        offset += HTTP_HEADER_END.length;
+        System.arraycopy(reasonBytes, 0, result, offset, reasonBytes.length);
+        return result;
+    }
+
+    // Reference-identity switch on the singleton ERROR_ String constants
+    // returned by QwpWebSocketHttpProcessor.validateHandshake. Returns the
+    // pre-built 400 response for known errors, null for arbitrary text. The
+    // returned byte[] is shared and read-only -- copy bytes into the response
+    // buffer, do not mutate.
+    private static byte[] precomputedBadRequestResponse(String validationError) {
+        if (validationError == null) {
+            return null;
+        }
+        return switch (validationError) {
+            case QwpWebSocketHttpProcessor.ERROR_CONNECTION_MUST_CONTAIN_UPGRADE ->
+                    BAD_REQUEST_RESPONSE_CONNECTION_MUST_CONTAIN_UPGRADE;
+            case QwpWebSocketHttpProcessor.ERROR_INVALID_SEC_WEBSOCKET_KEY ->
+                    BAD_REQUEST_RESPONSE_INVALID_SEC_WEBSOCKET_KEY;
+            case QwpWebSocketHttpProcessor.ERROR_INVALID_UPGRADE_HEADER_VALUE ->
+                    BAD_REQUEST_RESPONSE_INVALID_UPGRADE_HEADER_VALUE;
+            case QwpWebSocketHttpProcessor.ERROR_MISSING_CONNECTION_HEADER ->
+                    BAD_REQUEST_RESPONSE_MISSING_CONNECTION_HEADER;
+            case QwpWebSocketHttpProcessor.ERROR_MISSING_SEC_WEBSOCKET_KEY_HEADER ->
+                    BAD_REQUEST_RESPONSE_MISSING_SEC_WEBSOCKET_KEY_HEADER;
+            case QwpWebSocketHttpProcessor.ERROR_MISSING_UPGRADE_HEADER ->
+                    BAD_REQUEST_RESPONSE_MISSING_UPGRADE_HEADER;
+            case QwpWebSocketHttpProcessor.ERROR_ORIGIN_HEADER_NOT_ALLOWED ->
+                    BAD_REQUEST_RESPONSE_ORIGIN_HEADER_NOT_ALLOWED;
+            default -> null;
+        };
     }
 
     private static HttpException responseDoesNotFitSendBuffer(long fd, CharSequence responseType, int bufferSize, int requiredSize) {

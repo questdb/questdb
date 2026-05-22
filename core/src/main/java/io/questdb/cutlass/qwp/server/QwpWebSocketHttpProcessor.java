@@ -76,15 +76,19 @@ public class QwpWebSocketHttpProcessor implements HttpRequestHandler {
      * The required WebSocket version (RFC 6455).
      */
     public static final int WEBSOCKET_VERSION = 13;
-    private static final String ERROR_CONNECTION_MUST_CONTAIN_UPGRADE = "Connection header must contain 'upgrade'";
-    private static final String ERROR_INVALID_SEC_WEBSOCKET_KEY = "Invalid Sec-WebSocket-Key (must be 24-character base64 key)";
-    private static final String ERROR_INVALID_UPGRADE_HEADER_VALUE = "Invalid Upgrade header value";
-    private static final String ERROR_MISSING_CONNECTION_HEADER = "Missing Connection header";
-    private static final String ERROR_MISSING_SEC_WEBSOCKET_KEY_HEADER = "Missing Sec-WebSocket-Key header";
-    private static final String ERROR_MISSING_SEC_WEBSOCKET_VERSION_HEADER = "Missing Sec-WebSocket-Version header";
-    private static final String ERROR_MISSING_UPGRADE_HEADER = "Missing Upgrade header";
-    private static final String ERROR_ORIGIN_HEADER_NOT_ALLOWED = "Origin header not allowed on QWP WebSocket";
-    private static final String ERROR_UNSUPPORTED_WEBSOCKET_VERSION = "Unsupported WebSocket version (must be 13)";
+    // Package-private so QwpWebSocketUpgradeProcessor can precompute a complete
+    // 400 Bad Request response per error constant at class-init time, sparing
+    // the reject path the per-call reason.getBytes / Integer.toString /
+    // contentLength.getBytes allocations.
+    static final String ERROR_CONNECTION_MUST_CONTAIN_UPGRADE = "Connection header must contain 'upgrade'";
+    static final String ERROR_INVALID_SEC_WEBSOCKET_KEY = "Invalid Sec-WebSocket-Key (must be 24-character base64 key)";
+    static final String ERROR_INVALID_UPGRADE_HEADER_VALUE = "Invalid Upgrade header value";
+    static final String ERROR_MISSING_CONNECTION_HEADER = "Missing Connection header";
+    static final String ERROR_MISSING_SEC_WEBSOCKET_KEY_HEADER = "Missing Sec-WebSocket-Key header";
+    static final String ERROR_MISSING_SEC_WEBSOCKET_VERSION_HEADER = "Missing Sec-WebSocket-Version header";
+    static final String ERROR_MISSING_UPGRADE_HEADER = "Missing Upgrade header";
+    static final String ERROR_ORIGIN_HEADER_NOT_ALLOWED = "Origin header not allowed on QWP WebSocket";
+    static final String ERROR_UNSUPPORTED_WEBSOCKET_VERSION = "Unsupported WebSocket version (must be 13)";
     // Sec-WebSocket-Key is defined by RFC 6455 as a 16-byte base64 value --
     // exactly 24 ASCII bytes on the wire. 64 bytes leaves defensive headroom
     // for callers that bypass {@link #isValidKey}.
