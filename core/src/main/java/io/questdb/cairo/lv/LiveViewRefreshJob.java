@@ -1320,7 +1320,11 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // post-replay state. Restart can then short-circuit to head-hit
             // for a subsequent O3 in the head's hit zone instead of paying
             // for another full head-miss replay.
-            maybeWriteHeadCheckpoint(instance, windowFactory, advanceTo, replayMaxTs, appendedRows);
+            //
+            // Pass 0 appendedRows: lvRowsTotal already includes them (sourced
+            // from the on-disk size above), so adding them again would
+            // double-count lvRowPosition. Mirrors the backfill-completion path.
+            maybeWriteHeadCheckpoint(instance, windowFactory, advanceTo, replayMaxTs, 0L);
         }
         LOG.info().$("live view O3 head-miss replay completed [view=")
                 .$(viewName)

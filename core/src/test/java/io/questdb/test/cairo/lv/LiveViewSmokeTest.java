@@ -7168,6 +7168,13 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                 // gone on disk.
                 Assert.assertNotEquals(preO3HeadLvSeqTxn, lv.getHeadCheckpointLvSeqTxn());
                 Assert.assertNotEquals(Numbers.LONG_NULL, lv.getHeadCheckpointLvSeqTxn());
+
+                // lvRowsTotal (-> MANIFEST.lvRowPosition) must match the on-disk
+                // count: the intact-base head-miss is a full rebuild of 3 rows,
+                // counted once. The double-count bug returned 6 (3 on disk + 3
+                // appended).
+                Assert.assertEquals(3L, lv.getLvRowsTotal());
+                assertSql("count\n3\n", "SELECT count(*) AS count FROM lv");
             }
 
             execute("DROP LIVE VIEW lv");
