@@ -397,6 +397,18 @@ public class LeadLagWindowFunctionFactoryHelper {
         }
 
         @Override
+        public ColumnTypes getSnapshotKeyColumnTypes() {
+            return keyColumnTypes;
+        }
+
+        @Override
+        public int getSnapshotKeyStartIndex() {
+            return mapValueTypes != null
+                    ? mapValueTypes.getColumnCount()
+                    : LAG_COLUMN_TYPES.getColumnCount();
+        }
+
+        @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             super.init(symbolTableSource, executionContext);
             if (defaultValue != null) {
@@ -420,6 +432,12 @@ public class LeadLagWindowFunctionFactoryHelper {
         @Override
         public boolean isIgnoreNulls() {
             return ignoreNulls;
+        }
+
+        @Override
+        public void onSnapshotRestoreBegin() {
+            super.onSnapshotRestoreBegin();
+            memory.truncate();
         }
 
         @Override
@@ -486,6 +504,27 @@ public class LeadLagWindowFunctionFactoryHelper {
         }
 
         @Override
+        public long restorePartitionState(MemoryR source, long offset, MapValue value, int formatVersion) {
+            final long ringBytes = this.offset * RING_SLOT_BYTES;
+            final long firstIdx = source.getLong(offset);
+            offset += Long.BYTES;
+            final long count = source.getLong(offset);
+            offset += Long.BYTES;
+            final long newStartOffset = memory.appendAddressFor(ringBytes) - memory.getPageAddress(0);
+            for (long i = 0; i < this.offset; i++) {
+                memory.putLong(newStartOffset + i * RING_SLOT_BYTES, source.getLong(offset));
+                offset += RING_SLOT_BYTES;
+            }
+            value.putLong(0, newStartOffset);
+            value.putLong(1, firstIdx);
+            value.putLong(2, count);
+            if (tombstoneValueIndex >= 0) {
+                value.putByte(tombstoneValueIndex, (byte) 0);
+            }
+            return offset;
+        }
+
+        @Override
         public void snapshot(MemoryA sink) {
             // Two-pass walk so the partition count written first matches the
             // entries that follow even if tombstoneCount drifts between cycles.
@@ -534,6 +573,16 @@ public class LeadLagWindowFunctionFactoryHelper {
         @Override
         public int snapshotMinSupportedVersion() {
             return 1;
+        }
+
+        @Override
+        public void snapshotPartitionState(MemoryA sink, MapValue value) {
+            sink.putLong(value.getLong(1)); // firstIdx
+            sink.putLong(value.getLong(2)); // count
+            final long startOffset = value.getLong(0);
+            for (long i = 0; i < offset; i++) {
+                sink.putLong(memory.getLong(startOffset + i * RING_SLOT_BYTES));
+            }
         }
 
         @Override
