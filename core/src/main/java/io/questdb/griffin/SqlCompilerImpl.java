@@ -1642,10 +1642,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
     private void alterTableResume(int tableNamePosition, TableToken tableToken, long resumeFromTxn, SqlExecutionContext executionContext) {
         try {
-            if (!executionContext.isValidationOnly()) {
-                engine.getTableSequencerAPI().resumeTable(tableToken, resumeFromTxn);
-                executionContext.storeTelemetry(TelemetryEvent.WAL_APPLY_RESUME, TelemetryOrigin.WAL_APPLY);
-            }
+            engine.getTableSequencerAPI().resumeTable(tableToken, resumeFromTxn);
+            executionContext.storeTelemetry(TelemetryEvent.WAL_APPLY_RESUME, TelemetryOrigin.WAL_APPLY);
             compiledQuery.ofTableResume();
         } catch (CairoException ex) {
             LOG.critical().$("table resume failed [table=").$(tableToken)
@@ -1727,10 +1725,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 }
             }
 
-            if (!executionContext.isValidationOnly()) {
-                path.of(configuration.getDbRoot()).concat(tableToken.getDirName());
-                TableUtils.createConvertFile(ff, path, walFlag);
-            }
+            path.of(configuration.getDbRoot()).concat(tableToken.getDirName());
+            TableUtils.createConvertFile(ff, path, walFlag);
             compiledQuery.ofTableSetType();
         } catch (CairoException e) {
             throw SqlException.position(pos)
@@ -1741,10 +1737,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
     private void alterTableSuspend(int tableNamePosition, TableToken tableToken, ErrorTag errorTag, String errorMessage, SqlExecutionContext executionContext) {
         try {
-            if (!executionContext.isValidationOnly()) {
-                engine.getTableSequencerAPI().suspendTable(tableToken, errorTag, errorMessage);
-                executionContext.storeTelemetry(TelemetryEvent.WAL_APPLY_SUSPEND, TelemetryOrigin.WAL_APPLY);
-            }
+            engine.getTableSequencerAPI().suspendTable(tableToken, errorTag, errorMessage);
+            executionContext.storeTelemetry(TelemetryEvent.WAL_APPLY_SUSPEND, TelemetryOrigin.WAL_APPLY);
             compiledQuery.ofTableSuspend();
         } catch (CairoException ex) {
             LOG.critical().$("table suspend failed [table=").$(tableToken)
