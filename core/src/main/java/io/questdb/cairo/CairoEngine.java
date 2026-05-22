@@ -204,7 +204,10 @@ public class CairoEngine implements Closeable, WriterSource {
     private final WriterPool writerPool;
     private volatile boolean closing;
     private volatile boolean isCompleteInitDone;
-    private @NotNull ConfigReloader configReloader = new ConfigReloader() {
+    // volatile: configReloader is reassigned by EntCairoEngine.switchRole on the lifecycle
+    // thread and read by SqlCompilerImpl, GenericDropOperation, WriterPool, WalWriterPool,
+    // CopyImportTask on worker threads; no implicit fence between writer and readers. (WR-10)
+    private volatile @NotNull ConfigReloader configReloader = new ConfigReloader() {
         @Override
         public boolean reload() {
             return false;
@@ -220,14 +223,20 @@ public class CairoEngine implements Closeable, WriterSource {
             return WatchRegistry.UNREGISTERED;
         }
     }; // no-op
-    private @NotNull DdlListener ddlListener = DefaultDdlListener.INSTANCE;
+    // volatile: ddlListener is reassigned by EntCairoEngine.switchRole on the lifecycle thread
+    // (DefaultDdlListener.INSTANCE on REPLICA, EntDdlListener instance on PRIMARY) and read by
+    // SqlCompilerImpl on worker threads. Matches the sibling volatile durableAckRegistry. (WR-10)
+    private volatile @NotNull DdlListener ddlListener = DefaultDdlListener.INSTANCE;
     private volatile @NotNull DurableAckRegistry durableAckRegistry = DefaultDurableAckRegistry.INSTANCE;
     private FrameFactory frameFactory;
     private @NotNull MatViewStateStore matViewStateStore = NoOpMatViewStateStore.INSTANCE;
     private volatile Runnable recentWriteTrackerHydrationCallback;
     private @NotNull ViewStateStore viewStateStore = NoOpViewStateStore.INSTANCE;
     private @NotNull WalDirectoryPolicy walDirectoryPolicy = DefaultWalDirectoryPolicy.INSTANCE;
-    private @NotNull WalListener walListener = DefaultWalListener.INSTANCE;
+    // volatile: walListener is reassigned by PrimaryRoleState.openLoops on the lifecycle thread
+    // and read by TableSequencerImpl and TableSequencerAPI on sequencer/apply threads; no
+    // implicit fence between writer and readers. (WR-10)
+    private volatile @NotNull WalListener walListener = DefaultWalListener.INSTANCE;
     private @NotNull WalLocker walLocker;
 
     public CairoEngine(CairoConfiguration configuration) {

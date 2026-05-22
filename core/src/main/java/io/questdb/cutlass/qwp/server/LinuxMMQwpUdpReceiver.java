@@ -68,6 +68,13 @@ public class LinuxMMQwpUdpReceiver extends QwpUdpReceiver {
         if (checkClosed()) {
             return false;
         }
+        if (!acceptOpen.get()) {
+            // Mirror the worker-path acceptOpen gate so the own-thread driver
+            // also quiesces after switchRole publishes acceptOpen=false. Placed
+            // AFTER checkClosed() so close()'s acknowledgment spin (which sets
+            // closedAcknowledged inside checkClosed()) can still progress. (#036)
+            return false;
+        }
         boolean ran = false;
         int count;
         while ((count = nf.recvmmsgRaw(fd, msgVec, msgCount)) > 0) {

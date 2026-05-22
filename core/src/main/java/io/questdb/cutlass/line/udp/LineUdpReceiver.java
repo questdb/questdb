@@ -65,6 +65,13 @@ public class LineUdpReceiver extends AbstractLineProtoUdpReceiver {
 
     @Override
     protected boolean runSerially() {
+        if (!acceptOpen.get()) {
+            // Mirror the worker-path acceptOpen gate (AbstractLineProtoUdpReceiver.run)
+            // so the own-thread driver also quiesces after switchRole publishes
+            // acceptOpen=false. close() does not depend on runSerially() flowing
+            // post-close, so placement at the top is safe. (#036)
+            return false;
+        }
         boolean ran = false;
         int count;
         while ((count = nf.recvRaw(fd, buf, bufLen)) > 0) {

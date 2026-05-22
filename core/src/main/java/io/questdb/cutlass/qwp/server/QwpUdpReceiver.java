@@ -258,6 +258,14 @@ public class QwpUdpReceiver extends SynchronizedJob implements Closeable {
 
     @Override
     public boolean run(int workerId, @NotNull RunStatus runStatus) {
+        // Close-acknowledgment path: once closed=true, close() spins this.run(0)
+        // until runSerially() executes under the SyncJob lock and checkClosed()
+        // sets closedAcknowledged. Bypass the acceptOpen short-circuit in that
+        // case so the spin can make progress. The receiver is already closed,
+        // so no ingestion can happen even if super.run() is invoked.
+        if (closed) {
+            return super.run(workerId, runStatus);
+        }
         if (!acceptOpen.get()) {
             return false;
         }
@@ -267,6 +275,13 @@ public class QwpUdpReceiver extends SynchronizedJob implements Closeable {
     @Override
     public boolean runSerially() {
         if (checkClosed()) {
+            return false;
+        }
+        if (!acceptOpen.get()) {
+            // Mirror the worker-path acceptOpen gate so the own-thread driver
+            // also quiesces after switchRole publishes acceptOpen=false. Placed
+            // AFTER checkClosed() so close()'s acknowledgment spin (which sets
+            // closedAcknowledged inside checkClosed()) can still progress. (#036)
             return false;
         }
         boolean ran = false;
