@@ -7275,6 +7275,97 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testO3HeadMissAfterBaseDropPartitionPreservesUnrefreshablePrefix() throws Exception {
+        // Head-miss O3 replay re-reads the BASE table (it is not base-
+        // independent). When the base has dropped an old partition, the replay
+        // can no longer produce rows for that range. Without the replayMinTs
+        // clamp the REPLACE_RANGE spanned [viewLowerBoundTimestamp, +inf) and
+        // DELETED the LV's already-computed rows for the dropped range. The
+        // clamp scopes the rewrite to the rows the base still produces, so the
+        // unrefreshable prefix is preserved (frozen) instead of dropped. The
+        // daily anchor makes each day its own bucket, so dropping a whole day
+        // leaves the surviving days on bucket boundaries (no straddling-bucket
+        // accumulator artifact in this scenario).
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+                    "SELECT ts, sym, sum(x) OVER w AS s FROM base " +
+                    "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                execute("INSERT INTO base (ts, sym, x) VALUES " +
+                        "('2026-11-01T00:00:10.000000Z', 'a', 1.0), " +
+                        "('2026-11-01T00:00:20.000000Z', 'a', 2.0), " +
+                        "('2026-11-02T00:00:10.000000Z', 'a', 10.0), " +
+                        "('2026-11-02T00:00:20.000000Z', 'a', 20.0), " +
+                        "('2026-11-03T00:00:10.000000Z', 'a', 100.0), " +
+                        "('2026-11-03T00:00:20.000000Z', 'a', 200.0)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull(lv);
+                // A head checkpoint must exist so the upcoming deep-past O3 is a
+                // genuine head-miss decision rather than a no-head fallback.
+                Assert.assertNotEquals(Numbers.LONG_NULL, lv.getHeadCheckpointLvSeqTxn());
+                // Per-day cumulative sum (the anchor resets each day).
+                assertSql(
+                        "ts\tsym\ts\n" +
+                                "2026-11-01T00:00:10.000000Z\ta\t1.0\n" +
+                                "2026-11-01T00:00:20.000000Z\ta\t3.0\n" +
+                                "2026-11-02T00:00:10.000000Z\ta\t10.0\n" +
+                                "2026-11-02T00:00:20.000000Z\ta\t30.0\n" +
+                                "2026-11-03T00:00:10.000000Z\ta\t100.0\n" +
+                                "2026-11-03T00:00:20.000000Z\ta\t300.0\n",
+                        "SELECT ts, sym, s FROM lv ORDER BY ts"
+                );
+
+                // Base drops its oldest partition; the LV walks past it
+                // (transparent) and stays ACTIVE with its derived rows intact.
+                execute("ALTER TABLE base DROP PARTITION LIST '2026-11-01'");
+                drainWalQueue();
+                lv.setLastFlushTimeUs(Numbers.LONG_NULL);
+                drainJob(job);
+                drainWalQueue();
+                Assert.assertFalse(lv.isInvalid());
+
+                // Deep-past O3 into the surviving day-2 bucket (ts < headMaxTs)
+                // forces a head-miss replay. The base no longer holds day-1, so
+                // the replay produces nothing below 2026-11-02; the clamp leaves
+                // the day-1 LV rows in place rather than deleting them.
+                lv.setLastFlushTimeUs(Numbers.LONG_NULL);
+                execute("INSERT INTO base (ts, sym, x) VALUES ('2026-11-02T00:00:05.000000Z', 'a', 5.0)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                Assert.assertFalse(lv.isInvalid());
+                assertSql(
+                        "view_status\nactive\n",
+                        "SELECT view_status FROM live_views() WHERE view_name = 'lv'"
+                );
+                // Day-1 rows survive with their ORIGINAL sums (frozen prefix);
+                // day-2 is rewritten with the merged O3 row; day-3 is unchanged.
+                // Without the clamp, the day-1 rows would be gone.
+                assertSql(
+                        "ts\tsym\ts\n" +
+                                "2026-11-01T00:00:10.000000Z\ta\t1.0\n" +
+                                "2026-11-01T00:00:20.000000Z\ta\t3.0\n" +
+                                "2026-11-02T00:00:05.000000Z\ta\t5.0\n" +
+                                "2026-11-02T00:00:10.000000Z\ta\t15.0\n" +
+                                "2026-11-02T00:00:20.000000Z\ta\t35.0\n" +
+                                "2026-11-03T00:00:10.000000Z\ta\t100.0\n" +
+                                "2026-11-03T00:00:20.000000Z\ta\t300.0\n",
+                        "SELECT ts, sym, s FROM lv ORDER BY ts"
+                );
+            }
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
     public void testO3HeadHitReplaysFromHead() throws Exception {
         // An O3 row with ts > head.maxTimestamp drops into the
         // head-hit branch. State rolls back to the head's snapshot moment

@@ -1167,6 +1167,17 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         boolean readerAttached = false;
         long appendedRows = 0;
         long replayMaxTs = Numbers.LONG_NULL;
+        // Minimum output ts the replay actually produced (rows arrive in
+        // ts-ascending order, so the first appended row is the minimum). Used
+        // as the REPLACE_RANGE low boundary instead of viewLowerBoundTimestamp:
+        // when the base has lost rows below this point (base DROP PARTITION /
+        // TTL / TRUNCATE), the LV's own derived rows below it are preserved
+        // (frozen) rather than deleted by a range that the base can no longer
+        // refill. With an intact base the filter is deterministic, so every
+        // existing LV row regenerates and replayMinTs sits at or below the
+        // oldest LV row - the range still covers everything and behaviour is
+        // unchanged.
+        long replayMinTs = Numbers.LONG_NULL;
         try {
             engine.detachReader(reader);
             executionContext.of(reader);
@@ -1228,6 +1239,10 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                             Record outRecord = windowCursor.getRecord();
                             while (windowCursor.hasNext()) {
                                 long ts = outRecord.getTimestamp(cursorTimestampIndex);
+                                if (replayMinTs == Numbers.LONG_NULL) {
+                                    // First (= lowest) output row of the replay.
+                                    replayMinTs = ts;
+                                }
                                 if (replayMaxTs == Numbers.LONG_NULL || ts > replayMaxTs) {
                                     replayMaxTs = ts;
                                 }
@@ -1244,9 +1259,16 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         }
 
                         if (appendedRows > 0) {
+                            // Clamp the rewrite to the rows the base actually
+                            // produced. With an intact base replayMinTs sits at
+                            // or below the oldest LV row, so this still rewrites
+                            // the whole view; with base data removed below
+                            // replayMinTs it leaves the unrefreshable prefix in
+                            // place rather than deleting it. See the replayMinTs
+                            // declaration.
                             walWriter.commitLiveViewWithReplaceRange(
                                     advanceTo,
-                                    viewLowerBoundTimestamp,
+                                    replayMinTs,
                                     Long.MAX_VALUE
                             );
                         }
@@ -1263,6 +1285,15 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
 
         if (appendedRows > 0) {
             applyJob.applyWalDirect(instance.getLiveViewToken(), Job.RUNNING_STATUS);
+            // Re-read the on-disk row count: the clamped REPLACE_RANGE may have
+            // preserved an unrefreshable prefix below replayMinTs, so the head-
+            // miss output is no longer a pure from-scratch rebuild. Sourcing the
+            // lifetime counter from the table keeps the head checkpoint's
+            // lvRowPosition (written below) consistent in both the intact-base
+            // and base-data-removed cases.
+            try (TableReader lvReader = engine.getReader(instance.getLiveViewToken())) {
+                instance.setLvRowsTotal(lvReader.size());
+            }
         }
         instance.setLastProcessedSeqTxn(advanceTo);
         instance.setAppliedWatermark(advanceTo);
