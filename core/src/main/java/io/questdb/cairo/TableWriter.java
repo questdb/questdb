@@ -6451,9 +6451,17 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private void housekeep(long wallClockMicros) {
         try {
             // Drain async writer commands (e.g. storage policy parquet commit / drop local / squash)
-            // published while the writer was busy. The WAL apply path does not otherwise tick the
-            // command queue, so without this such commands could sit unprocessed on hot tables.
-            processCommandQueue(false);
+            // published while the writer was busy. The WAL apply loop holds the writer across many
+            // commits and never otherwise ticks the command queue, so without this such commands
+            // could sit unprocessed on hot WAL tables. Gated to WAL tables: a WAL table's queue only
+            // ever holds storage-policy / replication commands (structure-changing ALTERs route
+            // through the sequencer, never the async queue), so draining here with
+            // contextAllowsAnyStructureChanges=false rejects nothing legitimate. Non-WAL writers are
+            // already drained by their ingestion tick() and on pool return, so draining them here
+            // would only prematurely reject async structural ALTERs that pool-return would apply.
+            if (tableToken.isWal()) {
+                processCommandQueue(false);
+            }
             squashSplitPartitions(minSplitPartitionTimestamp, txWriter.getMaxTimestamp(), configuration.getO3LastPartitionMaxSplits());
             processPartitionRemoveCandidates();
             metrics.tableWriterMetrics().incrementCommits();

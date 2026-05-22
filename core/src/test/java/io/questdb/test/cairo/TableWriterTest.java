@@ -1951,13 +1951,13 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testHousekeepDrainsAsyncCommandQueueOnCommit() throws Exception {
-        // Regression test for the housekeep() command-queue drain. A command published to
-        // the writer's async queue while the writer is busy (e.g. a storage policy command
-        // published to a writer held by a hot WAL apply loop, which never ticks the command
-        // queue itself) must be applied on the next commit rather than sitting unprocessed
-        // until the writer is returned to the pool. housekeep() runs on every commit and
-        // drains the queue.
+    public void testHousekeepDoesNotDrainAsyncCommandQueueOnNonWalCommit() throws Exception {
+        // The housekeep() command-queue drain is gated to WAL tables. A non-WAL writer is already
+        // drained by its ingestion tick() and on pool return (with structure changes allowed), so
+        // housekeep() must NOT drain the queue on a non-WAL commit -- otherwise an async structural
+        // ALTER published to a busy writer would be prematurely rejected at commit time instead of
+        // being applied when the writer becomes idle. This test asserts the command stays queued
+        // across a commit and is only applied by an explicit tick().
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tbl (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY");
             TableToken token = engine.verifyTableName("tbl");
@@ -1974,13 +1974,17 @@ public class TableWriterTest extends AbstractCairoTest {
                 // The command is queued, not yet applied.
                 Assert.assertEquals(2, writer.getMetadata().getColumnCount());
 
-                // Commit some data. housekeep() runs on commit and must drain the queue,
-                // applying the queued ADD COLUMN. Without the drain the column stays missing.
+                // Commit some data. housekeep() runs on commit but, for a non-WAL table, must NOT
+                // drain the queue: the queued ADD COLUMN stays unapplied.
                 TableWriter.Row row = writer.newRow(0L);
                 row.putInt(1, 42);
                 row.append();
                 writer.commit();
+                Assert.assertEquals(2, writer.getMetadata().getColumnCount());
 
+                // An explicit tick() (as performed by ingestion and on pool return) drains the
+                // queue and applies the ADD COLUMN.
+                writer.tick();
                 Assert.assertEquals(3, writer.getMetadata().getColumnCount());
                 Assert.assertTrue(writer.getColumnIndex("y") >= 0);
             }
