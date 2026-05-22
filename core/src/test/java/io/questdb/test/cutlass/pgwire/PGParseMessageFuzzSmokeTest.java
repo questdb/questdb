@@ -24,10 +24,14 @@
 
 package io.questdb.test.cutlass.pgwire;
 
+import io.questdb.cairo.CairoException;
+import io.questdb.cutlass.pgwire.PGMessageProcessingException;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.lang.reflect.Field;
 import java.nio.charset.StandardCharsets;
 
 public class PGParseMessageFuzzSmokeTest extends AbstractCairoTest {
@@ -44,6 +48,18 @@ public class PGParseMessageFuzzSmokeTest extends AbstractCairoTest {
                     PGParseMessageFuzz.fuzzerTestOneInput(newQueryFrame("select 1"));
                     Assert.assertEquals(0, harness.context().getPipelineEntryPoolOutieCountForFuzz());
 
+                    PGParseMessageFuzz.fuzzerTestOneInput(newQueryFrame("select 'm'::byte"));
+                    Assert.assertEquals(0, harness.context().getPipelineEntryPoolOutieCountForFuzz());
+
+                    PGParseMessageFuzz.fuzzerTestOneInput(newQueryFrame("select ().file:"));
+                    Assert.assertEquals(0, harness.context().getPipelineEntryPoolOutieCountForFuzz());
+
+                    PGParseMessageFuzz.fuzzerTestOneInput(newQueryFrame("ifl\u001fAstrakjaec\u001fepa::select`::selec\u001fepa:81"));
+                    Assert.assertEquals(0, harness.context().getPipelineEntryPoolOutieCountForFuzz());
+
+                    PGParseMessageFuzz.fuzzerTestOneInput(newQueryFrame("\u001f2a(vil/ile.select 0et.ece.select &,6.f)5"));
+                    Assert.assertEquals(0, harness.context().getPipelineEntryPoolOutieCountForFuzz());
+
                     PGParseMessageFuzz.fuzzerTestOneInput(newFrame('P', 0));
                     PGParseMessageFuzz.fuzzerTestOneInput(newFrame('P', Integer.MAX_VALUE));
                     PGParseMessageFuzz.fuzzerTestOneInput(newParseWithTrailingBytesFrame());
@@ -51,6 +67,40 @@ public class PGParseMessageFuzzSmokeTest extends AbstractCairoTest {
                     Assert.assertEquals(0, harness.context().getPipelineEntryPoolOutieCountForFuzz());
                 } finally {
                     PGParseMessageFuzz.clearHarness(harness);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testWrappedUnexpectedRuntimeFailsFuzzing() throws Exception {
+        assertMemoryLeak(() -> {
+            try (PGFuzzHarness harness = new PGFuzzHarness(engine)) {
+                PGMessageProcessingException ex = new PGMessageProcessingException();
+                setFlyweightCause(ex, new NullPointerException("boom"));
+                try {
+                    harness.rethrowUnexpectedProcessingError(ex, "parse", new byte[]{'Q'});
+                    Assert.fail();
+                } catch (AssertionError e) {
+                    TestUtils.assertContains(e.getMessage(), "unexpected throwable hidden inside PGMessageProcessingException");
+                    TestUtils.assertContains(e.getMessage(), "java.lang.NullPointerException: boom");
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testWrappedCriticalCairoExceptionFailsFuzzing() throws Exception {
+        assertMemoryLeak(() -> {
+            try (PGFuzzHarness harness = new PGFuzzHarness(engine)) {
+                PGMessageProcessingException ex = new PGMessageProcessingException();
+                setFlyweightCause(ex, CairoException.critical(42).put("boom"));
+                try {
+                    harness.rethrowUnexpectedProcessingError(ex, "parse", new byte[]{'Q'});
+                    Assert.fail();
+                } catch (AssertionError e) {
+                    TestUtils.assertContains(e.getMessage(), "unexpected throwable hidden inside PGMessageProcessingException");
+                    TestUtils.assertContains(e.getMessage(), "io.questdb.cairo.CairoException: [42] boom");
                 }
             }
         });
@@ -104,5 +154,11 @@ public class PGParseMessageFuzzSmokeTest extends AbstractCairoTest {
         bytes[offset + 1] = (byte) (value >>> 16);
         bytes[offset + 2] = (byte) (value >>> 8);
         bytes[offset + 3] = (byte) value;
+    }
+
+    private static void setFlyweightCause(PGMessageProcessingException ex, Throwable cause) throws Exception {
+        Field causeField = PGMessageProcessingException.class.getDeclaredField("flyweightCause");
+        causeField.setAccessible(true);
+        causeField.set(ex, cause);
     }
 }

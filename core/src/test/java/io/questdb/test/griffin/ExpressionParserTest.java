@@ -74,6 +74,21 @@ public class ExpressionParserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAssembledQuotedIdentifierDottedChain() throws SqlException {
+        x("a.b.c", "\"a\".b.c");
+    }
+
+    @Test
+    public void testAssembledQuotedIdentifierEndingInEBeforeMinus() throws SqlException {
+        x("a.be c -", "\"a\".be-c");
+    }
+
+    @Test
+    public void testAssembledQuotedIdentifierDigitPartEndingInEBeforeMinus() throws SqlException {
+        x("a.3be c -", "\"a\".3be-c");
+    }
+
+    @Test
     public void testArrayCast() throws SqlException {
         x("'{1, 2, 3, 4}' double[] cast", "cast('{1, 2, 3, 4}' as double[])");
     }
@@ -915,6 +930,14 @@ public class ExpressionParserTest extends AbstractCairoTest {
         assertFail("(a.b).10.1",
                 6,
                 "constant is not allowed here"
+        );
+    }
+
+    @Test
+    public void testDotDereferenceAfterEmptyParentheses() {
+        assertFail("().file:",
+                2,
+                "missing arguments"
         );
     }
 

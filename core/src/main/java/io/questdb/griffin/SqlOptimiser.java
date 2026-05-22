@@ -210,6 +210,7 @@ public class SqlOptimiser implements Mutable {
     private final IntList tempCrosses = new IntList();
     private final LowerCaseCharSequenceIntHashMap tempCursorAliasSequenceMap = new LowerCaseCharSequenceIntHashMap();
     private final LowerCaseCharSequenceObjHashMap<QueryColumn> tempCursorAliases = new LowerCaseCharSequenceObjHashMap<>();
+    private final ObjHashSet<ExpressionNode> tempExpressionNodePath = new ObjHashSet<>();
     private final ObjList<ExpressionNode> tempExprs = new ObjList<>();
     private final IntHashSet tempIntHashSet = new IntHashSet();
     private final IntList tempIntList = new IntList();
@@ -354,6 +355,7 @@ public class SqlOptimiser implements Mutable {
         clausesToSteal.clear();
         tempCursorAliases.clear();
         tempCursorAliasSequenceMap.clear();
+        tempExpressionNodePath.clear();
         tableFactoriesInFlight.clear();
         groupByAliases.clear();
         groupByNodes.clear();
@@ -7068,19 +7070,35 @@ public class SqlOptimiser implements Mutable {
     }
 
     private void resolveNamedWindowsInExpr(ExpressionNode node, IQueryModel model) throws SqlException {
+        tempExpressionNodePath.clear();
+        try {
+            resolveNamedWindowsInExpr(node, model, tempExpressionNodePath);
+        } finally {
+            tempExpressionNodePath.clear();
+        }
+    }
+
+    private void resolveNamedWindowsInExpr(ExpressionNode node, IQueryModel model, ObjHashSet<ExpressionNode> path) throws SqlException {
         if (node == null) {
             return;
         }
-        if (node.windowExpression != null && node.windowExpression.isNamedWindowReference()) {
-            resolveNamedWindowReference(node.windowExpression, model);
+        if (!path.add(node)) {
+            throw CairoException.nonCritical().put("detected a recursive expression AST");
         }
-        if (node.paramCount < 3) {
-            resolveNamedWindowsInExpr(node.lhs, model);
-            resolveNamedWindowsInExpr(node.rhs, model);
-        } else {
-            for (int i = 0, n = node.paramCount; i < n; i++) {
-                resolveNamedWindowsInExpr(node.args.getQuick(i), model);
+        try {
+            if (node.windowExpression != null && node.windowExpression.isNamedWindowReference()) {
+                resolveNamedWindowReference(node.windowExpression, model);
             }
+            if (node.paramCount < 3) {
+                resolveNamedWindowsInExpr(node.lhs, model, path);
+                resolveNamedWindowsInExpr(node.rhs, model, path);
+            } else {
+                for (int i = 0, n = node.paramCount; i < n; i++) {
+                    resolveNamedWindowsInExpr(node.args.getQuick(i), model, path);
+                }
+            }
+        } finally {
+            path.remove(node);
         }
     }
 

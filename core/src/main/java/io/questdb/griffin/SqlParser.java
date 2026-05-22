@@ -4907,8 +4907,11 @@ public class SqlParser {
         return rewriteDeclaredVariables(parent, decls, exprTargetVariableName);
     }
 
-    private void rewritePgCast(ExpressionNode node) {
+    private void rewritePgCast(ExpressionNode node) throws SqlException {
         if (node.type == ExpressionNode.OPERATION && isColonColon(node.token)) {
+            if (node.rhs == null || node.rhs.token == null) {
+                throw SqlException.position(node.rhs != null ? node.rhs.position : node.position).put("type definition is expected");
+            }
             node.token = "cast";
             node.type = ExpressionNode.FUNCTION;
             node.rhs.type = ExpressionNode.CONSTANT;

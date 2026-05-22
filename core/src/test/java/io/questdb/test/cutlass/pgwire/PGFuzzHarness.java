@@ -26,9 +26,12 @@ package io.questdb.test.cutlass.pgwire;
 
 import io.questdb.DefaultFactoryProvider;
 import io.questdb.FactoryProvider;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
+import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cutlass.auth.AuthenticatorException;
 import io.questdb.cutlass.auth.SocketAuthenticator;
 import io.questdb.cutlass.pgwire.DefaultPGAuthenticatorFactory;
@@ -291,12 +294,12 @@ final class PGFuzzHarness implements Closeable {
             CharSequence extraDiagnostics
     ) {
         final Throwable cause = ex.getFlyweightCause();
-        if (!(cause instanceof Error)) {
+        if (!(cause instanceof Error) && (!(cause instanceof RuntimeException) || isExpectedSqlRuntimeException(cause))) {
             return;
         }
 
         StringBuilder message = new StringBuilder();
-        message.append("unexpected Error hidden inside PGMessageProcessingException [target=").append(target);
+        message.append("unexpected throwable hidden inside PGMessageProcessingException [target=").append(target);
         message.append(", cause=").append(cause.getClass().getName());
         if (cause.getMessage() != null) {
             message.append(": ").append(cause.getMessage());
@@ -322,6 +325,12 @@ final class PGFuzzHarness implements Closeable {
         }
         message.append(']');
         throw new AssertionError(message.toString(), cause);
+    }
+
+    private static boolean isExpectedSqlRuntimeException(Throwable cause) {
+        return cause instanceof CairoException && !((CairoException) cause).isCritical() ||
+                cause instanceof ImplicitCastException ||
+                cause instanceof TableReferenceOutOfDateException;
     }
 
     @Override

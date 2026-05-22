@@ -9913,6 +9913,24 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testPgCastRejectsSelectAsTypeDefinition() throws Exception {
+        assertException(
+                "ifl\u001fAstrakjaec\u001fepa::select`::selec\u001fepa:81",
+                20,
+                "type definition is expected"
+        );
+    }
+
+    @Test
+    public void testNestedLambdaQueryParseFailureRestoresStackFrames() throws Exception {
+        assertException(
+                "\u001f2a(vil/ile.select 0et.ece.select &,6.f)5",
+                34,
+                "too few arguments for '&'"
+        );
+    }
+
+    @Test
     public void testPipeConcatInJoin() throws SqlException {
         assertQuery(
                 "select-virtual 1 1, x from (select [x] from tab cross join select [y] from bap post-join-where concat(tab.x, '1') = concat('2', substring(bap.y, 0, 5)))",

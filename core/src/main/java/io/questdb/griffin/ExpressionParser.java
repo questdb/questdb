@@ -459,8 +459,10 @@ public class ExpressionParser {
             char c = lexer.getContent().charAt(lastPos - 1);
             if (c == 'e' || c == 'E') { // Incomplete scientific floating-point literal
                 ExpressionNode en = opStack.peek();
-                ((GenericLexer.FloatingSequence) en.token).setHi(lastPos + 1);
-                processDefaultBranch = false;
+                if (en.token instanceof GenericLexer.FloatingSequence) {
+                    ((GenericLexer.FloatingSequence) en.token).setHi(lastPos + 1);
+                    processDefaultBranch = false;
+                }
             }
         }
         return processDefaultBranch;
@@ -951,26 +953,28 @@ public class ExpressionParser {
         final int savedArgStackDepthStackBottom = argStackDepthStack.bottom();
         argStackDepthStack.setBottom(argStackDepthStack.sizeRaw());
 
-        int pos = lexer.lastTokenPosition();
-        // allow sub-query to parse "select" keyword
-        lexer.unparseLast();
+        try {
+            int pos = lexer.lastTokenPosition();
+            // allow sub-query to parse "select" keyword
+            lexer.unparseLast();
 
-        ExpressionNode node = expressionNodePool.next().of(ExpressionNode.QUERY, null, 0, pos);
-        // validate is Query is allowed
-        onNode(listener, node, argStackDepth, BRANCH_NONE);
-        // we can compile query if all is well
-        node.queryModel = sqlParser.parseAsSubQuery(lexer, null, true, sqlParserCallback, decls, false);
-        argStackDepth = onNode(listener, node, argStackDepth, BRANCH_NONE);
+            ExpressionNode node = expressionNodePool.next().of(ExpressionNode.QUERY, null, 0, pos);
+            // validate is Query is allowed
+            onNode(listener, node, argStackDepth, BRANCH_NONE);
+            // we can compile query if all is well
+            node.queryModel = sqlParser.parseAsSubQuery(lexer, null, true, sqlParserCallback, decls, false);
+            argStackDepth = onNode(listener, node, argStackDepth, BRANCH_NONE);
+            return argStackDepth;
+        } finally {
+            // pop our control node if sub-query hasn't done it
+            ExpressionNode control = opStack.peek();
+            if (control != null && control.type == ExpressionNode.CONTROL && Chars.equals(control.token, '|')) {
+                opStack.pop();
+            }
 
-        // pop our control node if sub-query hasn't done it
-        ExpressionNode control = opStack.peek();
-        if (control != null && control.type == ExpressionNode.CONTROL && Chars.equals(control.token, '|')) {
-            opStack.pop();
+            paramCountStack.setBottom(savedParamCountStackBottom);
+            argStackDepthStack.setBottom(savedArgStackDepthStackBottom);
         }
-
-        paramCountStack.setBottom(savedParamCountStackBottom);
-        argStackDepthStack.setBottom(savedArgStackDepthStackBottom);
-        return argStackDepth;
     }
 
     private int processPgTimestampCast(
@@ -1118,7 +1122,14 @@ public class ExpressionParser {
                             } else {
                                 // attach dot to existing literal or constant
                                 ExpressionNode en = opStack.peek();
-                                ((GenericLexer.FloatingSequence) en.token).setHi(lastPos + 1);
+                                if (en.token instanceof GenericLexer.FloatingSequence) {
+                                    ((GenericLexer.FloatingSequence) en.token).setHi(lastPos + 1);
+                                } else {
+                                    opStack.pop();
+                                    CharacterStoreEntry cse = characterStore.newEntry();
+                                    cse.put(en.token).put('.');
+                                    opStack.push(expressionNodePool.next().of(ExpressionNode.LITERAL, cse.toImmutable(), Integer.MIN_VALUE, en.position));
+                                }
                             }
                         }
                         if (prevBranch == BRANCH_DOT || prevBranch == BRANCH_DOT_DEREFERENCE) {
@@ -1128,6 +1139,9 @@ public class ExpressionParser {
                             throw SqlException.$(lastPos, "unexpected dot");
                         }
                         if (prevBranch == BRANCH_RIGHT_PARENTHESIS) {
+                            if (argStackDepth == 0) {
+                                throw missingArgs(lastPos);
+                            }
                             thisBranch = BRANCH_DOT_DEREFERENCE;
                         } else {
                             thisBranch = BRANCH_DOT;
@@ -2010,7 +2024,7 @@ public class ExpressionParser {
                             }
 
                             SqlKeywords.assertNameIsQuotedOrNotAKeyword(tok, lastPos);
-                            if (Chars.isQuoted(tok) || en.token instanceof CharacterStore.NameAssemblerCharSequence) {
+                            if (Chars.isQuoted(tok) || !(en.token instanceof GenericLexer.FloatingSequence)) {
                                 // replacing node, must remove old one from stack
                                 opStack.pop();
                                 // this was more analogous to 'a."b"'
@@ -2198,9 +2212,12 @@ public class ExpressionParser {
             }
         } catch (SqlException e) {
             opStack.clear();
-            scopeStack.clear();
-            argStackDepthStack.clear();
-            paramCountStack.clear();
+            while (scopeStack.pop() != null) {
+                // Discard only scopes owned by this parseExpr() invocation. Re-entrant
+                // parses hide caller scopes behind stack bottom and must not clear them.
+            }
+            argStackDepthStack.popAll();
+            paramCountStack.popAll();
             throw e;
         } finally {
             scopeStack.setBottom(savedScopeStackBottom);
