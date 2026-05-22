@@ -6052,7 +6052,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                             " range between 1 second preceding and 1 second following " + (includePrevailing ? " include prevailing " : " exclude prevailing ") +
                             "where 42=43;",
                     "ts",
-                    false,
+                    true,
                     true
             );
         });
