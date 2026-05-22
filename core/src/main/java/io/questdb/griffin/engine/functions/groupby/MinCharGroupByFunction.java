@@ -123,7 +123,7 @@ public class MinCharGroupByFunction extends CharFunction implements GroupByFunct
         char srcMin = srcValue.getChar(valueIndex);
         char destMin = destValue.getChar(valueIndex);
         if (srcMin != 0 && (srcMin < destMin || destMin == 0)) {
-            destValue.putInt(valueIndex, srcMin);
+            destValue.putChar(valueIndex, srcMin);
         }
     }
 

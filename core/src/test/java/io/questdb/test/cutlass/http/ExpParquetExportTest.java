@@ -141,7 +141,9 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                             "FROM long_sequence(1000)" +
                             ")", sqlExecutionContext);
 
-                    int threadCount = 15;
+                    // Single-worker server (see getExportTester()): a few concurrent clients already
+                    // exercise export connection handling; more just add scheduling overhead.
+                    int threadCount = Os.isLinux() ? 8 : 4;
                     CyclicBarrier barrier = new CyclicBarrier(threadCount);
                     AtomicInteger successCount = new AtomicInteger(0);
                     AtomicInteger errorCount = new AtomicInteger(0);
@@ -703,7 +705,10 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                     testHttpClient.assertGetParquet("/exp", 104173, params, "test_table");
                     params.put("row_group_size", "10000");
                     testHttpClient.assertGetParquet("/exp", 101211, params, "test_table");
-                    assertParquetExportDataCorrectness(engine, sqlExecutionContext, new String[]{"test_table"}, 10, 10091);
+                    // Each round re-exports the full 10k-row table over the forced byte-level HTTP
+                    // fragmentation from getExportTester(), slow on Mac/Windows. The assertGetParquet
+                    // calls above already cover every row_group_size, so fewer rounds suffice.
+                    assertParquetExportDataCorrectness(engine, sqlExecutionContext, new String[]{"test_table"}, Os.isLinux() ? 10 : 3, 10091);
                 });
     }
 

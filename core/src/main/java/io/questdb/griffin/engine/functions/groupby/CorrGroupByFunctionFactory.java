@@ -206,7 +206,7 @@ public class CorrGroupByFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean supportsParallelism() {
-            return true;
+            return BinaryFunction.super.supportsParallelism();
         }
 
         // mean_x, sum_x, mean_y, sum_y, sum_xy

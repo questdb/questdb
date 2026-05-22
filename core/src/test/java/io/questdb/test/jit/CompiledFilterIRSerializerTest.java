@@ -334,6 +334,78 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
     }
 
     @Test
+    public void testConstantArithFoldOnByteColumn() throws Exception {
+        // Pure-constant arithmetic subtree whose long-precision value overflows
+        // INT: emitted as a single I8 IMM in place of the multi-node subtree.
+        // Mirrors FunctionParser.functionToConstant0's LongConstant fold so the
+        // JIT compares at long width and matches the Java filter.
+        serialize("abyte > 100000 * 100000");
+        assertIR("(i64 10000000000L)(i8 abyte)(>)(ret)");
+    }
+
+    @Test
+    public void testConstantArithFoldOnIntColumn() throws Exception {
+        // Same shape on an INT column. Mixed I4 (anint) + I8 (folded
+        // constant) triggers the existing NarrowI64WidenDetector, so the
+        // column read picks up an SX_I64 to lift it to i64 before the
+        // comparison.
+        serialize("anint > 100000 * 100000");
+        assertIR("(i64 10000000000L)(i32 anint)(sx_i64)(>)(ret)");
+    }
+
+    @Test
+    public void testConstantArithFoldOnLongColumn() throws Exception {
+        // LONG column already at I8 width: the fold still collapses the
+        // subtree to one IMM and the comparison stays at i64 throughout.
+        serialize("along > 100000 * 100000");
+        assertIR("(i64 10000000000L)(i64 along)(>)(ret)");
+    }
+
+    @Test
+    public void testConstantArithFoldOnShortColumn() throws Exception {
+        serialize("ashort > 100000 * 100000");
+        assertIR("(i64 10000000000L)(i16 ashort)(>)(ret)");
+    }
+
+    @Test
+    public void testConstantArithFoldUnaryMinus() throws Exception {
+        // Unary minus of an overflowing product is itself a fold root.
+        serialize("along > -(100000 * 100000)");
+        assertIR("(i64 -10000000000L)(i64 along)(>)(ret)");
+    }
+
+    @Test
+    public void testConstantArithFoldVariousOps() throws Exception {
+        // Each arithmetic op participates in the long-precision evaluation.
+        serialize("along > 5000000000 + 5000000000");
+        assertIR("(i64 10000000000L)(i64 along)(>)(ret)");
+        serialize("along > 5000000000 - -5000000000");
+        assertIR("(i64 10000000000L)(i64 along)(>)(ret)");
+        serialize("along > 100000 * 100000");
+        assertIR("(i64 10000000000L)(i64 along)(>)(ret)");
+        serialize("along > 10000000000 / 1");
+        assertIR("(i64 10000000000L)(i64 along)(>)(ret)");
+    }
+
+    @Test
+    public void testConstantArithNoFoldInIntRange() throws Exception {
+        // Long-precision result fits in INT: no fold, the subtree is emitted
+        // node-by-node so the existing arithmetic IR ops still run.
+        serialize("anint > 100 * 100");
+        assertIR("(i32 100L)(i32 100L)(*)(i32 anint)(>)(ret)");
+    }
+
+    @Test
+    public void testConstantArithNoFoldOnNonConstantSubtree() throws Exception {
+        // Subtree mixes constants with a column reference: not pure-constant,
+        // so no fold and the arithmetic stays in the IR. The mixed I4 (anint)
+        // + I8 (along) operands still drive the existing NarrowI64WidenDetector
+        // path, which lifts the constant to i64 and sign-extends anint.
+        serialize("along > anint * 100000");
+        assertIR("(i64 100000L)(i32 anint)(sx_i64)(*)(i64 along)(>)(ret)");
+    }
+
+    @Test
     public void testConstantTypes() throws Exception {
         final String[][] columns = new String[][]{
                 {"abyte", "i8", "1", "1L", "i8"},
@@ -679,7 +751,9 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
     @Test
     public void testNullConstantMixedIntegerColumns() throws Exception {
         serialize("anint + along <> null or null <> along + anint");
-        assertIR("(i32 anint)(i64 along)(+)(i64 -9223372036854775808L)(<>)(||_sc)(i64 -9223372036854775808L)(i64 along)(i32 anint)(+)(<>)(ret)");
+        // (sx_i64) widens narrow INT operands to i64 inside arithmetic predicates that also
+        // have a LONG operand, so the JIT computes at long width and matches AddInt.getLong.
+        assertIR("(i32 anint)(sx_i64)(i64 along)(+)(i64 -9223372036854775808L)(<>)(||_sc)(i64 -9223372036854775808L)(i64 along)(i32 anint)(sx_i64)(+)(<>)(ret)");
     }
 
     @Test
@@ -732,6 +806,9 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
         filterToOptions.put("ashort - ashort = 0", 2);
         filterToOptions.put("abyte * ashort = 0", 2);
         filterToOptions.put("1 * abyte / ashort = 0", 2);
+        // Narrow int mixed with a wider operand in arithmetic also forces scalar:
+        // SIMD would compute at the narrow width and overflow, while scalar upcasts.
+        filterToOptions.put("afloat / abyte = 0", 4);
 
         for (Map.Entry<String, Integer> entry : filterToOptions.entrySet()) {
             int options = serialize(entry.getKey(), false, false, false);
@@ -749,17 +826,32 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
         // 4B
         filterToOptions.put("anint = 0 or abyte = 0", 4);
         filterToOptions.put("afloat = 0 or abyte = 0", 4);
-        filterToOptions.put("afloat / abyte = 0", 4);
         // 8B
         filterToOptions.put("along = 0 or ashort = 0", 8);
         filterToOptions.put("adouble = 0 or ashort = 0", 8);
         filterToOptions.put("afloat = 0 or adouble = 0", 8);
-        filterToOptions.put("anint * along = 0", 8);
 
         for (Map.Entry<String, Integer> entry : filterToOptions.entrySet()) {
             int options = serialize(entry.getKey(), false, false, false);
             assertOptionsHint(entry.getKey(), options, OptionsHint.MIXED_SIZES);
             assertOptionsSize(entry.getKey(), options, entry.getValue());
+        }
+    }
+
+    @Test
+    public void testOptionsNarrowI64WideningForcesScalar() throws Exception {
+        // Predicates that mix narrow-int and i64 operands with arithmetic emit
+        // SX_I64 to widen the narrow side. The SIMD code path does not
+        // implement SX_I64 (see avx2.h), so scalar mode is the only safe
+        // execution hint for these.
+        for (String filter : new String[]{
+                "anint * along = 0",
+                "anint + along = 0",
+                "abyte * along = 0",
+                "ashort - along = 0"
+        }) {
+            int options = serialize(filter, false, false, false);
+            assertOptionsHint(filter, options, OptionsHint.SCALAR);
         }
     }
 
@@ -1471,6 +1563,7 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
                 case AND_SC -> "&&_sc";
                 case OR_SC -> "||_sc";
                 case END_SC -> "end_sc";
+                case SX_I64 -> "sx_i64";
                 default -> "unknown";
             };
         }

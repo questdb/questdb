@@ -206,7 +206,7 @@ public abstract class AbstractRegressionGroupByFunction extends DoubleFunction i
 
     @Override
     public boolean supportsParallelism() {
-        return true;
+        return BinaryFunction.super.supportsParallelism();
     }
 
     protected void aggregate(MapValue mapValue, double y, double x) {
