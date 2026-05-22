@@ -32,6 +32,13 @@ import org.jetbrains.annotations.TestOnly;
 
 public final class PGStartupSessionFuzz {
     private static final int MAX_INPUT_LEN = 1 << 16;
+    private static final byte[] VALID_STARTUP_PACKET = {
+            0, 0, 0, 19,
+            0, 3, 0, 0,
+            'u', 's', 'e', 'r', 0,
+            'f', 'u', 'z', 'z', 0,
+            0
+    };
 
     private static PGFuzzHarness harness;
 
@@ -61,7 +68,7 @@ public final class PGStartupSessionFuzz {
         }
 
         try {
-            h.acceptStartupForFuzz(input);
+            h.acceptStartupForFuzz(wrapWithValidStartupIfRequested(input));
         } catch (PGMessageProcessingException expected) {
             h.rethrowUnexpectedProcessingError(expected, "startup", input);
             // Protocol-level rejection is fine.
@@ -77,5 +84,21 @@ public final class PGStartupSessionFuzz {
                 h.assertPipelinePoolBalanced();
             }
         }
+    }
+
+    private static byte[] wrapWithValidStartupIfRequested(byte[] input) {
+        if ((input[0] & 0x80) == 0) {
+            return input;
+        }
+
+        final int tailLength = input.length - 1;
+        if (tailLength > MAX_INPUT_LEN - VALID_STARTUP_PACKET.length) {
+            return input;
+        }
+
+        final byte[] wrapped = new byte[VALID_STARTUP_PACKET.length + tailLength];
+        System.arraycopy(VALID_STARTUP_PACKET, 0, wrapped, 0, VALID_STARTUP_PACKET.length);
+        System.arraycopy(input, 1, wrapped, VALID_STARTUP_PACKET.length, tailLength);
+        return wrapped;
     }
 }

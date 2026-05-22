@@ -1,0 +1,4 @@
+# Structured PGStartupSessionFuzz input: high-bit selector asks the target to
+# prepend a valid StartupMessage, then the remaining bytes are parsed as pgwire.
+80
+51 0000000d 73656c6563742031 00
