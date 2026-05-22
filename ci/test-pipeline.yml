@@ -14,7 +14,7 @@ variables:
   includeTests: "%regex[.*[^o].class]"
   MAVEN_CACHE_FOLDER: $(HOME)/.m2/repository
   MAVEN_OPTS: "-Dmaven.repo.local=$(MAVEN_CACHE_FOLDER) -Xmx3g -XX:+UseParallelGC"
-  MAVEN_RUN_OPTS: "-Dmaven.repo.local=$(MAVEN_CACHE_FOLDER) -Dmaven.resolver.transport=wagon -Dmaven.wagon.httpconnectionManager.ttlSeconds=30 "
+  MAVEN_RUN_OPTS: "-Dmaven.repo.local=$(MAVEN_CACHE_FOLDER) -Dmaven.resolver.transport=wagon -Dmaven.wagon.httpconnectionManager.ttlSeconds=30 -Dtest=io.questdb.test.cutlass.qwp.e2e.QwpWebSocketSenderReceiverTest#testErrorPropagation_asyncMultipleBatchesInFlight "
   MAVEN_VERSION: "version"
   MAVEN_VERSION_OPTION: "Default"
   # Full-reactor defaults for the self-hosted Linux jobs. Hosted mac/windows jobs
@@ -110,7 +110,7 @@ stages:
               OSS_PR_NUMBER: $(System.PullRequest.PullRequestNumber)
               OSS_BRANCH: $(System.PullRequest.SourceBranch)
 
-  # QWP-only isolation for hunting flaky QwpIngressOracleFuzzTest etc.
+  # Single-test isolation for the QWP close-drain timeout investigation.
   # Other SelfHosted* stages (Griffin / CairoA / CairoB / OtherA) deleted on this branch.
   - stage: SelfHostedRunQwp
     displayName: "SelfHosted QWP tests"
@@ -120,7 +120,7 @@ stages:
     jobs:
       - template: templates/self-hosted-jobs.yml
     variables:
-      includeTests: "**/cutlass/qwp/**"
+      includeTests: "**/cutlass/qwp/e2e/QwpWebSocketSenderReceiverTest.class"
 
   - stage: HostedRunTestsBranches
     displayName: "Hosted Running tests"

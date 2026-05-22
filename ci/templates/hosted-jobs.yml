@@ -3,7 +3,7 @@ jobs:
     displayName: "on"
     strategy:
       matrix:
-        # QWP-only matrix for hunting flaky QwpIngressOracleFuzzTest etc.
+        # Single-test matrix for the QWP close-drain timeout investigation.
         # Original entries (mac-griffin, mac-cairo, mac-cairo-fuzz, mac-pgwire,
         # windows-griffin-base, windows-griffin-sub, windows-fuzz1, windows-cairo-1,
         # windows-cairo-2, windows-pgwire, windows-other-1) deleted on this branch.
@@ -13,7 +13,7 @@ jobs:
           os: macOS
           jdk: "1.25"
           testset: "all"
-          includeTests: "**/cutlass/qwp/**"
+          includeTests: "**/cutlass/qwp/e2e/QwpWebSocketSenderReceiverTest.class"
           javadoc_step: ""
           javadoc_profile: ""
         windows-fuzz2:
@@ -23,7 +23,7 @@ jobs:
           os: Windows
           jdk: "1.25"
           testset: "all"
-          includeTests: "**/cutlass/qwp/**"
+          includeTests: "**/cutlass/qwp/e2e/QwpWebSocketSenderReceiverTest.class"
           javadoc_step: ""
           javadoc_profile: ""
         windows-other-2:
@@ -33,7 +33,7 @@ jobs:
           os: Windows
           jdk: "1.25"
           testset: "all"
-          includeTests: "**/cutlass/qwp/**"
+          includeTests: "**/cutlass/qwp/e2e/QwpWebSocketSenderReceiverTest.class"
           javadoc_step: ""
           javadoc_profile: ""
 
