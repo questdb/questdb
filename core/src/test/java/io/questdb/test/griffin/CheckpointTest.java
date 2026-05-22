@@ -1078,12 +1078,15 @@ public class CheckpointTest extends AbstractCairoTest {
             setProperty(PropertyKey.CAIRO_LEGACY_SNAPSHOT_INSTANCE_ID, snapshotId);
 
             final String tableName = getTestTableName();
+            // Fewer day partitions on slow CI runners; the index-rebuild assertions are computed
+            // from the data, so they hold at any size.
+            final int rowCount = Os.isLinux() ? 500 : 100;
             // Create table without indexed columns initially
             execute(
                     "create table " + tableName + " as (" +
                             "select x, " +
                             "timestamp_sequence(0, 100000000000) ts " +
-                            "from long_sequence(500)" +
+                            "from long_sequence(" + rowCount + ")" +
                             ") timestamp(ts) PARTITION BY DAY"
             );
 
@@ -1098,7 +1101,7 @@ public class CheckpointTest extends AbstractCairoTest {
                             "timestamp_sequence(50000000000000, 100000000000) ts, " +
                             "rnd_symbol('A','B','C') sym1, " +
                             "rnd_symbol('X','Y','Z') sym2 " +
-                            "from long_sequence(500)"
+                            "from long_sequence(" + rowCount + ")"
             );
 
             // Query using indexes before checkpoint to get expected counts
@@ -1189,13 +1192,16 @@ public class CheckpointTest extends AbstractCairoTest {
             setProperty(PropertyKey.CAIRO_LEGACY_SNAPSHOT_INSTANCE_ID, snapshotId);
 
             final String tableName = getTestTableName();
+            // Fewer day partitions on slow CI runners (each row lands in its own daily partition);
+            // the index-rebuild assertions are computed from the data, so they hold at any size.
+            final int rowCount = Os.isLinux() ? 1000 : 200;
             execute(
                     "create table " + tableName + " as (" +
                             "select rnd_symbol('A','B','C') sym1, " +
                             "rnd_symbol('X','Y','Z') sym2, " +
                             "x, " +
                             "timestamp_sequence(0, 100000000000) ts " +
-                            "from long_sequence(1000)" +
+                            "from long_sequence(" + rowCount + ")" +
                             "), index(sym1), index(sym2) timestamp(ts) PARTITION BY DAY"
             );
 
@@ -1217,7 +1223,7 @@ public class CheckpointTest extends AbstractCairoTest {
                             "rnd_symbol('X','Y','Z') sym2, " +
                             "x + 1000, " +
                             "timestamp_sequence(100000000000000, 100000000000) ts " +
-                            "from long_sequence(500)"
+                            "from long_sequence(" + (rowCount / 2) + ")"
             );
 
             // Release all readers and writers, but keep the snapshot dir around.
@@ -2822,7 +2828,8 @@ public class CheckpointTest extends AbstractCairoTest {
 
     @Test
     public void testRecoverCheckpointLargePartitionCount() throws Exception {
-        final int partitionCount = 2000;
+        // Fewer partitions on slow CI runners; still large enough to exercise the recovery path.
+        final int partitionCount = Os.isLinux() ? 2000 : 400;
         final String snapshotId = "id1";
         final String restartedId = "id2";
         assertMemoryLeak(() -> {

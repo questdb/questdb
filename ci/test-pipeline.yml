@@ -17,6 +17,10 @@ variables:
   MAVEN_RUN_OPTS: "-Dmaven.repo.local=$(MAVEN_CACHE_FOLDER) -Dmaven.resolver.transport=wagon -Dmaven.wagon.httpconnectionManager.ttlSeconds=30 "
   MAVEN_VERSION: "version"
   MAVEN_VERSION_OPTION: "Default"
+  # Full-reactor defaults for the self-hosted Linux jobs. Hosted mac/windows jobs
+  # (hosted-jobs.yml) override these to "-pl core -am" and drop the unused web console.
+  TEST_REACTOR_ARGS: ""
+  WEB_CONSOLE_PROFILE: "-P build-web-console"
 
 stages:
   - stage: CheckChanges
