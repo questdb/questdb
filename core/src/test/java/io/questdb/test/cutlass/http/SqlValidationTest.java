@@ -68,20 +68,20 @@ public class SqlValidationTest extends AbstractCairoTest {
 
                         testHttpClient.assertGet(
                                 "/api/v1/sql/validate",
-                                "{\"queryType\":\"ALTER TABLE\"}",
+                                "{\"query\":\"alter table abc resume wal\",\"error\":\"table does not exist [table=abc]\",\"position\":12}",
                                 "alter table abc resume wal"
                         );
 
                         testHttpClient.assertGet(
                                 "/api/v1/sql/validate",
-                                "{\"queryType\":\"ALTER TABLE\"}",
+                                "{\"query\":\"alter table abc suspend wal\",\"error\":\"table does not exist [table=abc]\",\"position\":12}",
                                 "alter table abc suspend wal"
                         );
 
 
                         testHttpClient.assertGet(
                                 "/api/v1/sql/validate",
-                                "{\"queryType\":\"ALTER TABLE\"}",
+                                "{\"query\":\"alter table abc set type wal\",\"error\":\"table does not exist [table=abc]\",\"position\":12}",
                                 "alter table abc set type wal"
                         );
 
@@ -185,9 +185,11 @@ public class SqlValidationTest extends AbstractCairoTest {
                                 "create view xyz_count as (select count() from xyz)"
                         );
 
+                        // The CREATE VIEW above was only validated, not executed, so xyz_count does
+                        // not exist; validation of ALTER VIEW now resolves the view and reports it.
                         testHttpClient.assertGet(
                                 "/api/v1/sql/validate",
-                                "{\"queryType\":\"ALTER VIEW\"}",
+                                "{\"query\":\"alter view xyz_count as (select 1)\",\"error\":\"view does not exist [view=xyz_count]\",\"position\":11}",
                                 "alter view xyz_count as (select 1)"
                         );
 

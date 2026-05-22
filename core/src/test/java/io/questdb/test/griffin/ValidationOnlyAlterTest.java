@@ -30,12 +30,14 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.idx.PostingIndexUtils;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
@@ -47,6 +49,12 @@ import static io.questdb.cairo.TableUtils.COLUMN_NAME_TXN_NONE;
 // execution): ALTER TABLE SET TYPE writes the WAL convert file, SUSPEND / RESUME WAL toggle
 // the sequencer's suspended flag, and REINDEX rebuilds index files. Each test validates the
 // statement (asserting no mutation), then runs it for real (asserting the mutation takes effect).
+//
+// Validation runs the full compile path (it no longer short-circuits at the ALTER/REINDEX
+// dispatch), so it also resolves the target table. Validating a statement against a
+// non-existent table therefore reports "table does not exist" rather than passing as
+// syntactically valid; testValidateAlterMissingTableFails / testValidateReindexMissingTableFails
+// pin that behavior.
 public class ValidationOnlyAlterTest extends AbstractCairoTest {
 
     @Before
@@ -54,6 +62,18 @@ public class ValidationOnlyAlterTest extends AbstractCairoTest {
         // SUSPEND WAL is gated on dev mode; enable it so validation reaches the suspend path.
         setProperty(PropertyKey.DEV_MODE_ENABLED, "true");
         super.setUp();
+    }
+
+    @Test
+    public void testValidateAlterMissingTableFails() throws Exception {
+        assertMemoryLeak(() -> {
+            try {
+                validate("ALTER TABLE no_such_table SUSPEND WAL");
+                Assert.fail("validation must reject ALTER against a non-existent table");
+            } catch (SqlException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "table does not exist");
+            }
+        });
     }
 
     @Test
@@ -81,6 +101,18 @@ public class ValidationOnlyAlterTest extends AbstractCairoTest {
 
                 execute("REINDEX TABLE rix COLUMN sym LOCK EXCLUSIVE");
                 Assert.assertTrue("real reindex must rebuild the index", ff.exists(PostingIndexUtils.keyFileName(path.trimTo(plen), "sym", COLUMN_NAME_TXN_NONE)));
+            }
+        });
+    }
+
+    @Test
+    public void testValidateReindexMissingTableFails() throws Exception {
+        assertMemoryLeak(() -> {
+            try {
+                validate("REINDEX TABLE no_such_table COLUMN sym LOCK EXCLUSIVE");
+                Assert.fail("validation must reject REINDEX against a non-existent table");
+            } catch (SqlException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "table does not exist");
             }
         });
     }
