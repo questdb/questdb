@@ -81,6 +81,10 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
     private final FixedOffsetIntervalIterator fixedOffsetIterator = new FixedOffsetIntervalIterator();
     private final MatViewGraph graph;
     private final LongList intervals = new LongList();
+    // The base table txn the most recent refreshIncremental0() examined (its reader's seqTxn), or
+    // Numbers.LONG_NULL if it did not open a reader. Read by refreshDependentViewsIncremental() to
+    // acknowledge the base txn that all refreshed views actually caught up to.
+    private long lastExaminedBaseTxn = Numbers.LONG_NULL;
     private final MicrosecondClock microsecondClock;
     private final RefreshContext refreshContext = new RefreshContext();
     private final MatViewRefreshSqlExecutionContext refreshSqlExecutionContext;
@@ -1131,7 +1135,13 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
 
         boolean refreshed = false;
         final SeqTxnTracker baseSeqTracker = engine.getTableSequencerAPI().getTxnTracker(baseTableToken);
+        // Safe floor: every view opens its reader after this sample, so each examines at least this txn.
         final long minRefreshToTxn = baseSeqTracker.getWriterTxn();
+        // The minimum base txn examined across the refreshed views. Acknowledging this instead of the
+        // pre-loop floor lets the clean/dirty handshake converge when the readable base txn advances
+        // between the floor sample and a view opening its reader, while never claiming the base is
+        // refreshed past what any view actually examined.
+        long minExaminedToTxn = Numbers.LONG_NULL;
 
         childViewSink.clear();
         graph.getDependentViews(baseTableToken, childViewSink);
@@ -1156,7 +1166,13 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
 
                 try (WalWriter walWriter = engine.getWalWriter(viewToken)) {
                     try {
+                        lastExaminedBaseTxn = Numbers.LONG_NULL;
                         refreshed |= refreshIncremental0(baseTableToken, viewDefinition, viewState, walWriter, refreshTriggerTimestamp);
+                        if (lastExaminedBaseTxn != Numbers.LONG_NULL) {
+                            minExaminedToTxn = minExaminedToTxn != Numbers.LONG_NULL
+                                    ? Math.min(minExaminedToTxn, lastExaminedBaseTxn)
+                                    : lastExaminedBaseTxn;
+                        }
                     } catch (Throwable th) {
                         refreshFailState(viewDefinition, viewState, walWriter, th);
                     }
@@ -1182,11 +1198,13 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         refreshTask.clear();
         refreshTask.baseTableToken = baseTableToken;
         refreshTask.operation = MatViewRefreshTask.INCREMENTAL_REFRESH;
-        stateStore.notifyBaseRefreshed(refreshTask, minRefreshToTxn);
+        // Fall back to the pre-loop floor when no view was refreshed (e.g. all skipped or timer-only).
+        final long refreshedToTxn = minExaminedToTxn != Numbers.LONG_NULL ? minExaminedToTxn : minRefreshToTxn;
+        stateStore.notifyBaseRefreshed(refreshTask, refreshedToTxn);
 
         if (refreshed) {
             LOG.info().$("refreshed materialized views dependent on [baseTable=").$(baseTableToken)
-                    .$(", lastSeqTxn=").$(minRefreshToTxn).I$();
+                    .$(", lastSeqTxn=").$(refreshedToTxn).I$();
         }
         return refreshed;
     }
@@ -1302,6 +1320,9 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         try (TableReader baseTableReader = engine.getReader(baseTableToken)) {
             final long fromBaseTxn = viewState.getLastRefreshBaseTxn();
             final long toBaseTxn = baseTableReader.getSeqTxn();
+            // Record the base txn this refresh examines, even on the early-out paths below, so the
+            // caller can acknowledge only what was actually examined.
+            lastExaminedBaseTxn = toBaseTxn;
             if (fromBaseTxn > toBaseTxn) {
                 final TableToken viewToken = viewDefinition.getMatViewToken();
                 throw CairoException.nonCritical().put("unexpected txn numbers, base table may have been renamed [view=").put(viewToken.getTableName())
