@@ -3593,12 +3593,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     }
 
     private void compileTruncate(SqlExecutionContext executionContext, @Transient CharSequence sqlText) throws SqlException {
-
-        if (executionContext.isValidationOnly()) {
-            compiledQuery.ofTruncate();
-            return;
-        }
-
         CharSequence tok;
         tok = SqlUtil.fetchNext(lexer);
 
@@ -3648,11 +3642,15 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     checkViewModification(tableToken);
                     checkMatViewModification(tableToken);
                     executionContext.getSecurityContext().authorizeTableTruncate(tableToken);
-                    try {
-                        tableWriters.add(engine.getTableWriterAPI(tableToken, "truncateTables"));
-                    } catch (CairoException e) {
-                        LOG.info().$("table busy [table=").$(tok).$(", e=").$((Throwable) e).I$();
-                        throw SqlException.$(lexer.lastTokenPosition(), "table '").put(tok).put("' could not be truncated: ").put(e);
+                    // Validation parses and resolves the table but must not acquire the writer
+                    // (which locks the table) or truncate any data.
+                    if (!executionContext.isValidationOnly()) {
+                        try {
+                            tableWriters.add(engine.getTableWriterAPI(tableToken, "truncateTables"));
+                        } catch (CairoException e) {
+                            LOG.info().$("table busy [table=").$(tok).$(", e=").$((Throwable) e).I$();
+                            throw SqlException.$(lexer.lastTokenPosition(), "table '").put(tok).put("' could not be truncated: ").put(e);
+                        }
                     }
                 }
 
@@ -3856,10 +3854,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         boolean partitionsKeyword = isPartitionsKeyword(tok);
         if (partitionsKeyword || isTableKeyword(tok)) {
             tok = expectToken(lexer, "table name");
-            if (executionContext.isValidationOnly()) {
-                compiledQuery.ofVacuum();
-                return;
-            }
             assertNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
             CharSequence tableName = GenericLexer.assertNoDotsAndSlashes(unquote(tok), lexer.lastTokenPosition());
             int tableNamePos = lexer.lastTokenPosition();
@@ -3872,7 +3866,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     int partitionBy = rdr.getMetadata().getPartitionBy();
                     if (PartitionBy.isPartitioned(partitionBy)) {
                         executionContext.getSecurityContext().authorizeTableVacuum(rdr.getTableToken());
-                        if (!TableUtils.schedulePurgeO3Partitions(
+                        // Validation parses, resolves the table and checks it is partitioned, but
+                        // must not schedule any purge work.
+                        if (!executionContext.isValidationOnly() && !TableUtils.schedulePurgeO3Partitions(
                                 messageBus,
                                 rdr.getTableToken(),
                                 rdr.getMetadata().getTimestampType(),
@@ -3887,7 +3883,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     } else if (partitionsKeyword) {
                         throw SqlException.$(lexer.lastTokenPosition(), "table '").put(tableName).put("' is not partitioned");
                     }
-                    vacuumColumnVersions.run(rdr);
+                    if (!executionContext.isValidationOnly()) {
+                        vacuumColumnVersions.run(rdr);
+                    }
                     compiledQuery.ofVacuum();
                 }
             } else {

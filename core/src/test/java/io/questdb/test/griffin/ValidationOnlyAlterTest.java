@@ -162,6 +162,48 @@ public class ValidationOnlyAlterTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testValidateTruncateDoesNotTruncate() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (ts TIMESTAMP, v INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO x VALUES ('2024-01-01T00:00:00', 1), ('2024-01-01T01:00:00', 2)");
+            drainWalQueue();
+            assertSql("count\n2\n", "SELECT count() FROM x");
+
+            validate("TRUNCATE TABLE x");
+            drainWalQueue();
+            assertSql("count\n2\n", "SELECT count() FROM x");
+
+            execute("TRUNCATE TABLE x");
+            drainWalQueue();
+            assertSql("count\n0\n", "SELECT count() FROM x");
+        });
+    }
+
+    @Test
+    public void testValidateTruncateMissingTableFails() throws Exception {
+        assertMemoryLeak(() -> {
+            try {
+                validate("TRUNCATE TABLE no_such_table");
+                Assert.fail("validation must reject TRUNCATE against a non-existent table");
+            } catch (SqlException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "table does not exist");
+            }
+        });
+    }
+
+    @Test
+    public void testValidateVacuumMissingTableFails() throws Exception {
+        assertMemoryLeak(() -> {
+            try {
+                validate("VACUUM TABLE no_such_table");
+                Assert.fail("validation must reject VACUUM against a non-existent table");
+            } catch (SqlException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "table does not exist");
+            }
+        });
+    }
+
     private static boolean convertFileExists() {
         final TableToken token = engine.verifyTableName("x");
         final Path path = Path.PATH.get().of(configuration.getDbRoot()).concat(token).concat(WalUtils.CONVERT_FILE_NAME);
