@@ -652,6 +652,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
 
         RecordCursorFactory factory = null;
         RecordToRowCopier copier;
+        final long prevRefreshStartTimestamp = viewState.getLastRefreshStartTimestampUs();
         final long refreshStartTimestamp = microsecondClock.getTicks();
         viewState.setLastRefreshStartTimestampUs(refreshStartTimestamp);
         final TableToken viewTableToken = viewDefinition.getMatViewToken();
@@ -676,6 +677,11 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 );
                 return true;
             }
+            // The watermark did not advance, so we skip the no-op WAL commit, leaving the persisted
+            // refresh finish timestamp behind the in-memory start timestamp bumped above. Since
+            // materialized_views reads the start from memory and the finish from the persisted state
+            // file, the view would report the "refreshing" status forever. Restore the start timestamp.
+            viewState.setLastRefreshStartTimestampUs(prevRefreshStartTimestamp);
             return false;
         }
 

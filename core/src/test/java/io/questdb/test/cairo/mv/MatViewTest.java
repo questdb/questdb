@@ -4632,6 +4632,15 @@ public class MatViewTest extends AbstractCairoTest {
                                     """),
                     "price_1h order by sym"
             );
+            assertQueryNoLeakCheck(
+                    """
+                            view_status\trefresh_finished
+                            valid\ttrue
+                            """,
+                    "select view_status, last_refresh_start_timestamp <= last_refresh_finish_timestamp as refresh_finished " +
+                            "from materialized_views where view_name = 'price_1h'",
+                    null
+            );
             // ...and, crucially, no new (no-op) WAL transaction was committed.
             assertSql(walTxnsBefore, walTxnsSql);
         });
@@ -4690,6 +4699,15 @@ public class MatViewTest extends AbstractCairoTest {
                                     gbpusd\t1.32\t1999-12-31T00:00:00.000000Z
                                     """),
                     "price_1h order by sym"
+            );
+            assertQueryNoLeakCheck(
+                    """
+                            view_status\trefresh_finished
+                            valid\ttrue
+                            """,
+                    "select view_status, last_refresh_start_timestamp <= last_refresh_finish_timestamp as refresh_finished " +
+                            "from materialized_views where view_name = 'price_1h'",
+                    null
             );
             // ...and no new WAL transaction was committed.
             assertSql(walTxnsBefore, walTxnsSql);
