@@ -6450,20 +6450,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      */
     private void housekeep(long wallClockMicros) {
         try {
-            // Drain async writer commands (e.g. storage policy parquet commit / drop local / squash)
-            // published while the writer was busy. The WAL apply loop holds the writer across many
-            // commits and never otherwise ticks the command queue, so without this such commands
-            // could sit unprocessed on hot WAL tables. Gated to WAL tables: a WAL table's structural
-            // ALTERs route through the sequencer, so the only commands that reach its async queue are
-            // non-structural storage-policy / replication commands. The contextAllowsAnyStructureChanges=false
-            // argument is therefore a safe default here (it is not the safety mechanism: ADD COLUMN
-            // ignores the flag, so it relies on no structural command reaching this queue, not on the
-            // flag rejecting one). Non-WAL writers are already drained by their ingestion tick() and on
-            // pool return, so draining them here with the flag off would prematurely reject async
-            // structural ALTERs that pool-return would otherwise apply.
-            if (tableToken.isWal()) {
-                processCommandQueue(false);
-            }
             squashSplitPartitions(minSplitPartitionTimestamp, txWriter.getMaxTimestamp(), configuration.getO3LastPartitionMaxSplits());
             processPartitionRemoveCandidates();
             metrics.tableWriterMetrics().incrementCommits();
@@ -8174,6 +8160,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     .$(", cursor=").$(cursor)
                     .I$();
             asyncWriterCommand = asyncWriterCommand.deserialize(cmd);
+            // A WAL table's structural ALTERs route through the sequencer, so only non-structural
+            // commands (e.g. storage policy) may reach its async command queue. Non-WAL tables
+            // can legitimately carry structural ALTERs here (published on writer contention),
+            // hence the WAL-only guard. The WAL apply job drains this queue via tick() after each
+            // batch, so a structural command slipping in would otherwise be applied out of band.
+            assert !tableToken.isWal() || !asyncWriterCommand.isStructural()
+                    : "structural command must not reach a WAL table's async command queue";
             affectedRowsCount = asyncWriterCommand.apply(this, contextAllowsAnyStructureChanges);
         } catch (TableReferenceOutOfDateException ex) {
             LOG.info()

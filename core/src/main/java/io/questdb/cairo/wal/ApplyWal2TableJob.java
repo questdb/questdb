@@ -516,6 +516,13 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                     if (!finishedAll || isTerminating) {
                         writer.commitSeqTxn();
                     }
+
+                    // The apply loop holds the writer across this batch of transactions and never
+                    // ticks the command queue itself. Once the batch is applied and its sequencer
+                    // txn finalized, drain async writer commands (e.g. storage policy parquet-commit
+                    // / drop-local / squash) published while the writer was busy, so they run here
+                    // rather than sitting unprocessed until the writer is returned to the pool.
+                    writer.tick();
                 } catch (EjectApplyWalException ex) {
                     finishedAll = false;
                 }

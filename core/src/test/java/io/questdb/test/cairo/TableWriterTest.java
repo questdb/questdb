@@ -1951,17 +1951,16 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testHousekeepDoesNotDrainAsyncCommandQueueOnNonWalCommit() throws Exception {
-        // The housekeep() command-queue drain is gated to WAL tables. A non-WAL writer is already
-        // drained by its ingestion tick() and on pool return (with structure changes allowed), so
-        // housekeep() must NOT drain the queue on a non-WAL commit -- otherwise an async structural
-        // ALTER published to a busy writer would be prematurely rejected at commit time instead of
-        // being applied when the writer becomes idle. This test asserts the command stays queued
+    public void testNonWalCommitDoesNotDrainAsyncCommandQueue() throws Exception {
+        // commit() must NOT drain the async command queue. A non-WAL writer is drained by its
+        // ingestion tick() and on pool return (with structure changes allowed); draining at commit
+        // time would prematurely reject an async structural ALTER published to a busy writer instead
+        // of applying it when the writer becomes idle. This test asserts the command stays queued
         // across a commit and is only applied by an explicit tick().
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tbl (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY");
             TableToken token = engine.verifyTableName("tbl");
-            // Guard the gate's premise: this test only proves anything if the table is non-WAL.
+            // A non-WAL table may legitimately carry a structural ALTER on its async queue.
             Assert.assertFalse(token.isWal());
 
             try (TableWriter writer = getWriter(token)) {
@@ -1976,8 +1975,8 @@ public class TableWriterTest extends AbstractCairoTest {
                 // The command is queued, not yet applied.
                 Assert.assertEquals(2, writer.getMetadata().getColumnCount());
 
-                // Commit some data. housekeep() runs on commit but, for a non-WAL table, must NOT
-                // drain the queue: the queued ADD COLUMN stays unapplied.
+                // Commit some data. commit() must NOT drain the queue: the queued ADD COLUMN
+                // stays unapplied.
                 TableWriter.Row row = writer.newRow(0L);
                 row.putInt(1, 42);
                 row.append();
@@ -1994,14 +1993,17 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testHousekeepDrainsAsyncCommandQueueOnWalApply() throws Exception {
-        // Regression test for the housekeep() command-queue drain on the WAL apply path.
-        // The WAL apply loop holds the writer across many commits and never ticks the command
-        // queue itself. A command published while the writer is busy (e.g. a storage policy
-        // command published to a writer held by a hot WAL apply loop) must be applied on the
-        // next WAL commit via housekeep(), rather than sitting unprocessed until the writer is
-        // finally returned to the pool. The apply runs on a writer this test holds, so the
-        // pool-return tick (which would also drain the queue) cannot mask the bug.
+    public void testWalApplyTickDrainsAsyncCommandQueue() throws Exception {
+        // Regression test for the async command-queue drain on the WAL apply path. The WAL apply
+        // loop holds the writer across a batch of transactions and never ticks the command queue
+        // itself; ApplyWal2TableJob ticks it once after the batch. A command published while the
+        // writer is busy (e.g. a storage policy command published to a writer held by a hot apply
+        // loop) must be applied by that tick, rather than sitting unprocessed until the writer is
+        // returned to the pool. This test holds the writer and replicates the apply job's
+        // commit-then-tick sequence, so the pool-return tick cannot mask the bug. A WAL table's
+        // structural ALTERs route through the sequencer and never reach its async queue (an
+        // assertion in processAsyncWriterCommand enforces this), so a non-structural SET PARAM
+        // command stands in for the storage policy commands that genuinely land there.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tbl (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("INSERT INTO tbl VALUES ('2022-02-24T00:00:00.000000Z', 1)");
@@ -2011,21 +2013,20 @@ public class TableWriterTest extends AbstractCairoTest {
             execute("INSERT INTO tbl VALUES ('2022-02-25T00:00:00.000000Z', 2)");
 
             TableToken token = engine.verifyTableName("tbl");
-            // Guard the gate's premise: the housekeep drain only runs for WAL tables.
             Assert.assertTrue(token.isWal());
             try (TableWriter writer = getWriter(token)) {
-                // Publish an ADD COLUMN command to the held writer's queue without ticking it,
-                // mimicking a command published while the apply loop owns the writer.
+                final int newMaxUncommittedRows = writer.getMetadata().getMaxUncommittedRows() + 12_345;
+                // Publish a non-structural SET PARAM command to the held writer's queue without
+                // ticking it, mimicking a command published while the apply loop owns the writer.
                 AlterOperationBuilder builder = new AlterOperationBuilder();
-                builder.ofAddColumn(0, token, token.getTableId())
-                        .ofAddColumn("y", 0, ColumnType.INT, 0, false, IndexType.NONE, 0);
+                builder.ofSetParamUncommittedRows(0, token, token.getTableId(), newMaxUncommittedRows);
                 AlterOperation alterOp = builder.build();
                 alterOp.withSecurityContext(AllowAllSecurityContext.INSTANCE);
                 writer.publishAsyncWriterCommand(alterOp);
-                Assert.assertEquals(2, writer.getMetadata().getColumnCount());
+                Assert.assertNotEquals(newMaxUncommittedRows, writer.getMetadata().getMaxUncommittedRows());
 
-                // Apply the pending WAL transaction on the held writer. commitWalInsertTransactions()
-                // runs housekeep(), which must drain the queued ADD COLUMN.
+                // Apply the pending WAL transaction on the held writer, then tick -- the same
+                // sequence ApplyWal2TableJob performs after its transaction-cursor loop.
                 final long seqTxn = writer.getAppliedSeqTxn() + 1;
                 try (TransactionLogCursor cursor = engine.getTableSequencerAPI().getCursor(token, writer.getAppliedSeqTxn())) {
                     writer.readWalTxnDetails(cursor);
@@ -2038,10 +2039,10 @@ public class TableWriterTest extends AbstractCairoTest {
                             .putAscii(WalUtils.WAL_NAME_BASE).put(walId).slash().put(segmentId);
                     writer.commitWalInsertTransactions(walPath, seqTxn, TableWriterPressureControl.EMPTY);
                 }
+                writer.tick();
 
-                // Without the housekeep drain the column would still be missing after the commit.
-                Assert.assertEquals(3, writer.getMetadata().getColumnCount());
-                Assert.assertTrue(writer.getColumnIndex("y") >= 0);
+                // The tick drained the queued SET PARAM command.
+                Assert.assertEquals(newMaxUncommittedRows, writer.getMetadata().getMaxUncommittedRows());
                 // The WAL transaction itself was applied.
                 Assert.assertEquals(seqTxn, writer.getAppliedSeqTxn());
             }
