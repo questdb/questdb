@@ -36,7 +36,7 @@ public class PgLocksFunctionFactoryTest extends AbstractCairoTest {
                 "pg_locks();",
                 null,
                 null,
-                false,
+                true,
                 true
         );
     }
@@ -48,7 +48,7 @@ public class PgLocksFunctionFactoryTest extends AbstractCairoTest {
                 "pg_catalog.pg_locks();",
                 null,
                 null,
-                false,
+                true,
                 true
         );
     }
