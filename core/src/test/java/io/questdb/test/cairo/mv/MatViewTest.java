@@ -4575,6 +4575,69 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNoOpIncrementalPeriodRefreshDoesNotCommitWal() throws Exception {
+        // A period mat view bypasses the "non-period view is up-to-date" early-out, so an
+        // incremental refresh that finds no new data and no newly complete period still reaches
+        // the no-rows commit path. It must not write a no-op replace-range WAL transaction when
+        // neither the base txn watermark nor the period hi advances - otherwise a base table apply
+        // backlog can make the refresh loop emit millions of such transactions.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table base_price (" +
+                            "sym varchar, price double, ts #TIMESTAMP" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            currentMicros = parseFloorPartialTimestamp("2000-01-01T00:00:00.000000Z");
+            execute(
+                    "create materialized view price_1h refresh immediate period (length 1d) as " +
+                            "select sym, last(price) as price, ts from base_price sample by 1d"
+            );
+            execute(
+                    "insert into base_price(sym, price, ts) values ('gbpusd', 1.320, '1999-12-31T09:01')" +
+                            ",('gbpusd', 1.321, '2000-01-01T13:02')"
+            );
+            drainWalQueue();
+
+            // First refresh: the 1999-12-31 period is complete, so the view refreshes and its
+            // watermark (base txn + period hi) advances.
+            currentMicros = parseFloorPartialTimestamp("2000-01-01T00:00:00.000000Z");
+            drainQueues();
+            assertQueryNoLeakCheck(
+                    replaceExpectedTimestamp(
+                            """
+                                    sym\tprice\tts
+                                    gbpusd\t1.32\t1999-12-31T00:00:00.000000Z
+                                    """),
+                    "price_1h order by sym"
+            );
+
+            // Snapshot the view's WAL transactions. We only look at sequencerTxn to stay
+            // independent of the randomized base table timestamp type and rows-per-query estimate.
+            final String walTxnsSql = "select sequencerTxn from wal_transactions('price_1h')";
+            printSql(walTxnsSql);
+            final String walTxnsBefore = sink.toString();
+
+            // No new base data and the second period (2000-01-01) hasn't completed yet, so this
+            // incremental refresh advances neither the base txn watermark nor the period hi.
+            currentMicros = parseFloorPartialTimestamp("2000-01-01T23:59:59.999999Z");
+            execute("refresh materialized view price_1h incremental");
+            drainQueues();
+
+            // The view data is unchanged...
+            assertQueryNoLeakCheck(
+                    replaceExpectedTimestamp(
+                            """
+                                    sym\tprice\tts
+                                    gbpusd\t1.32\t1999-12-31T00:00:00.000000Z
+                                    """),
+                    "price_1h order by sym"
+            );
+            // ...and, crucially, no new (no-op) WAL transaction was committed.
+            assertSql(walTxnsBefore, walTxnsSql);
+        });
+    }
+
+    @Test
     public void testPeriodMatViewSmoke() throws Exception {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp(

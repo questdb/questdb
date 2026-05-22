@@ -655,9 +655,13 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
 
         // If we don't have intervals to query, we may still need to bump base table txn or last period hi.
         if (intervalIterator == null) {
-            if (refreshContext.toBaseTxn != -1 || refreshContext.periodHi != Numbers.LONG_NULL) {
-                final long commitBaseTxn = refreshContext.toBaseTxn != -1 ? refreshContext.toBaseTxn : viewState.getLastRefreshBaseTxn();
-                final long commitPeriodHi = refreshContext.periodHi != Numbers.LONG_NULL ? refreshContext.periodHi : viewState.getLastPeriodHi();
+            final long commitBaseTxn = refreshContext.toBaseTxn != -1 ? refreshContext.toBaseTxn : viewState.getLastRefreshBaseTxn();
+            final long commitPeriodHi = refreshContext.periodHi != Numbers.LONG_NULL ? refreshContext.periodHi : viewState.getLastPeriodHi();
+            // Only commit when the watermark actually advances. Committing an unchanged watermark
+            // writes a no-op replace-range WAL transaction; when the base table apply lags, the
+            // self-re-enqueueing refresh loop can emit millions of these, flooding the view's WAL
+            // and stalling replicas that apply them.
+            if (commitBaseTxn > viewState.getLastRefreshBaseTxn() || commitPeriodHi > viewState.getLastPeriodHi()) {
                 refreshSuccessNoRows(
                         viewState,
                         walWriter,
