@@ -444,8 +444,10 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
                 return; // unreachable — sendFatalClose throws.
             }
 
+            int before = recvBufferLen;
             int remaining = recvBufferSize - recvBufferLen;
-            int read = socket.recv(recvBuffer + recvBufferLen, Math.min(forceRecvFragmentationChunkSize, remaining));
+            int recvLimit = Math.min(forceRecvFragmentationChunkSize, remaining);
+            int read = socket.recv(recvBuffer + recvBufferLen, recvLimit);
             if (read < 0) {
                 // Connection closed
                 LOG.info().$("WebSocket peer disconnected [fd=").$(context.getFd()).I$();
@@ -458,6 +460,14 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
             }
 
             recvBufferLen += read;
+            LOG.info().$("QWP_DIAG recv [fd=").$(context.getFd())
+                    .$(", before=").$(before)
+                    .$(", read=").$(read)
+                    .$(", after=").$(recvBufferLen)
+                    .$(", recvLimit=").$(recvLimit)
+                    .$(", forceChunk=").$(forceRecvFragmentationChunkSize)
+                    .$(", bufferSize=").$(recvBufferSize)
+                    .I$();
             LOG.debug()
                     .$("WebSocket recv [fd=").$(context.getFd())
                     .$(", bytes=").$(read)
@@ -465,11 +475,24 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
                     .I$();
 
             processWebSocketFrames(context, state, recvBuffer, recvBufferLen);
+            LOG.info().$("QWP_DIAG recv processed [fd=").$(context.getFd())
+                    .$(", offered=").$(recvBufferLen)
+                    .$(", buffered=").$(state.getRecvBufferLen())
+                    .$(", highestProcessed=").$(state.getHighestProcessedSequence())
+                    .$(", lastAcked=").$(state.getLastAckedSequence())
+                    .$(", pendingAck=").$(state.hasPendingAck())
+                    .$(", sendState=").$(state.getSendState())
+                    .I$();
 
             if (read == forceRecvFragmentationChunkSize) {
                 // Read was capped by the fragmentation chunk size — more data
                 // may be available. Schedule for re-read via the dispatcher,
                 // matching HttpConnectionContext.consumeChunked() behavior.
+                LOG.info().$("QWP_DIAG recv capped, parking for read [fd=").$(context.getFd())
+                        .$(", read=").$(read)
+                        .$(", forceChunk=").$(forceRecvFragmentationChunkSize)
+                        .$(", buffered=").$(state.getRecvBufferLen())
+                        .I$();
                 throw PeerIsSlowToWriteException.INSTANCE;
             }
 
@@ -513,68 +536,89 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
             return;
         }
 
-        switch (state.getSendState()) {
-            case QwpProcessorState.SEND_STATE_READY -> {
-            }
-            case QwpProcessorState.SEND_STATE_RESUME_ACK -> {
-                context.resumeResponseSend();
-                state.onResumeAckComplete();
-                LOG.debug().$("Resumed ACK sent successfully [fd=").$(context.getFd())
-                        .$(", upTo=").$(state.getLastAckedSequence()).I$();
-                if (state.hasPendingAck()) {
-                    trySendAck(context, state);
+        LOG.info().$("QWP_DIAG resumeSend enter [fd=").$(context.getFd())
+                .$(", sendState=").$(state.getSendState())
+                .$(", buffered=").$(state.getRecvBufferLen())
+                .$(", highestProcessed=").$(state.getHighestProcessedSequence())
+                .$(", lastAcked=").$(state.getLastAckedSequence())
+                .$(", pendingAck=").$(state.hasPendingAck())
+                .$(", deferredErrSeq=").$(state.getDeferredErrorSequence())
+                .$(", deferredErrStatus=").$(state.getDeferredErrorStatus())
+                .I$();
+        try {
+            switch (state.getSendState()) {
+                case QwpProcessorState.SEND_STATE_READY -> {
                 }
-                if (state.isDurableAckEnabled()) {
+                case QwpProcessorState.SEND_STATE_RESUME_ACK -> {
+                    context.resumeResponseSend();
+                    state.onResumeAckComplete();
+                    LOG.debug().$("Resumed ACK sent successfully [fd=").$(context.getFd())
+                            .$(", upTo=").$(state.getLastAckedSequence()).I$();
+                    if (state.hasPendingAck()) {
+                        trySendAck(context, state);
+                    }
+                    if (state.isDurableAckEnabled()) {
+                        trySendDurableAck(context, state);
+                    }
+                }
+                case QwpProcessorState.SEND_STATE_RESUME_DURABLE_ACK -> {
+                    context.resumeResponseSend();
+                    state.onResumeDurableAckComplete();
+                    LOG.debug().$("Resumed durable ACK sent successfully [fd=").$(context.getFd()).I$();
                     trySendDurableAck(context, state);
                 }
+                case QwpProcessorState.SEND_STATE_RESUME_ERROR -> {
+                    context.resumeResponseSend();
+                    LOG.debug().$("Resumed error response sent successfully [fd=").$(context.getFd()).I$();
+                    state.onResumeErrorComplete();
+                }
+                case QwpProcessorState.SEND_STATE_RESUME_ACK_THEN_ERROR -> {
+                    context.resumeResponseSend();
+                    state.onResumeAckComplete();
+                    LOG.debug().$("Resumed ACK sent successfully [fd=").$(context.getFd())
+                            .$(", upTo=").$(state.getLastAckedSequence()).I$();
+                    sendDeferredErrorResponse(context, state);
+                }
+                case QwpProcessorState.SEND_STATE_RESUME_DURABLE_ACK_THEN_ERROR -> {
+                    context.resumeResponseSend();
+                    state.onResumeDurableAckComplete();
+                    LOG.debug().$("Resumed durable ACK sent successfully [fd=").$(context.getFd()).I$();
+                    sendDeferredErrorResponse(context, state);
+                }
+                case QwpProcessorState.SEND_STATE_RESUME_ACK_THEN_CLOSE -> {
+                    context.resumeResponseSend();
+                    state.onResumeAckComplete();
+                    LOG.debug().$("Resumed ACK sent before fatal close [fd=").$(context.getFd())
+                            .$(", upTo=").$(state.getLastAckedSequence()).I$();
+                    sendDeferredFatalClose(context, state);
+                }
+                case QwpProcessorState.SEND_STATE_RESUME_DURABLE_ACK_THEN_CLOSE -> {
+                    context.resumeResponseSend();
+                    state.onResumeDurableAckComplete();
+                    LOG.debug().$("Resumed durable ACK sent before fatal close [fd=").$(context.getFd()).I$();
+                    sendDeferredFatalClose(context, state);
+                }
+                case QwpProcessorState.SEND_STATE_RESUME_CLOSE -> {
+                    context.resumeResponseSend();
+                    LOG.debug().$("Resumed CLOSE frame sent [fd=").$(context.getFd()).I$();
+                    gracefulCloseAndDisconnect(context);
+                }
+                default -> {
+                    LOG.critical().$("Invalid WebSocket send state [fd=").$(context.getFd())
+                            .$(", state=").$(state.getSendState()).I$();
+                    throw ServerDisconnectException.INSTANCE;
+                }
             }
-            case QwpProcessorState.SEND_STATE_RESUME_DURABLE_ACK -> {
-                context.resumeResponseSend();
-                state.onResumeDurableAckComplete();
-                LOG.debug().$("Resumed durable ACK sent successfully [fd=").$(context.getFd()).I$();
-                trySendDurableAck(context, state);
-            }
-            case QwpProcessorState.SEND_STATE_RESUME_ERROR -> {
-                context.resumeResponseSend();
-                LOG.debug().$("Resumed error response sent successfully [fd=").$(context.getFd()).I$();
-                state.onResumeErrorComplete();
-            }
-            case QwpProcessorState.SEND_STATE_RESUME_ACK_THEN_ERROR -> {
-                context.resumeResponseSend();
-                state.onResumeAckComplete();
-                LOG.debug().$("Resumed ACK sent successfully [fd=").$(context.getFd())
-                        .$(", upTo=").$(state.getLastAckedSequence()).I$();
-                sendDeferredErrorResponse(context, state);
-            }
-            case QwpProcessorState.SEND_STATE_RESUME_DURABLE_ACK_THEN_ERROR -> {
-                context.resumeResponseSend();
-                state.onResumeDurableAckComplete();
-                LOG.debug().$("Resumed durable ACK sent successfully [fd=").$(context.getFd()).I$();
-                sendDeferredErrorResponse(context, state);
-            }
-            case QwpProcessorState.SEND_STATE_RESUME_ACK_THEN_CLOSE -> {
-                context.resumeResponseSend();
-                state.onResumeAckComplete();
-                LOG.debug().$("Resumed ACK sent before fatal close [fd=").$(context.getFd())
-                        .$(", upTo=").$(state.getLastAckedSequence()).I$();
-                sendDeferredFatalClose(context, state);
-            }
-            case QwpProcessorState.SEND_STATE_RESUME_DURABLE_ACK_THEN_CLOSE -> {
-                context.resumeResponseSend();
-                state.onResumeDurableAckComplete();
-                LOG.debug().$("Resumed durable ACK sent before fatal close [fd=").$(context.getFd()).I$();
-                sendDeferredFatalClose(context, state);
-            }
-            case QwpProcessorState.SEND_STATE_RESUME_CLOSE -> {
-                context.resumeResponseSend();
-                LOG.debug().$("Resumed CLOSE frame sent [fd=").$(context.getFd()).I$();
-                gracefulCloseAndDisconnect(context);
-            }
-            default -> {
-                LOG.critical().$("Invalid WebSocket send state [fd=").$(context.getFd())
-                        .$(", state=").$(state.getSendState()).I$();
-                throw ServerDisconnectException.INSTANCE;
-            }
+        } finally {
+            LOG.info().$("QWP_DIAG resumeSend exit [fd=").$(context.getFd())
+                    .$(", sendState=").$(state.getSendState())
+                    .$(", buffered=").$(state.getRecvBufferLen())
+                    .$(", highestProcessed=").$(state.getHighestProcessedSequence())
+                    .$(", lastAcked=").$(state.getLastAckedSequence())
+                    .$(", pendingAck=").$(state.hasPendingAck())
+                    .$(", deferredErrSeq=").$(state.getDeferredErrorSequence())
+                    .$(", deferredErrStatus=").$(state.getDeferredErrorStatus())
+                    .I$();
         }
     }
 
@@ -693,6 +737,12 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
     private void handleBinaryMessage(HttpConnectionContext context, QwpProcessorState state, long payload, int length)
             throws PeerDisconnectedException, PeerIsSlowToReadException {
         long seq = state.nextMessageSequence();
+        LOG.info().$("QWP_DIAG binary begin [fd=").$(context.getFd())
+                .$(", seq=").$(seq)
+                .$(", len=").$(length)
+                .$(", highestProcessed=").$(state.getHighestProcessedSequence())
+                .$(", lastAcked=").$(state.getLastAckedSequence())
+                .I$();
         LOG.debug().$("WebSocket binary message [fd=").$(context.getFd())
                 .$(", len=").$(length)
                 .$(", seq=").$(seq).I$();
@@ -763,6 +813,14 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
             }
             sendErrorResponse(context, state, seq, responseStatus, errorMessage);
         }
+        LOG.info().$("QWP_DIAG binary done [fd=").$(context.getFd())
+                .$(", seq=").$(seq)
+                .$(", status=").$(responseStatus)
+                .$(", highestProcessed=").$(state.getHighestProcessedSequence())
+                .$(", lastAcked=").$(state.getLastAckedSequence())
+                .$(", pendingAck=").$(state.hasPendingAck())
+                .$(", sendState=").$(state.getSendState())
+                .I$();
     }
 
     private void handleClose(HttpConnectionContext context, QwpProcessorState state, long payload, int length)
@@ -996,6 +1054,16 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
                 Unsafe.copyMemory(pos, buffer, remaining);
             }
             state.setRecvBufferLen(remaining);
+            LOG.info().$("QWP_DIAG frame loop exit [fd=").$(context.getFd())
+                    .$(", offered=").$(bufferLen)
+                    .$(", consumed=").$(pos - buffer)
+                    .$(", remaining=").$(remaining)
+                    .$(", parserState=").$(frameParser.getState())
+                    .$(", highestProcessed=").$(state.getHighestProcessedSequence())
+                    .$(", lastAcked=").$(state.getLastAckedSequence())
+                    .$(", pendingAck=").$(state.hasPendingAck())
+                    .$(", sendState=").$(state.getSendState())
+                    .I$();
         }
 
     }
@@ -1088,9 +1156,16 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
         if (!state.isSendReady()) {
             state.onErrorBlocked(status, sequence, errorMessage);
+            LOG.info().$("QWP_DIAG error deferred [fd=").$(context.getFd())
+                    .$(", seq=").$(sequence)
+                    .$(", status=").$(status)
+                    .$(", sendState=").$(state.getSendState())
+                    .$(", buffered=").$(state.getRecvBufferLen())
+                    .I$();
             throw PeerIsSlowToReadException.INSTANCE;
         }
 
+        int frameSize = -1;
         try {
             HttpRawSocket rawSocket = context.getRawResponseSocket();
             long bufferAddr = rawSocket.getBufferAddress();
@@ -1100,7 +1175,7 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
             int msgLen = errorMessage != null ? Utf8s.utf8Bytes(errorMessage, 1024) : 0;
             int payloadLen = 9 + 2 + msgLen; // status + seq + len + msg
 
-            int frameSize = WebSocketFrameWriter.headerSize(payloadLen, false) + payloadLen;
+            frameSize = WebSocketFrameWriter.headerSize(payloadLen, false) + payloadLen;
 
             if (frameSize <= bufferSize) {
                 int offset = WebSocketFrameWriter.writeBinaryFrameHeader(bufferAddr, payloadLen);
@@ -1123,8 +1198,22 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
                 }
                 offset += msgLen;
 
+                LOG.info().$("QWP_DIAG error send attempt [fd=").$(context.getFd())
+                        .$(", seq=").$(sequence)
+                        .$(", status=").$(status)
+                        .$(", frameSize=").$(offset)
+                        .$(", bufferSize=").$(bufferSize)
+                        .$(", sendState=").$(state.getSendState())
+                        .$(", buffered=").$(state.getRecvBufferLen())
+                        .I$();
                 rawSocket.send(offset);
                 state.onErrorSent();
+                LOG.info().$("QWP_DIAG error sent [fd=").$(context.getFd())
+                        .$(", seq=").$(sequence)
+                        .$(", status=").$(status)
+                        .$(", frameSize=").$(offset)
+                        .$(", sendState=").$(state.getSendState())
+                        .I$();
                 LOG.debug().$("Sent error response [fd=").$(context.getFd())
                         .$(", seq=").$(sequence)
                         .$(", status=").$(status).I$();
@@ -1136,6 +1225,13 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
             }
         } catch (PeerIsSlowToReadException e) {
             state.onErrorBlocked(status, sequence, errorMessage);
+            LOG.info().$("QWP_DIAG error blocked [fd=").$(context.getFd())
+                    .$(", seq=").$(sequence)
+                    .$(", status=").$(status)
+                    .$(", frameSize=").$(frameSize)
+                    .$(", sendState=").$(state.getSendState())
+                    .$(", buffered=").$(state.getRecvBufferLen())
+                    .I$();
             LOG.debug().$("Failed to send error response [fd=").$(context.getFd())
                     .$(", seq=").$(sequence).I$();
             throw e;
@@ -1248,10 +1344,22 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
         try {
             rawSocket.send(headerLen + payloadLen);
             state.onAckSent(sequence);
+            LOG.info().$("QWP_DIAG ack sent [fd=").$(context.getFd())
+                    .$(", upTo=").$(sequence)
+                    .$(", frameSize=").$(headerLen + payloadLen)
+                    .$(", highestProcessed=").$(state.getHighestProcessedSequence())
+                    .$(", lastAcked=").$(state.getLastAckedSequence())
+                    .$(", pendingAck=").$(state.hasPendingAck())
+                    .I$();
             LOG.debug().$("Sent cumulative ACK [fd=").$(context.getFd()).$(", upTo=").$(sequence).I$();
         } catch (PeerIsSlowToReadException e) {
             // OS buffer full - transition to SENDING state
             state.onAckBlocked(sequence);
+            LOG.info().$("QWP_DIAG ack blocked [fd=").$(context.getFd())
+                    .$(", upTo=").$(sequence)
+                    .$(", frameSize=").$(headerLen + payloadLen)
+                    .$(", sendState=").$(state.getSendState())
+                    .I$();
             LOG.debug().$("ACK blocked, transitioning to SENDING [fd=").$(context.getFd())
                     .$(", seq=").$(sequence).I$();
             throw e;
