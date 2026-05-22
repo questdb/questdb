@@ -34,8 +34,6 @@ import io.questdb.cairo.lv.LiveViewSnapshotKeyCodec;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapFactory;
 import io.questdb.cairo.map.MapKey;
-import io.questdb.cairo.map.MapRecord;
-import io.questdb.cairo.map.MapRecordCursor;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
@@ -680,40 +678,6 @@ public class CountFunctionFactoryHelper {
         }
 
         @Override
-        public void restore(MemoryR source, int formatVersion) {
-            map.clear();
-            memory.truncate();
-            freeList.clear();
-            tombstoneCount = 0;
-            long srcOffset = 0;
-            final long partitionCount = source.getLong(srcOffset);
-            srcOffset += Long.BYTES;
-            for (long p = 0; p < partitionCount; p++) {
-                MapKey key = map.withKey();
-                srcOffset = LiveViewSnapshotKeyCodec.readKey(key, source, srcOffset, keyColumnTypes);
-                MapValue value = key.createValue();
-                final long frameSize = source.getLong(srcOffset);
-                srcOffset += Long.BYTES;
-                final long size = source.getLong(srcOffset);
-                srcOffset += Long.BYTES;
-                final long capacity = Math.max(size, initialBufferSize);
-                final long newStartOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
-                for (long i = 0; i < size; i++) {
-                    memory.putLong(newStartOffset + i * RECORD_SIZE, source.getLong(srcOffset));
-                    srcOffset += Long.BYTES;
-                }
-                value.putLong(0, frameSize);
-                value.putLong(1, newStartOffset);
-                value.putLong(2, size);
-                value.putLong(3, capacity);
-                value.putLong(4, 0L);
-                if (tombstoneValueIndex >= 0) {
-                    value.putByte(tombstoneValueIndex, (byte) 0);
-                }
-            }
-        }
-
-        @Override
         public long restorePartitionState(MemoryR source, long offset, MapValue value, int formatVersion) {
             final long frameSize = source.getLong(offset);
             offset += Long.BYTES;
@@ -734,47 +698,6 @@ public class CountFunctionFactoryHelper {
                 value.putByte(tombstoneValueIndex, (byte) 0);
             }
             return offset;
-        }
-
-        @Override
-        public void snapshot(MemoryA sink) {
-            MapRecordCursor cursor = map.getCursor();
-            MapRecord record = map.getRecord();
-            final long liveCount;
-            if (tombstoneValueIndex < 0 || tombstoneCount == 0) {
-                liveCount = map.size();
-            } else {
-                long count = 0;
-                while (cursor.hasNext()) {
-                    if (record.getValue().getByte(tombstoneValueIndex) != 1) {
-                        count++;
-                    }
-                }
-                liveCount = count;
-            }
-            sink.putLong(liveCount);
-
-            cursor.toTop();
-            final int keyStartIndex = mapValueTypes != null
-                    ? mapValueTypes.getColumnCount()
-                    : COUNT_OVER_PARTITION_RANGE_COLUMN_TYPES.getColumnCount();
-            while (cursor.hasNext()) {
-                final MapValue value = record.getValue();
-                if (tombstoneValueIndex >= 0 && value.getByte(tombstoneValueIndex) == 1) {
-                    continue;
-                }
-                LiveViewSnapshotKeyCodec.writeKey(sink, record, keyColumnTypes, keyStartIndex);
-                sink.putLong(value.getLong(0));
-                final long startOffset = value.getLong(1);
-                final long size = value.getLong(2);
-                final long capacity = value.getLong(3);
-                final long firstIdx = value.getLong(4);
-                sink.putLong(size);
-                for (long i = 0; i < size; i++) {
-                    final long idx = (firstIdx + i) % capacity;
-                    sink.putLong(memory.getLong(startOffset + idx * RECORD_SIZE));
-                }
-            }
         }
 
         @Override
@@ -1069,37 +992,6 @@ public class CountFunctionFactoryHelper {
         }
 
         @Override
-        public void restore(MemoryR source, int formatVersion) {
-            map.clear();
-            memory.truncate();
-            freeList.clear();
-            tombstoneCount = 0;
-            long srcOffset = 0;
-            final long partitionCount = source.getLong(srcOffset);
-            srcOffset += Long.BYTES;
-            for (long p = 0; p < partitionCount; p++) {
-                MapKey key = map.withKey();
-                srcOffset = LiveViewSnapshotKeyCodec.readKey(key, source, srcOffset, keyColumnTypes);
-                MapValue value = key.createValue();
-                final long partitionCountVal = source.getLong(srcOffset);
-                srcOffset += Long.BYTES;
-                final long loIdx = source.getLong(srcOffset);
-                srcOffset += Long.BYTES;
-                final long newStartOffset = memory.appendAddressFor(bufferSize) - memory.getPageAddress(0);
-                for (int i = 0; i < bufferSize; i++) {
-                    memory.putBool(newStartOffset + i, source.getBool(srcOffset));
-                    srcOffset += 1;
-                }
-                value.putLong(0, partitionCountVal);
-                value.putLong(1, loIdx);
-                value.putLong(2, newStartOffset);
-                if (tombstoneValueIndex >= 0) {
-                    value.putByte(tombstoneValueIndex, (byte) 0);
-                }
-            }
-        }
-
-        @Override
         public long restorePartitionState(MemoryR source, long offset, MapValue value, int formatVersion) {
             final long partitionCountVal = source.getLong(offset);
             offset += Long.BYTES;
@@ -1117,43 +1009,6 @@ public class CountFunctionFactoryHelper {
                 value.putByte(tombstoneValueIndex, (byte) 0);
             }
             return offset;
-        }
-
-        @Override
-        public void snapshot(MemoryA sink) {
-            MapRecordCursor cursor = map.getCursor();
-            MapRecord record = map.getRecord();
-            final long liveCount;
-            if (tombstoneValueIndex < 0 || tombstoneCount == 0) {
-                liveCount = map.size();
-            } else {
-                long count = 0;
-                while (cursor.hasNext()) {
-                    if (record.getValue().getByte(tombstoneValueIndex) != 1) {
-                        count++;
-                    }
-                }
-                liveCount = count;
-            }
-            sink.putLong(liveCount);
-
-            cursor.toTop();
-            final int keyStartIndex = mapValueTypes != null
-                    ? mapValueTypes.getColumnCount()
-                    : COUNT_OVER_PARTITION_ROWS_COLUMN_TYPES.getColumnCount();
-            while (cursor.hasNext()) {
-                final MapValue value = record.getValue();
-                if (tombstoneValueIndex >= 0 && value.getByte(tombstoneValueIndex) == 1) {
-                    continue;
-                }
-                LiveViewSnapshotKeyCodec.writeKey(sink, record, keyColumnTypes, keyStartIndex);
-                sink.putLong(value.getLong(0));
-                sink.putLong(value.getLong(1));
-                final long startOffset = value.getLong(2);
-                for (int i = 0; i < bufferSize; i++) {
-                    sink.putBool(memory.getBool(startOffset + i));
-                }
-            }
         }
 
         @Override
@@ -1704,25 +1559,6 @@ public class CountFunctionFactoryHelper {
         }
 
         @Override
-        public void restore(MemoryR source, int formatVersion) {
-            map.clear();
-            tombstoneCount = 0;
-            long offset = 0;
-            final long partitionCount = source.getLong(offset);
-            offset += Long.BYTES;
-            for (long p = 0; p < partitionCount; p++) {
-                MapKey key = map.withKey();
-                offset = LiveViewSnapshotKeyCodec.readKey(key, source, offset, keyColumnTypes);
-                MapValue value = key.createValue();
-                value.putLong(0, source.getLong(offset));
-                offset += Long.BYTES;
-                if (tombstoneValueIndex >= 0) {
-                    value.putByte(tombstoneValueIndex, (byte) 0);
-                }
-            }
-        }
-
-        @Override
         public long restorePartitionState(MemoryR source, long offset, MapValue value, int formatVersion) {
             value.putLong(0, source.getLong(offset));
             offset += Long.BYTES;
@@ -1730,42 +1566,6 @@ public class CountFunctionFactoryHelper {
                 value.putByte(tombstoneValueIndex, (byte) 0);
             }
             return offset;
-        }
-
-        @Override
-        public void snapshot(MemoryA sink) {
-            // Two-pass walk: count non-tombstoned partitions, then emit each.
-            MapRecordCursor cursor = map.getCursor();
-            MapRecord record = map.getRecord();
-            final long liveCount;
-            if (tombstoneValueIndex < 0 || tombstoneCount == 0) {
-                liveCount = map.size();
-            } else {
-                long count = 0;
-                while (cursor.hasNext()) {
-                    if (record.getValue().getByte(tombstoneValueIndex) != 1) {
-                        count++;
-                    }
-                }
-                liveCount = count;
-            }
-            sink.putLong(liveCount);
-
-            cursor.toTop();
-            // count has a single LONG value slot in the non-LV layout, two slots
-            // (LONG count + BYTE tombstone) in the LV layout. The key sits at
-            // record index after the value slots.
-            final int keyStartIndex = mapValueTypes != null
-                    ? mapValueTypes.getColumnCount()
-                    : COUNT_COLUMN_TYPES.getColumnCount();
-            while (cursor.hasNext()) {
-                final MapValue value = record.getValue();
-                if (tombstoneValueIndex >= 0 && value.getByte(tombstoneValueIndex) == 1) {
-                    continue;
-                }
-                LiveViewSnapshotKeyCodec.writeKey(sink, record, keyColumnTypes, keyStartIndex);
-                sink.putLong(value.getLong(0));
-            }
         }
 
         @Override

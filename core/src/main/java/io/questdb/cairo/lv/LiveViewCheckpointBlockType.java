@@ -58,8 +58,8 @@ public final class LiveViewCheckpointBlockType {
      * One per window function in the live view's compiled SELECT. Payload
      * carries {@code windowName} (which named WINDOW the function belongs to),
      * the fully-qualified factory name (for dispatch on restore), and the
-     * length-prefixed function-private state bytes produced by
-     * {@link io.questdb.griffin.engine.window.WindowFunction#snapshot}.
+     * key-shape header plus per-partition state produced by
+     * {@link LiveViewFunctionSnapshot#write}.
      */
     public static final int BLOCK_FUNCTION_SNAPSHOT = 3;
 

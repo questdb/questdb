@@ -34,8 +34,6 @@ import io.questdb.cairo.lv.LiveViewSnapshotKeyCodec;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapFactory;
 import io.questdb.cairo.map.MapKey;
-import io.questdb.cairo.map.MapRecord;
-import io.questdb.cairo.map.MapRecordCursor;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
@@ -1076,75 +1074,6 @@ public class MaxTimestampWindowFunctionFactory extends AbstractWindowFunctionFac
         }
 
         @Override
-        public void restore(MemoryR source, int formatVersion) {
-            map.clear();
-            memory.truncate();
-            freeList.clear();
-            if (dequeMemory != null) {
-                dequeMemory.truncate();
-            }
-            dequeFreeList.clear();
-            tombstoneCount = 0;
-            long srcOffset = 0;
-            final long partitionCount = source.getLong(srcOffset);
-            srcOffset += Long.BYTES;
-            for (long p = 0; p < partitionCount; p++) {
-                MapKey key = map.withKey();
-                srcOffset = LiveViewSnapshotKeyCodec.readKey(key, source, srcOffset, keyColumnTypes);
-                MapValue value = key.createValue();
-                final long frameSize = source.getLong(srcOffset);
-                srcOffset += Long.BYTES;
-                final long size = source.getLong(srcOffset);
-                srcOffset += Long.BYTES;
-                final long capacity = Math.max(size, initialBufferSize);
-                final long newStartOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
-                if (frameLoBounded) {
-                    final long dequeSize = source.getLong(srcOffset);
-                    srcOffset += Long.BYTES;
-                    for (long i = 0; i < size; i++) {
-                        memory.putLong(newStartOffset + i * RECORD_SIZE, source.getLong(srcOffset));
-                        srcOffset += Long.BYTES;
-                        memory.putLong(newStartOffset + i * RECORD_SIZE + Long.BYTES, source.getLong(srcOffset));
-                        srcOffset += Long.BYTES;
-                    }
-                    final long dequeCapacity = Math.max(dequeSize, dequeInitialBufferSize);
-                    final long newDequeStartOffset = dequeMemory.appendAddressFor(dequeCapacity * DEQUE_RECORD_SIZE) - dequeMemory.getPageAddress(0);
-                    for (long i = 0; i < dequeSize; i++) {
-                        dequeMemory.putLong(newDequeStartOffset + i * DEQUE_RECORD_SIZE, source.getLong(srcOffset));
-                        srcOffset += Long.BYTES;
-                    }
-                    value.putLong(0, frameSize);
-                    value.putLong(1, newStartOffset);
-                    value.putLong(2, size);
-                    value.putLong(3, capacity);
-                    value.putLong(4, 0L);
-                    value.putLong(5, newDequeStartOffset);
-                    value.putLong(6, dequeCapacity);
-                    value.putLong(7, 0L);
-                    value.putLong(8, dequeSize);
-                } else {
-                    final long maxMinVal = source.getLong(srcOffset);
-                    srcOffset += Long.BYTES;
-                    for (long i = 0; i < size; i++) {
-                        memory.putLong(newStartOffset + i * RECORD_SIZE, source.getLong(srcOffset));
-                        srcOffset += Long.BYTES;
-                        memory.putLong(newStartOffset + i * RECORD_SIZE + Long.BYTES, source.getLong(srcOffset));
-                        srcOffset += Long.BYTES;
-                    }
-                    value.putLong(0, frameSize);
-                    value.putLong(1, newStartOffset);
-                    value.putLong(2, size);
-                    value.putLong(3, capacity);
-                    value.putLong(4, 0L);
-                    value.putTimestamp(5, maxMinVal);
-                }
-                if (tombstoneValueIndex >= 0) {
-                    value.putByte(tombstoneValueIndex, (byte) 0);
-                }
-            }
-        }
-
-        @Override
         public long restorePartitionState(MemoryR source, long offset, MapValue value, int formatVersion) {
             final long frameSize = source.getLong(offset);
             offset += Long.BYTES;
@@ -1196,70 +1125,6 @@ public class MaxTimestampWindowFunctionFactory extends AbstractWindowFunctionFac
                 value.putByte(tombstoneValueIndex, (byte) 0);
             }
             return offset;
-        }
-
-        @Override
-        public void snapshot(MemoryA sink) {
-            MapRecordCursor cursor = map.getCursor();
-            MapRecord record = map.getRecord();
-            final long liveCount;
-            if (tombstoneValueIndex < 0 || tombstoneCount == 0) {
-                liveCount = map.size();
-            } else {
-                long count = 0;
-                while (cursor.hasNext()) {
-                    if (record.getValue().getByte(tombstoneValueIndex) != 1) {
-                        count++;
-                    }
-                }
-                liveCount = count;
-            }
-            sink.putLong(liveCount);
-
-            cursor.toTop();
-            final ArrayColumnTypes baseTypes = frameLoBounded
-                    ? MAX_OVER_PARTITION_RANGE_BOUNDED_COLUMN_TYPES
-                    : MAX_OVER_PARTITION_RANGE_COLUMN_TYPES;
-            final int keyStartIndex = mapValueTypes != null
-                    ? mapValueTypes.getColumnCount()
-                    : baseTypes.getColumnCount();
-            while (cursor.hasNext()) {
-                final MapValue value = record.getValue();
-                if (tombstoneValueIndex >= 0 && value.getByte(tombstoneValueIndex) == 1) {
-                    continue;
-                }
-                LiveViewSnapshotKeyCodec.writeKey(sink, record, keyColumnTypes, keyStartIndex);
-                sink.putLong(value.getLong(0));
-                final long startOffset = value.getLong(1);
-                final long size = value.getLong(2);
-                final long capacity = value.getLong(3);
-                final long firstIdx = value.getLong(4);
-                sink.putLong(size);
-                if (frameLoBounded) {
-                    final long dequeStartOffset = value.getLong(5);
-                    final long dequeCapacity = value.getLong(6);
-                    final long dequeStartIndex = value.getLong(7);
-                    final long dequeEndIndex = value.getLong(8);
-                    final long dequeSize = dequeEndIndex - dequeStartIndex;
-                    sink.putLong(dequeSize);
-                    for (long i = 0; i < size; i++) {
-                        final long idx = (firstIdx + i) % capacity;
-                        sink.putLong(memory.getLong(startOffset + idx * RECORD_SIZE));
-                        sink.putLong(memory.getLong(startOffset + idx * RECORD_SIZE + Long.BYTES));
-                    }
-                    for (long i = 0; i < dequeSize; i++) {
-                        final long idx = (dequeStartIndex + i) % dequeCapacity;
-                        sink.putLong(dequeMemory.getLong(dequeStartOffset + idx * DEQUE_RECORD_SIZE));
-                    }
-                } else {
-                    sink.putLong(value.getTimestamp(5));
-                    for (long i = 0; i < size; i++) {
-                        final long idx = (firstIdx + i) % capacity;
-                        sink.putLong(memory.getLong(startOffset + idx * RECORD_SIZE));
-                        sink.putLong(memory.getLong(startOffset + idx * RECORD_SIZE + Long.BYTES));
-                    }
-                }
-            }
         }
 
         @Override
@@ -1698,64 +1563,6 @@ public class MaxTimestampWindowFunctionFactory extends AbstractWindowFunctionFac
         }
 
         @Override
-        public void restore(MemoryR source, int formatVersion) {
-            map.clear();
-            memory.truncate();
-            if (dequeMemory != null) {
-                dequeMemory.truncate();
-            }
-            freeList.clear();
-            dequeFreeList.clear();
-            tombstoneCount = 0;
-            long srcOffset = 0;
-            final long partitionCount = source.getLong(srcOffset);
-            srcOffset += Long.BYTES;
-            final long ringBytes = (long) bufferSize * Long.BYTES;
-            final long dequeBytes = (long) dequeBufferSize * Long.BYTES;
-            for (long p = 0; p < partitionCount; p++) {
-                MapKey key = map.withKey();
-                srcOffset = LiveViewSnapshotKeyCodec.readKey(key, source, srcOffset, keyColumnTypes);
-                MapValue value = key.createValue();
-                final long loIdx = source.getLong(srcOffset);
-                srcOffset += Long.BYTES;
-                final long newStartOffset = memory.appendAddressFor(ringBytes) - memory.getPageAddress(0);
-                if (frameLoBounded) {
-                    final long dequeStartIndex = source.getLong(srcOffset);
-                    srcOffset += Long.BYTES;
-                    final long dequeEndIndex = source.getLong(srcOffset);
-                    srcOffset += Long.BYTES;
-                    for (int i = 0; i < bufferSize; i++) {
-                        memory.putLong(newStartOffset + (long) i * Long.BYTES, source.getLong(srcOffset));
-                        srcOffset += Long.BYTES;
-                    }
-                    final long newDequeStartOffset = dequeMemory.appendAddressFor(dequeBytes) - dequeMemory.getPageAddress(0);
-                    for (int i = 0; i < dequeBufferSize; i++) {
-                        dequeMemory.putLong(newDequeStartOffset + (long) i * Long.BYTES, source.getLong(srcOffset));
-                        srcOffset += Long.BYTES;
-                    }
-                    value.putLong(0, loIdx);
-                    value.putLong(1, newStartOffset);
-                    value.putLong(2, newDequeStartOffset);
-                    value.putLong(3, dequeStartIndex);
-                    value.putLong(4, dequeEndIndex);
-                } else {
-                    final long maxMinVal = source.getLong(srcOffset);
-                    srcOffset += Long.BYTES;
-                    for (int i = 0; i < bufferSize; i++) {
-                        memory.putLong(newStartOffset + (long) i * Long.BYTES, source.getLong(srcOffset));
-                        srcOffset += Long.BYTES;
-                    }
-                    value.putLong(0, loIdx);
-                    value.putLong(1, newStartOffset);
-                    value.putTimestamp(2, maxMinVal);
-                }
-                if (tombstoneValueIndex >= 0) {
-                    value.putByte(tombstoneValueIndex, (byte) 0);
-                }
-            }
-        }
-
-        @Override
         public long restorePartitionState(MemoryR source, long offset, MapValue value, int formatVersion) {
             final long ringBytes = (long) bufferSize * Long.BYTES;
             final long dequeBytes = (long) dequeBufferSize * Long.BYTES;
@@ -1796,58 +1603,6 @@ public class MaxTimestampWindowFunctionFactory extends AbstractWindowFunctionFac
                 value.putByte(tombstoneValueIndex, (byte) 0);
             }
             return offset;
-        }
-
-        @Override
-        public void snapshot(MemoryA sink) {
-            MapRecordCursor cursor = map.getCursor();
-            MapRecord record = map.getRecord();
-            final long liveCount;
-            if (tombstoneValueIndex < 0 || tombstoneCount == 0) {
-                liveCount = map.size();
-            } else {
-                long count = 0;
-                while (cursor.hasNext()) {
-                    if (record.getValue().getByte(tombstoneValueIndex) != 1) {
-                        count++;
-                    }
-                }
-                liveCount = count;
-            }
-            sink.putLong(liveCount);
-
-            cursor.toTop();
-            final ArrayColumnTypes baseTypes = frameLoBounded
-                    ? MAX_OVER_PARTITION_ROWS_BOUNDED_COLUMN_TYPES
-                    : MAX_OVER_PARTITION_ROWS_COLUMN_TYPES;
-            final int keyStartIndex = mapValueTypes != null
-                    ? mapValueTypes.getColumnCount()
-                    : baseTypes.getColumnCount();
-            while (cursor.hasNext()) {
-                final MapValue value = record.getValue();
-                if (tombstoneValueIndex >= 0 && value.getByte(tombstoneValueIndex) == 1) {
-                    continue;
-                }
-                LiveViewSnapshotKeyCodec.writeKey(sink, record, keyColumnTypes, keyStartIndex);
-                sink.putLong(value.getLong(0));
-                final long startOffset = value.getLong(1);
-                if (frameLoBounded) {
-                    sink.putLong(value.getLong(3));
-                    sink.putLong(value.getLong(4));
-                    for (int i = 0; i < bufferSize; i++) {
-                        sink.putLong(memory.getLong(startOffset + (long) i * Long.BYTES));
-                    }
-                    final long dequeStartOffset = value.getLong(2);
-                    for (int i = 0; i < dequeBufferSize; i++) {
-                        sink.putLong(dequeMemory.getLong(dequeStartOffset + (long) i * Long.BYTES));
-                    }
-                } else {
-                    sink.putLong(value.getTimestamp(2));
-                    for (int i = 0; i < bufferSize; i++) {
-                        sink.putLong(memory.getLong(startOffset + (long) i * Long.BYTES));
-                    }
-                }
-            }
         }
 
         @Override
@@ -2825,27 +2580,6 @@ public class MaxTimestampWindowFunctionFactory extends AbstractWindowFunctionFac
         }
 
         @Override
-        public void restore(MemoryR source, int formatVersion) {
-            map.clear();
-            tombstoneCount = 0;
-            long offset = 0;
-            final long partitionCount = source.getLong(offset);
-            offset += Long.BYTES;
-            for (long p = 0; p < partitionCount; p++) {
-                MapKey key = map.withKey();
-                offset = LiveViewSnapshotKeyCodec.readKey(key, source, offset, keyColumnTypes);
-                MapValue value = key.createValue();
-                value.putTimestamp(0, source.getLong(offset));
-                offset += Long.BYTES;
-                value.putByte(1, source.getByte(offset));
-                offset += Byte.BYTES;
-                if (tombstoneValueIndex >= 0) {
-                    value.putByte(tombstoneValueIndex, (byte) 0);
-                }
-            }
-        }
-
-        @Override
         public long restorePartitionState(MemoryR source, long offset, MapValue value, int formatVersion) {
             value.putTimestamp(0, source.getLong(offset));
             offset += Long.BYTES;
@@ -2855,40 +2589,6 @@ public class MaxTimestampWindowFunctionFactory extends AbstractWindowFunctionFac
                 value.putByte(tombstoneValueIndex, (byte) 0);
             }
             return offset;
-        }
-
-        @Override
-        public void snapshot(MemoryA sink) {
-            // Two-pass walk: count non-tombstoned partitions, then emit each.
-            MapRecordCursor cursor = map.getCursor();
-            MapRecord record = map.getRecord();
-            final long liveCount;
-            if (tombstoneValueIndex < 0 || tombstoneCount == 0) {
-                liveCount = map.size();
-            } else {
-                long count = 0;
-                while (cursor.hasNext()) {
-                    if (record.getValue().getByte(tombstoneValueIndex) != 1) {
-                        count++;
-                    }
-                }
-                liveCount = count;
-            }
-            sink.putLong(liveCount);
-
-            cursor.toTop();
-            final int keyStartIndex = mapValueTypes != null
-                    ? mapValueTypes.getColumnCount()
-                    : MAX_COLUMN_TYPES.getColumnCount();
-            while (cursor.hasNext()) {
-                final MapValue value = record.getValue();
-                if (tombstoneValueIndex >= 0 && value.getByte(tombstoneValueIndex) == 1) {
-                    continue;
-                }
-                LiveViewSnapshotKeyCodec.writeKey(sink, record, keyColumnTypes, keyStartIndex);
-                sink.putLong(value.getTimestamp(0));
-                sink.putByte(value.getByte(1));
-            }
         }
 
         @Override

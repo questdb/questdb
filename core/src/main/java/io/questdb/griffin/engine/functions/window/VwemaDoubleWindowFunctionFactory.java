@@ -34,8 +34,6 @@ import io.questdb.cairo.lv.LiveViewSnapshotKeyCodec;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapFactory;
 import io.questdb.cairo.map.MapKey;
-import io.questdb.cairo.map.MapRecord;
-import io.questdb.cairo.map.MapRecordCursor;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
@@ -462,31 +460,6 @@ public class VwemaDoubleWindowFunctionFactory extends AbstractWindowFunctionFact
         }
 
         @Override
-        public void restore(MemoryR source, int formatVersion) {
-            map.clear();
-            tombstoneCount = 0;
-            long srcOffset = 0;
-            final long partitionCount = source.getLong(srcOffset);
-            srcOffset += Long.BYTES;
-            for (long p = 0; p < partitionCount; p++) {
-                MapKey key = map.withKey();
-                srcOffset = LiveViewSnapshotKeyCodec.readKey(key, source, srcOffset, keyColumnTypes);
-                MapValue value = key.createValue();
-                value.putDouble(0, source.getDouble(srcOffset));
-                srcOffset += Double.BYTES;
-                value.putDouble(1, source.getDouble(srcOffset));
-                srcOffset += Double.BYTES;
-                value.putLong(2, source.getLong(srcOffset));
-                srcOffset += Long.BYTES;
-                value.putLong(3, source.getLong(srcOffset));
-                srcOffset += Long.BYTES;
-                if (tombstoneValueIndex >= 0) {
-                    value.putByte(tombstoneValueIndex, (byte) 0);
-                }
-            }
-        }
-
-        @Override
         public long restorePartitionState(MemoryR source, long offset, MapValue value, int formatVersion) {
             value.putDouble(0, source.getDouble(offset));
             offset += Double.BYTES;
@@ -500,41 +473,6 @@ public class VwemaDoubleWindowFunctionFactory extends AbstractWindowFunctionFact
                 value.putByte(tombstoneValueIndex, (byte) 0);
             }
             return offset;
-        }
-
-        @Override
-        public void snapshot(MemoryA sink) {
-            MapRecordCursor cursor = map.getCursor();
-            MapRecord record = map.getRecord();
-            final long liveCount;
-            if (tombstoneValueIndex < 0 || tombstoneCount == 0) {
-                liveCount = map.size();
-            } else {
-                long count = 0;
-                while (cursor.hasNext()) {
-                    if (record.getValue().getByte(tombstoneValueIndex) != 1) {
-                        count++;
-                    }
-                }
-                liveCount = count;
-            }
-            sink.putLong(liveCount);
-
-            cursor.toTop();
-            final int keyStartIndex = mapValueTypes != null
-                    ? mapValueTypes.getColumnCount()
-                    : VWEMA_COLUMN_TYPES.getColumnCount();
-            while (cursor.hasNext()) {
-                final MapValue value = record.getValue();
-                if (tombstoneValueIndex >= 0 && value.getByte(tombstoneValueIndex) == 1) {
-                    continue;
-                }
-                LiveViewSnapshotKeyCodec.writeKey(sink, record, keyColumnTypes, keyStartIndex);
-                sink.putDouble(value.getDouble(0));
-                sink.putDouble(value.getDouble(1));
-                sink.putLong(value.getLong(2));
-                sink.putLong(value.getLong(3));
-            }
         }
 
         @Override
@@ -896,31 +834,6 @@ public class VwemaDoubleWindowFunctionFactory extends AbstractWindowFunctionFact
         }
 
         @Override
-        public void restore(MemoryR source, int formatVersion) {
-            map.clear();
-            tombstoneCount = 0;
-            long srcOffset = 0;
-            final long partitionCount = source.getLong(srcOffset);
-            srcOffset += Long.BYTES;
-            for (long p = 0; p < partitionCount; p++) {
-                MapKey key = map.withKey();
-                srcOffset = LiveViewSnapshotKeyCodec.readKey(key, source, srcOffset, keyColumnTypes);
-                MapValue value = key.createValue();
-                value.putDouble(0, source.getDouble(srcOffset));
-                srcOffset += Double.BYTES;
-                value.putDouble(1, source.getDouble(srcOffset));
-                srcOffset += Double.BYTES;
-                value.putLong(2, source.getLong(srcOffset));
-                srcOffset += Long.BYTES;
-                value.putLong(3, source.getLong(srcOffset));
-                srcOffset += Long.BYTES;
-                if (tombstoneValueIndex >= 0) {
-                    value.putByte(tombstoneValueIndex, (byte) 0);
-                }
-            }
-        }
-
-        @Override
         public long restorePartitionState(MemoryR source, long offset, MapValue value, int formatVersion) {
             value.putDouble(0, source.getDouble(offset));
             offset += Double.BYTES;
@@ -934,41 +847,6 @@ public class VwemaDoubleWindowFunctionFactory extends AbstractWindowFunctionFact
                 value.putByte(tombstoneValueIndex, (byte) 0);
             }
             return offset;
-        }
-
-        @Override
-        public void snapshot(MemoryA sink) {
-            MapRecordCursor cursor = map.getCursor();
-            MapRecord record = map.getRecord();
-            final long liveCount;
-            if (tombstoneValueIndex < 0 || tombstoneCount == 0) {
-                liveCount = map.size();
-            } else {
-                long count = 0;
-                while (cursor.hasNext()) {
-                    if (record.getValue().getByte(tombstoneValueIndex) != 1) {
-                        count++;
-                    }
-                }
-                liveCount = count;
-            }
-            sink.putLong(liveCount);
-
-            cursor.toTop();
-            final int keyStartIndex = mapValueTypes != null
-                    ? mapValueTypes.getColumnCount()
-                    : VWEMA_COLUMN_TYPES.getColumnCount();
-            while (cursor.hasNext()) {
-                final MapValue value = record.getValue();
-                if (tombstoneValueIndex >= 0 && value.getByte(tombstoneValueIndex) == 1) {
-                    continue;
-                }
-                LiveViewSnapshotKeyCodec.writeKey(sink, record, keyColumnTypes, keyStartIndex);
-                sink.putDouble(value.getDouble(0));
-                sink.putDouble(value.getDouble(1));
-                sink.putLong(value.getLong(2));
-                sink.putLong(value.getLong(3));
-            }
         }
 
         @Override

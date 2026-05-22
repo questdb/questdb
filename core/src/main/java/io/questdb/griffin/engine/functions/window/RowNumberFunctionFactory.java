@@ -34,8 +34,6 @@ import io.questdb.cairo.lv.LiveViewSnapshotKeyCodec;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapFactory;
 import io.questdb.cairo.map.MapKey;
-import io.questdb.cairo.map.MapRecord;
-import io.questdb.cairo.map.MapRecordCursor;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
@@ -358,33 +356,6 @@ public class RowNumberFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void restore(MemoryR source, int formatVersion) {
-            // formatVersion check is handled by the caller: the framework
-            // unlinks the head and falls into head-miss replay when version
-            // is below snapshotMinSupportedVersion(). Future format bumps add
-            // version-dispatch here.
-            map.clear();
-            tombstoneCount = 0;
-            long offset = 0;
-            final long partitionCount = source.getLong(offset);
-            offset += Long.BYTES;
-            for (long p = 0; p < partitionCount; p++) {
-                MapKey key = map.withKey();
-                offset = LiveViewSnapshotKeyCodec.readKey(key, source, offset, keyColumnTypes);
-                MapValue value = key.createValue();
-                value.putLong(ROW_NUMBER_VALUE_INDEX, source.getLong(offset));
-                offset += Long.BYTES;
-                if (lastActivityTsValueIndex >= 0) {
-                    value.putLong(lastActivityTsValueIndex, source.getLong(offset));
-                    offset += Long.BYTES;
-                }
-                if (tombstoneValueIndex >= 0) {
-                    value.putByte(tombstoneValueIndex, (byte) 0);
-                }
-            }
-        }
-
-        @Override
         public long restorePartitionState(MemoryR source, long offset, MapValue value, int formatVersion) {
             value.putLong(ROW_NUMBER_VALUE_INDEX, source.getLong(offset));
             offset += Long.BYTES;
@@ -401,40 +372,6 @@ public class RowNumberFunctionFactory implements FunctionFactory {
         @Override
         public void setColumnIndex(int columnIndex) {
             this.columnIndex = columnIndex;
-        }
-
-        @Override
-        public void snapshot(MemoryA sink) {
-            // Two-pass walk: count non-tombstoned partitions, then emit each.
-            MapRecordCursor cursor = map.getCursor();
-            MapRecord record = map.getRecord();
-            final long liveCount;
-            if (tombstoneValueIndex < 0 || tombstoneCount == 0) {
-                liveCount = map.size();
-            } else {
-                long count = 0;
-                while (cursor.hasNext()) {
-                    if (record.getValue().getByte(tombstoneValueIndex) != 1) {
-                        count++;
-                    }
-                }
-                liveCount = count;
-            }
-            sink.putLong(liveCount);
-
-            cursor.toTop();
-            final int keyStartIndex = valueColumnTypes.getColumnCount();
-            while (cursor.hasNext()) {
-                final MapValue value = record.getValue();
-                if (tombstoneValueIndex >= 0 && value.getByte(tombstoneValueIndex) == 1) {
-                    continue;
-                }
-                LiveViewSnapshotKeyCodec.writeKey(sink, record, keyColumnTypes, keyStartIndex);
-                sink.putLong(value.getLong(ROW_NUMBER_VALUE_INDEX));
-                if (lastActivityTsValueIndex >= 0) {
-                    sink.putLong(value.getLong(lastActivityTsValueIndex));
-                }
-            }
         }
 
         @Override
@@ -518,11 +455,6 @@ public class RowNumberFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void restore(MemoryR source, int formatVersion) {
-            rowNumber = source.getLong(0);
-        }
-
-        @Override
         public long restorePartitionState(MemoryR source, long offset, MapValue value, int formatVersion) {
             rowNumber = source.getLong(offset);
             return offset + Long.BYTES;
@@ -531,11 +463,6 @@ public class RowNumberFunctionFactory implements FunctionFactory {
         @Override
         public void setColumnIndex(int columnIndex) {
             this.columnIndex = columnIndex;
-        }
-
-        @Override
-        public void snapshot(MemoryA sink) {
-            sink.putLong(rowNumber);
         }
 
         @Override

@@ -500,26 +500,6 @@ public interface WindowFunction extends Function {
     }
 
     /**
-     * Rehydrates per-partition accumulator state previously written by {@link #snapshot(MemoryA)}.
-     * The {@code formatVersion} is the per-function {@code snapshotFormatVersion()} the snapshot
-     * was written under; implementations dispatch to a version-matching decoder, zero-fill any
-     * new fields, and discard removed ones. A version lower than
-     * {@link #snapshotMinSupportedVersion()} must not reach this method — the live view caller
-     * unlinks the head checkpoint and falls into the head-miss path instead of attempting
-     * restore.
-     * <p>
-     * The default throws — only window functions that {@link #supportsSnapshot()} override.
-     * Functions on the default-throw path force their containing live view onto the head-miss
-     * replay path (visible in {@code live_views()} as
-     * {@code head_checkpoint_lv_seqtxn = LONG_NULL}).
-     */
-    default void restore(MemoryR source, int formatVersion) {
-        throw new UnsupportedOperationException(
-                "restore not implemented for " + getClass().getName()
-        );
-    }
-
-    /**
      * Rehydrates ONE partition's accumulator state previously written by
      * {@link #snapshotPartitionState(MemoryA, MapValue)}. The live-view snapshot
      * framework owns iteration: it has already read the partition key and called
@@ -563,33 +543,18 @@ public interface WindowFunction extends Function {
     void setColumnIndex(int columnIndex);
 
     /**
-     * Serialises the function's per-partition accumulator state into {@code sink} for later
-     * {@link #restore(MemoryR, int)}. The framework writes the resulting bytes into the live
-     * view's head {@code _checkpoints/<lvSeqTxn>.cp} file as a FUNCTION_SNAPSHOT block.
-     * <p>
-     * The default throws — only window functions that {@link #supportsSnapshot()} override.
-     * The live-view refresh path checks {@link #supportsSnapshot()} at first refresh and
-     * computes a per-LV {@code snapshotCapability} flag from the AND of every function's
-     * answer; LVs whose flag is {@code false} emit no checkpoints and route restart and O3
-     * through the head-miss replay path.
-     */
-    default void snapshot(MemoryA sink) {
-        throw new UnsupportedOperationException(
-                "snapshot not implemented for " + getClass().getName()
-        );
-    }
-
-    /**
      * @return the snapshot layout version this build writes. The framework records this in the
      * FUNCTION_SNAPSHOT block header so future builds can dispatch through
-     * {@link #restore(MemoryR, int)} to the correct decoder. Bump on any state-layout change.
+     * {@link #restorePartitionState(MemoryR, long, MapValue, int)} to the correct decoder. Bump
+     * on any state-layout change.
      */
     default int snapshotFormatVersion() {
         return 0;
     }
 
     /**
-     * @return the lowest snapshot {@code formatVersion} this build can {@link #restore(MemoryR, int)}.
+     * @return the lowest snapshot {@code formatVersion} this build can
+     * {@link #restorePartitionState(MemoryR, long, MapValue, int)}.
      * A head checkpoint whose recorded version is strictly less than this value cannot be replayed;
      * the live view layer surfaces it as {@code "checkpoint format version unsupported"} via the
      * unified invalidation path.
@@ -617,7 +582,8 @@ public interface WindowFunction extends Function {
     }
 
     /**
-     * Reports whether {@link #snapshot(MemoryA)} / {@link #restore(MemoryR, int)} are implemented.
+     * Reports whether {@link #snapshotPartitionState(MemoryA, MapValue)} /
+     * {@link #restorePartitionState(MemoryR, long, MapValue, int)} are implemented.
      * The live view refresh worker ANDs this across every window function in the compiled SELECT
      * at first refresh; the LV's per-instance {@code snapshotCapability} flag is the result.
      * Default {@code false} keeps unmigrated functions out of the checkpoint pipeline without

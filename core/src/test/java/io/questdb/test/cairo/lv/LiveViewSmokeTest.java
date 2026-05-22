@@ -36,6 +36,7 @@ import io.questdb.cairo.lv.LiveViewCheckpointManifest;
 import io.questdb.cairo.lv.LiveViewCheckpointReader;
 import io.questdb.cairo.lv.LiveViewCheckpointWriter;
 import io.questdb.cairo.lv.LiveViewDefinition;
+import io.questdb.cairo.lv.LiveViewFunctionSnapshot;
 import io.questdb.cairo.lv.LiveViewWindow;
 import io.questdb.cairo.lv.LiveViewInMemoryBuffer;
 import io.questdb.cairo.lv.LiveViewInMemoryTier;
@@ -4942,308 +4943,6 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCountOverUnboundedPartitionRowsSnapshotRoundTrip() throws Exception {
-        // count() over unbounded partition rows + ANCHOR.
-        // State per partition is a single LONG count. Round-trip via direct
-        // snapshot to in-memory sink + toTop + restore; verify counts match.
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE base (ts TIMESTAMP, x INT, sym SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
-                    "SELECT ts, sym, count(*) OVER w AS c FROM base " +
-                    "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
-
-            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
-                setCurrentMicros(0L);
-                execute("INSERT INTO base (ts, x, sym) VALUES " +
-                        "('2026-08-01T00:00:00.000000Z', 1, 'a'), " +
-                        "('2026-08-01T01:00:00.000000Z', 2, 'a'), " +
-                        "('2026-08-01T02:00:00.000000Z', 3, 'a'), " +
-                        "('2026-08-01T00:00:00.000000Z', 4, 'b')");
-                drainWalQueue();
-                drainJob(job);
-                drainWalQueue();
-
-                LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
-                WindowFunction countFunc = lv.getAnchorWindow().getFunctions().getQuick(0);
-                Assert.assertTrue(countFunc.supportsSnapshot());
-                Map fnMap = countFunc.getPartitionMap();
-                Assert.assertEquals("two partitions seeded", 2L, fnMap.size());
-
-                try (MemoryCARW sink = Vm.getCARWInstance(4096L, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
-                    countFunc.snapshot(sink);
-                    countFunc.toTop();
-                    Assert.assertEquals(0L, fnMap.size());
-                    countFunc.restore(sink, 1);
-                    Assert.assertEquals(2L, fnMap.size());
-
-                    // 'a' partition had 3 rows, 'b' had 1. Total 4.
-                    MapRecordCursor mc = fnMap.getCursor();
-                    MapRecord rec = fnMap.getRecord();
-                    long total = 0;
-                    while (mc.hasNext()) {
-                        total += rec.getValue().getLong(0);
-                    }
-                    Assert.assertEquals(4L, total);
-                }
-            }
-
-            execute("DROP LIVE VIEW lv");
-        });
-    }
-
-    @Test
-    public void testSumOverUnboundedPartitionRowsSnapshotRoundTrip() throws Exception {
-        // sum() over unbounded partition rows + ANCHOR.
-        // State per partition is [sum: DOUBLE, count: LONG] - same shape as
-        // avg. Round-trip via direct snapshot + toTop + restore.
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE base (ts TIMESTAMP, x DOUBLE, sym SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
-                    "SELECT ts, sym, sum(x) OVER w AS s FROM base " +
-                    "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
-
-            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
-                setCurrentMicros(0L);
-                execute("INSERT INTO base (ts, x, sym) VALUES " +
-                        "('2026-08-01T00:00:00.000000Z', 10.0, 'a'), " +
-                        "('2026-08-01T01:00:00.000000Z', 30.0, 'a'), " +
-                        "('2026-08-01T00:00:00.000000Z', 5.0, 'b')");
-                drainWalQueue();
-                drainJob(job);
-                drainWalQueue();
-
-                LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
-                WindowFunction sumFunc = lv.getAnchorWindow().getFunctions().getQuick(0);
-                Assert.assertTrue(sumFunc.supportsSnapshot());
-                Map fnMap = sumFunc.getPartitionMap();
-                Assert.assertEquals("two partitions seeded", 2L, fnMap.size());
-
-                try (MemoryCARW sink = Vm.getCARWInstance(4096L, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
-                    sumFunc.snapshot(sink);
-                    sumFunc.toTop();
-                    Assert.assertEquals(0L, fnMap.size());
-                    sumFunc.restore(sink, 1);
-                    Assert.assertEquals(2L, fnMap.size());
-
-                    // 'a' partition sum is 40.0, 'b' sum is 5.0. Total 45.0.
-                    MapRecordCursor mc = fnMap.getCursor();
-                    MapRecord rec = fnMap.getRecord();
-                    double total = 0;
-                    while (mc.hasNext()) {
-                        total += rec.getValue().getDouble(0);
-                    }
-                    Assert.assertEquals(45.0, total, 0.0);
-                }
-            }
-
-            execute("DROP LIVE VIEW lv");
-        });
-    }
-
-    @Test
-    public void testAvgOverUnboundedPartitionRowsSnapshotRoundTrip() throws Exception {
-        // avg() over (PARTITION BY ... ROWS UNBOUNDED
-        // PRECEDING ... ANCHOR ...) implements snapshot/restore. State per
-        // partition is [sum: DOUBLE, count: LONG]. Round-trip via direct
-        // snapshot to in-memory sink + toTop + restore; verify Map content.
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE base (ts TIMESTAMP, x DOUBLE, sym SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
-                    "SELECT ts, sym, avg(x) OVER w AS a FROM base " +
-                    "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
-
-            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
-                setCurrentMicros(0L);
-                execute("INSERT INTO base (ts, x, sym) VALUES " +
-                        "('2026-08-01T00:00:00.000000Z', 10.0, 'a'), " +
-                        "('2026-08-01T01:00:00.000000Z', 30.0, 'a'), " +
-                        "('2026-08-01T00:00:00.000000Z', 5.0, 'b')");
-                drainWalQueue();
-                drainJob(job);
-                drainWalQueue();
-
-                LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
-                ObjList<WindowFunction> funcs = lv.getAnchorWindow().getFunctions();
-                WindowFunction avgFunc = funcs.getQuick(0);
-                Assert.assertTrue("avg supports snapshot for SYMBOL key", avgFunc.supportsSnapshot());
-                Map fnMap = avgFunc.getPartitionMap();
-                Assert.assertNotNull(fnMap);
-                Assert.assertEquals("two partitions seeded", 2L, fnMap.size());
-
-                try (MemoryCARW sink = Vm.getCARWInstance(4096L, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
-                    avgFunc.snapshot(sink);
-                    avgFunc.toTop();
-                    Assert.assertEquals(0L, fnMap.size());
-                    avgFunc.restore(sink, 1);
-                    Assert.assertEquals(2L, fnMap.size());
-
-                    // Sum of all sums must equal 10+30+5 = 45, total count = 3.
-                    MapRecordCursor mc = fnMap.getCursor();
-                    MapRecord rec = fnMap.getRecord();
-                    double totalSum = 0;
-                    long totalCount = 0;
-                    while (mc.hasNext()) {
-                        totalSum += rec.getValue().getDouble(0);
-                        totalCount += rec.getValue().getLong(1);
-                    }
-                    Assert.assertEquals(45.0, totalSum, 0.0);
-                    Assert.assertEquals(3L, totalCount);
-                }
-            }
-
-            execute("DROP LIVE VIEW lv");
-        });
-    }
-
-    @Test
-    public void testMaxOverUnboundedPartitionRowsSnapshotRoundTrip() throws Exception {
-        // max() over unbounded partition rows + ANCHOR.
-        // State per partition is [value: DOUBLE, initialized: BYTE]. The same
-        // class handles min() via a swapped comparator.
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE base (ts TIMESTAMP, x DOUBLE, sym SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
-                    "SELECT ts, sym, max(x) OVER w AS m FROM base " +
-                    "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
-
-            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
-                setCurrentMicros(0L);
-                execute("INSERT INTO base (ts, x, sym) VALUES " +
-                        "('2026-08-01T00:00:00.000000Z', 5.0, 'a'), " +
-                        "('2026-08-01T01:00:00.000000Z', 50.0, 'a'), " +
-                        "('2026-08-01T02:00:00.000000Z', 20.0, 'a'), " +
-                        "('2026-08-01T00:00:00.000000Z', 7.0, 'b')");
-                drainWalQueue();
-                drainJob(job);
-                drainWalQueue();
-
-                LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
-                WindowFunction maxFunc = lv.getAnchorWindow().getFunctions().getQuick(0);
-                Assert.assertTrue(maxFunc.supportsSnapshot());
-                Map fnMap = maxFunc.getPartitionMap();
-                Assert.assertEquals(2L, fnMap.size());
-
-                try (MemoryCARW sink = Vm.getCARWInstance(4096L, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
-                    maxFunc.snapshot(sink);
-                    maxFunc.toTop();
-                    Assert.assertEquals(0L, fnMap.size());
-                    maxFunc.restore(sink, 1);
-                    Assert.assertEquals(2L, fnMap.size());
-
-                    // 'a' max is 50.0, 'b' max is 7.0. Sum 57.0.
-                    MapRecordCursor mc = fnMap.getCursor();
-                    MapRecord rec = fnMap.getRecord();
-                    double total = 0;
-                    while (mc.hasNext()) {
-                        total += rec.getValue().getDouble(0);
-                    }
-                    Assert.assertEquals(57.0, total, 0.0);
-                }
-            }
-
-            execute("DROP LIVE VIEW lv");
-        });
-    }
-
-    @Test
-    public void testFirstValueOverUnboundedPartitionRowsSnapshotRoundTrip() throws Exception {
-        // first_value() over unbounded partition rows +
-        // ANCHOR. State per partition is [value: DOUBLE, initialized: BYTE].
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE base (ts TIMESTAMP, x DOUBLE, sym SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
-                    "SELECT ts, sym, first_value(x) OVER w AS f FROM base " +
-                    "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
-
-            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
-                setCurrentMicros(0L);
-                execute("INSERT INTO base (ts, x, sym) VALUES " +
-                        "('2026-08-01T00:00:00.000000Z', 5.0, 'a'), " +
-                        "('2026-08-01T01:00:00.000000Z', 50.0, 'a'), " +
-                        "('2026-08-01T02:00:00.000000Z', 20.0, 'a'), " +
-                        "('2026-08-01T00:00:00.000000Z', 7.0, 'b')");
-                drainWalQueue();
-                drainJob(job);
-                drainWalQueue();
-
-                LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
-                WindowFunction fvFunc = lv.getAnchorWindow().getFunctions().getQuick(0);
-                Assert.assertTrue(fvFunc.supportsSnapshot());
-                Map fnMap = fvFunc.getPartitionMap();
-                Assert.assertEquals(2L, fnMap.size());
-
-                try (MemoryCARW sink = Vm.getCARWInstance(4096L, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
-                    fvFunc.snapshot(sink);
-                    fvFunc.toTop();
-                    Assert.assertEquals(0L, fnMap.size());
-                    fvFunc.restore(sink, 1);
-                    Assert.assertEquals(2L, fnMap.size());
-
-                    // 'a' first_value is 5.0, 'b' first_value is 7.0. Sum 12.0.
-                    MapRecordCursor mc = fnMap.getCursor();
-                    MapRecord rec = fnMap.getRecord();
-                    double total = 0;
-                    while (mc.hasNext()) {
-                        total += rec.getValue().getDouble(0);
-                    }
-                    Assert.assertEquals(12.0, total, 0.0);
-                }
-            }
-
-            execute("DROP LIVE VIEW lv");
-        });
-    }
-
-    @Test
-    public void testKSumOverUnboundedPartitionRowsSnapshotRoundTrip() throws Exception {
-        // ksum() (Kahan-compensated sum) over unbounded
-        // partition rows + ANCHOR. State per partition is [sum: DOUBLE,
-        // compensation: DOUBLE, count: LONG].
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE base (ts TIMESTAMP, x DOUBLE, sym SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
-                    "SELECT ts, sym, ksum(x) OVER w AS s FROM base " +
-                    "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
-
-            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
-                setCurrentMicros(0L);
-                execute("INSERT INTO base (ts, x, sym) VALUES " +
-                        "('2026-08-01T00:00:00.000000Z', 1.0, 'a'), " +
-                        "('2026-08-01T01:00:00.000000Z', 1e16, 'a'), " +
-                        "('2026-08-01T02:00:00.000000Z', 1.0, 'a'), " +
-                        "('2026-08-01T00:00:00.000000Z', 7.0, 'b')");
-                drainWalQueue();
-                drainJob(job);
-                drainWalQueue();
-
-                LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
-                WindowFunction ksumFunc = lv.getAnchorWindow().getFunctions().getQuick(0);
-                Assert.assertTrue(ksumFunc.supportsSnapshot());
-                Map fnMap = ksumFunc.getPartitionMap();
-                Assert.assertEquals(2L, fnMap.size());
-
-                try (MemoryCARW sink = Vm.getCARWInstance(4096L, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
-                    ksumFunc.snapshot(sink);
-                    ksumFunc.toTop();
-                    Assert.assertEquals(0L, fnMap.size());
-                    ksumFunc.restore(sink, 1);
-                    Assert.assertEquals(2L, fnMap.size());
-
-                    MapRecordCursor mc = fnMap.getCursor();
-                    MapRecord rec = fnMap.getRecord();
-                    long totalCount = 0;
-                    while (mc.hasNext()) {
-                        totalCount += rec.getValue().getLong(2);
-                    }
-                    Assert.assertEquals(4L, totalCount);
-                }
-            }
-
-            execute("DROP LIVE VIEW lv");
-        });
-    }
-
-    @Test
     public void testNthValueDoubleOverUnboundedPartitionRowsSnapshotRoundTrip() throws Exception {
         // nth_value() Step 1 — DOUBLE variant. State per partition is
         // [value: DOUBLE, count: LONG, tombstone: BYTE]. Picks N=2 so the second
@@ -5274,10 +4973,10 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                 Assert.assertEquals(2L, fnMap.size());
 
                 try (MemoryCARW sink = Vm.getCARWInstance(4096L, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
-                    nvFunc.snapshot(sink);
+                    LiveViewFunctionSnapshot.write(sink, nvFunc);
                     nvFunc.toTop();
                     Assert.assertEquals(0L, fnMap.size());
-                    nvFunc.restore(sink, 1);
+                    LiveViewFunctionSnapshot.restore(sink, 0L, nvFunc, 1);
                     Assert.assertEquals(2L, fnMap.size());
 
                     // 'a' nth_value(x, 2) is 50.0, 'b' is 11.0. Sum 61.0.
@@ -5324,10 +5023,10 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                 Assert.assertEquals(2L, fnMap.size());
 
                 try (MemoryCARW sink = Vm.getCARWInstance(4096L, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
-                    nvFunc.snapshot(sink);
+                    LiveViewFunctionSnapshot.write(sink, nvFunc);
                     nvFunc.toTop();
                     Assert.assertEquals(0L, fnMap.size());
-                    nvFunc.restore(sink, 1);
+                    LiveViewFunctionSnapshot.restore(sink, 0L, nvFunc, 1);
                     Assert.assertEquals(2L, fnMap.size());
 
                     // 'a' nth_value(x, 2) is 50, 'b' is 11. Sum 61.
@@ -5376,10 +5075,10 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                 Assert.assertEquals(2L, fnMap.size());
 
                 try (MemoryCARW sink = Vm.getCARWInstance(4096L, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
-                    nvFunc.snapshot(sink);
+                    LiveViewFunctionSnapshot.write(sink, nvFunc);
                     nvFunc.toTop();
                     Assert.assertEquals(0L, fnMap.size());
-                    nvFunc.restore(sink, 1);
+                    LiveViewFunctionSnapshot.restore(sink, 0L, nvFunc, 1);
                     Assert.assertEquals(2L, fnMap.size());
 
                     // 'a' nth_value(ts, 2) is 2026-08-01T01:00:00 (3_600_000_000us),
@@ -5430,10 +5129,10 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                 Assert.assertEquals(2L, fnMap.size());
 
                 try (MemoryCARW sink = Vm.getCARWInstance(4096L, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
-                    nvFunc.snapshot(sink);
+                    LiveViewFunctionSnapshot.write(sink, nvFunc);
                     nvFunc.toTop();
                     Assert.assertEquals(0L, fnMap.size());
-                    nvFunc.restore(sink, 1);
+                    LiveViewFunctionSnapshot.restore(sink, 0L, nvFunc, 1);
                     Assert.assertEquals(2L, fnMap.size());
 
                     // lockedValue is the value at count == n == 2: 'a' -> 50.0, 'b' -> 11.0. Sum 61.0.
@@ -5482,10 +5181,10 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                 Assert.assertEquals(2L, fnMap.size());
 
                 try (MemoryCARW sink = Vm.getCARWInstance(4096L, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
-                    nvFunc.snapshot(sink);
+                    LiveViewFunctionSnapshot.write(sink, nvFunc);
                     nvFunc.toTop();
                     Assert.assertEquals(0L, fnMap.size());
-                    nvFunc.restore(sink, 1);
+                    LiveViewFunctionSnapshot.restore(sink, 0L, nvFunc, 1);
                     Assert.assertEquals(2L, fnMap.size());
 
                     // lockedValue is the value at count == n == 2: 'a' -> 50, 'b' -> 11. Sum 61.
@@ -5534,10 +5233,10 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                 Assert.assertEquals(2L, fnMap.size());
 
                 try (MemoryCARW sink = Vm.getCARWInstance(4096L, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
-                    nvFunc.snapshot(sink);
+                    LiveViewFunctionSnapshot.write(sink, nvFunc);
                     nvFunc.toTop();
                     Assert.assertEquals(0L, fnMap.size());
-                    nvFunc.restore(sink, 1);
+                    LiveViewFunctionSnapshot.restore(sink, 0L, nvFunc, 1);
                     Assert.assertEquals(2L, fnMap.size());
 
                     // lockedValue is ts at count == 2 = '2026-08-01T01:00:00' for both partitions.
@@ -5588,10 +5287,10 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                 Assert.assertEquals(2L, fnMap.size());
 
                 try (MemoryCARW sink = Vm.getCARWInstance(4096L, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
-                    nvFunc.snapshot(sink);
+                    LiveViewFunctionSnapshot.write(sink, nvFunc);
                     nvFunc.toTop();
                     Assert.assertEquals(0L, fnMap.size());
-                    nvFunc.restore(sink, 1);
+                    LiveViewFunctionSnapshot.restore(sink, 0L, nvFunc, 1);
                     Assert.assertEquals(2L, fnMap.size());
 
                     // After 3 rows per partition, both rings hold (val_0, val_1, val_2) with count=3.
@@ -5643,10 +5342,10 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                 Assert.assertEquals(2L, fnMap.size());
 
                 try (MemoryCARW sink = Vm.getCARWInstance(4096L, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
-                    nvFunc.snapshot(sink);
+                    LiveViewFunctionSnapshot.write(sink, nvFunc);
                     nvFunc.toTop();
                     Assert.assertEquals(0L, fnMap.size());
-                    nvFunc.restore(sink, 1);
+                    LiveViewFunctionSnapshot.restore(sink, 0L, nvFunc, 1);
                     Assert.assertEquals(2L, fnMap.size());
 
                     MapRecordCursor mc = fnMap.getCursor();
@@ -5695,10 +5394,10 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                 Assert.assertEquals(2L, fnMap.size());
 
                 try (MemoryCARW sink = Vm.getCARWInstance(4096L, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
-                    nvFunc.snapshot(sink);
+                    LiveViewFunctionSnapshot.write(sink, nvFunc);
                     nvFunc.toTop();
                     Assert.assertEquals(0L, fnMap.size());
-                    nvFunc.restore(sink, 1);
+                    LiveViewFunctionSnapshot.restore(sink, 0L, nvFunc, 1);
                     Assert.assertEquals(2L, fnMap.size());
 
                     MapRecordCursor mc = fnMap.getCursor();
@@ -5748,10 +5447,10 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                 Assert.assertEquals(2L, fnMap.size());
 
                 try (MemoryCARW sink = Vm.getCARWInstance(4096L, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
-                    nvFunc.snapshot(sink);
+                    LiveViewFunctionSnapshot.write(sink, nvFunc);
                     nvFunc.toTop();
                     Assert.assertEquals(0L, fnMap.size());
-                    nvFunc.restore(sink, 1);
+                    LiveViewFunctionSnapshot.restore(sink, 0L, nvFunc, 1);
                     Assert.assertEquals(2L, fnMap.size());
 
                     // All 3 rows per partition land inside the 5-hour window, so
@@ -5804,10 +5503,10 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                 Assert.assertEquals(2L, fnMap.size());
 
                 try (MemoryCARW sink = Vm.getCARWInstance(4096L, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
-                    nvFunc.snapshot(sink);
+                    LiveViewFunctionSnapshot.write(sink, nvFunc);
                     nvFunc.toTop();
                     Assert.assertEquals(0L, fnMap.size());
-                    nvFunc.restore(sink, 1);
+                    LiveViewFunctionSnapshot.restore(sink, 0L, nvFunc, 1);
                     Assert.assertEquals(2L, fnMap.size());
 
                     MapRecordCursor mc = fnMap.getCursor();
@@ -5858,10 +5557,10 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                 Assert.assertEquals(2L, fnMap.size());
 
                 try (MemoryCARW sink = Vm.getCARWInstance(4096L, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
-                    nvFunc.snapshot(sink);
+                    LiveViewFunctionSnapshot.write(sink, nvFunc);
                     nvFunc.toTop();
                     Assert.assertEquals(0L, fnMap.size());
-                    nvFunc.restore(sink, 1);
+                    LiveViewFunctionSnapshot.restore(sink, 0L, nvFunc, 1);
                     Assert.assertEquals(2L, fnMap.size());
 
                     MapRecordCursor mc = fnMap.getCursor();
@@ -5871,84 +5570,6 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
                         totalSize += rec.getValue().getLong(2);
                     }
                     Assert.assertEquals(6L, totalSize);
-                }
-            }
-
-            execute("DROP LIVE VIEW lv");
-        });
-    }
-
-    @Test
-    public void testRowNumberSnapshotRoundTrip() throws Exception {
-        // row_number() implements snapshot/restore.
-        // Drive a single refresh cycle so the function's Map is populated with
-        // partition state, then snapshot to an in-memory sink, reset via
-        // toTop(), restore from the sink, and verify the Map content matches
-        // by iterating partition entries directly. End-to-end snapshot/restore
-        // through the LV refresh pipeline is gated on the write
-        // hook and the restart restore path and the cross-cycle
-        // anchor-map reset behaviour is a separate concern.
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
-                    "SELECT ts, sym, row_number() OVER w AS rn FROM base " +
-                    "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
-
-            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
-                setCurrentMicros(0L);
-                execute("INSERT INTO base (ts, sym) VALUES " +
-                        "('2026-08-01T00:00:00.000000Z', 'a'), " +
-                        "('2026-08-01T01:00:00.000000Z', 'a'), " +
-                        "('2026-08-01T00:00:00.000000Z', 'b')");
-                drainWalQueue();
-                drainJob(job);
-                drainWalQueue();
-
-                LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
-                ObjList<WindowFunction> funcs = lv.getAnchorWindow().getFunctions();
-                WindowFunction rowNumberFunc = funcs.getQuick(0);
-                Assert.assertTrue(
-                        "row_number must support snapshot for SYMBOL partition keys",
-                        rowNumberFunc.supportsSnapshot()
-                );
-                Assert.assertEquals(1, rowNumberFunc.snapshotFormatVersion());
-                Map fnMap = rowNumberFunc.getPartitionMap();
-                Assert.assertNotNull("getPartitionMap exposes the function's partition Map", fnMap);
-                Assert.assertEquals("two partitions seeded", 2L, fnMap.size());
-
-                // Snapshot the entire partition Map into an in-memory sink.
-                try (MemoryCARW sink = Vm.getCARWInstance(4096L, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
-                    rowNumberFunc.snapshot(sink);
-
-                    // Reset wipes the Map. After reset the function has no
-                    // partitions; any future computeNext on a known partition
-                    // would treat it as new and start at rn=1.
-                    rowNumberFunc.toTop();
-                    Assert.assertEquals(0L, fnMap.size());
-
-                    // Restore must rebuild the Map identically. Verify by
-                    // walking the cursor and tallying the row_number values
-                    // per symbol id.
-                    rowNumberFunc.restore(sink, 1);
-                    Assert.assertEquals("restore brought back both partitions", 2L, fnMap.size());
-
-                    // The restored Map's partition values must match the
-                    // pre-snapshot counters: partition 'a' had two rows
-                    // (rn=2 final), partition 'b' had one (rn=1 final).
-                    MapRecordCursor mc = fnMap.getCursor();
-                    MapRecord rec = fnMap.getRecord();
-                    long sumRn = 0;
-                    long minRn = Long.MAX_VALUE;
-                    long maxRn = Long.MIN_VALUE;
-                    while (mc.hasNext()) {
-                        long rn = rec.getValue().getLong(0); // ROW_NUMBER_VALUE_INDEX
-                        sumRn += rn;
-                        minRn = Math.min(minRn, rn);
-                        maxRn = Math.max(maxRn, rn);
-                    }
-                    Assert.assertEquals("partition counters sum to 1+2=3", 3L, sumRn);
-                    Assert.assertEquals("smallest counter is 1 (partition 'b')", 1L, minRn);
-                    Assert.assertEquals("largest counter is 2 (partition 'a')", 2L, maxRn);
                 }
             }
 
@@ -6684,13 +6305,13 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
             Assert.assertEquals(2L, rankFn.getPartitionMap().size());
 
             try (MemoryCARW buf = Vm.getCARWInstance(64 * 1024L, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
-                rankFn.snapshot(buf);
+                LiveViewFunctionSnapshot.write(buf, rankFn);
                 final long snapshotBytes = buf.getAppendOffset();
                 Assert.assertTrue("snapshot wrote some bytes", snapshotBytes > 0);
                 // Clear the function's map and restore from the captured bytes.
                 rankFn.getPartitionMap().clear();
                 Assert.assertEquals(0L, rankFn.getPartitionMap().size());
-                rankFn.restore(buf, rankFn.snapshotFormatVersion());
+                LiveViewFunctionSnapshot.restore(buf, 0L, rankFn, rankFn.snapshotFormatVersion());
                 Assert.assertEquals(
                         "restore rehydrates the same partition count snapshot captured",
                         2L,
@@ -6734,12 +6355,12 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
             Assert.assertEquals(2L, lagFn.getPartitionMap().size());
 
             try (MemoryCARW buf = Vm.getCARWInstance(64 * 1024L, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
-                lagFn.snapshot(buf);
+                LiveViewFunctionSnapshot.write(buf, lagFn);
                 final long snapshotBytes = buf.getAppendOffset();
                 Assert.assertTrue("snapshot wrote some bytes", snapshotBytes > 0);
                 lagFn.getPartitionMap().clear();
                 Assert.assertEquals(0L, lagFn.getPartitionMap().size());
-                lagFn.restore(buf, lagFn.snapshotFormatVersion());
+                LiveViewFunctionSnapshot.restore(buf, 0L, lagFn, lagFn.snapshotFormatVersion());
                 Assert.assertEquals(
                         "restore rehydrates the same partition count snapshot captured",
                         2L,

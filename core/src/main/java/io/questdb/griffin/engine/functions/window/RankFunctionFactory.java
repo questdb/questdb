@@ -38,8 +38,6 @@ import io.questdb.cairo.lv.LiveViewSnapshotKeyCodec;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapFactory;
 import io.questdb.cairo.map.MapKey;
-import io.questdb.cairo.map.MapRecord;
-import io.questdb.cairo.map.MapRecordCursor;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.map.RecordValueSink;
 import io.questdb.cairo.map.RecordValueSinkFactory;
@@ -709,38 +707,6 @@ public class RankFunctionFactory extends AbstractWindowFunctionFactory {
         }
 
         @Override
-        public void restore(MemoryR source, int formatVersion) {
-            map.clear();
-            tombstoneCount = 0;
-            long offset = 0;
-            final long partitionCount = source.getLong(offset);
-            offset += Long.BYTES;
-            for (long p = 0; p < partitionCount; p++) {
-                MapKey key = map.withKey();
-                offset = LiveViewSnapshotKeyCodec.readKey(key, source, offset, keyColumnTypes);
-                MapValue value = key.createValue();
-                // Chain prefix - the source-record column values the
-                // RecordComparator reads via setLeft(mapValue) to compute the
-                // tie-breaker.
-                offset = LiveViewSnapshotKeyCodec.readValueSlots(value, 0, source, offset, chainColumnTypes);
-                // rank, count.
-                value.putLong(chainTypeIndex, source.getLong(offset));
-                offset += Long.BYTES;
-                value.putLong(chainTypeIndex + 1, source.getLong(offset));
-                offset += Long.BYTES;
-                if (lastActivityTsValueIndex >= 0) {
-                    value.putLong(lastActivityTsValueIndex, source.getLong(offset));
-                    offset += Long.BYTES;
-                }
-                // Tombstone bit defaults to 0 after createValue; snapshot skips
-                // tombstoned entries so the restored Map is post-compaction.
-                if (tombstoneValueIndex >= 0) {
-                    value.putByte(tombstoneValueIndex, (byte) 0);
-                }
-            }
-        }
-
-        @Override
         public long restorePartitionState(MemoryR source, long offset, MapValue value, int formatVersion) {
             offset = LiveViewSnapshotKeyCodec.readValueSlots(value, 0, source, offset, chainColumnTypes);
             value.putLong(chainTypeIndex, source.getLong(offset));
@@ -760,47 +726,6 @@ public class RankFunctionFactory extends AbstractWindowFunctionFactory {
         @Override
         public void setColumnIndex(int columnIndex) {
             this.columnIndex = columnIndex;
-        }
-
-        @Override
-        public void snapshot(MemoryA sink) {
-            // Two-pass walk so the partition count written first matches the
-            // entries that follow even if tombstoneCount drifts between cycles.
-            // Tombstoned entries are skipped on restore;
-            // the restored Map starts at the post-compaction shape.
-            MapRecordCursor cursor = map.getCursor();
-            MapRecord record = map.getRecord();
-            final long liveCount;
-            if (tombstoneValueIndex < 0 || tombstoneCount == 0) {
-                liveCount = map.size();
-            } else {
-                long count = 0;
-                while (cursor.hasNext()) {
-                    if (record.getValue().getByte(tombstoneValueIndex) != 1) {
-                        count++;
-                    }
-                }
-                liveCount = count;
-            }
-            sink.putLong(liveCount);
-
-            cursor.toTop();
-            final int keyStartIndex = mapValueTypes != null
-                    ? mapValueTypes.getColumnCount()
-                    : chainTypeIndex + 2;
-            while (cursor.hasNext()) {
-                final MapValue value = record.getValue();
-                if (tombstoneValueIndex >= 0 && value.getByte(tombstoneValueIndex) == 1) {
-                    continue;
-                }
-                LiveViewSnapshotKeyCodec.writeKey(sink, record, keyColumnTypes, keyStartIndex);
-                LiveViewSnapshotKeyCodec.writeKey(sink, record, chainColumnTypes, 0);
-                sink.putLong(value.getLong(chainTypeIndex));
-                sink.putLong(value.getLong(chainTypeIndex + 1));
-                if (lastActivityTsValueIndex >= 0) {
-                    sink.putLong(value.getLong(lastActivityTsValueIndex));
-                }
-            }
         }
 
         @Override

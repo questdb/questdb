@@ -129,9 +129,9 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     // reused for subsequent LVs by re-opening on a different file.
     private LiveViewCheckpointReader checkpointReader;
     // Bulk-copy buffer for restoring per-function snapshot blocks. The
-    // WindowFunction.restore(MemoryR, int) contract reads from offset 0,
-    // so the framework copies a function's payload bytes here from the
-    // checkpoint file and hands the scratch to the function. Lazily
+    // snapshot framework reads a function's payload from offset 0, so it
+    // copies the payload bytes here from the checkpoint file and hands the
+    // scratch to LiveViewFunctionSnapshot.restore. Lazily
     // allocated; reused across functions and across cycles. Freed at
     // job close.
     private MemoryCARW checkpointRestoreScratch;
@@ -2053,12 +2053,13 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      *     STR factoryName     (matches snapshotFactoryName(f) - factory class,
      *                          not the function impl, so impl renames survive)
      *     INT formatVersion
-     *     ...function-private state bytes (consumed by WindowFunction.restore)
+     *     ...key-shape header + per-partition state (consumed by
+     *        {@link LiveViewFunctionSnapshot#restore})
      * </pre>
-     * Then bulk-copies the trailing state bytes into the per-worker scratch
-     * buffer (so {@link WindowFunction#restore(MemoryR, int)} reads from
-     * offset 0 as the contract requires) and dispatches by matching the
-     * factory name against the compiled SELECT's window functions.
+     * Then bulk-copies the trailing payload bytes into the per-worker scratch
+     * buffer (so {@link LiveViewFunctionSnapshot#restore} reads from offset 0)
+     * and dispatches by matching the factory name against the compiled
+     * SELECT's window functions.
      */
     private void restoreFunctionBlock(LiveViewCheckpointReader.ReadableBlock block, ObjList<WindowFunction> functions) {
         long offset = 0;
