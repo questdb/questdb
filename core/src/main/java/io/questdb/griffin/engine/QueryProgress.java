@@ -185,7 +185,12 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
         }
         LogRecord log = null;
         try {
-            executionContext.getCairoEngine().getMetrics().healthMetrics().incrementQueryErrorCounter();
+            // A validation failure is reported to the client, not as a server-side query error,
+            // so do not inflate the query-error metric for it. A reader leak is still counted
+            // below regardless of validation mode, as it indicates a real bug.
+            if (!executionContext.isValidationOnly()) {
+                executionContext.getCairoEngine().getMetrics().healthMetrics().incrementQueryErrorCounter();
+            }
             // Extract all the variables before the call to call LOG.errorW() to avoid exception
             // causing log sequence leaks.
             long durationNanos =
