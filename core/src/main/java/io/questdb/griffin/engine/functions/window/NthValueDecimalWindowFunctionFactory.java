@@ -69,11 +69,6 @@ public class NthValueDecimalWindowFunctionFactory extends AbstractWindowFunction
     }
 
     @Override
-    protected boolean supportNullsDesc() {
-        return true;
-    }
-
-    @Override
     public Function newInstance(
             int position,
             ObjList<Function> args,

@@ -3068,7 +3068,7 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
     static class Decimal64FirstValueOverUnboundedPartitionRowsFrameFunction extends BasePartitionedWindowFunction {
 
         protected final int type;
-        protected long value;
+        protected long value = Decimals.DECIMAL64_NULL;
 
         public Decimal64FirstValueOverUnboundedPartitionRowsFrameFunction(Map map, VirtualRecord partitionByRecord, RecordSink partitionBySink, Function arg, int type) {
             super(map, partitionByRecord, partitionBySink, arg);
@@ -3133,7 +3133,7 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
 
         protected final int type;
         protected boolean found;
-        protected long value;
+        protected long value = Decimals.DECIMAL64_NULL;
 
         public Decimal64FirstValueOverWholeResultSetFunction(Function arg, int type) {
             super(arg);
@@ -4509,7 +4509,7 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
     static class Decimal8FirstValueOverUnboundedPartitionRowsFrameFunction extends BasePartitionedWindowFunction {
 
         protected final int type;
-        protected byte value;
+        protected byte value = Decimals.DECIMAL8_NULL;
 
         public Decimal8FirstValueOverUnboundedPartitionRowsFrameFunction(Map map, VirtualRecord partitionByRecord, RecordSink partitionBySink, Function arg, int type) {
             super(map, partitionByRecord, partitionBySink, arg);
@@ -4574,7 +4574,7 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
 
         protected final int type;
         protected boolean found;
-        protected byte value;
+        protected byte value = Decimals.DECIMAL8_NULL;
 
         public Decimal8FirstValueOverWholeResultSetFunction(Function arg, int type) {
             super(arg);
@@ -5950,7 +5950,7 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
     static class Decimal16FirstValueOverUnboundedPartitionRowsFrameFunction extends BasePartitionedWindowFunction {
 
         protected final int type;
-        protected short value;
+        protected short value = Decimals.DECIMAL16_NULL;
 
         public Decimal16FirstValueOverUnboundedPartitionRowsFrameFunction(Map map, VirtualRecord partitionByRecord, RecordSink partitionBySink, Function arg, int type) {
             super(map, partitionByRecord, partitionBySink, arg);
@@ -6015,7 +6015,7 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
 
         protected final int type;
         protected boolean found;
-        protected short value;
+        protected short value = Decimals.DECIMAL16_NULL;
 
         public Decimal16FirstValueOverWholeResultSetFunction(Function arg, int type) {
             super(arg);
@@ -7391,7 +7391,7 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
     static class Decimal32FirstValueOverUnboundedPartitionRowsFrameFunction extends BasePartitionedWindowFunction {
 
         protected final int type;
-        protected int value;
+        protected int value = Decimals.DECIMAL32_NULL;
 
         public Decimal32FirstValueOverUnboundedPartitionRowsFrameFunction(Map map, VirtualRecord partitionByRecord, RecordSink partitionBySink, Function arg, int type) {
             super(map, partitionByRecord, partitionBySink, arg);
@@ -7456,7 +7456,7 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
 
         protected final int type;
         protected boolean found;
-        protected int value;
+        protected int value = Decimals.DECIMAL32_NULL;
 
         public Decimal32FirstValueOverWholeResultSetFunction(Function arg, int type) {
             super(arg);
@@ -8964,6 +8964,7 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
         public Decimal128FirstValueOverWholeResultSetFunction(Function arg, int type) {
             super(arg);
             this.type = type;
+            value.ofRawNull();
         }
 
         @Override
@@ -10493,6 +10494,7 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
         public Decimal256FirstValueOverWholeResultSetFunction(Function arg, int type) {
             super(arg);
             this.type = type;
+            value.ofRawNull();
         }
 
         @Override

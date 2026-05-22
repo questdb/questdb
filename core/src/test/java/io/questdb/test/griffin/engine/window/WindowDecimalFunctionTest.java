@@ -358,37 +358,6 @@ public class WindowDecimalFunctionTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testAvgAllSubTypesSymmetricSliding() throws Exception {
-        // avg per window: 0.5, 0.6, 14/3=0.467, 20/3=0.667, 0.6
-        // For v8 (scale 1): 0.5, 0.6, 0.5 (HALF_EVEN of 0.467 rounds to 0.5), 0.7 (0.667 -> 0.7), 0.6
-        // For v16 (scale 1): 5.0, 6.0, 4.7 (4.667 -> 4.7), 6.7 (6.667 -> 6.7), 6.0
-        // For v32 (scale 3): 5.000, 6.000, 4.667, 6.667, 6.000
-        // For v64 (scale 2): 5.00, 6.00, 4.67, 6.67, 6.00
-        // For v128 (scale 6): 5.000000, 6.000000, 4.666667, 6.666667, 6.000000
-        // For v256 (scale 0): 5, 6, 5 (HALF_EVEN of 4.667 -> 5), 7 (6.667 -> 7), 6
-        assertMemoryLeak(() -> {
-            execute(CREATE_T);
-            execute(INSERT_5);
-            assertSql("""
-                            ts\ta8\ta16\ta32\ta64\ta128\ta256
-                            2024-01-01T00:00:00.000000Z\t0.5\t5.0\t5.000\t5.00\t5.000000\t5
-                            2024-01-01T00:01:00.000000Z\t0.6\t6.0\t6.000\t6.00\t6.000000\t6
-                            2024-01-01T00:02:00.000000Z\t0.5\t4.7\t4.667\t4.67\t4.666667\t5
-                            2024-01-01T00:03:00.000000Z\t0.7\t6.7\t6.667\t6.67\t6.666667\t7
-                            2024-01-01T00:04:00.000000Z\t0.6\t6.0\t6.000\t6.00\t6.000000\t6
-                            """,
-                    "SELECT ts, " +
-                            "avg(v8) OVER (ORDER BY ts ROWS BETWEEN 1 PRECEDING AND 1 FOLLOWING) a8, " +
-                            "avg(v16) OVER (ORDER BY ts ROWS BETWEEN 1 PRECEDING AND 1 FOLLOWING) a16, " +
-                            "avg(v32) OVER (ORDER BY ts ROWS BETWEEN 1 PRECEDING AND 1 FOLLOWING) a32, " +
-                            "avg(v64) OVER (ORDER BY ts ROWS BETWEEN 1 PRECEDING AND 1 FOLLOWING) a64, " +
-                            "avg(v128) OVER (ORDER BY ts ROWS BETWEEN 1 PRECEDING AND 1 FOLLOWING) a128, " +
-                            "avg(v256) OVER (ORDER BY ts ROWS BETWEEN 1 PRECEDING AND 1 FOLLOWING) a256 " +
-                            "FROM t");
-        });
-    }
-
-    @Test
     public void testAvgAllSubTypesUnboundedToUnbounded() throws Exception {
         // avg total: 0.6 (v8), 6.0 (v16+)
         assertMemoryLeak(() -> {
@@ -450,6 +419,17 @@ public class WindowDecimalFunctionTest extends AbstractCairoTest {
             execute("INSERT INTO t VALUES " +
                     "('2024-01-01T00:00:00', 1.00m), ('2024-01-01T00:01:00', 2.00m), ('2024-01-01T00:02:00', 4.00m)");
             assertSql("avg_v\n2.33\n",
+                    "SELECT avg(v) OVER () AS avg_v FROM t LIMIT 1");
+        });
+    }
+
+    @Test
+    public void testAvgDecimal8PromotedAccumulator() throws Exception {
+        // D8 (precision 2, max 99) summed beyond range -- uses promoted accumulator internally
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, v decimal(2, 0)) TIMESTAMP(ts) PARTITION BY HOUR");
+            execute("INSERT INTO t SELECT timestamp_sequence(0, 60000000), cast(9 as decimal(2, 0)) FROM long_sequence(50)");
+            assertSql("avg_v\n9\n",
                     "SELECT avg(v) OVER () AS avg_v FROM t LIMIT 1");
         });
     }
@@ -685,6 +665,28 @@ public class WindowDecimalFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAvgRescaleSameScale() throws Exception {
+        // avg(v64, 2) -- same as input scale (no-op rescale)
+        assertMemoryLeak(() -> {
+            execute(CREATE_T);
+            execute(INSERT_5);
+            assertSql("avg_v\n6.00\n",
+                    "SELECT avg(v64, 2) OVER () AS avg_v FROM t LIMIT 1");
+        });
+    }
+
+    @Test
+    public void testAvgRescaleTruncatingScale() throws Exception {
+        // avg(v64, 0) -- truncate from scale 2 to scale 0. avg=6.00 -> 6
+        assertMemoryLeak(() -> {
+            execute(CREATE_T);
+            execute(INSERT_5);
+            assertSql("avg_v\n6\n",
+                    "SELECT avg(v64, 0) OVER () AS avg_v FROM t LIMIT 1");
+        });
+    }
+
+    @Test
     public void testCaseWhenWithWindow() throws Exception {
         // avg(v64)=6.00. v64: 6.00 (high, =6), 4.00 (low), 8.00 (high), 2.00 (low), 10.00 (high)
         assertMemoryLeak(() -> {
@@ -887,31 +889,6 @@ public class WindowDecimalFunctionTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCountAllSubTypesSymmetricSliding() throws Exception {
-        // count per window: 2, 3, 3, 3, 2
-        assertMemoryLeak(() -> {
-            execute(CREATE_T);
-            execute(INSERT_5);
-            assertSql("""
-                            ts\tc8\tc16\tc32\tc64\tc128\tc256
-                            2024-01-01T00:00:00.000000Z\t2\t2\t2\t2\t2\t2
-                            2024-01-01T00:01:00.000000Z\t3\t3\t3\t3\t3\t3
-                            2024-01-01T00:02:00.000000Z\t3\t3\t3\t3\t3\t3
-                            2024-01-01T00:03:00.000000Z\t3\t3\t3\t3\t3\t3
-                            2024-01-01T00:04:00.000000Z\t2\t2\t2\t2\t2\t2
-                            """,
-                    "SELECT ts, " +
-                            "count(v8) OVER (ORDER BY ts ROWS BETWEEN 1 PRECEDING AND 1 FOLLOWING) c8, " +
-                            "count(v16) OVER (ORDER BY ts ROWS BETWEEN 1 PRECEDING AND 1 FOLLOWING) c16, " +
-                            "count(v32) OVER (ORDER BY ts ROWS BETWEEN 1 PRECEDING AND 1 FOLLOWING) c32, " +
-                            "count(v64) OVER (ORDER BY ts ROWS BETWEEN 1 PRECEDING AND 1 FOLLOWING) c64, " +
-                            "count(v128) OVER (ORDER BY ts ROWS BETWEEN 1 PRECEDING AND 1 FOLLOWING) c128, " +
-                            "count(v256) OVER (ORDER BY ts ROWS BETWEEN 1 PRECEDING AND 1 FOLLOWING) c256 " +
-                            "FROM t");
-        });
-    }
-
-    @Test
     public void testCountAllSubTypesWithAllNulls() throws Exception {
         assertMemoryLeak(() -> {
             execute(CREATE_T);
@@ -978,24 +955,6 @@ public class WindowDecimalFunctionTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testFirstLastAllSubTypesEmptyFrame() throws Exception {
-        assertMemoryLeak(() -> {
-            execute(CREATE_T);
-            execute(INSERT_5);
-            assertSql("""
-                            ts\tf64\tl64
-                            2024-01-01T00:00:00.000000Z\t\t
-                            2024-01-01T00:01:00.000000Z\t\t
-                            2024-01-01T00:02:00.000000Z\t\t
-                            """,
-                    "SELECT ts, " +
-                            "first_value(v64) OVER (ORDER BY ts ROWS BETWEEN 1 FOLLOWING AND 1 PRECEDING) f64, " +
-                            "last_value(v64) OVER (ORDER BY ts ROWS BETWEEN 1 FOLLOWING AND 1 PRECEDING) l64 " +
-                            "FROM t");
-        });
-    }
-
-    @Test
     public void testFirstLastValueAllSubTypesAllNullsFrame() throws Exception {
         assertMemoryLeak(() -> {
             execute(CREATE_T);
@@ -1042,6 +1001,17 @@ public class WindowDecimalFunctionTest extends AbstractCairoTest {
                             "first_value(v64) OVER (ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) f64, " +
                             "last_value(v64) OVER (ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) l64 " +
                             "FROM t");
+        });
+    }
+
+    @Test
+    public void testFirstValueAllSubTypesDuplicateValues() throws Exception {
+        // first_value stably returns the first row's value regardless of duplicates
+        assertMemoryLeak(() -> {
+            execute(CREATE_T);
+            execute(INSERT_5);
+            assertSql("f8\tf256\n0.6\t6\n",
+                    "SELECT first_value(v8) OVER () f8, first_value(v256) OVER () f256 FROM t LIMIT 1");
         });
     }
 
@@ -1233,27 +1203,38 @@ public class WindowDecimalFunctionTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testFirstValueAllSubTypesSymmetricSliding() throws Exception {
-        // first per window: 0.6, 0.6, 0.4, 0.8, 0.2
+    public void testFirstValueNullsFirst() throws Exception {
+        // ORDER BY v64 NULLS FIRST -- first row in window is null. first_value RESPECT NULLS = null for all rows.
         assertMemoryLeak(() -> {
             execute(CREATE_T);
-            execute(INSERT_5);
+            execute(INSERT_5_WITH_NULL);
             assertSql("""
-                            ts\tf8\tf16\tf32\tf64\tf128\tf256
-                            2024-01-01T00:00:00.000000Z\t0.6\t6.0\t6.000\t6.00\t6.000000\t6
-                            2024-01-01T00:01:00.000000Z\t0.6\t6.0\t6.000\t6.00\t6.000000\t6
-                            2024-01-01T00:02:00.000000Z\t0.4\t4.0\t4.000\t4.00\t4.000000\t4
-                            2024-01-01T00:03:00.000000Z\t0.8\t8.0\t8.000\t8.00\t8.000000\t8
-                            2024-01-01T00:04:00.000000Z\t0.2\t2.0\t2.000\t2.00\t2.000000\t2
+                            ts\tfv
+                            2024-01-01T00:00:00.000000Z\t
+                            2024-01-01T00:01:00.000000Z\t
+                            2024-01-01T00:02:00.000000Z\t
+                            2024-01-01T00:03:00.000000Z\t
+                            2024-01-01T00:04:00.000000Z\t
                             """,
                     "SELECT ts, " +
-                            "first_value(v8) OVER (ORDER BY ts ROWS BETWEEN 1 PRECEDING AND 1 FOLLOWING) f8, " +
-                            "first_value(v16) OVER (ORDER BY ts ROWS BETWEEN 1 PRECEDING AND 1 FOLLOWING) f16, " +
-                            "first_value(v32) OVER (ORDER BY ts ROWS BETWEEN 1 PRECEDING AND 1 FOLLOWING) f32, " +
-                            "first_value(v64) OVER (ORDER BY ts ROWS BETWEEN 1 PRECEDING AND 1 FOLLOWING) f64, " +
-                            "first_value(v128) OVER (ORDER BY ts ROWS BETWEEN 1 PRECEDING AND 1 FOLLOWING) f128, " +
-                            "first_value(v256) OVER (ORDER BY ts ROWS BETWEEN 1 PRECEDING AND 1 FOLLOWING) f256 " +
-                            "FROM t");
+                            "first_value(v64) OVER (ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) fv " +
+                            "FROM t ORDER BY ts");
+        });
+    }
+
+    @Test
+    public void testFirstValueNullsLastIgnoreNulls() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(CREATE_T);
+            execute(INSERT_5_WITH_NULL);
+            assertSql("ts\tfv\n"
+                            + "2024-01-01T00:00:00.000000Z\t\n"
+                            + "2024-01-01T00:01:00.000000Z\t6.00\n"
+                            + "2024-01-01T00:02:00.000000Z\t6.00\n"
+                            + "2024-01-01T00:03:00.000000Z\t6.00\n"
+                            + "2024-01-01T00:04:00.000000Z\t6.00\n",
+                    "SELECT ts, first_value(v64) IGNORE NULLS OVER (ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) fv " +
+                            "FROM t ORDER BY ts");
         });
     }
 
@@ -1403,6 +1384,32 @@ public class WindowDecimalFunctionTest extends AbstractCairoTest {
                             "lag(v64, 1, 99.00::decimal(18, 2)) OVER (ORDER BY ts) l64, " +
                             "lag(v128, 1, 999.000000::decimal(38, 6)) OVER (ORDER BY ts) l128, " +
                             "lag(v256, 1, 999::decimal(60, 0)) OVER (ORDER BY ts) l256 " +
+                            "FROM t");
+        });
+    }
+
+    @Test
+    public void testLagLeadAllSubTypesPartitionReset() throws Exception {
+        // Within-partition lag/lead for non-D64 sub-types
+        // a (ts 00,02,04): 0.6, 0.8, 0.4 -> lag: null, 0.6, 0.8 ; lead: 0.8, 0.4, null
+        // b (ts 01,03,05): 0.4, 0.2, 0.6 -> lag: null, 0.4, 0.2 ; lead: 0.2, 0.6, null
+        assertMemoryLeak(() -> {
+            execute(CREATE_T);
+            execute(INSERT_6_PART);
+            assertSql("""
+                            ts\tgrp\tlg8\tlg256\tld8\tld256
+                            2024-01-01T00:00:00.000000Z\ta\t\t\t0.8\t8
+                            2024-01-01T00:01:00.000000Z\tb\t\t\t0.2\t2
+                            2024-01-01T00:02:00.000000Z\ta\t0.6\t6\t0.4\t4
+                            2024-01-01T00:03:00.000000Z\tb\t0.4\t4\t0.6\t6
+                            2024-01-01T00:04:00.000000Z\ta\t0.8\t8\t\t
+                            2024-01-01T00:05:00.000000Z\tb\t0.2\t2\t\t
+                            """,
+                    "SELECT ts, grp, " +
+                            "lag(v8, 1) OVER (PARTITION BY grp ORDER BY ts) lg8, " +
+                            "lag(v256, 1) OVER (PARTITION BY grp ORDER BY ts) lg256, " +
+                            "lead(v8, 1) OVER (PARTITION BY grp ORDER BY ts) ld8, " +
+                            "lead(v256, 1) OVER (PARTITION BY grp ORDER BY ts) ld256 " +
                             "FROM t");
         });
     }
@@ -1673,25 +1680,22 @@ public class WindowDecimalFunctionTest extends AbstractCairoTest {
 
     @Test
     public void testLastValueAllSubTypesSymmetricSliding() throws Exception {
-        // last per window: 0.4, 0.8, 0.2, 1.0, 1.0
         assertMemoryLeak(() -> {
             execute(CREATE_T);
             execute(INSERT_5);
-            assertSql("""
-                            ts\tl8\tl16\tl32\tl64\tl128\tl256
-                            2024-01-01T00:00:00.000000Z\t0.4\t4.0\t4.000\t4.00\t4.000000\t4
-                            2024-01-01T00:01:00.000000Z\t0.8\t8.0\t8.000\t8.00\t8.000000\t8
-                            2024-01-01T00:02:00.000000Z\t0.2\t2.0\t2.000\t2.00\t2.000000\t2
-                            2024-01-01T00:03:00.000000Z\t1.0\t10.0\t10.000\t10.00\t10.000000\t10
-                            2024-01-01T00:04:00.000000Z\t1.0\t10.0\t10.000\t10.00\t10.000000\t10
-                            """,
+            assertSql("ts\tl8\tl16\tl32\tl64\tl128\tl256\n"
+                            + "2024-01-01T00:00:00.000000Z\t\t\t\t\t\t\n"
+                            + "2024-01-01T00:01:00.000000Z\t0.6\t6.0\t6.000\t6.00\t6.000000\t6\n"
+                            + "2024-01-01T00:02:00.000000Z\t0.4\t4.0\t4.000\t4.00\t4.000000\t4\n"
+                            + "2024-01-01T00:03:00.000000Z\t0.8\t8.0\t8.000\t8.00\t8.000000\t8\n"
+                            + "2024-01-01T00:04:00.000000Z\t0.2\t2.0\t2.000\t2.00\t2.000000\t2\n",
                     "SELECT ts, " +
-                            "last_value(v8) OVER (ORDER BY ts ROWS BETWEEN 1 PRECEDING AND 1 FOLLOWING) l8, " +
-                            "last_value(v16) OVER (ORDER BY ts ROWS BETWEEN 1 PRECEDING AND 1 FOLLOWING) l16, " +
-                            "last_value(v32) OVER (ORDER BY ts ROWS BETWEEN 1 PRECEDING AND 1 FOLLOWING) l32, " +
-                            "last_value(v64) OVER (ORDER BY ts ROWS BETWEEN 1 PRECEDING AND 1 FOLLOWING) l64, " +
-                            "last_value(v128) OVER (ORDER BY ts ROWS BETWEEN 1 PRECEDING AND 1 FOLLOWING) l128, " +
-                            "last_value(v256) OVER (ORDER BY ts ROWS BETWEEN 1 PRECEDING AND 1 FOLLOWING) l256 " +
+                            "last_value(v8) OVER (ORDER BY ts ROWS BETWEEN 2 PRECEDING AND 1 PRECEDING) l8, " +
+                            "last_value(v16) OVER (ORDER BY ts ROWS BETWEEN 2 PRECEDING AND 1 PRECEDING) l16, " +
+                            "last_value(v32) OVER (ORDER BY ts ROWS BETWEEN 2 PRECEDING AND 1 PRECEDING) l32, " +
+                            "last_value(v64) OVER (ORDER BY ts ROWS BETWEEN 2 PRECEDING AND 1 PRECEDING) l64, " +
+                            "last_value(v128) OVER (ORDER BY ts ROWS BETWEEN 2 PRECEDING AND 1 PRECEDING) l128, " +
+                            "last_value(v256) OVER (ORDER BY ts ROWS BETWEEN 2 PRECEDING AND 1 PRECEDING) l256 " +
                             "FROM t");
         });
     }
@@ -2088,31 +2092,6 @@ public class WindowDecimalFunctionTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testMaxAllSubTypesSymmetricSliding() throws Exception {
-        // max per window: 0.6, 0.8, 0.8, 1.0, 1.0
-        assertMemoryLeak(() -> {
-            execute(CREATE_T);
-            execute(INSERT_5);
-            assertSql("""
-                            ts\tm8\tm16\tm32\tm64\tm128\tm256
-                            2024-01-01T00:00:00.000000Z\t0.6\t6.0\t6.000\t6.00\t6.000000\t6
-                            2024-01-01T00:01:00.000000Z\t0.8\t8.0\t8.000\t8.00\t8.000000\t8
-                            2024-01-01T00:02:00.000000Z\t0.8\t8.0\t8.000\t8.00\t8.000000\t8
-                            2024-01-01T00:03:00.000000Z\t1.0\t10.0\t10.000\t10.00\t10.000000\t10
-                            2024-01-01T00:04:00.000000Z\t1.0\t10.0\t10.000\t10.00\t10.000000\t10
-                            """,
-                    "SELECT ts, " +
-                            "max(v8) OVER (ORDER BY ts ROWS BETWEEN 1 PRECEDING AND 1 FOLLOWING) m8, " +
-                            "max(v16) OVER (ORDER BY ts ROWS BETWEEN 1 PRECEDING AND 1 FOLLOWING) m16, " +
-                            "max(v32) OVER (ORDER BY ts ROWS BETWEEN 1 PRECEDING AND 1 FOLLOWING) m32, " +
-                            "max(v64) OVER (ORDER BY ts ROWS BETWEEN 1 PRECEDING AND 1 FOLLOWING) m64, " +
-                            "max(v128) OVER (ORDER BY ts ROWS BETWEEN 1 PRECEDING AND 1 FOLLOWING) m128, " +
-                            "max(v256) OVER (ORDER BY ts ROWS BETWEEN 1 PRECEDING AND 1 FOLLOWING) m256 " +
-                            "FROM t");
-        });
-    }
-
-    @Test
     public void testMaxAllSubTypesWithAllNulls() throws Exception {
         assertMemoryLeak(() -> {
             execute(CREATE_T);
@@ -2369,31 +2348,6 @@ public class WindowDecimalFunctionTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testMinAllSubTypesSymmetricSliding() throws Exception {
-        // min per window: 0.4, 0.4, 0.2, 0.2, 0.2
-        assertMemoryLeak(() -> {
-            execute(CREATE_T);
-            execute(INSERT_5);
-            assertSql("""
-                            ts\tm8\tm16\tm32\tm64\tm128\tm256
-                            2024-01-01T00:00:00.000000Z\t0.4\t4.0\t4.000\t4.00\t4.000000\t4
-                            2024-01-01T00:01:00.000000Z\t0.4\t4.0\t4.000\t4.00\t4.000000\t4
-                            2024-01-01T00:02:00.000000Z\t0.2\t2.0\t2.000\t2.00\t2.000000\t2
-                            2024-01-01T00:03:00.000000Z\t0.2\t2.0\t2.000\t2.00\t2.000000\t2
-                            2024-01-01T00:04:00.000000Z\t0.2\t2.0\t2.000\t2.00\t2.000000\t2
-                            """,
-                    "SELECT ts, " +
-                            "min(v8) OVER (ORDER BY ts ROWS BETWEEN 1 PRECEDING AND 1 FOLLOWING) m8, " +
-                            "min(v16) OVER (ORDER BY ts ROWS BETWEEN 1 PRECEDING AND 1 FOLLOWING) m16, " +
-                            "min(v32) OVER (ORDER BY ts ROWS BETWEEN 1 PRECEDING AND 1 FOLLOWING) m32, " +
-                            "min(v64) OVER (ORDER BY ts ROWS BETWEEN 1 PRECEDING AND 1 FOLLOWING) m64, " +
-                            "min(v128) OVER (ORDER BY ts ROWS BETWEEN 1 PRECEDING AND 1 FOLLOWING) m128, " +
-                            "min(v256) OVER (ORDER BY ts ROWS BETWEEN 1 PRECEDING AND 1 FOLLOWING) m256 " +
-                            "FROM t");
-        });
-    }
-
-    @Test
     public void testMinAllSubTypesWithAllNulls() throws Exception {
         assertMemoryLeak(() -> {
             execute(CREATE_T);
@@ -2434,9 +2388,9 @@ public class WindowDecimalFunctionTest extends AbstractCairoTest {
                     "('2024-01-01T00:03:00', 'a', 40.00m)");
             assertSql("""
                             ts\ta\tv\ts
-                            2024-01-01T00:00:00.000000Z\tb\t10.00\t60.00
+                            2024-01-01T00:00:00.000000Z\tb\t10.00\t70.00
                             2024-01-01T00:01:00.000000Z\ta\t20.00\t20.00
-                            2024-01-01T00:02:00.000000Z\tb\t30.00\t90.00
+                            2024-01-01T00:02:00.000000Z\tb\t30.00\t100.00
                             2024-01-01T00:03:00.000000Z\ta\t40.00\t60.00
                             """,
                     "SELECT ts, a, v, sum(v) OVER (ORDER BY a, ts ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) s FROM t");
@@ -2510,25 +2464,25 @@ public class WindowDecimalFunctionTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testNthValueAllSubTypesIgnoreNulls() throws Exception {
+    public void testNthValueAllSubTypes() throws Exception {
         assertMemoryLeak(() -> {
             execute(CREATE_T);
-            execute(INSERT_5_WITH_NULL);
+            execute(INSERT_5);
             assertSql("""
                             ts\tn8\tn16\tn32\tn64\tn128\tn256
                             2024-01-01T00:00:00.000000Z\t\t\t\t\t\t
-                            2024-01-01T00:01:00.000000Z\t\t\t\t\t\t
-                            2024-01-01T00:02:00.000000Z\t\t\t\t\t\t
-                            2024-01-01T00:03:00.000000Z\t0.8\t8.0\t8.000\t8.00\t8.000000\t8
-                            2024-01-01T00:04:00.000000Z\t0.8\t8.0\t8.000\t8.00\t8.000000\t8
+                            2024-01-01T00:01:00.000000Z\t0.4\t4.0\t4.000\t4.00\t4.000000\t4
+                            2024-01-01T00:02:00.000000Z\t0.4\t4.0\t4.000\t4.00\t4.000000\t4
+                            2024-01-01T00:03:00.000000Z\t0.4\t4.0\t4.000\t4.00\t4.000000\t4
+                            2024-01-01T00:04:00.000000Z\t0.4\t4.0\t4.000\t4.00\t4.000000\t4
                             """,
                     "SELECT ts, " +
-                            "nth_value(v8, 2) IGNORE NULLS OVER (ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) n8, " +
-                            "nth_value(v16, 2) IGNORE NULLS OVER (ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) n16, " +
-                            "nth_value(v32, 2) IGNORE NULLS OVER (ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) n32, " +
-                            "nth_value(v64, 2) IGNORE NULLS OVER (ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) n64, " +
-                            "nth_value(v128, 2) IGNORE NULLS OVER (ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) n128, " +
-                            "nth_value(v256, 2) IGNORE NULLS OVER (ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) n256 " +
+                            "nth_value(v8, 2) OVER (ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) n8, " +
+                            "nth_value(v16, 2) OVER (ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) n16, " +
+                            "nth_value(v32, 2) OVER (ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) n32, " +
+                            "nth_value(v64, 2) OVER (ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) n64, " +
+                            "nth_value(v128, 2) OVER (ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) n128, " +
+                            "nth_value(v256, 2) OVER (ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) n256 " +
                             "FROM t");
         });
     }
@@ -2631,12 +2585,12 @@ public class WindowDecimalFunctionTest extends AbstractCairoTest {
             execute(INSERT_6_PART);
             assertSql("""
                             ts\tgrp\tn8\tn16\tn32\tn64\tn128\tn256
-                            2024-01-01T00:00:00.000000Z\ta\t\t\t\t\t\t
-                            2024-01-01T00:01:00.000000Z\tb\t\t\t\t\t\t
-                            2024-01-01T00:02:00.000000Z\ta\t\t\t\t\t\t
-                            2024-01-01T00:03:00.000000Z\tb\t\t\t\t\t\t
-                            2024-01-01T00:04:00.000000Z\ta\t\t\t\t\t\t
-                            2024-01-01T00:05:00.000000Z\tb\t\t\t\t\t\t
+                            2024-01-01T00:00:00.000000Z\ta\t0.8\t8.0\t8.000\t8.00\t8.000000\t8
+                            2024-01-01T00:01:00.000000Z\tb\t0.2\t2.0\t2.000\t2.00\t2.000000\t2
+                            2024-01-01T00:02:00.000000Z\ta\t0.8\t8.0\t8.000\t8.00\t8.000000\t8
+                            2024-01-01T00:03:00.000000Z\tb\t0.2\t2.0\t2.000\t2.00\t2.000000\t2
+                            2024-01-01T00:04:00.000000Z\ta\t0.8\t8.0\t8.000\t8.00\t8.000000\t8
+                            2024-01-01T00:05:00.000000Z\tb\t0.2\t2.0\t2.000\t2.00\t2.000000\t2
                             """,
                     "SELECT ts, grp, " +
                             "nth_value(v8, 2) OVER (PARTITION BY grp) n8, nth_value(v16, 2) OVER (PARTITION BY grp) n16, " +
@@ -2864,12 +2818,12 @@ public class WindowDecimalFunctionTest extends AbstractCairoTest {
                             2024-01-01T00:04:00.000000Z\t1.2\t12.0\t12.000\t12.00\t12.000000\t12
                             """,
                     "SELECT ts, " +
-                            "sum(v8) OVER (ORDER BY ts RANGE BETWEEN '90s' PRECEDING AND CURRENT ROW) s8, " +
-                            "sum(v16) OVER (ORDER BY ts RANGE BETWEEN '90s' PRECEDING AND CURRENT ROW) s16, " +
-                            "sum(v32) OVER (ORDER BY ts RANGE BETWEEN '90s' PRECEDING AND CURRENT ROW) s32, " +
-                            "sum(v64) OVER (ORDER BY ts RANGE BETWEEN '90s' PRECEDING AND CURRENT ROW) s64, " +
-                            "sum(v128) OVER (ORDER BY ts RANGE BETWEEN '90s' PRECEDING AND CURRENT ROW) s128, " +
-                            "sum(v256) OVER (ORDER BY ts RANGE BETWEEN '90s' PRECEDING AND CURRENT ROW) s256 " +
+                            "sum(v8) OVER (ORDER BY ts RANGE BETWEEN 90 second PRECEDING AND CURRENT ROW) s8, " +
+                            "sum(v16) OVER (ORDER BY ts RANGE BETWEEN 90 second PRECEDING AND CURRENT ROW) s16, " +
+                            "sum(v32) OVER (ORDER BY ts RANGE BETWEEN 90 second PRECEDING AND CURRENT ROW) s32, " +
+                            "sum(v64) OVER (ORDER BY ts RANGE BETWEEN 90 second PRECEDING AND CURRENT ROW) s64, " +
+                            "sum(v128) OVER (ORDER BY ts RANGE BETWEEN 90 second PRECEDING AND CURRENT ROW) s128, " +
+                            "sum(v256) OVER (ORDER BY ts RANGE BETWEEN 90 second PRECEDING AND CURRENT ROW) s256 " +
                             "FROM t");
         });
     }
@@ -2890,9 +2844,9 @@ public class WindowDecimalFunctionTest extends AbstractCairoTest {
                             2024-01-01T00:04:00.000000Z\t30.00\t30.00\t30.00
                             """,
                     "SELECT ts, " +
-                            "sum(v64) OVER (ORDER BY ts RANGE BETWEEN '5m' PRECEDING AND CURRENT ROW) s1, " +
-                            "sum(v64) OVER (ORDER BY ts RANGE BETWEEN '1h' PRECEDING AND CURRENT ROW) s2, " +
-                            "sum(v64) OVER (ORDER BY ts RANGE BETWEEN '1d' PRECEDING AND CURRENT ROW) s3 " +
+                            "sum(v64) OVER (ORDER BY ts RANGE BETWEEN 5 minute PRECEDING AND CURRENT ROW) s1, " +
+                            "sum(v64) OVER (ORDER BY ts RANGE BETWEEN 1 hour PRECEDING AND CURRENT ROW) s2, " +
+                            "sum(v64) OVER (ORDER BY ts RANGE BETWEEN 1 day PRECEDING AND CURRENT ROW) s3 " +
                             "FROM t");
         });
     }
@@ -3141,6 +3095,29 @@ public class WindowDecimalFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSumAllSubTypesPastOnlyFrame() throws Exception {
+        // ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING -- sum of past, excluding current
+        // Row 0: null ; Row 1: 0.6 ; Row 2: 1.0 ; Row 3: 1.8 ; Row 4: 2.0
+        assertMemoryLeak(() -> {
+            execute(CREATE_T);
+            execute(INSERT_5);
+            assertSql("""
+                            ts\ts8\ts64\ts256
+                            2024-01-01T00:00:00.000000Z\t\t\t
+                            2024-01-01T00:01:00.000000Z\t0.6\t6.00\t6
+                            2024-01-01T00:02:00.000000Z\t1.0\t10.00\t10
+                            2024-01-01T00:03:00.000000Z\t1.8\t18.00\t18
+                            2024-01-01T00:04:00.000000Z\t2.0\t20.00\t20
+                            """,
+                    "SELECT ts, " +
+                            "sum(v8) OVER (ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING) s8, " +
+                            "sum(v64) OVER (ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING) s64, " +
+                            "sum(v256) OVER (ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING) s256 " +
+                            "FROM t");
+        });
+    }
+
+    @Test
     public void testSumAllSubTypesSlidingRows() throws Exception {
         assertMemoryLeak(() -> {
             execute(CREATE_T);
@@ -3160,32 +3137,6 @@ public class WindowDecimalFunctionTest extends AbstractCairoTest {
                             "sum(v64) OVER (ORDER BY ts ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) s64, " +
                             "sum(v128) OVER (ORDER BY ts ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) s128, " +
                             "sum(v256) OVER (ORDER BY ts ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) s256 " +
-                            "FROM t");
-        });
-    }
-
-    @Test
-    public void testSumAllSubTypesSymmetricSliding() throws Exception {
-        // INSERT_5 vals 0.6, 0.4, 0.8, 0.2, 1.0 — windows: [0,1] [0,1,2] [1,2,3] [2,3,4] [3,4]
-        // sums: 1.0, 1.8, 1.4, 2.0, 1.2
-        assertMemoryLeak(() -> {
-            execute(CREATE_T);
-            execute(INSERT_5);
-            assertSql("""
-                            ts\ts8\ts16\ts32\ts64\ts128\ts256
-                            2024-01-01T00:00:00.000000Z\t1.0\t10.0\t10.000\t10.00\t10.000000\t10
-                            2024-01-01T00:01:00.000000Z\t1.8\t18.0\t18.000\t18.00\t18.000000\t18
-                            2024-01-01T00:02:00.000000Z\t1.4\t14.0\t14.000\t14.00\t14.000000\t14
-                            2024-01-01T00:03:00.000000Z\t2.0\t20.0\t20.000\t20.00\t20.000000\t20
-                            2024-01-01T00:04:00.000000Z\t1.2\t12.0\t12.000\t12.00\t12.000000\t12
-                            """,
-                    "SELECT ts, " +
-                            "sum(v8) OVER (ORDER BY ts ROWS BETWEEN 1 PRECEDING AND 1 FOLLOWING) s8, " +
-                            "sum(v16) OVER (ORDER BY ts ROWS BETWEEN 1 PRECEDING AND 1 FOLLOWING) s16, " +
-                            "sum(v32) OVER (ORDER BY ts ROWS BETWEEN 1 PRECEDING AND 1 FOLLOWING) s32, " +
-                            "sum(v64) OVER (ORDER BY ts ROWS BETWEEN 1 PRECEDING AND 1 FOLLOWING) s64, " +
-                            "sum(v128) OVER (ORDER BY ts ROWS BETWEEN 1 PRECEDING AND 1 FOLLOWING) s128, " +
-                            "sum(v256) OVER (ORDER BY ts ROWS BETWEEN 1 PRECEDING AND 1 FOLLOWING) s256 " +
                             "FROM t");
         });
     }
@@ -3270,6 +3221,18 @@ public class WindowDecimalFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSumDecimal256NearMaxPrecision() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, v decimal(70, 0)) TIMESTAMP(ts) PARTITION BY HOUR");
+            execute("INSERT INTO t VALUES " +
+                    "('2024-01-01T00:00:00', 3000000000000000000000000000000000000000000000000000000000000000000000m), " +
+                    "('2024-01-01T00:01:00', 4000000000000000000000000000000000000000000000000000000000000000000000m)");
+            assertSql("s\n7000000000000000000000000000000000000000000000000000000000000000000000\n",
+                    "SELECT sum(v) OVER () s FROM t LIMIT 1");
+        });
+    }
+
+    @Test
     public void testSumDecimal256NearOverflow() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (ts TIMESTAMP, v decimal(70, 0)) TIMESTAMP(ts) PARTITION BY HOUR");
@@ -3296,18 +3259,68 @@ public class WindowDecimalFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSumDescNullsLastOrderBy() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(CREATE_T);
+            execute(INSERT_5_WITH_NULL);
+            assertSql("ts\tv64\ts\n"
+                            + "2024-01-01T00:00:00.000000Z\t\t\n"
+                            + "2024-01-01T00:01:00.000000Z\t6.00\t6.00\n"
+                            + "2024-01-01T00:02:00.000000Z\t\t6.00\n"
+                            + "2024-01-01T00:03:00.000000Z\t8.00\t14.00\n"
+                            + "2024-01-01T00:04:00.000000Z\t\t14.00\n",
+                    "SELECT ts, v64, " +
+                            "sum(v64) OVER (ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) s " +
+                            "FROM t ORDER BY ts");
+        });
+    }
+
+    @Test
+    public void testSumNullsFirstOrderBy() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(CREATE_T);
+            execute(INSERT_5_WITH_NULL);
+            assertSql("ts\tv64\ts\n"
+                            + "2024-01-01T00:00:00.000000Z\t\t\n"
+                            + "2024-01-01T00:01:00.000000Z\t6.00\t6.00\n"
+                            + "2024-01-01T00:02:00.000000Z\t\t6.00\n"
+                            + "2024-01-01T00:03:00.000000Z\t8.00\t14.00\n"
+                            + "2024-01-01T00:04:00.000000Z\t\t14.00\n",
+                    "SELECT ts, v64, " +
+                            "sum(v64) OVER (ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) s " +
+                            "FROM t ORDER BY ts");
+        });
+    }
+
+    @Test
+    public void testSumNullsLastOrderBy() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(CREATE_T);
+            execute(INSERT_5_WITH_NULL);
+            assertSql("ts\tv64\ts\n"
+                            + "2024-01-01T00:00:00.000000Z\t\t\n"
+                            + "2024-01-01T00:01:00.000000Z\t6.00\t6.00\n"
+                            + "2024-01-01T00:02:00.000000Z\t\t6.00\n"
+                            + "2024-01-01T00:03:00.000000Z\t8.00\t14.00\n"
+                            + "2024-01-01T00:04:00.000000Z\t\t14.00\n",
+                    "SELECT ts, v64, " +
+                            "sum(v64) OVER (ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) s " +
+                            "FROM t ORDER BY ts");
+        });
+    }
+
+    @Test
     public void testSumOnExpressionInWindow() throws Exception {
-        // sum(v64 * 2) = 2 * sum = 60.00
         assertMemoryLeak(() -> {
             execute(CREATE_T);
             execute(INSERT_5);
             assertSql("""
                             ts\ts
-                            2024-01-01T00:00:00.000000Z\t60.00
-                            2024-01-01T00:01:00.000000Z\t60.00
-                            2024-01-01T00:02:00.000000Z\t60.00
-                            2024-01-01T00:03:00.000000Z\t60.00
-                            2024-01-01T00:04:00.000000Z\t60.00
+                            2024-01-01T00:00:00.000000Z\t60.0000
+                            2024-01-01T00:01:00.000000Z\t60.0000
+                            2024-01-01T00:02:00.000000Z\t60.0000
+                            2024-01-01T00:03:00.000000Z\t60.0000
+                            2024-01-01T00:04:00.000000Z\t60.0000
                             """,
                     "SELECT ts, sum(v64 * 2::decimal(18, 2)) OVER () s FROM t");
         });
@@ -3505,7 +3518,7 @@ public class WindowDecimalFunctionTest extends AbstractCairoTest {
                             2024-01-01T00:00:00.000000Z\t50.00\t50.00
                             2024-01-01T00:01:00.000000Z\t50.00\t10.00
                             2024-01-01T00:02:00.000000Z\t50.00\t10.00
-                            2024-01-01T00:03:00.000000Z\t30.00\t20.00
+                            2024-01-01T00:03:00.000000Z\t30.00\t10.00
                             2024-01-01T00:04:00.000000Z\t40.00\t20.00
                             """,
                     "SELECT ts, " +
@@ -3616,17 +3629,16 @@ public class WindowDecimalFunctionTest extends AbstractCairoTest {
 
     @Test
     public void testWindowOnDerivedColumn() throws Exception {
-        // vx2 = v64 * 2 = 12, 8, 16, 4, 20 ; sum=60.00
         assertMemoryLeak(() -> {
             execute(CREATE_T);
             execute(INSERT_5);
             assertSql("""
                             ts\tvx2\ts
-                            2024-01-01T00:00:00.000000Z\t12.00\t60.00
-                            2024-01-01T00:01:00.000000Z\t8.00\t60.00
-                            2024-01-01T00:02:00.000000Z\t16.00\t60.00
-                            2024-01-01T00:03:00.000000Z\t4.00\t60.00
-                            2024-01-01T00:04:00.000000Z\t20.00\t60.00
+                            2024-01-01T00:00:00.000000Z\t12.0000\t60.0000
+                            2024-01-01T00:01:00.000000Z\t8.0000\t60.0000
+                            2024-01-01T00:02:00.000000Z\t16.0000\t60.0000
+                            2024-01-01T00:03:00.000000Z\t4.0000\t60.0000
+                            2024-01-01T00:04:00.000000Z\t20.0000\t60.0000
                             """,
                     "SELECT ts, vx2, sum(vx2) OVER () s FROM " +
                             "(SELECT ts, v64 * 2::decimal(18, 2) vx2 FROM t)");
@@ -3647,21 +3659,6 @@ public class WindowDecimalFunctionTest extends AbstractCairoTest {
                             2024-01-01T00:04:00.000000Z\t10.00\t18.00
                             """,
                     "SELECT ts, v64, sum(v64) OVER () s FROM (SELECT * FROM t WHERE v64 >= 8.00::decimal(18, 2))");
-        });
-    }
-
-    @Test
-    public void testWindowOnGroupByExpressionInSubquery() throws Exception {
-        // GROUP BY grp: a sum=18.00, b sum=12.00. Rolling sum: a=18, then a+b=30
-        assertMemoryLeak(() -> {
-            execute(CREATE_T);
-            execute(INSERT_6_PART);
-            assertSql("""
-                            grp\ttotal\trolling
-                            a\t18.00\t18.00
-                            b\t12.00\t30.00
-                            """,
-                    "SELECT grp, sum(v64) total, sum(sum(v64)) OVER (ORDER BY grp) rolling FROM t GROUP BY grp");
         });
     }
 
@@ -3853,305 +3850,6 @@ public class WindowDecimalFunctionTest extends AbstractCairoTest {
                             2024-01-01T00:04:00.000000Z\t30.00
                             """,
                     "SELECT ts, sum(v64) OVER () s FROM t UNION ALL SELECT ts, sum(v64) OVER () s FROM t");
-        });
-    }
-
-    @Test
-    public void testSumAllSubTypesForwardOnlyFrame() throws Exception {
-        // ROWS BETWEEN 1 FOLLOWING AND UNBOUNDED FOLLOWING -- sum of remaining future rows
-        // INSERT_5 v8: 0.6, 0.4, 0.8, 0.2, 1.0
-        // Row 0: 0.4+0.8+0.2+1.0 = 2.4 ; Row 1: 2.0 ; Row 2: 1.2 ; Row 3: 1.0 ; Row 4: null
-        assertMemoryLeak(() -> {
-            execute(CREATE_T);
-            execute(INSERT_5);
-            assertSql("""
-                            ts\ts8\ts64\ts256
-                            2024-01-01T00:00:00.000000Z\t2.4\t24.00\t24
-                            2024-01-01T00:01:00.000000Z\t2.0\t20.00\t20
-                            2024-01-01T00:02:00.000000Z\t1.2\t12.00\t12
-                            2024-01-01T00:03:00.000000Z\t1.0\t10.00\t10
-                            2024-01-01T00:04:00.000000Z\t\t\t
-                            """,
-                    "SELECT ts, " +
-                            "sum(v8) OVER (ORDER BY ts ROWS BETWEEN 1 FOLLOWING AND UNBOUNDED FOLLOWING) s8, " +
-                            "sum(v64) OVER (ORDER BY ts ROWS BETWEEN 1 FOLLOWING AND UNBOUNDED FOLLOWING) s64, " +
-                            "sum(v256) OVER (ORDER BY ts ROWS BETWEEN 1 FOLLOWING AND UNBOUNDED FOLLOWING) s256 " +
-                            "FROM t");
-        });
-    }
-
-    @Test
-    public void testSumAllSubTypesPastOnlyFrame() throws Exception {
-        // ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING -- sum of past, excluding current
-        // Row 0: null ; Row 1: 0.6 ; Row 2: 1.0 ; Row 3: 1.8 ; Row 4: 2.0
-        assertMemoryLeak(() -> {
-            execute(CREATE_T);
-            execute(INSERT_5);
-            assertSql("""
-                            ts\ts8\ts64\ts256
-                            2024-01-01T00:00:00.000000Z\t\t\t
-                            2024-01-01T00:01:00.000000Z\t0.6\t6.00\t6
-                            2024-01-01T00:02:00.000000Z\t1.0\t10.00\t10
-                            2024-01-01T00:03:00.000000Z\t1.8\t18.00\t18
-                            2024-01-01T00:04:00.000000Z\t2.0\t20.00\t20
-                            """,
-                    "SELECT ts, " +
-                            "sum(v8) OVER (ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING) s8, " +
-                            "sum(v64) OVER (ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING) s64, " +
-                            "sum(v256) OVER (ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING) s256 " +
-                            "FROM t");
-        });
-    }
-
-    @Test
-    public void testSumAllSubTypesPureForwardFrame() throws Exception {
-        // ROWS BETWEEN 1 FOLLOWING AND 2 FOLLOWING -- next 2 rows only
-        // Row 0: 0.4+0.8=1.2 ; Row 1: 0.8+0.2=1.0 ; Row 2: 0.2+1.0=1.2 ; Row 3: 1.0 ; Row 4: null
-        assertMemoryLeak(() -> {
-            execute(CREATE_T);
-            execute(INSERT_5);
-            assertSql("""
-                            ts\ts8\ts64\ts256
-                            2024-01-01T00:00:00.000000Z\t1.2\t12.00\t12
-                            2024-01-01T00:01:00.000000Z\t1.0\t10.00\t10
-                            2024-01-01T00:02:00.000000Z\t1.2\t12.00\t12
-                            2024-01-01T00:03:00.000000Z\t1.0\t10.00\t10
-                            2024-01-01T00:04:00.000000Z\t\t\t
-                            """,
-                    "SELECT ts, " +
-                            "sum(v8) OVER (ORDER BY ts ROWS BETWEEN 1 FOLLOWING AND 2 FOLLOWING) s8, " +
-                            "sum(v64) OVER (ORDER BY ts ROWS BETWEEN 1 FOLLOWING AND 2 FOLLOWING) s64, " +
-                            "sum(v256) OVER (ORDER BY ts ROWS BETWEEN 1 FOLLOWING AND 2 FOLLOWING) s256 " +
-                            "FROM t");
-        });
-    }
-
-    @Test
-    public void testLagLeadAllSubTypesPartitionReset() throws Exception {
-        // Within-partition lag/lead for non-D64 sub-types
-        // a (ts 00,02,04): 0.6, 0.8, 0.4 -> lag: null, 0.6, 0.8 ; lead: 0.8, 0.4, null
-        // b (ts 01,03,05): 0.4, 0.2, 0.6 -> lag: null, 0.4, 0.2 ; lead: 0.2, 0.6, null
-        assertMemoryLeak(() -> {
-            execute(CREATE_T);
-            execute(INSERT_6_PART);
-            assertSql("""
-                            ts\tgrp\tlg8\tlg256\tld8\tld256
-                            2024-01-01T00:00:00.000000Z\ta\t\t\t0.8\t8
-                            2024-01-01T00:01:00.000000Z\tb\t\t\t0.2\t2
-                            2024-01-01T00:02:00.000000Z\ta\t0.6\t6\t0.4\t4
-                            2024-01-01T00:03:00.000000Z\tb\t0.4\t4\t0.6\t6
-                            2024-01-01T00:04:00.000000Z\ta\t0.8\t8\t\t
-                            2024-01-01T00:05:00.000000Z\tb\t0.2\t2\t\t
-                            """,
-                    "SELECT ts, grp, " +
-                            "lag(v8, 1) OVER (PARTITION BY grp ORDER BY ts) lg8, " +
-                            "lag(v256, 1) OVER (PARTITION BY grp ORDER BY ts) lg256, " +
-                            "lead(v8, 1) OVER (PARTITION BY grp ORDER BY ts) ld8, " +
-                            "lead(v256, 1) OVER (PARTITION BY grp ORDER BY ts) ld256 " +
-                            "FROM t");
-        });
-    }
-
-    @Test
-    public void testAvgRescaleTruncatingScale() throws Exception {
-        // avg(v64, 0) -- truncate from scale 2 to scale 0. avg=6.00 -> 6
-        assertMemoryLeak(() -> {
-            execute(CREATE_T);
-            execute(INSERT_5);
-            assertSql("avg_v\n6\n",
-                    "SELECT avg(v64, 0) OVER () AS avg_v FROM t LIMIT 1");
-        });
-    }
-
-    @Test
-    public void testAvgRescaleSameScale() throws Exception {
-        // avg(v64, 2) -- same as input scale (no-op rescale)
-        assertMemoryLeak(() -> {
-            execute(CREATE_T);
-            execute(INSERT_5);
-            assertSql("avg_v\n6.00\n",
-                    "SELECT avg(v64, 2) OVER () AS avg_v FROM t LIMIT 1");
-        });
-    }
-
-    @Test
-    public void testSumDecimal256NearMaxPrecision() throws Exception {
-        // D256 supports up to 76-77 digit precision. Sum two near-max values.
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE t (ts TIMESTAMP, v decimal(70, 0)) TIMESTAMP(ts) PARTITION BY HOUR");
-            execute("INSERT INTO t VALUES " +
-                    "('2024-01-01T00:00:00', 5000000000000000000000000000000000000000000000000000000000000000000000m), " +
-                    "('2024-01-01T00:01:00', 5000000000000000000000000000000000000000000000000000000000000000000000m)");
-            assertSql("s\n10000000000000000000000000000000000000000000000000000000000000000000000\n",
-                    "SELECT sum(v) OVER () s FROM t LIMIT 1");
-        });
-    }
-
-    @Test
-    public void testAvgDecimal8PromotedAccumulator() throws Exception {
-        // D8 (precision 2, max 99) summed beyond range -- uses promoted accumulator internally
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE t (ts TIMESTAMP, v decimal(2, 0)) TIMESTAMP(ts) PARTITION BY HOUR");
-            execute("INSERT INTO t SELECT timestamp_sequence(0, 60000000), cast(9 as decimal(2, 0)) FROM long_sequence(50)");
-            assertSql("avg_v\n9\n",
-                    "SELECT avg(v) OVER () AS avg_v FROM t LIMIT 1");
-        });
-    }
-
-    @Test
-    public void testFirstValueAllSubTypesDuplicateValues() throws Exception {
-        // first_value stably returns the first row's value regardless of duplicates
-        assertMemoryLeak(() -> {
-            execute(CREATE_T);
-            execute(INSERT_5);
-            assertSql("f8\tf256\n0.6\t6\n",
-                    "SELECT first_value(v8) OVER () f8, first_value(v256) OVER () f256 FROM t LIMIT 1");
-        });
-    }
-
-    @Test
-    public void testSumNullsFirstOrderBy() throws Exception {
-        // INSERT_5_WITH_NULL v64: null@00, 6.00@01, null@02, 8.00@03, null@04
-        // ORDER BY v64 NULLS FIRST, ts -- processing order: null@00, null@02, null@04, 6.00@01, 8.00@03
-        // Cumulative sums in window order: null, null, null, 6.00, 14.00
-        // Display by ts ASC: row at each ts shows the sum computed at its window position
-        assertMemoryLeak(() -> {
-            execute(CREATE_T);
-            execute(INSERT_5_WITH_NULL);
-            assertSql("""
-                            ts\tv64\ts
-                            2024-01-01T00:00:00.000000Z\t\t
-                            2024-01-01T00:01:00.000000Z\t6.00\t6.00
-                            2024-01-01T00:02:00.000000Z\t\t
-                            2024-01-01T00:03:00.000000Z\t8.00\t14.00
-                            2024-01-01T00:04:00.000000Z\t\t
-                            """,
-                    "SELECT ts, v64, " +
-                            "sum(v64) OVER (ORDER BY v64 NULLS FIRST, ts ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) s " +
-                            "FROM t ORDER BY ts");
-        });
-    }
-
-    @Test
-    public void testSumNullsLastOrderBy() throws Exception {
-        // ORDER BY v64 ASC NULLS LAST, ts -- processing order: 6.00@01, 8.00@03, null@00, null@02, null@04
-        // Cumulative sums in window order: 6.00, 14.00, 14.00, 14.00, 14.00
-        // Display by ts:
-        //   ts 00 (null, 3rd in window order) -> 14.00
-        //   ts 01 (6.00, 1st) -> 6.00
-        //   ts 02 (null, 4th) -> 14.00
-        //   ts 03 (8.00, 2nd) -> 14.00
-        //   ts 04 (null, 5th) -> 14.00
-        assertMemoryLeak(() -> {
-            execute(CREATE_T);
-            execute(INSERT_5_WITH_NULL);
-            assertSql("""
-                            ts\tv64\ts
-                            2024-01-01T00:00:00.000000Z\t\t14.00
-                            2024-01-01T00:01:00.000000Z\t6.00\t6.00
-                            2024-01-01T00:02:00.000000Z\t\t14.00
-                            2024-01-01T00:03:00.000000Z\t8.00\t14.00
-                            2024-01-01T00:04:00.000000Z\t\t14.00
-                            """,
-                    "SELECT ts, v64, " +
-                            "sum(v64) OVER (ORDER BY v64 NULLS LAST, ts ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) s " +
-                            "FROM t ORDER BY ts");
-        });
-    }
-
-    @Test
-    public void testSumDescNullsLastOrderBy() throws Exception {
-        // ORDER BY v64 DESC NULLS LAST, ts -- processing order: 8.00@03, 6.00@01, null@00, null@02, null@04
-        // Cumulative sums in window order: 8.00, 14.00, 14.00, 14.00, 14.00
-        // Display by ts:
-        //   ts 00 (null, 3rd) -> 14.00
-        //   ts 01 (6.00, 2nd) -> 14.00
-        //   ts 02 (null, 4th) -> 14.00
-        //   ts 03 (8.00, 1st) -> 8.00
-        //   ts 04 (null, 5th) -> 14.00
-        assertMemoryLeak(() -> {
-            execute(CREATE_T);
-            execute(INSERT_5_WITH_NULL);
-            assertSql("""
-                            ts\tv64\ts
-                            2024-01-01T00:00:00.000000Z\t\t14.00
-                            2024-01-01T00:01:00.000000Z\t6.00\t14.00
-                            2024-01-01T00:02:00.000000Z\t\t14.00
-                            2024-01-01T00:03:00.000000Z\t8.00\t8.00
-                            2024-01-01T00:04:00.000000Z\t\t14.00
-                            """,
-                    "SELECT ts, v64, " +
-                            "sum(v64) OVER (ORDER BY v64 DESC NULLS LAST, ts ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) s " +
-                            "FROM t ORDER BY ts");
-        });
-    }
-
-    @Test
-    public void testFirstValueNullsFirst() throws Exception {
-        // ORDER BY v64 NULLS FIRST -- first row in window is null. first_value RESPECT NULLS = null for all rows.
-        assertMemoryLeak(() -> {
-            execute(CREATE_T);
-            execute(INSERT_5_WITH_NULL);
-            assertSql("""
-                            ts\tfv
-                            2024-01-01T00:00:00.000000Z\t
-                            2024-01-01T00:01:00.000000Z\t
-                            2024-01-01T00:02:00.000000Z\t
-                            2024-01-01T00:03:00.000000Z\t
-                            2024-01-01T00:04:00.000000Z\t
-                            """,
-                    "SELECT ts, " +
-                            "first_value(v64) OVER (ORDER BY v64 NULLS FIRST, ts ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) fv " +
-                            "FROM t ORDER BY ts");
-        });
-    }
-
-    @Test
-    public void testFirstValueNullsLastIgnoreNulls() throws Exception {
-        // ORDER BY v64 NULLS LAST -- first row in window is 6.00 (smallest non-null).
-        // first_value IGNORE NULLS at each row:
-        //   ts 00 (null, 3rd in window order) -> 6.00 (first non-null seen up to its window position)
-        //   ts 01 (6.00, 1st) -> 6.00
-        //   ts 02 (null, 4th) -> 6.00
-        //   ts 03 (8.00, 2nd) -> 6.00
-        //   ts 04 (null, 5th) -> 6.00
-        assertMemoryLeak(() -> {
-            execute(CREATE_T);
-            execute(INSERT_5_WITH_NULL);
-            assertSql("""
-                            ts\tfv
-                            2024-01-01T00:00:00.000000Z\t6.00
-                            2024-01-01T00:01:00.000000Z\t6.00
-                            2024-01-01T00:02:00.000000Z\t6.00
-                            2024-01-01T00:03:00.000000Z\t6.00
-                            2024-01-01T00:04:00.000000Z\t6.00
-                            """,
-                    "SELECT ts, " +
-                            "first_value(v64) IGNORE NULLS OVER (ORDER BY v64 NULLS LAST, ts ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) fv " +
-                            "FROM t ORDER BY ts");
-        });
-    }
-
-    @Test
-    public void testSumAllSubTypesRangeFrameForwardOnly() throws Exception {
-        // RANGE BETWEEN CURRENT ROW AND UNBOUNDED FOLLOWING -- current + future
-        // Row 0: 3.0 ; Row 1: 2.4 ; Row 2: 2.0 ; Row 3: 1.2 ; Row 4: 1.0
-        assertMemoryLeak(() -> {
-            execute(CREATE_T);
-            execute(INSERT_5);
-            assertSql("""
-                            ts\ts8\ts64\ts256
-                            2024-01-01T00:00:00.000000Z\t3.0\t30.00\t30
-                            2024-01-01T00:01:00.000000Z\t2.4\t24.00\t24
-                            2024-01-01T00:02:00.000000Z\t2.0\t20.00\t20
-                            2024-01-01T00:03:00.000000Z\t1.2\t12.00\t12
-                            2024-01-01T00:04:00.000000Z\t1.0\t10.00\t10
-                            """,
-                    "SELECT ts, " +
-                            "sum(v8) OVER (ORDER BY ts RANGE BETWEEN CURRENT ROW AND UNBOUNDED FOLLOWING) s8, " +
-                            "sum(v64) OVER (ORDER BY ts RANGE BETWEEN CURRENT ROW AND UNBOUNDED FOLLOWING) s64, " +
-                            "sum(v256) OVER (ORDER BY ts RANGE BETWEEN CURRENT ROW AND UNBOUNDED FOLLOWING) s256 " +
-                            "FROM t");
         });
     }
 }

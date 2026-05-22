@@ -6065,7 +6065,7 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                         if (Math.abs(timestamp - ts) > maxDiff) {
                             if (frameSize > 0) {
                                 long val = memory.getLong(startOffset + idx * RECORD_SIZE + Long.BYTES);
-                                decimal128.subtract(val < 0 ? -1L : 0L, val, scale);
+                                decimal128.subtract(val < 0 ? -1L : 0L, val, 0);
                                 frameSize--;
                             }
                             newFirstIdx = (idx + 1) % capacity;
@@ -6326,7 +6326,7 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                 if (frameLoBounded) {
                     long loValue = memory.getLong(startOffset + loIdx * Long.BYTES);
                     if (loValue != Decimals.DECIMAL64_NULL) {
-                        decimal128.subtract(loValue < 0 ? -1L : 0L, loValue, scale);
+                        decimal128.subtract(loValue < 0 ? -1L : 0L, loValue, 0);
                         count--;
                     }
                 }
