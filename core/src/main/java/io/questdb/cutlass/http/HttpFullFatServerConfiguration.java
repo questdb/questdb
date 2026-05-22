@@ -53,6 +53,9 @@ public interface HttpFullFatServerConfiguration extends HttpServerConfiguration 
     ObjHashSet<String> CONTEXT_PATH_IMPORT = new ObjHashSet<>() {{
         add("/imp");
     }};
+    ObjHashSet<String> CONTEXT_PATH_INGEST = new ObjHashSet<>() {{
+        add("/ingest");
+    }};
     ObjHashSet<String> CONTEXT_PATH_SETTINGS = new ObjHashSet<>() {{
         add("/settings");
     }};
@@ -105,6 +108,10 @@ public interface HttpFullFatServerConfiguration extends HttpServerConfiguration 
         return CONTEXT_PATH_IMPORT;
     }
 
+    default ObjHashSet<String> getContextPathIngest() {
+        return CONTEXT_PATH_INGEST;
+    }
+
     default ObjHashSet<String> getContextPathSettings() {
         return CONTEXT_PATH_SETTINGS;
     }
@@ -124,6 +131,8 @@ public interface HttpFullFatServerConfiguration extends HttpServerConfiguration 
     default String getContextPathWebConsole() {
         return "";
     }
+
+    long getIngestMaxRequestSize();
 
     JsonQueryProcessorConfiguration getJsonQueryProcessorConfiguration();
 

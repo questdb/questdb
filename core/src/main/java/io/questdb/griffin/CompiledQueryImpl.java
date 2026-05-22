@@ -32,6 +32,7 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.engine.EmptyTableRecordCursorFactory;
 import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.griffin.engine.ops.CreateMatViewOperation;
+import io.questdb.griffin.engine.ops.CreatePayloadTransformOperation;
 import io.questdb.griffin.engine.ops.CreateTableOperation;
 import io.questdb.griffin.engine.ops.CreateViewOperation;
 import io.questdb.griffin.engine.ops.DoneOperationFuture;
@@ -273,6 +274,12 @@ public class CompiledQueryImpl implements CompiledQuery, Mutable {
     public void ofCreateMatView(CreateMatViewOperation createMatViewOp) {
         of(CREATE_MAT_VIEW);
         this.operation = createMatViewOp;
+        this.isExecutedAtParseTime = false;
+    }
+
+    public void ofCreatePayloadTransform(CreatePayloadTransformOperation createPayloadTransformOp) {
+        of(CREATE_PAYLOAD_TRANSFORM);
+        this.operation = createPayloadTransformOp;
         this.isExecutedAtParseTime = false;
     }
 

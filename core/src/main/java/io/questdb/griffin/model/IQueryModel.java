@@ -92,6 +92,7 @@ public interface IQueryModel extends Mutable, ExecutionModel, AliasTranslator, S
     int SHOW_MAX_IDENTIFIER_LENGTH = 6;
     int SHOW_PARAMETERS = 11;
     int SHOW_PARTITIONS = 3;
+    int SHOW_PAYLOAD_TRANSFORMS = 18;
     int SHOW_SEARCH_PATH = 8;
     int SHOW_SERVER_VERSION = 12;
     int SHOW_SERVER_VERSION_NUM = 13;

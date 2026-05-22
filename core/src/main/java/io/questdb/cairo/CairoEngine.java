@@ -55,6 +55,7 @@ import io.questdb.cairo.pool.WalWriterPool;
 import io.questdb.cairo.pool.WriterPool;
 import io.questdb.cairo.pool.WriterSource;
 import io.questdb.cairo.pool.ex.EntryLockedException;
+import io.questdb.cairo.pt.PayloadTransformStore;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.AsyncWriterCommand;
 import io.questdb.cairo.sql.InsertMethod;
@@ -178,6 +179,7 @@ public class CairoEngine implements Closeable, WriterSource {
     private final MetadataCache metadataCache;
     private final Metrics metrics;
     private final PartitionOverwriteControl partitionOverwriteControl = new PartitionOverwriteControl();
+    private final PayloadTransformStore payloadTransformStore;
     private final QueryRegistry queryRegistry;
     private final ReaderPool readerPool;
     private final RecentWriteTracker recentWriteTracker;
@@ -269,6 +271,7 @@ public class CairoEngine implements Closeable, WriterSource {
             this.matViewGraph = createMatViewGraph();
             this.viewGraph = createViewGraph();
             this.frameFactory = new FrameFactory(configuration);
+            this.payloadTransformStore = new PayloadTransformStore(this);
             this.dataID = DataID.open(configuration);
 
             // IMPORTANT: Do not reorder statements!
@@ -314,6 +317,7 @@ public class CairoEngine implements Closeable, WriterSource {
             case CREATE_TABLE:
             case CREATE_TABLE_AS_SELECT:
             case CREATE_MAT_VIEW:
+            case CREATE_PAYLOAD_TRANSFORM:
             case CREATE_VIEW:
             case DROP:
                 assert sqlExecutionContext.getCairoEngine() == compiler.getEngine();
@@ -599,6 +603,7 @@ public class CairoEngine implements Closeable, WriterSource {
         Misc.free(metadataCache);
         Misc.free(scoreboardPool);
         Misc.free(matViewStateStore);
+        Misc.free(payloadTransformStore);
         Misc.free(settingsStore);
         Misc.free(frameFactory);
         Misc.free(walLocker);
@@ -898,6 +903,10 @@ public class CairoEngine implements Closeable, WriterSource {
 
     public PartitionOverwriteControl getPartitionOverwriteControl() {
         return partitionOverwriteControl;
+    }
+
+    public PayloadTransformStore getPayloadTransformStore() {
+        return payloadTransformStore;
     }
 
     @TestOnly

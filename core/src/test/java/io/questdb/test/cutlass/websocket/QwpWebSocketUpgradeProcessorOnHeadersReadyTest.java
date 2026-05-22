@@ -43,6 +43,7 @@ import io.questdb.network.PlainSocketFactory;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
+import io.questdb.std.Utf8SequenceObjHashMap;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.DirectUtf8String;
 import io.questdb.std.str.Utf8Sequence;
@@ -568,6 +569,11 @@ public class QwpWebSocketUpgradeProcessorOnHeadersReadyTest extends AbstractCair
 
         @Override
         public DirectUtf8Sequence getUrlParam(Utf8Sequence name) {
+            return null;
+        }
+
+        @Override
+        public Utf8SequenceObjHashMap<DirectUtf8String> getUrlParams() {
             return null;
         }
 

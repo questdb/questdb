@@ -25,6 +25,7 @@
 package io.questdb.cutlass.http;
 
 import io.questdb.std.ObjList;
+import io.questdb.std.Utf8SequenceObjHashMap;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.DirectUtf8String;
 import io.questdb.std.str.Utf8Sequence;
@@ -61,6 +62,8 @@ public interface HttpRequestHeader {
     DirectUtf8String getUrl();
 
     DirectUtf8Sequence getUrlParam(Utf8Sequence name);
+
+    Utf8SequenceObjHashMap<DirectUtf8String> getUrlParams();
 
     boolean isGetRequest();
 

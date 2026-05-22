@@ -254,6 +254,11 @@ public class HttpHeaderParser implements Mutable, QuietCloseable, HttpRequestHea
         return urlParams.get(name);
     }
 
+    @Override
+    public Utf8SequenceObjHashMap<DirectUtf8String> getUrlParams() {
+        return urlParams;
+    }
+
     public boolean hasBoundary() {
         return boundary != null;
     }

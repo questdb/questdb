@@ -28,6 +28,7 @@ import io.questdb.ServerConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cutlass.http.processors.ExportQueryProcessor;
+import io.questdb.cutlass.http.processors.IngestProcessor;
 import io.questdb.cutlass.http.processors.LineHttpPingProcessor;
 import io.questdb.cutlass.http.processors.LineHttpProcessorConfiguration;
 import io.questdb.cutlass.http.processors.SettingsProcessor;
@@ -244,6 +245,23 @@ public class HttpServer implements Closeable {
             @Override
             public HttpRequestHandler newInstance() {
                 return new TextImportProcessor(cairoEngine, httpServerConfiguration.getJsonQueryProcessorConfiguration());
+            }
+        });
+
+        server.bind(new HttpRequestHandlerFactory() {
+            @Override
+            public ObjHashSet<String> getUrls() {
+                return httpServerConfiguration.getContextPathIngest();
+            }
+
+            @Override
+            public HttpRequestHandler newInstance() {
+                return new IngestProcessor(
+                        cairoEngine,
+                        httpServerConfiguration.getRecvBufferSize(),
+                        httpServerConfiguration.getIngestMaxRequestSize(),
+                        sharedQueryWorkerCount
+                );
             }
         });
 
