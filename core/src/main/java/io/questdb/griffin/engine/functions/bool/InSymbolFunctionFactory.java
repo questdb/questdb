@@ -42,10 +42,12 @@ import io.questdb.std.CharSequenceHashSet;
 import io.questdb.std.Chars;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.IntList;
+import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
 
 public class InSymbolFunctionFactory implements FunctionFactory {
+
     @Override
     public String getSignature() {
         return "in(Kv)";
@@ -69,35 +71,46 @@ public class InSymbolFunctionFactory implements FunctionFactory {
         IntList deferredValuePositions = null;
         for (int i = 1; i < n; i++) {
             Function func = args.getQuick(i);
-            switch (ColumnType.tagOf(func.getType())) {
+            int tag = ColumnType.tagOf(func.getType());
+            switch (tag) {
                 case ColumnType.STRING:
                 case ColumnType.VARCHAR:
                 case ColumnType.UNDEFINED:
-                    if (func.isRuntimeConstant()) {
-                        // string bind variable case
-                        if (deferredValues == null) {
-                            deferredValues = new ObjList<>();
-                            deferredValuePositions = new IntList();
-                        }
-                        deferredValues.add(func);
-                        deferredValuePositions.add(argPositions.getQuick(i));
-                        continue;
-                    }
-                    // fall through
                 case ColumnType.SYMBOL:
                 case ColumnType.NULL:
-                    CharSequence value = func.getStrA(null);
-                    if (value == null) {
-                        set.add((CharSequence) null);
-                    } else {
-                        set.add(Chars.toString(value));
-                    }
-                    break;
                 case ColumnType.CHAR:
-                    set.add(String.valueOf(func.getChar(null)));
                     break;
                 default:
                     throw SqlException.$(argPositions.getQuick(i), "STRING constant expected");
+            }
+            // Defer runtime-constants (bind variables and runtime-constant
+            // function chains over them) to init() regardless of whether the
+            // type is STRING/VARCHAR or SYMBOL/CHAR. Reading the value here
+            // hits NamedParameterLinkFunction.getBase() before the variable
+            // is bound and trips its assertion.
+            if (!func.isConstant() && func.isRuntimeConstant()) {
+                if (deferredValues == null) {
+                    deferredValues = new ObjList<>();
+                    deferredValuePositions = new IntList();
+                }
+                deferredValues.add(func);
+                deferredValuePositions.add(argPositions.getQuick(i));
+                continue;
+            }
+            if (tag == ColumnType.CHAR) {
+                char c = func.getChar(null);
+                if (c != 0) {
+                    set.add(String.valueOf(c));
+                } else {
+                    set.add((CharSequence) null);
+                }
+            } else {
+                CharSequence value = func.getStrA(null);
+                if (value != null) {
+                    set.add(Chars.toString(value));
+                } else {
+                    set.add((CharSequence) null);
+                }
             }
         }
 
@@ -139,6 +152,12 @@ public class InSymbolFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public void close() {
+            UnaryFunction.super.close();
+            Misc.freeObjList(deferredValues);
+        }
+
+        @Override
         public Function getArg() {
             return arg;
         }
@@ -160,6 +179,9 @@ public class InSymbolFunctionFactory implements FunctionFactory {
                     switch (ColumnType.tagOf(func.getType())) {
                         case ColumnType.VARCHAR:
                         case ColumnType.STRING:
+                        case ColumnType.SYMBOL:
+                        case ColumnType.CHAR:
+                        case ColumnType.NULL:
                             continue;
                         default:
                             throw SqlException.inconvertibleTypes(
@@ -182,7 +204,7 @@ public class InSymbolFunctionFactory implements FunctionFactory {
                 if (deferredValues != null) {
                     for (int i = 0, n = deferredValues.size(); i < n; i++) {
                         final Function func = deferredValues.getQuick(i);
-                        intSet.add(symbolTable.keyOf(func.getStrA(null)));
+                        intSet.add(symbolTable.keyOf(deferredValueToString(func)));
                     }
                 }
                 testFunc = intTest;
@@ -191,11 +213,31 @@ public class InSymbolFunctionFactory implements FunctionFactory {
                     deferredSet.clear();
                     for (int i = 0, n = deferredValues.size(); i < n; i++) {
                         final Function func = deferredValues.getQuick(i);
-                        deferredSet.add(func.getStrA(null));
+                        deferredSet.add(deferredValueToString(func));
                     }
                 }
                 testFunc = strTest;
             }
+        }
+
+        // Override required: UnaryFunction's default delegates to
+        // arg.isConstant(), which is true when the LHS is a literal (e.g.
+        // "'A'::SYMBOL IN (:b0)"). FunctionParser would then fold the
+        // function via getBool(null) before init() set testFunc, tripping
+        // an NPE.
+        @Override
+        public boolean isConstant() {
+            if (!arg.isConstant()) {
+                return false;
+            }
+            if (deferredValues != null) {
+                for (int i = 0, n = deferredValues.size(); i < n; i++) {
+                    if (!deferredValues.getQuick(i).isConstant()) {
+                        return false;
+                    }
+                }
+            }
+            return true;
         }
 
         @Override
@@ -226,6 +268,16 @@ public class InSymbolFunctionFactory implements FunctionFactory {
                 return deferredSet.contains(symbol);
             }
             return false;
+        }
+
+        private static CharSequence deferredValueToString(Function func) {
+            // CHAR-typed bind variables don't expose getStrA; route them through
+            // getChar instead so the deferred set still receives a String key.
+            if (ColumnType.tagOf(func.getType()) == ColumnType.CHAR) {
+                char c = func.getChar(null);
+                return c != 0 ? String.valueOf(c) : null;
+            }
+            return func.getStrA(null);
         }
     }
 }

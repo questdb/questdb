@@ -28,7 +28,6 @@ import io.questdb.TelemetryEvent;
 import io.questdb.TelemetryOrigin;
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnFilter;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
@@ -1653,18 +1652,15 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             return false;
         }
 
-        if (loFunc != null && loFunc.isConstant()
-                && hiFunc != null && hiFunc.isConstant()) {
+        if (loFunc != null && loFunc.isConstant() && hiFunc != null && hiFunc.isConstant()) {
             try {
                 loFunc.init(null, context);
                 hiFunc.init(null, context);
-
                 return !(loFunc.getLong(null) >= 0 && hiFunc.getLong(null) < 0);
             } catch (SqlException ex) {
                 LOG.error().$("Failed to initialize lo or hi functions [").$("error=").$safe(ex.getMessage()).I$();
             }
         }
-
         return true;
     }
 
@@ -1751,11 +1747,16 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         if (filter != null && !filter.isThreadSafe() && sharedQueryWorkerCount > 0) {
             assert filterExpr != null;
             ObjList<Function> workerFilters = new ObjList<>();
-            for (int i = 0; i < sharedQueryWorkerCount; i++) {
-                restoreWhereClause(filterExpr); // restore original filters in node query models
-                Function workerFilter = compileBooleanFilter(filterExpr, metadata, executionContext);
-                workerFilters.extendAndSet(i, workerFilter);
-                assert filter.getClass() == workerFilter.getClass();
+            try {
+                for (int i = 0; i < sharedQueryWorkerCount; i++) {
+                    restoreWhereClause(filterExpr); // restore original filters in node query models
+                    Function workerFilter = compileBooleanFilter(filterExpr, metadata, executionContext);
+                    workerFilters.extendAndSet(i, workerFilter);
+                    assert filter.getClass() == workerFilter.getClass();
+                }
+            } catch (Throwable th) {
+                Misc.freeObjList(workerFilters);
+                throw th;
             }
             return workerFilters;
         }
@@ -3498,22 +3499,23 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 }
             }
 
-            int timestampIndex = groupByFactory.getMetadata().getColumnIndexQuiet(alias);
+            final RecordMetadata baseMeta = groupByFactory.getMetadata();
+            int timestampIndex = baseMeta.getColumnIndexQuiet(alias);
             // The alias may resolve to a non-TIMESTAMP column after outer projection
             // (e.g. SELECT ts::LONG AS ts, ...). Reset so the fallback below can try
             // the raw timestamp token and getTimestampDriver doesn't trip its tag
             // assert.
             if (timestampIndex >= 0
-                    && !ColumnType.isTimestamp(groupByFactory.getMetadata().getColumnType(timestampIndex))) {
+                    && !ColumnType.isTimestamp(baseMeta.getColumnType(timestampIndex))) {
                 timestampIndex = -1;
             }
             // When the same timestamp column appears multiple times (e.g. SELECT k, k),
             // the alias may land on a renamed duplicate. Prefer the original token if
             // it yields an earlier TIMESTAMP-typed index.
             if (!Chars.equalsIgnoreCase(alias, timestamp.token)) {
-                int origIndex = groupByFactory.getMetadata().getColumnIndexQuiet(timestamp.token);
+                int origIndex = baseMeta.getColumnIndexQuiet(timestamp.token);
                 if (origIndex >= 0
-                        && ColumnType.isTimestamp(groupByFactory.getMetadata().getColumnType(origIndex))
+                        && ColumnType.isTimestamp(baseMeta.getColumnType(origIndex))
                         && (timestampIndex < 0 || origIndex < timestampIndex)) {
                     timestampIndex = origIndex;
                 }
@@ -3524,7 +3526,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 Misc.freeObjList(fillValues);
                 return groupByFactory;
             }
-            int timestampType = groupByFactory.getMetadata().getColumnType(timestampIndex);
+            int timestampType = baseMeta.getColumnType(timestampIndex);
             TimestampDriver driver = getTimestampDriver(timestampType);
             fillFromFunc = driver.getTimestampConstantNull();
             fillToFunc = driver.getTimestampConstantNull();
@@ -3837,7 +3839,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             // otherwise Function.getXxx throws UnsupportedOperationException
                             // at runtime. UNDEFINED (unbound bind variable) is left to
                             // late binding.
-                            final Function fillFunc = fillValues.getQuick(fillIdx);
+                            Function fillFunc = fillValues.getQuick(fillIdx);
                             final int fillType = fillFunc.getType();
                             if (fillType != ColumnType.UNDEFINED
                                     && !ColumnType.isConvertibleFrom(fillType, targetColType)) {
@@ -3845,6 +3847,19 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                 "fill value of type ").put(ColumnType.nameOf(fillType))
                                         .put(" cannot fill column of type ")
                                         .put(ColumnType.nameOf(targetColType));
+                            }
+                            // ColumnType.isConvertibleFrom may rely on an implicit cast factory;
+                            // without wrapping here, FillRecord.getXxx would call the unwrapped
+                            // fillFunc and hit Function.getXxx's UnsupportedOperationException
+                            // at runtime (e.g. INT -> DECIMAL via IntFunction.getDecimal64).
+                            if (fillType != ColumnType.UNDEFINED
+                                    && fillType != targetColType
+                                    && !ColumnType.isBuiltInWideningCast(fillType, targetColType)) {
+                                final Function cast = functionParser.createImplicitCast(fillExpr.position, fillFunc, targetColType);
+                                if (cast != null) {
+                                    fillValues.setQuick(fillIdx, cast);
+                                    fillFunc = cast;
+                                }
                             }
                             if (fillFunc.isNonDeterministic()) {
                                 throw SqlException.$(fillExpr.position,
@@ -7441,7 +7456,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             );
                         }
 
-                        RecordCursorFactory sortBase = recordCursorFactory;
                         if (recordCursorFactory instanceof VirtualRecordCursorFactory virtualFactory) {
                             IntList materializedColIndices = null;
                             IntList materializedColTypes = null;
@@ -7466,7 +7480,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 }
                             }
                             if (materializedColIndices != null) {
-                                sortBase = new SortKeyMaterializingRecordCursorFactory(
+                                // Reassign recordCursorFactory so the outer catch
+                                // closes the wrapper too; otherwise a throw from
+                                // the comparator compilation below leaks the
+                                // materializing cursor's native buffers
+                                // (NATIVE_TREE_CHAIN).
+                                recordCursorFactory = new SortKeyMaterializingRecordCursorFactory(
                                         configuration,
                                         orderedMetadata,
                                         recordCursorFactory,
@@ -7477,14 +7496,14 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         }
 
                         // Null-before-risky: SortedLightRecordCursorFactory's
-                        // ctor catch frees `sortBase` (recordCursorFactory or a
-                        // wrapping SortKeyMaterializingRecordCursorFactory), so
-                        // not nulling would let the outer catch double-free.
-                        // Risky-arg calls run before the null so the outer catch
-                        // still owns sortBase on their failure.
+                        // ctor catch frees recordCursorFactory (which here
+                        // already wraps any SortKeyMaterializingRecordCursorFactory
+                        // bolt-on), so not nulling would let the outer catch
+                        // double-free. Risky-arg calls run before the null so
+                        // the outer catch still owns it on their failure.
                         final RecordComparator sortLightComparator = recordComparatorCompiler.newInstance(metadata, listColumnFilterA);
                         final ListColumnFilter sortLightFilterCopy = listColumnFilterA.copy();
-                        final RecordCursorFactory sortBaseForSort = sortBase;
+                        final RecordCursorFactory sortBaseForSort = recordCursorFactory;
                         recordCursorFactory = null;
                         return new SortedLightRecordCursorFactory(
                                 configuration,
@@ -7528,7 +7547,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             }
 
             return recordCursorFactory;
-        } catch (SqlException | CairoException e) {
+        } catch (Throwable e) {
+            // ImplicitCastException, NumericException etc. are RuntimeException
+            // and would bypass a narrower catch, leaking the partially-built factory
+            // tree (which can hold native memory via PageFrameSequence).
             // recordCursorFactory may be null if a wrap-and-go ctor above took
             // ownership before throwing; Misc.free is null-safe.
             Misc.free(recordCursorFactory);
@@ -8372,7 +8394,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     limitHiFunc
             );
         } catch (Throwable e) {
-            factory.close();
+            Misc.free(factory);
             throw e;
         }
     }
@@ -9246,9 +9268,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     factory,
                     virtualColumnReservedSlots
             );
-        } catch (SqlException | CairoException e) {
+        } catch (Throwable e) {
+            // Constant-folding a cast (e.g. `(-1234567L)::DECIMAL(4,2)`) can throw
+            // ImplicitCastException at compile time. That escapes a narrower catch
+            // and leaks the inner factory together with its PageFrameSequence.
             Misc.freeObjList(functions);
-            factory.close();
+            Misc.free(factory);
             throw e;
         }
     }
@@ -10183,7 +10208,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
                     boolean orderByKeyColumn = false;
                     int indexDirection = IndexReader.DIR_FORWARD;
-                    if (intervalHitsOnlyOnePartition) {
+                    // Skip the order-by-key-column shortcut when an outer time-series join
+                    // needs the master in timestamp order. Honoring the order-by advice would
+                    // strip the timestamp index and let a sym-ordered cursor feed a SPLICE/ASOF
+                    // /LT/WINDOW merge that assumes ts order.
+                    if (intervalHitsOnlyOnePartition && !executionContext.isTimestampRequired()) {
                         final ObjList<ExpressionNode> orderByAdvice = model.getOrderByAdvice();
                         final int orderByAdviceSize = orderByAdvice.size();
                         if (orderByAdviceSize > 0 && orderByAdviceSize < 3) {
@@ -10451,7 +10480,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     }
                 }
 
-                if (intervalHitsOnlyOnePartition && intrinsicModel.filter == null) {
+                // Skip the symbol-index sort optimization when an outer time-series
+                // join needs the master in timestamp order. SortedSymbolIndexRecordCursorFactory
+                // emits rows in symbol order and zeroes the timestamp index, which would
+                // either trip "no timestamp" validation downstream or, worse, feed sym-ordered
+                // input into a SPLICE/ASOF/LT/WINDOW merge that assumes ts order.
+                if (intervalHitsOnlyOnePartition && intrinsicModel.filter == null && !executionContext.isTimestampRequired()) {
                     final ObjList<ExpressionNode> orderByAdvice = model.getOrderByAdvice();
                     final int orderByAdviceSize = orderByAdvice.size();
                     if (orderByAdviceSize > 0 && orderByAdviceSize < 3 && intrinsicModel.hasIntervalFilters()) {
