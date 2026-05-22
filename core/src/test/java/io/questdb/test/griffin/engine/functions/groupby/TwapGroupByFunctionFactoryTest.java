@@ -27,6 +27,7 @@ package io.questdb.test.griffin.engine.functions.groupby;
 import io.questdb.mp.WorkerPool;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
+import org.junit.Ignore;
 import org.junit.Test;
 
 public class TwapGroupByFunctionFactoryTest extends AbstractCairoTest {
@@ -97,6 +98,7 @@ public class TwapGroupByFunctionFactoryTest extends AbstractCairoTest {
         });
     }
 
+    @Ignore("non-designated timestamp not currently supported for TWAP")
     @Test
     public void testTwapNullTimestamp() throws Exception {
         assertMemoryLeak(() -> {
@@ -348,6 +350,29 @@ public class TwapGroupByFunctionFactoryTest extends AbstractCairoTest {
                     TestUtils.assertSqlCursors(engine, sqlExecutionContext, sql, sql, LOG);
                 }, configuration, LOG);
             }
+        });
+    }
+
+    @Test
+    public void testTwapRejectsNonDesignatedTimestamp() throws Exception {
+        assertMemoryLeak(() -> {
+            // 'ts' is the designated timestamp; 'ts2' is an ordinary timestamp column.
+            execute("CREATE TABLE tbl (price DOUBLE, ts TIMESTAMP, ts2 TIMESTAMP) TIMESTAMP(ts)");
+            // A non-designated timestamp column is rejected.
+            assertExceptionNoLeakCheck(
+                    "SELECT twap(price, ts2) FROM tbl",
+                    7,
+                    "twap() requires the table's designated timestamp as the second argument",
+                    false
+            );
+            // A table with no designated timestamp at all is rejected too.
+            execute("CREATE TABLE no_ts (price DOUBLE, ts TIMESTAMP)");
+            assertExceptionNoLeakCheck(
+                    "SELECT twap(price, ts) FROM no_ts",
+                    7,
+                    "twap() requires the table's designated timestamp as the second argument",
+                    false
+            );
         });
     }
 

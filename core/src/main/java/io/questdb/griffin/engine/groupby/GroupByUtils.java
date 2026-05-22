@@ -64,6 +64,7 @@ import io.questdb.griffin.engine.functions.columns.StrColumn;
 import io.questdb.griffin.engine.functions.columns.TimestampColumn;
 import io.questdb.griffin.engine.functions.columns.UuidColumn;
 import io.questdb.griffin.engine.functions.columns.VarcharColumn;
+import io.questdb.griffin.engine.functions.groupby.TwapGroupByFunction;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.IQueryModel;
 import io.questdb.griffin.model.QueryColumn;
@@ -91,6 +92,7 @@ public class GroupByUtils {
             SqlExecutionContext executionContext,
             RecordMetadata baseMetadata,
             int timestampIndex,
+            boolean isBaseTimestampAscending,
             boolean timestampUnimportant,
             ObjList<GroupByFunction> outGroupByFunctions,
             IntList outGroupByFunctionPositions,
@@ -226,6 +228,9 @@ public class GroupByUtils {
                         // fill type. it's to close the function properly when the validation fails
                         outGroupByFunctions.add(groupByFunc);
                         outGroupByFunctionPositions.add(node.position);
+                        if (groupByFunc instanceof TwapGroupByFunction twapFunc) {
+                            twapFunc.validateTimestampArg(timestampIndex, isBaseTimestampAscending, node.position);
+                        }
                         if (fillCount > 0) {
                             // index of the function relative to the list of fill values
                             // we might have the same fill value for all functions

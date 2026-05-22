@@ -29,9 +29,11 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.DoubleFunction;
 import io.questdb.griffin.engine.functions.GroupByFunction;
+import io.questdb.griffin.engine.functions.columns.ColumnFunction;
 import io.questdb.griffin.engine.groupby.SortedRunsMerge;
 import io.questdb.griffin.engine.groupby.GroupByAllocator;
 import io.questdb.std.LongList;
@@ -382,5 +384,24 @@ public class TwapGroupByFunction extends DoubleFunction implements GroupByFuncti
     @Override
     public boolean supportsParallelism() {
         return true;
+    }
+
+    /**
+     * Rejects the query at compile time unless the second argument is the
+     * table's designated timestamp and the base query delivers rows in
+     * ascending order of it. Both the parallel and the serial aggregation
+     * paths rely on each page frame's observations already being sorted by
+     * the timestamp argument; that holds only for the designated timestamp
+     * of a forward scan.
+     */
+    public void validateTimestampArg(int designatedTimestampIndex, boolean isBaseTimestampAscending, int position) throws SqlException {
+        if (designatedTimestampIndex < 0
+                || !(tsFunc instanceof ColumnFunction cf)
+                || cf.getColumnIndex() != designatedTimestampIndex) {
+            throw SqlException.$(position, "twap() requires the table's designated timestamp as the second argument");
+        }
+        if (!isBaseTimestampAscending) {
+            throw SqlException.$(position, "twap() requires the base query to provide ascending designated timestamp order");
+        }
     }
 }
