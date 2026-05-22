@@ -105,24 +105,27 @@ public class SequencerMetadataPool extends AbstractMultiTenantPool<SequencerMeta
                 int writerIndex,
                 boolean isDedupKey,
                 boolean symbolIsCached,
-                int symbolCapacity
+                int symbolCapacity,
+                @Transient IntList coveringColumnIndices
         ) {
             if (columnType > -1L) {
-                add(
-                        new TableColumnMetadata(
-                                columnName,
-                                columnType,
-                                indexType,
-                                indexValueBlockCapacity,
-                                symbolTableStatic,
-                                null,
-                                writerIndex,
-                                isDedupKey,
-                                0,
-                                symbolIsCached,
-                                symbolCapacity
-                        )
+                TableColumnMetadata columnMetadata = new TableColumnMetadata(
+                        columnName,
+                        columnType,
+                        indexType,
+                        indexValueBlockCapacity,
+                        symbolTableStatic,
+                        null,
+                        writerIndex,
+                        isDedupKey,
+                        0,
+                        symbolIsCached,
+                        symbolCapacity
                 );
+                if (coveringColumnIndices != null) {
+                    columnMetadata.setCoveringColumnIndices(new IntList(coveringColumnIndices));
+                }
+                add(columnMetadata);
             }
         }
 
