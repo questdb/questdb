@@ -1642,8 +1642,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
     private void alterTableResume(int tableNamePosition, TableToken tableToken, long resumeFromTxn, SqlExecutionContext executionContext) {
         try {
-            engine.getTableSequencerAPI().resumeTable(tableToken, resumeFromTxn);
-            executionContext.storeTelemetry(TelemetryEvent.WAL_APPLY_RESUME, TelemetryOrigin.WAL_APPLY);
+            if (!executionContext.isValidationOnly()) {
+                engine.getTableSequencerAPI().resumeTable(tableToken, resumeFromTxn);
+                executionContext.storeTelemetry(TelemetryEvent.WAL_APPLY_RESUME, TelemetryOrigin.WAL_APPLY);
+            }
             compiledQuery.ofTableResume();
         } catch (CairoException ex) {
             LOG.critical().$("table resume failed [table=").$(tableToken)
@@ -1725,8 +1727,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 }
             }
 
-            path.of(configuration.getDbRoot()).concat(tableToken.getDirName());
-            TableUtils.createConvertFile(ff, path, walFlag);
+            if (!executionContext.isValidationOnly()) {
+                path.of(configuration.getDbRoot()).concat(tableToken.getDirName());
+                TableUtils.createConvertFile(ff, path, walFlag);
+            }
             compiledQuery.ofTableSetType();
         } catch (CairoException e) {
             throw SqlException.position(pos)
@@ -1737,8 +1741,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
     private void alterTableSuspend(int tableNamePosition, TableToken tableToken, ErrorTag errorTag, String errorMessage, SqlExecutionContext executionContext) {
         try {
-            engine.getTableSequencerAPI().suspendTable(tableToken, errorTag, errorMessage);
-            executionContext.storeTelemetry(TelemetryEvent.WAL_APPLY_SUSPEND, TelemetryOrigin.WAL_APPLY);
+            if (!executionContext.isValidationOnly()) {
+                engine.getTableSequencerAPI().suspendTable(tableToken, errorTag, errorMessage);
+                executionContext.storeTelemetry(TelemetryEvent.WAL_APPLY_SUSPEND, TelemetryOrigin.WAL_APPLY);
+            }
             compiledQuery.ofTableSuspend();
         } catch (CairoException ex) {
             LOG.critical().$("table suspend failed [table=").$(tableToken)
@@ -1882,22 +1888,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
 
         if (isTableKeyword(tok)) {
-            if (executionContext.isValidationOnly()) {
-                compiledQuery.ofAlter(null);
-                return;
-            }
             compileAlterTable(executionContext);
         } else if (isMaterializedKeyword(tok)) {
-            if (executionContext.isValidationOnly()) {
-                compiledQuery.ofAlter(null);
-                return;
-            }
             compileAlterMatView(executionContext);
         } else {
-            if (executionContext.isValidationOnly()) {
-                compiledQuery.ofAlterView();
-                return;
-            }
             compileAlterView(executionContext);
         }
     }
@@ -3488,12 +3482,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     }
 
     private void compileReindex(SqlExecutionContext executionContext, @Transient CharSequence sqlText) throws SqlException {
-
-        if (executionContext.isValidationOnly()) {
-            compiledQuery.ofRepair();
-            return;
-        }
-
         CharSequence tok = SqlUtil.fetchNext(lexer);
         if (tok == null || !isTableKeyword(tok)) {
             throw SqlException.$(lexer.lastTokenPosition(), "TABLE expected");
