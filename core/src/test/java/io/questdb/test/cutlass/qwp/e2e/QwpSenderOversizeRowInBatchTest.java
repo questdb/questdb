@@ -140,10 +140,10 @@ public class QwpSenderOversizeRowInBatchTest extends AbstractCairoTest {
                                     + " got: " + msg,
                             msg.contains("batch too large for server batch cap"));
                 }
-                drainWalQueue();
-                engine.releaseInactive();
             } finally {
                 server.stop();
+                drainWalQueue();
+                engine.releaseInactive();
             }
         });
     }
@@ -202,14 +202,10 @@ public class QwpSenderOversizeRowInBatchTest extends AbstractCairoTest {
                                     + " got: " + msg,
                             msg.contains("row too large for server batch cap"));
                 }
-                // The QWP processor on the sidecar may have acquired WAL
-                // writers to ingest the small row. Drain explicitly and
-                // release inactive pool entries so assertMemoryLeak
-                // doesn't see them as a leak.
-                drainWalQueue();
-                engine.releaseInactive();
             } finally {
                 server.stop();
+                drainWalQueue();
+                engine.releaseInactive();
             }
         });
     }

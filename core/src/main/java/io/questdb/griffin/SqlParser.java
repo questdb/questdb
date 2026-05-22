@@ -495,7 +495,7 @@ public class SqlParser {
             CreateMatViewOperationBuilder builder
     ) throws SqlException {
         CharSequence nextToken = (tok == null || Chars.equals(tok, ';')) ? null : tok;
-        return sqlParserCallback.parseCreateMatViewExt(lexer, executionContext.getSecurityContext(), builder, nextToken);
+        return sqlParserCallback.parseCreateMatViewExt(lexer, executionContext, builder, nextToken);
     }
 
     private static CreateTableOperationBuilder parseCreateTableExt(
@@ -506,7 +506,7 @@ public class SqlParser {
             CreateTableOperationBuilder builder
     ) throws SqlException {
         CharSequence nextToken = (tok == null || Chars.equals(tok, ';')) ? null : tok;
-        return sqlParserCallback.parseCreateTableExt(lexer, executionContext.getSecurityContext(), builder, nextToken);
+        return sqlParserCallback.parseCreateTableExt(lexer, executionContext, builder, nextToken);
     }
 
     private static CreateViewOperationBuilder parseCreateViewExt(
@@ -517,7 +517,7 @@ public class SqlParser {
             CreateViewOperationBuilder builder
     ) throws SqlException {
         CharSequence nextToken = (tok == null || Chars.equals(tok, ';')) ? null : tok;
-        return sqlParserCallback.parseCreateViewExt(lexer, executionContext.getSecurityContext(), builder, nextToken);
+        return sqlParserCallback.parseCreateViewExt(lexer, executionContext, builder, nextToken);
     }
 
     private static void validateShowTransactions(GenericLexer lexer) throws SqlException {

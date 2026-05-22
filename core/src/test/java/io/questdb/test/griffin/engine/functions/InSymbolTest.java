@@ -33,6 +33,32 @@ import org.junit.Test;
 public class InSymbolTest extends AbstractCairoTest {
 
     @Test
+    public void testBindVarRhsWithConstantLhs() throws Exception {
+        // Regression: when the IN function's LHS was fully constant but
+        // the RHS held a deferred bind variable, Func.isConstant() used
+        // to delegate to UnaryFunction's default (which only inspects
+        // arg) and falsely report true. FunctionParser then folded the
+        // function via getBool(null) before init() set testFunc, hitting
+        // a NullPointerException at parse time.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (s SYMBOL)");
+            execute("INSERT INTO t VALUES ('A'), ('B'), ('C')");
+            bindVariableService.clear();
+            bindVariableService.setStr("b0", "Z");
+            assertSql(
+                    "s\n",
+                    "SELECT s FROM t WHERE 'A'::SYMBOL IN ((:b0)::VARCHAR)"
+            );
+            bindVariableService.clear();
+            bindVariableService.setStr("b0", "A");
+            assertSql(
+                    "s\nA\nB\nC\n",
+                    "SELECT s FROM t WHERE 'A'::SYMBOL IN ((:b0)::VARCHAR) ORDER BY 1"
+            );
+        });
+    }
+
+    @Test
     public void testBindVarTypeChange2() throws SqlException {
         execute("create table test as (select x, rnd_symbol(20, 2, 5, 1) a from long_sequence(100))");
 
@@ -40,16 +66,18 @@ public class InSymbolTest extends AbstractCairoTest {
         final ObjList<BindVariableTestTuple> tuples = new ObjList<>();
         tuples.add(new BindVariableTestTuple(
                 "simple",
-                "x\ta\n" +
-                        "1\tGZS\n" +
-                        "29\tPDXYS\n" +
-                        "30\tGZS\n" +
-                        "32\tWFF\n" +
-                        "38\tPDXYS\n" +
-                        "57\tGZS\n" +
-                        "73\tPDXYS\n" +
-                        "84\tPDXYS\n" +
-                        "89\tGZS\n",
+                """
+                        x\ta
+                        1\tGZS
+                        29\tPDXYS
+                        30\tGZS
+                        32\tWFF
+                        38\tPDXYS
+                        57\tGZS
+                        73\tPDXYS
+                        84\tPDXYS
+                        89\tGZS
+                        """,
                 bindVariableService -> {
                     bindVariableService.setStr(0, "PDXYS");
                     bindVariableService.setStr(1, "WFF");
@@ -80,65 +108,67 @@ public class InSymbolTest extends AbstractCairoTest {
 
         tuples.add(new BindVariableTestTuple(
                 "with nulls",
-                "x\ta\n" +
-                        "4\t\n" +
-                        "5\t\n" +
-                        "7\t\n" +
-                        "8\t\n" +
-                        "12\t\n" +
-                        "15\t\n" +
-                        "16\t\n" +
-                        "17\t\n" +
-                        "19\tOJSHR\n" +
-                        "20\t\n" +
-                        "21\t\n" +
-                        "23\t\n" +
-                        "24\t\n" +
-                        "26\tOJSHR\n" +
-                        "27\t\n" +
-                        "28\t\n" +
-                        "31\t\n" +
-                        "32\tWFF\n" +
-                        "34\t\n" +
-                        "35\t\n" +
-                        "36\t\n" +
-                        "40\t\n" +
-                        "41\t\n" +
-                        "42\t\n" +
-                        "44\t\n" +
-                        "45\t\n" +
-                        "46\t\n" +
-                        "49\t\n" +
-                        "50\t\n" +
-                        "52\t\n" +
-                        "53\t\n" +
-                        "56\t\n" +
-                        "58\t\n" +
-                        "60\t\n" +
-                        "61\t\n" +
-                        "62\t\n" +
-                        "63\t\n" +
-                        "65\t\n" +
-                        "67\t\n" +
-                        "71\t\n" +
-                        "72\t\n" +
-                        "74\t\n" +
-                        "78\tOJSHR\n" +
-                        "79\t\n" +
-                        "80\t\n" +
-                        "81\t\n" +
-                        "85\t\n" +
-                        "86\t\n" +
-                        "87\t\n" +
-                        "88\t\n" +
-                        "90\t\n" +
-                        "91\t\n" +
-                        "93\t\n" +
-                        "95\t\n" +
-                        "97\t\n" +
-                        "98\t\n" +
-                        "99\t\n" +
-                        "100\t\n",
+                """
+                        x\ta
+                        4\t
+                        5\t
+                        7\t
+                        8\t
+                        12\t
+                        15\t
+                        16\t
+                        17\t
+                        19\tOJSHR
+                        20\t
+                        21\t
+                        23\t
+                        24\t
+                        26\tOJSHR
+                        27\t
+                        28\t
+                        31\t
+                        32\tWFF
+                        34\t
+                        35\t
+                        36\t
+                        40\t
+                        41\t
+                        42\t
+                        44\t
+                        45\t
+                        46\t
+                        49\t
+                        50\t
+                        52\t
+                        53\t
+                        56\t
+                        58\t
+                        60\t
+                        61\t
+                        62\t
+                        63\t
+                        65\t
+                        67\t
+                        71\t
+                        72\t
+                        74\t
+                        78\tOJSHR
+                        79\t
+                        80\t
+                        81\t
+                        85\t
+                        86\t
+                        87\t
+                        88\t
+                        90\t
+                        91\t
+                        93\t
+                        95\t
+                        97\t
+                        98\t
+                        99\t
+                        100\t
+                        """,
                 bindVariableService -> {
                     bindVariableService.setStr(0, "OJSHR");
                     bindVariableService.setStr(1, null);
@@ -147,5 +177,87 @@ public class InSymbolTest extends AbstractCairoTest {
         ));
 
         assertSql("test where a in ($1,$2,$3)", tuples);
+    }
+
+    @Test
+    public void testCharNulInListMatchesNullSymbolRow() throws Exception {
+        // A CHAR(0) list element must be added to the set as null, mirroring
+        // CastCharToSymbolFunctionFactory's CHAR(0) -> NULL mapping. Otherwise a NULL
+        // symbol row fails to match a CHAR(0) IN entry while it correctly matches an
+        // explicit NULL entry. This shape is reachable in practice: with SYMBOL LHS
+        // the dispatcher picks InSymbolFunctionFactory exactly, and a NULL row tested
+        // against a CHAR(0) IN entry hits the eager CHAR branch here. The bind variant
+        // routes the same CHAR(0) through the deferred branch in init(), and both
+        // sides must agree.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (s SYMBOL)");
+            execute("INSERT INTO t VALUES ('A'), (NULL), ('B')");
+            // CHAR(0) alongside another literal: the NULL row matches via CHAR(0),
+            // 'A' picks up its own row.
+            assertSql(
+                    "s\n\nA\n",
+                    "SELECT s FROM t WHERE s IN ('A', (0)::CHAR) ORDER BY 1"
+            );
+            // CHAR(0) alone in the list: only the NULL row matches.
+            assertSql(
+                    "s\n\n",
+                    "SELECT s FROM t WHERE s IN ((0)::CHAR)"
+            );
+            // CHAR(0) alongside an explicit NULL: both map to set-null, no double-add
+            // or false-mismatch; only the NULL row matches.
+            assertSql(
+                    "s\n\n",
+                    "SELECT s FROM t WHERE s IN (NULL, (0)::CHAR)"
+            );
+            // A non-zero CHAR keeps its 1-char string and only matches the
+            // corresponding symbol row, never the NULL row.
+            assertSql(
+                    "s\nA\n",
+                    "SELECT s FROM t WHERE s IN (('A')::CHAR)"
+            );
+            // Bind variant: the runtime-constant CHAR(0) is deferred to
+            // Func.init() and routed through deferredValueToString, which must
+            // also map CHAR(0) to null so the deferred set agrees with the
+            // eager-fold branch.
+            bindVariableService.clear();
+            bindVariableService.setStr("b0", "0");
+            assertSql(
+                    "s\n\nA\n",
+                    "SELECT s FROM t WHERE s IN ('A', (:b0::INT)::CHAR) ORDER BY 1"
+            );
+            // Bind-only variant: CHAR(0) is the only IN entry, exercising the
+            // deferred path with no eagerly-folded set. Only the NULL row matches.
+            bindVariableService.clear();
+            bindVariableService.setStr("b0", "0");
+            assertSql(
+                    "s\n\n",
+                    "SELECT s FROM t WHERE s IN ((:b0::INT)::CHAR)"
+            );
+        });
+    }
+
+    @Test
+    public void testBindVarTypedCastInList() throws Exception {
+        // Regression: a bind variable wrapped in a non-STRING/VARCHAR cast
+        // (e.g. ::SYMBOL or ::CHAR) inside the IN list used to fall through
+        // to the SYMBOL/NULL/CHAR branches that read the value at compile
+        // time, tripping NamedParameterLinkFunction.getBase()'s assertion
+        // before the variable was bound. The deferred path now covers all
+        // accepted types.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (s SYMBOL)");
+            execute("INSERT INTO t VALUES ('A'), ('B'), ('C')");
+            bindVariableService.clear();
+            bindVariableService.setStr("b0", "B");
+            bindVariableService.setStr("b1", "C");
+            assertSql(
+                    "s\nA\nB\n",
+                    "SELECT s FROM t WHERE s IN ('A', :b0::SYMBOL) ORDER BY 1"
+            );
+            assertSql(
+                    "s\nA\nC\n",
+                    "SELECT s FROM t WHERE s IN ('A', :b1::CHAR) ORDER BY 1"
+            );
+        });
     }
 }

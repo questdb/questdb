@@ -35,7 +35,6 @@ import io.questdb.std.DirectIntList;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.IntIntHashMap;
-import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
@@ -66,13 +65,20 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
     private final IntIntHashMap columnIdToParquetIdx;
     private final PageFrameMemoryImpl frameMemory;
     private final ObjList<ParquetBuffers> freeParquetBuffers;
-    // Contains parquet to query column index mapping.
-    private final IntList fromParquetColumnIndexes;
+    private final ParquetFileDecoder legacyDecoder;
     private final int parquetCacheSize;
     // Contains [parquet_column_index, column_type] pairs.
+    // Each parquet column appears at most once even when multiple query
+    // columns reference it (a SelectedRecord projection can list the same
+    // base column twice). decode() iterates the query column mapping and
+    // looks up the slot via parquetIdxToDecodeSlot.
     private final DirectIntList parquetColumns;
+    // Maps parquet column index to its slot in parquetColumns / decoded
+    // buffers. -1 when the parquet column is not part of the current
+    // decode pass (excluded from the include/exclude filter, or absent
+    // from the parquet file because it was added later).
+    private final IntIntHashMap parquetIdxToDecodeSlot;
     private final ParquetPartitionDecoder parquetMetaDecoder;
-    private final ParquetFileDecoder legacyDecoder;
     private ParquetDecoder activeDecoder;
     private PageFrameAddressCache addressCache;
 
@@ -84,10 +90,10 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             for (int i = 0; i < parquetCacheSize; i++) {
                 freeParquetBuffers.add(new ParquetBuffers());
             }
-            columnIdToParquetIdx = new IntIntHashMap();
+            columnIdToParquetIdx = new IntIntHashMap(16);
             frameMemory = new PageFrameMemoryImpl();
-            fromParquetColumnIndexes = new IntList(16);
             parquetColumns = new DirectIntList(32, MemoryTag.NATIVE_DEFAULT, true);
+            parquetIdxToDecodeSlot = new IntIntHashMap(16);
             parquetMetaDecoder = new ParquetPartitionDecoder();
             legacyDecoder = new ParquetFileDecoder();
         } catch (Throwable th) {
@@ -356,25 +362,25 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
 
         parquetColumns.reopen();
         parquetColumns.clear();
-        final int parquetColumnCount = activeDecoder.getColumnCount();
-        fromParquetColumnIndexes.clear();
-        fromParquetColumnIndexes.setAll(parquetColumnCount, -1);
+        parquetIdxToDecodeSlot.clear();
 
         final ColumnMapping columnMapping = addressCache.getColumnMapping();
         final int readParquetColumnCount = columnMapping.getColumnCount();
         for (int i = 0; i < readParquetColumnCount; i++) {
             final int columnWriterIndex = columnMapping.getWriterIndex(i);
             final int parquetIdx = columnIdToParquetIdx.get(columnWriterIndex);
-            if (parquetIdx >= 0) {
+            if (parquetIdx >= 0 && parquetIdxToDecodeSlot.get(parquetIdx) < 0) {
                 int columnType = addressCache.getColumnTypes().getQuick(i);
                 if (ColumnType.tagOf(columnType) == ColumnType.VARCHAR) {
                     columnType = ColumnType.VARCHAR_SLICE;
                 }
+                parquetIdxToDecodeSlot.put(parquetIdx, (int) (parquetColumns.size() / 2));
                 parquetColumns.add(parquetIdx);
-                fromParquetColumnIndexes.setQuick(parquetIdx, i);
                 parquetColumns.add(columnType);
             }
             // Column missing from parquet (ADD COLUMN): stays at address 0 (NULL).
+            // Repeated parquet column: decode once; remapColumns() fans the
+            // buffer out to every query column that shares the parquet column.
         }
     }
 
@@ -383,9 +389,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
 
         parquetColumns.reopen();
         parquetColumns.clear();
-        final int parquetColumnCount = activeDecoder.getColumnCount();
-        fromParquetColumnIndexes.clear();
-        fromParquetColumnIndexes.setAll(parquetColumnCount, -1);
+        parquetIdxToDecodeSlot.clear();
 
         final ColumnMapping columnMapping = addressCache.getColumnMapping();
         final int readParquetColumnCount = columnMapping.getColumnCount();
@@ -393,13 +397,13 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             if (include && columnIndexes.contains(i) || (!include && !columnIndexes.contains(i))) {
                 final int columnWriterIndex = columnMapping.getWriterIndex(i);
                 final int parquetIdx = columnIdToParquetIdx.get(columnWriterIndex);
-                if (parquetIdx >= 0) {
+                if (parquetIdx >= 0 && parquetIdxToDecodeSlot.get(parquetIdx) < 0) {
                     int columnType = addressCache.getColumnTypes().getQuick(i);
                     if (ColumnType.tagOf(columnType) == ColumnType.VARCHAR) {
                         columnType = ColumnType.VARCHAR_SLICE;
                     }
+                    parquetIdxToDecodeSlot.put(parquetIdx, (int) (parquetColumns.size() / 2));
                     parquetColumns.add(parquetIdx);
-                    fromParquetColumnIndexes.setQuick(parquetIdx, i);
                     parquetColumns.add(columnType);
                 }
             }
@@ -514,7 +518,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             if (filteredRows.size() != 0) {
                 currentRowGroupBuffer.decodeRemainingColumns(
                         activeDecoder,
-                        filterColumnIndexes.size(),
+                        filterColumnIndexes,
                         parquetColumns,
                         rowGroupIndex,
                         rowGroupLo,
@@ -562,13 +566,13 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             clearAddresses();
             if (parquetColumns.size() > 0) {
                 decoder.decodeRowGroup(rowGroupBuffers, parquetColumns, rowGroup, rowLo, rowHi);
-                remapColumns(parquetColumns);
+                remapColumns();
             }
         }
 
         public void decodeRemainingColumns(
                 ParquetDecoder decoder,
-                int columnOffset,
+                IntHashSet filterColumnIndexes,
                 DirectIntList parquetColumns,
                 int rowGroup,
                 int rowLo,
@@ -577,12 +581,13 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
                 boolean fillWithNulls
         ) {
             if (parquetColumns.size() > 0) {
+                final int columnOffset = filterColumnIndexes.size();
                 if (fillWithNulls) {
                     decoder.decodeRowGroupWithRowFilterFillNulls(rowGroupBuffers, columnOffset, parquetColumns, rowGroup, rowLo, rowHi, filteredRows);
                 } else {
                     decoder.decodeRowGroupWithRowFilter(rowGroupBuffers, columnOffset, parquetColumns, rowGroup, rowLo, rowHi, filteredRows);
                 }
-                remapRemainingColumns(columnOffset, parquetColumns);
+                remapRemainingColumns(columnOffset, filterColumnIndexes);
             }
         }
 
@@ -608,36 +613,65 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             list.setPos(size);
         }
 
-        private void remapColumns(DirectIntList parquetColumns) {
+        // Fan the decoded buffers out to query columns. parquetColumns is
+        // deduplicated, so when several query columns reference the same
+        // parquet column they share one decode slot and copy the same
+        // address pair into their respective query slots.
+        private void remapColumns() {
             final int columnCount = addressCache.getColumnCount();
             ensureCapacityAndZero(pageAddresses, columnCount);
             ensureCapacityAndZero(pageSizes, columnCount);
             ensureCapacityAndZero(auxPageAddresses, columnCount);
             ensureCapacityAndZero(auxPageSizes, columnCount);
 
-            for (int i = 0, n = (int) (parquetColumns.size() / 2); i < n; i++) {
-                final int parquetColumnIndex = parquetColumns.get(2L * i);
-                final int columnIndex = fromParquetColumnIndexes.getQuick(parquetColumnIndex);
-                final int columnType = parquetColumns.get(2L * i + 1);
-                pageAddresses.set(columnIndex, rowGroupBuffers.getChunkDataPtr(i));
-                pageSizes.set(columnIndex, rowGroupBuffers.getChunkDataSize(i));
+            final ColumnMapping columnMapping = addressCache.getColumnMapping();
+            final int readParquetColumnCount = columnMapping.getColumnCount();
+            for (int q = 0; q < readParquetColumnCount; q++) {
+                final int writerIndex = columnMapping.getWriterIndex(q);
+                final int parquetIdx = columnIdToParquetIdx.get(writerIndex);
+                if (parquetIdx < 0) {
+                    continue; // ADD COLUMN: stays at address 0 (NULL).
+                }
+                final int slot = parquetIdxToDecodeSlot.get(parquetIdx);
+                if (slot < 0) {
+                    continue; // Not part of this decode pass.
+                }
+                final int columnType = addressCache.getColumnTypes().getQuick(q);
+                pageAddresses.set(q, rowGroupBuffers.getChunkDataPtr(slot));
+                pageSizes.set(q, rowGroupBuffers.getChunkDataSize(slot));
                 if (ColumnType.isVarSize(columnType)) {
-                    auxPageAddresses.set(columnIndex, rowGroupBuffers.getChunkAuxPtr(i));
-                    auxPageSizes.set(columnIndex, rowGroupBuffers.getChunkAuxSize(i));
+                    auxPageAddresses.set(q, rowGroupBuffers.getChunkAuxPtr(slot));
+                    auxPageSizes.set(q, rowGroupBuffers.getChunkAuxSize(slot));
                 }
             }
         }
 
-        private void remapRemainingColumns(int columnOffset, DirectIntList parquetColumns) {
-            for (int i = 0, n = (int) (parquetColumns.size() / 2); i < n; i++) {
-                final int parquetColumnIndex = parquetColumns.get(2L * i);
-                final int columnIndex = fromParquetColumnIndexes.getQuick(parquetColumnIndex);
-                final int columnType = parquetColumns.get(2L * i + 1);
-                pageAddresses.set(columnIndex, rowGroupBuffers.getChunkDataPtr(columnOffset + i));
-                pageSizes.set(columnIndex, rowGroupBuffers.getChunkDataSize(columnOffset + i));
+        private void remapRemainingColumns(int columnOffset, IntHashSet filterColumnIndexes) {
+            final ColumnMapping columnMapping = addressCache.getColumnMapping();
+            final int readParquetColumnCount = columnMapping.getColumnCount();
+            for (int q = 0; q < readParquetColumnCount; q++) {
+                // Filter columns hold full data read by absolute index; never overwrite
+                // them with the compacted buffer when a remaining column shares their
+                // parquet column. Guard only: the optimizer keeps filters below
+                // duplicating projections, so the late-mat frame has no duplicate today.
+                if (filterColumnIndexes.contains(q)) {
+                    continue;
+                }
+                final int writerIndex = columnMapping.getWriterIndex(q);
+                final int parquetIdx = columnIdToParquetIdx.get(writerIndex);
+                if (parquetIdx < 0) {
+                    continue;
+                }
+                final int slot = parquetIdxToDecodeSlot.get(parquetIdx);
+                if (slot < 0) {
+                    continue; // Excluded from this decode pass; the previous decode set its address.
+                }
+                final int columnType = addressCache.getColumnTypes().getQuick(q);
+                pageAddresses.set(q, rowGroupBuffers.getChunkDataPtr(columnOffset + slot));
+                pageSizes.set(q, rowGroupBuffers.getChunkDataSize(columnOffset + slot));
                 if (ColumnType.isVarSize(columnType)) {
-                    auxPageAddresses.set(columnIndex, rowGroupBuffers.getChunkAuxPtr(columnOffset + i));
-                    auxPageSizes.set(columnIndex, rowGroupBuffers.getChunkAuxSize(columnOffset + i));
+                    auxPageAddresses.set(q, rowGroupBuffers.getChunkAuxPtr(columnOffset + slot));
+                    auxPageSizes.set(q, rowGroupBuffers.getChunkAuxSize(columnOffset + slot));
                 }
             }
         }

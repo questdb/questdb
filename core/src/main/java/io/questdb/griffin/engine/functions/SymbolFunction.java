@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.functions;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.NanosTimestampDriver;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
@@ -215,8 +216,8 @@ public abstract class SymbolFunction implements Function, SymbolTable {
     }
 
     @Override
-    public final int getStrLen(Record rec) {
-        throw new UnsupportedOperationException();
+    public int getStrLen(Record rec) {
+        return TableUtils.lengthOf(getSymbol(rec));
     }
 
     @Override

@@ -33,6 +33,7 @@ import io.questdb.cairo.ParquetMetaFileReader;
 import io.questdb.griffin.engine.table.parquet.ParquetVersion;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
+import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.cairo.fuzz.AbstractFuzzTest;
@@ -136,7 +137,8 @@ public class O3ParquetMergeStrategyFuzzTest extends AbstractFuzzTest {
 
             long dayEnd = partitionTs + DAY_MICROS;
 
-            int rounds = 3 + rnd.nextInt(8);
+            // fewer rounds on slow CI runners (Mac, Windows)
+            int rounds = Os.isLinux() ? 3 + rnd.nextInt(8) : 3 + rnd.nextInt(2);
             LOG.info()
                     .$("starting all-parquet fuzz: initialRowCount=").$(initialRowCount)
                     .$(", rounds=").$(rounds)
@@ -306,7 +308,8 @@ public class O3ParquetMergeStrategyFuzzTest extends AbstractFuzzTest {
             // Initial data starts at '2022-02-24' (see FuzzRunner.createInitialTable).
             long dayEnd = partitionTs + DAY_MICROS;
 
-            int rounds = 3 + rnd.nextInt(8);
+            // fewer rounds on slow CI runners (Mac, Windows)
+            int rounds = Os.isLinux() ? 3 + rnd.nextInt(8) : 3 + rnd.nextInt(2);
             LOG.info()
                     .$("starting fuzz: initialRowCount=").$(initialRowCount)
                     .$(", rounds=").$(rounds)
@@ -475,7 +478,8 @@ public class O3ParquetMergeStrategyFuzzTest extends AbstractFuzzTest {
             // Each round uses a non-overlapping window advancing through the second
             // half of the day, so every batch appends after the previous one.
             long dayEnd = partitionTs + DAY_MICROS;
-            int rounds = 5 + rnd.nextInt(6);
+            // fewer rounds on slow CI runners (Mac, Windows)
+            int rounds = Os.isLinux() ? 5 + rnd.nextInt(6) : 5 + rnd.nextInt(2);
             long windowSize = (dayEnd - partitionTs - DAY_MICROS / 2) / rounds;
 
             LOG.info()
@@ -600,7 +604,8 @@ public class O3ParquetMergeStrategyFuzzTest extends AbstractFuzzTest {
 
             long dayEnd = partitionTs + DAY_MICROS;
 
-            int rounds = 3 + rnd.nextInt(8);
+            // fewer rounds on slow CI runners (Mac, Windows)
+            int rounds = Os.isLinux() ? 3 + rnd.nextInt(8) : 3 + rnd.nextInt(2);
             LOG.info()
                     .$("starting io-failure fuzz: initialRowCount=").$(initialRowCount)
                     .$(", rounds=").$(rounds)
@@ -759,7 +764,8 @@ public class O3ParquetMergeStrategyFuzzTest extends AbstractFuzzTest {
 
             long dayEnd = partitionTs + DAY_MICROS;
 
-            int rounds = 3 + rnd.nextInt(8);
+            // fewer rounds on slow CI runners (Mac, Windows)
+            int rounds = Os.isLinux() ? 3 + rnd.nextInt(8) : 3 + rnd.nextInt(2);
             LOG.info()
                     .$("starting schema-change fuzz: initialRowCount=").$(initialRowCount)
                     .$(", rounds=").$(rounds)

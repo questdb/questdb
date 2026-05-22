@@ -49,6 +49,7 @@ import org.jetbrains.annotations.TestOnly;
  * exposed.
  */
 public class QwpEgressMetrics implements Mutable {
+    private final Counter batchOverflowSplitCounter;
     private final Counter batchesSentCounter;
     private final Counter bytesCompressedSavedCounter;
     private final Counter bytesSentCounter;
@@ -66,11 +67,17 @@ public class QwpEgressMetrics implements Mutable {
         this.queriesErroredCounter = metricsRegistry.newCounter("qwp_egress_queries_errored");
         this.queriesCancelledCounter = metricsRegistry.newCounter("qwp_egress_queries_cancelled");
         this.batchesSentCounter = metricsRegistry.newCounter("qwp_egress_batches_sent");
+        this.batchOverflowSplitCounter = metricsRegistry.newCounter("qwp_egress_batch_overflow_splits");
         this.bytesSentCounter = metricsRegistry.newCounter("qwp_egress_bytes_sent");
         this.bytesCompressedSavedCounter = metricsRegistry.newCounter("qwp_egress_bytes_zstd_saved");
         this.rowsStreamedCounter = metricsRegistry.newCounter("qwp_egress_rows_streamed");
         this.cacheResetDictCounter = metricsRegistry.newCounter("qwp_egress_cache_reset_dict");
         this.cacheResetSchemasCounter = metricsRegistry.newCounter("qwp_egress_cache_reset_schemas");
+    }
+
+    @TestOnly
+    public long batchOverflowSplitCount() {
+        return batchOverflowSplitCounter.getValue();
     }
 
     @TestOnly
@@ -103,6 +110,7 @@ public class QwpEgressMetrics implements Mutable {
         queriesErroredCounter.reset();
         queriesCancelledCounter.reset();
         batchesSentCounter.reset();
+        batchOverflowSplitCounter.reset();
         bytesSentCounter.reset();
         bytesCompressedSavedCounter.reset();
         rowsStreamedCounter.reset();
@@ -112,6 +120,10 @@ public class QwpEgressMetrics implements Mutable {
 
     public AtomicLongGauge connectionCountGauge() {
         return connectionCountGauge;
+    }
+
+    public void markBatchOverflowSplit() {
+        batchOverflowSplitCounter.inc();
     }
 
     public void markBatchSent(int bytes, int rows) {
