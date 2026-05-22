@@ -1729,7 +1729,7 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
                     "SELECT value FROM ws_async_multi_err WHERE value = 0",
                     "value\n0\n"
             );
-        });
+        }, 65_536, 471, 71);
     }
 
     @Test
