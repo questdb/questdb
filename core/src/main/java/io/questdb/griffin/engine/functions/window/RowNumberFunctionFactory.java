@@ -284,6 +284,26 @@ public class RowNumberFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public ColumnTypes getSnapshotKeyColumnTypes() {
+            return keyColumnTypes;
+        }
+
+        @Override
+        public int getSnapshotKeyStartIndex() {
+            return valueColumnTypes.getColumnCount();
+        }
+
+        @Override
+        public long getTombstoneCount() {
+            return tombstoneCount;
+        }
+
+        @Override
+        public int getTombstoneValueIndex() {
+            return tombstoneValueIndex;
+        }
+
+        @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             super.init(symbolTableSource, executionContext);
             Function.init(partitionByRecord.getFunctions(), symbolTableSource, executionContext, null);
@@ -307,6 +327,12 @@ public class RowNumberFunctionFactory implements FunctionFactory {
                 value.putByte(tombstoneValueIndex, (byte) 0);
                 tombstoneCount--;
             }
+        }
+
+        @Override
+        public void onSnapshotRestoreBegin() {
+            map.clear();
+            tombstoneCount = 0;
         }
 
         @Override
@@ -359,6 +385,20 @@ public class RowNumberFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public long restorePartitionState(MemoryR source, long offset, MapValue value, int formatVersion) {
+            value.putLong(ROW_NUMBER_VALUE_INDEX, source.getLong(offset));
+            offset += Long.BYTES;
+            if (lastActivityTsValueIndex >= 0) {
+                value.putLong(lastActivityTsValueIndex, source.getLong(offset));
+                offset += Long.BYTES;
+            }
+            if (tombstoneValueIndex >= 0) {
+                value.putByte(tombstoneValueIndex, (byte) 0);
+            }
+            return offset;
+        }
+
+        @Override
         public void setColumnIndex(int columnIndex) {
             this.columnIndex = columnIndex;
         }
@@ -405,6 +445,14 @@ public class RowNumberFunctionFactory implements FunctionFactory {
         @Override
         public int snapshotMinSupportedVersion() {
             return 1;
+        }
+
+        @Override
+        public void snapshotPartitionState(MemoryA sink, MapValue value) {
+            sink.putLong(value.getLong(ROW_NUMBER_VALUE_INDEX));
+            if (lastActivityTsValueIndex >= 0) {
+                sink.putLong(value.getLong(lastActivityTsValueIndex));
+            }
         }
 
         @Override
@@ -475,6 +523,12 @@ public class RowNumberFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public long restorePartitionState(MemoryR source, long offset, MapValue value, int formatVersion) {
+            rowNumber = source.getLong(offset);
+            return offset + Long.BYTES;
+        }
+
+        @Override
         public void setColumnIndex(int columnIndex) {
             this.columnIndex = columnIndex;
         }
@@ -492,6 +546,11 @@ public class RowNumberFunctionFactory implements FunctionFactory {
         @Override
         public int snapshotMinSupportedVersion() {
             return 1;
+        }
+
+        @Override
+        public void snapshotPartitionState(MemoryA sink, MapValue value) {
+            sink.putLong(rowNumber);
         }
 
         @Override
