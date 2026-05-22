@@ -6463,6 +6463,127 @@ public class LiveViewSmokeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRestoreKeyShapeMismatchReplaysFromHeadMiss() throws Exception {
+        // A FUNCTION_SNAPSHOT block whose key-shape header (the partition key
+        // column count) disagrees with the running function is structural
+        // corruption that slipped past the CRC, not a version break. The
+        // restore must treat it like any other corrupt head .cp: unlink it,
+        // clear the head metadata, and fall through to head-miss replay -
+        // WITHOUT invalidating the view. This is the counterpart to
+        // testRestoreVersionMismatchInvalidatesView, which takes the other
+        // branch (invalidate, keep the .cp) on a real compatibility break.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms AS " +
+                    "SELECT ts, sym, sum(x) OVER w AS s FROM base " +
+                    "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
+
+            execute("INSERT INTO base (ts, sym, x) VALUES " +
+                    "('2026-06-01T00:00:00.000000Z', 'a', 1.0), " +
+                    "('2026-06-01T01:00:00.000000Z', 'a', 2.0)");
+            drainWalQueue();
+
+            final String fnFactoryName;
+            final int fnFormatVersion;
+            final long headLvSeqTxn;
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+                drainWalQueue();
+                final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull(instance);
+                headLvSeqTxn = instance.getHeadCheckpointLvSeqTxn();
+                Assert.assertNotEquals(Numbers.LONG_NULL, headLvSeqTxn);
+                final WindowFunction fn = instance.getAnchorWindow().getFunctions().getQuick(0);
+                final Class<?> fnClass = fn.getClass();
+                final Class<?> enclosing = fnClass.getEnclosingClass();
+                fnFactoryName = (enclosing != null ? enclosing : fnClass).getName();
+                // Stamp the function's CURRENT (valid) snapshot version so the
+                // restore clears the version gate and reaches the key-shape
+                // header check below.
+                fnFormatVersion = fn.snapshotFormatVersion();
+            }
+
+            // The LV has already materialised the cumulative sums to its
+            // on-disk tier before any corruption.
+            assertSql(
+                    "ts\tsym\ts\n" +
+                            "2026-06-01T00:00:00.000000Z\ta\t1.0\n" +
+                            "2026-06-01T01:00:00.000000Z\ta\t3.0\n",
+                    "SELECT ts, sym, s FROM lv ORDER BY ts"
+            );
+
+            // Replace the head .cp: same lvSeqTxn, valid prelude, but a
+            // FUNCTION_SNAPSHOT payload whose partitionKeyColumnCount is bogus
+            // (the running sum() partitions by exactly one column). The restore
+            // unwinds at the key-shape check before decoding any partition
+            // state, so we need no anchor block.
+            try (Path lvDir = new Path()) {
+                final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                lvDir.of(engine.getConfiguration().getDbRoot()).concat(instance.getLiveViewToken()).slash();
+
+                try (Path cpPath = new Path()) {
+                    cpPath.of(lvDir).concat(LiveViewCheckpointWriter.CHECKPOINT_DIR_NAME).slash();
+                    LiveViewCheckpointWriter.appendCpFileName(cpPath, headLvSeqTxn);
+                    engine.getConfiguration().getFilesFacade().removeQuiet(cpPath.$());
+                }
+
+                try (LiveViewCheckpointWriter w = new LiveViewCheckpointWriter(engine.getConfiguration())) {
+                    w.of(lvDir.$(), headLvSeqTxn);
+                    w.writeManifestBlock(new LiveViewCheckpointManifest()
+                            .setLvSeqTxn(headLvSeqTxn)
+                            .setLvRowPosition(0)
+                            .setBaseSeqTxn(0)
+                            .setMaxTimestamp(0)
+                            .setKind(LiveViewCheckpointManifest.KIND_STEADY)
+                            .addWindowName("w"));
+                    final MemoryA fnSink = w.beginBlock(LiveViewCheckpointBlockType.BLOCK_FUNCTION_SNAPSHOT);
+                    fnSink.putStr("w");
+                    fnSink.putStr(fnFactoryName);
+                    fnSink.putInt(fnFormatVersion); // valid version - clears the version gate
+                    fnSink.putInt(99); // bogus partitionKeyColumnCount - key-shape mismatch
+                    w.endBlock();
+                    w.commit(Numbers.LONG_NULL);
+                }
+            }
+
+            // Restart: clear the registry and rebuild from on-disk. The
+            // startup sweep re-stamps the head lvSeqTxn from the filename.
+            engine.getLiveViewRegistry().clear();
+            engine.buildViewGraphs();
+            final LiveViewInstance reloaded = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(reloaded);
+            Assert.assertEquals(headLvSeqTxn, reloaded.getHeadCheckpointLvSeqTxn());
+            Assert.assertFalse("LV must still be valid pre-refresh", reloaded.isInvalid());
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+            }
+
+            Assert.assertTrue("the restore was attempted on the first post-restart cycle", reloaded.isCheckpointRestoreAttempted());
+            Assert.assertFalse(
+                    "a key-shape mismatch is corruption, not a version break - the LV must NOT be invalidated",
+                    reloaded.isInvalid()
+            );
+            Assert.assertEquals(
+                    "the corrupt head .cp was unlinked and head metadata cleared (head-miss routing)",
+                    Numbers.LONG_NULL,
+                    reloaded.getHeadCheckpointLvSeqTxn()
+            );
+
+            // The failed restore left the on-disk tier untouched: the LV still
+            // reads the same cumulative sums it computed before the corruption.
+            assertSql(
+                    "ts\tsym\ts\n" +
+                            "2026-06-01T00:00:00.000000Z\ta\t1.0\n" +
+                            "2026-06-01T01:00:00.000000Z\ta\t3.0\n",
+                    "SELECT ts, sym, s FROM lv ORDER BY ts"
+            );
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
     public void testRestartRestoresRankFromHeadCheckpoint() throws Exception {
         // rank() is now snapshot-capable. End-to-end check that a
         // refresh cycle writes a head .cp, a simulated restart re-discovers
