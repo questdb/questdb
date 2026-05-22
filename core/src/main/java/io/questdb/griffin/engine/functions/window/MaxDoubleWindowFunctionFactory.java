@@ -798,6 +798,30 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
             return map;
         }
 
+        @Override
+        public ColumnTypes getSnapshotKeyColumnTypes() {
+            return keyColumnTypes;
+        }
+
+        @Override
+        public int getSnapshotKeyStartIndex() {
+            return mapValueTypes != null
+                    ? mapValueTypes.getColumnCount()
+                    : (frameLoBounded
+                    ? MAX_OVER_PARTITION_RANGE_BOUNDED_COLUMN_TYPES
+                    : MAX_OVER_PARTITION_RANGE_COLUMN_TYPES).getColumnCount();
+        }
+
+        @Override
+        public void onSnapshotRestoreBegin() {
+            super.onSnapshotRestoreBegin();
+            memory.truncate();
+            freeList.clear();
+            if (dequeMemory != null) {
+                dequeMemory.truncate();
+            }
+            dequeFreeList.clear();
+        }
 
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
@@ -924,6 +948,60 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         }
 
         @Override
+        public long restorePartitionState(MemoryR source, long offset, MapValue value, int formatVersion) {
+            final long frameSize = source.getLong(offset);
+            offset += Long.BYTES;
+            final long size = source.getLong(offset);
+            offset += Long.BYTES;
+            final long capacity = Math.max(size, initialBufferSize);
+            final long newStartOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
+            if (frameLoBounded) {
+                final long dequeSize = source.getLong(offset);
+                offset += Long.BYTES;
+                for (long i = 0; i < size; i++) {
+                    memory.putLong(newStartOffset + i * RECORD_SIZE, source.getLong(offset));
+                    offset += Long.BYTES;
+                    memory.putDouble(newStartOffset + i * RECORD_SIZE + Long.BYTES, source.getDouble(offset));
+                    offset += Double.BYTES;
+                }
+                final long dequeCapacity = Math.max(dequeSize, dequeInitialBufferSize);
+                final long newDequeStartOffset = dequeMemory.appendAddressFor(dequeCapacity * DEQUE_RECORD_SIZE) - dequeMemory.getPageAddress(0);
+                for (long i = 0; i < dequeSize; i++) {
+                    dequeMemory.putDouble(newDequeStartOffset + i * DEQUE_RECORD_SIZE, source.getDouble(offset));
+                    offset += Double.BYTES;
+                }
+                value.putLong(0, frameSize);
+                value.putLong(1, newStartOffset);
+                value.putLong(2, size);
+                value.putLong(3, capacity);
+                value.putLong(4, 0L);
+                value.putLong(5, newDequeStartOffset);
+                value.putLong(6, dequeCapacity);
+                value.putLong(7, 0L);
+                value.putLong(8, dequeSize);
+            } else {
+                final double maxMinVal = source.getDouble(offset);
+                offset += Double.BYTES;
+                for (long i = 0; i < size; i++) {
+                    memory.putLong(newStartOffset + i * RECORD_SIZE, source.getLong(offset));
+                    offset += Long.BYTES;
+                    memory.putDouble(newStartOffset + i * RECORD_SIZE + Long.BYTES, source.getDouble(offset));
+                    offset += Double.BYTES;
+                }
+                value.putLong(0, frameSize);
+                value.putLong(1, newStartOffset);
+                value.putLong(2, size);
+                value.putLong(3, capacity);
+                value.putLong(4, 0L);
+                value.putDouble(5, maxMinVal);
+            }
+            if (tombstoneValueIndex >= 0) {
+                value.putByte(tombstoneValueIndex, (byte) 0);
+            }
+            return offset;
+        }
+
+        @Override
         public void snapshot(MemoryA sink) {
             MapRecordCursor cursor = map.getCursor();
             MapRecord record = map.getRecord();
@@ -995,6 +1073,40 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         @Override
         public int snapshotMinSupportedVersion() {
             return 1;
+        }
+
+        @Override
+        public void snapshotPartitionState(MemoryA sink, MapValue value) {
+            sink.putLong(value.getLong(0));
+            final long startOffset = value.getLong(1);
+            final long size = value.getLong(2);
+            final long capacity = value.getLong(3);
+            final long firstIdx = value.getLong(4);
+            sink.putLong(size);
+            if (frameLoBounded) {
+                final long dequeStartOffset = value.getLong(5);
+                final long dequeCapacity = value.getLong(6);
+                final long dequeStartIndex = value.getLong(7);
+                final long dequeEndIndex = value.getLong(8);
+                final long dequeSize = dequeEndIndex - dequeStartIndex;
+                sink.putLong(dequeSize);
+                for (long i = 0; i < size; i++) {
+                    final long idx = (firstIdx + i) % capacity;
+                    sink.putLong(memory.getLong(startOffset + idx * RECORD_SIZE));
+                    sink.putDouble(memory.getDouble(startOffset + idx * RECORD_SIZE + Long.BYTES));
+                }
+                for (long i = 0; i < dequeSize; i++) {
+                    final long idx = (dequeStartIndex + i) % dequeCapacity;
+                    sink.putDouble(dequeMemory.getDouble(dequeStartOffset + idx * DEQUE_RECORD_SIZE));
+                }
+            } else {
+                sink.putDouble(value.getDouble(5));
+                for (long i = 0; i < size; i++) {
+                    final long idx = (firstIdx + i) % capacity;
+                    sink.putLong(memory.getLong(startOffset + idx * RECORD_SIZE));
+                    sink.putDouble(memory.getDouble(startOffset + idx * RECORD_SIZE + Long.BYTES));
+                }
+            }
         }
 
         @Override
@@ -1280,6 +1392,31 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         }
 
         @Override
+        public ColumnTypes getSnapshotKeyColumnTypes() {
+            return keyColumnTypes;
+        }
+
+        @Override
+        public int getSnapshotKeyStartIndex() {
+            return mapValueTypes != null
+                    ? mapValueTypes.getColumnCount()
+                    : (frameLoBounded
+                    ? MAX_OVER_PARTITION_ROWS_BOUNDED_COLUMN_TYPES
+                    : MAX_OVER_PARTITION_ROWS_COLUMN_TYPES).getColumnCount();
+        }
+
+        @Override
+        public void onSnapshotRestoreBegin() {
+            super.onSnapshotRestoreBegin();
+            memory.truncate();
+            if (dequeMemory != null) {
+                dequeMemory.truncate();
+            }
+            freeList.clear();
+            dequeFreeList.clear();
+        }
+
+        @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
             Unsafe.putDouble(spi.getAddress(recordOffset, columnIndex), maxMin);
@@ -1390,6 +1527,49 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         }
 
         @Override
+        public long restorePartitionState(MemoryR source, long offset, MapValue value, int formatVersion) {
+            final long ringBytes = (long) bufferSize * Double.BYTES;
+            final long dequeBytes = (long) dequeBufferSize * Double.BYTES;
+            final long loIdx = source.getLong(offset);
+            offset += Long.BYTES;
+            final long newStartOffset = memory.appendAddressFor(ringBytes) - memory.getPageAddress(0);
+            if (frameLoBounded) {
+                final long dequeStartIndex = source.getLong(offset);
+                offset += Long.BYTES;
+                final long dequeEndIndex = source.getLong(offset);
+                offset += Long.BYTES;
+                for (int i = 0; i < bufferSize; i++) {
+                    memory.putDouble(newStartOffset + (long) i * Double.BYTES, source.getDouble(offset));
+                    offset += Double.BYTES;
+                }
+                final long newDequeStartOffset = dequeMemory.appendAddressFor(dequeBytes) - dequeMemory.getPageAddress(0);
+                for (int i = 0; i < dequeBufferSize; i++) {
+                    dequeMemory.putDouble(newDequeStartOffset + (long) i * Double.BYTES, source.getDouble(offset));
+                    offset += Double.BYTES;
+                }
+                value.putLong(0, loIdx);
+                value.putLong(1, newStartOffset);
+                value.putLong(2, newDequeStartOffset);
+                value.putLong(3, dequeStartIndex);
+                value.putLong(4, dequeEndIndex);
+            } else {
+                final double maxMinVal = source.getDouble(offset);
+                offset += Double.BYTES;
+                for (int i = 0; i < bufferSize; i++) {
+                    memory.putDouble(newStartOffset + (long) i * Double.BYTES, source.getDouble(offset));
+                    offset += Double.BYTES;
+                }
+                value.putLong(0, loIdx);
+                value.putLong(1, newStartOffset);
+                value.putDouble(2, maxMinVal);
+            }
+            if (tombstoneValueIndex >= 0) {
+                value.putByte(tombstoneValueIndex, (byte) 0);
+            }
+            return offset;
+        }
+
+        @Override
         public void snapshot(MemoryA sink) {
             MapRecordCursor cursor = map.getCursor();
             MapRecord record = map.getRecord();
@@ -1449,6 +1629,28 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         @Override
         public int snapshotMinSupportedVersion() {
             return 1;
+        }
+
+        @Override
+        public void snapshotPartitionState(MemoryA sink, MapValue value) {
+            sink.putLong(value.getLong(0));
+            final long startOffset = value.getLong(1);
+            if (frameLoBounded) {
+                sink.putLong(value.getLong(3));
+                sink.putLong(value.getLong(4));
+                for (int i = 0; i < bufferSize; i++) {
+                    sink.putDouble(memory.getDouble(startOffset + (long) i * Double.BYTES));
+                }
+                final long dequeStartOffset = value.getLong(2);
+                for (int i = 0; i < dequeBufferSize; i++) {
+                    sink.putDouble(dequeMemory.getDouble(dequeStartOffset + (long) i * Double.BYTES));
+                }
+            } else {
+                sink.putDouble(value.getDouble(2));
+                for (int i = 0; i < bufferSize; i++) {
+                    sink.putDouble(memory.getDouble(startOffset + (long) i * Double.BYTES));
+                }
+            }
         }
 
         @Override
@@ -2079,6 +2281,18 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         }
 
         @Override
+        public ColumnTypes getSnapshotKeyColumnTypes() {
+            return keyColumnTypes;
+        }
+
+        @Override
+        public int getSnapshotKeyStartIndex() {
+            return mapValueTypes != null
+                    ? mapValueTypes.getColumnCount()
+                    : MAX_COLUMN_TYPES.getColumnCount();
+        }
+
+        @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
             Unsafe.putDouble(spi.getAddress(recordOffset, columnIndex), maxMin);
@@ -2135,6 +2349,18 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         }
 
         @Override
+        public long restorePartitionState(MemoryR source, long offset, MapValue value, int formatVersion) {
+            value.putDouble(0, source.getDouble(offset));
+            offset += Double.BYTES;
+            value.putByte(1, source.getByte(offset));
+            offset += Byte.BYTES;
+            if (tombstoneValueIndex >= 0) {
+                value.putByte(tombstoneValueIndex, (byte) 0);
+            }
+            return offset;
+        }
+
+        @Override
         public void snapshot(MemoryA sink) {
             // Two-pass walk: count non-tombstoned partitions, then emit each.
             MapRecordCursor cursor = map.getCursor();
@@ -2176,6 +2402,12 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         @Override
         public int snapshotMinSupportedVersion() {
             return 1;
+        }
+
+        @Override
+        public void snapshotPartitionState(MemoryA sink, MapValue value) {
+            sink.putDouble(value.getDouble(0));
+            sink.putByte(value.getByte(1));
         }
 
         @Override
