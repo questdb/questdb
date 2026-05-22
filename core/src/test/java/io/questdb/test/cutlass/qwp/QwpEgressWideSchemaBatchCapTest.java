@@ -27,6 +27,7 @@ package io.questdb.test.cutlass.qwp;
 import io.questdb.client.cutlass.qwp.client.QwpColumnBatch;
 import io.questdb.client.cutlass.qwp.client.QwpColumnBatchHandler;
 import io.questdb.client.cutlass.qwp.client.QwpQueryClient;
+import io.questdb.cutlass.qwp.server.egress.QwpRowExceedsBufferException;
 import io.questdb.test.AbstractBootstrapTest;
 import io.questdb.test.TestServerMain;
 import io.questdb.test.tools.TestUtils;
@@ -44,13 +45,15 @@ import org.junit.Test;
  * overflow surfaced as {@code STATUS_INTERNAL_ERROR (0x06)} mid-stream,
  * tearing down the query.
  * <p>
- * After the fix, the loop scales the row cap down for wide schemas via
- * {@code dynamicBatchRowCap}, splitting the stream into multiple batches
- * that each fit the send buffer. The residual overflow path (a single row
- * whose worst-case width still exceeds the buffer) now surfaces as
- * {@code STATUS_LIMIT_EXCEEDED (0x0B)}, which the C client reports as
- * {@code line_reader_error_server_limit_exceeded = 19} rather than the
- * misleading {@code server_internal_error = 16}.
+ * After the fix, the loop binary-searches the largest emittable row prefix
+ * via {@code QwpResultBatchBuffer.findLargestEmittablePrefix} and carries
+ * the suffix over into the next batch, splitting the stream into multiple
+ * RESULT_BATCH frames that each fit the send buffer. The residual overflow
+ * path (a single row whose wire encoding still exceeds the buffer)
+ * surfaces as {@link QwpRowExceedsBufferException}, mapped to
+ * {@code STATUS_LIMIT_EXCEEDED (0x0B)} on the wire, which the C client
+ * reports as {@code line_reader_error_server_limit_exceeded = 19} rather
+ * than the misleading {@code server_internal_error = 16}.
  */
 public class QwpEgressWideSchemaBatchCapTest extends AbstractBootstrapTest {
 
@@ -63,12 +66,11 @@ public class QwpEgressWideSchemaBatchCapTest extends AbstractBootstrapTest {
 
     /**
      * Pins the residual overflow arm of the batch-cap fix: when a single
-     * row's payload exceeds the rawSocket send buffer (even at the
-     * {@code MIN_BATCH_ROWS} floor of {@code dynamicBatchRowCap}),
-     * {@code emitTableBlock} returns -1 and the throw site converts that
-     * into {@code CairoException.setOutOfMemory(true)}.
-     * {@code mapErrorStatus} translates it to {@code STATUS_LIMIT_EXCEEDED
-     * (0x0B)} on the wire, which the C client reports as
+     * row's wire encoding exceeds the rawSocket send buffer,
+     * {@code findLargestEmittablePrefix} returns 0 and the throw site
+     * raises {@link QwpRowExceedsBufferException}, which
+     * {@code mapErrorStatus} translates to {@code STATUS_LIMIT_EXCEEDED
+     * (0x0B)} on the wire. The C client reports it as
      * {@code line_reader_error_server_limit_exceeded = 19} rather than the
      * masking {@code server_internal_error = 16}.
      * <p>
@@ -122,7 +124,7 @@ public class QwpEgressWideSchemaBatchCapTest extends AbstractBootstrapTest {
                                 + Integer.toHexString(status[0] & 0xff)
                                 + " msg=" + message[0],
                         (byte) 0x0B, status[0]);
-                TestUtils.assertContains(message[0], "batch too large for send buffer");
+                TestUtils.assertContains(message[0], "single row exceeds send buffer");
             }
         });
     }
@@ -132,9 +134,9 @@ public class QwpEgressWideSchemaBatchCapTest extends AbstractBootstrapTest {
      * overflow error. Builds a 41-column table (20 VARCHAR + 10 BINARY +
      * 5 UUID + 5 LONG256 + ts) and ingests 4000 rows. Total payload
      * comfortably exceeds the default 2 MiB send buffer at 16_384 rows /
-     * batch but fits across multiple batches once the row cap is
-     * schema-aware. SYMBOL columns are deliberately omitted so the test
-     * pins the dynamic row cap rather than the symbol-dict reserve --
+     * batch but partial-emit suffix carry-over splits it across multiple
+     * RESULT_BATCH frames. SYMBOL columns are deliberately omitted so the
+     * test pins the size-driven split rather than the symbol-dict reserve --
      * dict overhead has its own coverage in QwpEgressBootstrapTest.
      */
     @Test
