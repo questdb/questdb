@@ -22,8 +22,7 @@
   ~
   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~-->
 
-<project xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns="http://maven.apache.org/POM/4.0.0"
-         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/maven-v4_0_0.xsd">
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/maven-v4_0_0.xsd">
     <modelVersion>4.0.0</modelVersion>
     <name>QuestDB</name>
     <description>QuestDB is high performance SQL time series database</description>
@@ -46,10 +45,10 @@
         -->
         <qdbr.rustflags>-D warnings</qdbr.rustflags>
 
-        <questdb.client.version>1.2.0</questdb.client.version>
+        <questdb.client.version>1.2.2</questdb.client.version>
     </properties>
 
-    <version>9.3.6-SNAPSHOT</version>
+    <version>9.4.1-SNAPSHOT</version>
     <groupId>org.questdb</groupId>
     <artifactId>questdb</artifactId>
     <packaging>jar</packaging>
@@ -206,7 +205,7 @@
                 <artifactId>maven-surefire-plugin</artifactId>
                 <version>3.5.3</version>
                 <configuration>
-                    <forkNode implementation="org.apache.maven.plugin.surefire.extensions.SurefireForkNodeFactory"/>
+                    <forkNode implementation="org.apache.maven.plugin.surefire.extensions.SurefireForkNodeFactory" />
                     <useModulePath>true</useModulePath>
                     <includes>
                         <include>${test.include}</include>
@@ -236,6 +235,9 @@
     <profiles>
         <profile>
             <id>local-client</id>
+            <properties>
+                <questdb.client.version>1.2.2-SNAPSHOT</questdb.client.version>
+            </properties>
         </profile>
         <profile>
             <id>javadoc</id>

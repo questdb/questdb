@@ -40,6 +40,7 @@ import io.questdb.cutlass.qwp.websocket.WebSocketFrameWriter;
 import io.questdb.cutlass.qwp.websocket.WebSocketOpcode;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.network.Net;
 import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
 import io.questdb.network.PeerIsSlowToWriteException;
@@ -70,6 +71,11 @@ import static io.questdb.cutlass.qwp.protocol.QwpConstants.*;
 public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
     // Cumulative ACK batch size
     private static final int ACK_BATCH_SIZE = 8;
+    // Worst-case WebSocket frame header size (2-byte base + 8-byte 64-bit
+    // extended length + 4-byte mask for client->server frames). Subtracted
+    // from the recv buffer when computing the effective batch cap so the
+    // advertised value still leaves room for the frame header on the wire.
+    private static final int MAX_WS_FRAME_HEADER_BYTES = 14;
     // HTTP response templates
     private static final byte[] BAD_REQUEST_PREFIX =
             "HTTP/1.1 400 Bad Request\r\nContent-Type: text/plain\r\nContent-Length: ".getBytes(StandardCharsets.US_ASCII);
@@ -86,6 +92,12 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
                     \r
                     """).getBytes(StandardCharsets.US_ASCII);
     // Dependencies for ILP processing (safe as instance fields — config only)
+    // Precomputed X-QWP-Max-Batch-Size header bytes, cached because the
+    // effective cap is derived from recvBufferSize (config-fixed for the
+    // lifetime of this processor) and would otherwise allocate a String and
+    // a byte[] on every handshake. Null when the cap collapses to zero,
+    // which omits the header entirely.
+    private final byte[] effectiveMaxBatchSizeBytes;
     private final CairoEngine engine;
     private final int forceRecvFragmentationChunkSize;
     // WebSocket frame parser (scratchpad — fully reset within each processWebSocketFrames call)
@@ -100,6 +112,18 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
                 .getForceRecvFragmentationChunkSize();
         this.httpConfiguration = httpConfiguration;
         this.recvBufferSize = httpConfiguration.getRecvBufferSize();
+        // Advertise the effective batch cap, not the QWP protocol ceiling. The
+        // HTTP recv buffer is the actual binding constraint on inbound
+        // WebSocket frame size, and it is checked before the QWP parser ever
+        // sees the payload -- a frame larger than recv-buffer minus the
+        // worst-case WebSocket frame header gets closed with code 1009 long
+        // before STATUS_PARSE_ERROR can fire.
+        int effectiveMaxBatchSize = Math.min(
+                Math.max(0, recvBufferSize - MAX_WS_FRAME_HEADER_BYTES),
+                QwpConstants.DEFAULT_MAX_BATCH_SIZE);
+        this.effectiveMaxBatchSizeBytes = effectiveMaxBatchSize > 0
+                ? Integer.toString(effectiveMaxBatchSize).getBytes(StandardCharsets.US_ASCII)
+                : null;
         this.maxResponseContentLength = httpConfiguration.getSendBufferSize();
     }
 
@@ -277,7 +301,22 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
         int negotiatedVersion = negotiateQwpVersion(requestHeader, context.getFd());
 
         String acceptKey = QwpWebSocketHttpProcessor.computeAcceptKey(wsKey);
-        int requiredHandshakeSize = QwpWebSocketHttpProcessor.responseSize(acceptKey, negotiatedVersion, null, roleBytes);
+
+        // Resolve durable-ack opt-in before sizing the 101 response, since
+        // the X-QWP-Durable-Ack confirmation header affects the response size.
+        // The header is silently dropped when the engine has no durable-ack
+        // registry installed (OSS build or primary replication disabled), so
+        // opted-in clients on such servers receive a 101 without confirmation
+        // and fail at the client side.
+        Utf8Sequence durableAckHeader = requestHeader.getHeader(
+                QwpWebSocketHttpProcessor.HEADER_X_QWP_REQUEST_DURABLE_ACK);
+        boolean durableAckRequested = durableAckHeader != null
+                && Utf8s.equalsIgnoreCaseAscii(durableAckHeader, QwpWebSocketHttpProcessor.HEADER_VALUE_DURABLE_ACK_ENABLED);
+        boolean durableAckEnabled = durableAckRequested && engine.getDurableAckRegistry().isEnabled();
+
+        int requiredHandshakeSize = QwpWebSocketHttpProcessor.responseSize(
+                acceptKey, negotiatedVersion, null, durableAckEnabled, roleBytes,
+                effectiveMaxBatchSizeBytes);
         if (requiredHandshakeSize > bufferSize) {
             throw responseDoesNotFitSendBuffer(context.getFd(), "101 handshake response", bufferSize, requiredHandshakeSize);
         }
@@ -298,18 +337,12 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
         }
         state.of(context.getFd(), context.getSecurityContext());
         state.setNegotiatedVersion((byte) negotiatedVersion);
-        // Opt-in flag for STATUS_DURABLE_ACK frames. Silently ignored when the
-        // engine has no durable-ack registry installed (OSS build or primary
-        // replication disabled), so opted-in clients on such servers simply
-        // never see durable acks.
-        Utf8Sequence durableAckHeader = requestHeader.getHeader(
-                QwpWebSocketHttpProcessor.HEADER_X_QWP_REQUEST_DURABLE_ACK);
-        boolean durableAckRequested = durableAckHeader != null
-                && Utf8s.equalsIgnoreCaseAscii(durableAckHeader, QwpWebSocketHttpProcessor.HEADER_VALUE_DURABLE_ACK_ENABLED);
-        state.setDurableAckEnabled(durableAckRequested && engine.getDurableAckRegistry().isEnabled());
+        state.setDurableAckEnabled(durableAckEnabled);
 
         // Write the 101 Switching Protocols response (reuse the pre-computed accept key)
-        int bytesWritten = QwpWebSocketHttpProcessor.writeResponse(bufferAddr, acceptKey, negotiatedVersion, null, roleBytes);
+        int bytesWritten = QwpWebSocketHttpProcessor.writeResponse(
+                bufferAddr, acceptKey, negotiatedVersion, null, durableAckEnabled, roleBytes,
+                effectiveMaxBatchSizeBytes);
         if (bytesWritten <= 0) {
             throw responseDoesNotFitSendBuffer(context.getFd(), "101 handshake response", bufferSize, requiredHandshakeSize);
         }
@@ -367,10 +400,15 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
             int recvBufferLen = state.getRecvBufferLen();
             if (recvBufferLen >= recvBufferSize) {
                 // Buffer is full, but the parser still needs more data — the frame
-                // payload exceeds recv buffer capacity. Disconnect to avoid spinning.
+                // payload exceeds recv buffer capacity. Notify the client with
+                // a protocol-level CLOSE so it can distinguish "your frame is
+                // too big" from a generic network failure.
                 LOG.error().$("WebSocket frame too large for recv buffer [fd=").$(context.getFd())
                         .$(", bufferSize=").$(recvBufferSize).I$();
-                throw ServerDisconnectException.INSTANCE;
+                sendFatalClose(context, state,
+                        WebSocketCloseCode.MESSAGE_TOO_BIG,
+                        "frame payload exceeds receive buffer capacity");
+                return; // unreachable — sendFatalClose throws.
             }
 
             int remaining = recvBufferSize - recvBufferLen;
@@ -404,6 +442,9 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
 
         } catch (ServerDisconnectException | PeerIsSlowToWriteException | PeerIsSlowToReadException e) {
             throw e;
+        } catch (PeerDisconnectedException e) {
+            LOG.info().$("WebSocket peer disconnected [fd=").$(context.getFd()).I$();
+            throw ServerDisconnectException.INSTANCE;
         } catch (Throwable e) {
             LOG.error().$("WebSocket error [fd=").$(context.getFd()).$(", error=").$(e).I$();
             throw ServerDisconnectException.INSTANCE;
@@ -455,6 +496,24 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
                 state.onResumeDurableAckComplete();
                 LOG.debug().$("Resumed durable ACK sent successfully [fd=").$(context.getFd()).I$();
                 sendDeferredErrorResponse(context, state);
+            }
+            case QwpProcessorState.SEND_STATE_RESUME_ACK_THEN_CLOSE -> {
+                context.resumeResponseSend();
+                state.onResumeAckComplete();
+                LOG.debug().$("Resumed ACK sent before fatal close [fd=").$(context.getFd())
+                        .$(", upTo=").$(state.getLastAckedSequence()).I$();
+                sendDeferredFatalClose(context, state);
+            }
+            case QwpProcessorState.SEND_STATE_RESUME_DURABLE_ACK_THEN_CLOSE -> {
+                context.resumeResponseSend();
+                state.onResumeDurableAckComplete();
+                LOG.debug().$("Resumed durable ACK sent before fatal close [fd=").$(context.getFd()).I$();
+                sendDeferredFatalClose(context, state);
+            }
+            case QwpProcessorState.SEND_STATE_RESUME_CLOSE -> {
+                context.resumeResponseSend();
+                LOG.debug().$("Resumed CLOSE frame sent [fd=").$(context.getFd()).I$();
+                gracefulCloseAndDisconnect(context);
             }
             default -> {
                 LOG.critical().$("Invalid WebSocket send state [fd=").$(context.getFd())
@@ -512,6 +571,14 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
                 state.onResumeDurableAckComplete();
                 sendDeferredErrorResponse(context, state);
             }
+            case QwpProcessorState.SEND_STATE_RESUME_ACK_THEN_CLOSE,
+                 QwpProcessorState.SEND_STATE_RESUME_DURABLE_ACK_THEN_CLOSE,
+                 QwpProcessorState.SEND_STATE_RESUME_CLOSE -> // The peer is voluntarily closing, but we have a fatal CLOSE
+                // queued. The pending response will be torn down anyway, so
+                // there is no value in attempting to flush the deferred CLOSE
+                // frame on top of an in-flight ACK. Let the caller proceed.
+                    LOG.debug().$("Pending fatal close superseded by peer close [fd=").$(context.getFd())
+                            .$(", state=").$(state.getSendState()).I$();
             default -> {
                 LOG.critical().$("Invalid WebSocket send state during close [fd=").$(context.getFd())
                         .$(", state=").$(state.getSendState()).I$();
@@ -528,6 +595,25 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
         if (state.isDurableAckEnabled() && state.isSendReady()) {
             trySendDurableAck(context, state);
         }
+    }
+
+    /**
+     * Half-closes the write side of the socket so the kernel emits FIN instead
+     * of an abortive RST, then signals the framework to tear the connection
+     * down. shutdown(WR) is best-effort: even if it fails (e.g. the peer is
+     * already gone) we still raise ServerDisconnectException so the framework
+     * proceeds with cleanup.
+     */
+    private void gracefulCloseAndDisconnect(HttpConnectionContext context)
+            throws ServerDisconnectException {
+        try {
+            Socket socket = context.getSocket();
+            if (socket != null) {
+                socket.shutdown(Net.SHUT_WR);
+            }
+        } catch (Throwable ignored) {
+        }
+        throw ServerDisconnectException.INSTANCE;
     }
 
     private void handleBinaryMessage(HttpConnectionContext context, QwpProcessorState state, long payload, int length)
@@ -757,7 +843,6 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
             throws ServerDisconnectException, PeerDisconnectedException, PeerIsSlowToReadException {
         long bufferEnd = buffer + bufferLen;
         long pos = buffer;
-        FrameProcessResult result = FrameProcessResult.COMPLETE;
 
         try {
             while (pos < bufferEnd) {
@@ -777,31 +862,15 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
                         LOG.error().$("WebSocket frame too large [fd=").$(context.getFd())
                                 .$(", payloadLength=").$(frameParser.getPayloadLength())
                                 .$(", bufferSize=").$(recvBufferSize).I$();
-                        if (state.isSendReady()) {
-                            try {
-                                HttpRawSocket rawSocket = context.getRawResponseSocket();
-                                long bufferAddr = rawSocket.getBufferAddress();
-                                int bufferSize = rawSocket.getBufferSize();
-                                int written = WebSocketFrameWriter.writeCloseFrame(
-                                        bufferAddr, bufferSize,
-                                        WebSocketCloseCode.MESSAGE_TOO_BIG,
-                                        "frame payload exceeds maximum size"
-                                );
-                                if (written > 0) {
-                                    rawSocket.send(written);
-                                }
-                            } catch (PeerDisconnectedException | PeerIsSlowToReadException e) {
-                                // Best effort -- we're disconnecting anyway.
-                            }
-                        }
-                        throw ServerDisconnectException.INSTANCE;
+                        sendFatalClose(context, state,
+                                WebSocketCloseCode.MESSAGE_TOO_BIG,
+                                "frame payload exceeds maximum size");
+                        return; // unreachable — sendFatalClose throws.
                     }
-                    result = FrameProcessResult.NEED_MORE_DATA;
                     break;
                 }
 
                 if (consumed == 0 || frameParser.getState() == WebSocketFrameParser.STATE_NEED_MORE) {
-                    result = FrameProcessResult.NEED_MORE_DATA;
                     break;
                 }
 
@@ -822,10 +891,14 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
                 handleWebSocketFrame(context, state, opcode, frameParser.isFin(), payloadPtr, payloadLen);
             }
 
-            if (result == FrameProcessResult.COMPLETE) {
-                // All frames processed — flush any pending cumulative ACK
-                flushPendingAck(context, state);
-            }
+            // Flush any pending cumulative ACK whether or not the buffer ends
+            // on a clean frame boundary. The previous `COMPLETE`-only check
+            // starved senders of ACKs whenever a recv landed mid-frame —
+            // including any time the OS recv chunk was smaller than a full
+            // QWP batch — leaving the client's drainOnClose to time out.
+            // flushPendingAck is a no-op when nothing is pending, so this
+            // is safe in the empty-buffer / partial-frame-only cases too.
+            flushPendingAck(context, state);
         } finally {
             // Compact unprocessed bytes to buffer start and update state.
             // Handles both normal exit (remaining=0) and exception unwind
@@ -840,7 +913,7 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
     }
 
     private void rejectFragmentedFrame(HttpConnectionContext context, QwpProcessorState state, int opcode)
-            throws ServerDisconnectException {
+            throws PeerIsSlowToReadException, ServerDisconnectException {
         LOG.error()
                 .$("WebSocket fragmented frame rejected, QWP requires unfragmented messages [fd=").$(context.getFd())
                 .$(", opcode=").$(WebSocketOpcode.name(opcode))
@@ -849,53 +922,20 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
                 .$("or connect the QWP client directly to QuestDB")
                 .I$();
 
-        // Best-effort CLOSE with protocol error — the client or intermediary
-        // receives a clear reason instead of a silent connection drop.
-        if (state.isSendReady()) {
-            try {
-                HttpRawSocket rawSocket = context.getRawResponseSocket();
-                long bufferAddr = rawSocket.getBufferAddress();
-                int bufferSize = rawSocket.getBufferSize();
-                int written = WebSocketFrameWriter.writeCloseFrame(
-                        bufferAddr, bufferSize,
-                        WebSocketCloseCode.PROTOCOL_ERROR,
-                        "fragmented WebSocket frames are not supported"
-                );
-                if (written > 0) {
-                    rawSocket.send(written);
-                }
-            } catch (PeerDisconnectedException | PeerIsSlowToReadException e) {
-                // Best effort — we're disconnecting anyway.
-            }
-        }
-        throw ServerDisconnectException.INSTANCE;
+        sendFatalClose(context, state,
+                WebSocketCloseCode.PROTOCOL_ERROR,
+                "fragmented WebSocket frames are not supported");
     }
 
     private void rejectTextFrame(HttpConnectionContext context, QwpProcessorState state)
-            throws ServerDisconnectException {
+            throws PeerIsSlowToReadException, ServerDisconnectException {
         LOG.error()
                 .$("WebSocket text frame rejected, QWP accepts only binary frames [fd=").$(context.getFd())
                 .I$();
 
-        // Best-effort CLOSE with 1003 (Unsupported Data) per RFC 6455 Section 7.4.1.
-        if (state.isSendReady()) {
-            try {
-                HttpRawSocket rawSocket = context.getRawResponseSocket();
-                long bufferAddr = rawSocket.getBufferAddress();
-                int bufferSize = rawSocket.getBufferSize();
-                int written = WebSocketFrameWriter.writeCloseFrame(
-                        bufferAddr, bufferSize,
-                        WebSocketCloseCode.UNSUPPORTED_DATA,
-                        "text frames are not supported, QWP requires binary frames"
-                );
-                if (written > 0) {
-                    rawSocket.send(written);
-                }
-            } catch (PeerDisconnectedException | PeerIsSlowToReadException e) {
-                // Best effort — we're disconnecting anyway.
-            }
-        }
-        throw ServerDisconnectException.INSTANCE;
+        sendFatalClose(context, state,
+                WebSocketCloseCode.UNSUPPORTED_DATA,
+                "text frames are not supported, QWP requires binary frames");
     }
 
     /**
@@ -913,6 +953,42 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
                 state.getDeferredErrorStatus(),
                 state.getDeferredErrorMessage()
         );
+    }
+
+    /**
+     * Resume-path emission of a previously-deferred fatal CLOSE frame. Caller
+     * has already drained the in-flight response that was blocking the send.
+     * On success, half-closes the write side and raises ServerDisconnect. On
+     * partial flush of the CLOSE frame itself, transitions to RESUME_CLOSE so
+     * the next dispatcher tick finishes the flush.
+     */
+    private void sendDeferredFatalClose(HttpConnectionContext context, QwpProcessorState state)
+            throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
+        assert state.isSendReady() : "sendDeferredFatalClose called in wrong state";
+
+        int closeCode = state.getDeferredCloseCode();
+        CharSequence reason = state.getDeferredCloseReason();
+        HttpRawSocket rawSocket = context.getRawResponseSocket();
+        long bufferAddr = rawSocket.getBufferAddress();
+        int bufferSize = rawSocket.getBufferSize();
+
+        int written = WebSocketFrameWriter.writeCloseFrame(bufferAddr, bufferSize, closeCode, reason);
+        if (written <= 0) {
+            // CLOSE frame did not fit the send buffer — abandon the protocol close.
+            throw ServerDisconnectException.INSTANCE;
+        }
+
+        try {
+            rawSocket.send(written);
+        } catch (PeerIsSlowToReadException e) {
+            // Bytes are queued in the framework buffer; the resume path
+            // will finish flushing and disconnect.
+            state.onFatalCloseSendBlocked();
+            LOG.debug().$("Fatal CLOSE send blocked, deferring to resume [fd=").$(context.getFd()).I$();
+            throw e;
+        }
+
+        gracefulCloseAndDisconnect(context);
     }
 
     private void sendErrorResponse(
@@ -976,6 +1052,69 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
                     .$(", seq=").$(sequence).I$();
             throw e;
         }
+    }
+
+    /**
+     * Emits a fatal WebSocket CLOSE frame with the given protocol-level close
+     * code and disconnects. Routes through the send state machine so the CLOSE
+     * lands even when an ACK/durable-ACK is mid-flight:
+     * <ul>
+     *   <li>State READY, send succeeds → half-close (FIN) + ServerDisconnect.</li>
+     *   <li>State READY, send returns PeerIsSlow → bytes queued in framework
+     *       buffer, transitions to RESUME_CLOSE, throws PeerIsSlow.</li>
+     *   <li>State not READY → stores (code, reason), transitions to
+     *       *_THEN_CLOSE, throws PeerIsSlow.</li>
+     *   <li>Peer already gone → ServerDisconnect.</li>
+     * </ul>
+     */
+    private void sendFatalClose(
+            HttpConnectionContext context,
+            QwpProcessorState state,
+            int closeCode,
+            CharSequence reason
+    ) throws PeerIsSlowToReadException, ServerDisconnectException {
+        // Give the client one more chance to learn about already-committed
+        // sequences before tearing the connection down. flushPendingAck is a
+        // no-op when state is not READY (ACK already in flight), so it does
+        // not interfere with the deferred path below.
+        try {
+            flushPendingAck(context, state);
+        } catch (PeerDisconnectedException pde) {
+            throw ServerDisconnectException.INSTANCE;
+        } catch (PeerIsSlowToReadException slow) {
+            // ACK just transitioned into RESUME_ACK during flush — defer the
+            // CLOSE and surface the backpressure so the dispatcher resumes us.
+            state.onFatalCloseBlocked(closeCode, reason);
+            throw slow;
+        }
+
+        if (!state.isSendReady()) {
+            // Some other in-flight response is still blocking. Queue the CLOSE
+            // for the resume path.
+            state.onFatalCloseBlocked(closeCode, reason);
+            throw PeerIsSlowToReadException.INSTANCE;
+        }
+
+        HttpRawSocket rawSocket = context.getRawResponseSocket();
+        long bufferAddr = rawSocket.getBufferAddress();
+        int bufferSize = rawSocket.getBufferSize();
+
+        int written = WebSocketFrameWriter.writeCloseFrame(bufferAddr, bufferSize, closeCode, reason);
+        if (written <= 0) {
+            throw ServerDisconnectException.INSTANCE;
+        }
+
+        try {
+            rawSocket.send(written);
+        } catch (PeerDisconnectedException pde) {
+            throw ServerDisconnectException.INSTANCE;
+        } catch (PeerIsSlowToReadException slow) {
+            state.onFatalCloseSendBlocked();
+            LOG.debug().$("Fatal CLOSE send blocked, deferring to resume [fd=").$(context.getFd()).I$();
+            throw slow;
+        }
+
+        gracefulCloseAndDisconnect(context);
     }
 
     /**
@@ -1071,8 +1210,4 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
         }
     }
 
-    private enum FrameProcessResult {
-        COMPLETE,
-        NEED_MORE_DATA
-    }
 }

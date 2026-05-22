@@ -29,6 +29,7 @@ import io.questdb.cutlass.http.HttpFullFatServerConfiguration;
 import io.questdb.cutlass.http.HttpRequestHandler;
 import io.questdb.cutlass.http.HttpRequestHeader;
 import io.questdb.cutlass.http.HttpRequestProcessor;
+import io.questdb.cutlass.qwp.protocol.QwpConstants;
 import io.questdb.std.Numbers;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.Utf8Sequence;
@@ -102,6 +103,18 @@ public class QwpWebSocketHttpProcessor implements HttpRequestHandler {
     private static final byte[] RESPONSE_AFTER_ACCEPT = "\r\nX-QWP-Version: ".getBytes(StandardCharsets.US_ASCII);
     private static final byte[] RESPONSE_CONTENT_ENCODING_PREFIX =
             "\r\nX-QWP-Content-Encoding: ".getBytes(StandardCharsets.US_ASCII);
+    // Echoed back to clients that opted in via X-QWP-Request-Durable-Ack and
+    // landed on a server where the durable-ack registry is enabled. Absence
+    // tells an opted-in client that this server will never emit STATUS_DURABLE_ACK
+    // frames, so the client must fail at handshake rather than wait forever.
+    private static final byte[] RESPONSE_DURABLE_ACK_ENABLED =
+            "\r\nX-QWP-Durable-Ack: enabled".getBytes(StandardCharsets.US_ASCII);
+    // Advertises the server's hard cap on QWP message payload bytes so the
+    // ingest client can size its batches without trial-and-error. Without this
+    // hint a wide-row sender would have to discover the cap by sending an
+    // oversized batch and reacting to STATUS_PARSE_ERROR.
+    private static final byte[] RESPONSE_MAX_BATCH_SIZE_PREFIX =
+            "\r\nX-QWP-Max-Batch-Size: ".getBytes(StandardCharsets.US_ASCII);
     // Response template
     private static final byte[] RESPONSE_PREFIX =
             "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ".getBytes(StandardCharsets.US_ASCII);
@@ -122,6 +135,11 @@ public class QwpWebSocketHttpProcessor implements HttpRequestHandler {
     // is not, so one '=' padding byte lands in slot 27). The exact 28 matches both.
     private static final int SHA1_DIGEST_SIZE = 20;
     private static final ThreadLocal<byte[]> HASH_SCRATCH = ThreadLocal.withInitial(() -> new byte[SHA1_DIGEST_SIZE]);
+    // Precomputed X-QWP-Version digit bytes indexed by version number. Lets the
+    // handshake response writer skip per-call Integer.toString + getBytes
+    // allocations since the negotiated version is always inside the closed set
+    // [VERSION_1, MAX_SUPPORTED_VERSION] the server itself defines.
+    private static final byte[][] VERSION_BYTES = buildVersionBytes();
     private static final byte[] WEBSOCKET_GUID_BYTES = WEBSOCKET_GUID.getBytes(StandardCharsets.US_ASCII);
     private final QwpWebSocketUpgradeProcessor processor;
 
@@ -269,27 +287,39 @@ public class QwpWebSocketHttpProcessor implements HttpRequestHandler {
      * @return the total response size in bytes
      */
     public static int responseSize(String acceptKey, int qwpVersion) {
-        return responseSize(acceptKey, qwpVersion, null, null);
+        return responseSize(acceptKey, qwpVersion, null, false, null, null);
+    }
+
+    public static int responseSize(String acceptKey, int qwpVersion, byte[] contentEncodingBytes, boolean durableAckEnabled, byte[] roleBytes) {
+        return responseSize(acceptKey, qwpVersion, contentEncodingBytes, durableAckEnabled, roleBytes, null);
     }
 
     /**
      * Same as {@link #responseSize(String, int)} but accounts for an optional
-     * {@code X-QWP-Content-Encoding} header that echoes the compression codec
-     * the server chose during negotiation. Pass {@code null} for no header.
+     * {@code X-QWP-Content-Encoding} header echoing the negotiated compression
+     * codec, an optional {@code X-QWP-Durable-Ack: enabled} confirmation
+     * header, an optional {@code X-QuestDB-Role} header advertising the
+     * server role, and an optional {@code X-QWP-Max-Batch-Size} header
+     * advertising the server's ingest payload cap in bytes. Pass {@code null}
+     * / {@code false} to skip any of them. All byte[] arguments are written
+     * verbatim, so callers are expected to cache them on the hot path rather
+     * than allocating per handshake.
      */
-    public static int responseSize(String acceptKey, int qwpVersion, String contentEncoding) {
-        return responseSize(acceptKey, qwpVersion, contentEncoding, null);
-    }
-
-    public static int responseSize(String acceptKey, int qwpVersion, String contentEncoding, byte[] roleBytes) {
+    public static int responseSize(String acceptKey, int qwpVersion, byte[] contentEncodingBytes, boolean durableAckEnabled, byte[] roleBytes, byte[] maxBatchSizeBytes) {
         int size = RESPONSE_PREFIX.length + acceptKey.length()
-                + RESPONSE_AFTER_ACCEPT.length + digitCount(qwpVersion)
+                + RESPONSE_AFTER_ACCEPT.length + VERSION_BYTES[qwpVersion].length
                 + RESPONSE_SUFFIX.length;
-        if (contentEncoding != null) {
-            size += RESPONSE_CONTENT_ENCODING_PREFIX.length + contentEncoding.length();
+        if (contentEncodingBytes != null) {
+            size += RESPONSE_CONTENT_ENCODING_PREFIX.length + contentEncodingBytes.length;
+        }
+        if (durableAckEnabled) {
+            size += RESPONSE_DURABLE_ACK_ENABLED.length;
         }
         if (roleBytes != null) {
             size += RESPONSE_ROLE_PREFIX.length + roleBytes.length;
+        }
+        if (maxBatchSizeBytes != null) {
+            size += RESPONSE_MAX_BATCH_SIZE_PREFIX.length + maxBatchSizeBytes.length;
         }
         return size;
     }
@@ -374,19 +404,27 @@ public class QwpWebSocketHttpProcessor implements HttpRequestHandler {
      * @return the number of bytes written
      */
     public static int writeResponse(long buf, String acceptKey, int qwpVersion) {
-        return writeResponse(buf, acceptKey, qwpVersion, null, null);
+        return writeResponse(buf, acceptKey, qwpVersion, null, false, null, null);
+    }
+
+    public static int writeResponse(long buf, String acceptKey, int qwpVersion, byte[] contentEncodingBytes, boolean durableAckEnabled, byte[] roleBytes) {
+        return writeResponse(buf, acceptKey, qwpVersion, contentEncodingBytes, durableAckEnabled, roleBytes, null);
     }
 
     /**
      * Same as {@link #writeResponse(long, String, int)} but appends an optional
      * {@code X-QWP-Content-Encoding} header echoing the negotiated compression
-     * codec (e.g. {@code zstd;level=3}). Pass {@code null} for no header.
+     * codec (e.g. {@code zstd;level=1}), an optional
+     * {@code X-QWP-Durable-Ack: enabled} confirmation that this connection
+     * will receive {@code STATUS_DURABLE_ACK} frames, an optional
+     * {@code X-QuestDB-Role} header advertising the server role, and an
+     * optional {@code X-QWP-Max-Batch-Size} header advertising the server's
+     * ingest payload cap in bytes. Pass {@code null} / {@code false} to skip
+     * any of them. All byte[] arguments are written verbatim, so callers are
+     * expected to cache them on the hot path rather than allocating per
+     * handshake.
      */
-    public static int writeResponse(long buf, String acceptKey, int qwpVersion, String contentEncoding) {
-        return writeResponse(buf, acceptKey, qwpVersion, contentEncoding, null);
-    }
-
-    public static int writeResponse(long buf, String acceptKey, int qwpVersion, String contentEncoding, byte[] roleBytes) {
+    public static int writeResponse(long buf, String acceptKey, int qwpVersion, byte[] contentEncodingBytes, boolean durableAckEnabled, byte[] roleBytes, byte[] maxBatchSizeBytes) {
         int offset = 0;
 
         for (byte b : RESPONSE_PREFIX) {
@@ -401,17 +439,26 @@ public class QwpWebSocketHttpProcessor implements HttpRequestHandler {
         for (byte b : RESPONSE_AFTER_ACCEPT) {
             Unsafe.putByte(buf + offset++, b);
         }
-        byte[] versionBytes = Integer.toString(qwpVersion).getBytes(StandardCharsets.US_ASCII);
-        for (byte b : versionBytes) {
+        for (byte b : VERSION_BYTES[qwpVersion]) {
             Unsafe.putByte(buf + offset++, b);
         }
 
-        if (contentEncoding != null) {
+        if (contentEncodingBytes != null) {
             for (byte b : RESPONSE_CONTENT_ENCODING_PREFIX) {
                 Unsafe.putByte(buf + offset++, b);
             }
-            byte[] encBytes = contentEncoding.getBytes(StandardCharsets.US_ASCII);
-            for (byte b : encBytes) {
+            for (byte b : contentEncodingBytes) {
+                Unsafe.putByte(buf + offset++, b);
+            }
+        }
+
+        // Optional X-QWP-Durable-Ack confirmation. Emitted only when the
+        // client opted in AND this server has the durable-ack registry
+        // enabled. Absence tells an opted-in client that this connection
+        // will never receive durable acks, so its store-and-forward path
+        // must not be allowed to start.
+        if (durableAckEnabled) {
+            for (byte b : RESPONSE_DURABLE_ACK_ENABLED) {
                 Unsafe.putByte(buf + offset++, b);
             }
         }
@@ -421,6 +468,15 @@ public class QwpWebSocketHttpProcessor implements HttpRequestHandler {
                 Unsafe.putByte(buf + offset++, b);
             }
             for (byte b : roleBytes) {
+                Unsafe.putByte(buf + offset++, b);
+            }
+        }
+
+        if (maxBatchSizeBytes != null) {
+            for (byte b : RESPONSE_MAX_BATCH_SIZE_PREFIX) {
+                Unsafe.putByte(buf + offset++, b);
+            }
+            for (byte b : maxBatchSizeBytes) {
                 Unsafe.putByte(buf + offset++, b);
             }
         }
@@ -439,6 +495,14 @@ public class QwpWebSocketHttpProcessor implements HttpRequestHandler {
         // is required because resolveProcessorById() calls this after headers are
         // cleared (post-protocol-switch).
         return processor;
+    }
+
+    private static byte[][] buildVersionBytes() {
+        byte[][] table = new byte[QwpConstants.MAX_SUPPORTED_VERSION + 1][];
+        for (int v = QwpConstants.VERSION_1; v <= QwpConstants.MAX_SUPPORTED_VERSION; v++) {
+            table[v] = Integer.toString(v).getBytes(StandardCharsets.US_ASCII);
+        }
+        return table;
     }
 
     private static boolean containsUpgrade(Utf8Sequence seq) {
@@ -460,11 +524,5 @@ public class QwpWebSocketHttpProcessor implements HttpRequestHandler {
             }
         }
         return false;
-    }
-
-    private static int digitCount(int value) {
-        if (value < 10) return 1;
-        if (value < 100) return 2;
-        return 3; // QWP version will not exceed 255
     }
 }

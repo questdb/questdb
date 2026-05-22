@@ -30,11 +30,7 @@ import io.questdb.client.cutlass.qwp.client.QwpColumnBatchHandler;
 import io.questdb.client.cutlass.qwp.client.QwpQueryClient;
 import io.questdb.client.cutlass.qwp.client.WebSocketResponse;
 import io.questdb.client.cutlass.qwp.protocol.QwpConstants;
-import io.questdb.test.AbstractBootstrapTest;
-import io.questdb.test.TestServerMain;
-import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
-import org.junit.Before;
 import org.junit.Test;
 
 import java.util.UUID;
@@ -54,14 +50,7 @@ import java.util.UUID;
  * DECIMAL64 / DECIMAL128 / DECIMAL256. ARRAY, BINARY, and IPv4 are rejected
  * server-side and verified here via the client's setNull guard.
  */
-public class QwpEgressBindRoundTripTest extends AbstractBootstrapTest {
-
-    @Before
-    public void setUp() {
-        super.setUp();
-        TestUtils.unchecked(() -> createDummyConfiguration());
-        dbPath.parent().$();
-    }
+public class QwpEgressBindRoundTripTest extends AbstractReusedServerQwpEgressTest {
 
     @Test
     public void testBindBooleanFilter() throws Exception {
@@ -187,42 +176,38 @@ public class QwpEgressBindRoundTripTest extends AbstractBootstrapTest {
 
     @Test
     public void testBindErrorSurfacesViaOnError() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            try (TestServerMain serverMain = startWithEnvVariables()) {
-                serverMain.execute("CREATE TABLE t(c LONG, part_ts TIMESTAMP) TIMESTAMP(part_ts) PARTITION BY DAY WAL");
-                serverMain.awaitTable("t");
+        serverMain.execute("CREATE TABLE t(c LONG, part_ts TIMESTAMP) TIMESTAMP(part_ts) PARTITION BY DAY WAL");
+        serverMain.awaitTable("t");
 
-                final byte[] status = {Byte.MIN_VALUE};
-                final String[] msg = {null};
-                try (QwpQueryClient client = QwpQueryClient.fromConfig("ws::addr=127.0.0.1:" + HTTP_PORT + ";")) {
-                    client.connect();
-                    client.execute(
-                            "SELECT c FROM t WHERE c = $1",
-                            binds -> binds.setGeohash(0, 999, 0L),  // invalid precision
-                            new QwpColumnBatchHandler() {
-                                @Override
-                                public void onBatch(QwpColumnBatch batch) {
-                                    Assert.fail("unexpected batch: bind encode should have failed");
-                                }
+        final byte[] status = {Byte.MIN_VALUE};
+        final String[] msg = {null};
+        try (QwpQueryClient client = QwpQueryClient.fromConfig("ws::addr=127.0.0.1:" + HTTP_PORT + ";")) {
+            client.connect();
+            client.execute(
+                    "SELECT c FROM t WHERE c = $1",
+                    binds -> binds.setGeohash(0, 999, 0L),  // invalid precision
+                    new QwpColumnBatchHandler() {
+                        @Override
+                        public void onBatch(QwpColumnBatch batch) {
+                            Assert.fail("unexpected batch: bind encode should have failed");
+                        }
 
-                                @Override
-                                public void onEnd(long totalRows) {
-                                    Assert.fail("unexpected onEnd: bind encode should have failed");
-                                }
+                        @Override
+                        public void onEnd(long totalRows) {
+                            Assert.fail("unexpected onEnd: bind encode should have failed");
+                        }
 
-                                @Override
-                                public void onError(byte s, String m) {
-                                    status[0] = s;
-                                    msg[0] = m;
-                                }
-                            }
-                    );
-                }
-                Assert.assertEquals(WebSocketResponse.STATUS_INTERNAL_ERROR, status[0]);
-                Assert.assertNotNull(msg[0]);
-                Assert.assertTrue("message: " + msg[0], msg[0].contains("bind encoding failed"));
-            }
-        });
+                        @Override
+                        public void onError(byte s, String m) {
+                            status[0] = s;
+                            msg[0] = m;
+                        }
+                    }
+            );
+        }
+        Assert.assertEquals(WebSocketResponse.STATUS_INTERNAL_ERROR, status[0]);
+        Assert.assertNotNull(msg[0]);
+        Assert.assertTrue("message: " + msg[0], msg[0].contains("bind encoding failed"));
     }
 
     @Test
@@ -300,24 +285,20 @@ public class QwpEgressBindRoundTripTest extends AbstractBootstrapTest {
     public void testBindNoBindsViaNullLambda() throws Exception {
         // Sanity: when the user passes the 3-arg form with no setter, the wire
         // still encodes bind_count=0. Identical to the 2-arg overload.
-        TestUtils.assertMemoryLeak(() -> {
-            try (TestServerMain serverMain = startWithEnvVariables()) {
-                serverMain.execute("CREATE TABLE t(c LONG, part_ts TIMESTAMP) TIMESTAMP(part_ts) PARTITION BY DAY WAL");
-                serverMain.execute("INSERT INTO t VALUES (42, 1::TIMESTAMP)");
-                serverMain.awaitTable("t");
+        serverMain.execute("CREATE TABLE t(c LONG, part_ts TIMESTAMP) TIMESTAMP(part_ts) PARTITION BY DAY WAL");
+        serverMain.execute("INSERT INTO t VALUES (42, 1::TIMESTAMP)");
+        serverMain.awaitTable("t");
 
-                final long[] value = {Long.MIN_VALUE};
-                try (QwpQueryClient client = QwpQueryClient.fromConfig("ws::addr=127.0.0.1:" + HTTP_PORT + ";")) {
-                    client.connect();
-                    client.execute(
-                            "SELECT c FROM t",
-                            null,
-                            batchHandler(batch -> value[0] = batch.getLongValue(0, 0))
-                    );
-                }
-                Assert.assertEquals(42L, value[0]);
-            }
-        });
+        final long[] value = {Long.MIN_VALUE};
+        try (QwpQueryClient client = QwpQueryClient.fromConfig("ws::addr=127.0.0.1:" + HTTP_PORT + ";")) {
+            client.connect();
+            client.execute(
+                    "SELECT c FROM t",
+                    null,
+                    batchHandler(batch -> value[0] = batch.getLongValue(0, 0))
+            );
+        }
+        Assert.assertEquals(42L, value[0]);
     }
 
     @Test
@@ -397,39 +378,35 @@ public class QwpEgressBindRoundTripTest extends AbstractBootstrapTest {
         // iterations. Asserts each result is the value just bound. The server's
         // SQL-text-keyed factory cache compiles once on the first call; every
         // subsequent call with the same text reuses the cached factory.
-        TestUtils.assertMemoryLeak(() -> {
-            try (TestServerMain serverMain = startWithEnvVariables()) {
-                serverMain.execute("CREATE TABLE t(id LONG, part_ts TIMESTAMP) TIMESTAMP(part_ts) PARTITION BY DAY WAL");
-                serverMain.execute("INSERT INTO t VALUES (1, 1::TIMESTAMP), (2, 2::TIMESTAMP), (3, 3::TIMESTAMP), (4, 4::TIMESTAMP), (5, 5::TIMESTAMP)");
-                serverMain.awaitTable("t");
+        serverMain.execute("CREATE TABLE t(id LONG, part_ts TIMESTAMP) TIMESTAMP(part_ts) PARTITION BY DAY WAL");
+        serverMain.execute("INSERT INTO t VALUES (1, 1::TIMESTAMP), (2, 2::TIMESTAMP), (3, 3::TIMESTAMP), (4, 4::TIMESTAMP), (5, 5::TIMESTAMP)");
+        serverMain.awaitTable("t");
 
-                try (QwpQueryClient client = QwpQueryClient.fromConfig("ws::addr=127.0.0.1:" + HTTP_PORT + ";")) {
-                    client.connect();
-                    String sql = "SELECT id FROM t WHERE id = $1";
-                    for (int i = 1; i <= 5; i++) {
-                        final long target = i;
-                        final long[] observed = {-1L};
-                        client.execute(sql, binds -> binds.setLong(0, target), new QwpColumnBatchHandler() {
-                            @Override
-                            public void onBatch(QwpColumnBatch batch) {
-                                Assert.assertEquals(1, batch.getRowCount());
-                                observed[0] = batch.getLongValue(0, 0);
-                            }
-
-                            @Override
-                            public void onEnd(long totalRows) {
-                            }
-
-                            @Override
-                            public void onError(byte status, String message) {
-                                Assert.fail("iteration " + target + ": " + message);
-                            }
-                        });
-                        Assert.assertEquals("iteration " + target, target, observed[0]);
+        try (QwpQueryClient client = QwpQueryClient.fromConfig("ws::addr=127.0.0.1:" + HTTP_PORT + ";")) {
+            client.connect();
+            String sql = "SELECT id FROM t WHERE id = $1";
+            for (int i = 1; i <= 5; i++) {
+                final long target = i;
+                final long[] observed = {-1L};
+                client.execute(sql, binds -> binds.setLong(0, target), new QwpColumnBatchHandler() {
+                    @Override
+                    public void onBatch(QwpColumnBatch batch) {
+                        Assert.assertEquals(1, batch.getRowCount());
+                        observed[0] = batch.getLongValue(0, 0);
                     }
-                }
+
+                    @Override
+                    public void onEnd(long totalRows) {
+                    }
+
+                    @Override
+                    public void onError(byte status, String message) {
+                        Assert.fail("iteration " + target + ": " + message);
+                    }
+                });
+                Assert.assertEquals("iteration " + target, target, observed[0]);
             }
-        });
+        }
     }
 
     @Test
@@ -537,36 +514,32 @@ public class QwpEgressBindRoundTripTest extends AbstractBootstrapTest {
         // Executes two distinct queries on the same client back-to-back: the
         // bindValues scratch must reset between calls so the second query's
         // binds don't leak state from the first.
-        TestUtils.assertMemoryLeak(() -> {
-            try (TestServerMain serverMain = startWithEnvVariables()) {
-                serverMain.execute("CREATE TABLE t(id LONG, part_ts TIMESTAMP) TIMESTAMP(part_ts) PARTITION BY DAY WAL");
-                serverMain.execute("INSERT INTO t VALUES (1, 1::TIMESTAMP), (2, 2::TIMESTAMP), (3, 3::TIMESTAMP)");
-                serverMain.awaitTable("t");
+        serverMain.execute("CREATE TABLE t(id LONG, part_ts TIMESTAMP) TIMESTAMP(part_ts) PARTITION BY DAY WAL");
+        serverMain.execute("INSERT INTO t VALUES (1, 1::TIMESTAMP), (2, 2::TIMESTAMP), (3, 3::TIMESTAMP)");
+        serverMain.awaitTable("t");
 
-                try (QwpQueryClient client = QwpQueryClient.fromConfig("ws::addr=127.0.0.1:" + HTTP_PORT + ";")) {
-                    client.connect();
+        try (QwpQueryClient client = QwpQueryClient.fromConfig("ws::addr=127.0.0.1:" + HTTP_PORT + ";")) {
+            client.connect();
 
-                    // First: 3 binds.
-                    final long[] first = {-1L};
-                    client.execute(
-                            "SELECT id FROM t WHERE id IN ($1, $2, $3) ORDER BY id DESC LIMIT 1",
-                            binds -> binds.setLong(0, 1).setLong(1, 2).setLong(2, 3),
-                            batchHandler(batch -> first[0] = batch.getLongValue(0, 0))
-                    );
-                    Assert.assertEquals(3L, first[0]);
+            // First: 3 binds.
+            final long[] first = {-1L};
+            client.execute(
+                    "SELECT id FROM t WHERE id IN ($1, $2, $3) ORDER BY id DESC LIMIT 1",
+                    binds -> binds.setLong(0, 1).setLong(1, 2).setLong(2, 3),
+                    batchHandler(batch -> first[0] = batch.getLongValue(0, 0))
+            );
+            Assert.assertEquals(3L, first[0]);
 
-                    // Second: 1 bind. If the scratch didn't reset, bind_count
-                    // would be 4 on the wire and the server would read garbage.
-                    final long[] second = {-1L};
-                    client.execute(
-                            "SELECT id FROM t WHERE id = $1",
-                            binds -> binds.setLong(0, 2),
-                            batchHandler(batch -> second[0] = batch.getLongValue(0, 0))
-                    );
-                    Assert.assertEquals(2L, second[0]);
-                }
-            }
-        });
+            // Second: 1 bind. If the scratch didn't reset, bind_count
+            // would be 4 on the wire and the server would read garbage.
+            final long[] second = {-1L};
+            client.execute(
+                    "SELECT id FROM t WHERE id = $1",
+                    binds -> binds.setLong(0, 2),
+                    batchHandler(batch -> second[0] = batch.getLongValue(0, 0))
+            );
+            Assert.assertEquals(2L, second[0]);
+        }
     }
 
     private QwpColumnBatchHandler batchHandler(BatchConsumer body) {
@@ -594,35 +567,31 @@ public class QwpEgressBindRoundTripTest extends AbstractBootstrapTest {
             QwpBindSetter binds,
             BatchAsserter asserter
     ) throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            try (TestServerMain serverMain = startWithEnvVariables()) {
-                serverMain.execute(createSql);
-                serverMain.execute(insertSql);
-                serverMain.awaitTable("t");
+        serverMain.execute(createSql);
+        serverMain.execute(insertSql);
+        serverMain.awaitTable("t");
 
-                final boolean[] observed = {false};
-                try (QwpQueryClient client = QwpQueryClient.fromConfig("ws::addr=127.0.0.1:" + HTTP_PORT + ";")) {
-                    client.connect();
-                    client.execute(selectSql, binds, new QwpColumnBatchHandler() {
-                        @Override
-                        public void onBatch(QwpColumnBatch batch) {
-                            asserter.run(batch);
-                            observed[0] = true;
-                        }
-
-                        @Override
-                        public void onEnd(long totalRows) {
-                        }
-
-                        @Override
-                        public void onError(byte status, String message) {
-                            Assert.fail("egress query error: " + message);
-                        }
-                    });
+        final boolean[] observed = {false};
+        try (QwpQueryClient client = QwpQueryClient.fromConfig("ws::addr=127.0.0.1:" + HTTP_PORT + ";")) {
+            client.connect();
+            client.execute(selectSql, binds, new QwpColumnBatchHandler() {
+                @Override
+                public void onBatch(QwpColumnBatch batch) {
+                    asserter.run(batch);
+                    observed[0] = true;
                 }
-                Assert.assertTrue("expected at least one batch", observed[0]);
-            }
-        });
+
+                @Override
+                public void onEnd(long totalRows) {
+                }
+
+                @Override
+                public void onError(byte status, String message) {
+                    Assert.fail("egress query error: " + message);
+                }
+            });
+        }
+        Assert.assertTrue("expected at least one batch", observed[0]);
     }
 
     private void runProjectionNonNull(
@@ -630,32 +599,28 @@ public class QwpEgressBindRoundTripTest extends AbstractBootstrapTest {
             QwpBindSetter binds,
             BatchAsserter asserter
     ) throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            try (TestServerMain ignored = startWithEnvVariables()) {
-                final boolean[] observed = {false};
-                try (QwpQueryClient client = QwpQueryClient.fromConfig("ws::addr=127.0.0.1:" + HTTP_PORT + ";")) {
-                    client.connect();
-                    client.execute(selectSql, binds, new QwpColumnBatchHandler() {
-                        @Override
-                        public void onBatch(QwpColumnBatch batch) {
-                            Assert.assertEquals(1, batch.getRowCount());
-                            asserter.run(batch);
-                            observed[0] = true;
-                        }
-
-                        @Override
-                        public void onEnd(long totalRows) {
-                        }
-
-                        @Override
-                        public void onError(byte status, String message) {
-                            Assert.fail("egress query error: " + message);
-                        }
-                    });
+        final boolean[] observed = {false};
+        try (QwpQueryClient client = QwpQueryClient.fromConfig("ws::addr=127.0.0.1:" + HTTP_PORT + ";")) {
+            client.connect();
+            client.execute(selectSql, binds, new QwpColumnBatchHandler() {
+                @Override
+                public void onBatch(QwpColumnBatch batch) {
+                    Assert.assertEquals(1, batch.getRowCount());
+                    asserter.run(batch);
+                    observed[0] = true;
                 }
-                Assert.assertTrue("expected exactly one batch", observed[0]);
-            }
-        });
+
+                @Override
+                public void onEnd(long totalRows) {
+                }
+
+                @Override
+                public void onError(byte status, String message) {
+                    Assert.fail("egress query error: " + message);
+                }
+            });
+        }
+        Assert.assertTrue("expected exactly one batch", observed[0]);
     }
 
     private void runProjectionNull(

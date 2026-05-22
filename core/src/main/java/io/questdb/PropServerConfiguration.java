@@ -415,6 +415,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final PublicPassthroughConfiguration publicPassthroughConfiguration = new PropPublicPassthroughConfiguration();
     private final int queryCacheEventQueueCapacity;
     private final boolean queryWithinLatestByOptimisationEnabled;
+    private final int qwpEgressForcedZstdLevel;
     private final int qwpMaxRowsPerTable;
     private final int qwpMaxSchemasPerConnection;
     private final int qwpMaxTablesPerConnection;
@@ -765,7 +766,7 @@ public class PropServerConfiguration implements ServerConfiguration {
                 buildInformation,
                 FilesFacadeImpl.INSTANCE,
                 MicrosecondClockImpl.INSTANCE,
-                (configuration, engine, freeOnExitList) -> DefaultFactoryProvider.INSTANCE,
+                (_, _, _) -> DefaultFactoryProvider.INSTANCE,
                 true
         );
     }
@@ -1817,6 +1818,22 @@ public class PropServerConfiguration implements ServerConfiguration {
                 throw new ServerConfigurationException(
                         PropertyKey.QWP_MAX_SCHEMAS_PER_CONNECTION.getPropertyPath()
                                 + " must be at least 1"
+                );
+            }
+            this.qwpEgressForcedZstdLevel = getInt(
+                    properties,
+                    env,
+                    PropertyKey.QWP_EGRESS_COMPRESSION_FORCE_LEVEL,
+                    0
+            );
+            if (qwpEgressForcedZstdLevel != 0
+                    && (qwpEgressForcedZstdLevel < QwpConstants.COMPRESSION_ZSTD_MIN_LEVEL
+                    || qwpEgressForcedZstdLevel > QwpConstants.COMPRESSION_ZSTD_MAX_LEVEL)) {
+                throw new ServerConfigurationException(
+                        PropertyKey.QWP_EGRESS_COMPRESSION_FORCE_LEVEL.getPropertyPath()
+                                + " must be 0 (off) or in ["
+                                + QwpConstants.COMPRESSION_ZSTD_MIN_LEVEL + ", "
+                                + QwpConstants.COMPRESSION_ZSTD_MAX_LEVEL + "]"
                 );
             }
             this.qwpMaxRowsPerTable = getInt(properties, env, PropertyKey.QWP_MAX_ROWS_PER_TABLE, QwpConstants.DEFAULT_MAX_ROWS_PER_TABLE);
@@ -4212,6 +4229,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getQueryRegistryPoolSize() {
             return sqlQueryRegistryPoolSize;
+        }
+
+        @Override
+        public int getQwpEgressForcedZstdLevel() {
+            return qwpEgressForcedZstdLevel;
         }
 
         @Override

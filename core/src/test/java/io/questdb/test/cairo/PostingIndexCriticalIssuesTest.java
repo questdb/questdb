@@ -27,6 +27,7 @@ package io.questdb.test.cairo;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.idx.BitpackUtils;
@@ -62,6 +63,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
 import static io.questdb.cairo.TableUtils.COLUMN_NAME_TXN_NONE;
+import static io.questdb.cairo.TableUtils.setPathForNativePartition;
 
 /**
  * Red tests for the critical findings raised in the PR review of #6861.
@@ -350,6 +352,183 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testO3CoveringRebuildSidecarsPreservesCoveredValues() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_cov_o3 (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price),
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_cov_o3 VALUES
+                    ('2024-01-01T00:00:00Z', 'A', 1.0),
+                    ('2024-01-01T01:00:00Z', 'B', 2.0),
+                    ('2024-01-01T02:00:00Z', 'A', 3.0),
+                    ('2024-01-01T03:00:00Z', 'C', 4.0)
+                    """);
+            execute("""
+                    INSERT INTO t_cov_o3 VALUES
+                    ('2024-01-01T00:30:00Z', 'A', 5.0),
+                    ('2024-01-01T01:30:00Z', 'B', 6.0),
+                    ('2024-01-01T02:30:00Z', 'C', 7.0)
+                    """);
+
+            assertQueryNoLeakCheck(
+                    """
+                            ts\tsym\tprice
+                            2024-01-01T00:00:00.000000Z\tA\t1.0
+                            2024-01-01T00:30:00.000000Z\tA\t5.0
+                            2024-01-01T02:00:00.000000Z\tA\t3.0
+                            """,
+                    "SELECT ts, sym, price FROM t_cov_o3 WHERE sym = 'A' ORDER BY ts",
+                    "ts",
+                    false,
+                    true
+            );
+            assertQueryNoLeakCheck(
+                    """
+                            ts\tsym\tprice
+                            2024-01-01T01:00:00.000000Z\tB\t2.0
+                            2024-01-01T01:30:00.000000Z\tB\t6.0
+                            """,
+                    "SELECT ts, sym, price FROM t_cov_o3 WHERE sym = 'B' ORDER BY ts",
+                    "ts",
+                    false,
+                    true
+            );
+            assertQueryNoLeakCheck(
+                    """
+                            ts\tsym\tprice
+                            2024-01-01T02:30:00.000000Z\tC\t7.0
+                            2024-01-01T03:00:00.000000Z\tC\t4.0
+                            """,
+                    "SELECT ts, sym, price FROM t_cov_o3 WHERE sym = 'C' ORDER BY ts",
+                    "ts",
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testOpenFromO3ContextPropagatesUpcomingTxn() throws Exception {
+        assertMemoryLeak(() -> {
+            final String name = "posting_o3_upcoming_txn";
+            final long upcomingTxn = 42L;
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final int plen = path.size();
+                try (PostingIndexWriter writer = new PostingIndexWriter(configuration)) {
+                    writer.setO3PathContext(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, upcomingTxn);
+                    writer.openFromO3Context(/* isInit */ true);
+                    writer.add(0, 0);
+                    writer.add(1, 1);
+                    writer.setMaxValue(1);
+                    writer.commit();
+                }
+                FilesFacade rawFf = configuration.getFilesFacade();
+                LPSZ keyFile = PostingIndexUtils.keyFileName(
+                        path.trimTo(plen), name, COLUMN_NAME_TXN_NONE);
+                long fileSize = rawFf.length(keyFile);
+                try (MemoryCMARWImpl mem = new MemoryCMARWImpl(
+                        rawFf, keyFile, rawFf.getPageSize(), fileSize,
+                        MemoryTag.MMAP_DEFAULT, /* opts */ 0)) {
+                    PostingIndexChainWriter chain = new PostingIndexChainWriter();
+                    chain.openExisting(mem);
+                    Assert.assertTrue("chain must have head", chain.hasHead());
+                    PostingIndexChainEntry.Snapshot head = new PostingIndexChainEntry.Snapshot();
+                    chain.loadHeadEntry(mem, head);
+                    Assert.assertEquals(
+                            "openFromO3Context must propagate o3CtxUpcomingTxn into the published chain entry",
+                            upcomingTxn,
+                            head.txnAtSeal
+                    );
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testParquetIndexWriteUsesCommitDense() throws Exception {
+        // O3PartitionJob.updateParquetIndexes goes through commitDense for POSTING.
+        // That path runs when O3 mutates an already-parquet partition. Convert the
+        // first partition to parquet, then O3-insert into it to trigger the rewrite.
+        // After that, the chain head must hold a single dense gen.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_parquet_posting (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING
+                    ) TIMESTAMP(ts) PARTITION BY DAY WAL
+                    """);
+            execute("""
+                    INSERT INTO t_parquet_posting
+                    SELECT
+                        dateadd('s', x::INT, '2024-01-01T00:00:00Z'::TIMESTAMP),
+                        rnd_symbol('A', 'B', 'C', 'D', 'E')
+                    FROM long_sequence(1000)
+                    """);
+            execute("""
+                    INSERT INTO t_parquet_posting
+                    SELECT
+                        dateadd('s', x::INT, '2024-01-02T00:00:00Z'::TIMESTAMP),
+                        rnd_symbol('A', 'B', 'C', 'D', 'E')
+                    FROM long_sequence(1000)
+                    """);
+            drainWalQueue();
+            execute("ALTER TABLE t_parquet_posting CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            drainWalQueue();
+            execute("""
+                    INSERT INTO t_parquet_posting VALUES
+                    ('2024-01-01T00:30:00Z', 'F'),
+                    ('2024-01-01T01:30:00Z', 'G')
+                    """);
+            drainWalQueue();
+            engine.releaseAllWriters();
+
+            TableToken token = engine.getTableTokenIfExists("t_parquet_posting");
+            Assert.assertNotNull("table must exist", token);
+            long partitionTs;
+            long partitionNameTxn;
+            try (TableReader reader = engine.getReader(token)) {
+                partitionTs = reader.getTxFile().getPartitionTimestampByIndex(0);
+                partitionNameTxn = reader.getTxFile().getPartitionNameTxn(0);
+            }
+            FilesFacade rawFf = configuration.getFilesFacade();
+            try (Path path = new Path()) {
+                path.of(configuration.getDbRoot()).concat(token);
+                setPathForNativePartition(
+                        path, ColumnType.TIMESTAMP, io.questdb.cairo.PartitionBy.DAY, partitionTs, partitionNameTxn);
+                int plen = path.size();
+                LPSZ keyFile = PostingIndexUtils.keyFileName(
+                        path.trimTo(plen), "sym", COLUMN_NAME_TXN_NONE);
+                long fileSize = rawFf.length(keyFile);
+                Assert.assertTrue(".pk file must exist in parquet partition dir, path=" + keyFile, fileSize > 0);
+                try (MemoryCMARWImpl mem = new MemoryCMARWImpl(
+                        rawFf, keyFile, rawFf.getPageSize(), fileSize,
+                        MemoryTag.MMAP_DEFAULT, /* opts */ 0)) {
+                    PostingIndexChainWriter chain = new PostingIndexChainWriter();
+                    chain.openExisting(mem);
+                    Assert.assertTrue("chain must have head after parquet rewrite", chain.hasHead());
+                    PostingIndexChainEntry.Snapshot head = new PostingIndexChainEntry.Snapshot();
+                    chain.loadHeadEntry(mem, head);
+                    Assert.assertEquals("single dense gen expected after commitDense", 1, head.genCount);
+                    long gen0DirOffset = PostingIndexChainEntry.resolveGenDirOffset(head.offset, 0);
+                    int gen0KeyCount = mem.getInt(gen0DirOffset + PostingIndexUtils.GEN_DIR_OFFSET_KEY_COUNT);
+                    Assert.assertTrue("gen 0 must be dense (positive KEY_COUNT), got " + gen0KeyCount,
+                            gen0KeyCount > 0);
+                    Assert.assertEquals("commitDense must not rotate sealTxn", 0, head.sealTxn);
+                    LPSZ pvRotated = PostingIndexUtils.valueFileName(
+                            path.trimTo(plen), "sym", COLUMN_NAME_TXN_NONE, 1);
+                    Assert.assertFalse("rotated .pv.1 must not exist after commitDense, path=" + pvRotated,
+                            rawFf.exists(pvRotated));
+                }
+            }
+        });
+    }
+
     /**
      * Reader must clamp returned rowids by the picked chain entry's
      * V2_ENTRY_OFFSET_MAX_VALUE field. Writers can leave dirty
@@ -519,6 +698,219 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                                     + "[size=" + advertisedSize + ", iterated=" + iterated + "]",
                             advertisedSize < 0 || advertisedSize == iterated
                     );
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testReaderHidesHeadEntryTailGensAbovePin() throws Exception {
+        assertMemoryLeak(() -> {
+            final String name = "reader_pin_tail_gen_visibility";
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final int plen = path.size();
+                try (PostingIndexWriter writer = new PostingIndexWriter(configuration)) {
+                    writer.of(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, true);
+                    writer.setNextTxnAtSeal(1L);
+                    writer.add(0, 0);
+                    writer.add(0, 1);
+                    writer.setMaxValue(1);
+                    writer.commit();
+
+                    // currentTableTxn=2 so neither slot is trimmed -- we want
+                    // both gens persisted to disk so the reader-side pin
+                    // filter is what hides slot[1] for low-pinned readers.
+                    writer.setCurrentTableTxn(2L);
+                    writer.of(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, false);
+
+                    writer.setNextTxnAtSeal(2L);
+                    writer.add(1, 2);
+                    writer.add(1, 3);
+                    writer.setMaxValue(3);
+                    writer.commit();
+                }
+
+                try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
+                        configuration, path.trimTo(plen), name,
+                        COLUMN_NAME_TXN_NONE, /* partitionTxn */ 0, /* columnTop */ 0);
+                     DirectBitSet foundKeys = new DirectBitSet(8)) {
+                    reader.setPinnedTableTxn(2L);
+                    reader.reloadConditionally();
+                    int distinct = reader.collectDistinctKeys(foundKeys);
+                    Assert.assertEquals(
+                            "pin >= slot[1].TXN_AT_SEAL: both gens visible",
+                            2, distinct);
+                    Assert.assertTrue(foundKeys.get(0));
+                    Assert.assertTrue(foundKeys.get(1));
+                }
+
+                try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
+                        configuration, path.trimTo(plen), name,
+                        COLUMN_NAME_TXN_NONE, /* partitionTxn */ 0, /* columnTop */ 0);
+                     DirectBitSet foundKeys = new DirectBitSet(8)) {
+                    reader.setPinnedTableTxn(1L);
+                    reader.reloadConditionally();
+                    int distinct = reader.collectDistinctKeys(foundKeys);
+                    Assert.assertEquals(
+                            "pin = slot[0].TXN_AT_SEAL: only gen 0 visible",
+                            1, distinct);
+                    Assert.assertTrue(foundKeys.get(0));
+                    Assert.assertFalse(
+                            "key=1 lives in gen 1 (slot[1].TXN_AT_SEAL=2 > pin)",
+                            foundKeys.get(1)
+                    );
+
+                    try (RowCursor cursor = reader.getCursor(/* key */ 1, /* minValue */ 0, /* maxValue */ Long.MAX_VALUE)) {
+                        Assert.assertFalse(
+                                "rowids from the pin-hidden gen must not surface through getCursor",
+                                cursor.hasNext()
+                        );
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testReaderPinChangeViaReloadConditionallyRePicks() throws Exception {
+        assertMemoryLeak(() -> {
+            final String name = "reader_pin_reload_repick";
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final int plen = path.size();
+                try (PostingIndexWriter writer = new PostingIndexWriter(configuration)) {
+                    writer.of(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, true);
+                    writer.setNextTxnAtSeal(1L);
+                    writer.add(0, 0);
+                    writer.setMaxValue(0);
+                    writer.commit();
+
+                    writer.setCurrentTableTxn(2L);
+                    writer.of(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, false);
+
+                    writer.setNextTxnAtSeal(2L);
+                    writer.add(1, 1);
+                    writer.setMaxValue(1);
+                    writer.commit();
+                }
+
+                try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
+                        configuration, path.trimTo(plen), name,
+                        COLUMN_NAME_TXN_NONE, /* partitionTxn */ 0, /* columnTop */ 0);
+                     DirectBitSet foundKeys = new DirectBitSet(8)) {
+                    // Default Long.MAX_VALUE pin: both gens visible.
+                    Assert.assertEquals(2, reader.collectDistinctKeys(foundKeys));
+                    foundKeys.clear();
+
+                    // Lower the pin under slot[1]; reloadConditionally must
+                    // re-pick even though the chain header has not advanced.
+                    reader.setPinnedTableTxn(1L);
+                    reader.reloadConditionally();
+                    Assert.assertEquals(1, reader.collectDistinctKeys(foundKeys));
+                    Assert.assertTrue(foundKeys.get(0));
+                    Assert.assertFalse(foundKeys.get(1));
+                    foundKeys.clear();
+
+                    // Raise the pin back above slot[1]; re-pick exposes gen 1.
+                    reader.setPinnedTableTxn(Long.MAX_VALUE);
+                    reader.reloadConditionally();
+                    Assert.assertEquals(2, reader.collectDistinctKeys(foundKeys));
+                    Assert.assertTrue(foundKeys.get(0));
+                    Assert.assertTrue(foundKeys.get(1));
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testRecoveryHidesFailedExtendHeadFromReader() throws Exception {
+        assertMemoryLeak(() -> {
+            final String name = "extend_head_failed_recovery_query";
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final int plen = path.size();
+                try (PostingIndexWriter writer = new PostingIndexWriter(configuration)) {
+                    writer.of(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, true);
+                    writer.setNextTxnAtSeal(1L);
+                    for (long row = 0; row < 10; row++) {
+                        writer.add(0, row);
+                    }
+                    writer.setMaxValue(9);
+                    writer.commit();
+
+                    writer.setCurrentTableTxn(1L);
+                    writer.of(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, false);
+
+                    writer.setNextTxnAtSeal(2L);
+                    for (long row = 10; row < 20; row++) {
+                        writer.add(1, row);
+                    }
+                    writer.setMaxValue(19);
+                    writer.commit();
+                }
+
+                try (PostingIndexWriter writer = new PostingIndexWriter(configuration)) {
+                    writer.setCurrentTableTxn(1L);
+                    writer.of(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, false);
+                }
+
+                try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
+                        configuration, path.trimTo(plen), name,
+                        COLUMN_NAME_TXN_NONE, /* partitionTxn */ 0, /* columnTop */ 0);
+                     DirectBitSet foundKeys = new DirectBitSet(8)) {
+                    int distinct = reader.collectDistinctKeys(foundKeys);
+                    Assert.assertEquals(
+                            "only the committed key (0) should remain after recovery",
+                            1, distinct);
+                    Assert.assertTrue(foundKeys.get(0));
+                    Assert.assertFalse(
+                            "key=1 belongs to an uncommitted txn; must not be visible",
+                            foundKeys.get(1)
+                    );
+
+                    try (RowCursor cursor = reader.getCursor(/* key */ 1, /* minValue */ 0, /* maxValue */ Long.MAX_VALUE)) {
+                        Assert.assertFalse(
+                                "uncommitted rowids for key=1 must not surface through getCursor",
+                                cursor.hasNext()
+                        );
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testRecoveryTrimsExtendHeadFailedTailGens() throws Exception {
+        assertMemoryLeak(() -> {
+            final String name = "extend_head_failed_recovery";
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final int plen = path.size();
+                try (PostingIndexWriter writer = new PostingIndexWriter(configuration)) {
+                    writer.of(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, true);
+                    writer.setNextTxnAtSeal(1L);
+                    writer.add(0, 0);
+                    writer.add(0, 1);
+                    writer.setMaxValue(1);
+                    writer.commit(); // appendNewEntry -> txnAtSeal=1, genCount=1
+
+                    // Successful commit at table layer would advance committedTxn to 1.
+                    // The reopen below is what TableWriter does between WAL transactions:
+                    // close + open from disk, then drive recovery via setCurrentTableTxn.
+                    writer.setCurrentTableTxn(1L);
+                    writer.of(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, false);
+
+                    // Batch 2 anticipates txn 2 but the table commit will not run.
+                    writer.setNextTxnAtSeal(2L);
+                    writer.add(1, 2);
+                    writer.add(1, 3);
+                    writer.setMaxValue(3);
+                    writer.commit(); // extendHead -> genCount=2, txnAtSeal STAYS at 1
+                }
+
+                try (PostingIndexWriter writer = new PostingIndexWriter(configuration)) {
+                    writer.setCurrentTableTxn(1L);
+                    writer.of(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, false);
+                    Assert.assertEquals(
+                            "recovery walk should drop the failed batch 2 gen because batch 2 anticipated txn 2 > committedTxn 1",
+                            1, writer.getGenCount());
                 }
             }
         });
@@ -1804,9 +2196,13 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
      * The fix hoists {@code setNextTxnAtSeal(txWriter.getTxn() + 1L)}
      * BEFORE the rebuild commit so the intermediate REBUILD entry is
      * tagged out of every current reader's visibility window
-     * ({@code T_pin <= getTxn() < getTxn()+1}). The trailing
-     * {@code setNextTxnAtSeal(txWriter.getTxn())} for the SEAL entry
-     * keeps its existing tag.
+     * ({@code T_pin <= getTxn() < getTxn()+1}). The trailing SEAL entry
+     * (published after {@code rebuildSidecars}) now uses the same
+     * {@code getTxn()+1L} tag: per-gen visibility via {@code slot[0].TXN_AT_SEAL}
+     * keeps T-pinned readers on the prev entry until {@code txWriter.commit}
+     * lands, and {@code publishPendingPurges} clamps {@code toTableTxn} back
+     * to {@code getTxn()} so the scoreboard max is not pushed past the
+     * not-yet-committed table txn.
      * <p>
      * This test mirrors the FIXED call order at the writer-fixture
      * level and verifies the chain shape: REBUILD inherits the
@@ -2533,6 +2929,136 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
     }
 
     /**
+     * Red test for review finding M3: the reseal call added inside
+     * squashSplitPartitions (TableWriter:11920) can throw from file
+     * I/O (here: an mmap of the covering column inside
+     * mapCoveringColumnsForSeal). The throw unwinds through
+     * squashSplitPartitions and squashPartitionForce out to the caller.
+     * <p>
+     * housekeep() wraps its call to squashSplitPartitions in a
+     * try/catch that runs handleHousekeepingException, which sets
+     * distressed=true before rethrowing. The non-housekeep callers
+     * (convertPartitionNativeToParquet, detachPartition,
+     * generateParquetPartition, public squashPartitions(),
+     * switchNativePartitionWithParquet) do not. By the time the
+     * reseal runs, squashSplitPartitions has already mutated
+     * txWriter (removeAttachedPartitions,
+     * updatePartitionSizeByTimestamp) and columnVersionWriter
+     * (squashPartition) in memory but has not yet run their
+     * commit(), so a throw here leaves the writer's in-memory
+     * state diverged from on-disk _txn while the pool keeps
+     * handing the same writer out.
+     * <p>
+     * This test exercises the public squashPartitions() entry
+     * point (reached from ALTER TABLE x SQUASH PARTITIONS via
+     * AlterOperation). The fix wraps the reseal call in a
+     * try/catch that mirrors finishO3Commit at TableWriter:6042
+     * and sets distressed=true before rethrowing. Without that
+     * wrap, isDistressed() stays false after the throw.
+     */
+    @Test
+    public void testSquashPartitionsResealFailureMarksWriterDistressed() throws Exception {
+        // Allow splits to form and persist:
+        //  - SPLIT_MIN_SIZE=1 makes the writer split even tiny inserts.
+        //  - MAX_SPLITS=20 keeps the housekeep auto-merge from collapsing
+        //    them before we reach the explicit squashPartitions() call.
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 1);
+        node1.setProperty(PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS, 20);
+        node1.setProperty(PropertyKey.CAIRO_O3_MID_PARTITION_MAX_SPLITS, 20);
+
+        final AtomicBoolean failArmed = new AtomicBoolean(false);
+        // squashSplitPartitions opens columns through FrameAlgebra twice
+        // per merge step (source RO + target RW) and the reseal then
+        // opens the target's covering column RO via
+        // mapCoveringColumnsForSeal. The first openRO of price.d after
+        // armed corresponds to the FrameAlgebra source frame; subsequent
+        // openRO calls (>=2) are the seal. Track only the latter and
+        // fail their mmap so FrameAlgebra completes successfully and
+        // the throw is localised to the reseal call.
+        final AtomicInteger priceDopenROCount = new AtomicInteger(0);
+        final AtomicLong sealFd = new AtomicLong(-1);
+        ff = new TestFilesFacadeImpl() {
+            @Override
+            public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
+                if (failArmed.get() && fd == sealFd.get()) {
+                    return FilesFacade.MAP_FAILED;
+                }
+                return super.mmap(fd, len, offset, flags, memoryTag);
+            }
+
+            @Override
+            public long openRO(LPSZ name) {
+                long fd = super.openRO(name);
+                if (failArmed.get() && fd != -1 && name != null
+                        && Utf8s.endsWithAscii(name, "price.d")) {
+                    if (priceDopenROCount.incrementAndGet() >= 2) {
+                        sealFd.set(fd);
+                    }
+                }
+                return fd;
+            }
+        };
+
+        assertMemoryLeak(ff, () -> {
+            execute("""
+                    CREATE TABLE t_squash_reseal_fail (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price),
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            // Seed 2024-01-01.
+            execute("""
+                    INSERT INTO t_squash_reseal_fail VALUES
+                    ('2024-01-01T00:00:00Z', 'A', 10.0),
+                    ('2024-01-01T01:00:00Z', 'B', 20.0),
+                    ('2024-01-01T02:00:00Z', 'A', 30.0),
+                    ('2024-01-01T20:00:00Z', 'A', 40.0)
+                    """);
+            // O3 into a late prefix of the same logical partition creates
+            // a split sub-partition. With SPLIT_MIN_SIZE=1 the writer
+            // splits even at this tiny scale.
+            execute("""
+                    INSERT INTO t_squash_reseal_fail VALUES
+                    ('2024-01-01T19:00:00Z', 'C', 99.0)
+                    """);
+
+            // Confirm the table has two sub-partitions for the same
+            // logical day before arming the fault; otherwise
+            // squashPartitions() short-circuits and the reseal at
+            // TableWriter:11920 is never reached.
+            assertSql(
+                    """
+                            count
+                            2
+                            """,
+                    "SELECT count() FROM table_partitions('t_squash_reseal_fail')"
+            );
+
+            engine.releaseAllWriters();
+
+            try (TableWriter w = TestUtils.getWriter(engine, "t_squash_reseal_fail")) {
+                failArmed.set(true);
+                try {
+                    w.squashPartitions();
+                    Assert.fail("expected reseal failure to surface from squashPartitions()");
+                } catch (AssertionError ae) {
+                    throw ae;
+                } catch (Throwable ignore) {
+                    // expected: CairoException from TableUtils.mapRO
+                    // when the seal's mmap returns MAP_FAILED.
+                }
+                failArmed.set(false);
+                Assert.assertTrue(
+                        "writer must be distressed after a reseal throw inside squashPartitions(): " +
+                                "txWriter/columnVersionWriter were mutated in memory but their " +
+                                "commit() never ran, so the in-memory state diverged from on-disk _txn",
+                        w.isDistressed());
+            }
+        });
+    }
+
+    /**
      * Reproduces the SIGSEGV from the JMH walFastLag bench (hs_err_pid19555):
      * MemoryCR.getLong over-read inside PostingIndexChainEntry.read on a
      * covering posting index. The bench ran walFastLagInsertAndQuery in a
@@ -2709,7 +3235,7 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
      * Reproduces the writer-side root cause of the GraalVM SIGSEGV in
      * hs_err_pid19555 (PostingIndexBenchmarkSuite.walFastLagInsertAndQuery
      * on bench/posting-wal-fastlag): a covering posting index whose chain
-     * head had LEN=96 (= entrySize(genCount=1, coverCount=0)) while .pci
+     * head had LEN=104 (= entrySize(genCount=1, coverCount=0)) while .pci
      * advertised coverCount=1. This test drives PostingIndexWriter through
      * the same lifecycle the WAL fast-lag path follows in production:
      * <ol>
@@ -2786,8 +3312,8 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                         }
                         Assert.assertEquals(
                                 "post-seal head LEN must include the cover footer "
-                                        + "(64 header + genCount*28 gen-dir + coverCount*8 footer, "
-                                        + "padded to 8): expected entrySize(genCount=1, coverCount=1)=104",
+                                        + "(56 header + genCount*44 gen-dir + coverCount*8 footer, "
+                                        + "padded to 8): expected entrySize(genCount=1, coverCount=1)=112",
                                 PostingIndexChainEntry.entrySize(1, coverCount), lenAfterSeal
                         );
 

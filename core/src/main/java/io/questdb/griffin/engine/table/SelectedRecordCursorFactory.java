@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.AbstractRecordCursorFactory;
+import io.questdb.cairo.ReaderScanProfile;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.idx.IndexReader;
@@ -76,6 +77,11 @@ public final class SelectedRecordCursorFactory extends AbstractRecordCursorFacto
             }
         }
         return false;
+    }
+
+    @Override
+    public boolean canPeelForTopK() {
+        return true;
     }
 
     @Override
@@ -203,12 +209,24 @@ public final class SelectedRecordCursorFactory extends AbstractRecordCursorFacto
 
     @Override
     public boolean recordCursorSupportsLongTopK(int columnIndex) {
+        if (columnIndex < 0 || columnIndex >= columnCrossIndex.size()) {
+            return false;
+        }
         return base.recordCursorSupportsLongTopK(columnCrossIndex.getQuick(columnIndex));
     }
 
     @Override
     public boolean recordCursorSupportsRandomAccess() {
         return base.recordCursorSupportsRandomAccess();
+    }
+
+    @Override
+    public RecordCursorFactory rewrapOverTopK(RecordCursorFactory topK, RecordMetadata orderedMetadata) {
+        RecordCursorFactory rewrappedBase = base.rewrapOverTopK(topK, base.getMetadata());
+        // Shares columnCrossIndex with the orphaned wrapper. Per the
+        // RecordCursorFactory.rewrapOverTopK contract, the caller must not close the orphan;
+        // its state has transferred here. Same precedent as the AsOf and LatestBy peels.
+        return new SelectedRecordCursorFactory(orderedMetadata, columnCrossIndex, rewrappedBase);
     }
 
     @Override
@@ -235,6 +253,14 @@ public final class SelectedRecordCursorFactory extends AbstractRecordCursorFacto
     public void toPlan(PlanSink sink) {
         sink.type("SelectedRecord");
         sink.child(base);
+    }
+
+    @Override
+    public int translateOrderByColumnToBase(int projectedIndex) {
+        if (projectedIndex < 0 || projectedIndex >= columnCrossIndex.size()) {
+            return -1;
+        }
+        return base.translateOrderByColumnToBase(columnCrossIndex.getQuick(projectedIndex));
     }
 
     @Override
@@ -516,8 +542,8 @@ public final class SelectedRecordCursorFactory extends AbstractRecordCursorFacto
         }
 
         @Override
-        public void setStreamingMode(boolean enabled) {
-            baseCursor.setStreamingMode(enabled);
+        public void setScanProfile(ReaderScanProfile profile) {
+            baseCursor.setScanProfile(profile);
         }
 
         @Override

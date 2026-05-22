@@ -39,6 +39,15 @@ package io.questdb.cutlass.qwp.codec;
  * serialised as zero-length strings on the wire. The frame writer caps each
  * field at 65535 UTF-8 bytes to fit the {@code u16} length prefix and truncates
  * longer values silently.
+ * <p>
+ * {@link #getZoneId()} is the only field whose absence is structurally distinct
+ * from the empty string: when it returns {@code null} the writer omits the
+ * trailing field entirely and the {@link QwpEgressMsgKind#CAP_ZONE} bit stays
+ * unset in {@link #getCapabilities()}; when it returns a non-null value
+ * (including the empty string) the writer emits the {@code u16+utf8} trailer
+ * and the implementation must report the {@code CAP_ZONE} bit. Implementations
+ * are expected to compute the bit from the zone field rather than expose them
+ * as independent settings.
  */
 public interface QwpServerInfoProvider {
 
@@ -70,6 +79,18 @@ public interface QwpServerInfoProvider {
      * physical node served a given query.
      */
     CharSequence getNodeId();
+
+    /**
+     * Optional zone identifier (e.g. {@code eu-west-1a}, {@code dc-amsterdam}).
+     * Returning a non-null value (including the empty string) requires the
+     * implementation to set the {@link QwpEgressMsgKind#CAP_ZONE} bit in
+     * {@link #getCapabilities()}; the writer emits a {@code u16_len+utf8}
+     * trailer in that case. Returning {@code null} omits the trailer entirely
+     * and keeps the byte layout identical to the v2.0 baseline.
+     */
+    default CharSequence getZoneId() {
+        return null;
+    }
 
     /**
      * One of {@link QwpEgressMsgKind#ROLE_STANDALONE}, {@link
