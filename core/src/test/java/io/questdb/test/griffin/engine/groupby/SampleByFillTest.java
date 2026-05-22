@@ -1922,12 +1922,20 @@ public class SampleByFillTest extends AbstractCairoTest {
 
     @Test
     public void testFillValueRejectedForArrayAggregate() throws Exception {
-        // first(array) returns DOUBLE[]; no INT -> ARRAY implicit cast exists.
+        // first(array) returns DOUBLE[]. FirstArrayGroupByFunction omits
+        // SAMPLE_BY_FILL_VALUE from getSampleByFlags(), so the GroupByUtils
+        // flag-validation in assembleGroupByFunctions rejects FILL(VALUE) up
+        // front - before SqlCodeGenerator's INT->ARRAY type-coercion path
+        // would have produced "fill value of type INT cannot fill column of
+        // type DOUBLE[]". Both messages reject the same query; the flag-based
+        // one is the active rejection point on the array_agg branch because
+        // rewriteSelectClause0 now re-exposes the rewritten FILL list onto
+        // groupByModel.sampleByFill for validation.
         assertException(
                 "SELECT ts, first(a) FROM t_fv_arr SAMPLE BY 1m FILL(0)",
                 "CREATE TABLE t_fv_arr (a DOUBLE[], ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY",
                 52,
-                "fill value of type INT cannot fill column of type DOUBLE[]"
+                "support for VALUE fill is not yet implemented [function=first(a), class=io.questdb.griffin.engine.functions.groupby.FirstArrayGroupByFunction]"
         );
     }
 
@@ -1999,31 +2007,36 @@ public class SampleByFillTest extends AbstractCairoTest {
 
     @Test
     public void testFillValueWithSumMinusConstantOverFill() throws Exception {
-        // SqlOptimiser.rewriteAggregate splits sum(c - K) into sum(c) - count(*) * K when K is
-        // an integer constant. Verify that SAMPLE BY FILL drives the resulting two-aggregate
-        // plan correctly through SampleByFillRecordCursorFactory and that the fill rows still
-        // evaluate to the expected constant.
+        // SqlOptimiser.rewriteAggregate would normally split sum(c - K) into sum(c) -
+        // count(*) * K when K is an integer constant. Under SAMPLE BY FILL the rewrite
+        // is unsafe: the per-aggregate FILL value would land on both inner aggregates
+        // and the outer arithmetic would yield v - v * K instead of the user-visible
+        // v. The optimiser therefore suppresses the rewrite when any FILL is set (see
+        // testFillValueAppliesAfterAggregateArithmetic for the multiplicative form).
+        // This test pins the no-rewrite plan and verifies the data path still produces
+        // the expected fill rows when the inner aggregate computes sum(c - 1000)
+        // directly. FILL(0) hides the bug because 0 propagates correctly through any
+        // arithmetic; the multiplicative companion in the FillNullValue test class
+        // catches the case where FILL(42) does not.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t_fv_sum_minus (c SHORT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("INSERT INTO t_fv_sum_minus VALUES (10::SHORT, '2024-01-01T00:00:00.000000Z'), (20::SHORT, '2024-01-01T03:00:00.000000Z')");
             assertPlanNoLeakCheck(
                     "SELECT sum(c - 1000) AS s, ts FROM t_fv_sum_minus SAMPLE BY 1h FILL(0) ALIGN TO CALENDAR",
                     """
-                            VirtualRecord
-                              functions: [sum-COUNT*1000,ts]
-                                Sample By Fill
-                                  stride: '1h'
-                                  fill: value
-                                    Encode sort light
+                            Sample By Fill
+                              stride: '1h'
+                              fill: value
+                                Encode sort light
+                                  keys: [ts]
+                                    Async Group By workers: 1
                                       keys: [ts]
-                                        Async Group By workers: 1
-                                          keys: [ts]
-                                          keyFunctions: [timestamp_floor_utc('1h',ts)]
-                                          values: [sum(c),count(*)]
-                                          filter: null
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: t_fv_sum_minus
+                                      keyFunctions: [timestamp_floor_utc('1h',ts)]
+                                      values: [sum(c-1000)]
+                                      filter: null
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: t_fv_sum_minus
                             """
             );
             assertQueryNoLeakCheck(
@@ -2045,28 +2058,28 @@ public class SampleByFillTest extends AbstractCairoTest {
     @Test
     public void testFillValueWithSumPlusConstantOverFill() throws Exception {
         // Companion to testFillValueWithSumMinusConstantOverFill for the '+' branch:
-        // sum(c + K) splits to sum(c) + count(*) * K.
+        // sum(c + K) would split to sum(c) + count(*) * K but the rewrite is suppressed
+        // under SAMPLE BY FILL for the same reason. See testFillValueAppliesAfter-
+        // AggregateArithmetic for the value-propagation case.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t_fv_sum_plus (c SHORT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("INSERT INTO t_fv_sum_plus VALUES (10::SHORT, '2024-01-01T00:00:00.000000Z'), (20::SHORT, '2024-01-01T03:00:00.000000Z')");
             assertPlanNoLeakCheck(
                     "SELECT sum(c + 1000) AS s, ts FROM t_fv_sum_plus SAMPLE BY 1h FILL(0) ALIGN TO CALENDAR",
                     """
-                            VirtualRecord
-                              functions: [sum+COUNT*1000,ts]
-                                Sample By Fill
-                                  stride: '1h'
-                                  fill: value
-                                    Encode sort light
+                            Sample By Fill
+                              stride: '1h'
+                              fill: value
+                                Encode sort light
+                                  keys: [ts]
+                                    Async Group By workers: 1
                                       keys: [ts]
-                                        Async Group By workers: 1
-                                          keys: [ts]
-                                          keyFunctions: [timestamp_floor_utc('1h',ts)]
-                                          values: [sum(c),count(*)]
-                                          filter: null
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: t_fv_sum_plus
+                                      keyFunctions: [timestamp_floor_utc('1h',ts)]
+                                      values: [sum(c+1000)]
+                                      filter: null
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: t_fv_sum_plus
                             """
             );
             assertQueryNoLeakCheck(
@@ -2087,29 +2100,31 @@ public class SampleByFillTest extends AbstractCairoTest {
 
     @Test
     public void testFillValueWithSumTimesConstantOverFill() throws Exception {
-        // Companion for the '*' branch: sum(c * K) lifts the multiplier outside as sum(c) * K
-        // without adding count(*). Verify SAMPLE BY FILL still produces correct fill rows.
+        // Companion for the '*' branch: sum(c * K) would lift the multiplier outside
+        // as sum(c) * K, but the rewrite is suppressed under SAMPLE BY FILL because
+        // the FILL value would multiply through K in empty buckets. The matching
+        // value-propagation test in SampleByFillNullValueTest
+        // (testFillValueAppliesAfterAggregateArithmetic) pins FILL(42) -> 42 in
+        // empty buckets, not 42 * K.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t_fv_sum_mul (c SHORT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("INSERT INTO t_fv_sum_mul VALUES (10::SHORT, '2024-01-01T00:00:00.000000Z'), (20::SHORT, '2024-01-01T03:00:00.000000Z')");
             assertPlanNoLeakCheck(
                     "SELECT sum(c * 1000) AS s, ts FROM t_fv_sum_mul SAMPLE BY 1h FILL(0) ALIGN TO CALENDAR",
                     """
-                            VirtualRecord
-                              functions: [sum*1000,ts]
-                                Sample By Fill
-                                  stride: '1h'
-                                  fill: value
-                                    Encode sort light
+                            Sample By Fill
+                              stride: '1h'
+                              fill: value
+                                Encode sort light
+                                  keys: [ts]
+                                    Async Group By workers: 1
                                       keys: [ts]
-                                        Async Group By workers: 1
-                                          keys: [ts]
-                                          keyFunctions: [timestamp_floor_utc('1h',ts)]
-                                          values: [sum(c)]
-                                          filter: null
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: t_fv_sum_mul
+                                      keyFunctions: [timestamp_floor_utc('1h',ts)]
+                                      values: [sum(c*1000)]
+                                      filter: null
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: t_fv_sum_mul
                             """
             );
             assertQueryNoLeakCheck(

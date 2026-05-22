@@ -481,6 +481,28 @@ public class SqlOptimiser implements Mutable {
         return false;
     }
 
+    /**
+     * Returns true when rewriteSampleBy moved a non-NONE FILL list onto
+     * baseModel.fillValues. Callers use this to detect SAMPLE BY FILL in the
+     * rewritten-by-rewriteSampleBy form, where groupByModel.sampleByFill is
+     * still empty because moveSampleByFrom has not run.
+     */
+    private static boolean hasNonNoneRewrittenFill(IQueryModel baseModel) {
+        if (baseModel.getFillStride() == null) {
+            return false;
+        }
+        final ObjList<ExpressionNode> fill = baseModel.getFillValues();
+        if (fill == null) {
+            return false;
+        }
+        for (int i = 0, n = fill.size(); i < n; i++) {
+            if (!isNoneKeyword(fill.getQuick(i).token)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     // Returns true when every leaf in the expression tree is a literal constant
     // (no function calls, bind variables, or column references). Used to decide
     // whether a constWhereClause can be evaluated at compile time by the code
@@ -9301,29 +9323,6 @@ public class SqlOptimiser implements Mutable {
         if (sampleBy != null) {
             // move sample by to group by model
             groupByModel.moveSampleByFrom(baseModel);
-        } else if (baseModel.getFillStride() != null) {
-            assert baseModel.getFillValues() != null;
-            // rewriteSampleBy moved the fill list to baseModel.fillValues and cleared
-            // sampleBy. Re-expose it on groupByModel.sampleByFill so generateSelectGroupBy
-            // can validate each aggregate's getSampleByFlags() against the fill mode.
-            // sampleByFill (not fillValues) keeps toSink output stable: with sampleBy
-            // cleared, QueryModel.toSink skips the fill(...) branch entirely.
-            // Skip the re-expose when every token is NONE: validation for NONE is a
-            // no-op (every getSampleByFlags() includes SAMPLE_BY_FILL_NONE), and the
-            // gates below treat any non-empty sampleByFill as "carries a fill that
-            // breaks dedup". Letting FILL(NONE) take that branch would disable
-            // duplicate-aggregate detection unnecessarily.
-            final ObjList<ExpressionNode> baseFill = baseModel.getFillValues();
-            boolean hasNonNoneFill = false;
-            for (int i = 0, n = baseFill.size(); i < n; i++) {
-                if (!isNoneKeyword(baseFill.getQuick(i).token)) {
-                    hasNonNoneFill = true;
-                    break;
-                }
-            }
-            if (hasNonNoneFill) {
-                groupByModel.setSampleByFill(baseFill);
-            }
         }
 
         if (baseModel.getGroupBy().size() > 0) {
@@ -9341,10 +9340,16 @@ public class SqlOptimiser implements Mutable {
         // cursor model should have all columns that base model has to properly resolve duplicate names
         cursorModel.getAliasToColumnMap().putAll(baseModel.getAliasToColumnMap());
 
-        // pre-detect duplicate aggregates using hash-based detection;
-        // this is only needed when there's no sample by fill
+        // Pre-detect duplicate aggregates using hash-based detection.
+        // Skip when SAMPLE BY FILL is set anywhere on the query, regardless of
+        // whether sampleBy is still on baseModel (moved above) or rewriteSampleBy
+        // already split it into fillStride + fillValues on baseModel. Both forms
+        // require per-column FILL values to land on their own aggregate slot, so
+        // dedup'ing count(x), count(x) into one inner aggregate would silently
+        // drop a per-column FILL value in cases like FILL(NULL, 0). FILL(NONE)
+        // does not propagate per-column values, so dedup stays safe there.
         boolean hasDuplicateAggregates = false;
-        if (groupByModel.getSampleByFill().size() == 0) {
+        if (groupByModel.getSampleByFill().size() == 0 && !hasNonNoneRewrittenFill(baseModel)) {
             hasDuplicateAggregates = detectDuplicateAggregates(columns);
         }
 
@@ -9376,7 +9381,16 @@ public class SqlOptimiser implements Mutable {
                             rewriteStatus |= REWRITE_STATUS_USE_GROUP_BY_MODEL;
                         }
 
-                        if (groupByModel.getSampleByFill().size() > 0) { // fill breaks if column is de-duplicated
+                        // Suppress sum(c*K) -> sum(c)*K and sum(c+/-K) -> sum(c) +/- count(*)*K
+                        // under SAMPLE BY FILL. The rewrite is only safe when no FILL value is
+                        // applied to empty buckets: with FILL(VALUE=v), v lands on each of the
+                        // (now split) inner aggregate slots and the outer arithmetic yields v*K
+                        // (multiplicative) or v + v*K (additive) - not the user-visible v. Cover
+                        // both forms of the input: sampleBy still on baseModel (the gate already
+                        // covered that via groupByModel.sampleByFill, moved here by
+                        // moveSampleByFrom) and rewriteSampleBy already converted it to
+                        // fillStride + fillValues on baseModel.
+                        if (groupByModel.getSampleByFill().size() > 0 || hasNonNoneRewrittenFill(baseModel)) {
                             continue;
                         }
 
@@ -9410,6 +9424,21 @@ public class SqlOptimiser implements Mutable {
                     rewriteStatus |= REWRITE_STATUS_USE_INNER_MODEL;
                 }
             }
+        }
+
+        // Re-expose baseModel.fillValues on groupByModel.sampleByFill so the later
+        // assembleGroupByFunctions call in generateSelectGroupBy can validate each
+        // aggregate's getSampleByFlags() against the fill mode (the array_agg fix
+        // for "FILL(value) silently returns NULL for unsupported aggregates").
+        // sampleByFill (not fillValues) keeps toSink output stable: with sampleBy
+        // cleared, QueryModel.toSink skips the fill(...) branch entirely.
+        // Skip the re-expose when every token is NONE: validation for NONE is a
+        // no-op (every getSampleByFlags() includes SAMPLE_BY_FILL_NONE).
+        // The dedup and arithmetic-rewrite gates above already consulted
+        // hasNonNoneRewrittenFill(baseModel) directly, so this re-expose does not
+        // double up on those decisions; it is purely a hand-off to GroupByUtils.
+        if (sampleBy == null && hasNonNoneRewrittenFill(baseModel)) {
+            groupByModel.setSampleByFill(baseModel.getFillValues());
         }
 
         // group-by generator can cope with virtual columns, it does not require virtual model to be its base
