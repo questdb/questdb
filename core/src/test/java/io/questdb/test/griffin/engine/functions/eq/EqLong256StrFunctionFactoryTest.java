@@ -59,6 +59,19 @@ public class EqLong256StrFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testIPv4ConstantThrowsImplicitCast() throws Exception {
+        // The dispatcher resolves IPv4 = LONG256 by promoting IPv4 to STRING via
+        // CastIPv4ToStr. The IPv4 textual form (e.g. "0.2.250.211" for 195683) is
+        // not valid hex for a Long256, so the factory throws ImplicitCastException
+        // at compile time -- consistent with how other LONG256/STRING factories
+        // behave on invalid hex literals.
+        assertMemoryLeak(() -> {
+            execute("create table x (l long256)");
+            assertException("x where (195683)::IPv4 = l", 0, "inconvertible value: `0.2.252.99` [STRING -> LONG256]");
+        });
+    }
+
+    @Test
     public void testLong256Decode1() throws Exception {
         assertQuery(
                 "rnd_long256\n0x9f9b2131d49fcd1d6b8139815c50d3410010cde812ce60ee0010a928bb8b9650\n",

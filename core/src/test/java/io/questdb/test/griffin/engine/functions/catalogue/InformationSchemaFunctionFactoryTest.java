@@ -36,7 +36,7 @@ public class InformationSchemaFunctionFactoryTest extends AbstractCairoTest {
                 "information_schema._pg_expandarray(5);",
                 "create table x(a int)",
                 null,
-                false,
+                true,
                 true
         );
     }

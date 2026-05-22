@@ -750,6 +750,28 @@ public class IPv4Test extends AbstractCairoTest {
     }
 
     @Test
+    public void testExplicitCastIPv4ToVarchar() throws Exception {
+        assertMemoryLeak(() -> assertSql(
+                """
+                        cast
+                        1.1.1.1
+                        """,
+                "select ipv4 '1.1.1.1'::varchar"
+        ));
+    }
+
+    @Test
+    public void testExplicitCastIPv4ToVarchar2() throws Exception {
+        assertMemoryLeak(() -> assertSql(
+                """
+                        cast
+                        1.1.1.1
+                        """,
+                "select '1.1.1.1'::ipv4::varchar"
+        ));
+    }
+
+    @Test
     public void testExplicitCastIntToIPv4() throws Exception {
         assertMemoryLeak(() -> assertSql(
                 """
@@ -2614,6 +2636,19 @@ public class IPv4Test extends AbstractCairoTest {
                 false,
                 true
         );
+    }
+
+    @Test
+    public void testIPv4IsOrderedKeyed() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE test AS (SELECT" +
+                    " ('k' || lpad((x % 100)::string, 5, '0')) key," +
+                    " ((x % 100)::int)::ipv4 ip," +
+                    " (x * 1000000)::timestamp ts" +
+                    " FROM long_sequence(200)) TIMESTAMP(ts) PARTITION BY HOUR");
+            assertSql("key\tisOrdered\nk00000\ttrue\n",
+                    "SELECT key, isOrdered(ip) FROM test ORDER BY key LIMIT 1");
+        });
     }
 
     @Test
@@ -4784,6 +4819,16 @@ public class IPv4Test extends AbstractCairoTest {
                 "create table y (col uuid)",
                 21,
                 "inconvertible types: IPv4 -> UUID [from=col, to=col]"
+        );
+    }
+
+    @Test
+    public void testImplicitCastIPv4ToVarchar() throws Exception {
+        assertException(
+                "insert into y select rnd_ipv4() col from long_sequence(10)",
+                "create table y (col varchar)",
+                21,
+                "inconvertible types: IPv4 -> VARCHAR [from=col, to=col]"
         );
     }
 

@@ -303,6 +303,42 @@ public class ParallelFilterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCastToSymbolInParallelFilter() throws Exception {
+        // Cast-to-symbol functions maintain a mutable hash-map symbol cache, so they're thread-unsafe.
+        WorkerPool pool = new WorkerPool(() -> 4);
+        TestUtils.execute(
+                pool,
+                (engine, compiler, sqlExecutionContext) -> {
+                    sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
+                    engine.execute(
+                            "CREATE TABLE x (ts TIMESTAMP, iv INT, lv LONG) timestamp(ts) PARTITION BY DAY;",
+                            sqlExecutionContext
+                    );
+                    engine.execute(
+                            "INSERT INTO x SELECT x::timestamp, x::int, x FROM long_sequence(" + (1000 * PAGE_FRAME_MAX_ROWS) + ")",
+                            sqlExecutionContext
+                    );
+                    TestUtils.assertSql(
+                            engine,
+                            sqlExecutionContext,
+                            "SELECT count(*) FROM x WHERE length((iv)::SYMBOL) < 4",
+                            sink,
+                            "count\n999\n"
+                    );
+                    TestUtils.assertSql(
+                            engine,
+                            sqlExecutionContext,
+                            "SELECT count(*) FROM x WHERE length((lv)::SYMBOL) < 4",
+                            sink,
+                            "count\n999\n"
+                    );
+                },
+                configuration,
+                LOG
+        );
+    }
+
+    @Test
     public void testCountJitDisabled() throws Exception {
         testCount(SqlJitMode.JIT_MODE_DISABLED);
     }
@@ -530,6 +566,43 @@ public class ParallelFilterTest extends AbstractCairoTest {
     @Test
     public void testInTimestampJitEnabled() throws Exception {
         testInTimestamp(SqlJitMode.JIT_MODE_ENABLED);
+    }
+
+    @Test
+    public void testLong256FunctionsInParallelFilter() throws Exception {
+        // AbstractCastToLong256Function and LongsToLong256Function each return
+        // a shared Long256Impl, so they're thread-unsafe.
+        WorkerPool pool = new WorkerPool(() -> 4);
+        TestUtils.execute(
+                pool,
+                (engine, compiler, sqlExecutionContext) -> {
+                    sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
+                    engine.execute(
+                            "CREATE TABLE x (ts TIMESTAMP, iv INT) timestamp(ts) PARTITION BY DAY;",
+                            sqlExecutionContext
+                    );
+                    engine.execute(
+                            "INSERT INTO x SELECT x::timestamp, x::int FROM long_sequence(" + (1000 * PAGE_FRAME_MAX_ROWS) + ")",
+                            sqlExecutionContext
+                    );
+                    TestUtils.assertSql(
+                            engine,
+                            sqlExecutionContext,
+                            "SELECT count(*) FROM x WHERE (abs(iv))::LONG256 != (iv)::LONG256",
+                            sink,
+                            "count\n0\n"
+                    );
+                    TestUtils.assertSql(
+                            engine,
+                            sqlExecutionContext,
+                            "SELECT count(*) FROM x WHERE (iv)::LONG256 != to_long256(iv::long, 0, 0, 0)",
+                            sink,
+                            "count\n0\n"
+                    );
+                },
+                configuration,
+                LOG
+        );
     }
 
     @Test

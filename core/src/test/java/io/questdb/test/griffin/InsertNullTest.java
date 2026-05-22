@@ -34,9 +34,7 @@ import org.junit.Assert;
 import org.junit.Test;
 
 public class InsertNullTest extends AbstractCairoTest {
-
     private static final int NULL_INSERTS = 3;
-
     private static final String[][] TYPES = {
             // type name, null value
             {"boolean", "false"},
@@ -126,7 +124,7 @@ public class InsertNullTest extends AbstractCairoTest {
                         null,
                         String.format("insert into x select null from long_sequence(%d)", NULL_INSERTS),
                         expectedNullInserts("value\n", type[1], NULL_INSERTS, !isNotNullable(type[0])),
-                        !isNotNullable(type[0]),
+                        true,
                         false,
                         false
                 );
@@ -176,7 +174,7 @@ public class InsertNullTest extends AbstractCairoTest {
                         null,
                         String.format("insert into x select null from long_sequence(%d)", NULL_INSERTS),
                         expectedNullInserts("value\n", type[1], NULL_INSERTS, !isNotNullable(type[0])),
-                        !isNotNullable(type[0]),
+                        true,
                         false,
                         false
                 );

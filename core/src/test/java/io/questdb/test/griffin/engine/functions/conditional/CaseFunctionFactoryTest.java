@@ -407,80 +407,118 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testCaseErrors() throws Exception {
-        assertException("select case from long_sequence(1)", 7, "unbalanced 'case'");
-        assertException("select case end from long_sequence(1)", 12, "'when' expected");
-        assertException("select case x end from long_sequence(1)", 14, "'when' expected");
-        assertException("select case 1 end from long_sequence(1)", 14, "'when' expected");
-        assertException("select case false end from long_sequence(1)", 18, "'when' expected");
-        assertException("select case x/2 end from long_sequence(1)", 16, "'when' expected");
-        assertException("select case x/2 z end from long_sequence(1)", 18, "'when' expected");
-        assertException("select case 1+5 end from long_sequence(1)", 16, "'when' expected");
-        assertException("select case rnd_double() end from long_sequence(1)", 25, "'when' expected");
-        assertException("select case x else 2 end from long_sequence(1)", 14, "'when' expected");
-        assertException("select case x when else 2 end from long_sequence(1)", 19, "missing arguments");
-        assertException("select case x when 1 end from long_sequence(1)", 21, "'then' expected");
-        assertException("select case x when 1 else 2 end from long_sequence(1)", 21, "'then' expected");
-        assertException("select case x when 1 then else 2 end from long_sequence(1)", 26, "missing arguments");
-        assertException("select case x when 1 then 1 else else end from long_sequence(1)", 33, "missing arguments");
-        assertException("select case x when 1 then 1 when else 2 end from long_sequence(1)", 33, "missing arguments");
-        assertException("select case x when 1 then 1 when 2 else 2 end from long_sequence(1)", 35, "'then' expected");
-        assertException("select case when end from long_sequence(1)", 17, "missing arguments");
-        assertException("select case when then else end from long_sequence(1)", 17, "missing arguments");
-        assertException("select case when else end from long_sequence(1)", 17, "missing arguments");
-        assertException("select case when x end from long_sequence(1)", 19, "'then' expected");
-        assertException("select case when x else end from long_sequence(1)", 19, "'then' expected");
-        assertException("select case when x else 2 end from long_sequence(1)", 19, "'then' expected");
-        assertException("select case when x then end from long_sequence(1)", 24, "missing arguments");
-        assertException("select case when x then else end from long_sequence(1)", 24, "missing arguments");
-        assertException("select case when x then x else end from long_sequence(1)", 31, "missing arguments");
+        assertMemoryLeak(() -> {
+            assertExceptionNoLeakCheck("select case from long_sequence(1)", 7, "unbalanced 'case'");
+            assertExceptionNoLeakCheck("select case end from long_sequence(1)", 12, "'when' expected");
+            assertExceptionNoLeakCheck("select case x end from long_sequence(1)", 14, "'when' expected");
+            assertExceptionNoLeakCheck("select case 1 end from long_sequence(1)", 14, "'when' expected");
+            assertExceptionNoLeakCheck("select case false end from long_sequence(1)", 18, "'when' expected");
+            assertExceptionNoLeakCheck("select case x/2 end from long_sequence(1)", 16, "'when' expected");
+            assertExceptionNoLeakCheck("select case x/2 z end from long_sequence(1)", 18, "'when' expected");
+            assertExceptionNoLeakCheck("select case 1+5 end from long_sequence(1)", 16, "'when' expected");
+            assertExceptionNoLeakCheck("select case rnd_double() end from long_sequence(1)", 25, "'when' expected");
+            assertExceptionNoLeakCheck("select case x else 2 end from long_sequence(1)", 14, "'when' expected");
+            assertExceptionNoLeakCheck("select case x when else 2 end from long_sequence(1)", 19, "missing arguments");
+            assertExceptionNoLeakCheck("select case x when 1 end from long_sequence(1)", 21, "'then' expected");
+            assertExceptionNoLeakCheck("select case x when 1 else 2 end from long_sequence(1)", 21, "'then' expected");
+            assertExceptionNoLeakCheck("select case x when 1 then else 2 end from long_sequence(1)", 26, "missing arguments");
+            assertExceptionNoLeakCheck("select case x when 1 then 1 else else end from long_sequence(1)", 33, "missing arguments");
+            assertExceptionNoLeakCheck("select case x when 1 then 1 when else 2 end from long_sequence(1)", 33, "missing arguments");
+            assertExceptionNoLeakCheck("select case x when 1 then 1 when 2 else 2 end from long_sequence(1)", 35, "'then' expected");
+            assertExceptionNoLeakCheck("select case when end from long_sequence(1)", 17, "missing arguments");
+            assertExceptionNoLeakCheck("select case when then else end from long_sequence(1)", 17, "missing arguments");
+            assertExceptionNoLeakCheck("select case when else end from long_sequence(1)", 17, "missing arguments");
+            assertExceptionNoLeakCheck("select case when x end from long_sequence(1)", 19, "'then' expected");
+            assertExceptionNoLeakCheck("select case when x else end from long_sequence(1)", 19, "'then' expected");
+            assertExceptionNoLeakCheck("select case when x else 2 end from long_sequence(1)", 19, "'then' expected");
+            assertExceptionNoLeakCheck("select case when x then end from long_sequence(1)", 24, "missing arguments");
+            assertExceptionNoLeakCheck("select case when x then else end from long_sequence(1)", 24, "missing arguments");
+            assertExceptionNoLeakCheck("select case when x then x else end from long_sequence(1)", 31, "missing arguments");
+        });
     }
 
     @Test
     public void testCaseWithNoElseInSelectClause() throws Exception {
-        assertQuery("c\n0\nnull\nnull\n",
-                "select case x when 1 then 0 end c from long_sequence(3)", null, true, true
-        );
-
-        assertQuery("c\nnull\nnull\nnull\n",
-                "select case x when -1 then 0 end c from long_sequence(3)", null, true, true
-        );
-
-        assertQuery("c\n0\n0\n0\n",
-                "select case when x<5 then 0 end c from long_sequence(3)", null, true, true
-        );
-
-        assertQuery("c\n0\nnull\nnull\n",
-                "select case when x<2 then 0 end c from long_sequence(3)", null, true, true
-        );
-
-        assertQuery("c\n1\n",
-                "select case when true then 1 end c", null, true, true
-        );
-
-        assertQuery("c\nnull\n",
-                "select case when false then 2 end c", null, true, true
-        );
+        assertMemoryLeak(() -> {
+            assertQueryNoLeakCheck(
+                    "c\n0\nnull\nnull\n",
+                    "select case x when 1 then 0 end c from long_sequence(3)",
+                    null,
+                    true,
+                    true
+            );
+            assertQueryNoLeakCheck(
+                    "c\nnull\nnull\nnull\n",
+                    "select case x when -1 then 0 end c from long_sequence(3)",
+                    null,
+                    true,
+                    true
+            );
+            assertQueryNoLeakCheck(
+                    "c\n0\n0\n0\n",
+                    "select case when x<5 then 0 end c from long_sequence(3)",
+                    null,
+                    true,
+                    true
+            );
+            assertQueryNoLeakCheck(
+                    "c\n0\nnull\nnull\n",
+                    "select case when x<2 then 0 end c from long_sequence(3)",
+                    null,
+                    true,
+                    true
+            );
+            assertQueryNoLeakCheck(
+                    "c\n1\n",
+                    "select case when true then 1 end c",
+                    null,
+                    true,
+                    true
+            );
+            assertQueryNoLeakCheck(
+                    "c\nnull\n",
+                    "select case when false then 2 end c",
+                    null,
+                    true,
+                    true
+            );
+        });
     }
 
     @Test
     public void testCaseWithNoElseInWhereClause() throws Exception {
-        assertException("select x from long_sequence(3) where case x when 1 then 0 end", 37, "boolean expression expected");
+        assertMemoryLeak(() -> {
+            assertException("select x from long_sequence(3) where case x when 1 then 0 end", 37, "boolean expression expected");
 
-        assertQuery("x\n1\n",
-                "select x from long_sequence(3) where case when x<2 then true end", null, true, false
-        );
-
-        assertQuery("x\n1\n2\n",
-                "select x from long_sequence(3) where case when x<3 then true else false end", null, true, false
-        );
-
-        assertQuery("x\n1\n",
-                "select x from long_sequence(3) where case when x<2 then true when x<3 then false end", null, true, false
-        );
-
-        assertQuery("x\n",
-                "select x from long_sequence(3) where case when false then true end", null, false, false
-        );
+            assertQueryNoLeakCheck(
+                    "x\n1\n",
+                    "select x from long_sequence(3) where case when x<2 then true end",
+                    null,
+                    true,
+                    false
+            );
+            assertQueryNoLeakCheck(
+                    "x\n1\n2\n",
+                    "select x from long_sequence(3) where case when x<3 then true else false end",
+                    null,
+                    true,
+                    false
+            );
+            assertQueryNoLeakCheck(
+                    "x\n1\n",
+                    "select x from long_sequence(3) where case when x<2 then true when x<3 then false end",
+                    null,
+                    true,
+                    false
+            );
+            assertQueryNoLeakCheck(
+                    "x\n",
+                    "select x from long_sequence(3) where case when false then true end",
+                    null,
+                    true,
+                    false
+            );
+        });
     }
 
     @Test
