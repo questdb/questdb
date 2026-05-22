@@ -31,7 +31,6 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.PartitionBy;
-import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.SymbolMapReader;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
@@ -8112,34 +8111,34 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
         @Override
         public CreateMatViewOperationBuilder parseCreateMatViewExt(
                 GenericLexer lexer,
-                SecurityContext securityContext,
+                SqlExecutionContext executionContext,
                 CreateMatViewOperationBuilder builder,
                 @Nullable CharSequence tok
         ) throws SqlException {
             createMatViewSuffixCalled = true;
-            return super.parseCreateMatViewExt(lexer, securityContext, builder, tok);
+            return super.parseCreateMatViewExt(lexer, executionContext, builder, tok);
         }
 
         @Override
         public CreateTableOperationBuilder parseCreateTableExt(
                 GenericLexer lexer,
-                SecurityContext securityContext,
+                SqlExecutionContext executionContext,
                 CreateTableOperationBuilder builder,
                 @Nullable CharSequence tok
         ) throws SqlException {
             createTableSuffixCalled = true;
-            return super.parseCreateTableExt(lexer, securityContext, builder, tok);
+            return super.parseCreateTableExt(lexer, executionContext, builder, tok);
         }
 
         @Override
         public CreateViewOperationBuilder parseCreateViewExt(
                 GenericLexer lexer,
-                SecurityContext securityContext,
+                SqlExecutionContext executionContext,
                 CreateViewOperationBuilder builder,
                 @Nullable CharSequence tok
         ) throws SqlException {
             createViewSuffixCalled = true;
-            return super.parseCreateViewExt(lexer, securityContext, builder, tok);
+            return super.parseCreateViewExt(lexer, executionContext, builder, tok);
         }
 
         @Override
@@ -8150,13 +8149,13 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
 
         @Override
         protected void addColumnSuffix(
-                SecurityContext securityContext,
+                SqlExecutionContext executionContext,
                 CharSequence tok,
                 TableToken tableToken,
                 AlterOperationBuilder alterOperationBuilder
         ) throws SqlException {
             addColumnSuffixCalled = true;
-            super.addColumnSuffix(securityContext, tok, tableToken, alterOperationBuilder);
+            super.addColumnSuffix(executionContext, tok, tableToken, alterOperationBuilder);
         }
 
         @Override
