@@ -72,17 +72,17 @@ import static io.questdb.cutlass.qwp.protocol.QwpConstants.*;
 public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
     // Cumulative ACK batch size
     private static final int ACK_BATCH_SIZE = 8;
-    // Worst-case WebSocket frame header size (2-byte base + 8-byte 64-bit
-    // extended length + 4-byte mask for client->server frames). Subtracted
-    // from the recv buffer when computing the effective batch cap so the
-    // advertised value still leaves room for the frame header on the wire.
-    private static final int MAX_WS_FRAME_HEADER_BYTES = 14;
     // HTTP response templates
     private static final byte[] BAD_REQUEST_PREFIX =
             "HTTP/1.1 400 Bad Request\r\nContent-Type: text/plain\r\nContent-Length: ".getBytes(StandardCharsets.US_ASCII);
     private static final byte[] HTTP_HEADER_END = "\r\n\r\n".getBytes(StandardCharsets.US_ASCII);
     private static final Log LOG = LogFactory.getLog(QwpWebSocketUpgradeProcessor.class);
     private static final LocalValue<QwpProcessorState> LV = new LocalValue<>();
+    // Worst-case WebSocket frame header size (2-byte base + 8-byte 64-bit
+    // extended length + 4-byte mask for client->server frames). Subtracted
+    // from the recv buffer when computing the effective batch cap so the
+    // advertised value still leaves room for the frame header on the wire.
+    private static final int MAX_WS_FRAME_HEADER_BYTES = 14;
     // Carries the byte count of a 4xx upgrade rejection staged in the raw
     // response buffer by onHeadersReady, to be flushed by onRequestComplete
     // (which is allowed to propagate PeerIsSlowToReadException to the
@@ -576,16 +576,7 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
                 throw ServerDisconnectException.INSTANCE;
             }
         }
-    }
-
-    private static void finalizeHandshake(HttpConnectionContext context, QwpProcessorState state) {
-        state.setWsHandshakeSent(true);
-        state.setHandshakeFlushPending(false);
-        state.setPendingHandshakeBytes(0);
-        LOG.info().$("WebSocket handshake sent [fd=").$(context.getFd()).I$();
-        // Switch to WebSocket protocol -- the framework now routes recvs to
-        // resumeRecv (frame parser) instead of HTTP request parsing.
-        context.switchProtocol();
+        drainBufferedFrames(context, state);
     }
 
     private static int badRequestResponseSize(String reason) {
@@ -597,6 +588,16 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
                 + Integer.toString(reasonByteCount).length()
                 + HTTP_HEADER_END.length
                 + reasonByteCount;
+    }
+
+    private static void finalizeHandshake(HttpConnectionContext context, QwpProcessorState state) {
+        state.setWsHandshakeSent(true);
+        state.setHandshakeFlushPending(false);
+        state.setPendingHandshakeBytes(0);
+        LOG.info().$("WebSocket handshake sent [fd=").$(context.getFd()).I$();
+        // Switch to WebSocket protocol -- the framework now routes recvs to
+        // resumeRecv (frame parser) instead of HTTP request parsing.
+        context.switchProtocol();
     }
 
     private static HttpException responseDoesNotFitSendBuffer(long fd, CharSequence responseType, int bufferSize, int requiredSize) {
@@ -616,6 +617,13 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
             REJECT_FLUSH.set(context, tracker);
         }
         tracker.pendingBytes = bytesWritten;
+    }
+
+    private void drainBufferedFrames(HttpConnectionContext context, QwpProcessorState state)
+            throws ServerDisconnectException, PeerDisconnectedException, PeerIsSlowToReadException {
+        if (state.isSendReady() && state.getRecvBufferLen() > 0) {
+            processWebSocketFrames(context, state, context.getRecvBuffer(), state.getRecvBufferLen());
+        }
     }
 
     private void drainPendingResponse(HttpConnectionContext context, QwpProcessorState state)
