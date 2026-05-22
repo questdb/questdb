@@ -50,8 +50,20 @@ public class LinuxMMLineUdpReceiver extends AbstractLineProtoUdpReceiver {
     ) {
         super(configuration, engine, workerPool, acceptOpen);
         this.msgCount = configuration.getMsgCount();
-        msgVec = nf.msgHeaders(configuration.getMsgBufferSize(), msgCount);
-        start();
+        // #051: wrap the post-super native allocation and start() in try/catch so a failure
+        // (msgHeaders OOM, thread alloc, affinity bind) releases what the super already opened.
+        // close() releases the fd and any allocated msgVec; matches the LineTcpReceiver pattern.
+        try {
+            msgVec = nf.msgHeaders(configuration.getMsgBufferSize(), msgCount);
+            start();
+        } catch (Throwable t) {
+            try {
+                close();
+            } catch (Throwable s) {
+                t.addSuppressed(s);
+            }
+            throw t;
+        }
     }
 
     @Override

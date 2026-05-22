@@ -420,8 +420,11 @@ public class LifecycleOrchestrator implements QuietCloseable {
         // gated on a specific dep.
         for (StableWatch w : stableWatchers.values()) {
             if (allHardDependentsStable(w.componentName)) {
-                Runnable cb = w.callback;
-                w.callback = null; // single-shot
+                // #049: getAndSet(null) is a single CAS so two threads observing READY at the
+                // same time can no longer both null-and-invoke. Previously the three independent
+                // volatile ops (read cb, null callback, run cb) allowed a race where both threads
+                // saw a non-null callback and fired it twice. The callback contract is single-shot.
+                Runnable cb = w.callback.getAndSet(null);
                 if (cb != null) {
                     try {
                         cb.run();
@@ -560,12 +563,12 @@ public class LifecycleOrchestrator implements QuietCloseable {
     }
 
     private static final class StableWatch {
+        final AtomicReference<Runnable> callback;
         final String componentName;
-        volatile Runnable callback;
 
         StableWatch(String componentName, Runnable callback) {
             this.componentName = componentName;
-            this.callback = callback;
+            this.callback = new AtomicReference<>(callback);
         }
     }
 

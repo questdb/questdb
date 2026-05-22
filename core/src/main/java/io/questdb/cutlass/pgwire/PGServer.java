@@ -85,80 +85,115 @@ public class PGServer implements Closeable {
             ObjectFactory<SqlExecutionContextImpl> executionContextObjectFactory,
             AtomicBoolean acceptOpen
     ) {
-        this.acceptOpen = acceptOpen;
-        this.metrics = engine.getMetrics();
-        if (configuration.isSelectCacheEnabled()) {
-            this.typesAndSelectCache = new ConcurrentAssociativeCache<>(configuration.getConcurrentCacheConfiguration());
-        } else {
-            this.typesAndSelectCache = NO_OP_CACHE;
-        }
-        this.contextFactory = new PGConnectionContextFactory(
-                engine,
-                configuration,
-                registry,
-                executionContextObjectFactory,
-                typesAndSelectCache
-        );
-        this.dispatcher = IODispatchers.create(configuration, contextFactory);
-        this.sharedPoolNetwork = sharedPoolNetwork;
-        this.registry = registry;
-
-        sharedPoolNetwork.assign(new Job() {
-            @Override
-            public boolean run(int workerId, @NotNull RunStatus runStatus) {
-                if (!acceptOpen.get()) {
-                    return false;
-                }
-                return dispatcher.run(workerId, runStatus);
+        // #050: wrap the post-field-init body in try/catch so any throw (most commonly the bind
+        // failure from IODispatchers.create) releases the native handles allocated above
+        // (typesAndSelectCache + contextFactory). Matches the LineTcpReceiver pattern.
+        AssociativeCache<TypesAndSelect> typesAndSelectCacheLocal = null;
+        PGConnectionContextFactory contextFactoryLocal = null;
+        IODispatcher<PGConnectionContext> dispatcherLocal = null;
+        try {
+            this.acceptOpen = acceptOpen;
+            this.metrics = engine.getMetrics();
+            if (configuration.isSelectCacheEnabled()) {
+                typesAndSelectCacheLocal = new ConcurrentAssociativeCache<>(configuration.getConcurrentCacheConfiguration());
+            } else {
+                typesAndSelectCacheLocal = NO_OP_CACHE;
             }
-        });
+            contextFactoryLocal = new PGConnectionContextFactory(
+                    engine,
+                    configuration,
+                    registry,
+                    executionContextObjectFactory,
+                    typesAndSelectCacheLocal
+            );
+            dispatcherLocal = IODispatchers.create(configuration, contextFactoryLocal);
+            this.typesAndSelectCache = typesAndSelectCacheLocal;
+            this.contextFactory = contextFactoryLocal;
+            this.dispatcher = dispatcherLocal;
+            this.sharedPoolNetwork = sharedPoolNetwork;
+            this.registry = registry;
 
-        for (int i = 0, n = sharedPoolNetwork.getWorkerCount(); i < n; i++) {
-            sharedPoolNetwork.assign(i, new Job() {
-                private final IORequestProcessor<PGConnectionContext> processor = (operation, context, dispatcher) -> {
-                    try {
-                        if (operation == IOOperation.HEARTBEAT) {
-                            dispatcher.registerChannel(context, IOOperation.HEARTBEAT);
-                            return false;
-                        }
-                        context.handleClientOperation(operation);
-                        dispatcher.registerChannel(context, IOOperation.READ);
-                        return true;
-                    } catch (PeerIsSlowToWriteException e) {
-                        dispatcher.registerChannel(context, IOOperation.READ);
-                    } catch (PeerIsSlowToReadException e) {
-                        dispatcher.registerChannel(context, IOOperation.WRITE);
-                    } catch (PeerDisconnectedException e) {
-                        dispatcher.disconnect(
-                                context,
-                                operation == IOOperation.READ
-                                        ? DISCONNECT_REASON_PEER_DISCONNECT_AT_RECV
-                                        : DISCONNECT_REASON_PEER_DISCONNECT_AT_SEND
-                        );
-                    } catch (PGMessageProcessingException e) {
-                        LOG.error().$("protocol issue [err: `").$safe(e.getFlyweightMessage()).$("`]").$();
-                        dispatcher.disconnect(context, DISCONNECT_REASON_PROTOCOL_VIOLATION);
-                    } catch (Throwable e) { // must remain last in catch list!
-                        LOG.critical().$("internal error [ex=").$(e).$(']').$();
-                        // This is a critical error, so we treat it as an unhandled one.
-                        metrics.healthMetrics().incrementUnhandledErrors();
-                        dispatcher.disconnect(context, DISCONNECT_REASON_SERVER_ERROR);
-                    }
-                    return false;
-                };
-
+            sharedPoolNetwork.assign(new Job() {
                 @Override
                 public boolean run(int workerId, @NotNull RunStatus runStatus) {
                     if (!acceptOpen.get()) {
                         return false;
                     }
-                    return dispatcher.processIOQueue(processor);
+                    return dispatcher.run(workerId, runStatus);
                 }
             });
 
-            // context factory has thread local pools
-            // therefore we need each thread to clean their thread locals individually
-            sharedPoolNetwork.assignThreadLocalCleaner(i, contextFactory::freeThreadLocal);
+            for (int i = 0, n = sharedPoolNetwork.getWorkerCount(); i < n; i++) {
+                sharedPoolNetwork.assign(i, new Job() {
+                    private final IORequestProcessor<PGConnectionContext> processor = (operation, context, dispatcher) -> {
+                        try {
+                            if (operation == IOOperation.HEARTBEAT) {
+                                dispatcher.registerChannel(context, IOOperation.HEARTBEAT);
+                                return false;
+                            }
+                            context.handleClientOperation(operation);
+                            dispatcher.registerChannel(context, IOOperation.READ);
+                            return true;
+                        } catch (PeerIsSlowToWriteException e) {
+                            dispatcher.registerChannel(context, IOOperation.READ);
+                        } catch (PeerIsSlowToReadException e) {
+                            dispatcher.registerChannel(context, IOOperation.WRITE);
+                        } catch (PeerDisconnectedException e) {
+                            dispatcher.disconnect(
+                                    context,
+                                    operation == IOOperation.READ
+                                            ? DISCONNECT_REASON_PEER_DISCONNECT_AT_RECV
+                                            : DISCONNECT_REASON_PEER_DISCONNECT_AT_SEND
+                            );
+                        } catch (PGMessageProcessingException e) {
+                            LOG.error().$("protocol issue [err: `").$safe(e.getFlyweightMessage()).$("`]").$();
+                            dispatcher.disconnect(context, DISCONNECT_REASON_PROTOCOL_VIOLATION);
+                        } catch (Throwable e) { // must remain last in catch list!
+                            LOG.critical().$("internal error [ex=").$(e).$(']').$();
+                            // This is a critical error, so we treat it as an unhandled one.
+                            metrics.healthMetrics().incrementUnhandledErrors();
+                            dispatcher.disconnect(context, DISCONNECT_REASON_SERVER_ERROR);
+                        }
+                        return false;
+                    };
+
+                    @Override
+                    public boolean run(int workerId, @NotNull RunStatus runStatus) {
+                        if (!acceptOpen.get()) {
+                            return false;
+                        }
+                        return dispatcher.processIOQueue(processor);
+                    }
+                });
+
+                // context factory has thread local pools
+                // therefore we need each thread to clean their thread locals individually
+                sharedPoolNetwork.assignThreadLocalCleaner(i, contextFactory::freeThreadLocal);
+            }
+        } catch (Throwable t) {
+            // Free what we allocated above; close() would normally do this, but the partially
+            // constructed PGServer never enters the try-with-resources at the call site so
+            // close() never runs. Match the LineTcpReceiver close-and-rethrow shape.
+            try {
+                Misc.free(dispatcherLocal);
+            } catch (Throwable s) {
+                t.addSuppressed(s);
+            }
+            try {
+                Misc.free(contextFactoryLocal);
+            } catch (Throwable s) {
+                t.addSuppressed(s);
+            }
+            // typesAndSelectCacheLocal may be the static NO_OP_CACHE sentinel; freeing that
+            // would be wrong. Only free a freshly-allocated ConcurrentAssociativeCache.
+            if (typesAndSelectCacheLocal != null && typesAndSelectCacheLocal != NO_OP_CACHE) {
+                try {
+                    Misc.free(typesAndSelectCacheLocal);
+                } catch (Throwable s) {
+                    t.addSuppressed(s);
+                }
+            }
+            throw t;
         }
     }
 

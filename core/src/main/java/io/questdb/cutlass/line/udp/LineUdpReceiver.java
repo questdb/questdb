@@ -50,8 +50,20 @@ public class LineUdpReceiver extends AbstractLineProtoUdpReceiver {
             AtomicBoolean acceptOpen
     ) {
         super(configuration, engine, workerPool, acceptOpen);
-        this.buf = Unsafe.malloc(this.bufLen = configuration.getMsgBufferSize(), MemoryTag.NATIVE_ILP_RSS);
-        start();
+        // #051: wrap the post-super allocation and start() in try/catch so a failure (thread
+        // alloc, affinity bind, or buf malloc OOM) releases what the super already opened.
+        // close() releases the fd and any allocated buf; matches the LineTcpReceiver pattern.
+        try {
+            this.buf = Unsafe.malloc(this.bufLen = configuration.getMsgBufferSize(), MemoryTag.NATIVE_ILP_RSS);
+            start();
+        } catch (Throwable t) {
+            try {
+                close();
+            } catch (Throwable s) {
+                t.addSuppressed(s);
+            }
+            throw t;
+        }
     }
 
     @Override
