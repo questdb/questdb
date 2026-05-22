@@ -189,7 +189,7 @@ public class QwpSenderFuzzTest extends AbstractQwpWebSocketTest {
     @Test
     public void testAddColumns() throws Exception {
         initLoadParameters(15 + random.nextInt(100), 5 + random.nextInt(5),
-                2 + random.nextInt(Os.isWindows() ? 5 : 20), 1 + random.nextInt(4),
+                2 + random.nextInt(Os.isLinux() ? 8 : 3), 1 + random.nextInt(4),
                 random.nextInt(75));
         initFuzzParameters(-1, 1, 1 + random.nextInt(3), 6, false, true, false, 0.1);
         runTest();
@@ -211,49 +211,49 @@ public class QwpSenderFuzzTest extends AbstractQwpWebSocketTest {
 
     @Test
     public void testAllMixed() throws Exception {
-        initLoadParameters(50, Os.isWindows() ? 3 : 5, 5, 5, 50);
+        initLoadParameters(50, Os.isLinux() ? 5 : 3, 5, 5, 50);
         initFuzzParameters(3, 4, 5, 10, 5, true, true, true, 0.05);
         runTest();
     }
 
     @Test
     public void testAllMixedNoSymbols() throws Exception {
-        initLoadParameters(50, Os.isWindows() ? 3 : 5, 5, 5, 50);
+        initLoadParameters(50, Os.isLinux() ? 5 : 3, 5, 5, 50);
         initFuzzParameters(3, 4, 5, 10, 5, true, false, true, 0.05);
         runTest();
     }
 
     @Test
     public void testAllMixedSingleTable() throws Exception {
-        initLoadParameters(50, Os.isWindows() ? 3 : 5, 5, 1, 50);
+        initLoadParameters(50, Os.isLinux() ? 5 : 3, 5, 1, 50);
         initFuzzParameters(3, 4, 5, 10, 5, true, true, true, 0.05);
         runTest();
     }
 
     @Test
     public void testAllMixedSplitPart() throws Exception {
-        initLoadParameters(50, Os.isWindows() ? 3 : 5, 5, 1, 50);
+        initLoadParameters(50, Os.isLinux() ? 5 : 3, 5, 1, 50);
         initFuzzParameters(-1, -1, -1, 10, -1, false, true, false, 0.05);
         runTest();
     }
 
     @Test
     public void testCaseVariationReorderingColumns() throws Exception {
-        initLoadParameters(100, Os.isWindows() ? 3 : 5, 5, 5, 50);
+        initLoadParameters(100, Os.isLinux() ? 5 : 3, 5, 5, 50);
         initFuzzParameters(4, -1, 2, -1, true, true, false);
         runTest();
     }
 
     @Test
     public void testCaseVariationReorderingColumnsNoSymbols() throws Exception {
-        initLoadParameters(100, Os.isWindows() ? 3 : 5, 5, 5, 50);
+        initLoadParameters(100, Os.isLinux() ? 5 : 3, 5, 5, 50);
         initFuzzParameters(4, -1, -1, -1, true, false, false);
         runTest();
     }
 
     @Test
     public void testCaseVariationReorderingColumnsSendSymbolsWithSpace() throws Exception {
-        initLoadParameters(100, Os.isWindows() ? 3 : 5, 5, 5, 50);
+        initLoadParameters(100, Os.isLinux() ? 5 : 3, 5, 5, 50);
         initFuzzParameters(4, -1, 3, -1, true, true, true);
         // Same wide-batch-vs-default-recv-buffer issue as testLoadSendSymbolsWithSpace.
         clientAutoFlushRows = 5;
@@ -262,47 +262,47 @@ public class QwpSenderFuzzTest extends AbstractQwpWebSocketTest {
 
     @Test
     public void testDuplicatesReorderingColumns() throws Exception {
-        initLoadParameters(100, Os.isWindows() ? 3 : 5, 5, 5, 50);
+        initLoadParameters(100, Os.isLinux() ? 5 : 3, 5, 5, 50);
         initFuzzParameters(4, 4, -1, -1, -1, true, true, false, 0.05);
         runTest();
     }
 
     @Test
     public void testDuplicatesReorderingColumnsNoSymbols() throws Exception {
-        initLoadParameters(100, Os.isWindows() ? 3 : 5, 5, 5, 50);
+        initLoadParameters(100, Os.isLinux() ? 5 : 3, 5, 5, 50);
         initFuzzParameters(4, 4, -1, -1, -1, true, false, false, 0.05);
         runTest();
     }
 
     @Test
     public void testDuplicatesReorderingColumnsSendSymbolsWithSpace() throws Exception {
-        initLoadParameters(100, Os.isWindows() ? 3 : 5, 5, 5, 50);
+        initLoadParameters(100, Os.isLinux() ? 5 : 3, 5, 5, 50);
         initFuzzParameters(4, 4, -1, -1, -1, true, true, true, 0.05);
         runTest();
     }
 
     @Test
     public void testLoad() throws Exception {
-        initLoadParameters(100, Os.isWindows() ? 3 : 5, 7, 12, 20);
+        initLoadParameters(100, Os.isLinux() ? 5 : 3, 7, 12, 20);
         runTest();
     }
 
     @Test
     public void testLoadLargePayload() throws Exception {
-        initLoadParameters(500, Os.isWindows() ? 3 : 5, 5, 5, 10);
+        initLoadParameters(500, Os.isLinux() ? 5 : 3, 5, 5, 10);
         runTest();
     }
 
     @Test
     public void testLoadNoSymbols() throws Exception {
-        initLoadParameters(100, Os.isWindows() ? 3 : 5, 7, 12, 20);
+        initLoadParameters(100, Os.isLinux() ? 5 : 3, 7, 12, 20);
         initFuzzParameters(-1, -1, -1, 5, true, false, false, 0.05);
         runTest();
     }
 
     @Test
     public void testLoadSendSymbolsWithSpace() throws Exception {
-        initLoadParameters(100, Os.isWindows() ? 3 : 5, 4, 8, 20);
+        initLoadParameters(100, Os.isLinux() ? 5 : 3, 4, 8, 20);
         initFuzzParameters(-1, -1, 2, -1, false, true, true);
         // Frequent new-column injection (newColumnFactor=2) plus 8
         // interleaved tables and symbols with embedded spaces inflates
@@ -321,34 +321,34 @@ public class QwpSenderFuzzTest extends AbstractQwpWebSocketTest {
         // interleaved per batch and full schema headers, ~3 rows yields
         // a wire frame around 1KB, comfortably under 2048.
         clientAutoFlushRows = 3;
-        initLoadParameters(100, Os.isWindows() ? 3 : 5, 5, 5, 20);
+        initLoadParameters(100, Os.isLinux() ? 5 : 3, 5, 5, 20);
         runTest();
     }
 
     @Test
     public void testNonAsciiValues() throws Exception {
-        initLoadParameters(100, Os.isWindows() ? 3 : 5, 5, 5, 50);
+        initLoadParameters(100, Os.isLinux() ? 5 : 3, 5, 5, 50);
         initFuzzParameters(-1, -1, 3, 4, false, true, false);
         runTest();
     }
 
     @Test
     public void testNonAsciiValuesNoSymbols() throws Exception {
-        initLoadParameters(100, Os.isWindows() ? 3 : 5, 5, 5, 50);
+        initLoadParameters(100, Os.isLinux() ? 5 : 3, 5, 5, 50);
         initFuzzParameters(-1, -1, -1, 4, false, false, false);
         runTest();
     }
 
     @Test
     public void testReorderingColumns() throws Exception {
-        initLoadParameters(100, Os.isWindows() ? 3 : 5, 5, 5, 50);
+        initLoadParameters(100, Os.isLinux() ? 5 : 3, 5, 5, 50);
         initFuzzParameters(4, -1, -1, 8, false, true, true, 0.05);
         runTest();
     }
 
     @Test
     public void testReorderingColumnsNoSymbols() throws Exception {
-        initLoadParameters(100, Os.isWindows() ? 3 : 5, 5, 5, 50);
+        initLoadParameters(100, Os.isLinux() ? 5 : 3, 5, 5, 50);
         initFuzzParameters(4, -1, -1, -1, true, false, false, 0.05);
         runTest();
     }
@@ -356,7 +356,7 @@ public class QwpSenderFuzzTest extends AbstractQwpWebSocketTest {
     @Test
     public void testReorderingManyThreads() throws Exception {
         initLoadParameters(15 + random.nextInt(100), 5 + random.nextInt(5),
-                2 + random.nextInt(Os.isWindows() ? 5 : 20), 1 + random.nextInt(4),
+                2 + random.nextInt(Os.isLinux() ? 8 : 3), 1 + random.nextInt(4),
                 random.nextInt(75));
         initFuzzParameters(3, -1, 1 + random.nextInt(3), -1, false, true, false);
         runTest();
@@ -364,35 +364,35 @@ public class QwpSenderFuzzTest extends AbstractQwpWebSocketTest {
 
     @Test
     public void testReorderingNonAscii() throws Exception {
-        initLoadParameters(100, Os.isWindows() ? 3 : 5, 5, 5, 50);
+        initLoadParameters(100, Os.isLinux() ? 5 : 3, 5, 5, 50);
         initFuzzParameters(4, -1, 2, 4, false, true, false);
         runTest();
     }
 
     @Test
     public void testReorderingSkipColumnsWithNonAscii() throws Exception {
-        initLoadParameters(100, Os.isWindows() ? 3 : 5, 5, 5, 50);
+        initLoadParameters(100, Os.isLinux() ? 5 : 3, 5, 5, 50);
         initFuzzParameters(4, 4, 2, 4, true, true, false);
         runTest();
     }
 
     @Test
     public void testReorderingSkipColumnsWithNonAsciiNoSymbols() throws Exception {
-        initLoadParameters(100, Os.isWindows() ? 3 : 5, 5, 5, 50);
+        initLoadParameters(100, Os.isLinux() ? 5 : 3, 5, 5, 50);
         initFuzzParameters(4, 4, -1, 4, true, false, false);
         runTest();
     }
 
     @Test
     public void testReorderingSkipDuplicateColumnsWithNonAscii() throws Exception {
-        initLoadParameters(100, Os.isWindows() ? 3 : 5, 5, 5, 50);
+        initLoadParameters(100, Os.isLinux() ? 5 : 3, 5, 5, 50);
         initFuzzParameters(4, 4, 4, -1, 4, true, true, false, 0.05);
         runTest();
     }
 
     @Test
     public void testReorderingSkipDuplicateColumnsWithNonAsciiNoSymbols() throws Exception {
-        initLoadParameters(100, Os.isWindows() ? 3 : 5, 5, 5, 50);
+        initLoadParameters(100, Os.isLinux() ? 5 : 3, 5, 5, 50);
         initFuzzParameters(4, 4, 4, -1, 4, true, false, false, 0.05);
         runTest();
     }
