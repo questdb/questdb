@@ -106,6 +106,33 @@ public class LengthFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testUpperSymbolLength() throws Exception {
+        assertQuery(
+                """
+                        sym\tlength
+                        WC\t2
+                        \t-1
+                        EH\t2
+                        \t-1
+                        EH\t2
+                        SWH\t3
+                        T\t1
+                        T\t1
+                        T\t1
+                        \t-1
+                        """,
+                "select sym, length(upper(sym)) length from x",
+                "create table x as (" +
+                        "select rnd_symbol(5,1,3,5) as sym\n" +
+                        "from long_sequence(10)" +
+                        ")",
+                null,
+                true,
+                true
+        );
+    }
+
+    @Test
     public void testVarcharLengthBytesSimple() throws Exception {
         assertQuery(
                 """

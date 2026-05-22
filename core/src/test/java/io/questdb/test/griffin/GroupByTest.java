@@ -950,6 +950,87 @@ public class GroupByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testGroupByArrayKeyDoesNotLeak() throws Exception {
+        // Regression: count_distinct(<expression>) over a row source rewrites to
+        //   count(*) FROM (SELECT <expr> FROM ... WHERE <expr> IS NOT NULL GROUP BY <expr>)
+        // When <expr> is an ARRAY constructor, GroupByUtils rejects the GROUP BY
+        // key as "unsupported type of expression". The first column loop in
+        // assembleGroupByFunctions adds the parsed ARRAY Function to both outer
+        // and inner projection lists, then the third loop replaces the outer
+        // entry with a column-ref Function -- leaving the original ARRAY (and
+        // its NATIVE_ND_ARRAY backing) reachable only via the inner list. The
+        // failure-path cleanup now walks both lists and frees each unique
+        // reference exactly once.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (x INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES (1, '2024-01-01T00:00:00.000000Z')");
+            for (String q : new String[]{
+                    "SELECT count_distinct(ARRAY[0.9873]) FROM t WHERE ts < ts",
+                    "SELECT count_distinct(ARRAY[ARRAY[0.7172, 0.6604, 0.0546]," +
+                            " ARRAY[0.1216, 0.4188, 0.8926]]) FROM t WHERE ts < ts",
+            }) {
+                try {
+                    engine.select(q, sqlExecutionContext).close();
+                    Assert.fail("expected SqlException");
+                } catch (SqlException expected) {
+                    TestUtils.assertContains(expected.getFlyweightMessage(),
+                            "unsupported type of expression");
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testGroupByBrokenColumnAfterTimestampClosesFunctionsOnce() throws Exception {
+        // Regression: assembleGroupByFunctions's first column loop adds the
+        // designated timestamp column as a null placeholder on the outer
+        // projection list but skips the inner list, so subsequent non-timestamp
+        // columns sit at outer[i] and inner[i-1]. When a later column fails to
+        // parse, the failure-path cleanup must dedupe shared Function references
+        // by reference identity rather than by index. A naive index-aligned
+        // dedup would close every shared reference past the timestamp slot
+        // twice and underflow the native allocator counter; assertMemoryLeak
+        // catches the imbalance.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (c0 INT, c1 INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES (1, 10, '2024-01-01T00:00:00.000000Z')");
+            try {
+                engine.select(
+                        "SELECT ts, c0, c1, sum(nonexistent_col) FROM t SAMPLE BY 1h",
+                        sqlExecutionContext
+                ).close();
+                Assert.fail("expected SqlException");
+            } catch (SqlException expected) {
+                TestUtils.assertContains(expected.getFlyweightMessage(), "Invalid column");
+            }
+        });
+    }
+
+    @Test
+    public void testGroupByCastOverColumnStaysKey() throws Exception {
+        // Regression: the recursive walk in isEffectivelyConstantExpression
+        // must reject cast over a real column. (x)::STRING contains a LITERAL
+        // child that fails the type check, so the cast is not lifted into the
+        // outer projection and the column stays a real GROUP BY key.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (x INT)");
+            execute("INSERT INTO t VALUES (1), (2), (3)");
+            assertQueryNoLeakCheck(
+                    """
+                            e0\ta0
+                            1\t1
+                            2\t1
+                            3\t1
+                            """,
+                    "SELECT (x)::STRING AS e0, count() AS a0 FROM t GROUP BY 1 ORDER BY 1",
+                    null,
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
     public void testGroupByColumnIdx1() throws Exception {
         assertQuery(
                 """
@@ -1078,6 +1159,47 @@ public class GroupByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testGroupByConstantsOnlyMultiKey() throws Exception {
+        // SqlOptimiser drops effectively-constant GROUP BY keys when at least one
+        // other group-by key remains, but used to leave the dropped entries in
+        // groupByModel.getGroupBy(). validateGroupByColumns then iterated the
+        // stale list and threw "group by column does not match any key column"
+        // for any all-constant explicit GROUP BY. Bind variables hid the bug
+        // because :bN::TYPE is a FUNCTION node and not effectively-constant.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (c2 STRING)");
+            execute("INSERT INTO t VALUES ('J'), ('K')");
+            String expected = """
+                    e0\te1\ta0
+                    true\tJ\t1
+                    """;
+            String body = "FROM (SELECT c2 AS k, count() AS cnt FROM t)\nWHERE k > 'A'\n";
+            assertQueryNoLeakCheck(expected, "SELECT true AS e0, 'J' AS e1, max(cnt) AS a0\n" + body + "GROUP BY e0, e1", null, true, true);
+            assertQueryNoLeakCheck(expected, "SELECT true AS e0, 'J' AS e1, max(cnt) AS a0\n" + body + "GROUP BY e0, 2", null, true, true);
+            assertQueryNoLeakCheck(expected, "SELECT true AS e0, 'J' AS e1, max(cnt) AS a0\n" + body + "GROUP BY 1, 2", null, true, true);
+        });
+    }
+
+    @Test
+    public void testGroupByConstantsOnlySingleKey() throws Exception {
+        // Companion to testGroupByConstantsOnlyMultiKey: the single-key
+        // all-constant shape that originally surfaced the bug. With the
+        // effectively-constant key dropped from the inner GROUP BY, the
+        // optimiser must collapse to a non-keyed aggregate and still emit
+        // the lifted constant in the outer projection.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (x INT)");
+            execute("INSERT INTO t VALUES (1), (2), (3)");
+            String expected = """
+                    e0\ta0
+                    true\t3
+                    """;
+            assertQueryNoLeakCheck(expected, "SELECT true AS e0, max(x) AS a0 FROM t GROUP BY e0", null, true, true);
+            assertQueryNoLeakCheck(expected, "SELECT true AS e0, max(x) AS a0 FROM t GROUP BY 1", null, true, true);
+        });
+    }
+
+    @Test
     public void testGroupByDuplicateColumn() throws Exception {
         assertQuery(
                 """
@@ -1199,6 +1321,30 @@ public class GroupByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testGroupByMixedRealKeyAndConstantBind() throws Exception {
+        // Real column key plus constant bind projection: the bind goes to
+        // the outer virtual projection while the real column stays in the
+        // inner GROUP BY key set. Both keyed and non-empty input flow.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (c STRING)");
+            execute("INSERT INTO t VALUES ('A'), ('A'), ('B')");
+            bindVariableService.clear();
+            bindVariableService.setStr("b0", "X");
+            assertQueryNoLeakCheck(
+                    """
+                            e0\tc\ta0
+                            X\tA\t2
+                            X\tB\t1
+                            """,
+                    "SELECT :b0 AS e0, c, count() AS a0 FROM t GROUP BY c ORDER BY c",
+                    null,
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
     public void testGroupByNonPartitioned() throws Exception {
         assertQuery(
                 """
@@ -1213,6 +1359,39 @@ public class GroupByTest extends AbstractCairoTest {
                 true,
                 true
         );
+    }
+
+    @Test
+    public void testGroupByNullLiteralKey() throws Exception {
+        // Regression: a bare `null` literal in the SELECT list referenced from GROUP BY
+        // used to blow up the map key sink codegen with
+        //     IllegalArgumentException: Unexpected function type: NULL
+        // The NULL-typed key is now stored as a zero-width column (no bytes reserved),
+        // so all rows collapse into a single group as expected.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (v INT) ");
+            execute("INSERT INTO t VALUES (1), (2), (3)");
+            assertQueryNoLeakCheck(
+                    "e0\ta0\n" +
+                            "null\t2.0\n",
+                    "SELECT null AS e0, avg(v) AS a0 FROM t GROUP BY 1",
+                    null,
+                    true,
+                    true
+            );
+            // A real key alongside the constant NULL still grouped per real-key value.
+            execute("CREATE TABLE t2 (k INT, v INT)");
+            execute("INSERT INTO t2 VALUES (1, 10), (1, 20), (2, 30)");
+            assertQueryNoLeakCheck(
+                    "e0\tk\ta\n" +
+                            "null\t1\t15.0\n" +
+                            "null\t2\t30.0\n",
+                    "SELECT null AS e0, k, avg(v) AS a FROM t2 GROUP BY 1, k ORDER BY k",
+                    null,
+                    true,
+                    true
+            );
+        });
     }
 
     @Test
@@ -2897,6 +3076,37 @@ public class GroupByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNestedFilterAcrossGroupByWithBindVariable() throws Exception {
+        // The optimiser splits a WHERE over a GROUP BY subquery into two
+        // model filters when one conjunct references the aggregated column
+        // and the other references no column at all (e.g. a bind variable
+        // comparison): the constant-only conjunct gets pushed past the
+        // aggregate while the agg-column conjunct stays at the outer
+        // level. The literal form folds the constant conjunct away so this
+        // never surfaced; the bind form keeps it opaque, so codegen wraps
+        // a FilteredRecordCursorFactory over another, which historically
+        // tripped a constructor-time assertion. The factory now collapses
+        // those into a single combined-filter wrapper.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (sym SYMBOL, ts TIMESTAMP) timestamp(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES ('A', '2024-01-01T00:00:00.000000Z')");
+
+            bindVariableService.clear();
+            bindVariableService.setStr("b0", "KNWL");
+
+            assertQueryNoLeakCheck(
+                    "k\tcnt\n" +
+                            "A\t1\n",
+                    "SELECT * FROM (SELECT sym AS k, count() AS cnt FROM t)\n" +
+                            "WHERE (cnt IS NOT NULL) AND (:b0::VARCHAR != 'UX')",
+                    null,
+                    true,
+                    false
+            );
+        });
+    }
+
+    @Test
     public void testNestedGroupByWithExplicitGroupByClause() throws Exception {
         String expected = """
                 url\tu_count\tcnt\tavg_m_sum
@@ -2947,6 +3157,88 @@ public class GroupByTest extends AbstractCairoTest {
                         FROM x_sample
                         GROUP BY url"""
         );
+    }
+
+    @Test
+    public void testNonKeyedAggOverArithmeticBind() throws Exception {
+        // OPERATION (+) over a BIND_VARIABLE leaf is effectively-constant via
+        // the recursive walk in isEffectivelyConstantExpression, so it lifts
+        // to the outer projection in a non-keyed aggregate.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (x INT)");
+            execute("INSERT INTO t VALUES (1), (2), (3)");
+            bindVariableService.clear();
+            bindVariableService.setStr("b0", "5");
+            assertQueryNoLeakCheck(
+                    "e0\ta0\n6\t3\n",
+                    "SELECT :b0::LONG + 1 AS e0, count() AS a0 FROM t",
+                    null,
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testNonKeyedAggOverConstantCastNonEmpty() throws Exception {
+        // Sanity check: cast and bind projections render correctly when
+        // WHERE doesn't filter everything out, so the non-keyed aggregate
+        // sees real rows and the lifted projection still resolves to its
+        // bind / constant value at row time.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (c2 STRING)");
+            execute("INSERT INTO t VALUES ('A'), ('B'), ('C')");
+            String expected = "e0\ta0\nX\t3\n";
+            assertQueryNoLeakCheck(expected, "SELECT 'X'::CHAR AS e0, count() AS a0 FROM t", null, false, true);
+            bindVariableService.clear();
+            bindVariableService.setStr("b0", "X");
+            assertQueryNoLeakCheck(expected, "SELECT :b0::CHAR AS e0, count() AS a0 FROM t", null, false, true);
+            bindVariableService.clear();
+            bindVariableService.setStr("b0", "X");
+            assertQueryNoLeakCheck(expected, "SELECT :b0 AS e0, count() AS a0 FROM t", null, false, true);
+        });
+    }
+
+    @Test
+    public void testNonKeyedAggOverConstantCastProjection() throws Exception {
+        // Regression: a SELECT projection like 'X'::CHAR or :b0::CHAR is
+        // semantically constant per query, but isEffectivelyConstantExpression
+        // rejected FUNCTION nodes whose factory wasn't registered as runtime-
+        // constant. The optimiser then routed the projection through the
+        // keyed GROUP BY path, so a WHERE that filtered out every row produced
+        // an empty result instead of the single default-aggregate row a
+        // non-keyed aggregate is supposed to emit. Casts over constants and
+        // bind variables are now treated as effectively-constant.
+        //
+        // Without an explicit GROUP BY clause QuestDB returns the aggregate
+        // default row (the rule); explicit GROUP BY by a constant key still
+        // returns no rows on empty input (the documented exception).
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (c2 STRING)");
+            execute("INSERT INTO t VALUES ('A')");
+            String expected = """
+                    e0\ta0
+                    X\t0
+                    """;
+            assertQueryNoLeakCheck(expected, "SELECT 'X'::CHAR AS e0, count() AS a0 FROM t WHERE 1=0", null, false, true);
+            bindVariableService.clear();
+            bindVariableService.setStr("b0", "X");
+            assertQueryNoLeakCheck(expected, "SELECT :b0::CHAR AS e0, count() AS a0 FROM t WHERE 1=0", null, false, true);
+            bindVariableService.clear();
+            bindVariableService.setStr("b0", "X");
+            assertQueryNoLeakCheck(expected, "SELECT :b0 AS e0, count() AS a0 FROM t WHERE 1=0", null, false, true);
+            // Explicit GROUP BY by a constant-equivalent key keeps the empty-result exception.
+            // The grammar accepts column references / aliases / position numbers in GROUP
+            // BY, so route the bind cases through their projection alias.
+            String expectedEmpty = "e0\ta0\n";
+            assertQueryNoLeakCheck(expectedEmpty, "SELECT 'X'::CHAR AS e0, count() AS a0 FROM t WHERE 1=0 GROUP BY 'X'::CHAR", null, true, true);
+            bindVariableService.clear();
+            bindVariableService.setStr("b0", "X");
+            assertQueryNoLeakCheck(expectedEmpty, "SELECT :b0::CHAR AS e0, count() AS a0 FROM t WHERE 1=0 GROUP BY e0", null, true, true);
+            bindVariableService.clear();
+            bindVariableService.setStr("b0", "X");
+            assertQueryNoLeakCheck(expectedEmpty, "SELECT :b0 AS e0, count() AS a0 FROM t WHERE 1=0 GROUP BY e0", null, true, true);
+        });
     }
 
     @Test
