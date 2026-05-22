@@ -1737,6 +1737,18 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
         }
 
         @Override
+        public ColumnTypes getSnapshotKeyColumnTypes() {
+            return keyColumnTypes;
+        }
+
+        @Override
+        public int getSnapshotKeyStartIndex() {
+            return mapValueTypes != null
+                    ? mapValueTypes.getColumnCount()
+                    : BIVAR_COLUMN_TYPES.getColumnCount();
+        }
+
+        @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
             Unsafe.putDouble(spi.getAddress(recordOffset, columnIndex), result);
@@ -1798,6 +1810,20 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
         }
 
         @Override
+        public long restorePartitionState(MemoryR source, long offset, MapValue value, int formatVersion) {
+            for (int i = 0; i < 5; i++) {
+                value.putDouble(i, source.getDouble(offset));
+                offset += Double.BYTES;
+            }
+            value.putLong(5, source.getLong(offset));
+            offset += Long.BYTES;
+            if (tombstoneValueIndex >= 0) {
+                value.putByte(tombstoneValueIndex, (byte) 0);
+            }
+            return offset;
+        }
+
+        @Override
         public void snapshot(MemoryA sink) {
             MapRecordCursor cursor = map.getCursor();
             MapRecord record = map.getRecord();
@@ -1840,6 +1866,14 @@ public abstract class AbstractBivariateStatWindowFunctionFactory extends Abstrac
         @Override
         public int snapshotMinSupportedVersion() {
             return 1;
+        }
+
+        @Override
+        public void snapshotPartitionState(MemoryA sink, MapValue value) {
+            for (int i = 0; i < 5; i++) {
+                sink.putDouble(value.getDouble(i));
+            }
+            sink.putLong(value.getLong(5));
         }
 
         @Override
