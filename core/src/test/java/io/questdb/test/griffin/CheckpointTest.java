@@ -67,6 +67,7 @@ import io.questdb.cutlass.line.tcp.LineTcpReceiverConfiguration;
 import io.questdb.cutlass.line.udp.LineUdpReceiverConfiguration;
 import io.questdb.cutlass.pgwire.PGConfiguration;
 import io.questdb.griffin.DefaultSqlExecutionCircuitBreakerConfiguration;
+import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.metrics.MetricsConfiguration;
@@ -815,7 +816,7 @@ public class CheckpointTest extends AbstractCairoTest {
             execute("ALTER TABLE t CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
 
             TableToken tableToken = engine.verifyTableName("t");
-            String dbRoot = engine.getConfiguration().getDbRoot().toString();
+            String dbRoot = engine.getConfiguration().getDbRoot();
             File tableDir = new File(dbRoot, tableToken.getDirName());
             File partDir = findParquetPartitionDir(tableDir, "2024-01-01");
 
@@ -860,7 +861,7 @@ public class CheckpointTest extends AbstractCairoTest {
             execute("ALTER TABLE t CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
 
             TableToken tableToken = engine.verifyTableName("t");
-            String dbRoot = engine.getConfiguration().getDbRoot().toString();
+            String dbRoot = engine.getConfiguration().getDbRoot();
             File tableDir = new File(dbRoot, tableToken.getDirName());
             File partDir = findParquetPartitionDir(tableDir, "2024-01-01");
 
@@ -929,7 +930,7 @@ public class CheckpointTest extends AbstractCairoTest {
             execute("ALTER TABLE t CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
 
             TableToken tableToken = engine.verifyTableName("t");
-            String dbRoot = engine.getConfiguration().getDbRoot().toString();
+            String dbRoot = engine.getConfiguration().getDbRoot();
             File tableDir = new File(dbRoot, tableToken.getDirName());
             File partDir = findParquetPartitionDir(tableDir, "2024-01-01");
 
@@ -981,7 +982,7 @@ public class CheckpointTest extends AbstractCairoTest {
             execute("ALTER TABLE t CONVERT PARTITION TO PARQUET LIST '2024-01-01', '2024-01-02'");
 
             TableToken tableToken = engine.verifyTableName("t");
-            String dbRoot = engine.getConfiguration().getDbRoot().toString();
+            String dbRoot = engine.getConfiguration().getDbRoot();
             File tableDir = new File(dbRoot, tableToken.getDirName());
 
             File part1Dir = findParquetPartitionDir(tableDir, "2024-01-01");
@@ -1279,7 +1280,7 @@ public class CheckpointTest extends AbstractCairoTest {
             // After parquet conversion the directory has a txn suffix (e.g.
             // "2024-01-01.2"), so we locate it by prefix.
             TableToken tableToken = engine.verifyTableName("t");
-            String dbRoot = engine.getConfiguration().getDbRoot().toString();
+            String dbRoot = engine.getConfiguration().getDbRoot();
             File tableDir = new File(dbRoot, tableToken.getDirName());
             File[] partDirs = tableDir.listFiles((dir, name) -> name.startsWith("2024-01-01"));
             Assert.assertNotNull(partDirs);
@@ -1415,7 +1416,7 @@ public class CheckpointTest extends AbstractCairoTest {
                     """);
             execute("ALTER TABLE t2 CONVERT PARTITION TO PARQUET LIST '2024-02-01'");
 
-            String dbRoot = engine.getConfiguration().getDbRoot().toString();
+            String dbRoot = engine.getConfiguration().getDbRoot();
             TableToken token1 = engine.verifyTableName("t1");
             TableToken token2 = engine.verifyTableName("t2");
 
@@ -1501,7 +1502,7 @@ public class CheckpointTest extends AbstractCairoTest {
             // info sidecar (sym.pci...). Rebuild without seal leaves only
             // the unsealed sym.pv.0.
             TableToken tableToken = engine.verifyTableName("t_pi");
-            String dbRoot = engine.getConfiguration().getDbRoot().toString();
+            String dbRoot = engine.getConfiguration().getDbRoot();
             File tableDir = new File(dbRoot, tableToken.getDirName());
             for (String partitionPrefix : new String[]{"2024-01-01", "2024-01-02"}) {
                 File[] partDirs = tableDir.listFiles((d, n) -> n.startsWith(partitionPrefix));
@@ -1595,7 +1596,7 @@ public class CheckpointTest extends AbstractCairoTest {
             setProperty(PropertyKey.CAIRO_LEGACY_SNAPSHOT_INSTANCE_ID, restartedId);
             engine.checkpointRecover();
 
-            String dbRoot = engine.getConfiguration().getDbRoot().toString();
+            String dbRoot = engine.getConfiguration().getDbRoot();
             File tableDir = new File(dbRoot, tableToken.getDirName());
             File[] partDirs = tableDir.listFiles((d, n) -> n.startsWith("2024-01-01"));
             Assert.assertNotNull("partition dir missing", partDirs);
@@ -1665,7 +1666,7 @@ public class CheckpointTest extends AbstractCairoTest {
             assertSql(expected, "SELECT price FROM t_pi_parquet WHERE sym = 'A' ORDER BY ts");
 
             TableToken tableToken = engine.verifyTableName("t_pi_parquet");
-            String dbRoot = engine.getConfiguration().getDbRoot().toString();
+            String dbRoot = engine.getConfiguration().getDbRoot();
             File tableDir = new File(dbRoot, tableToken.getDirName());
             File[] partDirs = tableDir.listFiles((d, n) -> n.startsWith("2024-01-01"));
             Assert.assertNotNull("parquet partition dir missing", partDirs);
@@ -1759,7 +1760,7 @@ public class CheckpointTest extends AbstractCairoTest {
             setProperty(PropertyKey.CAIRO_LEGACY_SNAPSHOT_INSTANCE_ID, restartedId);
             engine.checkpointRecover();
 
-            String dbRoot = engine.getConfiguration().getDbRoot().toString();
+            String dbRoot = engine.getConfiguration().getDbRoot();
             File tableDir = new File(dbRoot, tableToken.getDirName());
             File[] partDirs = tableDir.listFiles((d, n) -> n.startsWith("2024-01-01"));
             Assert.assertNotNull("partition dir missing", partDirs);
@@ -1816,7 +1817,7 @@ public class CheckpointTest extends AbstractCairoTest {
             execute("ALTER TABLE t CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
 
             TableToken tableToken = engine.verifyTableName("t");
-            String dbRoot = engine.getConfiguration().getDbRoot().toString();
+            String dbRoot = engine.getConfiguration().getDbRoot();
             File tableDir = new File(dbRoot, tableToken.getDirName());
             File partDir = findParquetPartitionDir(tableDir, "2024-01-01");
 
@@ -1875,7 +1876,7 @@ public class CheckpointTest extends AbstractCairoTest {
             execute("ALTER TABLE t CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
 
             TableToken tableToken = engine.verifyTableName("t");
-            String dbRoot = engine.getConfiguration().getDbRoot().toString();
+            String dbRoot = engine.getConfiguration().getDbRoot();
             File tableDir = new File(dbRoot, tableToken.getDirName());
             File partDir = findParquetPartitionDir(tableDir, "2024-01-01");
 
@@ -2416,6 +2417,61 @@ public class CheckpointTest extends AbstractCairoTest {
 
             execute("checkpoint release");
 
+            assertSql(
+                    """
+                            in_progress\tstarted_at
+                            false\t
+                            """,
+                    "select * from checkpoint_status();"
+            );
+        });
+    }
+
+    @Test
+    public void testValidateCheckpointCreateDoesNotCreate() throws Exception {
+        assertMemoryLeak(() -> {
+            setCurrentMicros(0);
+            final String notInProgress = """
+                    in_progress\tstarted_at
+                    false\t
+                    """;
+            assertSql(notInProgress, "select * from checkpoint_status();");
+
+            // Validation compiles CHECKPOINT CREATE but must not start a checkpoint.
+            validateOnly("checkpoint create");
+            assertSql(notInProgress, "select * from checkpoint_status();");
+
+            // Real execution starts the checkpoint.
+            execute("checkpoint create");
+            assertSql(
+                    """
+                            in_progress\tstarted_at
+                            true\t1970-01-01T00:00:00.000000Z
+                            """,
+                    "select * from checkpoint_status();"
+            );
+
+            execute("checkpoint release");
+        });
+    }
+
+    @Test
+    public void testValidateCheckpointReleaseDoesNotRelease() throws Exception {
+        assertMemoryLeak(() -> {
+            setCurrentMicros(0);
+            execute("checkpoint create");
+            final String inProgress = """
+                    in_progress\tstarted_at
+                    true\t1970-01-01T00:00:00.000000Z
+                    """;
+            assertSql(inProgress, "select * from checkpoint_status();");
+
+            // Validation compiles CHECKPOINT RELEASE but must not end the checkpoint.
+            validateOnly("checkpoint release");
+            assertSql(inProgress, "select * from checkpoint_status();");
+
+            // Real execution releases the checkpoint.
+            execute("checkpoint release");
             assertSql(
                     """
                             in_progress\tstarted_at
@@ -4183,6 +4239,16 @@ public class CheckpointTest extends AbstractCairoTest {
         @Override
         public void init(CairoEngine engine, FreeOnExit freeOnExit) {
             delegate.init(engine, freeOnExit);
+        }
+    }
+
+    private static void validateOnly(String sql) throws SqlException {
+        final SqlExecutionContextImpl ctx = (SqlExecutionContextImpl) sqlExecutionContext;
+        ctx.setValidationOnly(true);
+        try (SqlCompiler compiler = engine.getSqlCompiler()) {
+            compiler.compile(sql, ctx);
+        } finally {
+            ctx.setValidationOnly(false);
         }
     }
 
