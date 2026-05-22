@@ -94,6 +94,10 @@ public class QwpIngressServerRestartFuzzTest extends AbstractCairoTest {
 
     private static final Log LOG = LogFactory.getLog(QwpIngressServerRestartFuzzTest.class);
     private static final String TABLE_NAME = "qwp_restart_fuzz";
+    // Server defaults from DefaultIODispatcherConfiguration. RestartableQwpServer
+    // does not override these, so the actual buffers are this size.
+    private static final int RECV_BUFFER_SIZE = 131_072;
+    private static final int SEND_BUFFER_SIZE = 131_072;
     private int recvChunk;
     private int sendChunk;
 
@@ -102,11 +106,12 @@ public class QwpIngressServerRestartFuzzTest extends AbstractCairoTest {
         super.setUp();
         Rnd rnd = TestUtils.generateRandom(LOG);
         // Independent recv / send fragmentation chunks (asymmetric, min=1).
-        // Mirrors QwpSenderFuzzTest + QwpEgressFragmentationFuzzTest:
         // chunk=1 makes every wire byte its own socket event, exposing
         // park-resume bugs in the WS parser and the SF replay path.
-        recvChunk = 1 + rnd.nextInt(500);
-        sendChunk = 1 + rnd.nextInt(500);
+        // Upper bound is the corresponding buffer size: a chunk larger than
+        // the buffer is effectively no fragmentation.
+        recvChunk = 1 + rnd.nextInt(RECV_BUFFER_SIZE);
+        sendChunk = 1 + rnd.nextInt(SEND_BUFFER_SIZE);
         LOG.info().$("QwpIngressServerRestartFuzzTest fragmentation recvChunk=").$(recvChunk)
                 .$(", sendChunk=").$(sendChunk).$();
     }

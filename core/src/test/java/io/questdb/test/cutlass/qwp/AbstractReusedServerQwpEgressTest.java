@@ -183,5 +183,11 @@ public abstract class AbstractReusedServerQwpEgressTest extends AbstractBootstra
         engine.releaseInactive();
         // Apply the enqueued WAL drops so the table names are free for the next test's CREATE.
         drainWalQueue(engine);
+        // Wait for the process-global fd cache to settle. drainWalQueue() runs the apply
+        // job synchronously, but the writer pool entries it closes can release cached
+        // fds a few ms later. Without this wait the release lands inside the next test's
+        // assertMemoryLeak window and trips LeakCheck with an fd count that has dropped
+        // below the baseline the next test just captured.
+        TestUtils.awaitFdCountStable();
     }
 }

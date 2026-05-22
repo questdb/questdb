@@ -109,6 +109,10 @@ public class QwpIngressOracleFuzzTest extends AbstractCairoTest {
             "한",    // U+D55C (3-byte)
             "🎉",   // U+1F389 (4-byte, surrogate pair in Java)
     };
+    // Server defaults from DefaultIODispatcherConfiguration. RestartableQwpServer
+    // does not override these, so the actual buffers are this size.
+    private static final int RECV_BUFFER_SIZE = 131_072;
+    private static final int SEND_BUFFER_SIZE = 131_072;
     private static final String TABLE_NAME = "qwp_oracle_fuzz";
     private static final String TS_COLUMN = "ts";
     private int recvChunk;
@@ -119,11 +123,12 @@ public class QwpIngressOracleFuzzTest extends AbstractCairoTest {
         super.setUp();
         Rnd rnd = TestUtils.generateRandom(LOG);
         // Independent recv / send fragmentation chunks (asymmetric, min=1).
-        // Mirrors QwpSenderFuzzTest + QwpEgressFragmentationFuzzTest:
         // chunk=1 makes every wire byte its own socket event, exposing
         // park-resume bugs in the WS parser and the SF replay path.
-        recvChunk = 1 + rnd.nextInt(500);
-        sendChunk = 1 + rnd.nextInt(500);
+        // Upper bound is the corresponding buffer size: a chunk larger than
+        // the buffer is effectively no fragmentation.
+        recvChunk = 1 + rnd.nextInt(RECV_BUFFER_SIZE);
+        sendChunk = 1 + rnd.nextInt(SEND_BUFFER_SIZE);
         LOG.info().$("QwpIngressOracleFuzzTest fragmentation recvChunk=").$(recvChunk)
                 .$(", sendChunk=").$(sendChunk).$();
     }

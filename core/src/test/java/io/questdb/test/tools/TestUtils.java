@@ -1173,6 +1173,41 @@ public final class TestUtils {
         }
     }
 
+    /**
+     * Polls the process-global file-descriptor counters until they stop changing for
+     * {@code 50ms}, or returns after {@code 5s}. Use between tests in suites that
+     * share a long-lived engine across tests: a deferred close from the previous
+     * test (e.g. an {@code ApplyWal2TableJob} that finishes after {@code tearDown}
+     * returns) can otherwise release a cached fd inside the next test's
+     * {@code assertMemoryLeak} window, making the next test fail {@code LeakCheck}
+     * with an fd count that has dropped below the baseline it just captured.
+     * <p>
+     * Loose thresholds on purpose: the race normally resolves in a few ms, so the
+     * 5s cap is just a backstop against undiscovered hangs.
+     */
+    public static void awaitFdCountStable() {
+        final long stableForMs = 50;
+        final long timeoutMs = 5_000;
+        final long deadline = System.currentTimeMillis() + timeoutMs;
+        long lastCached = -1;
+        long lastOs = -1;
+        long stableSinceMs = System.currentTimeMillis();
+        while (System.currentTimeMillis() < deadline) {
+            long cached = Files.getOpenCachedFileCount();
+            long os = Files.getOpenFileCount();
+            if (cached == lastCached && os == lastOs) {
+                if (System.currentTimeMillis() - stableSinceMs >= stableForMs) {
+                    return;
+                }
+            } else {
+                lastCached = cached;
+                lastOs = os;
+                stableSinceMs = System.currentTimeMillis();
+            }
+            Os.sleep(5);
+        }
+    }
+
     // Useful for debugging
     @SuppressWarnings("unused")
     public static long beHexToLong(String hex) {

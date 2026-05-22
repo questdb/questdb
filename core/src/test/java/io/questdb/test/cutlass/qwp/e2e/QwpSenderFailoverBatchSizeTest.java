@@ -104,14 +104,21 @@ public class QwpSenderFailoverBatchSizeTest extends AbstractCairoTest {
     // 600 KB payload comfortably exceeds B's 131058 cap and fits under A's
     // 2097138 cap, with margin for per-column metadata.
     private static final int ROW_PAYLOAD_SIZE_BYTES = 600_000;
+    // Server's send buffer; QwpSidecar does not override getSendBufferSize, so
+    // the default from DefaultIODispatcherConfiguration applies.
+    private static final int SEND_BUFFER_SIZE = 131_072;
     private int recvChunk;
     private int sendChunk;
 
     @Before
     public void setUpFragmentation() {
         Rnd rnd = TestUtils.generateRandom(LOG);
-        recvChunk = 1 + rnd.nextInt(500);
-        sendChunk = 1 + rnd.nextInt(500);
+        // Chunk ranges are [1, bufferSize]. Use the smaller of the two
+        // sidecars' recv buffers so the same chunk is legal for both.
+        recvChunk = 1 + rnd.nextInt(RECV_BUFFER_SMALL_BYTES);
+        sendChunk = 1 + rnd.nextInt(SEND_BUFFER_SIZE);
+        LOG.info().$("QwpSenderFailoverBatchSizeTest fragmentation recvChunk=").$(recvChunk)
+                .$(", sendChunk=").$(sendChunk).$();
     }
 
     @Test

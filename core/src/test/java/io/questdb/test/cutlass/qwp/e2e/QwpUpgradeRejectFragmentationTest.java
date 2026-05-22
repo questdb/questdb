@@ -38,10 +38,13 @@ import io.questdb.log.LogFactory;
 import io.questdb.mp.WorkerPoolUtils;
 import io.questdb.network.PlainSocketFactory;
 import io.questdb.std.ObjHashSet;
+import io.questdb.std.Rnd;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.mp.TestWorkerPool;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
+import org.junit.Before;
 import org.junit.Test;
 
 import java.io.IOException;
@@ -63,52 +66,75 @@ import java.nio.charset.StandardCharsets;
  * partial-send forced a disconnect mid-response and the client never received
  * the full reject body.
  * <p>
- * Each test pins the HTTP send-fragmentation chunk to a value smaller than the
- * reject body so the first send returns one fragment and the second triggers
- * PISR in {@code HttpResponseSink.sendBuffer}. With the fix the residual
- * fragments flush through {@code resumeSend} and the client receives the
- * complete response before the server disconnects.
+ * Each test fuzzes both the HTTP recv- and send-fragmentation chunk sizes in
+ * {@code [1, bufferSize]}. When the random send chunk lands below the reject
+ * body size, the first send returns one fragment and the second triggers PISR
+ * in {@code HttpResponseSink.sendBuffer}; with the fix the residual fragments
+ * flush through {@code resumeSend} and the client receives the complete
+ * response before the server disconnects. Larger random chunks simply leave
+ * the response unfragmented for that run -- the seed is logged so any failure
+ * replays deterministically.
  */
 public class QwpUpgradeRejectFragmentationTest extends AbstractCairoTest {
 
     private static final Log LOG = LogFactory.getLog(QwpUpgradeRejectFragmentationTest.class);
-    // Smaller than any reject body the cases below produce so the response
-    // must be split across at least two sends. The first chunk lands on the
-    // wire; the second trips PISR in HttpResponseSink.sendBuffer. Before the
-    // fix the buggy code caught the PISR and threw HttpException, killing
-    // the connection; after the fix the framework parks-on-write and the
-    // residual flushes through resumeSend.
-    private static final int SEND_FRAGMENTATION_CHUNK_SIZE = 50;
+    // Server defaults from DefaultIODispatcherConfiguration. These tests do
+    // not override the recv / send buffer sizes, so the actual buffers are
+    // this size; the fuzzed chunk sizes must not exceed them.
+    private static final int RECV_BUFFER_SIZE = 131_072;
+    private static final int SEND_BUFFER_SIZE = 131_072;
     // Canonical 400 Bad Request body written when the Origin header is
     // present. Hardcoded so the test asserts on exact wire bytes; the
     // server-side templates are package-private.
     private static final byte[] EXPECTED_400_ORIGIN_REJECT = (
-            "HTTP/1.1 400 Bad Request\r\n"
-                    + "Content-Type: text/plain\r\n"
-                    + "Content-Length: 42\r\n"
-                    + "\r\n"
-                    + "Origin header not allowed on QWP WebSocket"
+            """
+                    HTTP/1.1 400 Bad Request\r
+                    Content-Type: text/plain\r
+                    Content-Length: 42\r
+                    \r
+                    Origin header not allowed on QWP WebSocket"""
     ).getBytes(StandardCharsets.US_ASCII);
     // Canonical 421 Misdirected Request body written when the server role is
     // REPLICA. The X-QuestDB-Role header tells the client where to retry, so
     // a truncated reject leaves it blind to the redirect.
     private static final byte[] EXPECTED_421_REPLICA_REJECT = (
-            "HTTP/1.1 421 Misdirected Request\r\n"
-                    + "Connection: close\r\n"
-                    + "Content-Length: 0\r\n"
-                    + "X-QuestDB-Role: REPLICA\r\n"
-                    + "\r\n"
+            """
+                    HTTP/1.1 421 Misdirected Request\r
+                    Connection: close\r
+                    Content-Length: 0\r
+                    X-QuestDB-Role: REPLICA\r
+                    \r
+                    """
     ).getBytes(StandardCharsets.US_ASCII);
     // Canonical 426 Upgrade Required body written by
     // QwpWebSocketUpgradeProcessor.UPGRADE_REQUIRED_RESPONSE.
     private static final byte[] EXPECTED_426_RESPONSE = (
-            "HTTP/1.1 426 Upgrade Required\r\n"
-                    + "Upgrade: websocket\r\n"
-                    + "Connection: Upgrade\r\n"
-                    + "Sec-WebSocket-Version: 13\r\n"
-                    + "Content-Length: 0\r\n"
-                    + "\r\n"
+            """
+                    HTTP/1.1 426 Upgrade Required\r
+                    Upgrade: websocket\r
+                    Connection: Upgrade\r
+                    Sec-WebSocket-Version: 13\r
+                    Content-Length: 0\r
+                    \r
+                    """
     ).getBytes(StandardCharsets.US_ASCII);
+    private int forceRecvFragmentationChunkSize;
+    private int forceSendFragmentationChunkSize;
+
+    @Before
+    public void setUpFragmentation() {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        // Chunk ranges are [1, bufferSize]. Lower bound of 1 makes every
+        // wire byte its own socket event; upper bound is the corresponding
+        // buffer size (a chunk larger than the buffer is effectively no
+        // fragmentation). The seed logged by generateRandom replays both
+        // chunk values deterministically.
+        forceRecvFragmentationChunkSize = 1 + rnd.nextInt(RECV_BUFFER_SIZE);
+        forceSendFragmentationChunkSize = 1 + rnd.nextInt(SEND_BUFFER_SIZE);
+        LOG.info().$("QwpUpgradeRejectFragmentationTest fragmentation recvChunk=")
+                .$(forceRecvFragmentationChunkSize)
+                .$(", sendChunk=").$(forceSendFragmentationChunkSize).$();
+    }
 
     @Test
     public void test400OriginRejectIsFullyDeliveredUnderSendFragmentation() throws Exception {
@@ -219,7 +245,7 @@ public class QwpUpgradeRejectFragmentationTest extends AbstractCairoTest {
         }
     }
 
-    private static byte[] drainUntilEof(InputStream in) throws IOException {
+    private static byte[] drainUntilEof(InputStream in) {
         byte[] buf = new byte[256];
         int total = 0;
         while (true) {
@@ -253,8 +279,13 @@ public class QwpUpgradeRejectFragmentationTest extends AbstractCairoTest {
                 configuration,
                 new DefaultHttpContextConfiguration() {
                     @Override
+                    public int getForceRecvFragmentationChunkSize() {
+                        return forceRecvFragmentationChunkSize;
+                    }
+
+                    @Override
                     public int getForceSendFragmentationChunkSize() {
-                        return SEND_FRAGMENTATION_CHUNK_SIZE;
+                        return forceSendFragmentationChunkSize;
                     }
                 }
         ) {
@@ -297,8 +328,13 @@ public class QwpUpgradeRejectFragmentationTest extends AbstractCairoTest {
                 configuration,
                 new DefaultHttpContextConfiguration() {
                     @Override
+                    public int getForceRecvFragmentationChunkSize() {
+                        return forceRecvFragmentationChunkSize;
+                    }
+
+                    @Override
                     public int getForceSendFragmentationChunkSize() {
-                        return SEND_FRAGMENTATION_CHUNK_SIZE;
+                        return forceSendFragmentationChunkSize;
                     }
                 }
         ) {
