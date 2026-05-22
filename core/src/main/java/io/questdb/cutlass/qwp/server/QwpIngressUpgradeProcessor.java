@@ -680,8 +680,7 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
                     BAD_REQUEST_RESPONSE_MISSING_CONNECTION_HEADER;
             case QwpIngressHttpProcessor.ERROR_MISSING_SEC_WEBSOCKET_KEY_HEADER ->
                     BAD_REQUEST_RESPONSE_MISSING_SEC_WEBSOCKET_KEY_HEADER;
-            case QwpIngressHttpProcessor.ERROR_MISSING_UPGRADE_HEADER ->
-                    BAD_REQUEST_RESPONSE_MISSING_UPGRADE_HEADER;
+            case QwpIngressHttpProcessor.ERROR_MISSING_UPGRADE_HEADER -> BAD_REQUEST_RESPONSE_MISSING_UPGRADE_HEADER;
             case QwpIngressHttpProcessor.ERROR_ORIGIN_HEADER_NOT_ALLOWED ->
                     BAD_REQUEST_RESPONSE_ORIGIN_HEADER_NOT_ALLOWED;
             default -> null;
