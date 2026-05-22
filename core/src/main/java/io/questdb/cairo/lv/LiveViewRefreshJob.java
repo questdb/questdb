@@ -1698,7 +1698,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 fnSink.putStr(windowName);
                 fnSink.putStr(snapshotFactoryName(f));
                 fnSink.putInt(f.snapshotFormatVersion());
-                f.snapshot(fnSink);
+                LiveViewFunctionSnapshot.write(fnSink, f);
                 checkpointWriter.endBlock();
             }
 
@@ -1813,7 +1813,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 // enclosing FUNCTION_SNAPSHOT block. A future change that
                 // packs multiple payloads into a single block would need an
                 // explicit LONG length prefix here.
-                f.snapshot(fnSink);
+                LiveViewFunctionSnapshot.write(fnSink, f);
                 checkpointWriter.endBlock();
             }
 
@@ -2104,7 +2104,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         final long payloadStart = offset;
         final long payloadLength = block.size() - payloadStart;
         copyBlockToScratch(block, payloadStart, payloadLength);
-        match.restore(checkpointRestoreScratch, formatVersion);
+        LiveViewFunctionSnapshot.restore(checkpointRestoreScratch, 0L, match, formatVersion);
     }
 
     private void copyBlockToScratch(LiveViewCheckpointReader.ReadableBlock block, long offsetInBlock, long length) {
