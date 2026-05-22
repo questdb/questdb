@@ -519,6 +519,28 @@ public class RankFunctionFactory extends AbstractWindowFunctionFactory {
         }
 
         @Override
+        public ColumnTypes getSnapshotKeyColumnTypes() {
+            return keyColumnTypes;
+        }
+
+        @Override
+        public int getSnapshotKeyStartIndex() {
+            return mapValueTypes != null
+                    ? mapValueTypes.getColumnCount()
+                    : chainTypeIndex + 2;
+        }
+
+        @Override
+        public long getTombstoneCount() {
+            return tombstoneCount;
+        }
+
+        @Override
+        public int getTombstoneValueIndex() {
+            return tombstoneValueIndex;
+        }
+
+        @Override
         public void markPartitionAlive(Record record) {
             if (tombstoneValueIndex < 0 || tombstoneCount == 0) {
                 return;
@@ -636,6 +658,12 @@ public class RankFunctionFactory extends AbstractWindowFunctionFactory {
         }
 
         @Override
+        public void onSnapshotRestoreBegin() {
+            map.clear();
+            tombstoneCount = 0;
+        }
+
+        @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             partitionByRecord.of(record);
             MapKey key = map.withKey();
@@ -713,6 +741,23 @@ public class RankFunctionFactory extends AbstractWindowFunctionFactory {
         }
 
         @Override
+        public long restorePartitionState(MemoryR source, long offset, MapValue value, int formatVersion) {
+            offset = LiveViewSnapshotKeyCodec.readValueSlots(value, 0, source, offset, chainColumnTypes);
+            value.putLong(chainTypeIndex, source.getLong(offset));
+            offset += Long.BYTES;
+            value.putLong(chainTypeIndex + 1, source.getLong(offset));
+            offset += Long.BYTES;
+            if (lastActivityTsValueIndex >= 0) {
+                value.putLong(lastActivityTsValueIndex, source.getLong(offset));
+                offset += Long.BYTES;
+            }
+            if (tombstoneValueIndex >= 0) {
+                value.putByte(tombstoneValueIndex, (byte) 0);
+            }
+            return offset;
+        }
+
+        @Override
         public void setColumnIndex(int columnIndex) {
             this.columnIndex = columnIndex;
         }
@@ -766,6 +811,16 @@ public class RankFunctionFactory extends AbstractWindowFunctionFactory {
         @Override
         public int snapshotMinSupportedVersion() {
             return 1;
+        }
+
+        @Override
+        public void snapshotPartitionState(MemoryA sink, MapValue value) {
+            LiveViewSnapshotKeyCodec.writeKey(sink, value, chainColumnTypes, 0);
+            sink.putLong(value.getLong(chainTypeIndex));
+            sink.putLong(value.getLong(chainTypeIndex + 1));
+            if (lastActivityTsValueIndex >= 0) {
+                sink.putLong(value.getLong(lastActivityTsValueIndex));
+            }
         }
 
         @Override
