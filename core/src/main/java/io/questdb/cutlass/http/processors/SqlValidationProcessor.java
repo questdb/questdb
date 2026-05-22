@@ -276,6 +276,13 @@ public class SqlValidationProcessor implements HttpRequestProcessor, HttpRequest
             sqlExecutionContext.storeTelemetry(cc.getType(), TelemetryOrigin.HTTP_QUERY_VALIDATE);
             state.setCompilerNanos(nanosecondClock.getTicks() - compilationStart);
             state.setQueryType(cc.getType());
+            // Only SELECT hands the record cursor factory to executeNewSelect/state.of, which
+            // closes it. Every other statement type just confirms its kind and ignores the
+            // factory, so free any factory now to avoid leaking pseudo-select (COPY, BACKUP
+            // DATABASE, CREATE TOKEN, ...), EXPLAIN, or EMPTY factories during validation.
+            if (cc.getType() != CompiledQuery.SELECT) {
+                Misc.free(cc.getRecordCursorFactory());
+            }
             try {
                 switch (state.getQueryType()) {
                     case CompiledQuery.SELECT -> executeNewSelect(state, cc);
