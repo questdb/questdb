@@ -522,7 +522,18 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                     // txn finalized, drain async writer commands (e.g. storage policy parquet-commit
                     // / drop-local / squash) published while the writer was busy, so they run here
                     // rather than sitting unprocessed until the writer is returned to the pool.
-                    writer.tick();
+                    // Draining is a side activity: the WAL transactions are already durably committed
+                    // above, so a drain failure must not fail WAL apply or suspend the table. Each
+                    // command's own failure is reported on its correlation channel inside
+                    // processAsyncWriterCommand; this catch only guards the rare infrastructure error
+                    // escaping the queue loop. Genuine writer corruption still surfaces via the
+                    // distressed flag, which recreates the writer on the next apply.
+                    try {
+                        writer.tick();
+                    } catch (Throwable th) {
+                        LOG.error().$("error draining async command queue after WAL apply [table=")
+                                .$(writer.getTableToken()).$(", error=").$(th).I$();
+                    }
                 } catch (EjectApplyWalException ex) {
                     finishedAll = false;
                 }

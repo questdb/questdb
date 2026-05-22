@@ -79,6 +79,7 @@ import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.DateLocaleFactory;
+import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Sinkable;
@@ -2045,6 +2046,63 @@ public class TableWriterTest extends AbstractCairoTest {
                 Assert.assertEquals(newMaxUncommittedRows, writer.getMetadata().getMaxUncommittedRows());
                 // The WAL transaction itself was applied.
                 Assert.assertEquals(seqTxn, writer.getAppliedSeqTxn());
+            }
+        });
+    }
+
+    @Test
+    public void testWalApplyTickIsolatesFailingAsyncCommand() throws Exception {
+        // A drained async command that fails during apply must not abort the WAL commit or distress
+        // the writer: processAsyncWriterCommand catches the failure per-command and reports it on the
+        // command's correlation channel, then calls sequence.done() in finally. This guards against a
+        // regression that lets such a failure escape tick() into ApplyWal2TableJob, which would
+        // suspend the table. The command is a non-structural DROP PARTITION for a partition that does
+        // not exist, so applyDropPartition throws a CairoException.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tbl (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO tbl VALUES ('2022-02-24T00:00:00.000000Z', 1)");
+            drainWalQueue();
+
+            // Queue a second WAL transaction but do not apply it through the pool yet.
+            execute("INSERT INTO tbl VALUES ('2022-02-25T00:00:00.000000Z', 2)");
+
+            TableToken token = engine.verifyTableName("tbl");
+            Assert.assertTrue(token.isWal());
+            try (TableWriter writer = getWriter(token)) {
+                final int partitionCountBefore = writer.getPartitionCount();
+                // A partition timestamp far past every existing partition: removePartition cannot
+                // find it, so the DROP PARTITION command fails when drained.
+                final long missingPartitionTs = writer.getTxWriter().getPartitionTimestampByIndex(0) + 100_000L * Micros.DAY_MICROS;
+                AlterOperationBuilder builder = new AlterOperationBuilder();
+                builder.ofDropPartition(0, token, token.getTableId());
+                builder.addPartitionToList(missingPartitionTs, 0);
+                AlterOperation alterOp = builder.build();
+                alterOp.withSecurityContext(AllowAllSecurityContext.INSTANCE);
+                writer.publishAsyncWriterCommand(alterOp);
+
+                // Apply the pending WAL transaction on the held writer, then tick -- the same
+                // sequence ApplyWal2TableJob performs after its transaction-cursor loop. The tick
+                // drains the failing command, whose error must stay contained.
+                final long seqTxn = writer.getAppliedSeqTxn() + 1;
+                try (TransactionLogCursor cursor = engine.getTableSequencerAPI().getCursor(token, writer.getAppliedSeqTxn())) {
+                    writer.readWalTxnDetails(cursor);
+                }
+                final WalTxnDetails details = writer.getWalTnxDetails();
+                final int walId = details.getWalId(seqTxn);
+                final int segmentId = details.getSegmentId(seqTxn);
+                try (Path walPath = new Path()) {
+                    walPath.of(configuration.getDbRoot()).concat(token).slash()
+                            .putAscii(WalUtils.WAL_NAME_BASE).put(walId).slash().put(segmentId);
+                    writer.commitWalInsertTransactions(walPath, seqTxn, TableWriterPressureControl.EMPTY);
+                }
+                writer.tick();
+
+                // The WAL transaction was applied despite the failing command...
+                Assert.assertEquals(seqTxn, writer.getAppliedSeqTxn());
+                // ...the writer is not distressed...
+                Assert.assertFalse(writer.isDistressed());
+                // ...and no partition was removed (the failed DROP left the table unchanged).
+                Assert.assertEquals(partitionCountBefore + 1, writer.getPartitionCount());
             }
         });
     }
