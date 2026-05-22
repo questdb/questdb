@@ -63,9 +63,9 @@ import java.math.RoundingMode;
 
 public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFunctionFactory {
 
-    public static final ArrayColumnTypes AVG_RESCALE_DECIMAL64_OVER_PARTITION_RANGE_TYPES;
-    public static final ArrayColumnTypes AVG_RESCALE_DECIMAL64_OVER_PARTITION_ROWS_TYPES;
-    public static final ArrayColumnTypes AVG_RESCALE_DECIMAL64_TYPES;
+    private static final ArrayColumnTypes AVG_RESCALE_DECIMAL64_OVER_PARTITION_RANGE_TYPES;
+    private static final ArrayColumnTypes AVG_RESCALE_DECIMAL64_OVER_PARTITION_ROWS_TYPES;
+    private static final ArrayColumnTypes AVG_RESCALE_DECIMAL64_TYPES;
     private static final String NAME = "avg";
     private static final String SIGNATURE = NAME + "(Ξi)";
 
@@ -85,8 +85,6 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
         WindowContext windowContext = sqlExecutionContext.getWindowContext();
         windowContext.validate(position, supportNullsDesc());
         int framingMode = windowContext.getFramingMode();
-        RecordSink partitionBySink = windowContext.getPartitionBySink();
-        ColumnTypes partitionByKeyTypes = windowContext.getPartitionByKeyTypes();
         VirtualRecord partitionByRecord = windowContext.getPartitionByRecord();
         long rowsLo = windowContext.getRowsLo();
         long rowsHi = windowContext.getRowsHi();
@@ -104,6 +102,9 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
         final int argPrecision = ColumnType.getDecimalPrecision(argType);
         final int argScale = ColumnType.getDecimalScale(argType);
         final int targetPrecision = argPrecision - argScale + targetScale;
+        if (targetPrecision < 1) {
+            throw SqlException.$(scalePosition, "rescaled decimal has invalid precision: ").put(targetPrecision);
+        }
         if (targetPrecision > Decimals.MAX_PRECISION) {
             throw SqlException.$(scalePosition, "rescaled decimal has precision that exceeds maximum of ")
                     .put(Decimals.MAX_PRECISION).put(": ").put(targetPrecision);
@@ -114,109 +115,38 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
 
         if (rowsHi < rowsLo) {
             boolean isRange = framingMode == WindowExpression.FRAMING_RANGE;
-            return new Decimal256NullFunction(arg, NAME, rowsLo, rowsHi, isRange, partitionByRecord, targetType);
+            return switch (ColumnType.tagOf(targetType)) {
+                case ColumnType.DECIMAL8 ->
+                        new Decimal8NullFunction(arg, NAME, rowsLo, rowsHi, isRange, partitionByRecord, targetType);
+                case ColumnType.DECIMAL16 ->
+                        new Decimal16NullFunction(arg, NAME, rowsLo, rowsHi, isRange, partitionByRecord, targetType);
+                case ColumnType.DECIMAL32 ->
+                        new Decimal32NullFunction(arg, NAME, rowsLo, rowsHi, isRange, partitionByRecord, targetType);
+                case ColumnType.DECIMAL64 ->
+                        new Decimal64NullFunction(arg, NAME, rowsLo, rowsHi, isRange, partitionByRecord, targetType);
+                case ColumnType.DECIMAL128 ->
+                        new Decimal128NullFunction(arg, NAME, rowsLo, rowsHi, isRange, partitionByRecord, targetType);
+                default ->
+                        new Decimal256NullFunction(arg, NAME, rowsLo, rowsHi, isRange, partitionByRecord, targetType);
+            };
         }
 
-        if (tag == ColumnType.DECIMAL8) {
-            return newInstanceDecimal8(position, args, configuration, sqlExecutionContext, argType, targetType, argPos);
-        }
-        if (tag == ColumnType.DECIMAL16) {
-            return newInstanceDecimal16(position, args, configuration, sqlExecutionContext, argType, targetType, argPos);
-        }
-        if (tag == ColumnType.DECIMAL32) {
-            return newInstanceDecimal32(position, args, configuration, sqlExecutionContext, argType, targetType, argPos);
-        }
-        if (tag == ColumnType.DECIMAL128) {
-            return newInstanceDecimal128(position, args, configuration, sqlExecutionContext, argType, targetType, argPos);
-        }
-        if (tag == ColumnType.DECIMAL256) {
-            return newInstanceDecimal256(position, args, configuration, sqlExecutionContext, argType, targetType, argPos);
-        }
-        if (tag != ColumnType.DECIMAL64) {
-            throw SqlException.$(position, "avg(decimal, scale) is not yet implemented for ").put(ColumnType.nameOf(tag));
-        }
-
-        if (partitionByRecord != null) {
-            if (framingMode == WindowExpression.FRAMING_RANGE) {
-                if (windowContext.isDefaultFrame() && (!windowContext.isOrdered() || windowContext.getRowsHi() == Long.MAX_VALUE)) {
-                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, AVG_RESCALE_DECIMAL64_TYPES);
-                    return new Decimal64Rescale256AvgOverPartitionFunction(map, partitionByRecord, partitionBySink, arg, argType, targetType, argPos);
-                } else if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
-                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, AVG_RESCALE_DECIMAL64_TYPES);
-                    return new Decimal64Rescale256AvgOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, arg, argType, targetType, argPos);
-                } else {
-                    if (windowContext.isOrdered() && !windowContext.isOrderedByDesignatedTimestamp()) {
-                        throw SqlException.$(windowContext.getOrderByPos(), "RANGE is supported only for queries ordered by designated timestamp");
-                    }
-                    int timestampIndex = windowContext.getTimestampIndex();
-                    Map map = null;
-                    MemoryARW mem = null;
-                    try {
-                        map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, AVG_RESCALE_DECIMAL64_OVER_PARTITION_RANGE_TYPES);
-                        mem = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
-                                configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
-                        return new Decimal64Rescale256AvgOverPartitionRangeFrameFunction(map, partitionByRecord, partitionBySink,
-                                rowsLo, rowsHi, arg, mem, configuration.getSqlWindowInitialRangeBufferSize(), timestampIndex, argType, targetType, argPos);
-                    } catch (Throwable th) {
-                        Misc.free(map);
-                        Misc.free(mem);
-                        throw th;
-                    }
-                }
-            } else if (framingMode == WindowExpression.FRAMING_ROWS) {
-                if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
-                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, AVG_RESCALE_DECIMAL64_TYPES);
-                    return new Decimal64Rescale256AvgOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, arg, argType, targetType, argPos);
-                } else if (rowsLo == 0 && rowsHi == 0) {
-                    return new Decimal64Rescale256AvgOverCurrentRowFunction(arg, argType, targetType, argPos);
-                } else if (rowsLo == Long.MIN_VALUE && rowsHi == Long.MAX_VALUE) {
-                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, AVG_RESCALE_DECIMAL64_TYPES);
-                    return new Decimal64Rescale256AvgOverPartitionFunction(map, partitionByRecord, partitionBySink, arg, argType, targetType, argPos);
-                } else {
-                    Map map = null;
-                    MemoryARW mem = null;
-                    try {
-                        map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, AVG_RESCALE_DECIMAL64_OVER_PARTITION_ROWS_TYPES);
-                        mem = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
-                                configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
-                        return new Decimal64Rescale256AvgOverPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink,
-                                rowsLo, rowsHi, arg, mem, argType, targetType, argPos);
-                    } catch (Throwable th) {
-                        Misc.free(map);
-                        Misc.free(mem);
-                        throw th;
-                    }
-                }
-            }
-        } else {
-            if (framingMode == WindowExpression.FRAMING_RANGE) {
-                if (!windowContext.isOrdered() && windowContext.isDefaultFrame()) {
-                    return new Decimal64Rescale256AvgOverWholeResultSetFunction(arg, argType, targetType, argPos);
-                } else if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
-                    return new Decimal64Rescale256AvgOverUnboundedRowsFrameFunction(arg, argType, targetType, argPos);
-                } else {
-                    if (windowContext.isOrdered() && !windowContext.isOrderedByDesignatedTimestamp()) {
-                        throw SqlException.$(windowContext.getOrderByPos(), "RANGE is supported only for queries ordered by designated timestamp");
-                    }
-                    int timestampIndex = windowContext.getTimestampIndex();
-                    return new Decimal64Rescale256AvgOverRangeFrameFunction(rowsLo, rowsHi, arg, configuration, timestampIndex, argType, targetType, argPos);
-                }
-            } else if (framingMode == WindowExpression.FRAMING_ROWS) {
-                if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
-                    return new Decimal64Rescale256AvgOverUnboundedRowsFrameFunction(arg, argType, targetType, argPos);
-                } else if (rowsLo == 0 && rowsHi == 0) {
-                    return new Decimal64Rescale256AvgOverCurrentRowFunction(arg, argType, targetType, argPos);
-                } else if (rowsLo == Long.MIN_VALUE && rowsHi == Long.MAX_VALUE) {
-                    return new Decimal64Rescale256AvgOverWholeResultSetFunction(arg, argType, targetType, argPos);
-                } else {
-                    MemoryARW mem = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
-                            configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
-                    return new Decimal64Rescale256AvgOverRowsFrameFunction(arg, rowsLo, rowsHi, mem, argType, targetType, argPos);
-                }
-            }
-        }
-
-        throw SqlException.$(position, "function not implemented for given window parameters");
+        return switch (tag) {
+            case ColumnType.DECIMAL8 ->
+                    newInstanceDecimal8(position, args, configuration, sqlExecutionContext, argType, targetType, argPos);
+            case ColumnType.DECIMAL16 ->
+                    newInstanceDecimal16(position, args, configuration, sqlExecutionContext, argType, targetType, argPos);
+            case ColumnType.DECIMAL32 ->
+                    newInstanceDecimal32(position, args, configuration, sqlExecutionContext, argType, targetType, argPos);
+            case ColumnType.DECIMAL64 ->
+                    newInstanceDecimal64(position, args, configuration, sqlExecutionContext, argType, targetType, argPos);
+            case ColumnType.DECIMAL128 ->
+                    newInstanceDecimal128(position, args, configuration, sqlExecutionContext, argType, targetType, argPos);
+            case ColumnType.DECIMAL256 ->
+                    newInstanceDecimal256(position, args, configuration, sqlExecutionContext, argType, targetType, argPos);
+            default ->
+                    throw SqlException.$(position, "avg(decimal, scale) is not yet implemented for ").put(ColumnType.nameOf(tag));
+        };
     }
 
     private static void readD256(MemoryARW mem, long offset, Decimal256 sink) {
@@ -250,10 +180,20 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
             if (framingMode == WindowExpression.FRAMING_RANGE) {
                 if (windowContext.isDefaultFrame() && (!windowContext.isOrdered() || windowContext.getRowsHi() == Long.MAX_VALUE)) {
                     Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, AVG_RESCALE_DECIMAL64_TYPES);
-                    return new Decimal128Rescale256AvgOverPartitionFunction(map, partitionByRecord, partitionBySink, arg, argType, targetType, argPos);
+                    try {
+                        return new Decimal128Rescale256AvgOverPartitionFunction(map, partitionByRecord, partitionBySink, arg, argType, targetType, argPos);
+                    } catch (Throwable th) {
+                        Misc.free(map);
+                        throw th;
+                    }
                 } else if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
                     Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, AVG_RESCALE_DECIMAL64_TYPES);
-                    return new Decimal128Rescale256AvgOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, arg, argType, targetType, argPos);
+                    try {
+                        return new Decimal128Rescale256AvgOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, arg, argType, targetType, argPos);
+                    } catch (Throwable th) {
+                        Misc.free(map);
+                        throw th;
+                    }
                 } else {
                     if (windowContext.isOrdered() && !windowContext.isOrderedByDesignatedTimestamp()) {
                         throw SqlException.$(windowContext.getOrderByPos(), "RANGE is supported only for queries ordered by designated timestamp");
@@ -276,12 +216,22 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
             } else if (framingMode == WindowExpression.FRAMING_ROWS) {
                 if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
                     Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, AVG_RESCALE_DECIMAL64_TYPES);
-                    return new Decimal128Rescale256AvgOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, arg, argType, targetType, argPos);
+                    try {
+                        return new Decimal128Rescale256AvgOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, arg, argType, targetType, argPos);
+                    } catch (Throwable th) {
+                        Misc.free(map);
+                        throw th;
+                    }
                 } else if (rowsLo == 0 && rowsHi == 0) {
                     return new Decimal128Rescale256AvgOverCurrentRowFunction(arg, argType, targetType, argPos);
                 } else if (rowsLo == Long.MIN_VALUE && rowsHi == Long.MAX_VALUE) {
                     Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, AVG_RESCALE_DECIMAL64_TYPES);
-                    return new Decimal128Rescale256AvgOverPartitionFunction(map, partitionByRecord, partitionBySink, arg, argType, targetType, argPos);
+                    try {
+                        return new Decimal128Rescale256AvgOverPartitionFunction(map, partitionByRecord, partitionBySink, arg, argType, targetType, argPos);
+                    } catch (Throwable th) {
+                        Misc.free(map);
+                        throw th;
+                    }
                 } else {
                     Map map = null;
                     MemoryARW mem = null;
@@ -351,10 +301,20 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
             if (framingMode == WindowExpression.FRAMING_RANGE) {
                 if (windowContext.isDefaultFrame() && (!windowContext.isOrdered() || windowContext.getRowsHi() == Long.MAX_VALUE)) {
                     Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, AVG_RESCALE_DECIMAL64_TYPES);
-                    return new Decimal16Rescale256AvgOverPartitionFunction(map, partitionByRecord, partitionBySink, arg, argType, targetType, argPos);
+                    try {
+                        return new Decimal16Rescale256AvgOverPartitionFunction(map, partitionByRecord, partitionBySink, arg, argType, targetType, argPos);
+                    } catch (Throwable th) {
+                        Misc.free(map);
+                        throw th;
+                    }
                 } else if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
                     Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, AVG_RESCALE_DECIMAL64_TYPES);
-                    return new Decimal16Rescale256AvgOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, arg, argType, targetType, argPos);
+                    try {
+                        return new Decimal16Rescale256AvgOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, arg, argType, targetType, argPos);
+                    } catch (Throwable th) {
+                        Misc.free(map);
+                        throw th;
+                    }
                 } else {
                     if (windowContext.isOrdered() && !windowContext.isOrderedByDesignatedTimestamp()) {
                         throw SqlException.$(windowContext.getOrderByPos(), "RANGE is supported only for queries ordered by designated timestamp");
@@ -377,12 +337,22 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
             } else if (framingMode == WindowExpression.FRAMING_ROWS) {
                 if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
                     Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, AVG_RESCALE_DECIMAL64_TYPES);
-                    return new Decimal16Rescale256AvgOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, arg, argType, targetType, argPos);
+                    try {
+                        return new Decimal16Rescale256AvgOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, arg, argType, targetType, argPos);
+                    } catch (Throwable th) {
+                        Misc.free(map);
+                        throw th;
+                    }
                 } else if (rowsLo == 0 && rowsHi == 0) {
                     return new Decimal16Rescale256AvgOverCurrentRowFunction(arg, argType, targetType, argPos);
                 } else if (rowsLo == Long.MIN_VALUE && rowsHi == Long.MAX_VALUE) {
                     Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, AVG_RESCALE_DECIMAL64_TYPES);
-                    return new Decimal16Rescale256AvgOverPartitionFunction(map, partitionByRecord, partitionBySink, arg, argType, targetType, argPos);
+                    try {
+                        return new Decimal16Rescale256AvgOverPartitionFunction(map, partitionByRecord, partitionBySink, arg, argType, targetType, argPos);
+                    } catch (Throwable th) {
+                        Misc.free(map);
+                        throw th;
+                    }
                 } else {
                     Map map = null;
                     MemoryARW mem = null;
@@ -452,10 +422,20 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
             if (framingMode == WindowExpression.FRAMING_RANGE) {
                 if (windowContext.isDefaultFrame() && (!windowContext.isOrdered() || windowContext.getRowsHi() == Long.MAX_VALUE)) {
                     Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, AVG_RESCALE_DECIMAL64_TYPES);
-                    return new Decimal256Rescale256AvgOverPartitionFunction(map, partitionByRecord, partitionBySink, arg, argType, targetType, argPos);
+                    try {
+                        return new Decimal256Rescale256AvgOverPartitionFunction(map, partitionByRecord, partitionBySink, arg, argType, targetType, argPos);
+                    } catch (Throwable th) {
+                        Misc.free(map);
+                        throw th;
+                    }
                 } else if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
                     Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, AVG_RESCALE_DECIMAL64_TYPES);
-                    return new Decimal256Rescale256AvgOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, arg, argType, targetType, argPos);
+                    try {
+                        return new Decimal256Rescale256AvgOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, arg, argType, targetType, argPos);
+                    } catch (Throwable th) {
+                        Misc.free(map);
+                        throw th;
+                    }
                 } else {
                     if (windowContext.isOrdered() && !windowContext.isOrderedByDesignatedTimestamp()) {
                         throw SqlException.$(windowContext.getOrderByPos(), "RANGE is supported only for queries ordered by designated timestamp");
@@ -478,12 +458,22 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
             } else if (framingMode == WindowExpression.FRAMING_ROWS) {
                 if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
                     Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, AVG_RESCALE_DECIMAL64_TYPES);
-                    return new Decimal256Rescale256AvgOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, arg, argType, targetType, argPos);
+                    try {
+                        return new Decimal256Rescale256AvgOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, arg, argType, targetType, argPos);
+                    } catch (Throwable th) {
+                        Misc.free(map);
+                        throw th;
+                    }
                 } else if (rowsLo == 0 && rowsHi == 0) {
                     return new Decimal256Rescale256AvgOverCurrentRowFunction(arg, argType, targetType, argPos);
                 } else if (rowsLo == Long.MIN_VALUE && rowsHi == Long.MAX_VALUE) {
                     Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, AVG_RESCALE_DECIMAL64_TYPES);
-                    return new Decimal256Rescale256AvgOverPartitionFunction(map, partitionByRecord, partitionBySink, arg, argType, targetType, argPos);
+                    try {
+                        return new Decimal256Rescale256AvgOverPartitionFunction(map, partitionByRecord, partitionBySink, arg, argType, targetType, argPos);
+                    } catch (Throwable th) {
+                        Misc.free(map);
+                        throw th;
+                    }
                 } else {
                     Map map = null;
                     MemoryARW mem = null;
@@ -553,10 +543,20 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
             if (framingMode == WindowExpression.FRAMING_RANGE) {
                 if (windowContext.isDefaultFrame() && (!windowContext.isOrdered() || windowContext.getRowsHi() == Long.MAX_VALUE)) {
                     Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, AVG_RESCALE_DECIMAL64_TYPES);
-                    return new Decimal32Rescale256AvgOverPartitionFunction(map, partitionByRecord, partitionBySink, arg, argType, targetType, argPos);
+                    try {
+                        return new Decimal32Rescale256AvgOverPartitionFunction(map, partitionByRecord, partitionBySink, arg, argType, targetType, argPos);
+                    } catch (Throwable th) {
+                        Misc.free(map);
+                        throw th;
+                    }
                 } else if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
                     Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, AVG_RESCALE_DECIMAL64_TYPES);
-                    return new Decimal32Rescale256AvgOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, arg, argType, targetType, argPos);
+                    try {
+                        return new Decimal32Rescale256AvgOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, arg, argType, targetType, argPos);
+                    } catch (Throwable th) {
+                        Misc.free(map);
+                        throw th;
+                    }
                 } else {
                     if (windowContext.isOrdered() && !windowContext.isOrderedByDesignatedTimestamp()) {
                         throw SqlException.$(windowContext.getOrderByPos(), "RANGE is supported only for queries ordered by designated timestamp");
@@ -579,12 +579,22 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
             } else if (framingMode == WindowExpression.FRAMING_ROWS) {
                 if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
                     Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, AVG_RESCALE_DECIMAL64_TYPES);
-                    return new Decimal32Rescale256AvgOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, arg, argType, targetType, argPos);
+                    try {
+                        return new Decimal32Rescale256AvgOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, arg, argType, targetType, argPos);
+                    } catch (Throwable th) {
+                        Misc.free(map);
+                        throw th;
+                    }
                 } else if (rowsLo == 0 && rowsHi == 0) {
                     return new Decimal32Rescale256AvgOverCurrentRowFunction(arg, argType, targetType, argPos);
                 } else if (rowsLo == Long.MIN_VALUE && rowsHi == Long.MAX_VALUE) {
                     Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, AVG_RESCALE_DECIMAL64_TYPES);
-                    return new Decimal32Rescale256AvgOverPartitionFunction(map, partitionByRecord, partitionBySink, arg, argType, targetType, argPos);
+                    try {
+                        return new Decimal32Rescale256AvgOverPartitionFunction(map, partitionByRecord, partitionBySink, arg, argType, targetType, argPos);
+                    } catch (Throwable th) {
+                        Misc.free(map);
+                        throw th;
+                    }
                 } else {
                     Map map = null;
                     MemoryARW mem = null;
@@ -632,6 +642,127 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
         throw SqlException.$(position, "function not implemented for given window parameters");
     }
 
+    private Function newInstanceDecimal64(
+            int position,
+            ObjList<Function> args,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext,
+            int argType,
+            int targetType,
+            int argPos
+    ) throws SqlException {
+        WindowContext windowContext = sqlExecutionContext.getWindowContext();
+        int framingMode = windowContext.getFramingMode();
+        RecordSink partitionBySink = windowContext.getPartitionBySink();
+        ColumnTypes partitionByKeyTypes = windowContext.getPartitionByKeyTypes();
+        VirtualRecord partitionByRecord = windowContext.getPartitionByRecord();
+        long rowsLo = windowContext.getRowsLo();
+        long rowsHi = windowContext.getRowsHi();
+        Function arg = args.get(0);
+
+        if (partitionByRecord != null) {
+            if (framingMode == WindowExpression.FRAMING_RANGE) {
+                if (windowContext.isDefaultFrame() && (!windowContext.isOrdered() || windowContext.getRowsHi() == Long.MAX_VALUE)) {
+                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, AVG_RESCALE_DECIMAL64_TYPES);
+                    try {
+                        return new Decimal64Rescale256AvgOverPartitionFunction(map, partitionByRecord, partitionBySink, arg, argType, targetType, argPos);
+                    } catch (Throwable th) {
+                        Misc.free(map);
+                        throw th;
+                    }
+                } else if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
+                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, AVG_RESCALE_DECIMAL64_TYPES);
+                    try {
+                        return new Decimal64Rescale256AvgOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, arg, argType, targetType, argPos);
+                    } catch (Throwable th) {
+                        Misc.free(map);
+                        throw th;
+                    }
+                } else {
+                    if (windowContext.isOrdered() && !windowContext.isOrderedByDesignatedTimestamp()) {
+                        throw SqlException.$(windowContext.getOrderByPos(), "RANGE is supported only for queries ordered by designated timestamp");
+                    }
+                    int timestampIndex = windowContext.getTimestampIndex();
+                    Map map = null;
+                    MemoryARW mem = null;
+                    try {
+                        map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, AVG_RESCALE_DECIMAL64_OVER_PARTITION_RANGE_TYPES);
+                        mem = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
+                                configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
+                        return new Decimal64Rescale256AvgOverPartitionRangeFrameFunction(map, partitionByRecord, partitionBySink,
+                                rowsLo, rowsHi, arg, mem, configuration.getSqlWindowInitialRangeBufferSize(), timestampIndex, argType, targetType, argPos);
+                    } catch (Throwable th) {
+                        Misc.free(map);
+                        Misc.free(mem);
+                        throw th;
+                    }
+                }
+            } else if (framingMode == WindowExpression.FRAMING_ROWS) {
+                if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
+                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, AVG_RESCALE_DECIMAL64_TYPES);
+                    try {
+                        return new Decimal64Rescale256AvgOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, arg, argType, targetType, argPos);
+                    } catch (Throwable th) {
+                        Misc.free(map);
+                        throw th;
+                    }
+                } else if (rowsLo == 0 && rowsHi == 0) {
+                    return new Decimal64Rescale256AvgOverCurrentRowFunction(arg, argType, targetType, argPos);
+                } else if (rowsLo == Long.MIN_VALUE && rowsHi == Long.MAX_VALUE) {
+                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, AVG_RESCALE_DECIMAL64_TYPES);
+                    try {
+                        return new Decimal64Rescale256AvgOverPartitionFunction(map, partitionByRecord, partitionBySink, arg, argType, targetType, argPos);
+                    } catch (Throwable th) {
+                        Misc.free(map);
+                        throw th;
+                    }
+                } else {
+                    Map map = null;
+                    MemoryARW mem = null;
+                    try {
+                        map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, AVG_RESCALE_DECIMAL64_OVER_PARTITION_ROWS_TYPES);
+                        mem = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
+                                configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
+                        return new Decimal64Rescale256AvgOverPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink,
+                                rowsLo, rowsHi, arg, mem, argType, targetType, argPos);
+                    } catch (Throwable th) {
+                        Misc.free(map);
+                        Misc.free(mem);
+                        throw th;
+                    }
+                }
+            }
+        } else {
+            if (framingMode == WindowExpression.FRAMING_RANGE) {
+                if (!windowContext.isOrdered() && windowContext.isDefaultFrame()) {
+                    return new Decimal64Rescale256AvgOverWholeResultSetFunction(arg, argType, targetType, argPos);
+                } else if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
+                    return new Decimal64Rescale256AvgOverUnboundedRowsFrameFunction(arg, argType, targetType, argPos);
+                } else {
+                    if (windowContext.isOrdered() && !windowContext.isOrderedByDesignatedTimestamp()) {
+                        throw SqlException.$(windowContext.getOrderByPos(), "RANGE is supported only for queries ordered by designated timestamp");
+                    }
+                    int timestampIndex = windowContext.getTimestampIndex();
+                    return new Decimal64Rescale256AvgOverRangeFrameFunction(rowsLo, rowsHi, arg, configuration, timestampIndex, argType, targetType, argPos);
+                }
+            } else if (framingMode == WindowExpression.FRAMING_ROWS) {
+                if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
+                    return new Decimal64Rescale256AvgOverUnboundedRowsFrameFunction(arg, argType, targetType, argPos);
+                } else if (rowsLo == 0 && rowsHi == 0) {
+                    return new Decimal64Rescale256AvgOverCurrentRowFunction(arg, argType, targetType, argPos);
+                } else if (rowsLo == Long.MIN_VALUE && rowsHi == Long.MAX_VALUE) {
+                    return new Decimal64Rescale256AvgOverWholeResultSetFunction(arg, argType, targetType, argPos);
+                } else {
+                    MemoryARW mem = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
+                            configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
+                    return new Decimal64Rescale256AvgOverRowsFrameFunction(arg, rowsLo, rowsHi, mem, argType, targetType, argPos);
+                }
+            }
+        }
+
+        throw SqlException.$(position, "function not implemented for given window parameters");
+    }
+
     private Function newInstanceDecimal8(
             int position,
             ObjList<Function> args,
@@ -654,10 +785,20 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
             if (framingMode == WindowExpression.FRAMING_RANGE) {
                 if (windowContext.isDefaultFrame() && (!windowContext.isOrdered() || windowContext.getRowsHi() == Long.MAX_VALUE)) {
                     Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, AVG_RESCALE_DECIMAL64_TYPES);
-                    return new Decimal8Rescale256AvgOverPartitionFunction(map, partitionByRecord, partitionBySink, arg, argType, targetType, argPos);
+                    try {
+                        return new Decimal8Rescale256AvgOverPartitionFunction(map, partitionByRecord, partitionBySink, arg, argType, targetType, argPos);
+                    } catch (Throwable th) {
+                        Misc.free(map);
+                        throw th;
+                    }
                 } else if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
                     Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, AVG_RESCALE_DECIMAL64_TYPES);
-                    return new Decimal8Rescale256AvgOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, arg, argType, targetType, argPos);
+                    try {
+                        return new Decimal8Rescale256AvgOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, arg, argType, targetType, argPos);
+                    } catch (Throwable th) {
+                        Misc.free(map);
+                        throw th;
+                    }
                 } else {
                     if (windowContext.isOrdered() && !windowContext.isOrderedByDesignatedTimestamp()) {
                         throw SqlException.$(windowContext.getOrderByPos(), "RANGE is supported only for queries ordered by designated timestamp");
@@ -680,12 +821,22 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
             } else if (framingMode == WindowExpression.FRAMING_ROWS) {
                 if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
                     Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, AVG_RESCALE_DECIMAL64_TYPES);
-                    return new Decimal8Rescale256AvgOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, arg, argType, targetType, argPos);
+                    try {
+                        return new Decimal8Rescale256AvgOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, arg, argType, targetType, argPos);
+                    } catch (Throwable th) {
+                        Misc.free(map);
+                        throw th;
+                    }
                 } else if (rowsLo == 0 && rowsHi == 0) {
                     return new Decimal8Rescale256AvgOverCurrentRowFunction(arg, argType, targetType, argPos);
                 } else if (rowsLo == Long.MIN_VALUE && rowsHi == Long.MAX_VALUE) {
                     Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, AVG_RESCALE_DECIMAL64_TYPES);
-                    return new Decimal8Rescale256AvgOverPartitionFunction(map, partitionByRecord, partitionBySink, arg, argType, targetType, argPos);
+                    try {
+                        return new Decimal8Rescale256AvgOverPartitionFunction(map, partitionByRecord, partitionBySink, arg, argType, targetType, argPos);
+                    } catch (Throwable th) {
+                        Misc.free(map);
+                        throw th;
+                    }
                 } else {
                     Map map = null;
                     MemoryARW mem = null;
@@ -1391,7 +1542,6 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
         private final Decimal256 acc = new Decimal256();
         private final int argScale;
         private final int bufferSize;
-        private final Decimal256 divScratch = new Decimal256();
         private final boolean frameIncludesCurrentValue;
         private final boolean frameLoBounded;
         private final int frameSize;
@@ -1455,17 +1605,20 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
 
             if (mv.isNew()) {
                 loIdx = 0;
-                startOffset = memory.appendAddressFor((long) bufferSize * 16L) - memory.getPageAddress(0);
+                startOffset = memory.appendAddressFor((long) bufferSize * Decimal128.BYTES) - memory.getPageAddress(0);
+                acc.ofRaw(0);
                 if (frameIncludesCurrentValue && !isNull) {
-                    acc.ofRaw(inHigh, inLow);
+                    scratch.ofRaw(inHigh, inLow);
+                    Decimal256.uncheckedAdd(acc, scratch);
                     count = 1;
+                    doDivide(acc, 1, argScale, targetScale, position, value);
                 } else {
-                    acc.ofRaw(0);
+                    value.ofRawNull();
                     count = 0;
                 }
                 for (int j = 0; j < bufferSize; j++) {
-                    memory.putLong(startOffset + (long) j * 16L, Decimals.DECIMAL128_HI_NULL);
-                    memory.putLong(startOffset + (long) j * 16L + Long.BYTES, Decimals.DECIMAL128_LO_NULL);
+                    memory.putLong(startOffset + (long) j * Decimal128.BYTES, Decimals.DECIMAL128_HI_NULL);
+                    memory.putLong(startOffset + (long) j * Decimal128.BYTES + Long.BYTES, Decimals.DECIMAL128_LO_NULL);
                 }
             } else {
                 mv.getDecimal256(0, acc);
@@ -1479,7 +1632,7 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
                     hiH = inHigh;
                     hiL = inLow;
                 } else {
-                    long hiOff = startOffset + ((loIdx + frameSize - 1) % bufferSize) * 16L;
+                    long hiOff = startOffset + ((loIdx + frameSize - 1) % bufferSize) * Decimal128.BYTES;
                     hiH = memory.getLong(hiOff);
                     hiL = memory.getLong(hiOff + Long.BYTES);
                 }
@@ -1495,9 +1648,14 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
                         throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
                     }
                 }
+                if (count != 0) {
+                    doDivide(acc, count, argScale, targetScale, position, value);
+                } else {
+                    value.ofRawNull();
+                }
                 if (frameLoBounded) {
-                    long loH = memory.getLong(startOffset + loIdx * 16L);
-                    long loL = memory.getLong(startOffset + loIdx * 16L + Long.BYTES);
+                    long loH = memory.getLong(startOffset + loIdx * Decimal128.BYTES);
+                    long loL = memory.getLong(startOffset + loIdx * Decimal128.BYTES + Long.BYTES);
                     if (!Decimal128.isNull(loH, loL)) {
                         acc.subtract(loH < 0 ? -1L : 0L, loH < 0 ? -1L : 0L, loH, loL, 0);
                         count--;
@@ -1509,15 +1667,8 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
             mv.putLong(1, count);
             mv.putLong(2, (loIdx + 1) % bufferSize);
             mv.putLong(3, startOffset);
-            memory.putLong(startOffset + loIdx * 16L, inHigh);
-            memory.putLong(startOffset + loIdx * 16L + Long.BYTES, inLow);
-
-            if (count != 0) {
-                doDivide(acc, count, argScale, targetScale, position, divScratch);
-                value.copyRaw(divScratch);
-            } else {
-                value.ofRawNull();
-            }
+            memory.putLong(startOffset + loIdx * Decimal128.BYTES, inHigh);
+            memory.putLong(startOffset + loIdx * Decimal128.BYTES + Long.BYTES, inLow);
         }
 
         @Override
@@ -1998,11 +2149,11 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
             long hiH;
             long hiL;
             if (frameLoBounded && !frameIncludesCurrentValue) {
-                long off = (long) ((loIdx + frameSize - 1) % bufferSize) * 16L;
+                long off = (long) ((loIdx + frameSize - 1) % bufferSize) * Decimal128.BYTES;
                 hiH = buffer.getLong(off);
                 hiL = buffer.getLong(off + Long.BYTES);
             } else if (!frameLoBounded && !frameIncludesCurrentValue) {
-                long off = (long) (loIdx % bufferSize) * 16L;
+                long off = (long) (loIdx % bufferSize) * Decimal128.BYTES;
                 hiH = buffer.getLong(off);
                 hiL = buffer.getLong(off + Long.BYTES);
             } else {
@@ -2029,7 +2180,7 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
             }
 
             if (frameLoBounded) {
-                long off = (long) loIdx * 16L;
+                long off = (long) loIdx * Decimal128.BYTES;
                 long loH = buffer.getLong(off);
                 long loL = buffer.getLong(off + Long.BYTES);
                 if (!Decimal128.isNull(loH, loL)) {
@@ -2037,7 +2188,7 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
                     count--;
                 }
             }
-            long writeOff = (long) loIdx * 16L;
+            long writeOff = (long) loIdx * Decimal128.BYTES;
             buffer.putLong(writeOff, inHigh);
             buffer.putLong(writeOff + Long.BYTES, inLow);
             loIdx = (loIdx + 1) % bufferSize;
@@ -2177,8 +2328,8 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
 
         private void initBuffer() {
             for (int i = 0; i < bufferSize; i++) {
-                buffer.putLong((long) i * 16L, Decimals.DECIMAL128_HI_NULL);
-                buffer.putLong((long) i * 16L + Long.BYTES, Decimals.DECIMAL128_LO_NULL);
+                buffer.putLong((long) i * Decimal128.BYTES, Decimals.DECIMAL128_HI_NULL);
+                buffer.putLong((long) i * Decimal128.BYTES + Long.BYTES, Decimals.DECIMAL128_LO_NULL);
             }
         }
     }
@@ -3229,7 +3380,6 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
         private final Decimal256 acc = new Decimal256();
         private final int argScale;
         private final int bufferSize;
-        private final Decimal256 divScratch = new Decimal256();
         private final boolean frameIncludesCurrentValue;
         private final boolean frameLoBounded;
         private final int frameSize;
@@ -3290,11 +3440,13 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
             if (mv.isNew()) {
                 loIdx = 0;
                 startOffset = memory.appendAddressFor((long) bufferSize * Short.BYTES) - memory.getPageAddress(0);
+                acc.ofRaw(0);
                 if (frameIncludesCurrentValue && s != Decimals.DECIMAL16_NULL) {
-                    acc.ofRaw(s);
+                    Decimal256.uncheckedAdd(acc, s);
                     count = 1;
+                    doDivide(acc, 1, argScale, targetScale, position, value);
                 } else {
-                    acc.ofRaw(0);
+                    value.ofRawNull();
                     count = 0;
                 }
                 for (int i = 0; i < bufferSize; i++) {
@@ -3318,6 +3470,11 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
                         throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
                     }
                 }
+                if (count != 0) {
+                    doDivide(acc, count, argScale, targetScale, position, value);
+                } else {
+                    value.ofRawNull();
+                }
                 if (frameLoBounded) {
                     short lo = memory.getShort(startOffset + loIdx * Short.BYTES);
                     if (lo != Decimals.DECIMAL16_NULL) {
@@ -3332,13 +3489,6 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
             mv.putLong(2, (loIdx + 1) % bufferSize);
             mv.putLong(3, startOffset);
             memory.putShort(startOffset + loIdx * Short.BYTES, s);
-
-            if (count != 0) {
-                doDivide(acc, count, argScale, targetScale, position, divScratch);
-                value.copyRaw(divScratch);
-            } else {
-                value.ofRawNull();
-            }
         }
 
         @Override
@@ -5039,7 +5189,6 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
         private final Decimal256 acc = new Decimal256();
         private final int argScale;
         private final int bufferSize;
-        private final Decimal256 divScratch = new Decimal256();
         private final boolean frameIncludesCurrentValue;
         private final boolean frameLoBounded;
         private final int frameSize;
@@ -5105,16 +5254,18 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
 
             if (mv.isNew()) {
                 loIdx = 0;
-                startOffset = memory.appendAddressFor((long) bufferSize * 32L) - memory.getPageAddress(0);
+                startOffset = memory.appendAddressFor((long) bufferSize * Decimal256.BYTES) - memory.getPageAddress(0);
                 if (frameIncludesCurrentValue && !isNull) {
                     acc.copyRaw(scratch);
                     count = 1;
+                    doDivide(acc, 1, argScale, targetScale, position, value);
                 } else {
                     acc.ofRaw(0);
+                    value.ofRawNull();
                     count = 0;
                 }
                 for (int j = 0; j < bufferSize; j++) {
-                    long off = startOffset + (long) j * 32L;
+                    long off = startOffset + (long) j * Decimal256.BYTES;
                     memory.putLong(off, Decimals.DECIMAL256_HH_NULL);
                     memory.putLong(off + Long.BYTES, Decimals.DECIMAL256_HL_NULL);
                     memory.putLong(off + 2 * Long.BYTES, Decimals.DECIMAL256_LH_NULL);
@@ -5139,7 +5290,7 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
                         count++;
                     }
                 } else {
-                    readD256(memory, startOffset + ((loIdx + frameSize - 1) % bufferSize) * 32L, scratch);
+                    readD256(memory, startOffset + ((loIdx + frameSize - 1) % bufferSize) * Decimal256.BYTES, scratch);
                     if (!scratch.isNull()) {
                         try {
                             Decimal256.uncheckedAdd(acc, scratch);
@@ -5152,8 +5303,13 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
                         count++;
                     }
                 }
+                if (count != 0) {
+                    doDivide(acc, count, argScale, targetScale, position, value);
+                } else {
+                    value.ofRawNull();
+                }
                 if (frameLoBounded) {
-                    readD256(memory, startOffset + loIdx * 32L, scratch);
+                    readD256(memory, startOffset + loIdx * Decimal256.BYTES, scratch);
                     if (!scratch.isNull()) {
                         acc.subtract(scratch);
                         count--;
@@ -5165,18 +5321,11 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
             mv.putLong(1, count);
             mv.putLong(2, (loIdx + 1) % bufferSize);
             mv.putLong(3, startOffset);
-            long writeOff = startOffset + loIdx * 32L;
+            long writeOff = startOffset + loIdx * Decimal256.BYTES;
             memory.putLong(writeOff, inHh);
             memory.putLong(writeOff + Long.BYTES, inHl);
             memory.putLong(writeOff + 2 * Long.BYTES, inLh);
             memory.putLong(writeOff + 3 * Long.BYTES, inLl);
-
-            if (count != 0) {
-                doDivide(acc, count, argScale, targetScale, position, divScratch);
-                value.copyRaw(divScratch);
-            } else {
-                value.ofRawNull();
-            }
         }
 
         @Override
@@ -5673,8 +5822,8 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
                 }
             } else {
                 long hiOff = frameLoBounded
-                        ? (long) ((loIdx + frameSize - 1) % bufferSize) * 32L
-                        : (long) (loIdx % bufferSize) * 32L;
+                        ? (long) ((loIdx + frameSize - 1) % bufferSize) * Decimal256.BYTES
+                        : (long) (loIdx % bufferSize) * Decimal256.BYTES;
                 readD256(buffer, hiOff, scratch);
                 if (!scratch.isNull()) {
                     try {
@@ -5696,13 +5845,13 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
             }
 
             if (frameLoBounded) {
-                readD256(buffer, (long) loIdx * 32L, scratch);
+                readD256(buffer, (long) loIdx * Decimal256.BYTES, scratch);
                 if (!scratch.isNull()) {
                     acc.subtract(scratch);
                     count--;
                 }
             }
-            long writeOff = (long) loIdx * 32L;
+            long writeOff = (long) loIdx * Decimal256.BYTES;
             buffer.putLong(writeOff, inHh);
             buffer.putLong(writeOff + Long.BYTES, inHl);
             buffer.putLong(writeOff + 2 * Long.BYTES, inLh);
@@ -5844,7 +5993,7 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
 
         private void initBuffer() {
             for (int i = 0; i < bufferSize; i++) {
-                long off = (long) i * 32L;
+                long off = (long) i * Decimal256.BYTES;
                 buffer.putLong(off, Decimals.DECIMAL256_HH_NULL);
                 buffer.putLong(off + Long.BYTES, Decimals.DECIMAL256_HL_NULL);
                 buffer.putLong(off + 2 * Long.BYTES, Decimals.DECIMAL256_LH_NULL);
@@ -6899,7 +7048,6 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
         private final Decimal256 acc = new Decimal256();
         private final int argScale;
         private final int bufferSize;
-        private final Decimal256 divScratch = new Decimal256();
         private final boolean frameIncludesCurrentValue;
         private final boolean frameLoBounded;
         private final int frameSize;
@@ -6960,11 +7108,13 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
             if (mv.isNew()) {
                 loIdx = 0;
                 startOffset = memory.appendAddressFor((long) bufferSize * Integer.BYTES) - memory.getPageAddress(0);
+                acc.ofRaw(0);
                 if (frameIncludesCurrentValue && i != Decimals.DECIMAL32_NULL) {
-                    acc.ofRaw(i);
+                    Decimal256.uncheckedAdd(acc, i);
                     count = 1;
+                    doDivide(acc, 1, argScale, targetScale, position, value);
                 } else {
-                    acc.ofRaw(0);
+                    value.ofRawNull();
                     count = 0;
                 }
                 for (int j = 0; j < bufferSize; j++) {
@@ -6988,6 +7138,11 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
                         throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
                     }
                 }
+                if (count != 0) {
+                    doDivide(acc, count, argScale, targetScale, position, value);
+                } else {
+                    value.ofRawNull();
+                }
                 if (frameLoBounded) {
                     int lo = memory.getInt(startOffset + loIdx * Integer.BYTES);
                     if (lo != Decimals.DECIMAL32_NULL) {
@@ -7002,13 +7157,6 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
             mv.putLong(2, (loIdx + 1) % bufferSize);
             mv.putLong(3, startOffset);
             memory.putInt(startOffset + loIdx * Integer.BYTES, i);
-
-            if (count != 0) {
-                doDivide(acc, count, argScale, targetScale, position, divScratch);
-                value.copyRaw(divScratch);
-            } else {
-                value.ofRawNull();
-            }
         }
 
         @Override
@@ -8771,9 +8919,9 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
                 }
             } else {
                 v.getDecimal256(0, acc);
-                count = v.getLong(2);
-                loIdx = v.getLong(3);
-                startOffset = v.getLong(4);
+                count = v.getLong(1);
+                loIdx = v.getLong(2);
+                startOffset = v.getLong(3);
 
                 long hiValue = frameIncludesCurrentValue ? d : memory.getLong(startOffset + ((loIdx + frameSize - 1) % bufferSize) * Long.BYTES);
                 if (hiValue != Decimals.DECIMAL64_NULL) {
@@ -8803,9 +8951,9 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
             }
 
             v.putDecimal256(0, acc);
-            v.putLong(2, count);
-            v.putLong(3, (loIdx + 1) % bufferSize);
-            v.putLong(4, startOffset);
+            v.putLong(1, count);
+            v.putLong(2, (loIdx + 1) % bufferSize);
+            v.putLong(3, startOffset);
             memory.putLong(startOffset + loIdx * Long.BYTES, d);
         }
 
@@ -10504,7 +10652,6 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
         private final Decimal256 acc = new Decimal256();
         private final int argScale;
         private final int bufferSize;
-        private final Decimal256 divScratch = new Decimal256();
         private final boolean frameIncludesCurrentValue;
         private final boolean frameLoBounded;
         private final int frameSize;
@@ -10565,11 +10712,13 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
             if (mv.isNew()) {
                 loIdx = 0;
                 startOffset = memory.appendAddressFor((long) bufferSize * Byte.BYTES) - memory.getPageAddress(0);
+                acc.ofRaw(0);
                 if (frameIncludesCurrentValue && b != Decimals.DECIMAL8_NULL) {
-                    acc.ofRaw(b);
+                    Decimal256.uncheckedAdd(acc, b);
                     count = 1;
+                    doDivide(acc, 1, argScale, targetScale, position, value);
                 } else {
-                    acc.ofRaw(0);
+                    value.ofRawNull();
                     count = 0;
                 }
                 for (int i = 0; i < bufferSize; i++) {
@@ -10593,6 +10742,11 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
                         throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
                     }
                 }
+                if (count != 0) {
+                    doDivide(acc, count, argScale, targetScale, position, value);
+                } else {
+                    value.ofRawNull();
+                }
                 if (frameLoBounded) {
                     byte lo = memory.getByte(startOffset + loIdx * Byte.BYTES);
                     if (lo != Decimals.DECIMAL8_NULL) {
@@ -10607,13 +10761,6 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
             mv.putLong(2, (loIdx + 1) % bufferSize);
             mv.putLong(3, startOffset);
             memory.putByte(startOffset + loIdx * Byte.BYTES, b);
-
-            if (count != 0) {
-                doDivide(acc, count, argScale, targetScale, position, divScratch);
-                value.copyRaw(divScratch);
-            } else {
-                value.ofRawNull();
-            }
         }
 
         @Override

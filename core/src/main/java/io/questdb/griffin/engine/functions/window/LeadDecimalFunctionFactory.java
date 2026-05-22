@@ -176,12 +176,12 @@ public class LeadDecimalFunctionFactory extends AbstractWindowFunctionFactory {
                     defaultValue.getDecimal128(record, leadValue);
                 }
             } else {
-                buffer.getDecimal128((long) loIdx * 16L, leadValue);
+                buffer.getDecimal128((long) loIdx * Decimal128.BYTES, leadValue);
             }
             arg.getDecimal128(record, scratch);
             boolean respectNull = !ignoreNulls || !scratch.isNull();
             if (respectNull) {
-                buffer.putDecimal128((long) loIdx * 16L, scratch.getHigh(), scratch.getLow());
+                buffer.putDecimal128((long) loIdx * Decimal128.BYTES, scratch.getHigh(), scratch.getLow());
             }
             long addr = spi.getAddress(recordOffset, columnIndex);
             Unsafe.putLong(addr, leadValue.getHigh());
@@ -216,6 +216,7 @@ public class LeadDecimalFunctionFactory extends AbstractWindowFunctionFactory {
             this.defaultValue = defaultValue;
             this.offset = offset;
             this.type = type;
+            nullScratch.ofRawNull();
         }
 
         @Override
@@ -269,11 +270,10 @@ public class LeadDecimalFunctionFactory extends AbstractWindowFunctionFactory {
             long count = 0;
 
             if (mapValue.isNew()) {
-                startOffset = memory.appendAddressFor(offset * 16L) - memory.getPageAddress(0);
+                startOffset = memory.appendAddressFor(offset * Decimal128.BYTES) - memory.getPageAddress(0);
                 firstIdx = 0;
-                nullScratch.ofRawNull();
                 for (long i = 0; i < offset; i++) {
-                    memory.putDecimal128(startOffset + i * 16L, nullScratch.getHigh(), nullScratch.getLow());
+                    memory.putDecimal128(startOffset + i * Decimal128.BYTES, nullScratch.getHigh(), nullScratch.getLow());
                 }
             } else {
                 startOffset = mapValue.getLong(0);
@@ -289,11 +289,11 @@ public class LeadDecimalFunctionFactory extends AbstractWindowFunctionFactory {
                     defaultValue.getDecimal128(record, leadValue);
                 }
             } else {
-                memory.getDecimal128(startOffset + firstIdx * 16L, leadValue);
+                memory.getDecimal128(startOffset + firstIdx * Decimal128.BYTES, leadValue);
             }
             boolean respectNulls = !ignoreNulls || !scratch.isNull();
             if (respectNulls) {
-                memory.putDecimal128(startOffset + firstIdx * 16L, scratch.getHigh(), scratch.getLow());
+                memory.putDecimal128(startOffset + firstIdx * Decimal128.BYTES, scratch.getHigh(), scratch.getLow());
                 firstIdx++;
                 count++;
             }
@@ -363,12 +363,12 @@ public class LeadDecimalFunctionFactory extends AbstractWindowFunctionFactory {
                     defaultValue.getDecimal256(record, leadValue);
                 }
             } else {
-                buffer.getDecimal256((long) loIdx * 32L, leadValue);
+                buffer.getDecimal256((long) loIdx * Decimal256.BYTES, leadValue);
             }
             arg.getDecimal256(record, scratch);
             boolean respectNull = !ignoreNulls || !scratch.isNull();
             if (respectNull) {
-                buffer.putDecimal256((long) loIdx * 32L, scratch.getHh(), scratch.getHl(), scratch.getLh(), scratch.getLl());
+                buffer.putDecimal256((long) loIdx * Decimal256.BYTES, scratch.getHh(), scratch.getHl(), scratch.getLh(), scratch.getLl());
             }
             long addr = spi.getAddress(recordOffset, columnIndex);
             Unsafe.putLong(addr, leadValue.getHh());
@@ -405,6 +405,7 @@ public class LeadDecimalFunctionFactory extends AbstractWindowFunctionFactory {
             this.defaultValue = defaultValue;
             this.offset = offset;
             this.type = type;
+            nullScratch.ofRawNull();
         }
 
         @Override
@@ -458,11 +459,10 @@ public class LeadDecimalFunctionFactory extends AbstractWindowFunctionFactory {
             long count = 0;
 
             if (mapValue.isNew()) {
-                startOffset = memory.appendAddressFor(offset * 32L) - memory.getPageAddress(0);
+                startOffset = memory.appendAddressFor(offset * Decimal256.BYTES) - memory.getPageAddress(0);
                 firstIdx = 0;
-                nullScratch.ofRawNull();
                 for (long i = 0; i < offset; i++) {
-                    memory.putDecimal256(startOffset + i * 32L, nullScratch.getHh(), nullScratch.getHl(), nullScratch.getLh(), nullScratch.getLl());
+                    memory.putDecimal256(startOffset + i * Decimal256.BYTES, nullScratch.getHh(), nullScratch.getHl(), nullScratch.getLh(), nullScratch.getLl());
                 }
             } else {
                 startOffset = mapValue.getLong(0);
@@ -478,11 +478,11 @@ public class LeadDecimalFunctionFactory extends AbstractWindowFunctionFactory {
                     defaultValue.getDecimal256(record, leadValue);
                 }
             } else {
-                memory.getDecimal256(startOffset + firstIdx * 32L, leadValue);
+                memory.getDecimal256(startOffset + firstIdx * Decimal256.BYTES, leadValue);
             }
             boolean respectNulls = !ignoreNulls || !scratch.isNull();
             if (respectNulls) {
-                memory.putDecimal256(startOffset + firstIdx * 32L, scratch.getHh(), scratch.getHl(), scratch.getLh(), scratch.getLl());
+                memory.putDecimal256(startOffset + firstIdx * Decimal256.BYTES, scratch.getHh(), scratch.getHl(), scratch.getLh(), scratch.getLl());
                 firstIdx++;
                 count++;
             }

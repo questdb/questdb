@@ -61,20 +61,20 @@ import io.questdb.std.Vect;
 
 public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFactory {
 
-    public static final ArrayColumnTypes SUM_DECIMAL128_OVER_PARTITION_RANGE_TYPES;
-    public static final ArrayColumnTypes SUM_DECIMAL128_OVER_PARTITION_ROWS_TYPES;
-    public static final ArrayColumnTypes SUM_DECIMAL128_TYPES;
-    public static final ArrayColumnTypes SUM_DECIMAL16_OVER_PARTITION_RANGE_TYPES;
-    public static final ArrayColumnTypes SUM_DECIMAL16_OVER_PARTITION_ROWS_TYPES;
-    public static final ArrayColumnTypes SUM_DECIMAL16_TYPES;
-    public static final ArrayColumnTypes SUM_DECIMAL64_OVER_PARTITION_RANGE_TYPES;
-    public static final ArrayColumnTypes SUM_DECIMAL64_OVER_PARTITION_ROWS_TYPES;
-    public static final ArrayColumnTypes SUM_DECIMAL64_TYPES;
-    public static final ArrayColumnTypes SUM_DECIMAL8_OVER_PARTITION_RANGE_TYPES;
-    public static final ArrayColumnTypes SUM_DECIMAL8_OVER_PARTITION_ROWS_TYPES;
-    public static final ArrayColumnTypes SUM_DECIMAL8_TYPES;
     private static final String NAME = "sum";
     private static final String SIGNATURE = NAME + "(Ξ)";
+    private static final ArrayColumnTypes SUM_DECIMAL128_OVER_PARTITION_RANGE_TYPES;
+    private static final ArrayColumnTypes SUM_DECIMAL128_OVER_PARTITION_ROWS_TYPES;
+    private static final ArrayColumnTypes SUM_DECIMAL128_TYPES;
+    private static final ArrayColumnTypes SUM_DECIMAL16_OVER_PARTITION_RANGE_TYPES;
+    private static final ArrayColumnTypes SUM_DECIMAL16_OVER_PARTITION_ROWS_TYPES;
+    private static final ArrayColumnTypes SUM_DECIMAL16_TYPES;
+    private static final ArrayColumnTypes SUM_DECIMAL64_OVER_PARTITION_RANGE_TYPES;
+    private static final ArrayColumnTypes SUM_DECIMAL64_OVER_PARTITION_ROWS_TYPES;
+    private static final ArrayColumnTypes SUM_DECIMAL64_TYPES;
+    private static final ArrayColumnTypes SUM_DECIMAL8_OVER_PARTITION_RANGE_TYPES;
+    private static final ArrayColumnTypes SUM_DECIMAL8_OVER_PARTITION_ROWS_TYPES;
+    private static final ArrayColumnTypes SUM_DECIMAL8_TYPES;
 
     @Override
     public String getSignature() {
@@ -102,44 +102,61 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         int argType = arg.getType();
         int tag = ColumnType.tagOf(argType);
         int argPos = argPositions.getQuick(0);
-        int outputType = ColumnType.getDecimalType(Decimals.getDecimalTagPrecision(ColumnType.DECIMAL128), ColumnType.getDecimalScale(argType));
+        int argScale = ColumnType.getDecimalScale(argType);
+        // sum widens: D8/D16 -> D64, D32/D64 -> D128, D128/D256 -> D256
+        int outputType = switch (tag) {
+            case ColumnType.DECIMAL8, ColumnType.DECIMAL16 ->
+                    ColumnType.getDecimalType(Decimals.getDecimalTagPrecision(ColumnType.DECIMAL64), argScale);
+            case ColumnType.DECIMAL32, ColumnType.DECIMAL64 ->
+                    ColumnType.getDecimalType(Decimals.getDecimalTagPrecision(ColumnType.DECIMAL128), argScale);
+            case ColumnType.DECIMAL128, ColumnType.DECIMAL256 ->
+                    ColumnType.getDecimalType(Decimals.getDecimalTagPrecision(ColumnType.DECIMAL256), argScale);
+            default -> throw SqlException.$(position, "sum is not yet implemented for ").put(ColumnType.nameOf(tag));
+        };
 
         if (rowsHi < rowsLo) {
             boolean isRange = framingMode == WindowExpression.FRAMING_RANGE;
-            return new Decimal128NullFunction(arg, NAME, rowsLo, rowsHi, isRange, partitionByRecord, outputType);
+            return switch (tag) {
+                case ColumnType.DECIMAL8, ColumnType.DECIMAL16 ->
+                        new Decimal64NullFunction(arg, NAME, rowsLo, rowsHi, isRange, partitionByRecord, outputType);
+                case ColumnType.DECIMAL32, ColumnType.DECIMAL64 ->
+                        new Decimal128NullFunction(arg, NAME, rowsLo, rowsHi, isRange, partitionByRecord, outputType);
+                default ->
+                        new Decimal256NullFunction(arg, NAME, rowsLo, rowsHi, isRange, partitionByRecord, outputType);
+            };
         }
 
-        if (tag == ColumnType.DECIMAL8) {
-            int d8OutputType = ColumnType.getDecimalType(Decimals.getDecimalTagPrecision(ColumnType.DECIMAL64), ColumnType.getDecimalScale(argType));
-            return newInstanceDecimal8(position, args, configuration, sqlExecutionContext, d8OutputType);
-        }
-        if (tag == ColumnType.DECIMAL16) {
-            int d16OutputType = ColumnType.getDecimalType(Decimals.getDecimalTagPrecision(ColumnType.DECIMAL64), ColumnType.getDecimalScale(argType));
-            return newInstanceDecimal16(position, args, configuration, sqlExecutionContext, d16OutputType);
-        }
-        if (tag == ColumnType.DECIMAL32) {
-            int d32OutputType = ColumnType.getDecimalType(Decimals.getDecimalTagPrecision(ColumnType.DECIMAL128), ColumnType.getDecimalScale(argType));
-            return newInstanceDecimal32(position, args, configuration, sqlExecutionContext, d32OutputType, argPos);
-        }
-        if (tag == ColumnType.DECIMAL128) {
-            int d128OutputType = ColumnType.getDecimalType(Decimals.getDecimalTagPrecision(ColumnType.DECIMAL256), ColumnType.getDecimalScale(argType));
-            return newInstanceDecimal128(position, args, configuration, sqlExecutionContext, d128OutputType, argPos);
-        }
-        if (tag == ColumnType.DECIMAL256) {
-            return newInstanceDecimal256(position, args, configuration, sqlExecutionContext, argType, argPos);
-        }
-        if (tag != ColumnType.DECIMAL64) {
-            throw SqlException.$(position, "sum is not yet implemented for ").put(ColumnType.nameOf(tag));
+        switch (tag) {
+            case ColumnType.DECIMAL8:
+                return newInstanceDecimal8(position, args, configuration, sqlExecutionContext, outputType);
+            case ColumnType.DECIMAL16:
+                return newInstanceDecimal16(position, args, configuration, sqlExecutionContext, outputType);
+            case ColumnType.DECIMAL32:
+                return newInstanceDecimal32(position, args, configuration, sqlExecutionContext, outputType, argPos);
+            case ColumnType.DECIMAL128:
+                return newInstanceDecimal128(position, args, configuration, sqlExecutionContext, outputType, argPos);
+            case ColumnType.DECIMAL256:
+                return newInstanceDecimal256(position, args, configuration, sqlExecutionContext, argType, argPos);
         }
 
         if (partitionByRecord != null) {
             if (framingMode == WindowExpression.FRAMING_RANGE) {
                 if (windowContext.isDefaultFrame() && (!windowContext.isOrdered() || windowContext.getRowsHi() == Long.MAX_VALUE)) {
                     Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, SUM_DECIMAL64_TYPES);
-                    return new Decimal64SumOverPartitionFunction(map, partitionByRecord, partitionBySink, arg, outputType, argPos);
+                    try {
+                        return new Decimal64SumOverPartitionFunction(map, partitionByRecord, partitionBySink, arg, outputType, argPos);
+                    } catch (Throwable th) {
+                        Misc.free(map);
+                        throw th;
+                    }
                 } else if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
                     Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, SUM_DECIMAL64_TYPES);
-                    return new Decimal64SumOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, arg, outputType, argPos);
+                    try {
+                        return new Decimal64SumOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, arg, outputType, argPos);
+                    } catch (Throwable th) {
+                        Misc.free(map);
+                        throw th;
+                    }
                 } else {
                     if (windowContext.isOrdered() && !windowContext.isOrderedByDesignatedTimestamp()) {
                         throw SqlException.$(windowContext.getOrderByPos(), "RANGE is supported only for queries ordered by designated timestamp");
@@ -162,12 +179,22 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             } else if (framingMode == WindowExpression.FRAMING_ROWS) {
                 if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
                     Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, SUM_DECIMAL64_TYPES);
-                    return new Decimal64SumOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, arg, outputType, argPos);
+                    try {
+                        return new Decimal64SumOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, arg, outputType, argPos);
+                    } catch (Throwable th) {
+                        Misc.free(map);
+                        throw th;
+                    }
                 } else if (rowsLo == 0 && rowsHi == 0) {
                     return new Decimal64SumOverCurrentRowFunction(arg, outputType);
                 } else if (rowsLo == Long.MIN_VALUE && rowsHi == Long.MAX_VALUE) {
                     Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, SUM_DECIMAL64_TYPES);
-                    return new Decimal64SumOverPartitionFunction(map, partitionByRecord, partitionBySink, arg, outputType, argPos);
+                    try {
+                        return new Decimal64SumOverPartitionFunction(map, partitionByRecord, partitionBySink, arg, outputType, argPos);
+                    } catch (Throwable th) {
+                        Misc.free(map);
+                        throw th;
+                    }
                 } else {
                     Map map = null;
                     MemoryARW mem = null;
@@ -252,10 +279,20 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             if (framingMode == WindowExpression.FRAMING_RANGE) {
                 if (windowContext.isDefaultFrame() && (!windowContext.isOrdered() || windowContext.getRowsHi() == Long.MAX_VALUE)) {
                     Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, SUM_DECIMAL128_TYPES);
-                    return new Decimal128SumOverPartitionFunction(map, partitionByRecord, partitionBySink, arg, outputType, argPos);
+                    try {
+                        return new Decimal128SumOverPartitionFunction(map, partitionByRecord, partitionBySink, arg, outputType, argPos);
+                    } catch (Throwable th) {
+                        Misc.free(map);
+                        throw th;
+                    }
                 } else if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
                     Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, SUM_DECIMAL128_TYPES);
-                    return new Decimal128SumOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, arg, outputType, argPos);
+                    try {
+                        return new Decimal128SumOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, arg, outputType, argPos);
+                    } catch (Throwable th) {
+                        Misc.free(map);
+                        throw th;
+                    }
                 } else {
                     if (windowContext.isOrdered() && !windowContext.isOrderedByDesignatedTimestamp()) {
                         throw SqlException.$(windowContext.getOrderByPos(), "RANGE is supported only for queries ordered by designated timestamp");
@@ -278,12 +315,22 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             } else if (framingMode == WindowExpression.FRAMING_ROWS) {
                 if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
                     Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, SUM_DECIMAL128_TYPES);
-                    return new Decimal128SumOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, arg, outputType, argPos);
+                    try {
+                        return new Decimal128SumOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, arg, outputType, argPos);
+                    } catch (Throwable th) {
+                        Misc.free(map);
+                        throw th;
+                    }
                 } else if (rowsLo == 0 && rowsHi == 0) {
                     return new Decimal128SumOverCurrentRowFunction(arg, outputType, argPos);
                 } else if (rowsLo == Long.MIN_VALUE && rowsHi == Long.MAX_VALUE) {
                     Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, SUM_DECIMAL128_TYPES);
-                    return new Decimal128SumOverPartitionFunction(map, partitionByRecord, partitionBySink, arg, outputType, argPos);
+                    try {
+                        return new Decimal128SumOverPartitionFunction(map, partitionByRecord, partitionBySink, arg, outputType, argPos);
+                    } catch (Throwable th) {
+                        Misc.free(map);
+                        throw th;
+                    }
                 } else {
                     Map map = null;
                     MemoryARW mem = null;
@@ -351,10 +398,20 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             if (framingMode == WindowExpression.FRAMING_RANGE) {
                 if (windowContext.isDefaultFrame() && (!windowContext.isOrdered() || windowContext.getRowsHi() == Long.MAX_VALUE)) {
                     Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, SUM_DECIMAL16_TYPES);
-                    return new Decimal16SumOverPartitionFunction(map, partitionByRecord, partitionBySink, arg, outputType);
+                    try {
+                        return new Decimal16SumOverPartitionFunction(map, partitionByRecord, partitionBySink, arg, outputType);
+                    } catch (Throwable th) {
+                        Misc.free(map);
+                        throw th;
+                    }
                 } else if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
                     Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, SUM_DECIMAL16_TYPES);
-                    return new Decimal16SumOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, arg, outputType);
+                    try {
+                        return new Decimal16SumOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, arg, outputType);
+                    } catch (Throwable th) {
+                        Misc.free(map);
+                        throw th;
+                    }
                 } else {
                     if (windowContext.isOrdered() && !windowContext.isOrderedByDesignatedTimestamp()) {
                         throw SqlException.$(windowContext.getOrderByPos(), "RANGE is supported only for queries ordered by designated timestamp");
@@ -377,12 +434,22 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             } else if (framingMode == WindowExpression.FRAMING_ROWS) {
                 if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
                     Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, SUM_DECIMAL16_TYPES);
-                    return new Decimal16SumOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, arg, outputType);
+                    try {
+                        return new Decimal16SumOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, arg, outputType);
+                    } catch (Throwable th) {
+                        Misc.free(map);
+                        throw th;
+                    }
                 } else if (rowsLo == 0 && rowsHi == 0) {
                     return new Decimal16SumOverCurrentRowFunction(arg, outputType);
                 } else if (rowsLo == Long.MIN_VALUE && rowsHi == Long.MAX_VALUE) {
                     Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, SUM_DECIMAL16_TYPES);
-                    return new Decimal16SumOverPartitionFunction(map, partitionByRecord, partitionBySink, arg, outputType);
+                    try {
+                        return new Decimal16SumOverPartitionFunction(map, partitionByRecord, partitionBySink, arg, outputType);
+                    } catch (Throwable th) {
+                        Misc.free(map);
+                        throw th;
+                    }
                 } else {
                     Map map = null;
                     MemoryARW mem = null;
@@ -451,10 +518,20 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             if (framingMode == WindowExpression.FRAMING_RANGE) {
                 if (windowContext.isDefaultFrame() && (!windowContext.isOrdered() || windowContext.getRowsHi() == Long.MAX_VALUE)) {
                     Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, SUM_DECIMAL128_TYPES);
-                    return new Decimal256SumOverPartitionFunction(map, partitionByRecord, partitionBySink, arg, outputType, argPos);
+                    try {
+                        return new Decimal256SumOverPartitionFunction(map, partitionByRecord, partitionBySink, arg, outputType, argPos);
+                    } catch (Throwable th) {
+                        Misc.free(map);
+                        throw th;
+                    }
                 } else if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
                     Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, SUM_DECIMAL128_TYPES);
-                    return new Decimal256SumOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, arg, outputType, argPos);
+                    try {
+                        return new Decimal256SumOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, arg, outputType, argPos);
+                    } catch (Throwable th) {
+                        Misc.free(map);
+                        throw th;
+                    }
                 } else {
                     if (windowContext.isOrdered() && !windowContext.isOrderedByDesignatedTimestamp()) {
                         throw SqlException.$(windowContext.getOrderByPos(), "RANGE is supported only for queries ordered by designated timestamp");
@@ -477,12 +554,22 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             } else if (framingMode == WindowExpression.FRAMING_ROWS) {
                 if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
                     Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, SUM_DECIMAL128_TYPES);
-                    return new Decimal256SumOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, arg, outputType, argPos);
+                    try {
+                        return new Decimal256SumOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, arg, outputType, argPos);
+                    } catch (Throwable th) {
+                        Misc.free(map);
+                        throw th;
+                    }
                 } else if (rowsLo == 0 && rowsHi == 0) {
                     return new Decimal256SumOverCurrentRowFunction(arg, outputType, argPos);
                 } else if (rowsLo == Long.MIN_VALUE && rowsHi == Long.MAX_VALUE) {
                     Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, SUM_DECIMAL128_TYPES);
-                    return new Decimal256SumOverPartitionFunction(map, partitionByRecord, partitionBySink, arg, outputType, argPos);
+                    try {
+                        return new Decimal256SumOverPartitionFunction(map, partitionByRecord, partitionBySink, arg, outputType, argPos);
+                    } catch (Throwable th) {
+                        Misc.free(map);
+                        throw th;
+                    }
                 } else {
                     Map map = null;
                     MemoryARW mem = null;
@@ -551,10 +638,20 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             if (framingMode == WindowExpression.FRAMING_RANGE) {
                 if (windowContext.isDefaultFrame() && (!windowContext.isOrdered() || windowContext.getRowsHi() == Long.MAX_VALUE)) {
                     Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, SUM_DECIMAL64_TYPES);
-                    return new Decimal32SumOverPartitionFunction(map, partitionByRecord, partitionBySink, arg, outputType, argPos);
+                    try {
+                        return new Decimal32SumOverPartitionFunction(map, partitionByRecord, partitionBySink, arg, outputType, argPos);
+                    } catch (Throwable th) {
+                        Misc.free(map);
+                        throw th;
+                    }
                 } else if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
                     Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, SUM_DECIMAL64_TYPES);
-                    return new Decimal32SumOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, arg, outputType, argPos);
+                    try {
+                        return new Decimal32SumOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, arg, outputType, argPos);
+                    } catch (Throwable th) {
+                        Misc.free(map);
+                        throw th;
+                    }
                 } else {
                     if (windowContext.isOrdered() && !windowContext.isOrderedByDesignatedTimestamp()) {
                         throw SqlException.$(windowContext.getOrderByPos(), "RANGE is supported only for queries ordered by designated timestamp");
@@ -577,12 +674,22 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             } else if (framingMode == WindowExpression.FRAMING_ROWS) {
                 if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
                     Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, SUM_DECIMAL64_TYPES);
-                    return new Decimal32SumOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, arg, outputType, argPos);
+                    try {
+                        return new Decimal32SumOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, arg, outputType, argPos);
+                    } catch (Throwable th) {
+                        Misc.free(map);
+                        throw th;
+                    }
                 } else if (rowsLo == 0 && rowsHi == 0) {
                     return new Decimal32SumOverCurrentRowFunction(arg, outputType);
                 } else if (rowsLo == Long.MIN_VALUE && rowsHi == Long.MAX_VALUE) {
                     Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, SUM_DECIMAL64_TYPES);
-                    return new Decimal32SumOverPartitionFunction(map, partitionByRecord, partitionBySink, arg, outputType, argPos);
+                    try {
+                        return new Decimal32SumOverPartitionFunction(map, partitionByRecord, partitionBySink, arg, outputType, argPos);
+                    } catch (Throwable th) {
+                        Misc.free(map);
+                        throw th;
+                    }
                 } else {
                     Map map = null;
                     MemoryARW mem = null;
@@ -650,10 +757,20 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             if (framingMode == WindowExpression.FRAMING_RANGE) {
                 if (windowContext.isDefaultFrame() && (!windowContext.isOrdered() || windowContext.getRowsHi() == Long.MAX_VALUE)) {
                     Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, SUM_DECIMAL8_TYPES);
-                    return new Decimal8SumOverPartitionFunction(map, partitionByRecord, partitionBySink, arg, outputType);
+                    try {
+                        return new Decimal8SumOverPartitionFunction(map, partitionByRecord, partitionBySink, arg, outputType);
+                    } catch (Throwable th) {
+                        Misc.free(map);
+                        throw th;
+                    }
                 } else if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
                     Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, SUM_DECIMAL8_TYPES);
-                    return new Decimal8SumOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, arg, outputType);
+                    try {
+                        return new Decimal8SumOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, arg, outputType);
+                    } catch (Throwable th) {
+                        Misc.free(map);
+                        throw th;
+                    }
                 } else {
                     if (windowContext.isOrdered() && !windowContext.isOrderedByDesignatedTimestamp()) {
                         throw SqlException.$(windowContext.getOrderByPos(), "RANGE is supported only for queries ordered by designated timestamp");
@@ -676,12 +793,22 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             } else if (framingMode == WindowExpression.FRAMING_ROWS) {
                 if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
                     Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, SUM_DECIMAL8_TYPES);
-                    return new Decimal8SumOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, arg, outputType);
+                    try {
+                        return new Decimal8SumOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, arg, outputType);
+                    } catch (Throwable th) {
+                        Misc.free(map);
+                        throw th;
+                    }
                 } else if (rowsLo == 0 && rowsHi == 0) {
                     return new Decimal8SumOverCurrentRowFunction(arg, outputType);
                 } else if (rowsLo == Long.MIN_VALUE && rowsHi == Long.MAX_VALUE) {
                     Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, SUM_DECIMAL8_TYPES);
-                    return new Decimal8SumOverPartitionFunction(map, partitionByRecord, partitionBySink, arg, outputType);
+                    try {
+                        return new Decimal8SumOverPartitionFunction(map, partitionByRecord, partitionBySink, arg, outputType);
+                    } catch (Throwable th) {
+                        Misc.free(map);
+                        throw th;
+                    }
                 } else {
                     Map map = null;
                     MemoryARW mem = null;
@@ -893,7 +1020,6 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         private final RingBufferDesc memoryDesc = new RingBufferDesc();
         private final long minDiff;
         private final int position;
-        private final int scale;
         private final Decimal128 scratch = new Decimal128();
         private final int timestampIndex;
         private final int type;
@@ -921,7 +1047,6 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             this.timestampIndex = timestampIdx;
             this.frameIncludesCurrentValue = rangeHi == 0;
             this.type = type;
-            this.scale = ColumnType.getDecimalScale(type);
             this.position = position;
         }
 
@@ -1165,7 +1290,6 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         private final int frameSize;
         private final MemoryARW memory;
         private final int position;
-        private final int scale;
         private final Decimal128 scratch = new Decimal128();
         private final int type;
         private final Decimal256 value = new Decimal256();
@@ -1194,7 +1318,6 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             frameIncludesCurrentValue = rowsHi == 0;
             this.memory = memory;
             this.type = type;
-            this.scale = ColumnType.getDecimalScale(type);
             this.position = position;
         }
 
@@ -1221,7 +1344,7 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
 
             if (mv.isNew()) {
                 loIdx = 0;
-                startOffset = memory.appendAddressFor((long) bufferSize * 16L) - memory.getPageAddress(0);
+                startOffset = memory.appendAddressFor((long) bufferSize * Decimal128.BYTES) - memory.getPageAddress(0);
                 if (frameIncludesCurrentValue && !isNull) {
                     acc.ofRaw(inHigh, inLow);
                     count = 1;
@@ -1232,8 +1355,8 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                     count = 0;
                 }
                 for (int i = 0; i < bufferSize; i++) {
-                    memory.putLong(startOffset + (long) i * 16L, Decimals.DECIMAL128_HI_NULL);
-                    memory.putLong(startOffset + (long) i * 16L + Long.BYTES, Decimals.DECIMAL128_LO_NULL);
+                    memory.putLong(startOffset + (long) i * Decimal128.BYTES, Decimals.DECIMAL128_HI_NULL);
+                    memory.putLong(startOffset + (long) i * Decimal128.BYTES + Long.BYTES, Decimals.DECIMAL128_LO_NULL);
                 }
             } else {
                 mv.getDecimal256(0, acc);
@@ -1243,7 +1366,7 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
 
                 long hiOffset = frameIncludesCurrentValue
                         ? -1
-                        : startOffset + ((loIdx + frameSize - 1) % bufferSize) * 16L;
+                        : startOffset + ((loIdx + frameSize - 1) % bufferSize) * Decimal128.BYTES;
                 long hiH;
                 long hiL;
                 if (frameIncludesCurrentValue) {
@@ -1271,8 +1394,8 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                     value.ofRawNull();
                 }
                 if (frameLoBounded) {
-                    long loH = memory.getLong(startOffset + loIdx * 16L);
-                    long loL = memory.getLong(startOffset + loIdx * 16L + Long.BYTES);
+                    long loH = memory.getLong(startOffset + loIdx * Decimal128.BYTES);
+                    long loL = memory.getLong(startOffset + loIdx * Decimal128.BYTES + Long.BYTES);
                     if (!Decimal128.isNull(loH, loL)) {
                         acc.subtract(loH < 0 ? -1L : 0L, loH < 0 ? -1L : 0L, loH, loL, 0);
                         count--;
@@ -1284,8 +1407,8 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             mv.putLong(1, count);
             mv.putLong(2, (loIdx + 1) % bufferSize);
             mv.putLong(3, startOffset);
-            memory.putLong(startOffset + loIdx * 16L, inHigh);
-            memory.putLong(startOffset + loIdx * 16L + Long.BYTES, inLow);
+            memory.putLong(startOffset + loIdx * Decimal128.BYTES, inHigh);
+            memory.putLong(startOffset + loIdx * Decimal128.BYTES + Long.BYTES, inLow);
         }
 
         @Override
@@ -1368,7 +1491,6 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         private final MemoryARW memory;
         private final long minDiff;
         private final int position;
-        private final int scale;
         private final Decimal128 scratch = new Decimal128();
         private final int timestampIndex;
         private final int type;
@@ -1397,7 +1519,6 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             this.minDiff = Math.abs(rangeHi);
             this.timestampIndex = timestampIdx;
             this.type = type;
-            this.scale = ColumnType.getDecimalScale(type);
             this.position = position;
             capacity = initialCapacity;
             startOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
@@ -1606,7 +1727,6 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         private final boolean frameLoBounded;
         private final int frameSize;
         private final int position;
-        private final int scale;
         private final Decimal128 scratch = new Decimal128();
         private final int type;
         private final Decimal256 value = new Decimal256();
@@ -1628,7 +1748,6 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             frameIncludesCurrentValue = rowsHi == 0;
             this.buffer = memory;
             this.type = type;
-            this.scale = ColumnType.getDecimalScale(type);
             this.position = position;
             acc.ofRaw(0);
             value.ofRawNull();
@@ -1654,11 +1773,11 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             long hiH;
             long hiL;
             if (frameLoBounded && !frameIncludesCurrentValue) {
-                long off = (long) ((loIdx + frameSize - 1) % bufferSize) * 16L;
+                long off = (long) ((loIdx + frameSize - 1) % bufferSize) * Decimal128.BYTES;
                 hiH = buffer.getLong(off);
                 hiL = buffer.getLong(off + Long.BYTES);
             } else if (!frameLoBounded && !frameIncludesCurrentValue) {
-                long off = (long) (loIdx % bufferSize) * 16L;
+                long off = (long) (loIdx % bufferSize) * Decimal128.BYTES;
                 hiH = buffer.getLong(off);
                 hiL = buffer.getLong(off + Long.BYTES);
             } else {
@@ -1684,7 +1803,7 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             }
 
             if (frameLoBounded) {
-                long off = (long) loIdx * 16L;
+                long off = (long) loIdx * Decimal128.BYTES;
                 long loH = buffer.getLong(off);
                 long loL = buffer.getLong(off + Long.BYTES);
                 if (!Decimal128.isNull(loH, loL)) {
@@ -1692,7 +1811,7 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                     count--;
                 }
             }
-            long writeOff = (long) loIdx * 16L;
+            long writeOff = (long) loIdx * Decimal128.BYTES;
             buffer.putLong(writeOff, inHigh);
             buffer.putLong(writeOff + Long.BYTES, inLow);
             loIdx = (loIdx + 1) % bufferSize;
@@ -1781,8 +1900,8 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
 
         private void initBuffer() {
             for (int i = 0; i < bufferSize; i++) {
-                buffer.putLong((long) i * 16L, Decimals.DECIMAL128_HI_NULL);
-                buffer.putLong((long) i * 16L + Long.BYTES, Decimals.DECIMAL128_LO_NULL);
+                buffer.putLong((long) i * Decimal128.BYTES, Decimals.DECIMAL128_HI_NULL);
+                buffer.putLong((long) i * Decimal128.BYTES + Long.BYTES, Decimals.DECIMAL128_LO_NULL);
             }
         }
     }
@@ -3327,6 +3446,7 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         private final boolean frameLoBounded;
         private final LongList freeList = new LongList();
         private final int initialBufferSize;
+        private final Decimal256 input = new Decimal256();
         private final long maxDiff;
         private final MemoryARW memory;
         private final RingBufferDesc memoryDesc = new RingBufferDesc();
@@ -3382,8 +3502,8 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             long capacity;
             long firstIdx;
             long timestamp = record.getTimestamp(timestampIndex);
-            arg.getDecimal256(record, scratch);
-            boolean isNull = scratch.isNull();
+            arg.getDecimal256(record, input);
+            boolean isNull = input.isNull();
 
             if (mapValue.isNew()) {
                 capacity = initialBufferSize;
@@ -3391,9 +3511,9 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                 firstIdx = 0;
                 if (!isNull) {
                     memory.putLong(startOffset, timestamp);
-                    writeD256(memory, startOffset + Long.BYTES, scratch);
+                    writeD256(memory, startOffset + Long.BYTES, input);
                     if (frameIncludesCurrentValue) {
-                        acc.copyRaw(scratch);
+                        acc.copyRaw(input);
                         value.copyRaw(acc);
                         frameSize = 1;
                         size = frameLoBounded ? 1 : 0;
@@ -3447,7 +3567,7 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                     }
                     long slotOffset = startOffset + ((firstIdx + size) % capacity) * RECORD_SIZE;
                     memory.putLong(slotOffset, timestamp);
-                    writeD256(memory, slotOffset + Long.BYTES, scratch);
+                    writeD256(memory, slotOffset + Long.BYTES, input);
                     size++;
                 }
 
@@ -3649,7 +3769,7 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
 
             if (mv.isNew()) {
                 loIdx = 0;
-                startOffset = memory.appendAddressFor((long) bufferSize * 32L) - memory.getPageAddress(0);
+                startOffset = memory.appendAddressFor((long) bufferSize * Decimal256.BYTES) - memory.getPageAddress(0);
                 if (frameIncludesCurrentValue && !isNull) {
                     acc.copyRaw(scratch);
                     count = 1;
@@ -3660,7 +3780,7 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                     count = 0;
                 }
                 for (int i = 0; i < bufferSize; i++) {
-                    long off = startOffset + (long) i * 32L;
+                    long off = startOffset + (long) i * Decimal256.BYTES;
                     memory.putLong(off, Decimals.DECIMAL256_HH_NULL);
                     memory.putLong(off + Long.BYTES, Decimals.DECIMAL256_HL_NULL);
                     memory.putLong(off + 2 * Long.BYTES, Decimals.DECIMAL256_LH_NULL);
@@ -3685,7 +3805,7 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                         count++;
                     }
                 } else {
-                    readD256(memory, startOffset + ((loIdx + frameSize - 1) % bufferSize) * 32L, scratch);
+                    readD256(memory, startOffset + ((loIdx + frameSize - 1) % bufferSize) * Decimal256.BYTES, scratch);
                     if (!scratch.isNull()) {
                         try {
                             Decimal256.uncheckedAdd(acc, scratch);
@@ -3704,7 +3824,7 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                     value.ofRawNull();
                 }
                 if (frameLoBounded) {
-                    readD256(memory, startOffset + loIdx * 32L, scratch);
+                    readD256(memory, startOffset + loIdx * Decimal256.BYTES, scratch);
                     if (!scratch.isNull()) {
                         acc.subtract(scratch);
                         count--;
@@ -3716,7 +3836,7 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             mv.putLong(1, count);
             mv.putLong(2, (loIdx + 1) % bufferSize);
             mv.putLong(3, startOffset);
-            long writeOff = startOffset + loIdx * 32L;
+            long writeOff = startOffset + loIdx * Decimal256.BYTES;
             memory.putLong(writeOff, inHh);
             memory.putLong(writeOff + Long.BYTES, inHl);
             memory.putLong(writeOff + 2 * Long.BYTES, inLh);
@@ -4101,8 +4221,8 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                 }
             } else {
                 long hiOff = frameLoBounded
-                        ? (long) ((loIdx + frameSize - 1) % bufferSize) * 32L
-                        : (long) (loIdx % bufferSize) * 32L;
+                        ? (long) ((loIdx + frameSize - 1) % bufferSize) * Decimal256.BYTES
+                        : (long) (loIdx % bufferSize) * Decimal256.BYTES;
                 readD256(buffer, hiOff, scratch);
                 if (!scratch.isNull()) {
                     try {
@@ -4123,13 +4243,13 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             }
 
             if (frameLoBounded) {
-                readD256(buffer, (long) loIdx * 32L, scratch);
+                readD256(buffer, (long) loIdx * Decimal256.BYTES, scratch);
                 if (!scratch.isNull()) {
                     acc.subtract(scratch);
                     count--;
                 }
             }
-            long writeOff = (long) loIdx * 32L;
+            long writeOff = (long) loIdx * Decimal256.BYTES;
             buffer.putLong(writeOff, inHh);
             buffer.putLong(writeOff + Long.BYTES, inHl);
             buffer.putLong(writeOff + 2 * Long.BYTES, inLh);
@@ -4220,7 +4340,7 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
 
         private void initBuffer() {
             for (int i = 0; i < bufferSize; i++) {
-                long off = (long) i * 32L;
+                long off = (long) i * Decimal256.BYTES;
                 buffer.putLong(off, Decimals.DECIMAL256_HH_NULL);
                 buffer.putLong(off + Long.BYTES, Decimals.DECIMAL256_HL_NULL);
                 buffer.putLong(off + 2 * Long.BYTES, Decimals.DECIMAL256_LH_NULL);
@@ -4707,7 +4827,6 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         private final RingBufferDesc memoryDesc = new RingBufferDesc();
         private final long minDiff;
         private final int position;
-        private final int scale;
         private final int timestampIndex;
         private final int type;
         private final Decimal128 value = new Decimal128();
@@ -4734,7 +4853,6 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             this.timestampIndex = timestampIdx;
             this.frameIncludesCurrentValue = rangeHi == 0;
             this.type = type;
-            this.scale = ColumnType.getDecimalScale(type);
             this.position = position;
         }
 
@@ -4957,7 +5075,6 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         private final int frameSize;
         private final MemoryARW memory;
         private final int position;
-        private final int scale;
         private final int type;
         private final Decimal128 value = new Decimal128();
 
@@ -4985,7 +5102,6 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             frameIncludesCurrentValue = rowsHi == 0;
             this.memory = memory;
             this.type = type;
-            this.scale = ColumnType.getDecimalScale(type);
             this.position = position;
         }
 
@@ -5133,7 +5249,6 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         private final MemoryARW memory;
         private final long minDiff;
         private final int position;
-        private final int scale;
         private final int timestampIndex;
         private final int type;
         private final Decimal128 value = new Decimal128();
@@ -5161,7 +5276,6 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             this.minDiff = Math.abs(rangeHi);
             this.timestampIndex = timestampIdx;
             this.type = type;
-            this.scale = ColumnType.getDecimalScale(type);
             this.position = position;
             capacity = initialCapacity;
             startOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
@@ -5353,7 +5467,6 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         private final boolean frameLoBounded;
         private final int frameSize;
         private final int position;
-        private final int scale;
         private final int type;
         private final Decimal128 value = new Decimal128();
         private long count = 0;
@@ -5374,7 +5487,6 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             frameIncludesCurrentValue = rowsHi == 0;
             this.buffer = memory;
             this.type = type;
-            this.scale = ColumnType.getDecimalScale(type);
             this.position = position;
             acc.ofRaw(0);
             value.ofRawNull();
@@ -5960,7 +6072,6 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         private final RingBufferDesc memoryDesc = new RingBufferDesc();
         private final long minDiff;
         private final int position;
-        private final int scale;
         private final int timestampIndex;
         private final int type;
         private final Decimal128 value = new Decimal128();
@@ -5987,7 +6098,6 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             this.timestampIndex = timestampIdx;
             this.frameIncludesCurrentValue = rangeHi == 0;
             this.type = type;
-            this.scale = ColumnType.getDecimalScale(type);
             this.position = position;
         }
 
@@ -6212,7 +6322,6 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         private final int frameSize;
         private final MemoryARW memory;
         private final int position;
-        private final int scale;
         private final int type;
         private final Decimal128 value = new Decimal128();
 
@@ -6240,7 +6349,6 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             frameIncludesCurrentValue = rowsHi == 0;
             this.memory = memory;
             this.type = type;
-            this.scale = ColumnType.getDecimalScale(type);
             this.position = position;
         }
 
@@ -6391,7 +6499,6 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         private final MemoryARW memory;
         private final long minDiff;
         private final int position;
-        private final int scale;
         private final int timestampIndex;
         private final int type;
         private final Decimal128 value = new Decimal128();
@@ -6419,7 +6526,6 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             this.minDiff = Math.abs(rangeHi);
             this.timestampIndex = timestampIdx;
             this.type = type;
-            this.scale = ColumnType.getDecimalScale(type);
             this.position = position;
             capacity = initialCapacity;
             startOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
@@ -6613,7 +6719,6 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         private final boolean frameLoBounded;
         private final int frameSize;
         private final int position;
-        private final int scale;
         private final int type;
         private final Decimal128 value = new Decimal128();
         private long count = 0;
@@ -6634,7 +6739,6 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             frameIncludesCurrentValue = rowsHi == 0;
             this.buffer = memory;
             this.type = type;
-            this.scale = ColumnType.getDecimalScale(type);
             this.position = position;
             acc.ofRaw(0);
             value.ofRawNull();

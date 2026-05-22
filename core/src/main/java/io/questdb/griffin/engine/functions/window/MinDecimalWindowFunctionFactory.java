@@ -33,7 +33,6 @@ import io.questdb.std.ObjList;
 
 public class MinDecimalWindowFunctionFactory extends AbstractWindowFunctionFactory {
 
-    public static final MaxDecimalWindowFunctionFactory.Decimal64Comparator LESS_THAN = (a, b) -> a < b;
     public static final String NAME = "min";
     private static final String SIGNATURE = NAME + "(Ξ)";
 
@@ -50,6 +49,10 @@ public class MinDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        return MaxDecimalWindowFunctionFactory.newMaxMinInstance(this, position, args, configuration, sqlExecutionContext, LESS_THAN, NAME);
+        return MaxDecimalWindowFunctionFactory.newMaxMinInstance(this, position, args, configuration, sqlExecutionContext,
+                MaxDecimalWindowFunctionFactory.LESS_THAN_64,
+                MaxDecimalWindowFunctionFactory.LESS_THAN_128,
+                MaxDecimalWindowFunctionFactory.LESS_THAN_256,
+                NAME);
     }
 }

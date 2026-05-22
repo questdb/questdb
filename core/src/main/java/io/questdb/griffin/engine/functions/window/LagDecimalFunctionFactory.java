@@ -58,11 +58,6 @@ public class LagDecimalFunctionFactory extends AbstractWindowFunctionFactory {
     }
 
     @Override
-    protected boolean supportNullsDesc() {
-        return true;
-    }
-
-    @Override
     public Function newInstance(
             int position,
             ObjList<Function> args,
@@ -72,87 +67,84 @@ public class LagDecimalFunctionFactory extends AbstractWindowFunctionFactory {
     ) throws SqlException {
         final int argType = args.get(0).getType();
         final int tag = ColumnType.tagOf(argType);
-        switch (tag) {
-            case ColumnType.DECIMAL8:
-                return LeadLagWindowFunctionFactoryHelper.newInstance(
-                        position, args, argPositions, configuration, sqlExecutionContext,
-                        (defaultValue) -> {
-                            if (!ColumnType.isSameOrBuiltInWideningCast(defaultValue.getType(), argType)) {
-                                throw SqlException.$(argPositions.getQuick(2), "default value must be castable to decimal");
-                            }
-                        },
-                        (arg, defaultValueFunc, offset, memory, ignoreNulls) -> new Decimal8LagFunction(arg, defaultValueFunc, offset, memory, ignoreNulls, argType),
-                        (partitionByRecord, arg, name, ignoreNulls) -> new Decimal8LeadLagValueCurrentRow(partitionByRecord, arg, name, ignoreNulls, argType),
-                        (map, partitionByRecord, partitionBySink, memory, arg, ignoreNulls, defaultValue, offset) -> new Decimal8LagOverPartitionFunction(map, partitionByRecord, partitionBySink, memory, arg, ignoreNulls, defaultValue, offset, argType)
-                );
-            case ColumnType.DECIMAL16:
-                return LeadLagWindowFunctionFactoryHelper.newInstance(
-                        position, args, argPositions, configuration, sqlExecutionContext,
-                        (defaultValue) -> {
-                            if (!ColumnType.isSameOrBuiltInWideningCast(defaultValue.getType(), argType)) {
-                                throw SqlException.$(argPositions.getQuick(2), "default value must be castable to decimal");
-                            }
-                        },
-                        (arg, defaultValueFunc, offset, memory, ignoreNulls) -> new Decimal16LagFunction(arg, defaultValueFunc, offset, memory, ignoreNulls, argType),
-                        (partitionByRecord, arg, name, ignoreNulls) -> new Decimal16LeadLagValueCurrentRow(partitionByRecord, arg, name, ignoreNulls, argType),
-                        (map, partitionByRecord, partitionBySink, memory, arg, ignoreNulls, defaultValue, offset) -> new Decimal16LagOverPartitionFunction(map, partitionByRecord, partitionBySink, memory, arg, ignoreNulls, defaultValue, offset, argType)
-                );
-            case ColumnType.DECIMAL32:
-                return LeadLagWindowFunctionFactoryHelper.newInstance(
-                        position, args, argPositions, configuration, sqlExecutionContext,
-                        (defaultValue) -> {
-                            if (!ColumnType.isSameOrBuiltInWideningCast(defaultValue.getType(), argType)) {
-                                throw SqlException.$(argPositions.getQuick(2), "default value must be castable to decimal");
-                            }
-                        },
-                        (arg, defaultValueFunc, offset, memory, ignoreNulls) -> new Decimal32LagFunction(arg, defaultValueFunc, offset, memory, ignoreNulls, argType),
-                        (partitionByRecord, arg, name, ignoreNulls) -> new Decimal32LeadLagValueCurrentRow(partitionByRecord, arg, name, ignoreNulls, argType),
-                        (map, partitionByRecord, partitionBySink, memory, arg, ignoreNulls, defaultValue, offset) -> new Decimal32LagOverPartitionFunction(map, partitionByRecord, partitionBySink, memory, arg, ignoreNulls, defaultValue, offset, argType)
-                );
-            case ColumnType.DECIMAL64:
-                return LeadLagWindowFunctionFactoryHelper.newInstance(
-                        position, args, argPositions, configuration, sqlExecutionContext,
-                        (defaultValue) -> {
-                            if (!ColumnType.isSameOrBuiltInWideningCast(defaultValue.getType(), argType)) {
-                                throw SqlException.$(argPositions.getQuick(2), "default value must be castable to decimal");
-                            }
-                        },
-                        (arg, defaultValueFunc, offset, memory, ignoreNulls) -> new Decimal64LagFunction(arg, defaultValueFunc, offset, memory, ignoreNulls, argType),
-                        (partitionByRecord, arg, name, ignoreNulls) -> new Decimal64LeadLagValueCurrentRow(partitionByRecord, arg, name, ignoreNulls, argType),
-                        (map, partitionByRecord, partitionBySink, memory, arg, ignoreNulls, defaultValue, offset) -> new Decimal64LagOverPartitionFunction(map, partitionByRecord, partitionBySink, memory, arg, ignoreNulls, defaultValue, offset, argType)
-                );
-            case ColumnType.DECIMAL128:
-                return LeadLagWindowFunctionFactoryHelper.newInstance(
-                        position, args, argPositions, configuration, sqlExecutionContext,
-                        (defaultValue) -> {
-                            if (!ColumnType.isSameOrBuiltInWideningCast(defaultValue.getType(), argType)) {
-                                throw SqlException.$(argPositions.getQuick(2), "default value must be castable to decimal");
-                            }
-                        },
-                        (arg, defaultValueFunc, offset, memory, ignoreNulls) -> new Decimal128LagFunction(arg, defaultValueFunc, offset, memory, ignoreNulls, argType),
-                        (partitionByRecord, arg, name, ignoreNulls) -> new Decimal128LeadLagValueCurrentRow(partitionByRecord, arg, name, ignoreNulls, argType),
-                        (map, partitionByRecord, partitionBySink, memory, arg, ignoreNulls, defaultValue, offset) -> new Decimal128LagOverPartitionFunction(map, partitionByRecord, partitionBySink, memory, arg, ignoreNulls, defaultValue, offset, argType)
-                );
-            case ColumnType.DECIMAL256:
-                return LeadLagWindowFunctionFactoryHelper.newInstance(
-                        position, args, argPositions, configuration, sqlExecutionContext,
-                        (defaultValue) -> {
-                            if (!ColumnType.isSameOrBuiltInWideningCast(defaultValue.getType(), argType)) {
-                                throw SqlException.$(argPositions.getQuick(2), "default value must be castable to decimal");
-                            }
-                        },
-                        (arg, defaultValueFunc, offset, memory, ignoreNulls) -> new Decimal256LagFunction(arg, defaultValueFunc, offset, memory, ignoreNulls, argType),
-                        (partitionByRecord, arg, name, ignoreNulls) -> new Decimal256LeadLagValueCurrentRow(partitionByRecord, arg, name, ignoreNulls, argType),
-                        (map, partitionByRecord, partitionBySink, memory, arg, ignoreNulls, defaultValue, offset) -> new Decimal256LagOverPartitionFunction(map, partitionByRecord, partitionBySink, memory, arg, ignoreNulls, defaultValue, offset, argType)
-                );
-            default:
-                throw SqlException.$(position, "lag is not yet implemented for ").put(ColumnType.nameOf(tag));
-        }
+        return switch (tag) {
+            case ColumnType.DECIMAL8 -> LeadLagWindowFunctionFactoryHelper.newInstance(
+                    position, args, argPositions, configuration, sqlExecutionContext,
+                    (defaultValue) -> {
+                        if (!ColumnType.isSameOrBuiltInWideningCast(defaultValue.getType(), argType)) {
+                            throw SqlException.$(argPositions.getQuick(2), "default value must be castable to decimal");
+                        }
+                    },
+                    (arg, defaultValueFunc, offset, memory, ignoreNulls) -> new Decimal8LagFunction(arg, defaultValueFunc, offset, memory, ignoreNulls, argType),
+                    (partitionByRecord, arg, name, ignoreNulls) -> new Decimal8LeadLagValueCurrentRow(partitionByRecord, arg, name, ignoreNulls, argType),
+                    (map, partitionByRecord, partitionBySink, memory, arg, ignoreNulls, defaultValue, offset) -> new Decimal8LagOverPartitionFunction(map, partitionByRecord, partitionBySink, memory, arg, ignoreNulls, defaultValue, offset, argType)
+            );
+            case ColumnType.DECIMAL16 -> LeadLagWindowFunctionFactoryHelper.newInstance(
+                    position, args, argPositions, configuration, sqlExecutionContext,
+                    (defaultValue) -> {
+                        if (!ColumnType.isSameOrBuiltInWideningCast(defaultValue.getType(), argType)) {
+                            throw SqlException.$(argPositions.getQuick(2), "default value must be castable to decimal");
+                        }
+                    },
+                    (arg, defaultValueFunc, offset, memory, ignoreNulls) -> new Decimal16LagFunction(arg, defaultValueFunc, offset, memory, ignoreNulls, argType),
+                    (partitionByRecord, arg, name, ignoreNulls) -> new Decimal16LeadLagValueCurrentRow(partitionByRecord, arg, name, ignoreNulls, argType),
+                    (map, partitionByRecord, partitionBySink, memory, arg, ignoreNulls, defaultValue, offset) -> new Decimal16LagOverPartitionFunction(map, partitionByRecord, partitionBySink, memory, arg, ignoreNulls, defaultValue, offset, argType)
+            );
+            case ColumnType.DECIMAL32 -> LeadLagWindowFunctionFactoryHelper.newInstance(
+                    position, args, argPositions, configuration, sqlExecutionContext,
+                    (defaultValue) -> {
+                        if (!ColumnType.isSameOrBuiltInWideningCast(defaultValue.getType(), argType)) {
+                            throw SqlException.$(argPositions.getQuick(2), "default value must be castable to decimal");
+                        }
+                    },
+                    (arg, defaultValueFunc, offset, memory, ignoreNulls) -> new Decimal32LagFunction(arg, defaultValueFunc, offset, memory, ignoreNulls, argType),
+                    (partitionByRecord, arg, name, ignoreNulls) -> new Decimal32LeadLagValueCurrentRow(partitionByRecord, arg, name, ignoreNulls, argType),
+                    (map, partitionByRecord, partitionBySink, memory, arg, ignoreNulls, defaultValue, offset) -> new Decimal32LagOverPartitionFunction(map, partitionByRecord, partitionBySink, memory, arg, ignoreNulls, defaultValue, offset, argType)
+            );
+            case ColumnType.DECIMAL64 -> LeadLagWindowFunctionFactoryHelper.newInstance(
+                    position, args, argPositions, configuration, sqlExecutionContext,
+                    (defaultValue) -> {
+                        if (!ColumnType.isSameOrBuiltInWideningCast(defaultValue.getType(), argType)) {
+                            throw SqlException.$(argPositions.getQuick(2), "default value must be castable to decimal");
+                        }
+                    },
+                    (arg, defaultValueFunc, offset, memory, ignoreNulls) -> new Decimal64LagFunction(arg, defaultValueFunc, offset, memory, ignoreNulls, argType),
+                    (partitionByRecord, arg, name, ignoreNulls) -> new Decimal64LeadLagValueCurrentRow(partitionByRecord, arg, name, ignoreNulls, argType),
+                    (map, partitionByRecord, partitionBySink, memory, arg, ignoreNulls, defaultValue, offset) -> new Decimal64LagOverPartitionFunction(map, partitionByRecord, partitionBySink, memory, arg, ignoreNulls, defaultValue, offset, argType)
+            );
+            case ColumnType.DECIMAL128 -> LeadLagWindowFunctionFactoryHelper.newInstance(
+                    position, args, argPositions, configuration, sqlExecutionContext,
+                    (defaultValue) -> {
+                        if (!ColumnType.isSameOrBuiltInWideningCast(defaultValue.getType(), argType)) {
+                            throw SqlException.$(argPositions.getQuick(2), "default value must be castable to decimal");
+                        }
+                    },
+                    (arg, defaultValueFunc, offset, memory, ignoreNulls) -> new Decimal128LagFunction(arg, defaultValueFunc, offset, memory, ignoreNulls, argType),
+                    (partitionByRecord, arg, name, ignoreNulls) -> new Decimal128LeadLagValueCurrentRow(partitionByRecord, arg, name, ignoreNulls, argType),
+                    (map, partitionByRecord, partitionBySink, memory, arg, ignoreNulls, defaultValue, offset) -> new Decimal128LagOverPartitionFunction(map, partitionByRecord, partitionBySink, memory, arg, ignoreNulls, defaultValue, offset, argType)
+            );
+            case ColumnType.DECIMAL256 -> LeadLagWindowFunctionFactoryHelper.newInstance(
+                    position, args, argPositions, configuration, sqlExecutionContext,
+                    (defaultValue) -> {
+                        if (!ColumnType.isSameOrBuiltInWideningCast(defaultValue.getType(), argType)) {
+                            throw SqlException.$(argPositions.getQuick(2), "default value must be castable to decimal");
+                        }
+                    },
+                    (arg, defaultValueFunc, offset, memory, ignoreNulls) -> new Decimal256LagFunction(arg, defaultValueFunc, offset, memory, ignoreNulls, argType),
+                    (partitionByRecord, arg, name, ignoreNulls) -> new Decimal256LeadLagValueCurrentRow(partitionByRecord, arg, name, ignoreNulls, argType),
+                    (map, partitionByRecord, partitionBySink, memory, arg, ignoreNulls, defaultValue, offset) -> new Decimal256LagOverPartitionFunction(map, partitionByRecord, partitionBySink, memory, arg, ignoreNulls, defaultValue, offset, argType)
+            );
+            default -> throw SqlException.$(position, "lag is not yet implemented for ").put(ColumnType.nameOf(tag));
+        };
+    }
+
+    @Override
+    protected boolean supportNullsDesc() {
+        return true;
     }
 
     public static class Decimal128LagFunction extends LeadLagWindowFunctionFactoryHelper.BaseLagFunction {
 
-        private final Decimal128 defaultScratch = new Decimal128();
         private final Decimal128 lagValue = new Decimal128();
         private final Decimal128 scratch = new Decimal128();
         private final int type;
@@ -172,12 +164,12 @@ public class LagDecimalFunctionFactory extends AbstractWindowFunctionFactory {
                     defaultValue.getDecimal128(record, lagValue);
                 }
             } else {
-                buffer.getDecimal128((long) loIdx * 16L, lagValue);
+                buffer.getDecimal128((long) loIdx * Decimal128.BYTES, lagValue);
             }
             arg.getDecimal128(record, scratch);
             boolean respectNulls = !ignoreNulls || !scratch.isNull();
             if (respectNulls) {
-                buffer.putDecimal128((long) loIdx * 16L, scratch.getHigh(), scratch.getLow());
+                buffer.putDecimal128((long) loIdx * Decimal128.BYTES, scratch.getHigh(), scratch.getLow());
             }
             return respectNulls;
         }
@@ -210,7 +202,6 @@ public class LagDecimalFunctionFactory extends AbstractWindowFunctionFactory {
         private final Decimal128 nullScratch = new Decimal128();
         private final long offset;
         private final Decimal128 scratch = new Decimal128();
-        private final Decimal128 slotValue = new Decimal128();
         private final int type;
 
         public Decimal128LagOverPartitionFunction(Map map,
@@ -229,6 +220,7 @@ public class LagDecimalFunctionFactory extends AbstractWindowFunctionFactory {
             this.offset = offset;
             this.type = type;
             lagValue.ofRawNull();
+            nullScratch.ofRawNull();
         }
 
         @Override
@@ -249,11 +241,10 @@ public class LagDecimalFunctionFactory extends AbstractWindowFunctionFactory {
             long count = 0;
 
             if (mapValue.isNew()) {
-                startOffset = memory.appendAddressFor(offset * 16L) - memory.getPageAddress(0);
+                startOffset = memory.appendAddressFor(offset * Decimal128.BYTES) - memory.getPageAddress(0);
                 firstIdx = 0;
-                nullScratch.ofRawNull();
                 for (long i = 0; i < offset; i++) {
-                    memory.putDecimal128(startOffset + i * 16L, nullScratch.getHigh(), nullScratch.getLow());
+                    memory.putDecimal128(startOffset + i * Decimal128.BYTES, nullScratch.getHigh(), nullScratch.getLow());
                 }
             } else {
                 startOffset = mapValue.getLong(0);
@@ -269,11 +260,11 @@ public class LagDecimalFunctionFactory extends AbstractWindowFunctionFactory {
                     defaultValue.getDecimal128(record, lagValue);
                 }
             } else {
-                memory.getDecimal128(startOffset + firstIdx * 16L, lagValue);
+                memory.getDecimal128(startOffset + firstIdx * Decimal128.BYTES, lagValue);
             }
             boolean respectNulls = !ignoreNulls || !scratch.isNull();
             if (respectNulls) {
-                memory.putDecimal128(startOffset + firstIdx * 16L, scratch.getHigh(), scratch.getLow());
+                memory.putDecimal128(startOffset + firstIdx * Decimal128.BYTES, scratch.getHigh(), scratch.getLow());
                 firstIdx++;
                 count++;
             }
@@ -391,6 +382,130 @@ public class LagDecimalFunctionFactory extends AbstractWindowFunctionFactory {
         }
     }
 
+    public static class Decimal16LagFunction extends LeadLagWindowFunctionFactoryHelper.BaseLagFunction {
+
+        private final int type;
+        private short lagValue;
+
+        public Decimal16LagFunction(Function arg, Function defaultValueFunc, long offset, MemoryARW memory, boolean ignoreNulls, int type) {
+            super(arg, defaultValueFunc, offset, memory, ignoreNulls);
+            this.type = type;
+        }
+
+        @Override
+        public boolean computeNext0(Record record) {
+            if (count < offset) {
+                lagValue = defaultValue == null ? Decimals.DECIMAL16_NULL : defaultValue.getDecimal16(record);
+            } else {
+                lagValue = buffer.getShort((long) loIdx * Short.BYTES);
+            }
+            short s = arg.getDecimal16(record);
+            boolean respectNulls = !ignoreNulls || s != Decimals.DECIMAL16_NULL;
+            if (respectNulls) {
+                buffer.putShort((long) loIdx * Short.BYTES, s);
+            }
+            return respectNulls;
+        }
+
+        @Override
+        public short getDecimal16(Record rec) {
+            return lagValue;
+        }
+
+        @Override
+        public int getType() {
+            return type;
+        }
+
+        @Override
+        public void pass1(Record record, long recordOffset, WindowSPI spi) {
+            computeNext(record);
+            Unsafe.putShort(spi.getAddress(recordOffset, columnIndex), lagValue);
+        }
+    }
+
+    static class Decimal16LagOverPartitionFunction extends LeadLagWindowFunctionFactoryHelper.BaseLagOverPartitionFunction {
+
+        private final int type;
+        private short lagValue;
+
+        public Decimal16LagOverPartitionFunction(Map map,
+                                                 VirtualRecord partitionByRecord,
+                                                 RecordSink partitionBySink,
+                                                 MemoryARW memory,
+                                                 Function arg,
+                                                 boolean ignoreNulls,
+                                                 Function defaultValue,
+                                                 long offset,
+                                                 int type) {
+            super(map, partitionByRecord, partitionBySink, memory, arg, ignoreNulls, defaultValue, offset);
+            this.type = type;
+        }
+
+        @Override
+        public short getDecimal16(Record rec) {
+            return lagValue;
+        }
+
+        @Override
+        public int getType() {
+            return type;
+        }
+
+        @Override
+        public void pass1(Record record, long recordOffset, WindowSPI spi) {
+            computeNext(record);
+            Unsafe.putShort(spi.getAddress(recordOffset, columnIndex), lagValue);
+        }
+
+        @Override
+        protected boolean computeNext0(long count, long offset, long startOffset, long firstIdx, Record record) {
+            short s = arg.getDecimal16(record);
+            if (count < offset) {
+                lagValue = defaultValue == null ? Decimals.DECIMAL16_NULL : defaultValue.getDecimal16(record);
+            } else {
+                lagValue = memory.getShort(startOffset + firstIdx * Short.BYTES);
+            }
+            boolean respectNulls = !ignoreNulls || Decimals.DECIMAL16_NULL != s;
+            if (respectNulls) {
+                memory.putShort(startOffset + firstIdx * Short.BYTES, s);
+            }
+            return respectNulls;
+        }
+    }
+
+    static class Decimal16LeadLagValueCurrentRow extends LeadLagWindowFunctionFactoryHelper.BaseLeadLagCurrentRow {
+
+        private final int type;
+        private short value;
+
+        public Decimal16LeadLagValueCurrentRow(VirtualRecord partitionByRecord, Function arg, String name, boolean ignoreNulls, int type) {
+            super(partitionByRecord, arg, name, ignoreNulls);
+            this.type = type;
+        }
+
+        @Override
+        public void computeNext(Record record) {
+            value = arg.getDecimal16(record);
+        }
+
+        @Override
+        public short getDecimal16(Record rec) {
+            return value;
+        }
+
+        @Override
+        public int getType() {
+            return type;
+        }
+
+        @Override
+        public void pass1(Record record, long recordOffset, WindowSPI spi) {
+            computeNext(record);
+            Unsafe.putShort(spi.getAddress(recordOffset, columnIndex), value);
+        }
+    }
+
     public static class Decimal256LagFunction extends LeadLagWindowFunctionFactoryHelper.BaseLagFunction {
 
         private final Decimal256 lagValue = new Decimal256();
@@ -412,12 +527,12 @@ public class LagDecimalFunctionFactory extends AbstractWindowFunctionFactory {
                     defaultValue.getDecimal256(record, lagValue);
                 }
             } else {
-                buffer.getDecimal256((long) loIdx * 32L, lagValue);
+                buffer.getDecimal256((long) loIdx * Decimal256.BYTES, lagValue);
             }
             arg.getDecimal256(record, scratch);
             boolean respectNulls = !ignoreNulls || !scratch.isNull();
             if (respectNulls) {
-                buffer.putDecimal256((long) loIdx * 32L, scratch.getHh(), scratch.getHl(), scratch.getLh(), scratch.getLl());
+                buffer.putDecimal256((long) loIdx * Decimal256.BYTES, scratch.getHh(), scratch.getHl(), scratch.getLh(), scratch.getLl());
             }
             return respectNulls;
         }
@@ -470,6 +585,7 @@ public class LagDecimalFunctionFactory extends AbstractWindowFunctionFactory {
             this.offset = offset;
             this.type = type;
             lagValue.ofRawNull();
+            nullScratch.ofRawNull();
         }
 
         @Override
@@ -490,11 +606,10 @@ public class LagDecimalFunctionFactory extends AbstractWindowFunctionFactory {
             long count = 0;
 
             if (mapValue.isNew()) {
-                startOffset = memory.appendAddressFor(offset * 32L) - memory.getPageAddress(0);
+                startOffset = memory.appendAddressFor(offset * Decimal256.BYTES) - memory.getPageAddress(0);
                 firstIdx = 0;
-                nullScratch.ofRawNull();
                 for (long i = 0; i < offset; i++) {
-                    memory.putDecimal256(startOffset + i * 32L, nullScratch.getHh(), nullScratch.getHl(), nullScratch.getLh(), nullScratch.getLl());
+                    memory.putDecimal256(startOffset + i * Decimal256.BYTES, nullScratch.getHh(), nullScratch.getHl(), nullScratch.getLh(), nullScratch.getLl());
                 }
             } else {
                 startOffset = mapValue.getLong(0);
@@ -510,11 +625,11 @@ public class LagDecimalFunctionFactory extends AbstractWindowFunctionFactory {
                     defaultValue.getDecimal256(record, lagValue);
                 }
             } else {
-                memory.getDecimal256(startOffset + firstIdx * 32L, lagValue);
+                memory.getDecimal256(startOffset + firstIdx * Decimal256.BYTES, lagValue);
             }
             boolean respectNulls = !ignoreNulls || !scratch.isNull();
             if (respectNulls) {
-                memory.putDecimal256(startOffset + firstIdx * 32L, scratch.getHh(), scratch.getHl(), scratch.getLh(), scratch.getLl());
+                memory.putDecimal256(startOffset + firstIdx * Decimal256.BYTES, scratch.getHh(), scratch.getHl(), scratch.getLh(), scratch.getLl());
                 firstIdx++;
                 count++;
             }
@@ -633,6 +748,130 @@ public class LagDecimalFunctionFactory extends AbstractWindowFunctionFactory {
             Unsafe.putLong(addr + Long.BYTES, value.getHl());
             Unsafe.putLong(addr + 2 * Long.BYTES, value.getLh());
             Unsafe.putLong(addr + 3 * Long.BYTES, value.getLl());
+        }
+    }
+
+    public static class Decimal32LagFunction extends LeadLagWindowFunctionFactoryHelper.BaseLagFunction {
+
+        private final int type;
+        private int lagValue;
+
+        public Decimal32LagFunction(Function arg, Function defaultValueFunc, long offset, MemoryARW memory, boolean ignoreNulls, int type) {
+            super(arg, defaultValueFunc, offset, memory, ignoreNulls);
+            this.type = type;
+        }
+
+        @Override
+        public boolean computeNext0(Record record) {
+            if (count < offset) {
+                lagValue = defaultValue == null ? Decimals.DECIMAL32_NULL : defaultValue.getDecimal32(record);
+            } else {
+                lagValue = buffer.getInt((long) loIdx * Integer.BYTES);
+            }
+            int i = arg.getDecimal32(record);
+            boolean respectNulls = !ignoreNulls || i != Decimals.DECIMAL32_NULL;
+            if (respectNulls) {
+                buffer.putInt((long) loIdx * Integer.BYTES, i);
+            }
+            return respectNulls;
+        }
+
+        @Override
+        public int getDecimal32(Record rec) {
+            return lagValue;
+        }
+
+        @Override
+        public int getType() {
+            return type;
+        }
+
+        @Override
+        public void pass1(Record record, long recordOffset, WindowSPI spi) {
+            computeNext(record);
+            Unsafe.putInt(spi.getAddress(recordOffset, columnIndex), lagValue);
+        }
+    }
+
+    static class Decimal32LagOverPartitionFunction extends LeadLagWindowFunctionFactoryHelper.BaseLagOverPartitionFunction {
+
+        private final int type;
+        private int lagValue;
+
+        public Decimal32LagOverPartitionFunction(Map map,
+                                                 VirtualRecord partitionByRecord,
+                                                 RecordSink partitionBySink,
+                                                 MemoryARW memory,
+                                                 Function arg,
+                                                 boolean ignoreNulls,
+                                                 Function defaultValue,
+                                                 long offset,
+                                                 int type) {
+            super(map, partitionByRecord, partitionBySink, memory, arg, ignoreNulls, defaultValue, offset);
+            this.type = type;
+        }
+
+        @Override
+        public int getDecimal32(Record rec) {
+            return lagValue;
+        }
+
+        @Override
+        public int getType() {
+            return type;
+        }
+
+        @Override
+        public void pass1(Record record, long recordOffset, WindowSPI spi) {
+            computeNext(record);
+            Unsafe.putInt(spi.getAddress(recordOffset, columnIndex), lagValue);
+        }
+
+        @Override
+        protected boolean computeNext0(long count, long offset, long startOffset, long firstIdx, Record record) {
+            int i = arg.getDecimal32(record);
+            if (count < offset) {
+                lagValue = defaultValue == null ? Decimals.DECIMAL32_NULL : defaultValue.getDecimal32(record);
+            } else {
+                lagValue = memory.getInt(startOffset + firstIdx * Integer.BYTES);
+            }
+            boolean respectNulls = !ignoreNulls || Decimals.DECIMAL32_NULL != i;
+            if (respectNulls) {
+                memory.putInt(startOffset + firstIdx * Integer.BYTES, i);
+            }
+            return respectNulls;
+        }
+    }
+
+    static class Decimal32LeadLagValueCurrentRow extends LeadLagWindowFunctionFactoryHelper.BaseLeadLagCurrentRow {
+
+        private final int type;
+        private int value;
+
+        public Decimal32LeadLagValueCurrentRow(VirtualRecord partitionByRecord, Function arg, String name, boolean ignoreNulls, int type) {
+            super(partitionByRecord, arg, name, ignoreNulls);
+            this.type = type;
+        }
+
+        @Override
+        public void computeNext(Record record) {
+            value = arg.getDecimal32(record);
+        }
+
+        @Override
+        public int getDecimal32(Record rec) {
+            return value;
+        }
+
+        @Override
+        public int getType() {
+            return type;
+        }
+
+        @Override
+        public void pass1(Record record, long recordOffset, WindowSPI spi) {
+            computeNext(record);
+            Unsafe.putInt(spi.getAddress(recordOffset, columnIndex), value);
         }
     }
 
@@ -881,254 +1120,6 @@ public class LagDecimalFunctionFactory extends AbstractWindowFunctionFactory {
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             computeNext(record);
             Unsafe.putByte(spi.getAddress(recordOffset, columnIndex), value);
-        }
-    }
-
-    public static class Decimal16LagFunction extends LeadLagWindowFunctionFactoryHelper.BaseLagFunction {
-
-        private final int type;
-        private short lagValue;
-
-        public Decimal16LagFunction(Function arg, Function defaultValueFunc, long offset, MemoryARW memory, boolean ignoreNulls, int type) {
-            super(arg, defaultValueFunc, offset, memory, ignoreNulls);
-            this.type = type;
-        }
-
-        @Override
-        public boolean computeNext0(Record record) {
-            if (count < offset) {
-                lagValue = defaultValue == null ? Decimals.DECIMAL16_NULL : defaultValue.getDecimal16(record);
-            } else {
-                lagValue = buffer.getShort((long) loIdx * Short.BYTES);
-            }
-            short s = arg.getDecimal16(record);
-            boolean respectNulls = !ignoreNulls || s != Decimals.DECIMAL16_NULL;
-            if (respectNulls) {
-                buffer.putShort((long) loIdx * Short.BYTES, s);
-            }
-            return respectNulls;
-        }
-
-        @Override
-        public short getDecimal16(Record rec) {
-            return lagValue;
-        }
-
-        @Override
-        public int getType() {
-            return type;
-        }
-
-        @Override
-        public void pass1(Record record, long recordOffset, WindowSPI spi) {
-            computeNext(record);
-            Unsafe.putShort(spi.getAddress(recordOffset, columnIndex), lagValue);
-        }
-    }
-
-    static class Decimal16LagOverPartitionFunction extends LeadLagWindowFunctionFactoryHelper.BaseLagOverPartitionFunction {
-
-        private final int type;
-        private short lagValue;
-
-        public Decimal16LagOverPartitionFunction(Map map,
-                                                 VirtualRecord partitionByRecord,
-                                                 RecordSink partitionBySink,
-                                                 MemoryARW memory,
-                                                 Function arg,
-                                                 boolean ignoreNulls,
-                                                 Function defaultValue,
-                                                 long offset,
-                                                 int type) {
-            super(map, partitionByRecord, partitionBySink, memory, arg, ignoreNulls, defaultValue, offset);
-            this.type = type;
-        }
-
-        @Override
-        public short getDecimal16(Record rec) {
-            return lagValue;
-        }
-
-        @Override
-        public int getType() {
-            return type;
-        }
-
-        @Override
-        public void pass1(Record record, long recordOffset, WindowSPI spi) {
-            computeNext(record);
-            Unsafe.putShort(spi.getAddress(recordOffset, columnIndex), lagValue);
-        }
-
-        @Override
-        protected boolean computeNext0(long count, long offset, long startOffset, long firstIdx, Record record) {
-            short s = arg.getDecimal16(record);
-            if (count < offset) {
-                lagValue = defaultValue == null ? Decimals.DECIMAL16_NULL : defaultValue.getDecimal16(record);
-            } else {
-                lagValue = memory.getShort(startOffset + firstIdx * Short.BYTES);
-            }
-            boolean respectNulls = !ignoreNulls || Decimals.DECIMAL16_NULL != s;
-            if (respectNulls) {
-                memory.putShort(startOffset + firstIdx * Short.BYTES, s);
-            }
-            return respectNulls;
-        }
-    }
-
-    static class Decimal16LeadLagValueCurrentRow extends LeadLagWindowFunctionFactoryHelper.BaseLeadLagCurrentRow {
-
-        private final int type;
-        private short value;
-
-        public Decimal16LeadLagValueCurrentRow(VirtualRecord partitionByRecord, Function arg, String name, boolean ignoreNulls, int type) {
-            super(partitionByRecord, arg, name, ignoreNulls);
-            this.type = type;
-        }
-
-        @Override
-        public void computeNext(Record record) {
-            value = arg.getDecimal16(record);
-        }
-
-        @Override
-        public short getDecimal16(Record rec) {
-            return value;
-        }
-
-        @Override
-        public int getType() {
-            return type;
-        }
-
-        @Override
-        public void pass1(Record record, long recordOffset, WindowSPI spi) {
-            computeNext(record);
-            Unsafe.putShort(spi.getAddress(recordOffset, columnIndex), value);
-        }
-    }
-
-    public static class Decimal32LagFunction extends LeadLagWindowFunctionFactoryHelper.BaseLagFunction {
-
-        private final int type;
-        private int lagValue;
-
-        public Decimal32LagFunction(Function arg, Function defaultValueFunc, long offset, MemoryARW memory, boolean ignoreNulls, int type) {
-            super(arg, defaultValueFunc, offset, memory, ignoreNulls);
-            this.type = type;
-        }
-
-        @Override
-        public boolean computeNext0(Record record) {
-            if (count < offset) {
-                lagValue = defaultValue == null ? Decimals.DECIMAL32_NULL : defaultValue.getDecimal32(record);
-            } else {
-                lagValue = buffer.getInt((long) loIdx * Integer.BYTES);
-            }
-            int i = arg.getDecimal32(record);
-            boolean respectNulls = !ignoreNulls || i != Decimals.DECIMAL32_NULL;
-            if (respectNulls) {
-                buffer.putInt((long) loIdx * Integer.BYTES, i);
-            }
-            return respectNulls;
-        }
-
-        @Override
-        public int getDecimal32(Record rec) {
-            return lagValue;
-        }
-
-        @Override
-        public int getType() {
-            return type;
-        }
-
-        @Override
-        public void pass1(Record record, long recordOffset, WindowSPI spi) {
-            computeNext(record);
-            Unsafe.putInt(spi.getAddress(recordOffset, columnIndex), lagValue);
-        }
-    }
-
-    static class Decimal32LagOverPartitionFunction extends LeadLagWindowFunctionFactoryHelper.BaseLagOverPartitionFunction {
-
-        private final int type;
-        private int lagValue;
-
-        public Decimal32LagOverPartitionFunction(Map map,
-                                                 VirtualRecord partitionByRecord,
-                                                 RecordSink partitionBySink,
-                                                 MemoryARW memory,
-                                                 Function arg,
-                                                 boolean ignoreNulls,
-                                                 Function defaultValue,
-                                                 long offset,
-                                                 int type) {
-            super(map, partitionByRecord, partitionBySink, memory, arg, ignoreNulls, defaultValue, offset);
-            this.type = type;
-        }
-
-        @Override
-        public int getDecimal32(Record rec) {
-            return lagValue;
-        }
-
-        @Override
-        public int getType() {
-            return type;
-        }
-
-        @Override
-        public void pass1(Record record, long recordOffset, WindowSPI spi) {
-            computeNext(record);
-            Unsafe.putInt(spi.getAddress(recordOffset, columnIndex), lagValue);
-        }
-
-        @Override
-        protected boolean computeNext0(long count, long offset, long startOffset, long firstIdx, Record record) {
-            int i = arg.getDecimal32(record);
-            if (count < offset) {
-                lagValue = defaultValue == null ? Decimals.DECIMAL32_NULL : defaultValue.getDecimal32(record);
-            } else {
-                lagValue = memory.getInt(startOffset + firstIdx * Integer.BYTES);
-            }
-            boolean respectNulls = !ignoreNulls || Decimals.DECIMAL32_NULL != i;
-            if (respectNulls) {
-                memory.putInt(startOffset + firstIdx * Integer.BYTES, i);
-            }
-            return respectNulls;
-        }
-    }
-
-    static class Decimal32LeadLagValueCurrentRow extends LeadLagWindowFunctionFactoryHelper.BaseLeadLagCurrentRow {
-
-        private final int type;
-        private int value;
-
-        public Decimal32LeadLagValueCurrentRow(VirtualRecord partitionByRecord, Function arg, String name, boolean ignoreNulls, int type) {
-            super(partitionByRecord, arg, name, ignoreNulls);
-            this.type = type;
-        }
-
-        @Override
-        public void computeNext(Record record) {
-            value = arg.getDecimal32(record);
-        }
-
-        @Override
-        public int getDecimal32(Record rec) {
-            return value;
-        }
-
-        @Override
-        public int getType() {
-            return type;
-        }
-
-        @Override
-        public void pass1(Record record, long recordOffset, WindowSPI spi) {
-            computeNext(record);
-            Unsafe.putInt(spi.getAddress(recordOffset, columnIndex), value);
         }
     }
 }
