@@ -38,6 +38,7 @@ import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.SimpleReadWriteLock;
 import io.questdb.std.datetime.MicrosecondClock;
@@ -122,14 +123,17 @@ public class TableSequencerImpl implements TableSequencer {
         }
         try {
             walIdGenerator.open(path);
-            metadata.open(path, rootLen, tableToken);
+            // The txn log is the recovery authority; open it before _meta so a damaged _meta can be rebuilt.
             tableTransactionLog.open(path);
+            openOrRecoverMetadata(tableTransactionLog.getMaxMetadataVersion());
         } catch (CairoException ex) {
             closeLocked();
             if (ex.isTableDropped()) {
                 throw ex;
             }
-            if (ex.isFileCannotRead() && engine.getTableTokenByDirName(tableToken.getDirName()) == null) {
+            final boolean droppedTableMetadataMissing = (ex.isFileCannotRead() || ex.isSequencerMetadataOpenFailed())
+                    && engine.getTableTokenByDirName(tableToken.getDirName()) == null;
+            if (droppedTableMetadataMissing) {
                 LOG.info().$("could not open sequencer, table is dropped [table=").$(tableToken)
                         .$(", path=").$(path)
                         .$(", error=").$safe(ex.getMessage())
@@ -243,6 +247,7 @@ public class TableSequencerImpl implements TableSequencer {
         for (int i = 0; i < columnCount; i++) {
             int columnType = metadata.getColumnType(i);
             int columnOrder = metadata.getReadColumnOrder().getQuick(i);
+            IntList coveringColumnIndices = metadata.getColumnMetadata(i).getCoveringColumnIndices();
             sink.addColumn(
                     metadata.getColumnName(i),
                     columnType,
@@ -252,7 +257,8 @@ public class TableSequencerImpl implements TableSequencer {
                     i,
                     metadata.isDedupKey(i),
                     metadata.getColumnMetadata(i).isSymbolCacheFlag(),
-                    metadata.getColumnMetadata(i).getSymbolCapacity()
+                    metadata.getColumnMetadata(i).getSymbolCapacity(),
+                    coveringColumnIndices
             );
             if (columnType > -1) {
                 reorderNeeded |= lastOrder > columnOrder;
@@ -271,7 +277,7 @@ public class TableSequencerImpl implements TableSequencer {
                 compressedTimestampIndex,
                 metadata.getMetadataVersion(),
                 compressedColumnCount,
-                reorderNeeded ? metadata.getReadColumnOrder() : null
+                reorderNeeded || sink.requiresFullReadColumnOrder() ? metadata.getReadColumnOrder() : null
         );
 
         return tableTransactionLog.lastTxn();
@@ -408,19 +414,7 @@ public class TableSequencerImpl implements TableSequencer {
             return null;
         }
 
-        try (TableMetadataChangeLog metaChangeCursor = tableTransactionLog.getTableMetadataChangeLog(
-                metadata.getMetadataVersion(), alterCommandWalFormatter)
-        ) {
-            boolean updated = false;
-            while (metaChangeCursor.hasNext()) {
-                TableMetadataChange change = metaChangeCursor.next();
-                change.apply(metadataSvc, true);
-                updated = true;
-            }
-            if (updated) {
-                metadata.syncToMetaFile();
-            }
-        }
+        reconcileMetadataWithCommittedLog(tableTransactionLog.getMaxMetadataVersion());
         long lastTxn = tableTransactionLog.lastTxn();
         LOG.info()
                 .$("reloaded table sequencer [table=").$(tableToken)
@@ -499,6 +493,91 @@ public class TableSequencerImpl implements TableSequencer {
         if (txn == Long.MAX_VALUE || seqTxnTracker.notifyOnCommit(txn)) {
             engine.notifyWalTxnCommitted(tableToken);
         }
+    }
+
+    private void openOrRecoverMetadata(long committedStructureVersion) {
+        try {
+            metadata.openTableSequencerMetadata(path, rootLen, tableToken);
+        } catch (CairoException ex) {
+            if (tableTransactionLog.isDropped()) {
+                // The txn log is the recovery authority: if it records the drop, surface that
+                // even when the registry has not yet caught up with the drop.
+                throw CairoException.tableDropped(tableToken);
+            }
+            if (!ex.isSequencerMetadataOpenFailed()) {
+                throw ex;
+            }
+            LOG.critical().$("could not open sequencer metadata, rebuilding from transaction log [table=").$(tableToken)
+                    .$(", committedStructureVersion=").$(committedStructureVersion)
+                    .$(", error=").$safe(ex.getMessage())
+                    .I$();
+            rebuildMetadataFromCommittedLog(committedStructureVersion);
+            return;
+        }
+        reconcileMetadataWithCommittedLog(committedStructureVersion);
+    }
+
+    private void rebuildMetadataFromCommittedLog(long committedStructureVersion) {
+        metadata.openFromInitialMetadata(path, rootLen, tableToken);
+        replayCommittedMetadataChanges(0, committedStructureVersion, false);
+    }
+
+    private void reconcileMetadataWithCommittedLog(long committedStructureVersion) {
+        if (tableTransactionLog.isDropped()) {
+            return;
+        }
+
+        long metaVersion = metadata.getMetadataVersion();
+        if (metaVersion == committedStructureVersion) {
+            return;
+        }
+
+        if (metaVersion < committedStructureVersion) {
+            // Normal catch-up: preserve the old reload() behavior by applying only the missing sidecars.
+            replayCommittedMetadataChanges(metaVersion, committedStructureVersion, true);
+            return;
+        }
+
+        // _meta is ahead of the committed txn log. Discard it and rebuild from _meta.0.
+        rebuildMetadataFromCommittedLog(committedStructureVersion);
+    }
+
+    private void replayCommittedMetadataChange(TableMetadataChange change, boolean applyRenameSidecars) {
+        if (!applyRenameSidecars && change instanceof AlterOperation alter) {
+            if (alter.getCommand() == AlterOperation.RENAME_TABLE) {
+                replayCommittedRename();
+                return;
+            }
+        }
+        change.apply(metadataSvc, true);
+    }
+
+    private void replayCommittedMetadataChanges(long metaVersion, long committedStructureVersion, boolean applyRenameSidecars) {
+        try (TableMetadataChangeLog metaChangeCursor = tableTransactionLog.getTableMetadataChangeLog(
+                metaVersion, alterCommandWalFormatter)
+        ) {
+            while (metaChangeCursor.hasNext()) {
+                replayCommittedMetadataChange(metaChangeCursor.next(), applyRenameSidecars);
+            }
+        }
+
+        if (metadata.getMetadataVersion() != committedStructureVersion) {
+            throw CairoException.critical(0)
+                    .put("could not recover sequencer metadata [table=").put(tableToken)
+                    .put(", metaVersion=").put(metadata.getMetadataVersion())
+                    .put(", committedStructureVersion=").put(committedStructureVersion)
+                    .put(']');
+        }
+
+        metadata.syncToMetaFile();
+        tableToken = metadata.getTableToken();
+    }
+
+    private void replayCommittedRename() {
+        // Full rebuild starts from the registry token, the durable table-name authority. Historical
+        // rename sidecars can otherwise move metadata away from the registry after abandoned renames or rename chains.
+        // skipTableRename() still bumps structureVersion so the replay matches the committed log's version count.
+        metadata.skipTableRename();
     }
 
     void readLock() {

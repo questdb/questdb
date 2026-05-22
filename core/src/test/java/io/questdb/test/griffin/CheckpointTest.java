@@ -41,6 +41,7 @@ import io.questdb.cairo.CheckpointListener;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnVersionReader;
 import io.questdb.cairo.DefaultCairoConfiguration;
+import io.questdb.cairo.IndexType;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableReaderMetadata;
@@ -54,6 +55,7 @@ import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.mv.MatViewState;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
+import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.view.ViewDefinition;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMARW;
@@ -61,6 +63,7 @@ import io.questdb.cairo.vm.api.MemoryMR;
 import io.questdb.cairo.wal.WalPurgeJob;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.WalWriter;
+import io.questdb.cairo.wal.seq.SequencerMetadata;
 import io.questdb.cutlass.http.HttpFullFatServerConfiguration;
 import io.questdb.cutlass.http.HttpServerConfiguration;
 import io.questdb.cutlass.line.tcp.LineTcpReceiverConfiguration;
@@ -77,6 +80,7 @@ import io.questdb.std.CharSequenceLongHashMap;
 import io.questdb.std.Chars;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.IntList;
 import io.questdb.std.IntObjHashMap;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
@@ -3143,6 +3147,62 @@ public class CheckpointTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCheckpointRestorePreservesWalPostingIncludeSequencerMetadata() throws Exception {
+        final String snapshotId = "id1";
+        final String restartedId = "id2";
+        assertMemoryLeak(() -> {
+            setProperty(PropertyKey.CAIRO_LEGACY_SNAPSHOT_INSTANCE_ID, snapshotId);
+            setProperty(PropertyKey.CAIRO_POSTING_INDEX_AUTO_INCLUDE_TIMESTAMP, "false");
+
+            String tableName = getTestTableName() + "_pi";
+            execute(
+                    "create table " + tableName + " (" +
+                            "ts timestamp, " +
+                            "sym symbol index type posting include (price), " +
+                            "price double, " +
+                            "qty int" +
+                            ") timestamp(ts) partition by day wal"
+            );
+            execute(
+                    "insert into " + tableName + " values " +
+                            "('2024-01-01T00:00:00.000000Z', 'A', 1.0, 10), " +
+                            "('2024-01-01T01:00:00.000000Z', 'B', 2.0, 20), " +
+                            "('2024-01-01T02:00:00.000000Z', 'A', 3.0, 30)"
+            );
+            drainWalQueue();
+
+            execute("alter table " + tableName + " alter column qty type long");
+            drainWalQueue();
+
+            TableToken tableToken = engine.verifyTableName(tableName);
+            assertSequencerReadColumnOrder(tableToken, 0, 1, 2, 3, 3);
+            try (TableReader reader = engine.getReader(tableName)) {
+                assertPostingIncludeMetadata(reader.getMetadata(), "sym", "price");
+            }
+            try (TableRecordMetadata metadata = engine.getSequencerMetadata(tableToken)) {
+                assertPostingIncludeMetadata(metadata, "sym", "price");
+            }
+
+            execute("checkpoint create");
+
+            engine.clear();
+            setProperty(PropertyKey.CAIRO_LEGACY_SNAPSHOT_INSTANCE_ID, restartedId);
+            engine.checkpointRecover();
+
+            tableToken = engine.verifyTableName(tableName);
+            assertSequencerReadColumnOrder(tableToken, 0, 1, 2, 3, 3);
+            try (TableReader reader = engine.getReader(tableName)) {
+                assertPostingIncludeMetadata(reader.getMetadata(), "sym", "price");
+            }
+            try (TableRecordMetadata metadata = engine.getSequencerMetadata(tableToken)) {
+                assertPostingIncludeMetadata(metadata, "sym", "price");
+            }
+
+            engine.checkpointRelease();
+        });
+    }
+
+    @Test
     public void testWalMetadataRecovery() throws Exception {
         final String snapshotId = "id1";
         final String restartedId = "id2";
@@ -3382,6 +3442,38 @@ public class CheckpointTest extends AbstractCairoTest {
         }
         Assert.fail("Table not found in callback map: " + tableNamePrefix);
         return -1; // unreachable
+    }
+
+    private void assertSequencerReadColumnOrder(TableToken tableToken, int... expected) {
+        try (Path path = new Path(); SequencerMetadata metadata = new SequencerMetadata(configuration, true)) {
+            path.of(configuration.getDbRoot()).concat(tableToken.getDirName()).concat(WalUtils.SEQ_DIR);
+            metadata.openTableSequencerMetadata(path, path.size(), tableToken);
+            IntList readColumnOrder = metadata.getReadColumnOrder();
+            Assert.assertEquals("unexpected sequencer read-column order size", expected.length, readColumnOrder.size());
+            for (int i = 0; i < expected.length; i++) {
+                Assert.assertEquals("unexpected sequencer read-column order at " + i, expected[i], readColumnOrder.getQuick(i));
+            }
+        }
+    }
+
+    private static void assertPostingIncludeMetadata(TableRecordMetadata metadata, String indexedColumn, String coveringColumn) {
+        int indexedColumnIndex = metadata.getColumnIndexQuiet(indexedColumn);
+        int coveringColumnIndex = metadata.getColumnIndexQuiet(coveringColumn);
+        Assert.assertTrue("expected indexed column to exist: " + indexedColumn, indexedColumnIndex > -1);
+        Assert.assertTrue("expected covering column to exist: " + coveringColumn, coveringColumnIndex > -1);
+        Assert.assertEquals(
+                "expected POSTING index on " + indexedColumn,
+                IndexType.POSTING,
+                metadata.getColumnIndexType(indexedColumnIndex)
+        );
+
+        IntList coveringIndices = metadata.getColumnMetadata(indexedColumnIndex).getCoveringColumnIndices();
+        Assert.assertNotNull("expected INCLUDE list to exist for column: " + indexedColumn, coveringIndices);
+        Assert.assertEquals("expected exact INCLUDE list size for column: " + indexedColumn, 1, coveringIndices.size());
+        Assert.assertTrue(
+                "expected INCLUDE list for " + indexedColumn + " to contain " + coveringColumn,
+                coveringIndices.contains(metadata.getWriterIndex(coveringColumnIndex))
+        );
     }
 
     private static LongList longList(long... values) {
