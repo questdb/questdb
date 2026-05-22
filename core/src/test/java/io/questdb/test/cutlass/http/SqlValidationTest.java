@@ -87,7 +87,7 @@ public class SqlValidationTest extends AbstractCairoTest {
 
                         testHttpClient.assertGet(
                                 "/api/v1/sql/validate",
-                                "{\"queryType\":\"VACUUM\"}",
+                                "{\"query\":\"vacuum table abc\",\"error\":\"table does not exist [table=abc]\",\"position\":13}",
                                 "vacuum table abc"
                         );
 
