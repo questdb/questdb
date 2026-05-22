@@ -31,7 +31,7 @@ import io.questdb.cutlass.http.DefaultHttpServerConfiguration;
 import io.questdb.cutlass.http.HttpFullFatServerConfiguration;
 import io.questdb.cutlass.http.HttpRequestHandlerFactory;
 import io.questdb.cutlass.http.HttpServer;
-import io.questdb.cutlass.qwp.server.QwpWebSocketHttpProcessor;
+import io.questdb.cutlass.qwp.server.QwpIngressHttpProcessor;
 import io.questdb.griffin.SqlException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -136,8 +136,8 @@ public final class RestartableQwpServer implements AutoCloseable {
             }
 
             @Override
-            public QwpWebSocketHttpProcessor newInstance() {
-                return new QwpWebSocketHttpProcessor(engine, httpConfig);
+            public QwpIngressHttpProcessor newInstance() {
+                return new QwpIngressHttpProcessor(engine, httpConfig);
             }
         });
         WorkerPoolUtils.setupWriterJobs(workerPool, engine);

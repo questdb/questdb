@@ -36,8 +36,8 @@ import io.questdb.cutlass.http.LocalValue;
 import io.questdb.cutlass.qwp.codec.QwpEgressMsgKind;
 import io.questdb.cutlass.qwp.codec.QwpServerInfoProvider;
 import io.questdb.cutlass.qwp.protocol.QwpConstants;
-import io.questdb.cutlass.qwp.server.QwpProcessorState;
-import io.questdb.cutlass.qwp.server.QwpWebSocketUpgradeProcessor;
+import io.questdb.cutlass.qwp.server.QwpIngressProcessorState;
+import io.questdb.cutlass.qwp.server.QwpIngressUpgradeProcessor;
 import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PlainSocketFactory;
 import io.questdb.std.MemoryTag;
@@ -56,7 +56,7 @@ import org.junit.Test;
 import java.lang.reflect.Field;
 import java.nio.charset.StandardCharsets;
 
-public class QwpWebSocketUpgradeProcessorOnHeadersReadyTest extends AbstractCairoTest {
+public class QwpIngressUpgradeProcessorOnHeadersReadyTest extends AbstractCairoTest {
     private static final int HANDSHAKE_BUFFER_SIZE = 1024;
     private static final int TINY_BUFFER_SIZE = 64;
 
@@ -93,8 +93,8 @@ public class QwpWebSocketUpgradeProcessorOnHeadersReadyTest extends AbstractCair
         // stale-tracker reject branch and throws HttpException.
         assertMemoryLeak(() -> {
             HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
-            QwpWebSocketUpgradeProcessor processor = new QwpWebSocketUpgradeProcessor(engine, httpConfig);
-            LocalValue<QwpProcessorState> lv = getLV();
+            QwpIngressUpgradeProcessor processor = new QwpIngressUpgradeProcessor(engine, httpConfig);
+            LocalValue<QwpIngressProcessorState> lv = getLV();
 
             long bufferAddr = Unsafe.malloc(HANDSHAKE_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
             try (
@@ -136,7 +136,7 @@ public class QwpWebSocketUpgradeProcessorOnHeadersReadyTest extends AbstractCair
                 header.setHeader("Sec-WebSocket-Version", "13");
 
                 processor.onHeadersReady(context);
-                QwpProcessorState state = lv.get(context);
+                QwpIngressProcessorState state = lv.get(context);
                 Assert.assertNotNull("valid handshake must allocate processor state", state);
                 Assert.assertTrue("101 bytes must be staged for onRequestComplete to flush",
                         state.isHandshakeFlushPending());
@@ -192,7 +192,7 @@ public class QwpWebSocketUpgradeProcessorOnHeadersReadyTest extends AbstractCair
                     return recvBufferSize;
                 }
             };
-            QwpWebSocketUpgradeProcessor processor = new QwpWebSocketUpgradeProcessor(engine, httpConfig);
+            QwpIngressUpgradeProcessor processor = new QwpIngressUpgradeProcessor(engine, httpConfig);
 
             long bufferAddr = Unsafe.malloc(HANDSHAKE_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
             try (
@@ -240,8 +240,8 @@ public class QwpWebSocketUpgradeProcessorOnHeadersReadyTest extends AbstractCair
     public void testOnHeadersReadyFailsHardWhenBadRequestResponseDoesNotFitBuffer() throws Exception {
         assertMemoryLeak(() -> {
             HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
-            QwpWebSocketUpgradeProcessor processor = new QwpWebSocketUpgradeProcessor(engine, httpConfig);
-            LocalValue<QwpProcessorState> lv = getLV();
+            QwpIngressUpgradeProcessor processor = new QwpIngressUpgradeProcessor(engine, httpConfig);
+            LocalValue<QwpIngressProcessorState> lv = getLV();
 
             long bufferAddr = Unsafe.malloc(TINY_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
             try (
@@ -267,8 +267,8 @@ public class QwpWebSocketUpgradeProcessorOnHeadersReadyTest extends AbstractCair
     public void testOnHeadersReadyFailsHardWhenHandshakeResponseDoesNotFitBuffer() throws Exception {
         assertMemoryLeak(() -> {
             HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
-            QwpWebSocketUpgradeProcessor processor = new QwpWebSocketUpgradeProcessor(engine, httpConfig);
-            LocalValue<QwpProcessorState> lv = getLV();
+            QwpIngressUpgradeProcessor processor = new QwpIngressUpgradeProcessor(engine, httpConfig);
+            LocalValue<QwpIngressProcessorState> lv = getLV();
 
             long bufferAddr = Unsafe.malloc(TINY_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
             try (
@@ -296,8 +296,8 @@ public class QwpWebSocketUpgradeProcessorOnHeadersReadyTest extends AbstractCair
         assertMemoryLeak(() -> {
             node1.getConfigurationOverrides().setQwpServerInfoProvider(new FakeRoleProvider(QwpEgressMsgKind.ROLE_REPLICA));
             HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
-            QwpWebSocketUpgradeProcessor processor = new QwpWebSocketUpgradeProcessor(engine, httpConfig);
-            LocalValue<QwpProcessorState> lv = getLV();
+            QwpIngressUpgradeProcessor processor = new QwpIngressUpgradeProcessor(engine, httpConfig);
+            LocalValue<QwpIngressProcessorState> lv = getLV();
 
             long bufferAddr = Unsafe.malloc(TINY_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
             try (
@@ -324,8 +324,8 @@ public class QwpWebSocketUpgradeProcessorOnHeadersReadyTest extends AbstractCair
     public void testOnHeadersReadyFailsHardWhenUpgradeRequiredResponseDoesNotFitBuffer() throws Exception {
         assertMemoryLeak(() -> {
             HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
-            QwpWebSocketUpgradeProcessor processor = new QwpWebSocketUpgradeProcessor(engine, httpConfig);
-            LocalValue<QwpProcessorState> lv = getLV();
+            QwpIngressUpgradeProcessor processor = new QwpIngressUpgradeProcessor(engine, httpConfig);
+            LocalValue<QwpIngressProcessorState> lv = getLV();
 
             long bufferAddr = Unsafe.malloc(TINY_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
             try (
@@ -386,8 +386,8 @@ public class QwpWebSocketUpgradeProcessorOnHeadersReadyTest extends AbstractCair
     public void testOnHeadersReadyTreatsMissingVersionAsUpgradeRequiredWhenResponseDoesNotFitBuffer() throws Exception {
         assertMemoryLeak(() -> {
             HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
-            QwpWebSocketUpgradeProcessor processor = new QwpWebSocketUpgradeProcessor(engine, httpConfig);
-            LocalValue<QwpProcessorState> lv = getLV();
+            QwpIngressUpgradeProcessor processor = new QwpIngressUpgradeProcessor(engine, httpConfig);
+            LocalValue<QwpIngressProcessorState> lv = getLV();
 
             long bufferAddr = Unsafe.malloc(TINY_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
             try (
@@ -410,7 +410,7 @@ public class QwpWebSocketUpgradeProcessorOnHeadersReadyTest extends AbstractCair
     }
 
     private static void assertBufferTooSmallFailure(
-            QwpWebSocketUpgradeProcessor processor,
+            QwpIngressUpgradeProcessor processor,
             TestableContext context,
             CharSequence expectedResponseType
     )
@@ -432,8 +432,8 @@ public class QwpWebSocketUpgradeProcessorOnHeadersReadyTest extends AbstractCair
         DurableAckRegistry previous = engine.getDurableAckRegistry();
         engine.setDurableAckRegistry(registry);
         HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
-        QwpWebSocketUpgradeProcessor processor = new QwpWebSocketUpgradeProcessor(engine, httpConfig);
-        LocalValue<QwpProcessorState> lv = getLV();
+        QwpIngressUpgradeProcessor processor = new QwpIngressUpgradeProcessor(engine, httpConfig);
+        LocalValue<QwpIngressProcessorState> lv = getLV();
 
         long bufferAddr = Unsafe.malloc(HANDSHAKE_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
         try (
@@ -454,7 +454,7 @@ public class QwpWebSocketUpgradeProcessorOnHeadersReadyTest extends AbstractCair
             processor.onRequestComplete(context);
 
             Assert.assertTrue("handshake must have switched protocol", context.isSwitchProtocolCalled());
-            QwpProcessorState state = lv.get(context);
+            QwpIngressProcessorState state = lv.get(context);
             Assert.assertNotNull("state must be populated after successful handshake", state);
             Assert.assertEquals(expectedEnabled, state.isDurableAckEnabled());
         } finally {
@@ -466,8 +466,8 @@ public class QwpWebSocketUpgradeProcessorOnHeadersReadyTest extends AbstractCair
     private static void assertHandshakeAcceptedForRole(byte role, String expectedRoleName) throws Exception {
         node1.getConfigurationOverrides().setQwpServerInfoProvider(new FakeRoleProvider(role));
         HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
-        QwpWebSocketUpgradeProcessor processor = new QwpWebSocketUpgradeProcessor(engine, httpConfig);
-        LocalValue<QwpProcessorState> lv = getLV();
+        QwpIngressUpgradeProcessor processor = new QwpIngressUpgradeProcessor(engine, httpConfig);
+        LocalValue<QwpIngressProcessorState> lv = getLV();
 
         long bufferAddr = Unsafe.malloc(HANDSHAKE_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
         try (
@@ -500,8 +500,8 @@ public class QwpWebSocketUpgradeProcessorOnHeadersReadyTest extends AbstractCair
     private static void assertHandshakeRejectedForRole(byte role, String expectedRoleName) throws Exception {
         node1.getConfigurationOverrides().setQwpServerInfoProvider(new FakeRoleProvider(role));
         HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
-        QwpWebSocketUpgradeProcessor processor = new QwpWebSocketUpgradeProcessor(engine, httpConfig);
-        LocalValue<QwpProcessorState> lv = getLV();
+        QwpIngressUpgradeProcessor processor = new QwpIngressUpgradeProcessor(engine, httpConfig);
+        LocalValue<QwpIngressProcessorState> lv = getLV();
 
         long bufferAddr = Unsafe.malloc(HANDSHAKE_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
         try (
@@ -540,10 +540,10 @@ public class QwpWebSocketUpgradeProcessorOnHeadersReadyTest extends AbstractCair
     }
 
     @SuppressWarnings("unchecked")
-    private static LocalValue<QwpProcessorState> getLV() throws Exception {
-        Field lvField = QwpWebSocketUpgradeProcessor.class.getDeclaredField("LV");
+    private static LocalValue<QwpIngressProcessorState> getLV() throws Exception {
+        Field lvField = QwpIngressUpgradeProcessor.class.getDeclaredField("LV");
         lvField.setAccessible(true);
-        return (LocalValue<QwpProcessorState>) lvField.get(null);
+        return (LocalValue<QwpIngressProcessorState>) lvField.get(null);
     }
 
     private static String readResponse(long bufferAddr, int size) {

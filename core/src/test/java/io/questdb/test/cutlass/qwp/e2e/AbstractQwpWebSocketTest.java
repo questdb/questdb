@@ -33,7 +33,7 @@ import io.questdb.cutlass.http.processors.LineHttpProcessorConfiguration;
 import io.questdb.client.Sender;
 import io.questdb.client.SenderErrorHandler;
 import io.questdb.client.cutlass.qwp.client.QwpWebSocketSender;
-import io.questdb.cutlass.qwp.server.QwpWebSocketHttpProcessor;
+import io.questdb.cutlass.qwp.server.QwpIngressHttpProcessor;
 import io.questdb.griffin.SqlException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -256,8 +256,8 @@ public class AbstractQwpWebSocketTest extends AbstractCairoTest {
                     }
 
                     @Override
-                    public QwpWebSocketHttpProcessor newInstance() {
-                        return new QwpWebSocketHttpProcessor(engine, httpConfig);
+                    public QwpIngressHttpProcessor newInstance() {
+                        return new QwpIngressHttpProcessor(engine, httpConfig);
                     }
                 });
                 WorkerPoolUtils.setupWriterJobs(workerPool, engine);

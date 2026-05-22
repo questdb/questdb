@@ -50,8 +50,8 @@ import io.questdb.cutlass.qwp.codec.QwpResultBatchBuffer;
 import io.questdb.cutlass.qwp.codec.QwpServerInfoProvider;
 import io.questdb.cutlass.qwp.protocol.QwpConstants;
 import io.questdb.cutlass.qwp.protocol.QwpParseException;
-import io.questdb.cutlass.qwp.server.QwpWebSocketHttpProcessor;
-import io.questdb.cutlass.qwp.server.QwpWebSocketUpgradeProcessor;
+import io.questdb.cutlass.qwp.server.QwpIngressHttpProcessor;
+import io.questdb.cutlass.qwp.server.QwpIngressUpgradeProcessor;
 import io.questdb.cutlass.qwp.websocket.WebSocketCloseCode;
 import io.questdb.cutlass.qwp.websocket.WebSocketFrameParser;
 import io.questdb.cutlass.qwp.websocket.WebSocketFrameWriter;
@@ -299,14 +299,14 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
         long bufferAddr = rawSocket.getBufferAddress();
         int bufferSize = rawSocket.getBufferSize();
 
-        String validationError = QwpWebSocketHttpProcessor.validateHandshake(context.getRequestHeader());
+        String validationError = QwpIngressHttpProcessor.validateHandshake(context.getRequestHeader());
         if (validationError != null) {
             LOG.error().$("Egress WebSocket handshake validation failed [fd=").$(context.getFd())
                     .$(", error=").$(validationError).I$();
-            final boolean versionError = QwpWebSocketHttpProcessor.isVersionValidationError(validationError);
+            final boolean versionError = QwpIngressHttpProcessor.isVersionValidationError(validationError);
             final int written = versionError
-                    ? QwpWebSocketUpgradeProcessor.writeUpgradeRequiredResponse(bufferAddr, bufferSize)
-                    : QwpWebSocketUpgradeProcessor.writeBadRequestResponse(bufferAddr, bufferSize, validationError);
+                    ? QwpIngressUpgradeProcessor.writeUpgradeRequiredResponse(bufferAddr, bufferSize)
+                    : QwpIngressUpgradeProcessor.writeBadRequestResponse(bufferAddr, bufferSize, validationError);
             if (written <= 0) {
                 throw HttpException.instance("egress handshake error response does not fit send buffer");
             }
@@ -322,7 +322,7 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
         }
 
         HttpRequestHeader requestHeader = context.getRequestHeader();
-        Utf8Sequence wsKey = QwpWebSocketHttpProcessor.getWebSocketKey(requestHeader);
+        Utf8Sequence wsKey = QwpIngressHttpProcessor.getWebSocketKey(requestHeader);
 
         int negotiatedVersion = negotiateQwpVersion(requestHeader, context.getFd());
         // Pick the compression codec now so the response size reflects the
@@ -330,7 +330,7 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
         // RESULT_NONE when the header is absent or no supported codec is
         // listed, which leaves the wire raw and omits the response header.
         Utf8Sequence acceptEncoding = requestHeader.getHeader(
-                QwpWebSocketHttpProcessor.HEADER_X_QWP_ACCEPT_ENCODING);
+                QwpIngressHttpProcessor.HEADER_X_QWP_ACCEPT_ENCODING);
         long negotiatedCompression = QwpEgressCompressionNegotiator.negotiate(acceptEncoding);
         byte negotiatedCodec = QwpEgressCompressionNegotiator.codec(negotiatedCompression);
         byte negotiatedLevel = QwpEgressCompressionNegotiator.level(negotiatedCompression);
@@ -345,8 +345,8 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
         byte[] contentEncodingHeaderBytes = QwpEgressCompressionNegotiator.responseHeaderValue(
                 negotiatedCodec, effectiveLevel);
 
-        byte[] acceptKey = QwpWebSocketHttpProcessor.computeAcceptKey(wsKey);
-        int requiredHandshakeSize = QwpWebSocketHttpProcessor.responseSize(
+        byte[] acceptKey = QwpIngressHttpProcessor.computeAcceptKey(wsKey);
+        int requiredHandshakeSize = QwpIngressHttpProcessor.responseSize(
                 acceptKey, negotiatedVersion, contentEncodingHeaderBytes, false, null);
         // v2 appends a SERVER_INFO WebSocket frame right after the 101 response
         // bytes, in the same send buffer. Reserve an upper-bound for the frame so
@@ -377,7 +377,7 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
         // are clamped rather than rejected so one buggy client doesn't break
         // the handshake -- the server-authoritative cap is always applied.
         Utf8Sequence maxBatchRowsHeader = requestHeader.getHeader(
-                QwpWebSocketHttpProcessor.HEADER_X_QWP_MAX_BATCH_ROWS);
+                QwpIngressHttpProcessor.HEADER_X_QWP_MAX_BATCH_ROWS);
         int effectiveMaxBatchRows = MAX_ROWS_PER_BATCH;
         if (maxBatchRowsHeader != null) {
             int clientRequested = Numbers.parseNonNegativeIntQuiet(maxBatchRowsHeader);
@@ -387,7 +387,7 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
         }
         state.setMaxBatchRows(effectiveMaxBatchRows);
 
-        int bytesWritten = QwpWebSocketHttpProcessor.writeResponse(
+        int bytesWritten = QwpIngressHttpProcessor.writeResponse(
                 bufferAddr, acceptKey, negotiatedVersion, contentEncodingHeaderBytes, false, null);
         // For v2 and above, append an unsolicited SERVER_INFO WebSocket frame to
         // the same send buffer. The client reads it as the first frame after the
@@ -739,7 +739,7 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
     }
 
     private static int parseClientMaxVersion(HttpRequestHeader requestHeader) {
-        Utf8Sequence maxVersionHeader = requestHeader.getHeader(QwpWebSocketHttpProcessor.HEADER_X_QWP_MAX_VERSION);
+        Utf8Sequence maxVersionHeader = requestHeader.getHeader(QwpIngressHttpProcessor.HEADER_X_QWP_MAX_VERSION);
         if (maxVersionHeader == null) {
             return QwpConstants.VERSION_1;
         }
@@ -1474,7 +1474,7 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
     private int negotiateQwpVersion(HttpRequestHeader requestHeader, long fd) {
         int clientMaxVersion = parseClientMaxVersion(requestHeader);
         int negotiated = Math.min(clientMaxVersion, QwpConstants.MAX_SUPPORTED_VERSION);
-        Utf8Sequence clientId = requestHeader.getHeader(QwpWebSocketHttpProcessor.HEADER_X_QWP_CLIENT_ID);
+        Utf8Sequence clientId = requestHeader.getHeader(QwpIngressHttpProcessor.HEADER_X_QWP_CLIENT_ID);
         if (clientId != null) {
             LOG.info().$("Egress QWP version negotiated [fd=").$(fd)
                     .$(", clientId=").$(clientId)

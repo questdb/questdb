@@ -48,7 +48,7 @@ import java.util.Base64;
  * This handler detects WebSocket upgrade requests and returns an appropriate
  * processor to handle the WebSocket protocol upgrade and subsequent communication.
  */
-public class QwpWebSocketHttpProcessor implements HttpRequestHandler {
+public class QwpIngressHttpProcessor implements HttpRequestHandler {
 
     public static final Utf8String HEADER_CONNECTION = new Utf8String("Connection");
     public static final Utf8String HEADER_ORIGIN = new Utf8String("Origin");
@@ -143,7 +143,7 @@ public class QwpWebSocketHttpProcessor implements HttpRequestHandler {
     // [VERSION_1, MAX_SUPPORTED_VERSION] the server itself defines.
     private static final byte[][] VERSION_BYTES = buildVersionBytes();
     private static final byte[] WEBSOCKET_GUID_BYTES = WEBSOCKET_GUID.getBytes(StandardCharsets.US_ASCII);
-    private final QwpWebSocketUpgradeProcessor processor;
+    private final QwpIngressUpgradeProcessor processor;
 
     /**
      * Creates a new QWP v1 WebSocket HTTP processor.
@@ -151,8 +151,8 @@ public class QwpWebSocketHttpProcessor implements HttpRequestHandler {
      * @param engine            the Cairo engine for database access
      * @param httpConfiguration the HTTP server configuration
      */
-    public QwpWebSocketHttpProcessor(CairoEngine engine, HttpFullFatServerConfiguration httpConfiguration) {
-        this.processor = new QwpWebSocketUpgradeProcessor(engine, httpConfiguration);
+    public QwpIngressHttpProcessor(CairoEngine engine, HttpFullFatServerConfiguration httpConfiguration) {
+        this.processor = new QwpIngressUpgradeProcessor(engine, httpConfiguration);
     }
 
     /**

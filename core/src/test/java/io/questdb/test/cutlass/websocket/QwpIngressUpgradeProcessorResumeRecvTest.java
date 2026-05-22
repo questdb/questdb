@@ -27,14 +27,13 @@ package io.questdb.test.cutlass.websocket;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cutlass.http.DefaultHttpServerConfiguration;
 import io.questdb.cutlass.http.HttpConnectionContext;
-import io.questdb.cutlass.http.HttpException;
 import io.questdb.cutlass.http.HttpFullFatServerConfiguration;
 import io.questdb.cutlass.http.HttpRawSocket;
 import io.questdb.cutlass.http.HttpRequestHeader;
 import io.questdb.cutlass.http.HttpServerConfiguration;
 import io.questdb.cutlass.http.LocalValue;
-import io.questdb.cutlass.qwp.server.QwpProcessorState;
-import io.questdb.cutlass.qwp.server.QwpWebSocketUpgradeProcessor;
+import io.questdb.cutlass.qwp.server.QwpIngressProcessorState;
+import io.questdb.cutlass.qwp.server.QwpIngressUpgradeProcessor;
 import io.questdb.cutlass.qwp.websocket.WebSocketOpcode;
 import io.questdb.log.Log;
 import io.questdb.network.NetworkFacadeImpl;
@@ -51,7 +50,6 @@ import io.questdb.std.str.DirectUtf8String;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8String;
 import io.questdb.test.AbstractCairoTest;
-import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
 import org.junit.Test;
@@ -60,7 +58,7 @@ import java.lang.reflect.Field;
 import java.nio.charset.StandardCharsets;
 
 /**
- * Tests for {@link QwpWebSocketUpgradeProcessor} covering network edge cases:
+ * Tests for {@link QwpIngressUpgradeProcessor} covering network edge cases:
  * partial reads, oversized frames, send backpressure, buffer-too-small, and
  * state machine transitions that are hard to trigger from E2E tests.
  * <p>
@@ -69,7 +67,7 @@ import java.nio.charset.StandardCharsets;
  * patterns from {@code BaseLineTcpContextTest.LineTcpNetworkFacade} and
  * {@code QwpWebSocketUpgradeProcessorOnHeadersReadyTest.MockRawSocket}.
  */
-public class QwpWebSocketUpgradeProcessorResumeRecvTest extends AbstractCairoTest {
+public class QwpIngressUpgradeProcessorResumeRecvTest extends AbstractCairoTest {
     private static final byte[] DEFAULT_MASK_KEY = {0x12, 0x34, 0x56, 0x78};
     private static final int RECV_BUFFER_SIZE = 1024;
     private static final int SEND_BUFFER_SIZE = 256;
@@ -82,7 +80,7 @@ public class QwpWebSocketUpgradeProcessorResumeRecvTest extends AbstractCairoTes
         // recv returns -1 on the next call and throws ServerDisconnectException.
         assertMemoryLeak(() -> {
             HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
-            QwpWebSocketUpgradeProcessor processor = new QwpWebSocketUpgradeProcessor(engine, httpConfig);
+            QwpIngressUpgradeProcessor processor = new QwpIngressUpgradeProcessor(engine, httpConfig);
 
             // Feed a PING frame to trigger processWebSocketFrames → flushPendingAck
             byte[] pingFrame = createMaskedFrame(WebSocketOpcode.PING, new byte[0]);
@@ -96,7 +94,7 @@ public class QwpWebSocketUpgradeProcessorResumeRecvTest extends AbstractCairoTes
             try (TestableContext context = new TestableContext(
                     httpConfig, mockNf, mockRawSocket, recvBuf, RECV_BUFFER_SIZE
             )) {
-                QwpProcessorState state = setupState(httpConfig, context);
+                QwpIngressProcessorState state = setupState(httpConfig, context);
                 // Set up pending ACK: highestProcessed > lastAcked
                 state.setHighestProcessedSequence(5);
 
@@ -121,7 +119,7 @@ public class QwpWebSocketUpgradeProcessorResumeRecvTest extends AbstractCairoTes
     public void testAckBufferTooSmall() throws Exception {
         assertMemoryLeak(() -> {
             HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
-            QwpWebSocketUpgradeProcessor processor = new QwpWebSocketUpgradeProcessor(engine, httpConfig);
+            QwpIngressUpgradeProcessor processor = new QwpIngressUpgradeProcessor(engine, httpConfig);
 
             byte[] pingFrame = createMaskedFrame(WebSocketOpcode.PING, new byte[0]);
             MockNetworkFacade mockNf = new MockNetworkFacade(pingFrame);
@@ -134,7 +132,7 @@ public class QwpWebSocketUpgradeProcessorResumeRecvTest extends AbstractCairoTes
             try (TestableContext context = new TestableContext(
                     httpConfig, mockNf, mockRawSocket, recvBuf, RECV_BUFFER_SIZE
             )) {
-                QwpProcessorState state = setupState(httpConfig, context);
+                QwpIngressProcessorState state = setupState(httpConfig, context);
                 state.setHighestProcessedSequence(5);
 
                 try {
@@ -155,7 +153,7 @@ public class QwpWebSocketUpgradeProcessorResumeRecvTest extends AbstractCairoTes
     public void testBadRequestSendSlowToRead() throws Exception {
         assertMemoryLeak(() -> {
             HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
-            QwpWebSocketUpgradeProcessor processor = new QwpWebSocketUpgradeProcessor(engine, httpConfig);
+            QwpIngressUpgradeProcessor processor = new QwpIngressUpgradeProcessor(engine, httpConfig);
 
             long sendBuf = Unsafe.malloc(SEND_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
             MockRawSocket mockRawSocket = new MockRawSocket(sendBuf, SEND_BUFFER_SIZE);
@@ -199,7 +197,7 @@ public class QwpWebSocketUpgradeProcessorResumeRecvTest extends AbstractCairoTes
     public void testCloseWhenBufferBusy() throws Exception {
         assertMemoryLeak(() -> {
             HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
-            QwpWebSocketUpgradeProcessor processor = new QwpWebSocketUpgradeProcessor(engine, httpConfig);
+            QwpIngressUpgradeProcessor processor = new QwpIngressUpgradeProcessor(engine, httpConfig);
 
             // CLOSE frame with code 1000 (normal closure)
             byte[] closePayload = {0x03, (byte) 0xE8}; // 1000 big-endian
@@ -212,7 +210,7 @@ public class QwpWebSocketUpgradeProcessorResumeRecvTest extends AbstractCairoTes
             try (TestableContext context = new TestableContext(
                     httpConfig, mockNf, mockRawSocket, recvBuf, RECV_BUFFER_SIZE
             )) {
-                QwpProcessorState state = setupState(httpConfig, context);
+                QwpIngressProcessorState state = setupState(httpConfig, context);
                 // Set send state to non-READY
                 state.onAckBlocked(0);
 
@@ -235,7 +233,7 @@ public class QwpWebSocketUpgradeProcessorResumeRecvTest extends AbstractCairoTes
     public void testErrorBufferTooSmall() throws Exception {
         assertMemoryLeak(() -> {
             HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
-            QwpWebSocketUpgradeProcessor processor = new QwpWebSocketUpgradeProcessor(engine, httpConfig);
+            QwpIngressUpgradeProcessor processor = new QwpIngressUpgradeProcessor(engine, httpConfig);
 
             // Garbage binary → triggers error response
             byte[] garbageBinary = createMaskedFrame(WebSocketOpcode.BINARY, new byte[]{0x00, 0x01, 0x02});
@@ -270,7 +268,7 @@ public class QwpWebSocketUpgradeProcessorResumeRecvTest extends AbstractCairoTes
     public void testErrorSendBlocked() throws Exception {
         assertMemoryLeak(() -> {
             HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
-            QwpWebSocketUpgradeProcessor processor = new QwpWebSocketUpgradeProcessor(engine, httpConfig);
+            QwpIngressUpgradeProcessor processor = new QwpIngressUpgradeProcessor(engine, httpConfig);
 
             byte[] garbageBinary = createMaskedFrame(WebSocketOpcode.BINARY, new byte[]{0x00, 0x01, 0x02});
             MockNetworkFacade mockNf = new MockNetworkFacade(garbageBinary);
@@ -283,7 +281,7 @@ public class QwpWebSocketUpgradeProcessorResumeRecvTest extends AbstractCairoTes
             try (TestableContext context = new TestableContext(
                     httpConfig, mockNf, mockRawSocket, recvBuf, RECV_BUFFER_SIZE
             )) {
-                QwpProcessorState state = setupState(httpConfig, context);
+                QwpIngressProcessorState state = setupState(httpConfig, context);
 
                 try {
                     processor.resumeRecv(context);
@@ -303,7 +301,7 @@ public class QwpWebSocketUpgradeProcessorResumeRecvTest extends AbstractCairoTes
     public void testErrorSendBlockedWithPendingAck() throws Exception {
         assertMemoryLeak(() -> {
             HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
-            QwpWebSocketUpgradeProcessor processor = new QwpWebSocketUpgradeProcessor(engine, httpConfig);
+            QwpIngressUpgradeProcessor processor = new QwpIngressUpgradeProcessor(engine, httpConfig);
 
             // Binary frame with garbage data -- processing fails, triggers error response
             byte[] garbageBinary = createMaskedFrame(WebSocketOpcode.BINARY, new byte[]{0x00, 0x01, 0x02});
@@ -321,7 +319,7 @@ public class QwpWebSocketUpgradeProcessorResumeRecvTest extends AbstractCairoTes
             try (TestableContext context = new TestableContext(
                     httpConfig, mockNf, mockRawSocket, recvBuf, RECV_BUFFER_SIZE
             )) {
-                QwpProcessorState state = setupState(httpConfig, context);
+                QwpIngressProcessorState state = setupState(httpConfig, context);
                 // Pending ACK: highestProcessed > lastAcked, so hasPendingAck() is true
                 state.setHighestProcessedSequence(5);
 
@@ -344,7 +342,7 @@ public class QwpWebSocketUpgradeProcessorResumeRecvTest extends AbstractCairoTes
     public void testErrorWhenSendNotReady() throws Exception {
         assertMemoryLeak(() -> {
             HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
-            QwpWebSocketUpgradeProcessor processor = new QwpWebSocketUpgradeProcessor(engine, httpConfig);
+            QwpIngressUpgradeProcessor processor = new QwpIngressUpgradeProcessor(engine, httpConfig);
 
             byte[] garbageBinary = createMaskedFrame(WebSocketOpcode.BINARY, new byte[]{0x00, 0x01, 0x02});
             MockNetworkFacade mockNf = new MockNetworkFacade(garbageBinary);
@@ -355,7 +353,7 @@ public class QwpWebSocketUpgradeProcessorResumeRecvTest extends AbstractCairoTes
             try (TestableContext context = new TestableContext(
                     httpConfig, mockNf, mockRawSocket, recvBuf, RECV_BUFFER_SIZE
             )) {
-                QwpProcessorState state = setupState(httpConfig, context);
+                QwpIngressProcessorState state = setupState(httpConfig, context);
                 // Set send state to non-READY before error triggers
                 state.onAckBlocked(0);
 
@@ -379,7 +377,7 @@ public class QwpWebSocketUpgradeProcessorResumeRecvTest extends AbstractCairoTes
     public void testFrameParseError() throws Exception {
         assertMemoryLeak(() -> {
             HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
-            QwpWebSocketUpgradeProcessor processor = new QwpWebSocketUpgradeProcessor(engine, httpConfig);
+            QwpIngressUpgradeProcessor processor = new QwpIngressUpgradeProcessor(engine, httpConfig);
 
             // Frame with RSV1 bit set (0x40 | 0x82 = 0xC2): RSV bits trigger parse error
             byte[] badFrame = {(byte) 0xC2, (byte) 0x80, 0x00, 0x00, 0x00, 0x00};
@@ -411,7 +409,7 @@ public class QwpWebSocketUpgradeProcessorResumeRecvTest extends AbstractCairoTes
     public void testFrameTooLargeForRecvBuffer() throws Exception {
         assertMemoryLeak(() -> {
             HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
-            QwpWebSocketUpgradeProcessor processor = new QwpWebSocketUpgradeProcessor(engine, httpConfig);
+            QwpIngressUpgradeProcessor processor = new QwpIngressUpgradeProcessor(engine, httpConfig);
 
             // Craft a masked binary frame with 64-bit extended length exceeding the
             // config's recvBufferSize (default 131072). Use 64-bit encoding (length field = 127).
@@ -462,7 +460,7 @@ public class QwpWebSocketUpgradeProcessorResumeRecvTest extends AbstractCairoTes
         // machine and emitted once the pending ACK drains via resumeSend.
         assertMemoryLeak(() -> {
             HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
-            QwpWebSocketUpgradeProcessor processor = new QwpWebSocketUpgradeProcessor(engine, httpConfig);
+            QwpIngressUpgradeProcessor processor = new QwpIngressUpgradeProcessor(engine, httpConfig);
 
             long declaredLen = httpConfig.getRecvBufferSize() + 100L;
             byte[] frame = new byte[14];
@@ -483,7 +481,7 @@ public class QwpWebSocketUpgradeProcessorResumeRecvTest extends AbstractCairoTes
             try (TestableContext context = new TestableContext(
                     httpConfig, mockNf, mockRawSocket, recvBuf, RECV_BUFFER_SIZE
             )) {
-                QwpProcessorState state = setupState(httpConfig, context);
+                QwpIngressProcessorState state = setupState(httpConfig, context);
                 // Force send state to non-READY (an ACK is in flight). With
                 // the old behaviour the CLOSE would be skipped; now it is
                 // queued for the resume path.
@@ -534,7 +532,7 @@ public class QwpWebSocketUpgradeProcessorResumeRecvTest extends AbstractCairoTes
         // sendFatalClose, deferring behind an in-flight ACK if needed.
         assertMemoryLeak(() -> {
             HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
-            QwpWebSocketUpgradeProcessor processor = new QwpWebSocketUpgradeProcessor(engine, httpConfig);
+            QwpIngressUpgradeProcessor processor = new QwpIngressUpgradeProcessor(engine, httpConfig);
 
             long recvBuf = Unsafe.malloc(RECV_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
             long sendBuf = Unsafe.malloc(SEND_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
@@ -543,7 +541,7 @@ public class QwpWebSocketUpgradeProcessorResumeRecvTest extends AbstractCairoTes
                     httpConfig, new MockNetworkFacade(new byte[0]),
                     mockRawSocket, recvBuf, RECV_BUFFER_SIZE
             )) {
-                QwpProcessorState state = setupState(httpConfig, context);
+                QwpIngressProcessorState state = setupState(httpConfig, context);
                 // Mark the recv buffer as full so the "frame too large for
                 // recv buffer" branch fires before recvRaw is consulted.
                 state.setRecvBufferLen(RECV_BUFFER_SIZE);
@@ -581,7 +579,7 @@ public class QwpWebSocketUpgradeProcessorResumeRecvTest extends AbstractCairoTes
         // only from onRequestComplete.
         assertMemoryLeak(() -> {
             HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
-            QwpWebSocketUpgradeProcessor processor = new QwpWebSocketUpgradeProcessor(engine, httpConfig);
+            QwpIngressUpgradeProcessor processor = new QwpIngressUpgradeProcessor(engine, httpConfig);
 
             long sendBuf = Unsafe.malloc(SEND_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
             MockRawSocket mockRawSocket = new MockRawSocket(sendBuf, SEND_BUFFER_SIZE);
@@ -602,7 +600,7 @@ public class QwpWebSocketUpgradeProcessorResumeRecvTest extends AbstractCairoTes
                 processor.onHeadersReady(context);
                 Assert.assertEquals("onHeadersReady must not send",
                         0, mockRawSocket.sendCallCount);
-                QwpProcessorState state = getLV().get(context);
+                QwpIngressProcessorState state = getLV().get(context);
                 Assert.assertNotNull(state);
                 Assert.assertTrue("handshake flush must be pending after onHeadersReady",
                         state.isHandshakeFlushPending());
@@ -635,7 +633,7 @@ public class QwpWebSocketUpgradeProcessorResumeRecvTest extends AbstractCairoTes
     public void testOnClosedInvalidState() throws Exception {
         assertMemoryLeak(() -> {
             HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
-            QwpWebSocketUpgradeProcessor processor = new QwpWebSocketUpgradeProcessor(engine, httpConfig);
+            QwpIngressUpgradeProcessor processor = new QwpIngressUpgradeProcessor(engine, httpConfig);
 
             long sendBuf = Unsafe.malloc(SEND_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
             try (TestableContext context = new TestableContext(
@@ -643,8 +641,8 @@ public class QwpWebSocketUpgradeProcessorResumeRecvTest extends AbstractCairoTes
                     new MockRawSocket(sendBuf, SEND_BUFFER_SIZE),
                     0, 0
             )) {
-                QwpProcessorState state = setupState(httpConfig, context);
-                Field sendStateField = QwpProcessorState.class.getDeclaredField("sendState");
+                QwpIngressProcessorState state = setupState(httpConfig, context);
+                Field sendStateField = QwpIngressProcessorState.class.getDeclaredField("sendState");
                 sendStateField.setAccessible(true);
                 sendStateField.setInt(state, 99);
 
@@ -660,7 +658,7 @@ public class QwpWebSocketUpgradeProcessorResumeRecvTest extends AbstractCairoTes
     public void testOnClosedResumeAck() throws Exception {
         assertMemoryLeak(() -> {
             HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
-            QwpWebSocketUpgradeProcessor processor = new QwpWebSocketUpgradeProcessor(engine, httpConfig);
+            QwpIngressUpgradeProcessor processor = new QwpIngressUpgradeProcessor(engine, httpConfig);
 
             long sendBuf = Unsafe.malloc(SEND_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
             try (TestableContext context = new TestableContext(
@@ -668,7 +666,7 @@ public class QwpWebSocketUpgradeProcessorResumeRecvTest extends AbstractCairoTes
                     new MockRawSocket(sendBuf, SEND_BUFFER_SIZE),
                     0, 0
             )) {
-                QwpProcessorState state = setupState(httpConfig, context);
+                QwpIngressProcessorState state = setupState(httpConfig, context);
                 state.onAckBlocked(3);
                 Assert.assertTrue(state.isSending());
 
@@ -685,7 +683,7 @@ public class QwpWebSocketUpgradeProcessorResumeRecvTest extends AbstractCairoTes
     public void testOnClosedResumeAckThenError() throws Exception {
         assertMemoryLeak(() -> {
             HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
-            QwpWebSocketUpgradeProcessor processor = new QwpWebSocketUpgradeProcessor(engine, httpConfig);
+            QwpIngressUpgradeProcessor processor = new QwpIngressUpgradeProcessor(engine, httpConfig);
 
             long sendBuf = Unsafe.malloc(SEND_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
             MockRawSocket mockRawSocket = new MockRawSocket(sendBuf, SEND_BUFFER_SIZE);
@@ -693,7 +691,7 @@ public class QwpWebSocketUpgradeProcessorResumeRecvTest extends AbstractCairoTes
                     httpConfig, new MockNetworkFacade(new byte[0]),
                     mockRawSocket, 0, 0
             )) {
-                QwpProcessorState state = setupState(httpConfig, context);
+                QwpIngressProcessorState state = setupState(httpConfig, context);
                 state.onAckBlocked(3);
                 state.onErrorBlocked((byte) 5, 4L, "test");
                 Assert.assertTrue(state.isSending());
@@ -712,7 +710,7 @@ public class QwpWebSocketUpgradeProcessorResumeRecvTest extends AbstractCairoTes
     public void testOnClosedResumeError() throws Exception {
         assertMemoryLeak(() -> {
             HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
-            QwpWebSocketUpgradeProcessor processor = new QwpWebSocketUpgradeProcessor(engine, httpConfig);
+            QwpIngressUpgradeProcessor processor = new QwpIngressUpgradeProcessor(engine, httpConfig);
 
             long sendBuf = Unsafe.malloc(SEND_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
             try (TestableContext context = new TestableContext(
@@ -720,7 +718,7 @@ public class QwpWebSocketUpgradeProcessorResumeRecvTest extends AbstractCairoTes
                     new MockRawSocket(sendBuf, SEND_BUFFER_SIZE),
                     0, 0
             )) {
-                QwpProcessorState state = setupState(httpConfig, context);
+                QwpIngressProcessorState state = setupState(httpConfig, context);
                 state.onErrorBlocked((byte) 5, 4L, "test error");
                 Assert.assertTrue(state.isSending());
 
@@ -737,7 +735,7 @@ public class QwpWebSocketUpgradeProcessorResumeRecvTest extends AbstractCairoTes
     public void testPartialFrameCompaction() throws Exception {
         assertMemoryLeak(() -> {
             HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
-            QwpWebSocketUpgradeProcessor processor = new QwpWebSocketUpgradeProcessor(engine, httpConfig);
+            QwpIngressUpgradeProcessor processor = new QwpIngressUpgradeProcessor(engine, httpConfig);
 
             // Two PONG frames back-to-back. Deliver the first frame fully plus
             // 3 bytes of the second frame, then block. processWebSocketFrames
@@ -764,7 +762,7 @@ public class QwpWebSocketUpgradeProcessorResumeRecvTest extends AbstractCairoTes
                     new MockRawSocket(sendBuf, SEND_BUFFER_SIZE),
                     recvBuf, RECV_BUFFER_SIZE
             )) {
-                QwpProcessorState state = setupState(httpConfig, context);
+                QwpIngressProcessorState state = setupState(httpConfig, context);
 
                 // first PONG processed
                 processor.resumeRecv(context);
@@ -800,7 +798,7 @@ public class QwpWebSocketUpgradeProcessorResumeRecvTest extends AbstractCairoTes
     public void testPartialFrameNeedMore() throws Exception {
         assertMemoryLeak(() -> {
             HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
-            QwpWebSocketUpgradeProcessor processor = new QwpWebSocketUpgradeProcessor(engine, httpConfig);
+            QwpIngressUpgradeProcessor processor = new QwpIngressUpgradeProcessor(engine, httpConfig);
 
             // Create a valid masked PONG frame (6 bytes: 2 header + 4 mask, 0 payload)
             byte[] pongFrame = createMaskedFrame(WebSocketOpcode.PONG, new byte[0]);
@@ -821,7 +819,7 @@ public class QwpWebSocketUpgradeProcessorResumeRecvTest extends AbstractCairoTes
                     new MockRawSocket(sendBuf, SEND_BUFFER_SIZE),
                     recvBuf, RECV_BUFFER_SIZE
             )) {
-                QwpProcessorState state = setupState(httpConfig, context);
+                QwpIngressProcessorState state = setupState(httpConfig, context);
 
                 processor.resumeRecv(context);
                 try {
@@ -858,7 +856,7 @@ public class QwpWebSocketUpgradeProcessorResumeRecvTest extends AbstractCairoTes
     public void testPingSendFails() throws Exception {
         assertMemoryLeak(() -> {
             HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
-            QwpWebSocketUpgradeProcessor processor = new QwpWebSocketUpgradeProcessor(engine, httpConfig);
+            QwpIngressUpgradeProcessor processor = new QwpIngressUpgradeProcessor(engine, httpConfig);
 
             byte[] pingFrame = createMaskedFrame(WebSocketOpcode.PING, new byte[]{1, 2, 3});
             MockNetworkFacade mockNf = new MockNetworkFacade(pingFrame);
@@ -892,7 +890,7 @@ public class QwpWebSocketUpgradeProcessorResumeRecvTest extends AbstractCairoTes
     public void testPingWhenBufferBusy() throws Exception {
         assertMemoryLeak(() -> {
             HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
-            QwpWebSocketUpgradeProcessor processor = new QwpWebSocketUpgradeProcessor(engine, httpConfig);
+            QwpIngressUpgradeProcessor processor = new QwpIngressUpgradeProcessor(engine, httpConfig);
 
             byte[] pingFrame = createMaskedFrame(WebSocketOpcode.PING, new byte[]{1, 2, 3});
             MockNetworkFacade mockNf = new MockNetworkFacade(pingFrame);
@@ -903,7 +901,7 @@ public class QwpWebSocketUpgradeProcessorResumeRecvTest extends AbstractCairoTes
             try (TestableContext context = new TestableContext(
                     httpConfig, mockNf, mockRawSocket, recvBuf, RECV_BUFFER_SIZE
             )) {
-                QwpProcessorState state = setupState(httpConfig, context);
+                QwpIngressProcessorState state = setupState(httpConfig, context);
                 // Set send state to non-READY so pong is skipped
                 state.onAckBlocked(0);
 
@@ -956,7 +954,7 @@ public class QwpWebSocketUpgradeProcessorResumeRecvTest extends AbstractCairoTes
         // stays at RESUME_DURABLE_ACK until the real drain path resumes it.
         assertMemoryLeak(() -> {
             HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
-            QwpWebSocketUpgradeProcessor processor = new QwpWebSocketUpgradeProcessor(engine, httpConfig);
+            QwpIngressUpgradeProcessor processor = new QwpIngressUpgradeProcessor(engine, httpConfig);
 
             byte[] pingFrame = createMaskedFrame(WebSocketOpcode.PING, new byte[0]);
             MockNetworkFacade mockNf = new MockNetworkFacade(pingFrame);
@@ -967,7 +965,7 @@ public class QwpWebSocketUpgradeProcessorResumeRecvTest extends AbstractCairoTes
             try (TestableContext context = new TestableContext(
                     httpConfig, mockNf, mockRawSocket, recvBuf, RECV_BUFFER_SIZE
             )) {
-                QwpProcessorState state = setupState(httpConfig, context);
+                QwpIngressProcessorState state = setupState(httpConfig, context);
                 state.setDurableAckEnabled(true);
                 // Enter SEND_STATE_RESUME_DURABLE_ACK = 4 to simulate a
                 // durable-ack send blocked on OS backpressure.
@@ -1007,7 +1005,7 @@ public class QwpWebSocketUpgradeProcessorResumeRecvTest extends AbstractCairoTes
     public void testPongFrame() throws Exception {
         assertMemoryLeak(() -> {
             HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
-            QwpWebSocketUpgradeProcessor processor = new QwpWebSocketUpgradeProcessor(engine, httpConfig);
+            QwpIngressUpgradeProcessor processor = new QwpIngressUpgradeProcessor(engine, httpConfig);
 
             byte[] pongFrame = createMaskedFrame(WebSocketOpcode.PONG, new byte[0]);
             MockNetworkFacade mockNf = new MockNetworkFacade(pongFrame);
@@ -1041,7 +1039,7 @@ public class QwpWebSocketUpgradeProcessorResumeRecvTest extends AbstractCairoTes
     public void testResumeRecvBufferFull() throws Exception {
         assertMemoryLeak(() -> {
             HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
-            QwpWebSocketUpgradeProcessor processor = new QwpWebSocketUpgradeProcessor(engine, httpConfig);
+            QwpIngressUpgradeProcessor processor = new QwpIngressUpgradeProcessor(engine, httpConfig);
 
             MockNetworkFacade mockNf = new MockNetworkFacade(new byte[0]);
             long recvBuf = Unsafe.malloc(RECV_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
@@ -1051,7 +1049,7 @@ public class QwpWebSocketUpgradeProcessorResumeRecvTest extends AbstractCairoTes
                     new MockRawSocket(sendBuf, SEND_BUFFER_SIZE),
                     recvBuf, RECV_BUFFER_SIZE
             )) {
-                QwpProcessorState state = setupState(httpConfig, context);
+                QwpIngressProcessorState state = setupState(httpConfig, context);
                 // Buffer already full — recv guard fires before socket.recv()
                 state.setRecvBufferLen(RECV_BUFFER_SIZE);
 
@@ -1072,7 +1070,7 @@ public class QwpWebSocketUpgradeProcessorResumeRecvTest extends AbstractCairoTes
     public void testResumeRecvNoState() throws Exception {
         assertMemoryLeak(() -> {
             HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
-            QwpWebSocketUpgradeProcessor processor = new QwpWebSocketUpgradeProcessor(engine, httpConfig);
+            QwpIngressUpgradeProcessor processor = new QwpIngressUpgradeProcessor(engine, httpConfig);
 
             MockNetworkFacade mockNf = new MockNetworkFacade(new byte[0]);
             long recvBuf = Unsafe.malloc(RECV_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
@@ -1100,7 +1098,7 @@ public class QwpWebSocketUpgradeProcessorResumeRecvTest extends AbstractCairoTes
     public void testResumeSendInvalidState() throws Exception {
         assertMemoryLeak(() -> {
             HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
-            QwpWebSocketUpgradeProcessor processor = new QwpWebSocketUpgradeProcessor(engine, httpConfig);
+            QwpIngressUpgradeProcessor processor = new QwpIngressUpgradeProcessor(engine, httpConfig);
 
             long sendBuf = Unsafe.malloc(SEND_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
             try (TestableContext context = new TestableContext(
@@ -1108,9 +1106,9 @@ public class QwpWebSocketUpgradeProcessorResumeRecvTest extends AbstractCairoTes
                     new MockRawSocket(sendBuf, SEND_BUFFER_SIZE),
                     0, 0
             )) {
-                QwpProcessorState state = setupState(httpConfig, context);
+                QwpIngressProcessorState state = setupState(httpConfig, context);
                 // Set invalid send state via reflection
-                Field sendStateField = QwpProcessorState.class.getDeclaredField("sendState");
+                Field sendStateField = QwpIngressProcessorState.class.getDeclaredField("sendState");
                 sendStateField.setAccessible(true);
                 sendStateField.setInt(state, 99);
 
@@ -1130,7 +1128,7 @@ public class QwpWebSocketUpgradeProcessorResumeRecvTest extends AbstractCairoTes
     public void testResumeSendResumeError() throws Exception {
         assertMemoryLeak(() -> {
             HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
-            QwpWebSocketUpgradeProcessor processor = new QwpWebSocketUpgradeProcessor(engine, httpConfig);
+            QwpIngressUpgradeProcessor processor = new QwpIngressUpgradeProcessor(engine, httpConfig);
 
             long sendBuf = Unsafe.malloc(SEND_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
             MockRawSocket mockRawSocket = new MockRawSocket(sendBuf, SEND_BUFFER_SIZE);
@@ -1138,7 +1136,7 @@ public class QwpWebSocketUpgradeProcessorResumeRecvTest extends AbstractCairoTes
                     httpConfig, new MockNetworkFacade(new byte[0]),
                     mockRawSocket, 0, 0
             )) {
-                QwpProcessorState state = setupState(httpConfig, context);
+                QwpIngressProcessorState state = setupState(httpConfig, context);
                 // Set SEND_STATE_RESUME_ERROR (error blocked without prior ACK block)
                 state.onErrorBlocked((byte) 5, 3L, "test error");
 
@@ -1160,7 +1158,7 @@ public class QwpWebSocketUpgradeProcessorResumeRecvTest extends AbstractCairoTes
     public void testStateReuse() throws Exception {
         assertMemoryLeak(() -> {
             HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
-            QwpWebSocketUpgradeProcessor processor = new QwpWebSocketUpgradeProcessor(engine, httpConfig);
+            QwpIngressUpgradeProcessor processor = new QwpIngressUpgradeProcessor(engine, httpConfig);
 
             long sendBuf = Unsafe.malloc(SEND_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
             MockRawSocket mockRawSocket = new MockRawSocket(sendBuf, SEND_BUFFER_SIZE);
@@ -1184,8 +1182,8 @@ public class QwpWebSocketUpgradeProcessorResumeRecvTest extends AbstractCairoTes
                 processor.onRequestComplete(context);
                 Assert.assertTrue(context.isSwitchProtocolCalled());
 
-                LocalValue<QwpProcessorState> lv = getLV();
-                QwpProcessorState state = lv.get(context);
+                LocalValue<QwpIngressProcessorState> lv = getLV();
+                QwpIngressProcessorState state = lv.get(context);
                 Assert.assertNotNull(state);
 
                 // Reset context for second call
@@ -1199,7 +1197,7 @@ public class QwpWebSocketUpgradeProcessorResumeRecvTest extends AbstractCairoTes
                 processor.onRequestComplete(context);
                 Assert.assertTrue(context.isSwitchProtocolCalled());
 
-                QwpProcessorState state2 = lv.get(context);
+                QwpIngressProcessorState state2 = lv.get(context);
                 Assert.assertSame(state, state2);
             } finally {
                 Unsafe.free(sendBuf, SEND_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
@@ -1248,18 +1246,18 @@ public class QwpWebSocketUpgradeProcessorResumeRecvTest extends AbstractCairoTes
     }
 
     @SuppressWarnings("unchecked")
-    private static LocalValue<QwpProcessorState> getLV() throws Exception {
-        Field lvField = QwpWebSocketUpgradeProcessor.class.getDeclaredField("LV");
+    private static LocalValue<QwpIngressProcessorState> getLV() throws Exception {
+        Field lvField = QwpIngressUpgradeProcessor.class.getDeclaredField("LV");
         lvField.setAccessible(true);
-        return (LocalValue<QwpProcessorState>) lvField.get(null);
+        return (LocalValue<QwpIngressProcessorState>) lvField.get(null);
     }
 
-    private static QwpProcessorState setupState(
+    private static QwpIngressProcessorState setupState(
             HttpFullFatServerConfiguration httpConfig,
             TestableContext context
     ) throws Exception {
-        LocalValue<QwpProcessorState> lv = getLV();
-        QwpProcessorState state = new QwpProcessorState(
+        LocalValue<QwpIngressProcessorState> lv = getLV();
+        QwpIngressProcessorState state = new QwpIngressProcessorState(
                 RECV_BUFFER_SIZE,
                 httpConfig.getSendBufferSize(),
                 engine,

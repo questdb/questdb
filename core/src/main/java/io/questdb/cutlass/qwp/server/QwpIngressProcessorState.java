@@ -55,7 +55,7 @@ import io.questdb.std.str.Utf8s;
 /**
  * State management for QWP v1 processing.
  */
-public class QwpProcessorState implements QuietCloseable, ConnectionAware {
+public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware {
     static final int SEND_STATE_READY = 0;
     static final int SEND_STATE_RESUME_ACK = 1;
     static final int SEND_STATE_RESUME_ACK_THEN_CLOSE = 7;
@@ -65,7 +65,7 @@ public class QwpProcessorState implements QuietCloseable, ConnectionAware {
     static final int SEND_STATE_RESUME_DURABLE_ACK_THEN_CLOSE = 8;
     static final int SEND_STATE_RESUME_DURABLE_ACK_THEN_ERROR = 5;
     static final int SEND_STATE_RESUME_ERROR = 2;
-    private static final Log LOG = LogFactory.getLog(QwpProcessorState.class);
+    private static final Log LOG = LogFactory.getLog(QwpIngressProcessorState.class);
     private final QwpTudCache.CommittedTxnConsumer committedTxnConsumer = this::recordCommittedTable;
     private final LineHttpProcessorConfiguration configuration;
     // Delta symbol dictionary for this connection
@@ -118,7 +118,7 @@ public class QwpProcessorState implements QuietCloseable, ConnectionAware {
     private QwpWalAppender walAppender;
     private boolean wsHandshakeSent;
 
-    public QwpProcessorState(
+    public QwpIngressProcessorState(
             int initBufferSize,
             int maxResponseContentLength,
             CairoEngine engine,
