@@ -189,7 +189,7 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
      * @return the number of bytes written, or -1 if buffer too small
      */
     public static int writeHandshakeResponse(long buffer, int bufferSize, Utf8Sequence key, int qwpVersion) {
-        String acceptKey = QwpWebSocketHttpProcessor.computeAcceptKey(key);
+        byte[] acceptKey = QwpWebSocketHttpProcessor.computeAcceptKey(key);
         int requiredSize = QwpWebSocketHttpProcessor.responseSize(acceptKey, qwpVersion);
 
         if (requiredSize > bufferSize) {
@@ -309,7 +309,7 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
         // Read QWP version negotiation headers
         int negotiatedVersion = negotiateQwpVersion(requestHeader, context.getFd());
 
-        String acceptKey = QwpWebSocketHttpProcessor.computeAcceptKey(wsKey);
+        byte[] acceptKey = QwpWebSocketHttpProcessor.computeAcceptKey(wsKey);
 
         // Resolve durable-ack opt-in before sizing the 101 response, since
         // the X-QWP-Durable-Ack confirmation header affects the response size.

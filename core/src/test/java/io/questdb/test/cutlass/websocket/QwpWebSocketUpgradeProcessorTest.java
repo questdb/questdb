@@ -71,7 +71,7 @@ public class QwpWebSocketUpgradeProcessorTest extends AbstractWebSocketTest {
         assertMemoryLeak(() -> {
             // Given a valid WebSocket key
             Utf8String key = new Utf8String("dGhlIHNhbXBsZSBub25jZQ==");
-            String expectedAccept = QwpWebSocketHttpProcessor.computeAcceptKey(key);
+            String expectedAccept = new String(QwpWebSocketHttpProcessor.computeAcceptKey(key), StandardCharsets.US_ASCII);
 
             // When we write the handshake response
             long bufferSize = 256;
@@ -131,7 +131,7 @@ public class QwpWebSocketUpgradeProcessorTest extends AbstractWebSocketTest {
 
             for (String keyStr : keys) {
                 Utf8String key = new Utf8String(keyStr);
-                String expectedAccept = QwpWebSocketHttpProcessor.computeAcceptKey(key);
+                String expectedAccept = new String(QwpWebSocketHttpProcessor.computeAcceptKey(key), StandardCharsets.US_ASCII);
 
                 long bufferSize = 256;
                 long buffer = Unsafe.malloc(bufferSize, MemoryTag.NATIVE_DEFAULT);

@@ -90,9 +90,7 @@ public class QwpWebSocketHttpProcessor implements HttpRequestHandler {
     // for callers that bypass {@link #isValidKey}.
     private static final int KEY_SCRATCH_SIZE = 64;
     // Per-thread scratch so the accept-key computation runs with zero byte[] allocs
-    // under sustained reconnect load. The String returned to the caller still
-    // allocates (28 chars) but that's the only irreducible cost without changing
-    // the writeResponse contract to consume raw bytes.
+    // under sustained reconnect load.
     private static final ThreadLocal<byte[]> KEY_SCRATCH = ThreadLocal.withInitial(() -> new byte[KEY_SCRATCH_SIZE]);
     private static final byte[] MISDIRECTED_REQUEST_PREFIX =
             ("""
@@ -155,11 +153,17 @@ public class QwpWebSocketHttpProcessor implements HttpRequestHandler {
 
     /**
      * Computes the Sec-WebSocket-Accept value for the given key.
+     * <p>
+     * Returns a reference to a thread-local scratch buffer of length
+     * {@link #SHA1_BASE64_SIZE} containing the base64-encoded SHA-1 hash.
+     * The caller must consume the bytes (e.g. copy them into the response
+     * buffer) before invoking {@code computeAcceptKey} again on the same
+     * thread, as the next call overwrites the scratch in place.
      *
      * @param key the Sec-WebSocket-Key from the client
-     * @return the base64-encoded SHA-1 hash to send in the response
+     * @return the base64-encoded SHA-1 hash bytes (length {@link #SHA1_BASE64_SIZE})
      */
-    public static String computeAcceptKey(Utf8Sequence key) {
+    public static byte[] computeAcceptKey(Utf8Sequence key) {
         MessageDigest sha1 = SHA1_DIGEST.get();
         sha1.reset();
 
@@ -184,13 +188,12 @@ public class QwpWebSocketHttpProcessor implements HttpRequestHandler {
         // digest(byte[],int,int) writes into the supplied buffer -- no per-call
         // byte[] from sha1.digest() and no per-call byte[] from the Base64
         // encoder (which also has a no-alloc encode(byte[],byte[]) overload).
-        // Only the returned String is still allocated.
         try {
             byte[] hash = HASH_SCRATCH.get();
             sha1.digest(hash, 0, SHA1_DIGEST_SIZE);
             byte[] b64 = BASE64_SCRATCH.get();
-            int b64Len = Base64.getEncoder().encode(hash, b64);
-            return new String(b64, 0, b64Len, StandardCharsets.US_ASCII);
+            Base64.getEncoder().encode(hash, b64);
+            return b64;
         } catch (DigestException e) {
             throw new RuntimeException("SHA-1 digest failed", e);
         }
@@ -282,20 +285,20 @@ public class QwpWebSocketHttpProcessor implements HttpRequestHandler {
     /**
      * Returns the size of the handshake response for the given accept key and QWP version.
      *
-     * @param acceptKey  the computed accept key
+     * @param acceptKey  the computed accept key bytes
      * @param qwpVersion the negotiated QWP version number
      * @return the total response size in bytes
      */
-    public static int responseSize(String acceptKey, int qwpVersion) {
+    public static int responseSize(byte[] acceptKey, int qwpVersion) {
         return responseSize(acceptKey, qwpVersion, null, false, null, null);
     }
 
-    public static int responseSize(String acceptKey, int qwpVersion, byte[] contentEncodingBytes, boolean durableAckEnabled, byte[] roleBytes) {
+    public static int responseSize(byte[] acceptKey, int qwpVersion, byte[] contentEncodingBytes, boolean durableAckEnabled, byte[] roleBytes) {
         return responseSize(acceptKey, qwpVersion, contentEncodingBytes, durableAckEnabled, roleBytes, null);
     }
 
     /**
-     * Same as {@link #responseSize(String, int)} but accounts for an optional
+     * Same as {@link #responseSize(byte[], int)} but accounts for an optional
      * {@code X-QWP-Content-Encoding} header echoing the negotiated compression
      * codec, an optional {@code X-QWP-Durable-Ack: enabled} confirmation
      * header, an optional {@code X-QuestDB-Role} header advertising the
@@ -305,8 +308,8 @@ public class QwpWebSocketHttpProcessor implements HttpRequestHandler {
      * verbatim, so callers are expected to cache them on the hot path rather
      * than allocating per handshake.
      */
-    public static int responseSize(String acceptKey, int qwpVersion, byte[] contentEncodingBytes, boolean durableAckEnabled, byte[] roleBytes, byte[] maxBatchSizeBytes) {
-        int size = RESPONSE_PREFIX.length + acceptKey.length()
+    public static int responseSize(byte[] acceptKey, int qwpVersion, byte[] contentEncodingBytes, boolean durableAckEnabled, byte[] roleBytes, byte[] maxBatchSizeBytes) {
+        int size = RESPONSE_PREFIX.length + acceptKey.length
                 + RESPONSE_AFTER_ACCEPT.length + VERSION_BYTES[qwpVersion].length
                 + RESPONSE_SUFFIX.length;
         if (contentEncodingBytes != null) {
@@ -399,20 +402,20 @@ public class QwpWebSocketHttpProcessor implements HttpRequestHandler {
      * Writes the WebSocket handshake response to the given buffer.
      *
      * @param buf        the buffer to write to
-     * @param acceptKey  the computed Sec-WebSocket-Accept value
+     * @param acceptKey  the computed Sec-WebSocket-Accept value bytes
      * @param qwpVersion the negotiated QWP version number
      * @return the number of bytes written
      */
-    public static int writeResponse(long buf, String acceptKey, int qwpVersion) {
+    public static int writeResponse(long buf, byte[] acceptKey, int qwpVersion) {
         return writeResponse(buf, acceptKey, qwpVersion, null, false, null, null);
     }
 
-    public static int writeResponse(long buf, String acceptKey, int qwpVersion, byte[] contentEncodingBytes, boolean durableAckEnabled, byte[] roleBytes) {
+    public static int writeResponse(long buf, byte[] acceptKey, int qwpVersion, byte[] contentEncodingBytes, boolean durableAckEnabled, byte[] roleBytes) {
         return writeResponse(buf, acceptKey, qwpVersion, contentEncodingBytes, durableAckEnabled, roleBytes, null);
     }
 
     /**
-     * Same as {@link #writeResponse(long, String, int)} but appends an optional
+     * Same as {@link #writeResponse(long, byte[], int)} but appends an optional
      * {@code X-QWP-Content-Encoding} header echoing the negotiated compression
      * codec (e.g. {@code zstd;level=1}), an optional
      * {@code X-QWP-Durable-Ack: enabled} confirmation that this connection
@@ -424,15 +427,14 @@ public class QwpWebSocketHttpProcessor implements HttpRequestHandler {
      * expected to cache them on the hot path rather than allocating per
      * handshake.
      */
-    public static int writeResponse(long buf, String acceptKey, int qwpVersion, byte[] contentEncodingBytes, boolean durableAckEnabled, byte[] roleBytes, byte[] maxBatchSizeBytes) {
+    public static int writeResponse(long buf, byte[] acceptKey, int qwpVersion, byte[] contentEncodingBytes, boolean durableAckEnabled, byte[] roleBytes, byte[] maxBatchSizeBytes) {
         int offset = 0;
 
         for (byte b : RESPONSE_PREFIX) {
             Unsafe.putByte(buf + offset++, b);
         }
 
-        byte[] acceptBytes = acceptKey.getBytes(StandardCharsets.US_ASCII);
-        for (byte b : acceptBytes) {
+        for (byte b : acceptKey) {
             Unsafe.putByte(buf + offset++, b);
         }
 

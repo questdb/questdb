@@ -43,9 +43,9 @@ public class WebSocketHandshakeTest extends AbstractWebSocketTest {
         // Same key should always produce same accept value
         String clientKey = "x3JJHMbDL1EzLkh9GBhXDw==";
 
-        String accept1 = QwpWebSocketHttpProcessor.computeAcceptKey(new Utf8String(clientKey));
-        String accept2 = QwpWebSocketHttpProcessor.computeAcceptKey(new Utf8String(clientKey));
-        String accept3 = QwpWebSocketHttpProcessor.computeAcceptKey(new Utf8String(clientKey));
+        String accept1 = new String(QwpWebSocketHttpProcessor.computeAcceptKey(new Utf8String(clientKey)), StandardCharsets.US_ASCII);
+        String accept2 = new String(QwpWebSocketHttpProcessor.computeAcceptKey(new Utf8String(clientKey)), StandardCharsets.US_ASCII);
+        String accept3 = new String(QwpWebSocketHttpProcessor.computeAcceptKey(new Utf8String(clientKey)), StandardCharsets.US_ASCII);
 
         Assert.assertEquals(accept1, accept2);
         Assert.assertEquals(accept2, accept3);
@@ -57,8 +57,8 @@ public class WebSocketHandshakeTest extends AbstractWebSocketTest {
         String key1 = "dGhlIHNhbXBsZSBub25jZQ==";
         String key2 = "x3JJHMbDL1EzLkh9GBhXDw==";
 
-        String accept1 = QwpWebSocketHttpProcessor.computeAcceptKey(new Utf8String(key1));
-        String accept2 = QwpWebSocketHttpProcessor.computeAcceptKey(new Utf8String(key2));
+        String accept1 = new String(QwpWebSocketHttpProcessor.computeAcceptKey(new Utf8String(key1)), StandardCharsets.US_ASCII);
+        String accept2 = new String(QwpWebSocketHttpProcessor.computeAcceptKey(new Utf8String(key2)), StandardCharsets.US_ASCII);
 
         Assert.assertNotEquals(accept1, accept2);
     }
@@ -67,11 +67,11 @@ public class WebSocketHandshakeTest extends AbstractWebSocketTest {
     public void testComputeAcceptKeyKnownValues() {
         // Additional test vectors to verify SHA-1 computation
         // RFC 6455 test vector
-        String acceptKey = QwpWebSocketHttpProcessor.computeAcceptKey(new Utf8String("dGhlIHNhbXBsZSBub25jZQ=="));
+        String acceptKey = new String(QwpWebSocketHttpProcessor.computeAcceptKey(new Utf8String("dGhlIHNhbXBsZSBub25jZQ==")), StandardCharsets.US_ASCII);
         Assert.assertEquals("s3pPLMBiTxaQ9kYGzzhZRbK+xOo=", acceptKey);
 
         // Verify different keys produce different results
-        String acceptKey2 = QwpWebSocketHttpProcessor.computeAcceptKey(new Utf8String("x3JJHMbDL1EzLkh9GBhXDw=="));
+        String acceptKey2 = new String(QwpWebSocketHttpProcessor.computeAcceptKey(new Utf8String("x3JJHMbDL1EzLkh9GBhXDw==")), StandardCharsets.US_ASCII);
         Assert.assertNotEquals(acceptKey, acceptKey2);
     }
 
@@ -81,7 +81,7 @@ public class WebSocketHandshakeTest extends AbstractWebSocketTest {
         String clientKey = "dGhlIHNhbXBsZSBub25jZQ==";
         String expectedAccept = "s3pPLMBiTxaQ9kYGzzhZRbK+xOo=";
 
-        String acceptKey = QwpWebSocketHttpProcessor.computeAcceptKey(new Utf8String(clientKey));
+        String acceptKey = new String(QwpWebSocketHttpProcessor.computeAcceptKey(new Utf8String(clientKey)), StandardCharsets.US_ASCII);
         Assert.assertEquals(expectedAccept, acceptKey);
     }
 
@@ -91,7 +91,7 @@ public class WebSocketHandshakeTest extends AbstractWebSocketTest {
         Utf8String clientKey = new Utf8String("dGhlIHNhbXBsZSBub25jZQ==");
         String expectedAccept = "s3pPLMBiTxaQ9kYGzzhZRbK+xOo=";
 
-        String acceptKey = QwpWebSocketHttpProcessor.computeAcceptKey(clientKey);
+        String acceptKey = new String(QwpWebSocketHttpProcessor.computeAcceptKey(clientKey), StandardCharsets.US_ASCII);
         Assert.assertEquals(expectedAccept, acceptKey);
     }
 
@@ -208,7 +208,7 @@ public class WebSocketHandshakeTest extends AbstractWebSocketTest {
     @Test
     public void testResponseSize() throws Exception {
         assertMemoryLeak(() -> {
-            String acceptKey = "s3pPLMBiTxaQ9kYGzzhZRbK+xOo=";
+            byte[] acceptKey = "s3pPLMBiTxaQ9kYGzzhZRbK+xOo=".getBytes(StandardCharsets.US_ASCII);
             int expectedSize = QwpWebSocketHttpProcessor.responseSize(acceptKey, 1);
 
             long buf = allocateBuffer(256);
@@ -224,7 +224,7 @@ public class WebSocketHandshakeTest extends AbstractWebSocketTest {
     @Test
     public void testResponseSizeWithMaxBatchSize() throws Exception {
         assertMemoryLeak(() -> {
-            String acceptKey = "s3pPLMBiTxaQ9kYGzzhZRbK+xOo=";
+            byte[] acceptKey = "s3pPLMBiTxaQ9kYGzzhZRbK+xOo=".getBytes(StandardCharsets.US_ASCII);
             int maxBatchSize = 16 * 1024 * 1024;
             byte[] maxBatchSizeBytes = Integer.toString(maxBatchSize).getBytes(StandardCharsets.US_ASCII);
             int expectedSize = QwpWebSocketHttpProcessor.responseSize(
@@ -249,7 +249,7 @@ public class WebSocketHandshakeTest extends AbstractWebSocketTest {
     @Test
     public void testWriteResponseOmitsMaxBatchSizeWhenAbsent() throws Exception {
         assertMemoryLeak(() -> {
-            String acceptKey = "s3pPLMBiTxaQ9kYGzzhZRbK+xOo=";
+            byte[] acceptKey = "s3pPLMBiTxaQ9kYGzzhZRbK+xOo=".getBytes(StandardCharsets.US_ASCII);
 
             long buf = allocateBuffer(256);
             try {
@@ -278,7 +278,7 @@ public class WebSocketHandshakeTest extends AbstractWebSocketTest {
             final int idx = i;
             threads[i] = new Thread(() -> {
                 for (int j = 0; j < 100; j++) {
-                    String accept = QwpWebSocketHttpProcessor.computeAcceptKey(new Utf8String(clientKey));
+                    String accept = new String(QwpWebSocketHttpProcessor.computeAcceptKey(new Utf8String(clientKey)), StandardCharsets.US_ASCII);
                     if (!expectedAccept.equals(accept)) {
                         results[idx] = false;
                         return;
@@ -319,7 +319,8 @@ public class WebSocketHandshakeTest extends AbstractWebSocketTest {
         assertMemoryLeak(() -> {
             long buf = allocateBuffer(256);
             try {
-                String acceptKey = "s3pPLMBiTxaQ9kYGzzhZRbK+xOo=";
+                String acceptKeyStr = "s3pPLMBiTxaQ9kYGzzhZRbK+xOo=";
+                byte[] acceptKey = acceptKeyStr.getBytes(StandardCharsets.US_ASCII);
                 int written = QwpWebSocketHttpProcessor.writeResponse(buf, acceptKey, 1);
 
                 byte[] response = readBytes(buf, written);
@@ -328,7 +329,7 @@ public class WebSocketHandshakeTest extends AbstractWebSocketTest {
                 Assert.assertTrue(responseStr.startsWith("HTTP/1.1 101 Switching Protocols\r\n"));
                 Assert.assertTrue(responseStr.contains("Upgrade: websocket\r\n"));
                 Assert.assertTrue(responseStr.contains("Connection: Upgrade\r\n"));
-                Assert.assertTrue(responseStr.contains("Sec-WebSocket-Accept: " + acceptKey + "\r\n"));
+                Assert.assertTrue(responseStr.contains("Sec-WebSocket-Accept: " + acceptKeyStr + "\r\n"));
                 Assert.assertTrue(responseStr.endsWith("\r\n\r\n"));
             } finally {
                 freeBuffer(buf, 256);
@@ -341,7 +342,7 @@ public class WebSocketHandshakeTest extends AbstractWebSocketTest {
         assertMemoryLeak(() -> {
             // Full end-to-end test
             String clientKey = "dGhlIHNhbXBsZSBub25jZQ==";
-            String acceptKey = QwpWebSocketHttpProcessor.computeAcceptKey(new Utf8String(clientKey));
+            byte[] acceptKey = QwpWebSocketHttpProcessor.computeAcceptKey(new Utf8String(clientKey));
 
             long buf = allocateBuffer(256);
             try {

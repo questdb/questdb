@@ -345,7 +345,7 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
         byte[] contentEncodingHeaderBytes = QwpEgressCompressionNegotiator.responseHeaderValue(
                 negotiatedCodec, effectiveLevel);
 
-        String acceptKey = QwpWebSocketHttpProcessor.computeAcceptKey(wsKey);
+        byte[] acceptKey = QwpWebSocketHttpProcessor.computeAcceptKey(wsKey);
         int requiredHandshakeSize = QwpWebSocketHttpProcessor.responseSize(
                 acceptKey, negotiatedVersion, contentEncodingHeaderBytes, false, null);
         // v2 appends a SERVER_INFO WebSocket frame right after the 101 response
