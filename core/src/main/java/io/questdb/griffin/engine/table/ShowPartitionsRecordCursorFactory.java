@@ -463,6 +463,14 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
                     case 10 -> isReadOnly || !isDetached;
                     case 11 -> isDetached;
                     case 12 -> isAttachable;
+                    // For tables that pre-date the release of storage policy the hasParquetGenerated
+                    // bit was not used and always stays 0 (false); after storage policy ships these
+                    // bits remain 0 too. However, partitions could already be converted to parquet
+                    // manually (pre-storage-policy), and for those the flags read
+                    // hasParquetGenerated=false, isParquet=true. That is harmless internally, but
+                    // showed up oddly in SHOW PARTITIONS (a parquet partition reporting "not
+                    // generated"). Treat any parquet partition as having a generated parquet file:
+                    // isParquet implies a parquet file was generated for it.
                     case 13 -> hasParquetGenerated || isParquet;
                     case 14 -> isParquet;
                     default -> throw new UnsupportedOperationException();

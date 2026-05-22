@@ -1961,6 +1961,8 @@ public class TableWriterTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tbl (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY");
             TableToken token = engine.verifyTableName("tbl");
+            // Guard the gate's premise: this test only proves anything if the table is non-WAL.
+            Assert.assertFalse(token.isWal());
 
             try (TableWriter writer = getWriter(token)) {
                 // Publish an ADD COLUMN command to the writer's own queue without ticking it.
@@ -2009,6 +2011,8 @@ public class TableWriterTest extends AbstractCairoTest {
             execute("INSERT INTO tbl VALUES ('2022-02-25T00:00:00.000000Z', 2)");
 
             TableToken token = engine.verifyTableName("tbl");
+            // Guard the gate's premise: the housekeep drain only runs for WAL tables.
+            Assert.assertTrue(token.isWal());
             try (TableWriter writer = getWriter(token)) {
                 // Publish an ADD COLUMN command to the held writer's queue without ticking it,
                 // mimicking a command published while the apply loop owns the writer.

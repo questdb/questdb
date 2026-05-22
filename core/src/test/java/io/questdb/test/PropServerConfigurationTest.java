@@ -1194,6 +1194,16 @@ public class PropServerConfigurationTest {
     }
 
     @Test
+    public void testWalMaxLagSizeZeroAccepted() throws Exception {
+        // 0 is the minimum accepted value (the guard rejects only negatives), so it must pass and
+        // round-trip unchanged. Guards against a > vs >= regression in getLongSize(..., minValue).
+        Properties properties = new Properties();
+        properties.setProperty("cairo.wal.max.lag.size", "0");
+        PropServerConfiguration configuration = newPropServerConfiguration(properties);
+        Assert.assertEquals(0, configuration.getCairoConfiguration().getWalMaxLagSize());
+    }
+
+    @Test
     public void testInvalidValidationResult() {
         Properties properties = new Properties();
         properties.setProperty("invalid.key", "value");
