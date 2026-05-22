@@ -370,7 +370,7 @@ public class TableTransactionLog implements Closeable {
                     return;
                 }
 
-                throw CairoException.critical(0).put("expected to read table structure changes but there is no saved in the sequencer [structureVersionLo=").put(structureVersionLo).put(']');
+                throw CairoException.critical(0).put("expected to read table structure changes but there is none saved in the sequencer [structureVersionLo=").put(structureVersionLo).put(']');
             } finally {
                 ff.close(txnMetaFd);
                 ff.close(txnMetaIndexFd);

@@ -59,8 +59,6 @@ import io.questdb.cairo.wal.seq.TableTransactionLogFile;
 import io.questdb.cairo.wal.seq.TableTransactionLogV1;
 import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.griffin.engine.ops.AlterOperationBuilder;
-import io.questdb.griffin.engine.table.parquet.PartitionDescriptor;
-import io.questdb.griffin.engine.table.parquet.PartitionEncoder;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Chars;
@@ -2707,7 +2705,7 @@ public class TableWriterTest extends AbstractCairoTest {
                 mem.sync(false);
                 mem.setTruncateSize(TableTransactionLogFile.HEADER_SIZE + TableTransactionLogV1.RECORD_SIZE + TableTransactionLogFile.TX_LOG_STRUCTURE_VERSION_OFFSET + Long.BYTES);
             }
-            assertException("alter table " + PRODUCT + " add column abc INT;", 12, "expected to read table structure changes but there is no saved in the sequencer");
+            assertException("alter table " + PRODUCT + " add column abc INT;", 12, "expected to read table structure changes but there is none saved in the sequencer");
         });
     }
 
@@ -3513,7 +3511,7 @@ public class TableWriterTest extends AbstractCairoTest {
     private int getDirCount() {
         AtomicInteger count = new AtomicInteger();
         try (Path path = new Path()) {
-            FF.iterateDir(path.of(root).concat(PRODUCT_FS).$(), (pUtf8NameZ, type) -> {
+            FF.iterateDir(path.of(root).concat(PRODUCT_FS).$(), (_, type) -> {
                 if (type == Files.DT_DIR) {
                     count.incrementAndGet();
                 }

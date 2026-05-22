@@ -499,7 +499,12 @@ public class TableSequencerImpl implements TableSequencer {
         try {
             metadata.openTableSequencerMetadata(path, rootLen, tableToken);
         } catch (CairoException ex) {
-            if (tableTransactionLog.isDropped() || !ex.isSequencerMetadataOpenFailed()) {
+            if (tableTransactionLog.isDropped()) {
+                // The txn log is the recovery authority: if it records the drop, surface that
+                // even when the registry has not yet caught up with the drop.
+                throw CairoException.tableDropped(tableToken);
+            }
+            if (!ex.isSequencerMetadataOpenFailed()) {
                 throw ex;
             }
             LOG.critical().$("could not open sequencer metadata, rebuilding from transaction log [table=").$(tableToken)
@@ -538,8 +543,7 @@ public class TableSequencerImpl implements TableSequencer {
     }
 
     private void replayCommittedMetadataChange(TableMetadataChange change, boolean applyRenameSidecars) {
-        if (!applyRenameSidecars && change instanceof AlterOperation) {
-            final AlterOperation alter = (AlterOperation) change;
+        if (!applyRenameSidecars && change instanceof AlterOperation alter) {
             if (alter.getCommand() == AlterOperation.RENAME_TABLE) {
                 replayCommittedRename();
                 return;
@@ -572,6 +576,7 @@ public class TableSequencerImpl implements TableSequencer {
     private void replayCommittedRename() {
         // Full rebuild starts from the registry token, the durable table-name authority. Historical
         // rename sidecars can otherwise move metadata away from the registry after abandoned renames or rename chains.
+        // skipTableRename() still bumps structureVersion so the replay matches the committed log's version count.
         metadata.skipTableRename();
     }
 
