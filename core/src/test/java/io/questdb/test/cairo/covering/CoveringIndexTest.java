@@ -85,6 +85,113 @@ public class CoveringIndexTest extends AbstractCairoTest {
     private static final ColumnVersionReader EMPTY_CVR = new ColumnVersionReader();
 
     @Test
+    public void testAddPostingCoveringIndexNonWalActivePartitionCannotBeParquet() throws Exception {
+        // Non-WAL counterpart to the WAL bug below. That bug needs a Parquet
+        // LAST partition -- but a non-WAL table can never have one: CONVERT
+        // PARTITION TO PARQUET skips the active (last) partition by design (see
+        // TableWriter.convertPartitionNativeToParquet, "conversion is
+        // unsupported for non-WAL tables"). So on a non-WAL table the last
+        // partition stays native, ADD INDEX TYPE POSTING INCLUDE (...) takes the
+        // native indexLastPartition() path, and there is no crash to reproduce.
+        // This test pins that boundary.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_repro_nowal (
+                        ts TIMESTAMP,
+                        sym SYMBOL,
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY
+                    """);
+            execute("""
+                    INSERT INTO t_repro_nowal
+                    SELECT
+                        dateadd('m', x::INT, '2024-01-01T00:00:00Z'::TIMESTAMP),
+                        'A' || (x % 4),
+                        x::DOUBLE
+                    FROM long_sequence(100)
+                    """);
+
+            // CONVERT is a no-op here: 2024-01-01 is the active partition.
+            execute("ALTER TABLE t_repro_nowal CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            assertSql(
+                    "name\tisParquet\n2024-01-01\tfalse\n",
+                    "SELECT name, isParquet FROM table_partitions('t_repro_nowal')"
+            );
+
+            // The last partition is native, so the covering index builds fine.
+            execute("ALTER TABLE t_repro_nowal ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (price)");
+            assertSql(
+                    "indexed\ntrue\n",
+                    "SELECT indexed FROM table_columns('t_repro_nowal') WHERE \"column\" = 'sym'"
+            );
+            // x % 4 == 0 for 25 of x in [1, 100].
+            assertSql(
+                    "count\n25\n",
+                    "SELECT count(*) count FROM t_repro_nowal WHERE sym = 'A0'"
+            );
+        });
+    }
+
+    @Test
+    public void testAddPostingCoveringIndexWhenLastPartitionIsParquetWal() throws Exception {
+        // ADD INDEX TYPE POSTING ... INCLUDE (...) crashed with an NPE
+        // ("Cannot invoke FilesFacade.read(...) because ff is null") when the
+        // table's LAST partition is a Parquet partition.
+        //
+        // writeIndex() splits the work: indexHistoricPartitions() checks
+        // isPartitionParquet() and dispatches Parquet partitions to the
+        // Parquet-aware indexParquetPartition(); the last partition went
+        // through indexLastPartition(), which had no such branch -- it indexed
+        // the last partition as if it were native, and the covering seal()
+        // then read the INCLUDE columns' source through a FilesFacade that was
+        // never wired up for a Parquet partition.
+        //
+        // A single-partition table is the minimal trigger: that partition is
+        // the last partition, so indexLastPartition() handles it. On a WAL
+        // table the failed apply suspends the table.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_repro (
+                        ts TIMESTAMP,
+                        sym SYMBOL,
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY WAL
+                    """);
+            execute("""
+                    INSERT INTO t_repro
+                    SELECT
+                        dateadd('m', x::INT, '2024-01-01T00:00:00Z'::TIMESTAMP),
+                        'A' || (x % 4),
+                        x::DOUBLE
+                    FROM long_sequence(100)
+                    """);
+            drainWalQueue();
+
+            execute("ALTER TABLE t_repro CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            drainWalQueue();
+
+            execute("ALTER TABLE t_repro ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (price)");
+            drainWalQueue();
+
+            // The ADD INDEX must have applied cleanly: table not suspended,
+            // column indexed, covering query correct.
+            assertSql(
+                    "suspended\nfalse\n",
+                    "SELECT suspended FROM wal_tables() WHERE name = 't_repro'"
+            );
+            assertSql(
+                    "indexed\ntrue\n",
+                    "SELECT indexed FROM table_columns('t_repro') WHERE \"column\" = 'sym'"
+            );
+            // x % 4 == 0 for 25 of x in [1, 100].
+            assertSql(
+                    "count\n25\n",
+                    "SELECT count(*) count FROM t_repro WHERE sym = 'A0'"
+            );
+        });
+    }
+
+    @Test
     public void testAlterAddIndexAuthorizesIndexedColumnOnly() throws Exception {
         // SecurityContext.authorizeAlterTableAddIndex must receive only the indexed
         // column name. Passing covering column names through the same hook would let
