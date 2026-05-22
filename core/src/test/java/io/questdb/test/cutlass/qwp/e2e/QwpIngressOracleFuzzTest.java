@@ -651,13 +651,16 @@ public class QwpIngressOracleFuzzTest extends AbstractCairoTest {
                                 }
                                 written = end;
                             }
-                            // Final drain pass: open one more sender with
-                            // default close_flush_timeout so any residual
+                            // Final drain pass: open one more sender with a
+                            // generous close_flush_timeout so any residual
                             // unacked frames replay and then ACK before we
-                            // assert the oracle.
+                            // assert the oracle. The default 5 s is not
+                            // enough on slow CI (e.g. Windows) when several
+                            // bounces leave a queue of frames to replay.
                             String drainConnect = "ws::addr=localhost:" + port + ";sf_dir=" + mySfDir
                                     + ";initial_connect_retry=async"
                                     + ";reconnect_max_duration_millis=120000"
+                                    + ";close_flush_timeout_millis=120000"
                                     + ";sf_max_bytes=" + sfMaxBytes + ";";
                             try (Sender sender = Sender.fromConfig(drainConnect)) {
                                 sender.flush();
