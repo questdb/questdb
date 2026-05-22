@@ -9512,7 +9512,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 """);
     }
 
-    @Test // jit is not used due to type mismatch
+    @Test
+    // jit is not used due to type mismatch -- the cast-fold guard only unwraps when target type matches column type
     public void testSelectWithNonJittedFilter1() throws Exception {
         assertPlan("create table tab ( l long, ts timestamp);", "select * from tab where l = 12::short ", """
                 Async Filter workers: 1
@@ -9523,10 +9524,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 """);
     }
 
-    @Test // jit filter doesn't work with type casts
+    @Test
     public void testSelectWithNonJittedFilter10() throws Exception {
         assertPlan("create table tab ( s short, ts timestamp);", "select * from tab where s = 1::short ", """
-                Async Filter workers: 1
+                Async JIT Filter workers: 1
                   filter: s=1
                     PageFrame
                         Row forward scan
@@ -9534,10 +9535,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 """);
     }
 
-    @Test // TODO: should run with jitted filter just like b = true
+    @Test
     public void testSelectWithNonJittedFilter11() throws Exception {
         assertPlan("create table tab ( b boolean, ts timestamp);", "select * from tab where b = true::boolean ", """
-                Async Filter workers: 1
+                Async JIT Filter workers: 1
                   filter: b=true
                     PageFrame
                         Row forward scan
@@ -9545,10 +9546,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 """);
     }
 
-    @Test // TODO: should run with jitted filter just like l = 1024
+    @Test
     public void testSelectWithNonJittedFilter12() throws Exception {
         assertPlan("create table tab ( l long, ts timestamp);", "select * from tab where l = 1024::long ", """
-                Async Filter workers: 1
+                Async JIT Filter workers: 1
                   filter: l=1024L
                     PageFrame
                         Row forward scan
@@ -9556,10 +9557,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 """);
     }
 
-    @Test // TODO: should run with jitted filter just like d = 1024.1
+    @Test
     public void testSelectWithNonJittedFilter13() throws Exception {
         assertPlan("create table tab ( d double, ts timestamp);", "select * from tab where d = 1024.1::double ", """
-                Async Filter workers: 1
+                Async JIT Filter workers: 1
                   filter: d=1024.1
                     PageFrame
                         Row forward scan
@@ -9567,10 +9568,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 """);
     }
 
-    @Test // TODO: should run with jitted filter just like d = null
+    @Test
     public void testSelectWithNonJittedFilter14() throws Exception {
         assertPlan("create table tab ( d double, ts timestamp);", "select * from tab where d = null::double ", """
-                Async Filter workers: 1
+                Async JIT Filter workers: 1
                   filter: d is null
                     PageFrame
                         Row forward scan
@@ -9638,7 +9639,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 """);
     }
 
-    @Test // jit is not used due to type mismatch
+    @Test
+    // jit is not used due to type mismatch -- the cast-fold guard only unwraps when target type matches column type
     public void testSelectWithNonJittedFilter2() throws Exception {
         assertPlan("create table tab ( l long, ts timestamp);", "select * from tab where l = 12::byte ", """
                 Async Filter workers: 1
@@ -9649,7 +9651,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 """);
     }
 
-    @Test // jit is not used due to type mismatch
+    @Test
+    // jit is not used due to type mismatch
     public void testSelectWithNonJittedFilter3() throws Exception {
         assertPlan("create table tab ( l long, ts timestamp);", "select * from tab where l = '123' ", """
                 Async Filter workers: 1
@@ -9705,10 +9708,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 """);
     }
 
-    @Test // jit filter doesn't work with type casts
+    @Test
     public void testSelectWithNonJittedFilter9() throws Exception {
         assertPlan("create table tab ( b byte, ts timestamp);", "select * from tab where b = 1::byte ", """
-                Async Filter workers: 1
+                Async JIT Filter workers: 1
                   filter: b=1
                     PageFrame
                         Row forward scan

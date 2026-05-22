@@ -124,6 +124,134 @@ public class CompiledFilterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testBindVariableCastPreservesJit() throws Exception {
+        // PR #6413's `<col> = $1::TYPE` workaround: when the bind variable is bound
+        // as the cast target type, the cast is a no-op and JIT can engage. When the
+        // bound type differs, the cast does real coercion that the JIT IR can't
+        // replicate, so we bail to Java. Covers every JIT-supported scalar type so
+        // bindVariableTypeCode dispatch is exercised end-to-end.
+        Uuid uuidValue = new Uuid();
+        uuidValue.of("11111111-2222-3333-4444-555555555555");
+        assertMemoryLeak(() -> {
+            execute(
+                    "create table x (" +
+                            "abool BOOLEAN, abyte BYTE, ashort SHORT, achar CHAR, " +
+                            "anint INT, along LONG, afloat FLOAT, adouble DOUBLE, " +
+                            "auuid UUID, aipv4 IPv4, " +
+                            "adate DATE, ats2 TIMESTAMP, ats TIMESTAMP" +
+                            ") timestamp(ats)"
+            );
+            execute(
+                    "insert into x values (true, 1, 10, 'A', 100, 1000, 1.5, 2.5, " +
+                            "'11111111-2222-3333-4444-555555555555', " +
+                            "'1.2.3.4', " +
+                            "'2026-06-15T00:00:00.000Z', " +
+                            "'2026-01-01T00:00:00.000000Z', '2026-01-01T00:00:00.000000Z')"
+            );
+
+            // Read back the row's date and timestamp so the bind values match without
+            // magic epoch numbers.
+            long rowDate, rowTs;
+            try (RecordCursorFactory factory = select("select adate, ats2 from x");
+                 RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                Assert.assertTrue(cursor.hasNext());
+                rowDate = cursor.getRecord().getDate(0);
+                rowTs = cursor.getRecord().getTimestamp(1);
+            }
+
+            // Bind variables bound to types matching the cast target -> fold engages.
+            // IPv4 covers the I4_TYPE-mapping `bindVariableTypeCode` branch shared with
+            // INT/SYMBOL/etc. Parametrised types (GEOHASH(Nb), TIMESTAMP_NANO) aren't
+            // covered here because their type literals are not bare CONSTANT nodes, so
+            // `isCastTargetTypeLiteral` correctly refuses to fold them.
+            bindVariableService.clear();
+            bindVariableService.setBoolean(0, true);
+            bindVariableService.setByte(1, (byte) 1);
+            bindVariableService.setShort(2, (short) 10);
+            bindVariableService.setChar(3, 'A');
+            bindVariableService.setInt(4, 100);
+            bindVariableService.setLong(5, 1000L);
+            bindVariableService.setFloat(6, 1.5f);
+            bindVariableService.setDouble(7, 2.5d);
+            bindVariableService.setUuid(8, uuidValue.getLo(), uuidValue.getHi());
+            bindVariableService.setIPv4(9, "1.2.3.4");
+            bindVariableService.setDate(10, rowDate);
+            bindVariableService.setTimestamp(11, rowTs);
+
+            String[] queriesThatMustJit = {
+                    "select * from x where abool = $1::boolean",
+                    "select * from x where abyte = $2::byte",
+                    "select * from x where ashort = $3::short",
+                    "select * from x where achar = $4::char",
+                    "select * from x where anint = $5::int",
+                    "select * from x where along = $6::long",
+                    "select * from x where afloat = cast($7 AS float)",
+                    "select * from x where adouble = $8::double",
+                    "select * from x where auuid = $9::uuid",
+                    "select * from x where aipv4 = $10::ipv4",
+                    "select * from x where adate = $11::date",
+                    "select * from x where ats2 = $12::timestamp",
+            };
+            for (String q : queriesThatMustJit) {
+                try (RecordCursorFactory factory = select(q)) {
+                    Assert.assertTrue("expected JIT for: " + q, factory.usesCompiledFilter());
+                    try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                        Assert.assertTrue("expected at least one row for: " + q, cursor.hasNext());
+                    }
+                }
+            }
+
+            // NULL bind variable with matching cast: fold must engage and produce the
+            // same output as the bare-bind form. We compare cast vs bare bind (rather
+            // than vs Java) so the assertion proves only what's in scope here -- the
+            // fold doesn't change semantics relative to the bare bind path.
+            bindVariableService.clear();
+            bindVariableService.setLong(0); // typed NULL LONG
+            sink.clear();
+            try (RecordCursorFactory factory = select("select * from x where along = $1");
+                 RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                Assert.assertTrue(
+                        "expected JIT for bare NULL LONG bind var",
+                        factory.usesCompiledFilter()
+                );
+                println(factory.getMetadata(), cursor, sink);
+            }
+            String bareOut = sink.toString();
+            try (RecordCursorFactory factory = select("select * from x where along = $1::long");
+                 RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                Assert.assertTrue(
+                        "expected JIT for NULL LONG bind var with ::long cast",
+                        factory.usesCompiledFilter()
+                );
+                sink.clear();
+                println(factory.getMetadata(), cursor, sink);
+            }
+            Assert.assertEquals("cast form must match bare bind form for NULL LONG", bareOut, sink.toString());
+
+            // Mismatched bound vs cast target: cast performs real coercion that the
+            // JIT IR can't replicate, so we bail to Java. STRING -> INT exercises the
+            // boundType != castType path with a STRING bind var (PG's typical default
+            // before binding); LONG -> INT covers two non-STRING types differing.
+            bindVariableService.clear();
+            bindVariableService.setStr(0, "100");
+            try (RecordCursorFactory factory = select("select * from x where anint = $1::int")) {
+                Assert.assertFalse(
+                        "expected Java fallback for STRING bind var with ::int cast",
+                        factory.usesCompiledFilter()
+                );
+            }
+            bindVariableService.clear();
+            bindVariableService.setLong(0, 100L);
+            try (RecordCursorFactory factory = select("select * from x where anint = $1::int")) {
+                Assert.assertFalse(
+                        "expected Java fallback for LONG bind var with ::int cast",
+                        factory.usesCompiledFilter()
+                );
+            }
+        });
+    }
+
+    @Test
     public void testBindVariableNullCheckScalar() throws Exception {
         testBindVariableNullCheck(SqlJitMode.JIT_MODE_FORCE_SCALAR);
     }
@@ -147,6 +275,204 @@ public class CompiledFilterTest extends AbstractCairoTest {
                     """;
 
             testFilterWithColTops(query, expected, SqlJitMode.JIT_MODE_ENABLED);
+        });
+    }
+
+    @Test
+    public void testColumnCastPreservesJit() throws Exception {
+        // No-op casts wrapped around a column should fold to the bare column for JIT.
+        // Cross-type column casts must still bail to Java since the JIT IR has no
+        // cast op to perform the runtime conversion.
+        assertMemoryLeak(() -> {
+            execute(
+                    "create table x (" +
+                            "abyte BYTE, ashort SHORT, anint INT, along LONG, " +
+                            "auuid UUID, asymbol SYMBOL, " +
+                            "ats2 TIMESTAMP, ats TIMESTAMP" +
+                            ") timestamp(ats)"
+            );
+            execute(
+                    "insert into x values (1, 10, 100, 1000, " +
+                            "'11111111-2222-3333-4444-555555555555', 'sym', " +
+                            "'2026-01-01T00:00:00.000000Z', '2026-01-01T00:00:00.000000Z')"
+            );
+
+            String[] queriesThatMustJit = {
+                    "select * from x where abyte::byte = 1",
+                    "select * from x where ashort::short = 10",
+                    "select * from x where anint::int = 100",
+                    "select * from x where along::long = 1000",
+                    "select * from x where auuid::uuid = '11111111-2222-3333-4444-555555555555'",
+                    "select * from x where asymbol::symbol = 'sym'",
+                    "select * from x where ats2::timestamp = '2026-01-01T00:00:00.000000Z'",
+                    // Both sides cast (matching their own column types).
+                    "select * from x where auuid::uuid = '11111111-2222-3333-4444-555555555555'::uuid",
+            };
+            String[] queriesThatMustNotJit = {
+                    // Cross-type column cast: JIT can't perform the actual coercion.
+                    "select * from x where anint::long = 100",
+                    "select * from x where abyte::int = 1",
+            };
+
+            StringBuilder failures = new StringBuilder();
+            for (String q : queriesThatMustJit) {
+                try (RecordCursorFactory factory = select(q)) {
+                    if (!factory.usesCompiledFilter()) {
+                        failures.append("\n  expected JIT, got Java: ").append(q);
+                    }
+                }
+            }
+            for (String q : queriesThatMustNotJit) {
+                try (RecordCursorFactory factory = select(q)) {
+                    if (factory.usesCompiledFilter()) {
+                        failures.append("\n  expected Java fallback, got JIT: ").append(q);
+                    }
+                }
+            }
+            if (failures.length() > 0) {
+                Assert.fail("Column-cast-fold expectations not met:" + failures);
+            }
+        });
+    }
+
+    @Test
+    public void testConstantCastPreservesJit() throws Exception {
+        // Regression for the legacy `<col> = '...'::uuid` workaround from PR #6413
+        // (and any other literal `'...'::TYPE`): the cast was tripping the JIT IR
+        // serializer's "invalid operator: cast" rejection and silently falling back
+        // to the Java filter. Asserts JIT engagement for matching cast/column types,
+        // and asserts NO JIT for cross-type or PG-rewritten casts (where folding
+        // would change semantics). Aggregates failures so a single run lists every
+        // miss.
+        assertMemoryLeak(() -> {
+            execute(
+                    "create table x (" +
+                            "abool BOOLEAN, " +
+                            "abyte BYTE, " +
+                            "ashort SHORT, " +
+                            "achar CHAR, " +
+                            "anint INT, " +
+                            "along LONG, " +
+                            "afloat FLOAT, " +
+                            "adouble DOUBLE, " +
+                            "auuid UUID, " +
+                            "asymbol SYMBOL, " +
+                            "adate DATE, " +
+                            // ats is the designated timestamp -- predicates on it are
+                            // pushed down as interval scans, so we JIT against ats2.
+                            "ats2 TIMESTAMP, " +
+                            "ats TIMESTAMP" +
+                            ") timestamp(ats)"
+            );
+            execute(
+                    "insert into x values (" +
+                            "true, 1, 10, 'A', 100, 1000, 1.5, 2.5, " +
+                            "'11111111-2222-3333-4444-555555555555', " +
+                            "'sym', " +
+                            "'2026-01-01', " +
+                            "'2026-01-01T00:00:00.000000Z', " +
+                            "'2026-01-01T00:00:00.000000Z')"
+            );
+
+            // NB: in QuestDB, `::float` is rewritten to DOUBLE for PG compatibility,
+            // so `afloat = 1.5::float` is semantically `afloat = 1.5::double`. The
+            // type-tag-match guard correctly refuses to fold this, and the query
+            // falls back to Java. Test FLOAT via the unambiguous `cast(... AS float)`
+            // form instead.
+            String[] queriesThatMustJit = {
+                    // baseline: constant without cast already JITs
+                    "select * from x where abool = true",
+                    "select * from x where abyte = 1",
+                    "select * from x where ashort = 10",
+                    "select * from x where achar = 'A'",
+                    "select * from x where anint = 100",
+                    "select * from x where along = 1000",
+                    "select * from x where afloat = 1.5",
+                    "select * from x where adouble = 2.5",
+                    "select * from x where auuid = '11111111-2222-3333-4444-555555555555'",
+                    "select * from x where asymbol = 'sym'",
+                    "select * from x where adate = '2026-01-01'",
+                    "select * from x where ats2 = '2026-01-01T00:00:00.000000Z'",
+                    // matching `::TYPE` cast on the constant side
+                    "select * from x where abool = true::boolean",
+                    "select * from x where abyte = 1::byte",
+                    "select * from x where ashort = 10::short",
+                    "select * from x where achar = 'A'::char",
+                    "select * from x where anint = 100::int",
+                    "select * from x where along = 1000::long",
+                    "select * from x where afloat = cast(1.5 AS float)",
+                    "select * from x where adouble = 2.5::double",
+                    "select * from x where auuid = '11111111-2222-3333-4444-555555555555'::uuid",
+                    "select * from x where asymbol = 'sym'::symbol",
+                    "select * from x where adate = '2026-01-01'::date",
+                    "select * from x where ats2 = '2026-01-01T00:00:00.000000Z'::timestamp",
+                    // `cast(<const> AS TYPE)` form parses to the same FUNCTION/cast AST node
+                    "select * from x where auuid = cast('11111111-2222-3333-4444-555555555555' AS uuid)",
+                    "select * from x where ats2 = cast('2026-01-01T00:00:00.000000Z' AS timestamp)",
+                    // mirrors the user-reported shape: AND-chain with literal casts on the constant side
+                    "select * from x where auuid = '11111111-2222-3333-4444-555555555555'::uuid and adate = '2026-01-01'::date",
+                    // negated-constant cast: exercises the OPERATION(-, CONSTANT) branch of
+                    // isFoldableConstantArg AND the LONG_MIN/INT_MIN/SHORT_MIN/BYTE_MIN
+                    // sign-truncate path in serializeNumber. The negative MIN values
+                    // happen to coincide with INT/LONG NULL sentinels; the JIT's
+                    // null-aware compare keeps Java semantics intact.
+                    "select * from x where abyte > (-128)::byte",
+                    "select * from x where ashort > (-32768)::short",
+                    "select * from x where anint > (-2147483648)::int",
+                    "select * from x where along > (-9223372036854775808)::long",
+            };
+
+            // Cross-type or PG-rewritten casts must NOT fold. They fall back to the Java
+            // filter, which preserves the user's stated cast semantics. The Java path
+            // produces correct results; the only assertion here is that JIT does not
+            // engage (since folding would change semantics, e.g. INT NULL sentinel,
+            // or different timestamp precision drivers for ::timestamp_ns vs ::timestamp).
+            String[] queriesThatMustNotJit = {
+                    "select * from x where afloat = 1.5::float",         // ::float -> DOUBLE
+                    "select * from x where anint = 100::long",           // wider cast
+                    "select * from x where abyte = 1::short",            // wider cast
+                    // ::timestamp_ns and ::timestamp share the TIMESTAMP tag but use
+                    // different precision drivers; the full-type guard must reject this.
+                    "select * from x where ats2 = '2026-01-01T00:00:00.000000Z'::timestamp_ns",
+            };
+
+            StringBuilder failures = new StringBuilder();
+            for (String q : queriesThatMustJit) {
+                try (RecordCursorFactory factory = select(q)) {
+                    if (!factory.usesCompiledFilter()) {
+                        failures.append("\n  expected JIT, got Java: ").append(q);
+                    }
+                }
+            }
+            for (String q : queriesThatMustNotJit) {
+                try (RecordCursorFactory factory = select(q)) {
+                    if (factory.usesCompiledFilter()) {
+                        failures.append("\n  expected Java fallback, got JIT: ").append(q);
+                    }
+                }
+            }
+            if (failures.length() > 0) {
+                Assert.fail("Cast-fold expectations not met:" + failures);
+            }
+
+            // Result-correctness checks for load-bearing cases. The fuzz covers the
+            // wide surface end-to-end; these explicit assertions verify that the
+            // user-reported scenario and the negated-MIN boundaries (which exercise
+            // parseSignedLong and the JIT null-aware compare) produce the same rows
+            // as the Java filter would. A bug where JIT engages but emits incorrect
+            // IR would surface here even when usesCompiledFilter() is true.
+            assertSql(
+                    "count\n1\n",
+                    "select count() from x where auuid = '11111111-2222-3333-4444-555555555555'::uuid and adate = '2026-01-01'::date"
+            );
+            // BYTE_MIN/SHORT_MIN are NOT NULL sentinels in QuestDB, so `col > -MIN`
+            // matches every non-null row.
+            assertSql("count\n1\n", "select count() from x where abyte > (-128)::byte");
+            assertSql("count\n1\n", "select count() from x where ashort > (-32768)::short");
+            // INT_MIN and LONG_MIN ARE NULL sentinels, so the cast result is NULL and
+            // `col > NULL` evaluates to NULL (no rows match).
+            assertSql("count\n0\n", "select count() from x where anint > (-2147483648)::int");
+            assertSql("count\n0\n", "select count() from x where along > (-9223372036854775808)::long");
         });
     }
 
