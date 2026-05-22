@@ -215,6 +215,99 @@ public class QwpEgressReviewFindingsTest {
         });
     }
 
+    /**
+     * computeDeltaSize() must equal the byte count emitDeltaSection() writes
+     * across varint-boundary entry lengths. The two share emitDeltaSectionImpl
+     * but this guards against future divergence.
+     */
+    @Test
+    public void testComputeDeltaSizeMatchesEmitDeltaSection() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final int bufSize = 64 * 1024;
+            long buf = Unsafe.malloc(bufSize, MemoryTag.NATIVE_DEFAULT);
+            try {
+                ObjList<QwpEgressColumnDef> cols = new ObjList<>();
+                QwpEgressColumnDef def = new QwpEgressColumnDef();
+                def.of("s", ColumnType.SYMBOL);
+                cols.add(def);
+
+                try (QwpResultBatchBuffer batch = new QwpResultBatchBuffer();
+                     QwpEgressConnSymbolDict dict = new QwpEgressConnSymbolDict()) {
+                    batch.beginBatch(cols, null, dict);
+                    // Entry length varint boundaries: 1 byte (< 128), 2 bytes (128..16383),
+                    // 3 bytes (16384..). Cover all three.
+                    String[] entries = {"a", "abc", repeat('x', 127), repeat('y', 128),
+                            repeat('z', 200), repeat('w', 16383), repeat('q', 16384)};
+                    for (String s : entries) {
+                        dict.addEntry(s);
+                    }
+                    int computed = batch.computeDeltaSize();
+                    int written = batch.emitDeltaSection(buf, buf + bufSize);
+                    Assert.assertEquals(
+                            "computeDeltaSize must match emitDeltaSection byte count",
+                            written, computed);
+                }
+            } finally {
+                Unsafe.free(buf, bufSize, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
+    /**
+     * findLargestEmittablePrefix returns -1 when the empty table-block header
+     * itself overflows the budget (pathological tiny budget with a full
+     * schema). The streamResults caller maps this to the "table block header
+     * does not fit" exception variant.
+     */
+    @Test
+    public void testFindLargestEmittablePrefixReturnsMinusOneOnHeaderOverflow() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            ObjList<QwpEgressColumnDef> cols = new ObjList<>();
+            // 100 columns -> full schema is hundreds of bytes; budget=2 forces -1.
+            for (int i = 0; i < 100; i++) {
+                QwpEgressColumnDef def = new QwpEgressColumnDef();
+                def.of("col_" + i, ColumnType.INT);
+                cols.add(def);
+            }
+            try (QwpResultBatchBuffer batch = new QwpResultBatchBuffer();
+                 QwpEgressConnSymbolDict dict = new QwpEgressConnSymbolDict()) {
+                batch.beginBatch(cols, null, dict);
+                int k = batch.findLargestEmittablePrefix(2L, true);
+                Assert.assertEquals("budget too small for empty table block: expect -1", -1, k);
+            }
+        });
+    }
+
+    /**
+     * findLargestEmittablePrefix returns 0 when the header fits but no row
+     * does. Covered here via an empty buffer (rowsBuffered == 0) -- the same
+     * code path the streamResults caller hits when k == 0 after a partial-emit
+     * search exhausts the budget before any row encodes.
+     */
+    @Test
+    public void testFindLargestEmittablePrefixReturnsZeroWhenNoRowFits() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            ObjList<QwpEgressColumnDef> cols = new ObjList<>();
+            QwpEgressColumnDef def = new QwpEgressColumnDef();
+            def.of("x", ColumnType.INT);
+            cols.add(def);
+            try (QwpResultBatchBuffer batch = new QwpResultBatchBuffer();
+                 QwpEgressConnSymbolDict dict = new QwpEgressConnSymbolDict()) {
+                batch.beginBatch(cols, null, dict);
+                int headerSize = batch.computeTableBlockSize(0, true);
+                Assert.assertTrue("header size positive", headerSize > 0);
+                int k = batch.findLargestEmittablePrefix(headerSize, true);
+                Assert.assertEquals("zero-row prefix on empty buffer", 0, k);
+            }
+        });
+    }
+
+    private static String repeat(char c, int n) {
+        char[] buf = new char[n];
+        java.util.Arrays.fill(buf, c);
+        return new String(buf);
+    }
+
     private static void assertValidUtf8(byte[] bytes) {
         CharsetDecoder decoder = StandardCharsets.UTF_8.newDecoder()
                 .onMalformedInput(CodingErrorAction.REPORT)

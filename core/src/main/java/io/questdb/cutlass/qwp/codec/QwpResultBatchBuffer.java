@@ -121,6 +121,7 @@ public class QwpResultBatchBuffer implements QuietCloseable {
      * place so the next batch reuses the native heap from byte 0.
      */
     public void advanceStartRow(int k) {
+        assert startRow <= Integer.MAX_VALUE - k : "startRow int overflow";
         startRow += k;
         if (startRow == physicalRowCount) {
             for (int i = 0; i < columnCount; i++) {
@@ -273,6 +274,7 @@ public class QwpResultBatchBuffer implements QuietCloseable {
                     perColumnRowLoop(record, lo, hi, ci);
             }
         }
+        assert physicalRowCount <= Integer.MAX_VALUE - rows : "physicalRowCount int overflow";
         physicalRowCount += rows;
     }
 
@@ -292,6 +294,7 @@ public class QwpResultBatchBuffer implements QuietCloseable {
         for (int ci = 0; ci < n; ci++) {
             appendCell(record, ci, scs[ci], wts[ci], qts[ci], defs[ci], sts[ci]);
         }
+        assert physicalRowCount < Integer.MAX_VALUE : "physicalRowCount int overflow";
         physicalRowCount++;
     }
 
@@ -364,28 +367,8 @@ public class QwpResultBatchBuffer implements QuietCloseable {
         columnCount = 0;
     }
 
-    /**
-     * Returns the exact number of bytes {@link #emitDeltaSection} would produce
-     * for the current batch's pending dict entries
-     * ({@code [batchDeltaStart, connDict.size())}). Mirrors the emit byte
-     * layout step-by-step via {@link QwpVarint#encodedLength}; tests guarantee
-     * the two stay in sync.
-     */
     public int computeDeltaSize() {
-        final int deltaStart = batchDeltaStart;
-        final int deltaCount = connDict.size() - deltaStart;
-        long bytes = QwpVarint.encodedLength(deltaStart) + QwpVarint.encodedLength(deltaCount);
-        if (deltaCount == 0) {
-            return (int) bytes;
-        }
-        int prevEnd = connDict.entryStart(deltaStart);
-        for (int i = 0; i < deltaCount; i++) {
-            int endOff = connDict.entryEnd(deltaStart + i);
-            int entryLen = endOff - prevEnd;
-            bytes += QwpVarint.encodedLength(entryLen) + entryLen;
-            prevEnd = endOff;
-        }
-        return (int) bytes;
+        return emitDeltaSectionImpl(0L, Long.MAX_VALUE, true);
     }
 
     /**
@@ -408,34 +391,12 @@ public class QwpResultBatchBuffer implements QuietCloseable {
      *   for each new entry: [length: varint][UTF-8 bytes]
      * </pre>
      * New entries are whatever {@code appendRow} appended to the connection dict
-     * during this batch, i.e. {@code [batchDeltaStart..connDict.size())}. No
-     * probing, no hashing, no equality checks -- the dict is already populated.
+     * during this batch, i.e. {@code [batchDeltaStart..connDict.size())}.
      *
      * @return bytes written, or -1 if the delta section would overflow wireLimit
      */
     public int emitDeltaSection(long wireBuf, long wireLimit) {
-        final int deltaStart = batchDeltaStart;
-        final int deltaCount = connDict.size() - deltaStart;
-        long p = wireBuf;
-        if (p + 2 * QwpVarint.MAX_VARINT_BYTES > wireLimit) return -1;
-        p = QwpVarint.encode(p, deltaStart);
-        p = QwpVarint.encode(p, deltaCount);
-        if (deltaCount == 0) {
-            return (int) (p - wireBuf);
-        }
-        long heapAddr = connDict.getHeapAddr();
-        int prevEnd = connDict.entryStart(deltaStart);
-        for (int i = 0; i < deltaCount; i++) {
-            int entryId = deltaStart + i;
-            int endOff = connDict.entryEnd(entryId);
-            int entryLen = endOff - prevEnd;
-            if (p + QwpVarint.MAX_VARINT_BYTES + entryLen > wireLimit) return -1;
-            p = QwpVarint.encode(p, entryLen);
-            Vect.memcpy(p, heapAddr + prevEnd, entryLen);
-            p += entryLen;
-            prevEnd = endOff;
-        }
-        return (int) (p - wireBuf);
+        return emitDeltaSectionImpl(wireBuf, wireLimit, false);
     }
 
     /**
@@ -1074,21 +1035,54 @@ public class QwpResultBatchBuffer implements QuietCloseable {
      * @return number of bytes written / computed, or -1 if {@code wireLimit}
      * would be exceeded (dry runs called with MAX_VALUE never return -1).
      */
+    private int emitDeltaSectionImpl(long wireBuf, long wireLimit, boolean dryRun) {
+        final int deltaStart = batchDeltaStart;
+        final int deltaCount = connDict.size() - deltaStart;
+        final int startVarLen = QwpVarint.encodedLength(deltaStart);
+        final int countVarLen = QwpVarint.encodedLength(deltaCount);
+        long p = wireBuf;
+        if (p + startVarLen + countVarLen > wireLimit) return -1;
+        if (!dryRun) {
+            p = QwpVarint.encode(p, deltaStart);
+            p = QwpVarint.encode(p, deltaCount);
+        } else {
+            p += startVarLen + countVarLen;
+        }
+        if (deltaCount == 0) {
+            return (int) (p - wireBuf);
+        }
+        long heapAddr = dryRun ? 0 : connDict.getHeapAddr();
+        int prevEnd = connDict.entryStart(deltaStart);
+        for (int i = 0; i < deltaCount; i++) {
+            int endOff = connDict.entryEnd(deltaStart + i);
+            int entryLen = endOff - prevEnd;
+            int lenVar = QwpVarint.encodedLength(entryLen);
+            if (p + lenVar + entryLen > wireLimit) return -1;
+            if (!dryRun) {
+                p = QwpVarint.encode(p, entryLen);
+                Vect.memcpy(p, heapAddr + prevEnd, entryLen);
+                p += entryLen;
+            } else {
+                p += lenVar + entryLen;
+            }
+            prevEnd = endOff;
+        }
+        return (int) (p - wireBuf);
+    }
+
     private int emitTableBlockImpl(long wireBuf, long wireLimit, int srcRowStart, int rowsToEmit,
                                    long schemaId, boolean writeFullSchema, boolean dryRun) {
         long p = wireBuf;
-        // Preflight the fixed prelude: 1 byte empty-name + rowsToEmit varint +
-        // columnCount varint. QwpVarint.encode has no internal bound check and
-        // can emit up to MAX_VARINT_BYTES per value; the guard prevents walking
-        // past wireLimit when the caller's budget is tight.
-        if (p + 1 + 2L * QwpVarint.MAX_VARINT_BYTES > wireLimit) return -1;
+        int rowsVarLen = QwpVarint.encodedLength(rowsToEmit);
+        int colsVarLen = QwpVarint.encodedLength(columnCount);
+        if (p + 1 + rowsVarLen + colsVarLen > wireLimit) return -1;
         if (!dryRun) {
             Unsafe.putByte(p, (byte) 0);
             p++;
             p = QwpVarint.encode(p, rowsToEmit);
             p = QwpVarint.encode(p, columnCount);
         } else {
-            p += 1 + QwpVarint.encodedLength(rowsToEmit) + QwpVarint.encodedLength(columnCount);
+            p += 1 + rowsVarLen + colsVarLen;
         }
         if (writeFullSchema) {
             int exact = QwpEgressSchemaWriter.exactFullSize(schemaId, columns);

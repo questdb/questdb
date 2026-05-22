@@ -1504,7 +1504,10 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
         int qwpPayloadLen = qwpSize - QwpConstants.HEADER_SIZE;
         QwpEgressFrameWriter.patchPayloadLength(qwpStart, qwpPayloadLen);
 
-        // Commits BEFORE sendFrame; see QwpEgressUpgradeProcessor.java:1492-1497.
+        // Commits BEFORE sendFrame: rawSocket.send commits bytes to the
+        // response sink and may throw PeerIsSlowToReadException while the
+        // committed bytes are queued for resumeResponseSend. The bytes always
+        // reach the wire, so bookkeeping must always advance.
         state.consumeStreamingCredit(qwpSize);
         if (isPartialEmit) {
             batchBuffer.advanceDeltaStart();
@@ -1660,7 +1663,6 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
             boolean writeFullSchema,
             int rowsToShip
     ) throws PeerDisconnectedException, PeerIsSlowToReadException {
-        metrics.markBatchOverflowSplit();
         sendResultBatch(context, state, requestId, batchSeq, batchBuffer,
                 schemaId, writeFullSchema, rowsToShip, true);
     }
@@ -1763,18 +1765,12 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
             final int bufSize = rawSocket.getBufferSize();
             final int batchCap = state.getMaxBatchRows();
             int rowsToAdd = batchCap - batchBuffer.getRowCount();
-            // Dict can't be partial-emitted (Policy A): the wire format ships
-            // [batchDeltaStart, connDict.size()) as one unit. Cap per-batch
-            // dict growth so the delta never exceeds the send buffer; the
-            // table-block overflow path (findLargestEmittablePrefix) handles
-            // the rest. 60% leaves room for prelude + delta varints + schema
-            // + table-block headers.
-            final int dictBudget = (bufSize * 6) / 10;
-            final int dictBytesAtStart = state.getConnSymbolDict().heapBytes();
+            // Dict ships as one wire unit; cap on wire bytes (heap + per-entry
+            // varint headers). 60% leaves room for prelude + schema + table block.
+            final int dictBudgetWireBytes = (bufSize * 6) / 10;
             boolean isCursorExhausted;
             boolean dictCapHit = false;
             if (isPageFrame) {
-                // Per-slice cap (1024 rows) bounds dict overshoot per appendPageFrame call.
                 PageFrame frame = null;
                 while (rowsToAdd > 0 && (frame = state.advanceToPageFrame()) != null) {
                     long lo = state.getStreamingPageFrameRow();
@@ -1784,7 +1780,7 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
                     batchBuffer.appendPageFrame(frame, state.getStreamingPageFrameMemoryRecord(), lo, hi);
                     state.consumePageFrameRows(sliceRows);
                     rowsToAdd -= sliceRows;
-                    if (state.getConnSymbolDict().heapBytes() - dictBytesAtStart > dictBudget) {
+                    if (batchBuffer.computeDeltaSize() > dictBudgetWireBytes) {
                         dictCapHit = true;
                         break;
                     }
@@ -1795,15 +1791,12 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
                 while (rowsToAdd > 0 && (hasMore = cursor.hasNext())) {
                     batchBuffer.appendRow(cursor.getRecord());
                     rowsToAdd--;
-                    if (state.getConnSymbolDict().heapBytes() - dictBytesAtStart > dictBudget) {
+                    if (batchBuffer.computeDeltaSize() > dictBudgetWireBytes) {
                         dictCapHit = true;
                         break;
                     }
                 }
                 isCursorExhausted = !hasMore;
-            }
-            if (dictCapHit) {
-                metrics.markBatchOverflowSplit();
             }
             int rowsBuffered = batchBuffer.getRowCount();
             boolean writeFullSchema = !state.isStreamingFullSchemaSent();
@@ -1860,10 +1853,13 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
                 int k = batchBuffer.findLargestEmittablePrefix(budget, writeFullSchema);
                 if (k <= 0) {
                     throw QwpRowExceedsBufferException.instance(
-                            batchBuffer.getColumnCount(), bufSize, rowsBuffered);
+                            batchBuffer.getColumnCount(), bufSize, rowsBuffered, k == -1);
                 }
                 rowsToShip = k;
                 isPartialEmit = true;
+            }
+            if (dictCapHit || isPartialEmit) {
+                metrics.markBatchOverflowSplit();
             }
             // Advance the streaming sequence BEFORE the network send. HttpRawSocket.send commits
             // bytes to the response sink (buffer.onWrite) before flushSingle() -- which is what

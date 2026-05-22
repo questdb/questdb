@@ -320,7 +320,10 @@ public class QwpEgressDeltaSymbolDictTest extends AbstractBootstrapTest {
     }
 
     @Test
-    public void testOverflowPreservesBooleanWithNulls() throws Exception {
+    public void testOverflowPreservesBooleanBitPacking() throws Exception {
+        // QuestDB BOOLEAN has no NULL representation -- nulls coerce to false
+        // at INSERT time. The wire path never transports a BOOLEAN null. This
+        // test exercises BOOLEAN bit-packing across partial-emit boundaries.
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startWithEnvVariables(
                     PropertyKey.HTTP_SEND_BUFFER_SIZE.getEnvVarName(), "256K"
@@ -830,10 +833,13 @@ public class QwpEgressDeltaSymbolDictTest extends AbstractBootstrapTest {
         // Direct unit test of the mapErrorStatus precedence: the marker
         // exception must classify as STATUS_LIMIT_EXCEEDED, not the default
         // STATUS_INTERNAL_ERROR fallthrough.
-        Throwable e = QwpRowExceedsBufferException.instance(3, 65_536, 1);
+        Throwable e = QwpRowExceedsBufferException.instance(3, 65_536, 1, false);
         Assert.assertEquals((byte) 0x0B, QwpEgressUpgradeProcessor.mapErrorStatus(e));
-        Assert.assertTrue("message must include marker text",
-                e.getMessage().contains("row prefix does not fit send buffer"));
+        Assert.assertTrue("message must include single-row marker: " + e.getMessage(),
+                e.getMessage().contains("single row exceeds send buffer"));
+        Throwable eHdr = QwpRowExceedsBufferException.instance(3, 32, 0, true);
+        Assert.assertTrue("message must include header marker: " + eHdr.getMessage(),
+                eHdr.getMessage().contains("table block header does not fit send buffer"));
     }
 
     @Test
@@ -872,8 +878,8 @@ public class QwpEgressDeltaSymbolDictTest extends AbstractBootstrapTest {
                 Assert.assertEquals("STATUS_LIMIT_EXCEEDED expected, got status=" + errorStatus[0]
                                 + " msg=" + errorMessage[0],
                         (byte) 0x0B, errorStatus[0]);
-                Assert.assertTrue("message should mention overflow: " + errorMessage[0],
-                        errorMessage[0].contains("row prefix does not fit send buffer"));
+                Assert.assertTrue("message should mention single-row overflow: " + errorMessage[0],
+                        errorMessage[0].contains("single row exceeds send buffer"));
             }
         });
     }

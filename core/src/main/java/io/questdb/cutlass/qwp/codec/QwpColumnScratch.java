@@ -69,13 +69,13 @@ final class QwpColumnScratch implements QuietCloseable {
     // Shrink threshold: a buffer whose capacity exceeds SHRINK_TRIGGER_FACTOR *
     // peak-seen-in-the-query is eligible for a trim at query boundary.
     private static final int SHRINK_TRIGGER_FACTOR = 4;
-    final Decimal128 decimal128Sink = new Decimal128();
-    final Decimal256 decimal256Sink = new Decimal256();
     // Dedup by native symbol-table key -> connection-scoped dict id. Persists across
     // batches on this connection for the lifetime of a single query. Reset via
     // {@link #resetConnSymbolMap} when a new query begins so that native keys from
     // a different cursor/table don't reuse stale mappings.
     final IntIntHashMap connKeyToConnId = new IntIntHashMap();
+    final Decimal128 decimal128Sink = new Decimal128();
+    final Decimal256 decimal256Sink = new Decimal256();
     long arrayHeapAddr;
     int arrayHeapCapacity;
     int arrayHeapPos;
@@ -208,6 +208,19 @@ final class QwpColumnScratch implements QuietCloseable {
         return pos;
     }
 
+    /**
+     * Computes the shrink target for a buffer given its per-query peak usage.
+     * Never goes below {@link #INITIAL_BYTES}; rounds at
+     * {@link #SHRINK_TARGET_FACTOR} x peak for non-zero peaks.
+     */
+    private static int shrinkTarget(int peak) {
+        if (peak == 0) {
+            return INITIAL_BYTES;
+        }
+        long target = (long) peak * SHRINK_TARGET_FACTOR;
+        return (int) Math.max(INITIAL_BYTES, target);
+    }
+
     private void ensureNullBitmapCapacity(int rowIdx) {
         int needed = (rowIdx >>> 3) + 1;
         if (nullBitmapCapacity >= needed) return;
@@ -257,35 +270,6 @@ final class QwpColumnScratch implements QuietCloseable {
     }
 
     /**
-     * ARRAY: record the end-offset of the array bytes just written. Mirror of
-     * {@link #recordStringOffset}, sharing the slot-{@code nonNullCount + 1}
-     * convention with the implicit zero at slot 0.
-     */
-    void recordArrayOffset() {
-        int slotIdx = nonNullCount + 1;
-        int needed = 4 * (slotIdx + 1);
-        if (arrayOffsetsCapacity < needed) {
-            int newCap = Math.max(arrayOffsetsCapacity * 2, Math.max(INITIAL_BYTES, needed));
-            arrayOffsetsAddr = Unsafe.realloc(arrayOffsetsAddr, arrayOffsetsCapacity, newCap, MemoryTag.NATIVE_HTTP_CONN);
-            arrayOffsetsCapacity = newCap;
-        }
-        Unsafe.putInt(arrayOffsetsAddr + 4L * slotIdx, arrayHeapPos);
-    }
-
-    void recordSymbolBytes(int connId) {
-        int slotIdx = nonNullCount + 1;
-        int needed = 4 * (slotIdx + 1);
-        if (symbolBytesCumCapacity < needed) {
-            int newCap = Math.max(symbolBytesCumCapacity * 2, Math.max(INITIAL_BYTES, needed));
-            symbolBytesCumAddr = Unsafe.realloc(symbolBytesCumAddr, symbolBytesCumCapacity, newCap, MemoryTag.NATIVE_HTTP_CONN);
-            symbolBytesCumCapacity = newCap;
-        }
-        int prevCum = nonNullCount == 0 ? 0
-                : Unsafe.getInt(symbolBytesCumAddr + 4L * nonNullCount);
-        Unsafe.putInt(symbolBytesCumAddr + 4L * slotIdx, prevCum + QwpVarint.encodedLength(connId));
-    }
-
-    /**
      * Sets bit {@code rowIdx} in the null bitmap. Caller must have already
      * called {@link #ensureNullBitmapCapacity} to cover at least rowIdx.
      */
@@ -293,6 +277,26 @@ final class QwpColumnScratch implements QuietCloseable {
         long byteAddr = nullBitmapAddr + (rowIdx >>> 3);
         byte cur = Unsafe.getByte(byteAddr);
         Unsafe.putByte(byteAddr, (byte) (cur | (1 << (rowIdx & 7))));
+    }
+
+    /**
+     * Rolls the current batch's footprint into the peak counters. Called from
+     * {@link #beginBatch} (just before positions reset) and from
+     * {@link #resetForNewQuery} (to catch the final batch of a query).
+     */
+    private void updatePeakUsage() {
+        if (valuesPos > peakValuesBytes) peakValuesBytes = valuesPos;
+        if (stringHeapPos > peakStringHeapBytes) peakStringHeapBytes = stringHeapPos;
+        if (arrayHeapPos > peakArrayHeapBytes) peakArrayHeapBytes = arrayHeapPos;
+        int offsetsBytes = nonNullCount > 0 ? 4 * (nonNullCount + 1) : 0;
+        if (offsetsBytes > peakStringOffsetsBytes) peakStringOffsetsBytes = offsetsBytes;
+        if (offsetsBytes > peakArrayOffsetsBytes) peakArrayOffsetsBytes = offsetsBytes;
+        int symIdsBytes = 4 * nonNullCount;
+        if (symIdsBytes > peakSymbolIdsBytes) peakSymbolIdsBytes = symIdsBytes;
+        int symCumBytes = nonNullCount > 0 ? 4 * (nonNullCount + 1) : 0;
+        if (symCumBytes > peakSymbolBytesCumBytes) peakSymbolBytesCumBytes = symCumBytes;
+        int bitmapBytes = (rowCount + 7) >>> 3;
+        if (bitmapBytes > peakNullBitmapBytes) peakNullBitmapBytes = bitmapBytes;
     }
 
     /**
@@ -376,20 +380,6 @@ final class QwpColumnScratch implements QuietCloseable {
     }
 
     /**
-     * No-null fixed-width column bulk append: BYTE / SHORT / CHAR columns
-     * have no sentinel and never contribute to the null bitmap, so we copy
-     * the whole block into {@code valuesAddr} in one {@code memcpy}.
-     */
-    void appendColumnFixedNoNull(long srcAddr, int n, int typeSize) {
-        int bytes = n * typeSize;
-        ensureValuesCapacity(valuesPos + bytes);
-        Vect.memcpy(valuesAddr + valuesPos, srcAddr, bytes);
-        valuesPos += bytes;
-        nonNullCount += n;
-        rowCount += n;
-    }
-
-    /**
      * DOUBLE / FLOAT-as-double column bulk append: reads {@code n} 8-byte
      * values from {@code srcAddr} (QuestDB stores DOUBLE NULL as NaN). Values
      * that are NaN go into the null bitmap; non-null values are packed dense
@@ -415,6 +405,20 @@ final class QwpColumnScratch implements QuietCloseable {
         }
         valuesPos += nonNullWritten * 8;
         nonNullCount += nonNullWritten;
+        rowCount += n;
+    }
+
+    /**
+     * No-null fixed-width column bulk append: BYTE / SHORT / CHAR columns
+     * have no sentinel and never contribute to the null bitmap, so we copy
+     * the whole block into {@code valuesAddr} in one {@code memcpy}.
+     */
+    void appendColumnFixedNoNull(long srcAddr, int n, int typeSize) {
+        int bytes = n * typeSize;
+        ensureValuesCapacity(valuesPos + bytes);
+        Vect.memcpy(valuesAddr + valuesPos, srcAddr, bytes);
+        valuesPos += bytes;
+        nonNullCount += n;
         rowCount += n;
     }
 
@@ -808,6 +812,47 @@ final class QwpColumnScratch implements QuietCloseable {
         }
     }
 
+    void ensureArrayHeapCapacity(int required) {
+        if (arrayHeapCapacity >= required) return;
+        int newCap = Math.max(arrayHeapCapacity * 2, Math.max(INITIAL_BYTES, required));
+        arrayHeapAddr = Unsafe.realloc(arrayHeapAddr, arrayHeapCapacity, newCap, MemoryTag.NATIVE_HTTP_CONN);
+        arrayHeapCapacity = newCap;
+    }
+
+    void markNonNullAndAdvanceRow() {
+        nonNullCount++;
+        rowCount++;
+    }
+
+    /**
+     * ARRAY: record the end-offset of the array bytes just written. Mirror of
+     * {@link #recordStringOffset}, sharing the slot-{@code nonNullCount + 1}
+     * convention with the implicit zero at slot 0.
+     */
+    void recordArrayOffset() {
+        int slotIdx = nonNullCount + 1;
+        int needed = 4 * (slotIdx + 1);
+        if (arrayOffsetsCapacity < needed) {
+            int newCap = Math.max(arrayOffsetsCapacity * 2, Math.max(INITIAL_BYTES, needed));
+            arrayOffsetsAddr = Unsafe.realloc(arrayOffsetsAddr, arrayOffsetsCapacity, newCap, MemoryTag.NATIVE_HTTP_CONN);
+            arrayOffsetsCapacity = newCap;
+        }
+        Unsafe.putInt(arrayOffsetsAddr + 4L * slotIdx, arrayHeapPos);
+    }
+
+    void recordSymbolBytes(int connId) {
+        int slotIdx = nonNullCount + 1;
+        int needed = 4 * (slotIdx + 1);
+        if (symbolBytesCumCapacity < needed) {
+            int newCap = Math.max(symbolBytesCumCapacity * 2, Math.max(INITIAL_BYTES, needed));
+            symbolBytesCumAddr = Unsafe.realloc(symbolBytesCumAddr, symbolBytesCumCapacity, newCap, MemoryTag.NATIVE_HTTP_CONN);
+            symbolBytesCumCapacity = newCap;
+        }
+        int prevCum = nonNullCount == 0 ? 0
+                : Unsafe.getInt(symbolBytesCumAddr + 4L * nonNullCount);
+        Unsafe.putInt(symbolBytesCumAddr + 4L * slotIdx, prevCum + QwpVarint.encodedLength(connId));
+    }
+
     /**
      * Clears the native-key -> connId map so native keys from a new query (which
      * may live in a different symbol-table space) don't reuse stale mappings,
@@ -901,51 +946,6 @@ final class QwpColumnScratch implements QuietCloseable {
         peakSymbolBytesCumBytes = 0;
         peakArrayHeapBytes = 0;
         peakArrayOffsetsBytes = 0;
-    }
-
-    /**
-     * Computes the shrink target for a buffer given its per-query peak usage.
-     * Never goes below {@link #INITIAL_BYTES}; rounds at
-     * {@link #SHRINK_TARGET_FACTOR} x peak for non-zero peaks.
-     */
-    private static int shrinkTarget(int peak) {
-        if (peak == 0) {
-            return INITIAL_BYTES;
-        }
-        long target = (long) peak * SHRINK_TARGET_FACTOR;
-        return (int) Math.max(INITIAL_BYTES, target);
-    }
-
-    /**
-     * Rolls the current batch's footprint into the peak counters. Called from
-     * {@link #beginBatch} (just before positions reset) and from
-     * {@link #resetForNewQuery} (to catch the final batch of a query).
-     */
-    private void updatePeakUsage() {
-        if (valuesPos > peakValuesBytes) peakValuesBytes = valuesPos;
-        if (stringHeapPos > peakStringHeapBytes) peakStringHeapBytes = stringHeapPos;
-        if (arrayHeapPos > peakArrayHeapBytes) peakArrayHeapBytes = arrayHeapPos;
-        int offsetsBytes = nonNullCount > 0 ? 4 * (nonNullCount + 1) : 0;
-        if (offsetsBytes > peakStringOffsetsBytes) peakStringOffsetsBytes = offsetsBytes;
-        if (offsetsBytes > peakArrayOffsetsBytes) peakArrayOffsetsBytes = offsetsBytes;
-        int symIdsBytes = 4 * nonNullCount;
-        if (symIdsBytes > peakSymbolIdsBytes) peakSymbolIdsBytes = symIdsBytes;
-        int symCumBytes = nonNullCount > 0 ? 4 * (nonNullCount + 1) : 0;
-        if (symCumBytes > peakSymbolBytesCumBytes) peakSymbolBytesCumBytes = symCumBytes;
-        int bitmapBytes = (rowCount + 7) >>> 3;
-        if (bitmapBytes > peakNullBitmapBytes) peakNullBitmapBytes = bitmapBytes;
-    }
-
-    void ensureArrayHeapCapacity(int required) {
-        if (arrayHeapCapacity >= required) return;
-        int newCap = Math.max(arrayHeapCapacity * 2, Math.max(INITIAL_BYTES, required));
-        arrayHeapAddr = Unsafe.realloc(arrayHeapAddr, arrayHeapCapacity, newCap, MemoryTag.NATIVE_HTTP_CONN);
-        arrayHeapCapacity = newCap;
-    }
-
-    void markNonNullAndAdvanceRow() {
-        nonNullCount++;
-        rowCount++;
     }
 
     /**

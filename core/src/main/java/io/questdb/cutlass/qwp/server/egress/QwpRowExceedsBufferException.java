@@ -46,11 +46,16 @@ public final class QwpRowExceedsBufferException extends RuntimeException
     private QwpRowExceedsBufferException() {
     }
 
-    public static QwpRowExceedsBufferException instance(int columnCount, int sendBufferSize, int rowsBuffered) {
+    public static QwpRowExceedsBufferException instance(int columnCount, int sendBufferSize,
+                                                        int rowsBuffered, boolean isHeaderOverflow) {
         QwpRowExceedsBufferException ex = tlException.get();
         ex.message.clear();
-        ex.message.put("egress: row prefix does not fit send buffer [colCount=")
-                .put(columnCount).put(", bufferSize=").put(sendBufferSize)
+        if (isHeaderOverflow) {
+            ex.message.put("egress: table block header does not fit send buffer [colCount=");
+        } else {
+            ex.message.put("egress: single row exceeds send buffer [colCount=");
+        }
+        ex.message.put(columnCount).put(", bufferSize=").put(sendBufferSize)
                 .put(", rowsBuffered=").put(rowsBuffered).put(']');
         return ex;
     }
