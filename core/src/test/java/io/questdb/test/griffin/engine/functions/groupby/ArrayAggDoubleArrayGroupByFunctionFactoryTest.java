@@ -1081,6 +1081,65 @@ public class ArrayAggDoubleArrayGroupByFunctionFactoryTest extends AbstractCairo
     }
 
     @Test
+    public void testSampleByFirstObservation() throws Exception {
+        // ALIGN TO FIRST OBSERVATION routes through a different RecordCursorFactory than
+        // ALIGN TO CALENDAR. The array variant's per-element copy plus null/empty-array
+        // branches in computeFirst/computeNext are the more failure-prone side of the
+        // aggregate; testSampleBy already pins ALIGN TO CALENDAR, this pins FIRST.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (ts TIMESTAMP, arr DOUBLE[]) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO tab VALUES
+                    ('2024-01-01T00:00:00', ARRAY[1.0, 2.0]),
+                    ('2024-01-01T01:00:00', ARRAY[3.0]),
+                    ('2024-01-01T02:00:00', ARRAY[4.0, 5.0]),
+                    ('2024-01-01T05:00:00', ARRAY[6.0]),
+                    ('2024-01-01T05:30:00', ARRAY[7.0, 8.0]),
+                    ('2024-01-01T09:00:00', ARRAY[9.0])
+                    """);
+            assertQueryNoLeakCheck(
+                    """
+                            ts\tagg
+                            2024-01-01T00:00:00.000000Z\t[1.0,2.0,3.0,4.0,5.0]
+                            2024-01-01T03:00:00.000000Z\t[6.0,7.0,8.0]
+                            2024-01-01T09:00:00.000000Z\t[9.0]
+                            """,
+                    "SELECT ts, array_agg(arr) agg FROM tab SAMPLE BY 3h ALIGN TO FIRST OBSERVATION",
+                    "ts"
+            );
+        });
+    }
+
+    @Test
+    public void testSampleByFromToFillNull() throws Exception {
+        // FROM/TO + FILL(NULL) extends the result range beyond the data window, forcing
+        // FillRangeRecordCursorFactory to emit synthetic null buckets at the front and
+        // back. The scalar variant doesn't exercise the array null path; this test pins
+        // FillRangeRecord.getArray() returning ArrayConstant.NULL for the synthetic rows.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (ts TIMESTAMP, arr DOUBLE[]) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO tab VALUES
+                    ('2024-01-01T02:00:00', ARRAY[1.0, 2.0]),
+                    ('2024-01-01T03:00:00', ARRAY[3.0])
+                    """);
+            assertQueryNoLeakCheck(
+                    """
+                            ts\tagg
+                            2024-01-01T00:00:00.000000Z\tnull
+                            2024-01-01T01:00:00.000000Z\tnull
+                            2024-01-01T02:00:00.000000Z\t[1.0,2.0]
+                            2024-01-01T03:00:00.000000Z\t[3.0]
+                            2024-01-01T04:00:00.000000Z\tnull
+                            """,
+                    "SELECT ts, array_agg(arr) agg FROM tab "
+                            + "SAMPLE BY 1h FROM '2024-01-01' TO '2024-01-01T05:00:00.000000Z' FILL(NULL) ALIGN TO CALENDAR",
+                    "ts", false, false
+            );
+        });
+    }
+
+    @Test
     public void testSingleRow() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tab (arr DOUBLE[])");

@@ -79,6 +79,42 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFillNullDisablesDuplicateAggregateDedup() throws Exception {
+        // Counter-test to testFillNonePreservesDuplicateAggregateDedup. With FILL(NULL)
+        // the fill-list propagation in rewriteSelectClause0 re-exposes the fill on
+        // groupByModel.sampleByFill, which gates off detectDuplicateAggregates. This is
+        // deliberate: per-column FILL(NULL) values must reach their own column, so
+        // collapsing count(x), count(x) into one inner aggregate would silently drop the
+        // second column's fill in cases like FILL(NULL, 0). The cost is that duplicate
+        // aggregates under FILL(NULL) are computed twice. This plan asserts the two
+        // count(x) entries remain distinct in the inner Async Group By; a future change
+        // that accidentally re-enables dedup here would re-introduce the per-column fill
+        // bug fixed by testFillValuePerColumnPreservedAcrossDuplicates.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES ('2024-01-01T00:00:00.000000Z', 1)");
+            assertPlanNoLeakCheck(
+                    "SELECT count(x), count(x), ts FROM t SAMPLE BY 1h FILL(NULL) ALIGN TO CALENDAR",
+                    """
+                            Sample By Fill
+                              stride: '1h'
+                              fill: null
+                                Encode sort light
+                                  keys: [ts]
+                                    Async Group By workers: 1
+                                      keys: [ts]
+                                      keyFunctions: [timestamp_floor_utc('1h',ts)]
+                                      values: [count(x),count(x)]
+                                      filter: null
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: t
+                            """
+            );
+        });
+    }
+
+    @Test
     public void testFillNullCastMultiKey() throws Exception {
         // FILL(NULL) variant of the multi-key inline-function classifier
         // regression: an inline cast x::STRING is a FUNCTION-form key and must

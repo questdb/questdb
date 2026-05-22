@@ -904,6 +904,36 @@ public class ArrayAggDoubleGroupByFunctionFactoryTest extends AbstractCairoTest 
     }
 
     @Test
+    public void testSampleByFromToFillNull() throws Exception {
+        // FROM/TO + FILL(NULL) extends the result range beyond the data window, forcing
+        // FillRangeRecordCursorFactory to emit synthetic null buckets at the front and
+        // back. Pins FillRangeRecord.getArray() returning ArrayConstant.NULL for the
+        // synthetic rows -- the array() override on FillRangeRecord must hand back null
+        // rather than the underlying function value when a bucket has no source row.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (ts TIMESTAMP, val DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO tab VALUES
+                    ('2024-01-01T02:00:00', 1.0),
+                    ('2024-01-01T03:00:00', 2.0)
+                    """);
+            assertQueryNoLeakCheck(
+                    """
+                            ts\tarr
+                            2024-01-01T00:00:00.000000Z\tnull
+                            2024-01-01T01:00:00.000000Z\tnull
+                            2024-01-01T02:00:00.000000Z\t[1.0]
+                            2024-01-01T03:00:00.000000Z\t[2.0]
+                            2024-01-01T04:00:00.000000Z\tnull
+                            """,
+                    "SELECT ts, array_agg(val) arr FROM tab "
+                            + "SAMPLE BY 1h FROM '2024-01-01' TO '2024-01-01T05:00:00.000000Z' FILL(NULL) ALIGN TO CALENDAR",
+                    "ts", false, false
+            );
+        });
+    }
+
+    @Test
     public void testSingleRow() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tab (val DOUBLE)");
