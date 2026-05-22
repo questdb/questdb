@@ -275,27 +275,51 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
     }
 
     /**
-     * Pins lazy parquet behavior for DOUBLE-&gt;LONG/DATE/TIMESTAMP at the upper i64
-     * boundary. The Rust converter in
-     * {@code core/rust/qdbr/src/parquet_read/decode.rs} stores the bound as
-     * {@code i64::MAX as f64}. Since {@code i64::MAX = 2^63 - 1} requires 63
-     * mantissa bits and f64 only has 53, that cast rounds up to {@code 2^63}.
-     * A f64 value equal to {@code 2^63} is strictly greater than {@code i64::MAX}
-     * but passes the {@code v <= max} guard, then saturates to {@code i64::MAX}
-     * under the {@code as} cast — silently producing wrong data instead of the
-     * documented NULL sentinel. Differential assertion against the native (JNI)
-     * path does not catch this because the C++ kernel has analogous undefined
-     * behavior for out-of-range floats, so this test asserts the contract
-     * directly: out-of-range floats read back as NULL.
+     * Pins lazy parquet behavior for DOUBLE-&gt;LONG/DATE/TIMESTAMP/INT at the
+     * float-to-integer boundaries. Two distinct concerns share the same test:
+     * <ul>
+     *     <li>Upper bound precision loss (LONG/DATE/TIMESTAMP only): the Rust
+     *         converter in {@code core/rust/qdbr/src/parquet_read/decode.rs} cannot
+     *         use {@code i64::MAX as f64} as the bound because {@code i64::MAX = 2^63 - 1}
+     *         requires 63 mantissa bits and f64 only has 53, so the cast rounds up
+     *         to {@code 2^63}. An f64 value equal to {@code 2^63} is strictly greater
+     *         than {@code i64::MAX} but would pass a {@code v <= max} guard, then
+     *         saturate to {@code i64::MAX} under the {@code as} cast - silently
+     *         producing wrong data instead of the documented NULL sentinel. The
+     *         converter uses {@code F64_MAX_SAFE_FOR_I64} to defend against this.</li>
+     *     <li>Lower bound NULL sentinel collision (LONG/DATE/TIMESTAMP/INT):
+     *         {@code i64::MIN as f64} and {@code i32::MIN as f64} are exactly
+     *         representable, but those integers are also the destination NULL
+     *         sentinels. Without a strict lower bound check the value passes
+     *         {@code v >= min} and the cast lands on the sentinel itself, so a
+     *         legitimate float value at the boundary reads back as NULL via the
+     *         cast path rather than via the explicit null branch. The converter
+     *         uses {@code LOWER_STRICT = true} for these cases so the strict bound
+     *         routes the value through the explicit null branch.</li>
+     * </ul>
+     * Differential assertion against the native (JNI) path does not catch either
+     * because the C++ kernel has analogous behavior, so this test asserts the
+     * contract directly: out-of-range or sentinel-colliding floats read back as NULL.
      */
     @Test
     public void testDoubleToLongBoundaryPrecisionLoss() throws Exception {
         assertMemoryLeak(() -> {
             // 9.223372036854776e18 == 2^63 exactly in f64. 2^63 is strictly
             // greater than i64::MAX = 2^63 - 1, so the contract is NULL.
+            // -9.223372036854776e18 == -2^63 exactly in f64. -2^63 is i64::MIN,
+            // which is the LONG NULL sentinel; the strict lower bound check
+            // routes this through the explicit null branch.
             for (String targetType : new String[]{"LONG", "DATE", "TIMESTAMP"}) {
                 assertParquetFloatOutOfRangeNull("DOUBLE", targetType, "9.223372036854776e18");
+                assertParquetFloatOutOfRangeNull("DOUBLE", targetType, "-9.223372036854776e18");
             }
+            // For DOUBLE -> INT both bounds are exactly representable in f64,
+            // but the lower bound i32::MIN as f64 = -2147483648.0 lands on
+            // i32::MIN (the INT NULL sentinel), so the strict lower bound check
+            // applies. 2147483648.0 is i32::MAX + 1 and exercises the standard
+            // upper out-of-range path.
+            assertParquetFloatOutOfRangeNull("DOUBLE", "INT", "-2147483648.0");
+            assertParquetFloatOutOfRangeNull("DOUBLE", "INT", "2147483648.0");
         });
     }
 
@@ -567,20 +591,30 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
     }
 
     /**
-     * Pins lazy parquet behavior for FLOAT-&gt;LONG/DATE/TIMESTAMP at the upper i64
-     * boundary. The Rust converter in
-     * {@code core/rust/qdbr/src/parquet_read/decode.rs} stores the upper bound as
-     * {@code i64::MAX as f32}. Since {@code i64::MAX = 2^63 - 1} is not
-     * representable in f32 (only 23 mantissa bits available, 63 needed), that
-     * cast rounds up to {@code 2^63} - one ULP above {@code i64::MAX}. A f32
-     * value equal to {@code 2^63} is strictly greater than {@code i64::MAX} but
-     * passes the {@code v <= max} guard, then saturates to {@code i64::MAX} under
-     * the {@code as} cast - silently producing wrong data instead of the
-     * documented NULL sentinel. The differential helper {@link #assertConversion}
-     * does not catch this because the native (JNI) {@code convert_from_type_to_type}
-     * kernel has analogous undefined behavior for out-of-range floats. This test
-     * asserts the contract directly: floats strictly above {@code i64::MAX} read
-     * back as NULL.
+     * Pins lazy parquet behavior for FLOAT-&gt;LONG/DATE/TIMESTAMP/INT at the
+     * float-to-integer boundaries. Two distinct concerns share the same test:
+     * <ul>
+     *     <li>Upper bound precision loss (LONG/DATE/TIMESTAMP and INT): the Rust
+     *         converter cannot use {@code i64::MAX as f32} as the bound because
+     *         {@code i64::MAX = 2^63 - 1} is not representable in f32 (23 mantissa
+     *         bits available, 63 needed), so the cast rounds up to {@code 2^63}.
+     *         The same applies to {@code i32::MAX} in f32 (only 23 mantissa bits;
+     *         {@code i32::MAX} rounds up to {@code 2^31}). The converter uses
+     *         {@code F32_MAX_SAFE_FOR_I64} / {@code F32_MAX_SAFE_FOR_I32} to defend
+     *         against the saturating-cast hazard.</li>
+     *     <li>Lower bound NULL sentinel collision (LONG/DATE/TIMESTAMP/INT):
+     *         {@code i64::MIN as f32} and {@code i32::MIN as f32} are exactly
+     *         representable (both are powers of two), but those integers are
+     *         also the destination NULL sentinels. Without a strict lower bound
+     *         check the value passes {@code v >= min} and the cast lands on the
+     *         sentinel itself. The converter uses {@code LOWER_STRICT = true}
+     *         for these cases so the strict bound routes the value through the
+     *         explicit null branch.</li>
+     * </ul>
+     * The differential helper {@link #assertConversion} does not catch either
+     * because the native (JNI) {@code convert_from_type_to_type} kernel has
+     * analogous behavior. This test asserts the contract directly: out-of-range
+     * or sentinel-colliding floats read back as NULL.
      * <p>
      * At the f32 magnitude of {@code 2^63}, adjacent representable values are
      * spaced by {@code 2^40}, so {@code 2^63} is the only f32 in the open
@@ -591,9 +625,20 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             // 9.223372036854776e18 == 2^63 exactly when stored as f32.
             // 2^63 is strictly greater than i64::MAX = 2^63 - 1, so the contract is NULL.
+            // -9.223372036854776e18 == -2^63 exactly when stored as f32.
+            // -2^63 is i64::MIN, which is the LONG NULL sentinel; the strict
+            // lower bound check routes this through the explicit null branch.
             for (String targetType : new String[]{"LONG", "DATE", "TIMESTAMP"}) {
                 assertParquetFloatOutOfRangeNull("FLOAT", targetType, "cast(9.223372036854776e18 as float)");
+                assertParquetFloatOutOfRangeNull("FLOAT", targetType, "cast(-9.223372036854776e18 as float)");
             }
+            // For FLOAT -> INT both bounds suffer from f32 precision loss /
+            // sentinel collision: i32::MAX rounds up to 2^31 in f32, and
+            // i32::MIN as f32 = -2^31 is the INT NULL sentinel. 2147483648.0
+            // exercises the upper safe-bound path; -2147483648.0 (= -2^31
+            // exactly in f32) exercises the strict lower bound path.
+            assertParquetFloatOutOfRangeNull("FLOAT", "INT", "cast(2147483648.0 as float)");
+            assertParquetFloatOutOfRangeNull("FLOAT", "INT", "cast(-2147483648.0 as float)");
         });
     }
 

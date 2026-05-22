@@ -899,13 +899,13 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
         ) ? sink : null;
     }
 
-    private boolean convertVarToBool(int srcTag, int columnIndex) {
-        CharSequence cs = readVarValueForConversion(srcTag, columnIndex);
+    private boolean convertVarToBool(int encoded, int columnIndex) {
+        CharSequence cs = readVarValueForConversion(encoded & 0xFF, columnIndex);
         return cs != null && SqlKeywords.isTrueKeyword(cs);
     }
 
-    private byte convertVarToByte(int srcTag, int columnIndex) {
-        CharSequence cs = readVarValueForConversion(srcTag, columnIndex);
+    private byte convertVarToByte(int encoded, int columnIndex) {
+        CharSequence cs = readVarValueForConversion(encoded & 0xFF, columnIndex);
         if (cs != null) {
             try {
                 return (byte) Numbers.parseInt(cs);
@@ -915,13 +915,13 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
         return 0;
     }
 
-    private char convertVarToChar(int srcTag, int columnIndex) {
-        CharSequence cs = readVarValueForConversion(srcTag, columnIndex);
+    private char convertVarToChar(int encoded, int columnIndex) {
+        CharSequence cs = readVarValueForConversion(encoded & 0xFF, columnIndex);
         return cs != null && cs.length() > 0 ? cs.charAt(0) : (char) 0;
     }
 
-    private long convertVarToDate(int srcTag, int columnIndex) {
-        CharSequence cs = readVarValueForConversion(srcTag, columnIndex);
+    private long convertVarToDate(int encoded, int columnIndex) {
+        CharSequence cs = readVarValueForConversion(encoded & 0xFF, columnIndex);
         if (cs != null) {
             try {
                 // parseFloorLiteral matches ColumnTypeConverter's STRING->DATE path and
@@ -1034,13 +1034,13 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
         return Decimals.DECIMAL8_NULL;
     }
 
-    private double convertVarToDouble(int srcTag, int columnIndex) {
-        CharSequence cs = readVarValueForConversion(srcTag, columnIndex);
+    private double convertVarToDouble(int encoded, int columnIndex) {
+        CharSequence cs = readVarValueForConversion(encoded & 0xFF, columnIndex);
         return Numbers.parseDoubleQuiet(cs);
     }
 
-    private float convertVarToFloat(int srcTag, int columnIndex) {
-        CharSequence cs = readVarValueForConversion(srcTag, columnIndex);
+    private float convertVarToFloat(int encoded, int columnIndex) {
+        CharSequence cs = readVarValueForConversion(encoded & 0xFF, columnIndex);
         if (cs != null) {
             try {
                 return Numbers.parseFloat(cs);
@@ -1050,32 +1050,32 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
         return Float.NaN;
     }
 
-    private int convertVarToIPv4(int srcTag, int columnIndex) {
-        CharSequence cs = readVarValueForConversion(srcTag, columnIndex);
+    private int convertVarToIPv4(int encoded, int columnIndex) {
+        CharSequence cs = readVarValueForConversion(encoded & 0xFF, columnIndex);
         if (cs != null) {
             return Numbers.parseIPv4Quiet(cs);
         }
         return Numbers.IPv4_NULL;
     }
 
-    private int convertVarToInt(int srcTag, int columnIndex) {
-        CharSequence cs = readVarValueForConversion(srcTag, columnIndex);
+    private int convertVarToInt(int encoded, int columnIndex) {
+        CharSequence cs = readVarValueForConversion(encoded & 0xFF, columnIndex);
         if (cs != null) {
             return Numbers.parseIntQuiet(cs);
         }
         return Numbers.INT_NULL;
     }
 
-    private long convertVarToLong(int srcTag, int columnIndex) {
-        CharSequence cs = readVarValueForConversion(srcTag, columnIndex);
+    private long convertVarToLong(int encoded, int columnIndex) {
+        CharSequence cs = readVarValueForConversion(encoded & 0xFF, columnIndex);
         if (cs != null) {
             return Numbers.parseLongQuiet(cs);
         }
         return Numbers.LONG_NULL;
     }
 
-    private short convertVarToShort(int srcTag, int columnIndex) {
-        CharSequence cs = readVarValueForConversion(srcTag, columnIndex);
+    private short convertVarToShort(int encoded, int columnIndex) {
+        CharSequence cs = readVarValueForConversion(encoded & 0xFF, columnIndex);
         if (cs != null) {
             try {
                 return (short) Numbers.parseInt(cs);
@@ -1085,7 +1085,8 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
         return 0;
     }
 
-    private CharSequence convertVarToStr(int srcTag, int columnIndex, StringSink sink) {
+    private CharSequence convertVarToStr(int encoded, int columnIndex, StringSink sink) {
+        int srcTag = encoded & 0xFF;
         if (srcTag == ColumnType.VARCHAR) {
             // Decode UTF-8 straight into the destination sink. Going through
             // readVarValueForConversion would route the decode via utf16DecodeSink
@@ -1128,8 +1129,8 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
         return Numbers.LONG_NULL;
     }
 
-    private long convertVarToUuidHi(int srcTag, int columnIndex) {
-        CharSequence cs = readVarValueForConversion(srcTag, columnIndex);
+    private long convertVarToUuidHi(int encoded, int columnIndex) {
+        CharSequence cs = readVarValueForConversion(encoded & 0xFF, columnIndex);
         if (cs != null) {
             try {
                 // checkDashesAndLength must run first: Uuid.parseHi indexes charAt up to
@@ -1144,8 +1145,8 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
         return Numbers.LONG_NULL;
     }
 
-    private long convertVarToUuidLo(int srcTag, int columnIndex) {
-        CharSequence cs = readVarValueForConversion(srcTag, columnIndex);
+    private long convertVarToUuidLo(int encoded, int columnIndex) {
+        CharSequence cs = readVarValueForConversion(encoded & 0xFF, columnIndex);
         if (cs != null) {
             try {
                 Uuid.checkDashesAndLength(cs);

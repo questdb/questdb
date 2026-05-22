@@ -953,9 +953,7 @@ impl ParquetUpdater {
             let existing_fields = self.parquet_file.schema().fields();
             for (i, col) in meta.schema.iter_mut().enumerate() {
                 col.column_top = 0;
-                let field_id = existing_fields
-                    .get(i)
-                    .and_then(|f| f.get_field_info().id);
+                let field_id = existing_fields.get(i).and_then(|f| f.get_field_info().id);
                 if let Some(id) = field_id {
                     if let Some(&written) = self.written_ascii.get(&id) {
                         if self.is_rewrite {

@@ -408,7 +408,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         // columns survives. Without this, PageFrameMemoryRecord re-snapshots a stale -1
         // for filter columns and reads VARCHAR_SLICE bytes as the target fixed type.
         for (int i = 0; i < readParquetColumnCount; i++) {
-            if (include && columnIndexes.contains(i) || (!include && !columnIndexes.contains(i))) {
+            if ((include && columnIndexes.contains(i)) || (!include && !columnIndexes.contains(i))) {
                 resolveParquetColumn(i, columnMapping, activeDecoder);
             }
         }
@@ -499,7 +499,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
                     // Negative value signals var→fixed direction.
                     // -1 remains the "no conversion" sentinel.
                     // Bit layout of the encoded value (target-specific metadata
-                    // in the upper bits — only one target family fills 8-23 at a time):
+                    // in the upper bits - only one target family fills 8-23 at a time):
                     //   bits 0-7:   source tag (STRING or VARCHAR)
                     //   bits 8-15:  target decimal precision (decimal targets)
                     //   bits 16-23: target decimal scale (decimal targets)

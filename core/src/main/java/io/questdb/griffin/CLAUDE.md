@@ -142,17 +142,19 @@ Column "price" (current, index=5, type=STRING)
        └── replacingIndex → index=1 (type=DOUBLE, original)
 ```
 
-When reading a parquet partition, Java walks the chain to find which column index the
-parquet file actually contains:
+When reading a parquet partition, Java looks up which column index the parquet file
+actually contains. The chain head (the original writer index at the bottom of the
+`replacingIndex` chain) is precomputed at metadata load time by
+`TableUtils.getReplacingChainHead` and surfaced as `getOriginalWriterIndex()`, so the
+lookup is a direct map probe rather than a per-query walk:
 
 ```java
-// O3PartitionJob + PageFrameMemoryPool
-int parquetIdx = parquetColIdToIdx.get(writerIndex);
+// PageFrameMemoryPool.resolveParquetColumn
+int parquetIdx = columnIdToParquetIdx.get(columnMapping.getWriterIndex(i));
 if (parquetIdx < 0) {
-    int replacingIndex = metadata.getColumnMetadata(i).getReplacingIndex();
-    while (replacingIndex >= 0 && parquetIdx < 0) {
-        parquetIdx = parquetColIdToIdx.get(replacingIndex);
-        replacingIndex = metadata.getColumnMetadata(replacingIndex).getReplacingIndex();
+    int origWriterIndex = columnMapping.getOriginalWriterIndex(i);
+    if (origWriterIndex >= 0 && origWriterIndex != columnWriterIndex) {
+        parquetIdx = columnIdToParquetIdx.get(origWriterIndex);
     }
 }
 ```
@@ -204,9 +206,9 @@ was converted to parquet, the conversion happens on-the-fly through `PageFrameMe
 2. Builds a column ID map (`field_id` → parquet column index).
 3. For each query column, calls `resolveParquetColumn()`:
    - Tries direct lookup by the column's current writer index.
-   - If not found, falls back to `buildDenseIdxToParquetIdx()` which walks the
-     `replacingIndex` chain (same logic as `O3PartitionJob`) to find the parquet column
-     under an older writer index.
+   - If not found, falls back to the column's `getOriginalWriterIndex()` — the
+     precomputed chain head from `TableUtils.getReplacingChainHead` — to find the
+     parquet column under an older writer index.
    - Compares the parquet column's stored type against the current metadata type.
    - Records the conversion strategy in `sourceColumnTypes[col]`.
 

@@ -42,10 +42,10 @@ public class TableColumnMetadata implements Plannable {
     private int columnType;
     private IntList coveringColumnIndices;
     private boolean dedupKeyFlag;
+    private byte indexType;
     private int indexValueBlockCapacity;
     private int parquetEncodingConfig;
     private boolean symbolCacheFlag;
-    private byte indexType;
 
     public TableColumnMetadata(String columnName, int columnType) {
         this(columnName, columnType, null);
@@ -208,6 +208,10 @@ public class TableColumnMetadata implements Plannable {
         return writerIndex;
     }
 
+    public boolean isCovering() {
+        return coveringColumnIndices != null && coveringColumnIndices.size() > 0;
+    }
+
     public boolean isDedupKeyFlag() {
         return dedupKeyFlag;
     }
@@ -216,16 +220,12 @@ public class TableColumnMetadata implements Plannable {
         return columnType < 0;
     }
 
-    public boolean isCovering() {
-        return coveringColumnIndices != null && coveringColumnIndices.size() > 0;
+    public boolean isIndexed() {
+        return IndexType.isIndexed(indexType);
     }
 
     public boolean isSymbolCacheFlag() {
         return symbolCacheFlag;
-    }
-
-    public boolean isIndexed() {
-        return IndexType.isIndexed(indexType);
     }
 
     public boolean isSymbolTableStatic() {

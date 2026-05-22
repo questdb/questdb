@@ -29,6 +29,9 @@ import io.questdb.griffin.engine.table.parquet.ParquetPartitionDecoder;
 import io.questdb.griffin.engine.table.parquet.PartitionDescriptor;
 import io.questdb.griffin.engine.table.parquet.PartitionUpdater;
 import io.questdb.griffin.engine.table.parquet.RowGroupBuffers;
+import io.questdb.std.Decimal128;
+import io.questdb.std.Decimal256;
+import io.questdb.std.Decimal64;
 import io.questdb.std.DirectIntList;
 import io.questdb.std.IntIntHashMap;
 import io.questdb.std.IntList;
@@ -36,6 +39,7 @@ import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
+import io.questdb.std.Unsafe;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8StringSink;
 
@@ -46,6 +50,9 @@ public class O3ParquetMergeContext implements Closeable {
     private IntList activeColIndices;
     private IntList activeToDecodeIdx;
     private PartitionDescriptor chunkDescriptor;
+    private Decimal128 decimal128Buf;
+    private Decimal256 decimal256Buf;
+    private Decimal64 decimal64Buf;
     private LongList gapO3Ranges;
     private LongList mergeDstBufs;
     private LongList nullBufs;
@@ -69,6 +76,9 @@ public class O3ParquetMergeContext implements Closeable {
         activeColIndices = new IntList();
         activeToDecodeIdx = new IntList();
         chunkDescriptor = new PartitionDescriptor();
+        decimal128Buf = new Decimal128();
+        decimal256Buf = new Decimal256();
+        decimal64Buf = new Decimal64();
         gapO3Ranges = new LongList();
         mergeDstBufs = new LongList();
         nullBufs = new LongList();
@@ -111,9 +121,17 @@ public class O3ParquetMergeContext implements Closeable {
         activeColIndices = null;
         activeToDecodeIdx = null;
         chunkDescriptor = Misc.free(chunkDescriptor);
+        decimal128Buf = null;
+        decimal256Buf = null;
+        decimal64Buf = null;
         gapO3Ranges = null;
-        mergeDstBufs = null;
-        nullBufs = null;
+        // Each list stores [addr, size, addr, size] per column; the per-row-group
+        // finally blocks normally free these, but on abnormal shutdown (worker
+        // thread death) the lists may still hold native pointers. Walk and free
+        // before dropping the references.
+        mergeDstBufs = freeNativePairs(mergeDstBufs);
+        nullBufs = freeNativePairs(nullBufs);
+        tmpBufs = freeNativePairs(tmpBufs);
         parquetColIdToIdx = null;
         parquetColumns = Misc.free(parquetColumns);
         if (parquetMetaReader != null) {
@@ -130,7 +148,6 @@ public class O3ParquetMergeContext implements Closeable {
         rowGroupBounds = null;
         srcPtrs = null;
         tableToParquetIdx = null;
-        tmpBufs = null;
         utf16Sink = null;
         utf8Sink = null;
     }
@@ -151,6 +168,18 @@ public class O3ParquetMergeContext implements Closeable {
 
     public PartitionDescriptor getChunkDescriptor() {
         return chunkDescriptor;
+    }
+
+    public Decimal128 getDecimal128Buf() {
+        return decimal128Buf;
+    }
+
+    public Decimal256 getDecimal256Buf() {
+        return decimal256Buf;
+    }
+
+    public Decimal64 getDecimal64Buf() {
+        return decimal64Buf;
     }
 
     public LongList getGapO3Ranges() {
@@ -263,5 +292,24 @@ public class O3ParquetMergeContext implements Closeable {
      */
     public void releaseResources() {
         partitionUpdater.close();
+    }
+
+    /**
+     * Walks a per-column buffer list with [addr, size, addr, size] stride and
+     * frees any non-zero (addr, size) pair. Returns {@code null} so the caller
+     * can drop the reference in one assignment.
+     */
+    private static LongList freeNativePairs(LongList list) {
+        if (list == null) {
+            return null;
+        }
+        final int n = list.size();
+        for (int i = 0; i + 1 < n; i += 2) {
+            long addr = list.getQuick(i);
+            if (addr != 0) {
+                Unsafe.free(addr, list.getQuick(i + 1), MemoryTag.NATIVE_O3);
+            }
+        }
+        return null;
     }
 }

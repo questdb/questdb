@@ -461,6 +461,12 @@ fn contract_to_bool<T: Default + PartialEq + Copy>(
 }
 
 /// Multiply or divide every non-null i64 in the buffer by `factor`.
+///
+/// Multiplication uses `checked_mul` because `factor` comes from `_pm` metadata
+/// over a JNI boundary: a corrupted scale value paired with a large input would
+/// silently wrap to a plausible-looking timestamp instead of failing loudly.
+/// On overflow the value is replaced with the LONG NULL sentinel, matching the
+/// convention used elsewhere on conversion failure.
 pub(super) fn scale_i64_in_place(data: &mut AcVec<u8>, factor: i64, divide: bool) {
     let count = data.len() / size_of::<i64>();
     let ptr = data.as_mut_ptr() as *mut i64;
@@ -471,7 +477,8 @@ pub(super) fn scale_i64_in_place(data: &mut AcVec<u8>, factor: i64, divide: bool
         } else if divide {
             val / factor
         } else {
-            val * factor
+            val.checked_mul(factor)
+                .unwrap_or(qdb_core::col_type::nulls::LONG)
         };
         unsafe { ptr.add(i).write_unaligned(converted) };
     }
@@ -698,6 +705,53 @@ fn mul_i256_pow10(w0: i64, w1: u64, w2: u64, w3: u64, scale_diff: u32) -> (i64, 
     r
 }
 
+/// Multiply a sign-extended 256-bit integer by 10^scale_diff with overflow checking.
+/// Returns `None` if the magnitude overflows i256 at any intermediate step.
+fn checked_mul_i256_pow10(
+    w0: i64,
+    w1: u64,
+    w2: u64,
+    w3: u64,
+    scale_diff: u32,
+) -> Option<(i64, u64, u64, u64)> {
+    let mut r = (w0, w1, w2, w3);
+    let mut remaining = scale_diff;
+    while remaining > 0 {
+        let step = remaining.min(18);
+        r = checked_mul_i256_u64(r.0, r.1, r.2, r.3, 10u64.pow(step))?;
+        remaining -= step;
+    }
+    Some(r)
+}
+
+/// Checked variant of [`mul_i256_u64`].
+///
+/// Returns `None` if the multiplication overflows i256. The check compares the
+/// pre-multiplication sign of the high limb against the post-multiplication
+/// sign after stripping the carry: any divergence indicates the high limb
+/// truncated significant bits.
+fn checked_mul_i256_u64(
+    w0: i64,
+    w1: u64,
+    w2: u64,
+    w3: u64,
+    factor: u64,
+) -> Option<(i64, u64, u64, u64)> {
+    let f = factor as u128;
+    let p3 = w3 as u128 * f;
+    let p2 = w2 as u128 * f + (p3 >> 64);
+    let p1 = w1 as u128 * f + (p2 >> 64);
+    let p0_full = w0 as i128 * f as i128 + (p1 >> 64) as i128;
+    // Overflow detection: a sign-extended i256 multiplied by a positive u64
+    // factor preserves sign. The high limb (i64) after truncation must match the
+    // sign of the full i128 product. If not, bits were lost.
+    let p0_trunc = p0_full as i64;
+    if p0_trunc as i128 != p0_full {
+        return None;
+    }
+    Some((p0_trunc, p1 as u64, p2 as u64, p3 as u64))
+}
+
 /// Multiply a 256-bit two's complement integer by a u64 factor.
 fn mul_i256_u64(w0: i64, w1: u64, w2: u64, w3: u64, factor: u64) -> (i64, u64, u64, u64) {
     let f = factor as u128;
@@ -825,17 +879,24 @@ fn convert_fixed_to_decimal(
             for i in (0..count).rev() {
                 let val = unsafe { read_le_i64_at(ptr, i, src_size) };
                 let offset = i * 16;
-                if is_int_null(val, src_tag) {
-                    unsafe {
+                // i64 widened to i128 multiplied by 10^scale can exceed i128
+                // (e.g. i64::MAX * 10^38 overflows). Use checked_mul and emit
+                // the Decimal128 NULL pair on overflow, mirroring the i64 path
+                // in scale_or_null_i64.
+                let scaled = if is_int_null(val, src_tag) {
+                    None
+                } else {
+                    (val as i128).checked_mul(factor)
+                };
+                match scaled {
+                    Some(s) => unsafe {
+                        (ptr.add(offset) as *mut i64).write_unaligned((s >> 64) as i64);
+                        (ptr.add(offset + 8) as *mut u64).write_unaligned(s as u64);
+                    },
+                    None => unsafe {
                         (ptr.add(offset) as *mut i64).write_unaligned(i64::MIN);
                         (ptr.add(offset + 8) as *mut u64).write_unaligned(0);
-                    }
-                } else {
-                    let scaled = (val as i128).wrapping_mul(factor);
-                    unsafe {
-                        (ptr.add(offset) as *mut i64).write_unaligned((scaled >> 64) as i64);
-                        (ptr.add(offset + 8) as *mut u64).write_unaligned(scaled as u64);
-                    }
+                    },
                 }
             }
         }
@@ -844,24 +905,29 @@ fn convert_fixed_to_decimal(
             for i in (0..count).rev() {
                 let val = unsafe { read_le_i64_at(ptr, i, src_size) };
                 let offset = i * 32;
-                if is_int_null(val, src_tag) {
-                    unsafe {
-                        (ptr.add(offset) as *mut i64).write_unaligned(i64::MIN);
-                        (ptr.add(offset + 8) as *mut u64).write_unaligned(0);
-                        (ptr.add(offset + 16) as *mut u64).write_unaligned(0);
-                        (ptr.add(offset + 24) as *mut u64).write_unaligned(0);
-                    }
+                // Sign-extended i64 multiplied by 10^scale can exceed i256 for
+                // large scale + large |val| (e.g. i64::MAX * 10^76 overflows).
+                // checked_mul_i256_pow10 returns None on overflow; emit the
+                // Decimal256 NULL on overflow, mirroring the Decimal128 path.
+                let scaled = if is_int_null(val, src_tag) {
+                    None
                 } else {
-                    // Sign-extend to 256-bit: (sign, sign, sign, val)
                     let sign = if val < 0 { u64::MAX } else { 0 };
-                    let (w0, w1, w2, w3) =
-                        mul_i256_pow10(sign as i64, sign, sign, val as u64, dst_scale as u32);
-                    unsafe {
+                    checked_mul_i256_pow10(sign as i64, sign, sign, val as u64, dst_scale as u32)
+                };
+                match scaled {
+                    Some((w0, w1, w2, w3)) => unsafe {
                         (ptr.add(offset) as *mut i64).write_unaligned(w0);
                         (ptr.add(offset + 8) as *mut u64).write_unaligned(w1);
                         (ptr.add(offset + 16) as *mut u64).write_unaligned(w2);
                         (ptr.add(offset + 24) as *mut u64).write_unaligned(w3);
-                    }
+                    },
+                    None => unsafe {
+                        (ptr.add(offset) as *mut i64).write_unaligned(i64::MIN);
+                        (ptr.add(offset + 8) as *mut u64).write_unaligned(0);
+                        (ptr.add(offset + 16) as *mut u64).write_unaligned(0);
+                        (ptr.add(offset + 24) as *mut u64).write_unaligned(0);
+                    },
                 }
             }
         }

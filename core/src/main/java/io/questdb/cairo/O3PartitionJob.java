@@ -549,6 +549,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         for (int slot = 0; slot < 4; slot += 2) {
                             if (mergeDstBufs.getQuick(bi4 + slot) != 0) {
                                 Unsafe.free(mergeDstBufs.getQuick(bi4 + slot), mergeDstBufs.getQuick(bi4 + slot + 1), MemoryTag.NATIVE_O3);
+                                mergeDstBufs.setQuick(bi4 + slot, 0);
+                                mergeDstBufs.setQuick(bi4 + slot + 1, 0);
                             }
                         }
                     }
@@ -2481,7 +2483,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         long fixBuf = Unsafe.malloc(fixSize, MemoryTag.NATIVE_O3);
                         nullBufs.setQuick(bi4, fixBuf);
                         nullBufs.setQuick(bi4 + 1, fixSize);
-                        convertVarColumnToFixed(srcType, columnType, columnDataPtr, columnAuxPtr, rowGroupSize, fixBuf, ctx.getUtf8Sink(), ctx.getUtf16Sink());
+                        convertVarColumnToFixed(srcType, columnType, columnDataPtr, columnAuxPtr, rowGroupSize, fixBuf, ctx.getUtf8Sink(), ctx.getUtf16Sink(), ctx.getDecimal64Buf(), ctx.getDecimal128Buf(), ctx.getDecimal256Buf());
                         columnDataPtr = fixBuf;
                     } else if (columnDataPtr == 0) {
                         // Column top or missing from parquet: create null source buffer.
@@ -2657,6 +2659,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 for (int slot = 0; slot < 4; slot += 2) {
                     if (nullBufs.getQuick(bi4 + slot) != 0) {
                         Unsafe.free(nullBufs.getQuick(bi4 + slot), nullBufs.getQuick(bi4 + slot + 1), MemoryTag.NATIVE_O3);
+                        nullBufs.setQuick(bi4 + slot, 0);
+                        nullBufs.setQuick(bi4 + slot + 1, 0);
                     }
                 }
             }
@@ -3561,7 +3565,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         long fixBuf = Unsafe.malloc(fixSize, MemoryTag.NATIVE_O3);
                         tmpBufs.setQuick(ai * 4, fixBuf);
                         tmpBufs.setQuick(ai * 4 + 1, fixSize);
-                        convertVarColumnToFixed(srcType, columnType, columnDataPtr, columnAuxPtr, rowGroupSize, fixBuf, utf8Sink, utf16Sink);
+                        convertVarColumnToFixed(srcType, columnType, columnDataPtr, columnAuxPtr, rowGroupSize, fixBuf, utf8Sink, utf16Sink, ctx.getDecimal64Buf(), ctx.getDecimal128Buf(), ctx.getDecimal256Buf());
                         columnDataPtr = fixBuf;
                     } else if (columnDataPtr == 0) {
                         // Column missing from parquet: null fixed data.
@@ -3622,6 +3626,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     long size = tmpBufs.getQuick(i * 4 + slot + 1);
                     if (addr != 0) {
                         Unsafe.free(addr, size, MemoryTag.NATIVE_O3);
+                        tmpBufs.setQuick(i * 4 + slot, 0);
+                        tmpBufs.setQuick(i * 4 + slot + 1, 0);
                     }
                 }
             }
@@ -4057,7 +4063,10 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             int rowCount,
             long dstPtr,
             Utf8StringSink utf8Sink,
-            StringSink utf16Sink
+            StringSink utf16Sink,
+            Decimal64 d64,
+            Decimal128 d128,
+            Decimal256 d256
     ) {
         boolean isVarchar = ColumnType.isVarchar(srcType);
         // utf16Sink plays two non-overlapping roles depending on srcType:
@@ -4067,12 +4076,9 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         //   - string source: per-row UTF-16 accumulator. Both clear() per row,
         //     so a single sink covers both paths.
         final StringSink strSink = utf16Sink;
-        // Scratch decimal buffers for DECIMAL targets. Allocating once per row
-        // group keeps the per-row write zero-allocation. Unused for non-decimal
-        // dstType.
-        final Decimal64 d64 = new Decimal64();
-        final Decimal128 d128 = new Decimal128();
-        final Decimal256 d256 = new Decimal256();
+        // d64/d128/d256 are scratch decimal buffers for DECIMAL targets, hoisted
+        // into O3ParquetMergeContext so per-call allocation is zero. Unused for
+        // non-decimal dstType.
 
         for (int i = 0; i < rowCount; i++) {
             CharSequence value;
@@ -4118,7 +4124,10 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
     static long estimateStringDataSize(int srcType, int rowCount) {
         // 4 bytes length prefix + maxChars * 2 bytes UTF-16LE per row.
         // Null values use only 4 bytes.
-        int maxCharsPerRow = switch (srcType) {
+        // DECIMAL formats to precision digits plus optional sign and decimal point.
+        int maxCharsPerRow = ColumnType.isDecimal(srcType)
+                ? ColumnType.getDecimalPrecision(srcType) + 2
+                : switch (srcType) {
             case ColumnType.BOOLEAN -> 5;
             case ColumnType.BYTE -> 4;
             case ColumnType.SHORT -> 6;
@@ -4137,7 +4146,10 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
 
     static long estimateVarcharDataSize(int srcType, int rowCount) {
         // Only spilled values (>9 UTF-8 bytes) consume data buffer space.
-        int maxBytesPerRow = switch (srcType) {
+        // DECIMAL formats to precision digits plus optional sign and decimal point.
+        int maxBytesPerRow = ColumnType.isDecimal(srcType)
+                ? ColumnType.getDecimalPrecision(srcType) + 2
+                : switch (srcType) {
             case ColumnType.BOOLEAN, ColumnType.BYTE, ColumnType.SHORT, ColumnType.CHAR -> 0;
             case ColumnType.INT -> 11;
             case ColumnType.LONG -> 20;

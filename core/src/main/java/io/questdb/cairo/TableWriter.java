@@ -91,7 +91,9 @@ import io.questdb.mp.SOUnboundedCountDownLatch;
 import io.questdb.mp.Sequence;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Chars;
+import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
+import io.questdb.std.Decimal64;
 import io.questdb.std.Decimals;
 import io.questdb.std.DirectIntList;
 import io.questdb.std.DirectLongList;
@@ -269,10 +271,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private final Path path;
     private final int pathRootSize;
     private final int pathSize;
+    private final FragileCode RECOVER_FROM_META_RENAME_FAILURE = this::recoverFromMetaRenameFailure;
     // Pending parquet->native conversions awaiting a single batched commit.
     // Three longs per entry: [partitionTimestamp, oldPartitionNameTxn, lastPartitionConvertedFlag].
     private final LongList pendingParquetToNativeConversions = new LongList();
-    private final FragileCode RECOVER_FROM_META_RENAME_FAILURE = this::recoverFromMetaRenameFailure;
     private final LongAdder physicallyWrittenRowsSinceLastCommit = new LongAdder();
     private final Row row = new RowImpl();
     private final LongList rowValueIsNotNull = new LongList();
@@ -1214,7 +1216,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     metadata
             );
 
-            // open new column files (skip when last partition is parquet — no native files)
+            // open new column files (skip when last partition is parquet - no native files)
             int lastPartitionIndex = txWriter.getPartitionCount() - 1;
             if ((txWriter.getTransientRowCount() > 0 || !PartitionBy.isPartitioned(partitionBy))
                     && (lastPartitionIndex < 0 || !txWriter.isPartitionParquet(lastPartitionIndex))) {
@@ -1411,11 +1413,30 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     /**
-     * Commits the batch of parquet->native conversions queued by
-     * {@link #convertPartitionParquetToNative(long, boolean)} calls with {@code doCommit=false},
-     * then runs the deferred per-partition housekeeping (metadata cache refresh, old parquet
-     * dir cleanup, active partition reopen if the last partition was converted). Empty batch
-     * is a no-op. The pending list is cleared regardless of housekeeping outcome.
+     * Pre-commit for the batched parquet->native conversions queued by
+     * {@link #convertPartitionParquetToNative(long, boolean)} calls with {@code doCommit=false}.
+     * Writes {@code _txn} so it references the new native partitions and runs the deferred
+     * per-partition housekeeping (metadata cache refresh, old parquet dir cleanup, active
+     * partition reopen if the last partition was converted). Empty batch is a no-op. The
+     * pending list is cleared regardless of outcome.
+     * <p>
+     * This is <b>not</b> a final commit. {@code txWriter.commit} below persists {@code _txn},
+     * but the new native column files written by {@link #produceNativeFromParquet} were closed
+     * without fsync and are not part of the writer's active column set, so no data fsync is
+     * issued here. Real durability is established by the column-conversion final commit
+     * ({@link #commit00}) that the caller (typically
+     * {@link io.questdb.griffin.ConvertOperatorImpl#convertColumn0}) runs after the column
+     * type-conversion phase: that commit's {@code syncColumns} fsyncs both the just-reopened
+     * native partition data and the new column-conversion output before publishing the next
+     * {@code _txn}.
+     * <p>
+     * Consequence for error handling: any failure here (the {@code txWriter.commit} itself,
+     * the metadata cache update, or the per-partition close/rmdir/reopen housekeeping) means
+     * the surrounding ALTER as a whole has not completed - the column-conversion phase will
+     * not run, the final commit will not happen, and on crash no part of the operation is
+     * durable. Sub-failures must therefore propagate as ordinary errors, not as the
+     * "data persisted, housekeeping failed" signal of {@link #handleHousekeepingException}:
+     * no data has been persisted in the durable sense at this point.
      */
     public void commitPendingParquetToNativeConversions() {
         if (pendingParquetToNativeConversions.size() == 0) {
@@ -1423,32 +1444,27 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
         try {
             txWriter.commit(denseSymbolMapWriters);
+
             // hasParquetPartitions reflects post-commit txWriter state and does not change
             // across loop iterations (the loop only does file-system housekeeping). Acquire
             // the engine-wide metadata-cache lock once instead of N times.
-            try {
-                try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
-                    metadataRW.setHasParquetPartitions(tableToken, txWriter.hasParquetPartitions());
-                }
-            } catch (Throwable e) {
-                handleHousekeepingException(e);
+            try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
+                metadataRW.setHasParquetPartitions(tableToken, txWriter.hasParquetPartitions());
             }
+
             for (int i = 0, n = pendingParquetToNativeConversions.size(); i < n; i += 3) {
                 long pts = pendingParquetToNativeConversions.getQuick(i);
                 long oldNameTxn = pendingParquetToNativeConversions.getQuick(i + 1);
                 boolean lastConverted = pendingParquetToNativeConversions.getQuick(i + 2) != 0L;
-                try {
-                    if (lastConverted) {
-                        closeActivePartition(false);
-                    }
-                    safeDeletePartitionDir(pts, oldNameTxn);
-                    if (lastConverted) {
-                        openPartition(pts, txWriter.getTransientRowCount());
-                        setAppendPosition(txWriter.getTransientRowCount(), false);
-                    }
-                } catch (Throwable e) {
-                    handleHousekeepingException(e);
+                if (lastConverted) {
+                    closeActivePartition(false);
                 }
+                safeDeletePartitionDir(pts, oldNameTxn);
+                if (lastConverted) {
+                    openPartition(pts, txWriter.getTransientRowCount());
+                    setAppendPosition(txWriter.getTransientRowCount(), false);
+                }
+
             }
         } finally {
             pendingParquetToNativeConversions.clear();
@@ -1678,15 +1694,22 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     /**
-     * When {@code doCommit} is true, behaves identically to the no-arg variant: commits
-     * the conversion and runs post-commit housekeeping before returning.
+     * When {@code doCommit} is true, behaves identically to the no-arg variant: commits the
+     * conversion and runs post-commit housekeeping before returning. This is a standalone,
+     * durable conversion.
      * <p>
      * When {@code doCommit} is false, performs the partition rewrite and updates in-memory
      * {@code txWriter} state, but does not commit and does not run post-commit housekeeping.
-     * The caller must invoke {@link #commitPendingParquetToNativeConversions()} once after
-     * the batch to publish the changes atomically. If the caller fails before that call,
-     * the in-memory updates are discarded along with the (subsequently distressed) writer,
-     * leaving the on-disk state unchanged.
+     * The new native column files are written and closed without fsync. The caller must
+     * invoke {@link #commitPendingParquetToNativeConversions()} once after the batch to
+     * push {@code _txn} to disk and run the deferred housekeeping. Even after that
+     * pre-commit, the new data files are not yet fsynced - the real durability fence is
+     * the caller's subsequent {@link #commit00} (or equivalent {@code syncColumns} +
+     * {@code txWriter.commit}) at the end of the surrounding operation, typically the
+     * column-conversion final commit driven by
+     * {@link io.questdb.griffin.ConvertOperatorImpl#convertColumn0}. If the caller fails
+     * before either of those, the in-memory updates are discarded along with the
+     * (subsequently distressed) writer, leaving the on-disk state unchanged.
      */
     public boolean convertPartitionParquetToNative(long partitionTimestamp, boolean doCommit) {
         assert metadata.getTimestampIndex() > -1;
@@ -1699,7 +1722,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     .$(", partition=").$ts(timestampDriver, partitionTimestamp)
                     .I$();
             // The last partition is parquet, so bitmap index files do not exist for
-            // indexed symbol columns.  Skip indexing here — rebuildPartitionIndexFiles()
+            // indexed symbol columns.  Skip indexing here - rebuildPartitionIndexFiles()
             // will create the indexes after the conversion to native.
             avoidIndexOnCommit = true;
             commit();
@@ -2039,7 +2062,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             rewriteAndSwapMetadata(metadata);
             clearTodoAndCommitMeta();
 
-            // remove indexer — skip seal since the index is being dropped
+            // remove indexer - skip seal since the index is being dropped
             ColumnIndexer columnIndexer = indexers.getQuick(columnIndex);
             if (columnIndexer != null) {
                 columnIndexer.discardAndClose();
@@ -2573,7 +2596,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
 
         if (txWriter.isPartitionParquet(partitionIndex)) {
-            // Already fully switched to parquet format — nothing to do.
+            // Already fully switched to parquet format - nothing to do.
             return true;
         }
 
@@ -6176,7 +6199,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     // republished. The on-disk recovery is now structurally
                     // sound: the v2 chain's recoveryDropAbandoned, run from
                     // PostingIndexWriter.of() on the next reopen, drops every
-                    // entry with txnAtSeal > currentTableTxn — i.e. the
+                    // entry with txnAtSeal > currentTableTxn - i.e. the
                     // entries the failed seal loop published before the
                     // encompassing txWriter.commit landed. The catch still
                     // marks the writer distressed because the in-memory
@@ -6632,7 +6655,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         // Seal now so that covering sidecar files are written immediately.
         // Without this, the last partition's writer stays open and sidecar
-        // files are only created on close — but queries run before close
+        // files are only created on close - but queries run before close
         // would use a covering index scan plan (metadata says INCLUDE) and
         // find no sidecar data. Future writes create new sparse generations
         // that the next seal merges.
@@ -8477,7 +8500,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     final boolean isParquet = partitionIndexRaw > -1 && txWriter.isPartitionParquetByRawIndex(partitionIndexRaw);
 
                     // We're appending onto the last (active) partition.
-                    // Cannot append to parquet partitions — they must go through the O3 merge path.
+                    // Cannot append to parquet partitions - they must go through the O3 merge path.
                     final boolean append = last && !isParquet && (srcDataMax == 0 || (isCommitDedupMode() && o3Timestamp > maxTimestamp) || (!isCommitDedupMode() && o3Timestamp >= maxTimestamp))
                             // If it's replace commit, the append is only possible if the last partition data is
                             // before the replace range.
@@ -8784,7 +8807,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 // txn >= lastCommittedTxn means there are some versions found in the table directory
                 // that are not attached to the table most likely as a result of a rollback.
                 // Rollback orphans (txn >= lastCommittedTxn) are not in any txn snapshot,
-                // so no checkpoint or reader can reference them — safe to remove immediately.
+                // so no checkpoint or reader can reference them - safe to remove immediately.
                 if ((!anyReadersBeforeCommittedTxn && !checkpointInProgress) || txn >= lastCommittedTxn) {
                     setPathForNativePartition(
                             other,
@@ -10078,6 +10101,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
 
             final int rowGroupCount = parquetMetadata.getRowGroupCount();
+            // Scratch decimal buffers for the var->fixed converter when target is DECIMAL.
+            // Hoisted out of the row-group loop so the conversion stays zero-allocation
+            // on the per-row path. Unused for non-decimal targets.
+            final Decimal64 d64 = new Decimal64();
+            final Decimal128 d128 = new Decimal128();
+            final Decimal256 d256 = new Decimal256();
             for (int rowGroupIndex = 0; rowGroupIndex < rowGroupCount; rowGroupIndex++) {
                 assert parquetMetadata.getRowGroupSize(rowGroupIndex) <= Integer.MAX_VALUE;
                 final long rowGroupRowCount = parquetFileDecoder.decodeRowGroup(
@@ -10206,7 +10235,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                         effectiveSrcType, tableColumnType,
                                         srcDataPtr, srcAuxPtr,
                                         (int) rowGroupRowCount, fixBuf,
-                                        utf8Sink, utf16Sink
+                                        utf8Sink, utf16Sink,
+                                        d64, d128, d256
                                 );
                                 appendBuffer(dstFixFd, fixBuf, fixSize);
                             } finally {
@@ -11601,7 +11631,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 }
 
                 // Column added after this partition (getColumnTop == -1) or partition has no
-                // column data (columnTop >= partitionSize) has no .pk file here — skip.
+                // column data (columnTop >= partitionSize) has no .pk file here - skip.
                 long columnTop = columnVersionWriter.getColumnTop(partitionTimestamp, colIdx);
                 if (columnTop == -1 || columnTop >= partitionSize) {
                     continue;
@@ -12244,7 +12274,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // Flush posting index sidecar data before the partition switch.
         // PostingIndexWriter reads covered column values from the MemoryMA
         // objects that were set via configureCovering(). Those MemoryMA
-        // objects are the TableWriter's column memories — the same Java
+        // objects are the TableWriter's column memories - the same Java
         // objects get remapped to the new partition's files in openPartition().
         // Any unflushed pending/spill data still holds row IDs from the
         // current partition, so we must write the sidecar gen block now,
@@ -12752,7 +12782,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      *                       column_top >= row_group_size (i.e. all-NULL
      *                       columns), so only columns with partial data
      *                       (0 < column_top < partitionRowCount) should be
-     *                       zeroed — those are the ones where the encoder
+     *                       zeroed - those are the ones where the encoder
      *                       fills the top region with NULLs and the decoder
      *                       produces all rows.
      */
@@ -13206,8 +13236,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private static final class DetachedPostingFileRemover implements PostingIndexUtils.SealedFileVisitor {
         private CharSequence columnName;
         private long columnNameTxn;
-        private Path detachedPath;
         private int detachedPartitionRoot;
+        private Path detachedPath;
         private FilesFacade ff;
 
         public void of(FilesFacade ff, Path detachedPath, int detachedPartitionRoot, CharSequence columnName, long columnNameTxn) {

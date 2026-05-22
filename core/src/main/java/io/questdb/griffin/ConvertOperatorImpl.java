@@ -148,28 +148,6 @@ public class ConvertOperatorImpl implements Closeable {
         clear();
     }
 
-    /**
-     * Returns true when a parquet partition that stores {@code parquetType} can be read
-     * lazily as {@code existingType} without diverging from the equivalent native conversion.
-     * <p>
-     * Lazy decode is safe when the two types are identical, or when they are stored
-     * identically in parquet AND the decoder transcodes losslessly (STRING and VARCHAR
-     * are both encoded as UTF-8 BYTE_ARRAY).
-     * <p>
-     * Tag-only equality is NOT enough: TIMESTAMP_MICRO and TIMESTAMP_NANO share a tag
-     * but require x/divide-by-1000 scaling, and the parquet decoder skips that scaling
-     * when the target is a non-time type (e.g. INT).
-     */
-    private static boolean isParquetStorageCompatible(int parquetType, int existingType) {
-        if (parquetType == existingType) {
-            return true;
-        }
-        // STRING (UTF-16) and VARCHAR (UTF-8) are both encoded as UTF-8 BYTE_ARRAY in parquet;
-        // the decoder transcodes between the two without any value loss.
-        return (parquetType == ColumnType.STRING && existingType == ColumnType.VARCHAR)
-                || (parquetType == ColumnType.VARCHAR && existingType == ColumnType.STRING);
-    }
-
     private void clear() {
         purgingOperator.clear();
         Misc.free(symbolMapReader);
@@ -244,7 +222,7 @@ public class ConvertOperatorImpl implements Closeable {
             // Pre-pass: convert parquet partitions to native when needed.
             // Case 1: chained conversion (e.g. INT -> STRING -> DATE) where parquet stores an
             //         older type - convert so the two-step path matches native behavior.
-            // Case 2: target type is Symbol — symbol maps cannot be built from parquet.
+            // Case 2: target type is Symbol - symbol maps cannot be built from parquet.
             //
             // Each per-partition convert is performed without committing; a single batched
             // commit at the end of the loop publishes them atomically. If any partition
@@ -536,6 +514,28 @@ public class ConvertOperatorImpl implements Closeable {
             fixedFd = TableUtils.openRW(ff, dFile(path.trimTo(pathTrimToLen), name, columnNameTxn), LOG, fileOpenOpts);
             varFd = -1;
         }
+    }
+
+    /**
+     * Returns true when a parquet partition that stores {@code parquetType} can be read
+     * lazily as {@code existingType} without diverging from the equivalent native conversion.
+     * <p>
+     * Lazy decode is safe when the two types are identical, or when they are stored
+     * identically in parquet AND the decoder transcodes losslessly (STRING and VARCHAR
+     * are both encoded as UTF-8 BYTE_ARRAY).
+     * <p>
+     * Tag-only equality is NOT enough: TIMESTAMP_MICRO and TIMESTAMP_NANO share a tag
+     * but require x/divide-by-1000 scaling, and the parquet decoder skips that scaling
+     * when the target is a non-time type (e.g. INT).
+     */
+    private static boolean isParquetStorageCompatible(int parquetType, int existingType) {
+        if (parquetType == existingType) {
+            return true;
+        }
+        // STRING (UTF-16) and VARCHAR (UTF-8) are both encoded as UTF-8 BYTE_ARRAY in parquet;
+        // the decoder transcodes between the two without any value loss.
+        return (parquetType == ColumnType.STRING && existingType == ColumnType.VARCHAR)
+                || (parquetType == ColumnType.VARCHAR && existingType == ColumnType.STRING);
     }
 
     private static class SymbolMapper implements SymbolMapWriterLite {

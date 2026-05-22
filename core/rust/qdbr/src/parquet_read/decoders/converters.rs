@@ -84,28 +84,38 @@ pub const F32_MAX_SAFE_FOR_I32: f32 = f32::from_bits(0x4EFF_FFFF);
 
 /// Range-checked float-to-integer conversion.
 ///
-/// Values that are NaN or outside `[min_val, max_val]` produce `null_value`
+/// Values that are NaN or outside the accepted range produce `null_value`
 /// instead of saturating (which is what Rust's `as` cast does).
 /// This matches the C++ `convert_from_type_to_type` behaviour for float→int.
 ///
-/// Callers must pass an `max_val` that is itself in the destination integer's
+/// The accepted range is `[min_val, max_val]` when `LOWER_STRICT = false`
+/// and `(min_val, max_val]` when `LOWER_STRICT = true`.
+///
+/// Callers must pass a `max_val` that is itself in the destination integer's
 /// range. For `(F, I)` pairs where `I::MAX as F` rounds up beyond `I::MAX` -
 /// `(f32, i64)`, `(f64, i64)`, `(f32, i32)` - use the `F*_MAX_SAFE_FOR_I*`
 /// constants above instead of `I::MAX as F`.
-pub struct FloatToIntRangeCheckConverter<F, I> {
+///
+/// For `(F, I)` pairs where `I::MIN` is the destination NULL sentinel
+/// (`i32` and `i64`), set `LOWER_STRICT = true` and pass `min_val = I::MIN as F`.
+/// Without strict lower bound, a float input equal to `I::MIN as F` would
+/// convert to `I::MIN` (the NULL sentinel), silently turning a legitimate value
+/// into NULL.
+pub struct FloatToIntRangeCheckConverter<F, I, const LOWER_STRICT: bool = false> {
     null_value: I,
     max_val: F,
     min_val: F,
     _marker: PhantomData<(F, I)>,
 }
 
-impl<F: Copy, I: Copy> FloatToIntRangeCheckConverter<F, I> {
+impl<F: Copy, I: Copy, const LOWER_STRICT: bool> FloatToIntRangeCheckConverter<F, I, LOWER_STRICT> {
     pub fn new(null_value: I, max_val: F, min_val: F) -> Self {
         Self { null_value, max_val, min_val, _marker: PhantomData }
     }
 }
 
-impl<F, I> Converter<F, I> for FloatToIntRangeCheckConverter<F, I>
+impl<F, I, const LOWER_STRICT: bool> Converter<F, I>
+    for FloatToIntRangeCheckConverter<F, I, LOWER_STRICT>
 where
     F: PartialOrd + Copy + AsPrimitive<I>,
     I: 'static + Copy,
@@ -113,7 +123,12 @@ where
     #[inline]
     fn convert(&self, input: F) -> I {
         // NaN fails both comparisons (PartialOrd), so falls through to null_value.
-        if input <= self.max_val && input >= self.min_val {
+        let in_lower = if LOWER_STRICT {
+            input > self.min_val
+        } else {
+            input >= self.min_val
+        };
+        if input <= self.max_val && in_lower {
             input.as_()
         } else {
             self.null_value
