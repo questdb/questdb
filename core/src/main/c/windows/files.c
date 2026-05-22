@@ -540,38 +540,105 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_mkdir(JNIEnv *e, jclass cl, jlo
 }
 
 JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_getFileSystemStatus(JNIEnv *e, jclass cl, jlong lpszName) {
-    DWORD fileSystemFlags;
     char drive[MAX_PATH];
     char fileSystemName[MAX_PATH];
     char volumeName[MAX_PATH];
-    DWORD VolumeSerialNo;
-    unsigned long MaxComponentLength, FileSystemFlags;
+    DWORD volumeSerialNo;
+    DWORD maxComponentLength;
+    DWORD fileSystemFlags;
 
-    if (GetVolumePathName((LPCSTR) lpszName, drive, MAX_PATH)) {
-        if (GetVolumeInformation(
-                drive,
-                volumeName,
-                MAX_PATH,
-                &VolumeSerialNo,
-                &MaxComponentLength,
-                &fileSystemFlags,
-                fileSystemName,
-                MAX_PATH
-        )) {
-            if ((fileSystemFlags & FILE_SUPPORTS_TRANSACTIONS) != 0) {
-                // windows share (CIFS) reports filesystem as NTFS
-                // local disks support transactions, but CIFS does not
-                strcpy((char *) lpszName, fileSystemName);
-                return FLAG_FS_SUPPORTED * 0x2b;
-            }
-            // unsupported file system
-            strcpy((char *) lpszName, "SMB");
-            return 0x3b;
-        }
+    if (!GetVolumePathName((LPCSTR) lpszName, drive, MAX_PATH)) {
+        SaveLastError();
+        return 0;
     }
 
-    SaveLastError();
-    return -1;
+    // Distinguish local disk from network mount up-front: an SMB-mounted NTFS
+    // share reports as "NTFS" via GetVolumeInformation, so the filesystem name
+    // alone is not enough.
+    UINT driveType = GetDriveType(drive);
+    BOOL isRemote = (driveType == DRIVE_REMOTE);
+
+    // Synthetic magic numbers - Windows doesn't expose a stable f_type. Pick values
+    // that don't collide with statfs magics from other platforms (Linux statfs
+    // magics are mostly < 0x10000 or have the high bit set), and that are
+    // individually distinct so a user reading the log can tell SMB from
+    // remote-stat-failed etc.
+    static const jlong MAGIC_NTFS_LOCAL    = 0x10001LL;
+    static const jlong MAGIC_REFS_LOCAL    = 0x10002LL;
+    static const jlong MAGIC_FAT_LOCAL     = 0x10003LL;
+    static const jlong MAGIC_LOCAL_UNKNOWN = 0x10004LL;
+    static const jlong MAGIC_SMB           = 0x10005LL;
+    static const jlong MAGIC_REMOTE_OTHER  = 0x10006LL;
+    static const jlong MAGIC_REMOTE_UNREAD = 0x10007LL;
+
+    if (!GetVolumeInformation(
+            drive,
+            volumeName,
+            MAX_PATH,
+            &volumeSerialNo,
+            &maxComponentLength,
+            &fileSystemFlags,
+            fileSystemName,
+            MAX_PATH)) {
+        SaveLastError();
+        // GetVolumeInformation against a DRIVE_REMOTE round-trips through the SMB
+        // redirector and can fail transiently (redirector reconnect, Kerberos
+        // ticket renewal, brief server unavailability, lazy reconnect of a mapped
+        // drive still completing its first round-trip at startup). We can't tell
+        // a transient failure from a permanently broken share, so we don't hard
+        // fail: a truly broken share will surface a precise I/O error on the
+        // next CreateFile/WriteFile anyway. Surface this as "supported but not
+        // mmap-safe" so the gate requires commit.mode=sync and the operator can
+        // override with commit.mode=!nosync, matching the treatment of identified
+        // SMB and the Linux statfs-failure path.
+        if (isRemote) {
+            strcpy((char *) lpszName, "REMOTE");
+            return MAGIC_REMOTE_UNREAD | FLAG_FS_SUPPORTED;
+        }
+        return 0;
+    }
+
+    // GetVolumeInformation returns a NUL-terminated name; check each byte and the
+    // byte after the expected length for '\0' to get exact match without a libc
+    // string call.
+    const char *n = fileSystemName;
+    BOOL isNtfsName = n[0]=='N' && n[1]=='T' && n[2]=='F' && n[3]=='S' && n[4]==0;
+    BOOL isReFSName = n[0]=='R' && n[1]=='e' && n[2]=='F' && n[3]=='S' && n[4]==0;
+    // FAT family is open-ended ("FAT", "FAT12", "FAT16", "FAT32"), match the prefix.
+    BOOL isFatName  = (n[0]=='F' && n[1]=='A' && n[2]=='T')
+                   || (n[0]=='e' && n[1]=='x' && n[2]=='F' && n[3]=='A' && n[4]=='T' && n[5]==0);
+
+    if (isRemote) {
+        // SMB/CIFS share (the redirector typically reports the server-side FS
+        // name, often NTFS or ReFS). Allow with commit.mode=sync; hard-fail
+        // anything else (NFS via Services for NFS, WebDAV, unknown).
+        if (isNtfsName || isReFSName || isFatName) {
+            strcpy((char *) lpszName, "SMB");
+            return MAGIC_SMB | FLAG_FS_SUPPORTED;
+        }
+        strcpy((char *) lpszName, fileSystemName);
+        return MAGIC_REMOTE_OTHER | FLAG_FS_SUPPORTED | FLAG_FS_HARD_FAIL;
+    }
+
+    // Local volume.
+    strcpy((char *) lpszName, fileSystemName);
+    if (isNtfsName) {
+        return MAGIC_NTFS_LOCAL | FLAG_FS_SUPPORTED | FLAG_FS_MMAP_SAFE;
+    }
+    if (isReFSName) {
+        return MAGIC_REFS_LOCAL | FLAG_FS_SUPPORTED | FLAG_FS_MMAP_SAFE;
+    }
+    if (isFatName) {
+        // FAT family is local but not mmap-safe; require commit.mode=sync.
+        return MAGIC_FAT_LOCAL | FLAG_FS_SUPPORTED;
+    }
+    // Local volume with a real filesystem name we don't recognise (e.g. a
+    // third-party driver). Treat it as supported-but-not-mmap-safe so the gate
+    // requires commit.mode=sync, matching the Linux "recognised but unclassified"
+    // path. Without FLAG_FS_SUPPORTED, the startup log would say "UNSUPPORTED"
+    // and /warnings would tag UNSUPPORTED FILE SYSTEM, even though the gate
+    // accepts the volume with commit.mode=sync.
+    return MAGIC_LOCAL_UNKNOWN | FLAG_FS_SUPPORTED;
 }
 
 JNIEXPORT jint JNICALL Java_io_questdb_std_Files_openRO(JNIEnv *e, jclass cl, jlong lpszName) {

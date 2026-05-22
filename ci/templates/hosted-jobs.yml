@@ -184,6 +184,19 @@ jobs:
           excludeTests: "**/**Fuzz**,**/cairo/o3/**,**/cairo/mv/**"
           javadoc_step: ""
           javadoc_profile: ""
+        # Focused subset that runs against a ReFS-formatted virtual disk attached as R:
+        # to validate the Windows mmap-safe whitelist. See steps.yml "Mount ReFS volume".
+        windows-refs-bootstrap:
+          imageName: "windows-latest"
+          poolName: "Azure Pipelines"
+          os: Windows
+          jdk: "1.25"
+          testset: "all"
+          includeTests: "**/BootstrapTest*,**/cairo/TableWriter*Test*,**/cairo/TableReader*Test*"
+          excludeTests: "**/**Fuzz**"
+          javadoc_step: ""
+          javadoc_profile: ""
+          mountRefs: "true"
 
     pool:
       vmImage: $(imageName)

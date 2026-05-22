@@ -27,6 +27,7 @@ package io.questdb.test;
 import io.questdb.Bootstrap;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.DefaultCairoConfiguration;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -46,6 +47,7 @@ import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
+import org.junit.Assume;
 import org.junit.Test;
 
 import java.io.File;
@@ -116,6 +118,144 @@ public class BootstrapTest extends AbstractBootstrapTest {
             Assert.fail();
         } catch (Bootstrap.BootstrapException thr) {
             TestUtils.assertContains(thr.getMessage(), "Arguments expected, non provided");
+        }
+    }
+
+    @Test
+    public void testCheckMmapSafeAllowsMmapSafeFs() {
+        // ext4 with the mmap-safe bit set must pass for any commit mode.
+        long ext4 = 0xEF53L | Files.FLAG_FS_SUPPORTED | Files.FLAG_FS_MMAP_SAFE;
+        Bootstrap.checkMmapSafeOrSync(ext4, "ext4", CommitMode.ASYNC, false, "/some/path", "db");
+        Bootstrap.checkMmapSafeOrSync(ext4, "ext4", CommitMode.NOSYNC, false, "/some/path", "db");
+        Bootstrap.checkMmapSafeOrSync(ext4, "ext4", CommitMode.SYNC, false, "/some/path", "db");
+    }
+
+    @Test
+    public void testCheckMmapSafeAllowsMacAarch64ZeroStatfs() {
+        // Some macOS-aarch64 hosted runners surface fsStatus=0 from statfs() even though
+        // the filesystem is APFS. verifyFileSystem treats that as SUPPORTED for logging,
+        // so the gate must agree -- otherwise startup logs "SUPPORTED" and then throws
+        // "Unsupported Filesystem Configuration" immediately after.
+        Assume.assumeTrue(Os.type == Os.DARWIN && Os.arch == Os.ARCH_AARCH64);
+        Bootstrap.checkMmapSafeOrSync(0L, "apfs", CommitMode.NOSYNC, false, "/db", "db");
+    }
+
+    @Test
+    public void testCheckMmapSafeAllowsSyncOnUnsafeFs() {
+        // 9p, virtiofs, FUSE, SMB etc. are recognised but not mmap-safe. SYNC always passes.
+        long v9fs = 0x01021997L | Files.FLAG_FS_SUPPORTED;
+        Bootstrap.checkMmapSafeOrSync(v9fs, "V9FS", CommitMode.SYNC, false, "/9p/mount", "db");
+        long virtiofs = 0x12345678L | Files.FLAG_FS_SUPPORTED;
+        Bootstrap.checkMmapSafeOrSync(virtiofs, "virtiofs", CommitMode.SYNC, false, "/virtio/mount", "db");
+    }
+
+    @Test
+    public void testCheckMmapSafeBangOverrideBypassesGate() {
+        long v9fs = 0x01021997L | Files.FLAG_FS_SUPPORTED;
+        // commitModeForced=true must allow nosync/async on a non-mmap-safe FS without throwing.
+        Bootstrap.checkMmapSafeOrSync(v9fs, "V9FS", CommitMode.NOSYNC, true, "/9p/mount", "db");
+        Bootstrap.checkMmapSafeOrSync(v9fs, "V9FS", CommitMode.ASYNC, true, "/9p/mount", "db");
+    }
+
+    @Test
+    public void testCheckMmapSafeBangOverrideCannotBypassHardFail() {
+        long nfs = (long) Files.NFS_MAGIC | Files.FLAG_FS_SUPPORTED | Files.FLAG_FS_HARD_FAIL;
+        try {
+            Bootstrap.checkMmapSafeOrSync(nfs, "NFS", CommitMode.SYNC, true, "/nfs/mount", "db");
+            Assert.fail("expected BootstrapException");
+        } catch (Bootstrap.BootstrapException e) {
+            TestUtils.assertContains(e.getMessage(), "fundamentally incompatible");
+            TestUtils.assertContains(e.getMessage(), "fs=NFS");
+        }
+    }
+
+    @Test
+    public void testCheckMmapSafeRejectsHardFailFs() {
+        long nfs = (long) Files.NFS_MAGIC | Files.FLAG_FS_SUPPORTED | Files.FLAG_FS_HARD_FAIL;
+        try {
+            Bootstrap.checkMmapSafeOrSync(nfs, "NFS", CommitMode.SYNC, false, "/nfs/mount", "db");
+            Assert.fail("expected BootstrapException");
+        } catch (Bootstrap.BootstrapException e) {
+            TestUtils.assertContains(e.getMessage(), "fundamentally incompatible");
+            TestUtils.assertContains(e.getMessage(), "fs=NFS");
+        }
+    }
+
+    @Test
+    public void testCheckMmapSafeRejectsUnsafeFsAsync() {
+        long v9fs = 0x01021997L | Files.FLAG_FS_SUPPORTED;
+        try {
+            Bootstrap.checkMmapSafeOrSync(v9fs, "V9FS", CommitMode.ASYNC, false, "/9p/mount", "db");
+            Assert.fail("expected BootstrapException");
+        } catch (Bootstrap.BootstrapException e) {
+            TestUtils.assertContains(e.getMessage(), "not on the mmap-safe whitelist");
+            TestUtils.assertContains(e.getMessage(), "cairo.commit.mode");
+            TestUtils.assertContains(e.getMessage(), "fs=V9FS");
+        }
+    }
+
+    @Test
+    public void testCheckMmapSafeRejectsUnsafeFsNosync() {
+        long virtiofs = 0x12345678L | Files.FLAG_FS_SUPPORTED;
+        try {
+            Bootstrap.checkMmapSafeOrSync(virtiofs, "virtiofs", CommitMode.NOSYNC, false, "/virtio/mount", "checkpoint");
+            Assert.fail("expected BootstrapException");
+        } catch (Bootstrap.BootstrapException e) {
+            TestUtils.assertContains(e.getMessage(), "not on the mmap-safe whitelist");
+            TestUtils.assertContains(e.getMessage(), "checkpoint");
+            TestUtils.assertContains(e.getMessage(), "fs=virtiofs");
+        }
+    }
+
+    @Test
+    public void testCheckMmapSafeBangIsNoOpOnSafeFs() {
+        // The bang override must not throw or have side-effects when the FS is already
+        // on the mmap-safe whitelist; the warning path must not be reached.
+        long ext4 = 0xEF53L | Files.FLAG_FS_SUPPORTED | Files.FLAG_FS_MMAP_SAFE;
+        Bootstrap.checkMmapSafeOrSync(ext4, "ext4", CommitMode.NOSYNC, true, "/path", "db");
+        Bootstrap.checkMmapSafeOrSync(ext4, "ext4", CommitMode.ASYNC, true, "/path", "db");
+        Bootstrap.checkMmapSafeOrSync(ext4, "ext4", CommitMode.SYNC, true, "/path", "db");
+    }
+
+    @Test
+    public void testCheckMmapSafePropagatesKindIntoVolumeError() {
+        // Volume errors carry an alias-decorated kind like "create table allowed volume [vol1]";
+        // the message must surface that verbatim so operators know which volume is at fault.
+        long virtiofs = 0x12345678L | Files.FLAG_FS_SUPPORTED;
+        try {
+            Bootstrap.checkMmapSafeOrSync(virtiofs, "virtiofs", CommitMode.NOSYNC, false,
+                    "/mnt/vol1", "create table allowed volume [vol1]");
+            Assert.fail("expected BootstrapException");
+        } catch (Bootstrap.BootstrapException e) {
+            TestUtils.assertContains(e.getMessage(), "create table allowed volume [vol1]");
+            TestUtils.assertContains(e.getMessage(), "/mnt/vol1");
+            TestUtils.assertContains(e.getMessage(), "fs=virtiofs");
+        }
+    }
+
+    @Test
+    public void testCheckMmapSafeRejectsHardFailWithoutSupportedBit() {
+        // The HARD_FAIL bit alone is enough to block startup; SUPPORTED is informational
+        // and must not be required for the hard-fail branch to fire.
+        long mystery = 0x99L | Files.FLAG_FS_HARD_FAIL;
+        try {
+            Bootstrap.checkMmapSafeOrSync(mystery, "REMOTE", CommitMode.SYNC, false, "/x", "db");
+            Assert.fail("expected BootstrapException");
+        } catch (Bootstrap.BootstrapException e) {
+            TestUtils.assertContains(e.getMessage(), "fundamentally incompatible");
+            TestUtils.assertContains(e.getMessage(), "fs=REMOTE");
+        }
+    }
+
+    @Test
+    public void testCheckMmapSafeRejectsUnknownFsAsync() {
+        // No FLAG_FS_SUPPORTED bit set -- the gate must still fire (default: require sync).
+        long unknown = 0xdeadbeefL;
+        try {
+            Bootstrap.checkMmapSafeOrSync(unknown, "unknown", CommitMode.NOSYNC, false, "/path", "db");
+            Assert.fail("expected BootstrapException");
+        } catch (Bootstrap.BootstrapException e) {
+            TestUtils.assertContains(e.getMessage(), "not on the mmap-safe whitelist");
         }
     }
 

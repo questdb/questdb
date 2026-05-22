@@ -51,6 +51,15 @@ public final class Files {
     public static final int FILES_RENAME_ERR_EXDEV = 1;
     public static final int FILES_RENAME_ERR_OTHER = 2;
     public static final int FILES_RENAME_OK = 0;
+    /**
+     * Filesystem status flag bits. The native side packs these into the high bits of the
+     * jlong return value of {@link #getFileSystemStatus(LPSZ)}, alongside the raw 32-bit
+     * filesystem magic / type code in the low bits. A return value of {@code 0} means the
+     * underlying {@code statfs()} (or Windows equivalent) call failed.
+     */
+    public static final long FLAG_FS_HARD_FAIL = 1L << 34;
+    public static final long FLAG_FS_MMAP_SAFE = 1L << 33;
+    public static final long FLAG_FS_SUPPORTED = 1L << 32;
     public static final int MAP_RO = 1;
     public static final int MAP_RW = 2;
     public static final int NFS_MAGIC = 0x6969;
@@ -71,7 +80,6 @@ public final class Files {
     public static final int TMPFS_MAGIC = 0x01021994;
     public static final Charset UTF_8;
     public static final int WINDOWS_ERROR_FILE_EXISTS = 0x50;
-    private static final int VIRTIO_FS_MAGIC = 0x6a656a63;
     private static final FdCache fdCache = new FdCache();
     private static final MmapCache mmapCache = MmapCache.INSTANCE;
     public static boolean ASYNC_MUNMAP_ENABLED = false;
@@ -225,17 +233,33 @@ public final class Files {
     public native static long getFileLimit();
 
     /**
-     * Detects if filesystem is supported by QuestDB. The function returns both FS magic and name. Both
-     * can be presented to user even if file system is not supported.
+     * Detects the filesystem at the given path and returns a packed status with the
+     * filesystem magic in the low 32 bits and the {@code FLAG_FS_*} bits in the high
+     * 32 bits. Writes the human-readable filesystem name into the {@code lpszName}
+     * buffer, which must have at least 128 bytes of capacity.
      *
-     * @param lpszName existing path on the file system. The name of the filesystem is written to this
-     *                 address, therefore name should have at least 128 byte capacity
-     * @return 0 when OS call failed, errno should be checked. Negative number is file system magic that is supported
-     * positive number is magic that is not supported.
+     * @return 0 when the underlying OS call failed (caller may check {@code Os.errno()});
+     * otherwise a non-zero packed value. Use {@link #isSupported(long)},
+     * {@link #isMmapSafe(long)} and {@link #isHardFail(long)} to inspect the flags.
      */
-    public static int getFileSystemStatus(LPSZ lpszName) {
-        int status = getFileSystemStatus(lpszName.ptr());
-        if (status == VIRTIO_FS_MAGIC) {
+    public static long getFileSystemStatus(LPSZ lpszName) {
+        final long ptr = lpszName.ptr();
+        long status = getFileSystemStatus(ptr);
+        // The TableUtils.lock() touch-workaround needs to know if the data lives on a
+        // VirtIO-FS (Docker Desktop on macOS). On success the native call overwrites
+        // the path buffer with the filesystem name as a null-terminated string; on
+        // failure (status == 0) the buffer is unchanged and may still hold the
+        // original path bytes, so guard the byte-level probe behind that.
+        if (status != 0
+                && Unsafe.getByte(ptr) == 'v'
+                && Unsafe.getByte(ptr + 1) == 'i'
+                && Unsafe.getByte(ptr + 2) == 'r'
+                && Unsafe.getByte(ptr + 3) == 't'
+                && Unsafe.getByte(ptr + 4) == 'i'
+                && Unsafe.getByte(ptr + 5) == 'o'
+                && Unsafe.getByte(ptr + 6) == 'f'
+                && Unsafe.getByte(ptr + 7) == 's'
+                && Unsafe.getByte(ptr + 8) == 0) {
             VIRTIO_FS_DETECTED = true;
         }
         return status;
@@ -317,10 +341,22 @@ public final class Files {
                 (Os.isWindows() && errno == CairoException.ERRNO_FILE_DOES_NOT_EXIST_WIN);
     }
 
+    public static boolean isHardFail(long fsStatus) {
+        return (fsStatus & FLAG_FS_HARD_FAIL) != 0;
+    }
+
+    public static boolean isMmapSafe(long fsStatus) {
+        return (fsStatus & FLAG_FS_MMAP_SAFE) != 0;
+    }
+
     public native static boolean isSoftLink(long lpszPath);
 
     public static boolean isSoftLink(LPSZ path) {
         return isSoftLink(path.ptr());
+    }
+
+    public static boolean isSupported(long fsStatus) {
+        return (fsStatus & FLAG_FS_SUPPORTED) != 0;
     }
 
     public static long length(LPSZ lpsz) {
@@ -644,7 +680,7 @@ public final class Files {
 
     private static native long getDiskSize(long lpszPath);
 
-    private static native int getFileSystemStatus(long lpszName);
+    private static native long getFileSystemStatus(long lpszName);
 
     private native static long getLastModified(long lpszName);
 

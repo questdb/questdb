@@ -34,6 +34,7 @@ import io.questdb.ServerConfiguration;
 import io.questdb.ServerMain;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.DefaultCairoConfiguration;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.Record;
@@ -44,6 +45,7 @@ import io.questdb.cutlass.http.client.HttpClientFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.str.LPSZ;
@@ -84,6 +86,30 @@ public class WarningsEndpointTest extends AbstractBootstrapTest {
     }
 
     @Test
+    public void testFileSystemRequiresSyncWarningWithOverride() throws Exception {
+        // Filesystem is recognised but not mmap-safe (e.g. v9fs, smb, virtiofs). Operator
+        // started QuestDB with cairo.commit.mode=!nosync, accepting the durability risk.
+        // The web console must surface the same DURABILITY WARNING that Bootstrap logs.
+        final long fsStatus = 0x01021994L | Files.FLAG_FS_SUPPORTED;
+        testWarningsWithProps(fsStatus, 1048576L, 1048576L, CommitMode.NOSYNC, "[" +
+                "{" +
+                "\"tag\":\"" + FILE_SYSTEM_REQUIRES_SYNC.text() + "\"," +
+                "\"warning\":\"Filesystem is not mmap-safe and commit.mode is not sync; "
+                + "data loss or silent corruption is possible [dir=" + root + ", magic=0x01021994]\"" +
+                "}" +
+                "]");
+    }
+
+    @Test
+    public void testFileSystemSupportedNoWarningWithSyncMode() throws Exception {
+        // Filesystem is recognised but not mmap-safe AND commit.mode=sync. Bootstrap accepts
+        // this combination as SUPPORTED (REQUIRES commit.mode=sync); the web console must not
+        // contradict it with an "Unsupported file system" warning.
+        final long fsStatus = 0x01021994L | Files.FLAG_FS_SUPPORTED;
+        testWarningsWithProps(fsStatus, 1048576L, 1048576L, CommitMode.SYNC, "[]");
+    }
+
+    @Test
     public void testFileSystemWarning() throws Exception {
         testWarningsWithProps(25600, 1048576L, 1048576L, "[" +
                 "{" +
@@ -95,7 +121,7 @@ public class WarningsEndpointTest extends AbstractBootstrapTest {
 
     @Test
     public void testMaxMapCountWarning() throws Exception {
-        testWarningsWithProps(-200, 4194304L, 65536L, "[" +
+        testWarningsWithProps(0xEF53L | Files.FLAG_FS_SUPPORTED | Files.FLAG_FS_MMAP_SAFE, 4194304L, 65536L, "[" +
                 "{" +
                 "\"tag\":\"" + OUT_OF_MMAP_AREAS.text() + "\"," +
                 "\"warning\":\"vm.max_map_count limit is too low [current=65536, recommended=1048576]\"" +
@@ -105,7 +131,7 @@ public class WarningsEndpointTest extends AbstractBootstrapTest {
 
     @Test
     public void testMixedWarnings() throws Exception {
-        testWarningsWithProps(-55, 10240L, 4096L, "[" +
+        testWarningsWithProps(0xEF53L | Files.FLAG_FS_SUPPORTED | Files.FLAG_FS_MMAP_SAFE, 10240L, 4096L, "[" +
                 "{" +
                 "\"tag\":\"" + TOO_MANY_OPEN_FILES.text() + "\"," +
                 "\"warning\":\"fs.file-max limit is too low [current=10240, recommended=1048576]\"" +
@@ -118,12 +144,12 @@ public class WarningsEndpointTest extends AbstractBootstrapTest {
 
     @Test
     public void testNoWarnings() throws Exception {
-        testWarningsWithProps(-256, 1048576L, 1048576L, "[]");
+        testWarningsWithProps(0xEF53L | Files.FLAG_FS_SUPPORTED | Files.FLAG_FS_MMAP_SAFE, 1048576L, 1048576L, "[]");
     }
 
     @Test
     public void testOpenFilesWarning() throws Exception {
-        testWarningsWithProps(-100, 1024L, 1048576L, "[" +
+        testWarningsWithProps(0xEF53L | Files.FLAG_FS_SUPPORTED | Files.FLAG_FS_MMAP_SAFE, 1024L, 1048576L, "[" +
                 "{" +
                 "\"tag\":\"" + TOO_MANY_OPEN_FILES.text() + "\"," +
                 "\"warning\":\"fs.file-max limit is too low [current=1024, recommended=1048576]\"" +
@@ -241,7 +267,7 @@ public class WarningsEndpointTest extends AbstractBootstrapTest {
 
     @Test
     public void testZeroLimits() throws Exception {
-        testWarningsWithProps(-256, 0L, 0L, "[]");
+        testWarningsWithProps(0xEF53L | Files.FLAG_FS_SUPPORTED | Files.FLAG_FS_MMAP_SAFE, 0L, 0L, "[]");
     }
 
     private static void setWarning(CairoEngine engine, String tag, String warning) throws SqlException {
@@ -270,7 +296,11 @@ public class WarningsEndpointTest extends AbstractBootstrapTest {
         TestUtils.assertResponse(request, 200, expectedHttpResponse);
     }
 
-    private void testWarningsWithProps(int fsMagic, long openFilesLimit, long mapCountLimit, String expectedWarnings) throws Exception {
+    private void testWarningsWithProps(long fsMagic, long openFilesLimit, long mapCountLimit, String expectedWarnings) throws Exception {
+        testWarningsWithProps(fsMagic, openFilesLimit, mapCountLimit, CommitMode.NOSYNC, expectedWarnings);
+    }
+
+    private void testWarningsWithProps(long fsMagic, long openFilesLimit, long mapCountLimit, int commitMode, String expectedWarnings) throws Exception {
         final Bootstrap bootstrap = new Bootstrap(
                 new PropBootstrapConfiguration() {
                     @Override
@@ -283,11 +313,16 @@ public class WarningsEndpointTest extends AbstractBootstrapTest {
                                 bootstrap.getBuildInformation(),
                                 new FilesFacadeImpl(),
                                 bootstrap.getMicrosecondClock(),
-                                (configuration, engine, freeOnExit) -> new FactoryProviderImpl(configuration)
+                                (configuration, _, _) -> new FactoryProviderImpl(configuration)
                         ) {
                             @Override
                             public CairoConfiguration getCairoConfiguration() {
                                 return new DefaultCairoConfiguration(bootstrap.getRootDirectory()) {
+                                    @Override
+                                    public int getCommitMode() {
+                                        return commitMode;
+                                    }
+
                                     @Override
                                     public @NotNull FilesFacade getFilesFacade() {
                                         return new FilesFacadeImpl() {
@@ -297,7 +332,7 @@ public class WarningsEndpointTest extends AbstractBootstrapTest {
                                             }
 
                                             @Override
-                                            public int getFileSystemStatus(LPSZ lpszName) {
+                                            public long getFileSystemStatus(LPSZ lpszName) {
                                                 return fsMagic;
                                             }
 

@@ -8,6 +8,7 @@ import org.jetbrains.annotations.NotNull;
 public enum ErrorTag {
     NONE(""),
     UNSUPPORTED_FILE_SYSTEM("UNSUPPORTED FILE SYSTEM"),
+    FILE_SYSTEM_REQUIRES_SYNC("FILE SYSTEM REQUIRES SYNC"),
     DISK_FULL("DISK FULL"),
     TOO_MANY_OPEN_FILES("TOO MANY OPEN FILES"),
     OUT_OF_MMAP_AREAS("OUT OF MMAP AREAS"),
@@ -37,30 +38,21 @@ public enum ErrorTag {
     }
 
     static ErrorTag linux(int code) {
-        switch (code) {
-            case 28:
-                return DISK_FULL;
-            case 24:
-                return TOO_MANY_OPEN_FILES;
-            case 12:
-                return OUT_OF_MMAP_AREAS;
-            default:
-                return NONE;
-        }
+        return switch (code) {
+            case 28 -> DISK_FULL;
+            case 24 -> TOO_MANY_OPEN_FILES;
+            case 12 -> OUT_OF_MMAP_AREAS;
+            default -> NONE;
+        };
     }
 
     static ErrorTag windows(int code) {
-        switch (code) {
-            case 39:
-            case 112:
-                return DISK_FULL;
-            case 4:
-                return TOO_MANY_OPEN_FILES;
-            case 8:
-                return OUT_OF_MMAP_AREAS;
-            default:
-                return NONE;
-        }
+        return switch (code) {
+            case 39, 112 -> DISK_FULL;
+            case 4 -> TOO_MANY_OPEN_FILES;
+            case 8 -> OUT_OF_MMAP_AREAS;
+            default -> NONE;
+        };
     }
 
     static {

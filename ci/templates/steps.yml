@@ -146,13 +146,40 @@ steps:
         eq(variables['testset'], 'none'),
         eq(variables['SOURCE_CODE_CHANGED'], 'false')
       )
+  # ReFS validation: create a VHDX, format it ReFS, mount as R:, and steer the JUnit
+  # TemporaryFolder onto it via java.io.tmpdir so storage tests exercise the ReFS path
+  # of the Windows filesystem detector. Runs only on the windows-refs-bootstrap matrix
+  # entry.
+  - powershell: |
+      $vhd = Join-Path $env:AGENT_TEMPDIRECTORY 'refs.vhdx'
+      $script = Join-Path $env:AGENT_TEMPDIRECTORY 'refs-mount.diskpart'
+      Write-Host "Creating ReFS-formatted VHDX at $vhd (2 GiB sparse)"
+      @(
+          "create vdisk file=$vhd maximum=2048 type=expandable",
+          "select vdisk file=$vhd",
+          "attach vdisk",
+          "create partition primary",
+          "format fs=refs label=qdb-refs quick",
+          "assign letter=R"
+      ) | Out-File -FilePath $script -Encoding ascii
+      diskpart /s $script
+      if ($LASTEXITCODE -ne 0) {
+          Write-Error "diskpart failed with exit code $LASTEXITCODE"
+          exit 1
+      }
+      New-Item -ItemType Directory -Force -Path 'R:\tmp' | Out-Null
+      Write-Host "##vso[task.setvariable variable=JAVA_TMPDIR_OPT]-Djava.io.tmpdir=R:\tmp"
+      fsutil fsinfo volumeinfo R:
+    displayName: "Mount ReFS volume"
+    condition: eq(variables['mountRefs'], 'true')
+
   - task: Maven@3
     displayName: "Run tests"
     inputs:
       mavenVersionOption: "$(MAVEN_VERSION_OPTION)"
       mavenDirectory: "$(build.sourcesdirectory)/maven/apache-maven-$(MAVEN_VERSION)"
       mavenPomFile: "pom.xml"
-      mavenOptions: "-Xlog:gc -Dfile.encoding=UTF-8 $(MAVEN_OPTS)"
+      mavenOptions: "-Xlog:gc -Dfile.encoding=UTF-8 $(MAVEN_OPTS) $(JAVA_TMPDIR_OPT)"
       goals: "clean test"
       options: "--batch-mode --quiet $(TEST_REACTOR_ARGS) -Dtest.include=$(includeTests)
         -Dtest.exclude=$(excludeTests)

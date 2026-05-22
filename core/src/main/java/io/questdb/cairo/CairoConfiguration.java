@@ -944,6 +944,16 @@ public interface CairoConfiguration {
      */
     boolean isColumnAliasExpressionEnabled();
 
+    /**
+     * Returns true when {@code cairo.commit.mode} was given with a leading {@code !},
+     * meaning the operator has explicitly opted out of the startup filesystem-safety
+     * gate that would otherwise force {@code commit.mode=sync} on filesystems where
+     * mmap'd writeback is not durable. Defaults to false.
+     */
+    default boolean isCommitModeForced() {
+        return false;
+    }
+
     boolean isCopierChunkedEnabled();
 
     boolean isDevModeEnabled();

@@ -26,6 +26,7 @@ package io.questdb;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cutlass.http.HttpFullFatServerConfiguration;
@@ -119,7 +120,7 @@ public class Bootstrap {
         }
 
         if (argsMap.get("-n") == null && Os.type != Os.WINDOWS) {
-            Signal.handle(new Signal("HUP"), signal -> { /* suppress HUP signal */ });
+            Signal.handle(new Signal("HUP"), _ -> { /* suppress HUP signal */ });
         }
 
         // before we set up the logger, we need to copy the conf file
@@ -202,7 +203,7 @@ public class Bootstrap {
                             buildInformation,
                             ffOverride,
                             MicrosecondClockImpl.INSTANCE,
-                            (configuration1, engine, freeOnExit) -> DefaultFactoryProvider.INSTANCE,
+                            (_, _, _) -> DefaultFactoryProvider.INSTANCE,
                             true
                     );
                 }
@@ -449,9 +450,7 @@ public class Bootstrap {
         int colWidth = 32;
         // Insert at least one space between columns
         sb.append("  ");
-        for (int i = headerWidth + 2; i < colWidth; i++) {
-            sb.append(' ');
-        }
+        sb.repeat(" ", Math.max(0, colWidth - (headerWidth + 2)));
     }
 
     private static void setPublicVersion(String publicDir, String version) throws IOException {
@@ -569,13 +568,15 @@ public class Bootstrap {
                 log.advisoryW().$(" - THIS IS READ ONLY INSTANCE").$();
             }
             try (Path path = new Path()) {
-                verifyFileSystem(path, cairoConfig.getDbRoot(), "db", true, true);
-                verifyFileSystem(path, cairoConfig.getCheckpointRoot(), TableUtils.CHECKPOINT_DIRECTORY, true, false);
-                verifyFileSystem(path, cairoConfig.getLegacyCheckpointRoot(), TableUtils.LEGACY_CHECKPOINT_DIRECTORY, false, false);
-                verifyFileSystem(path, cairoConfig.getSqlCopyInputRoot(), "sql copy input", false, false);
-                verifyFileSystem(path, cairoConfig.getSqlCopyInputWorkRoot(), "sql copy input worker", true, false);
+                final int commitMode = cairoConfig.getCommitMode();
+                final boolean commitModeForced = cairoConfig.isCommitModeForced();
+                verifyFileSystem(path, cairoConfig.getDbRoot(), "db", true, true, commitMode, commitModeForced);
+                verifyFileSystem(path, cairoConfig.getCheckpointRoot(), TableUtils.CHECKPOINT_DIRECTORY, true, false, commitMode, commitModeForced);
+                verifyFileSystem(path, cairoConfig.getLegacyCheckpointRoot(), TableUtils.LEGACY_CHECKPOINT_DIRECTORY, false, false, commitMode, commitModeForced);
+                verifyFileSystem(path, cairoConfig.getSqlCopyInputRoot(), "sql copy input", false, false, commitMode, commitModeForced);
+                verifyFileSystem(path, cairoConfig.getSqlCopyInputWorkRoot(), "sql copy input worker", true, false, commitMode, commitModeForced);
                 verifyFileOpts(path, cairoConfig);
-                cairoConfig.getVolumeDefinitions().forEach((alias, volumePath) -> verifyFileSystem(path, volumePath, "create table allowed volume [" + alias + ']', true, false));
+                cairoConfig.getVolumeDefinitions().forEach((alias, volumePath) -> verifyFileSystem(path, volumePath, "create table allowed volume [" + alias + ']', true, false, commitMode, commitModeForced));
             }
             if (JitUtil.isJitSupported()) {
                 final int jitMode = cairoConfig.getSqlJitMode();
@@ -644,39 +645,117 @@ public class Bootstrap {
         }
     }
 
-    private void verifyFileSystem(Path path, CharSequence rootDir, String kind, boolean failOnNfs, boolean logUnstable) {
+    /**
+     * @param dataPath whether QuestDB writes long-lived mmap'd data here (db, checkpoint,
+     *                 configured volumes). When true, applies {@link #checkMmapSafeOrSync}.
+     *                 False for read-only paths like {@code sql copy input} and the legacy
+     *                 checkpoint dir, which are not gated.
+     */
+    private void verifyFileSystem(Path path, CharSequence rootDir, String kind, boolean dataPath, boolean logUnstable, int commitMode, boolean commitModeForced) {
         if (rootDir == null) {
             log.advisoryW().$(" - ").$(kind).$(" root: NOT SET").$();
             return;
         }
         path.of(rootDir);
 
-        // path will contain file system name
-        if (Files.exists(path.$())) {
-            final long fsStatus = Files.getFileSystemStatus(path.$());
-            path.seekZ();
-            LogRecord rec = log.advisoryW().$(" - ").$(kind).$(" root: [path=").$(rootDir).$(", magic=0x");
-            if (fsStatus < 0 || (fsStatus == 0 && Os.type == Os.DARWIN && Os.arch == Os.ARCH_AARCH64)) {
-                rec.$hex(-fsStatus).$(", fs=").$(path).$("] -> SUPPORTED").$();
-            } else {
-                rec.$hex(fsStatus).$(", fs=").$(path);
-                if (logUnstable) {
-                    rec.$("] -> UNSUPPORTED (SYSTEM COULD BE UNSTABLE)").$();
-                } else {
-                    rec.$("] -> UNSUPPORTED").$();
-                }
-            }
-
-            if (failOnNfs && fsStatus == Files.NFS_MAGIC) {
-                throw new BootstrapException("Error: Unsupported Filesystem Detected. " + Misc.EOL
-                        + "QuestDB cannot start because the '" + rootDirectory + "' is located on an NFS filesystem, "
-                        + "which is not supported. Please relocate your '" + kind + " root' to a supported filesystem to continue. " + Misc.EOL
-                        + "For a list of supported filesystems and further guidance, please visit: https://questdb.io/docs/deployment/capacity-planning/#supported-filesystems "
-                        + "[path=" + rootDir + ", kind=" + kind + ", fs=NFS]", true);
-            }
-        } else {
+        if (!Files.exists(path.$())) {
             log.info().$(" - ").$(kind).$(" root: [path=").$(rootDir).$("] -> NOT FOUND").$();
+            return;
         }
+
+        // The native side overwrites the path buffer with the filesystem name.
+        final long fsStatus = Files.getFileSystemStatus(path.$());
+        path.seekZ();
+        // Treat a zero fsStatus on macOS ARM as supported - statfs() can return 0 on
+        // some hosted runners where APFS is otherwise correctly identified.
+        final boolean macSpecial = fsStatus == 0 && Os.type == Os.DARWIN && Os.arch == Os.ARCH_AARCH64;
+        final boolean mmapSafe = Files.isMmapSafe(fsStatus) || macSpecial;
+        final boolean supported = Files.isSupported(fsStatus) || macSpecial;
+        final boolean hardFail = Files.isHardFail(fsStatus);
+        final long magic = fsStatus & 0xFFFFFFFFL;
+
+        LogRecord rec = log.advisoryW().$(" - ").$(kind).$(" root: [path=").$(rootDir).$(", magic=0x");
+        rec.$hex(magic).$(", fs=").$(path);
+        if (hardFail) {
+            rec.$("] -> INCOMPATIBLE").$();
+        } else if (mmapSafe) {
+            rec.$("] -> SUPPORTED").$();
+        } else if (supported) {
+            rec.$("] -> SUPPORTED (REQUIRES commit.mode=sync)").$();
+        } else if (logUnstable) {
+            rec.$("] -> UNSUPPORTED (SYSTEM COULD BE UNSTABLE)").$();
+        } else {
+            rec.$("] -> UNSUPPORTED").$();
+        }
+
+        if (dataPath) {
+            checkMmapSafeOrSync(fsStatus, path.toString(), commitMode, commitModeForced, rootDir, kind);
+        }
+    }
+
+    /**
+     * Gate for data-path roots (db, checkpoint, configured volumes). Three outcomes:
+     * <ol>
+     * <li>The filesystem carries {@link Files#FLAG_FS_HARD_FAIL} (e.g. NFS, Windows DRIVE_REMOTE
+     *     that we cannot identify as SMB) — refuse to start. msync alone cannot make these
+     *     durable enough.</li>
+     * <li>The filesystem is on the mmap-safe whitelist — proceed.</li>
+     * <li>Anything else — require {@code cairo.commit.mode=sync}, which forces an msync(MS_SYNC)
+     *     after each commit. Operators who accept the risk can prefix the value with {@code !}
+     *     to override (e.g. {@code commit.mode=!nosync}); a loud warning is logged.</li>
+     * </ol>
+     * Static so unit tests can drive it with a synthetic fsStatus without needing
+     * a real exotic mount.
+     */
+    public static void checkMmapSafeOrSync(long fsStatus, String fsName, int commitMode, boolean commitModeForced, CharSequence rootDir, String kind) {
+        // Treat fsStatus==0 on macOS ARM as supported - statfs() can return 0 on some
+        // hosted runners where APFS is otherwise correctly identified. Mirrors the log
+        // path in verifyFileSystem; without this, the log says SUPPORTED but the gate
+        // would throw "Unsupported Filesystem Configuration" right after.
+        if (fsStatus == 0 && Os.type == Os.DARWIN && Os.arch == Os.ARCH_AARCH64) {
+            return;
+        }
+        if (Files.isHardFail(fsStatus)) {
+            if (commitModeForced) {
+                // Not even ! lets you start on NFS / WebDAV / unidentified remote shares.
+                LogFactory.getLog(LOG_NAME).advisoryW()
+                        .$("commit.mode override is ignored for incompatible filesystem [path=").$(rootDir)
+                        .$(", kind=").$(kind).$(", fs=").$(fsName).I$();
+            }
+            throw new BootstrapException("Error: Incompatible Filesystem Detected. " + Misc.EOL
+                    + "QuestDB cannot start because the '" + kind + " root' is on a filesystem that is "
+                    + "fundamentally incompatible with mmap-based storage (e.g. NFS, an unrecognised network mount). "
+                    + "msync alone is not sufficient to make these durable, so commit.mode=sync will not help. " + Misc.EOL
+                    + "Please relocate the '" + kind + " root' to a supported filesystem. " + Misc.EOL
+                    + "For a list of supported filesystems and further guidance, please visit: https://questdb.io/docs/deployment/capacity-planning/#supported-filesystems "
+                    + "[path=" + rootDir + ", kind=" + kind + ", fs=" + fsName + "]", true);
+        }
+        if (Files.isMmapSafe(fsStatus)) {
+            return;
+        }
+        if (commitMode == CommitMode.SYNC) {
+            return;
+        }
+        if (commitModeForced) {
+            LogFactory.getLog(LOG_NAME).advisoryW()
+                    .$("DURABILITY WARNING: commit.mode override active on a non-mmap-safe filesystem; "
+                            + "data loss / silent corruption is possible. [path=").$(rootDir)
+                    .$(", kind=").$(kind).$(", fs=").$(fsName)
+                    .$(", mode=").$(commitMode == CommitMode.NOSYNC ? "nosync" : "async").I$();
+            return;
+        }
+        throw new BootstrapException("Error: Unsupported Filesystem Configuration Detected. " + Misc.EOL
+                + "QuestDB cannot start because the '" + kind + " root' is on a filesystem that is not "
+                + "on the mmap-safe whitelist, and 'cairo.commit.mode' is not set to 'sync'. " + Misc.EOL
+                + "On such filesystems, mmap'd writes may be buffered in a client page cache and silently "
+                + "never reach the underlying file, causing corruption (e.g. numeric columns appearing as "
+                + "zero on disk). 9p (Docker Desktop bind mount on WSL2) and VirtIO-FS (Docker Desktop on "
+                + "macOS) are the most common examples. " + Misc.EOL
+                + "Please either: " + Misc.EOL
+                + "  1) Set 'cairo.commit.mode=sync' in server.conf -- slower but safe, OR " + Misc.EOL
+                + "  2) Use a Docker named volume so the data lives on ext4 inside the VM (recommended), OR " + Misc.EOL
+                + "  3) Override the check with 'cairo.commit.mode=!nosync' if you accept the risk. " + Misc.EOL
+                + "[path=" + rootDir + ", kind=" + kind + ", fs=" + fsName + "]", true);
     }
 
     void logBannerAndEndpoints(String schema) {

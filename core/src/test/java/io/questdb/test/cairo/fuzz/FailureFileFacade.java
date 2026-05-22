@@ -194,7 +194,7 @@ public class FailureFileFacade implements FilesFacade {
     }
 
     @Override
-    public int getFileSystemStatus(LPSZ lpszName) {
+    public long getFileSystemStatus(LPSZ lpszName) {
         return ff.getFileSystemStatus(lpszName);
     }
 

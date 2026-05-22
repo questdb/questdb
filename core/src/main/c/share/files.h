@@ -389,7 +389,19 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_getMapCountLimit
 #define FILES_RENAME_ERR_EXDEV 1
 #define FILES_RENAME_ERR_OTHER 2
 
-#define FLAG_FS_SUPPORTED (-1)
+// Filesystem status flag bits, packed into the jlong return value of
+// Java_io_questdb_std_Files_getFileSystemStatus alongside the raw 32-bit
+// magic number / type code.
+//
+//   bits[0..31]: raw magic / type code
+//   bit 32:      FLAG_FS_SUPPORTED  - QuestDB recognises this filesystem by name
+//   bit 33:      FLAG_FS_MMAP_SAFE  - mmap+writeback is durable without msync
+//   bit 34:      FLAG_FS_HARD_FAIL  - QuestDB refuses to start regardless of commit.mode
+//
+// A return value of 0 means statfs() (or the Windows equivalent) failed.
+#define FLAG_FS_SUPPORTED (1LL << 32)
+#define FLAG_FS_MMAP_SAFE (1LL << 33)
+#define FLAG_FS_HARD_FAIL (1LL << 34)
 
 #ifdef __cplusplus
 }
