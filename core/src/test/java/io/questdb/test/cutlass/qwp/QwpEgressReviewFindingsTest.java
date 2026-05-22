@@ -45,6 +45,7 @@ import java.nio.charset.CharacterCodingException;
 import java.nio.charset.CharsetDecoder;
 import java.nio.charset.CodingErrorAction;
 import java.nio.charset.StandardCharsets;
+import java.util.Arrays;
 
 /**
  * Regression coverage for verifiable CodeRabbit findings on PR 6991.
@@ -54,6 +55,67 @@ import java.nio.charset.StandardCharsets;
  * keeps them useful as regression guards.
  */
 public class QwpEgressReviewFindingsTest {
+
+    @Test
+    public void testComputeDeltaSizeMatchesEmitDeltaSection() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final int bufSize = 64 * 1024;
+            long buf = Unsafe.malloc(bufSize, MemoryTag.NATIVE_DEFAULT);
+            try {
+                ObjList<QwpEgressColumnDef> cols = new ObjList<>();
+                QwpEgressColumnDef def = new QwpEgressColumnDef();
+                def.of("s", ColumnType.SYMBOL);
+                cols.add(def);
+
+                try (QwpResultBatchBuffer batch = new QwpResultBatchBuffer();
+                     QwpEgressConnSymbolDict dict = new QwpEgressConnSymbolDict()) {
+                    batch.beginBatch(cols, null, dict);
+                    // Entry length varint boundaries: 1 byte (< 128), 2 bytes (128..16383),
+                    // 3 bytes (16384..). Cover all three.
+                    String[] entries = {"a", "abc", repeat('x', 127), repeat('y', 128),
+                            repeat('z', 200), repeat('w', 16383), repeat('q', 16384)};
+                    for (String s : entries) {
+                        dict.addEntry(s);
+                    }
+                    int computed = batch.computeDeltaSize();
+                    int written = batch.emitDeltaSection(buf, buf + bufSize);
+                    Assert.assertEquals(
+                            "computeDeltaSize must match emitDeltaSection byte count",
+                            written, computed);
+                }
+            } finally {
+                Unsafe.free(buf, bufSize, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
+    @Test
+    public void testCurrentBatchDeltaWireBytesMatchesComputeDeltaSize() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            ObjList<QwpEgressColumnDef> cols = new ObjList<>();
+            QwpEgressColumnDef def = new QwpEgressColumnDef();
+            def.of("s", ColumnType.SYMBOL);
+            cols.add(def);
+            try (QwpResultBatchBuffer batch = new QwpResultBatchBuffer();
+                 QwpEgressConnSymbolDict dict = new QwpEgressConnSymbolDict()) {
+                batch.beginBatch(cols, null, dict);
+                Assert.assertEquals(batch.computeDeltaSize(), batch.currentBatchDeltaWireBytes());
+
+                String[] entries = {"a", "abc", repeat('x', 127), repeat('y', 128),
+                        repeat('z', 200), repeat('w', 16383), repeat('q', 16384)};
+                for (String s : entries) {
+                    dict.addEntry(s);
+                    Assert.assertEquals("drift after adding " + s.length() + "-byte entry",
+                            batch.computeDeltaSize(), batch.currentBatchDeltaWireBytes());
+                }
+
+                int sizeBeforeRollback = dict.size();
+                dict.rollbackTo(sizeBeforeRollback - 3);
+                Assert.assertEquals("drift after rollback",
+                        batch.computeDeltaSize(), batch.currentBatchDeltaWireBytes());
+            }
+        });
+    }
 
     /**
      * Finding #5: {@code QwpEgressRequestDecoder.decodeCredit} returns the varint
@@ -216,44 +278,6 @@ public class QwpEgressReviewFindingsTest {
     }
 
     /**
-     * computeDeltaSize() must equal the byte count emitDeltaSection() writes
-     * across varint-boundary entry lengths. The two share emitDeltaSectionImpl
-     * but this guards against future divergence.
-     */
-    @Test
-    public void testComputeDeltaSizeMatchesEmitDeltaSection() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            final int bufSize = 64 * 1024;
-            long buf = Unsafe.malloc(bufSize, MemoryTag.NATIVE_DEFAULT);
-            try {
-                ObjList<QwpEgressColumnDef> cols = new ObjList<>();
-                QwpEgressColumnDef def = new QwpEgressColumnDef();
-                def.of("s", ColumnType.SYMBOL);
-                cols.add(def);
-
-                try (QwpResultBatchBuffer batch = new QwpResultBatchBuffer();
-                     QwpEgressConnSymbolDict dict = new QwpEgressConnSymbolDict()) {
-                    batch.beginBatch(cols, null, dict);
-                    // Entry length varint boundaries: 1 byte (< 128), 2 bytes (128..16383),
-                    // 3 bytes (16384..). Cover all three.
-                    String[] entries = {"a", "abc", repeat('x', 127), repeat('y', 128),
-                            repeat('z', 200), repeat('w', 16383), repeat('q', 16384)};
-                    for (String s : entries) {
-                        dict.addEntry(s);
-                    }
-                    int computed = batch.computeDeltaSize();
-                    int written = batch.emitDeltaSection(buf, buf + bufSize);
-                    Assert.assertEquals(
-                            "computeDeltaSize must match emitDeltaSection byte count",
-                            written, computed);
-                }
-            } finally {
-                Unsafe.free(buf, bufSize, MemoryTag.NATIVE_DEFAULT);
-            }
-        });
-    }
-
-    /**
      * findLargestEmittablePrefix returns -1 when the empty table-block header
      * itself overflows the budget (pathological tiny budget with a full
      * schema). The streamResults caller maps this to the "table block header
@@ -302,12 +326,6 @@ public class QwpEgressReviewFindingsTest {
         });
     }
 
-    private static String repeat(char c, int n) {
-        char[] buf = new char[n];
-        java.util.Arrays.fill(buf, c);
-        return new String(buf);
-    }
-
     private static void assertValidUtf8(byte[] bytes) {
         CharsetDecoder decoder = StandardCharsets.UTF_8.newDecoder()
                 .onMalformedInput(CodingErrorAction.REPORT)
@@ -336,5 +354,11 @@ public class QwpEgressReviewFindingsTest {
         Method m = cls.getDeclaredMethod("encodeUtf8", CharSequence.class, long.class, int.class);
         m.setAccessible(true);
         return (int) m.invoke(null, cs, heapAddr, 0);
+    }
+
+    private static String repeat(char c, int n) {
+        char[] buf = new char[n];
+        Arrays.fill(buf, c);
+        return new String(buf);
     }
 }

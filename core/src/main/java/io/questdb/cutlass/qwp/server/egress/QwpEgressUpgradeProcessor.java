@@ -1780,7 +1780,7 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
                     batchBuffer.appendPageFrame(frame, state.getStreamingPageFrameMemoryRecord(), lo, hi);
                     state.consumePageFrameRows(sliceRows);
                     rowsToAdd -= sliceRows;
-                    if (batchBuffer.computeDeltaSize() > dictBudgetWireBytes) {
+                    if (batchBuffer.currentBatchDeltaWireBytes() > dictBudgetWireBytes) {
                         dictCapHit = true;
                         break;
                     }
@@ -1791,7 +1791,7 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
                 while (rowsToAdd > 0 && (hasMore = cursor.hasNext())) {
                     batchBuffer.appendRow(cursor.getRecord());
                     rowsToAdd--;
-                    if (batchBuffer.computeDeltaSize() > dictBudgetWireBytes) {
+                    if (batchBuffer.currentBatchDeltaWireBytes() > dictBudgetWireBytes) {
                         dictCapHit = true;
                         break;
                     }

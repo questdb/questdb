@@ -84,6 +84,7 @@ public class QwpResultBatchBuffer implements QuietCloseable {
     // ids allocated by this batch's SYMBOL rows sit in [batchDeltaStart..connDict.size()),
     // which is exactly what {@link #emitDeltaSection} needs to ship.
     private int batchDeltaStart;
+    private long batchDeltaWireBytesAtStart;
     private int columnCount;
     private ObjList<QwpEgressColumnDef> columns;
     // Connection-scoped SYMBOL dictionary. Populated directly from appendRow's SYMBOL
@@ -112,6 +113,7 @@ public class QwpResultBatchBuffer implements QuietCloseable {
     public void advanceDeltaStart() {
         if (connDict != null) {
             batchDeltaStart = connDict.size();
+            batchDeltaWireBytesAtStart = connDict.getTotalWireBytes();
         }
     }
 
@@ -318,6 +320,7 @@ public class QwpResultBatchBuffer implements QuietCloseable {
         this.startRow = 0;
         this.connDict = connDict;
         this.batchDeltaStart = connDict.size();
+        this.batchDeltaWireBytesAtStart = connDict.getTotalWireBytes();
         while (scratches.size() < columnCount) {
             scratches.add(new QwpColumnScratch());
         }
@@ -365,10 +368,20 @@ public class QwpResultBatchBuffer implements QuietCloseable {
         physicalRowCount = 0;
         startRow = 0;
         columnCount = 0;
+        batchDeltaStart = 0;
+        batchDeltaWireBytesAtStart = 0;
     }
 
     public int computeDeltaSize() {
         return emitDeltaSectionImpl(0L, Long.MAX_VALUE, true);
+    }
+
+    public int currentBatchDeltaWireBytes() {
+        int deltaCount = connDict.size() - batchDeltaStart;
+        long entryBytes = connDict.getTotalWireBytes() - batchDeltaWireBytesAtStart;
+        return QwpVarint.encodedLength(batchDeltaStart)
+                + QwpVarint.encodedLength(deltaCount)
+                + (int) entryBytes;
     }
 
     /**
@@ -468,6 +481,8 @@ public class QwpResultBatchBuffer implements QuietCloseable {
         startRow = 0;
         columnCount = 0;
         columns = null;
+        batchDeltaStart = 0;
+        batchDeltaWireBytesAtStart = 0;
     }
 
     /**
