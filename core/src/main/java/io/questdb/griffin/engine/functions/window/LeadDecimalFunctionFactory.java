@@ -33,6 +33,7 @@ import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.cairo.sql.VirtualRecord;
 import io.questdb.cairo.sql.WindowSPI;
 import io.questdb.cairo.vm.api.MemoryARW;
@@ -58,6 +59,11 @@ public class LeadDecimalFunctionFactory extends AbstractWindowFunctionFactory {
     }
 
     @Override
+    protected boolean supportNullsDesc() {
+        return true;
+    }
+
+    @Override
     public Function newInstance(
             int position,
             ObjList<Function> args,
@@ -73,7 +79,7 @@ public class LeadDecimalFunctionFactory extends AbstractWindowFunctionFactory {
                         position, args, argPositions, configuration, sqlExecutionContext,
                         (defaultValue) -> {
                             if (!ColumnType.isSameOrBuiltInWideningCast(defaultValue.getType(), argType)) {
-                                throw SqlException.$(argPositions.getQuick(2), "default value must be can cast to decimal");
+                                throw SqlException.$(argPositions.getQuick(2), "default value must be castable to decimal");
                             }
                         },
                         (arg, defaultValueFunc, offset, memory, ignoreNulls) -> new Decimal8LeadFunction(arg, defaultValueFunc, offset, memory, ignoreNulls, argType),
@@ -85,7 +91,7 @@ public class LeadDecimalFunctionFactory extends AbstractWindowFunctionFactory {
                         position, args, argPositions, configuration, sqlExecutionContext,
                         (defaultValue) -> {
                             if (!ColumnType.isSameOrBuiltInWideningCast(defaultValue.getType(), argType)) {
-                                throw SqlException.$(argPositions.getQuick(2), "default value must be can cast to decimal");
+                                throw SqlException.$(argPositions.getQuick(2), "default value must be castable to decimal");
                             }
                         },
                         (arg, defaultValueFunc, offset, memory, ignoreNulls) -> new Decimal16LeadFunction(arg, defaultValueFunc, offset, memory, ignoreNulls, argType),
@@ -97,7 +103,7 @@ public class LeadDecimalFunctionFactory extends AbstractWindowFunctionFactory {
                         position, args, argPositions, configuration, sqlExecutionContext,
                         (defaultValue) -> {
                             if (!ColumnType.isSameOrBuiltInWideningCast(defaultValue.getType(), argType)) {
-                                throw SqlException.$(argPositions.getQuick(2), "default value must be can cast to decimal");
+                                throw SqlException.$(argPositions.getQuick(2), "default value must be castable to decimal");
                             }
                         },
                         (arg, defaultValueFunc, offset, memory, ignoreNulls) -> new Decimal32LeadFunction(arg, defaultValueFunc, offset, memory, ignoreNulls, argType),
@@ -109,7 +115,7 @@ public class LeadDecimalFunctionFactory extends AbstractWindowFunctionFactory {
                         position, args, argPositions, configuration, sqlExecutionContext,
                         (defaultValue) -> {
                             if (!ColumnType.isSameOrBuiltInWideningCast(defaultValue.getType(), argType)) {
-                                throw SqlException.$(argPositions.getQuick(2), "default value must be can cast to decimal");
+                                throw SqlException.$(argPositions.getQuick(2), "default value must be castable to decimal");
                             }
                         },
                         (arg, defaultValueFunc, offset, memory, ignoreNulls) -> new Decimal64LeadFunction(arg, defaultValueFunc, offset, memory, ignoreNulls, argType),
@@ -121,7 +127,7 @@ public class LeadDecimalFunctionFactory extends AbstractWindowFunctionFactory {
                         position, args, argPositions, configuration, sqlExecutionContext,
                         (defaultValue) -> {
                             if (!ColumnType.isSameOrBuiltInWideningCast(defaultValue.getType(), argType)) {
-                                throw SqlException.$(argPositions.getQuick(2), "default value must be can cast to decimal");
+                                throw SqlException.$(argPositions.getQuick(2), "default value must be castable to decimal");
                             }
                         },
                         (arg, defaultValueFunc, offset, memory, ignoreNulls) -> new Decimal128LeadFunction(arg, defaultValueFunc, offset, memory, ignoreNulls, argType),
@@ -133,7 +139,7 @@ public class LeadDecimalFunctionFactory extends AbstractWindowFunctionFactory {
                         position, args, argPositions, configuration, sqlExecutionContext,
                         (defaultValue) -> {
                             if (!ColumnType.isSameOrBuiltInWideningCast(defaultValue.getType(), argType)) {
-                                throw SqlException.$(argPositions.getQuick(2), "default value must be can cast to decimal");
+                                throw SqlException.$(argPositions.getQuick(2), "default value must be castable to decimal");
                             }
                         },
                         (arg, defaultValueFunc, offset, memory, ignoreNulls) -> new Decimal256LeadFunction(arg, defaultValueFunc, offset, memory, ignoreNulls, argType),
@@ -145,8 +151,9 @@ public class LeadDecimalFunctionFactory extends AbstractWindowFunctionFactory {
         }
     }
 
-    static class Decimal128LeadFunction extends LeadLagWindowFunctionFactoryHelper.BaseLeadFunction implements Reopenable, WindowDecimal128Function {
+    static class Decimal128LeadFunction extends LeadLagWindowFunctionFactoryHelper.BaseLeadFunction implements Reopenable {
 
+        private final Decimal128 leadValue = new Decimal128();
         private final Decimal128 scratch = new Decimal128();
         private final int type;
 
@@ -162,7 +169,6 @@ public class LeadDecimalFunctionFactory extends AbstractWindowFunctionFactory {
 
         @Override
         protected boolean doPass1(Record record, long recordOffset, WindowSPI spi) {
-            Decimal128 leadValue = new Decimal128();
             if (count < offset) {
                 if (defaultValue == null) {
                     leadValue.ofRawNull();
@@ -184,11 +190,13 @@ public class LeadDecimalFunctionFactory extends AbstractWindowFunctionFactory {
         }
     }
 
-    static class Decimal128LeadOverPartitionFunction extends BasePartitionedWindowFunction implements WindowDecimal128Function {
+    static class Decimal128LeadOverPartitionFunction extends BasePartitionedWindowFunction {
 
         private final Function defaultValue;
         private final boolean ignoreNulls;
+        private final Decimal128 leadValue = new Decimal128();
         private final MemoryARW memory;
+        private final Decimal128 nullScratch = new Decimal128();
         private final long offset;
         private final Decimal128 scratch = new Decimal128();
         private final int type;
@@ -223,6 +231,11 @@ public class LeadDecimalFunctionFactory extends AbstractWindowFunctionFactory {
         }
 
         @Override
+        public Pass1ScanDirection getPass1ScanDirection() {
+            return Pass1ScanDirection.BACKWARD;
+        }
+
+        @Override
         public int getPassCount() {
             return WindowFunction.ZERO_PASS;
         }
@@ -230,6 +243,14 @@ public class LeadDecimalFunctionFactory extends AbstractWindowFunctionFactory {
         @Override
         public int getType() {
             return type;
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            super.init(symbolTableSource, executionContext);
+            if (defaultValue != null) {
+                defaultValue.init(symbolTableSource, executionContext);
+            }
         }
 
         @Override
@@ -250,7 +271,6 @@ public class LeadDecimalFunctionFactory extends AbstractWindowFunctionFactory {
             if (mapValue.isNew()) {
                 startOffset = memory.appendAddressFor(offset * 16L) - memory.getPageAddress(0);
                 firstIdx = 0;
-                Decimal128 nullScratch = new Decimal128();
                 nullScratch.ofRawNull();
                 for (long i = 0; i < offset; i++) {
                     memory.putDecimal128(startOffset + i * 16L, nullScratch.getHigh(), nullScratch.getLow());
@@ -262,7 +282,6 @@ public class LeadDecimalFunctionFactory extends AbstractWindowFunctionFactory {
             }
 
             arg.getDecimal128(record, scratch);
-            Decimal128 leadValue = new Decimal128();
             if (count < offset) {
                 if (defaultValue == null) {
                     leadValue.ofRawNull();
@@ -319,8 +338,9 @@ public class LeadDecimalFunctionFactory extends AbstractWindowFunctionFactory {
         }
     }
 
-    static class Decimal256LeadFunction extends LeadLagWindowFunctionFactoryHelper.BaseLeadFunction implements Reopenable, WindowDecimal256Function {
+    static class Decimal256LeadFunction extends LeadLagWindowFunctionFactoryHelper.BaseLeadFunction implements Reopenable {
 
+        private final Decimal256 leadValue = new Decimal256();
         private final Decimal256 scratch = new Decimal256();
         private final int type;
 
@@ -336,7 +356,6 @@ public class LeadDecimalFunctionFactory extends AbstractWindowFunctionFactory {
 
         @Override
         protected boolean doPass1(Record record, long recordOffset, WindowSPI spi) {
-            Decimal256 leadValue = new Decimal256();
             if (count < offset) {
                 if (defaultValue == null) {
                     leadValue.ofRawNull();
@@ -360,11 +379,13 @@ public class LeadDecimalFunctionFactory extends AbstractWindowFunctionFactory {
         }
     }
 
-    static class Decimal256LeadOverPartitionFunction extends BasePartitionedWindowFunction implements WindowDecimal256Function {
+    static class Decimal256LeadOverPartitionFunction extends BasePartitionedWindowFunction {
 
         private final Function defaultValue;
         private final boolean ignoreNulls;
+        private final Decimal256 leadValue = new Decimal256();
         private final MemoryARW memory;
+        private final Decimal256 nullScratch = new Decimal256();
         private final long offset;
         private final Decimal256 scratch = new Decimal256();
         private final int type;
@@ -399,6 +420,11 @@ public class LeadDecimalFunctionFactory extends AbstractWindowFunctionFactory {
         }
 
         @Override
+        public Pass1ScanDirection getPass1ScanDirection() {
+            return Pass1ScanDirection.BACKWARD;
+        }
+
+        @Override
         public int getPassCount() {
             return WindowFunction.ZERO_PASS;
         }
@@ -406,6 +432,14 @@ public class LeadDecimalFunctionFactory extends AbstractWindowFunctionFactory {
         @Override
         public int getType() {
             return type;
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            super.init(symbolTableSource, executionContext);
+            if (defaultValue != null) {
+                defaultValue.init(symbolTableSource, executionContext);
+            }
         }
 
         @Override
@@ -426,7 +460,6 @@ public class LeadDecimalFunctionFactory extends AbstractWindowFunctionFactory {
             if (mapValue.isNew()) {
                 startOffset = memory.appendAddressFor(offset * 32L) - memory.getPageAddress(0);
                 firstIdx = 0;
-                Decimal256 nullScratch = new Decimal256();
                 nullScratch.ofRawNull();
                 for (long i = 0; i < offset; i++) {
                     memory.putDecimal256(startOffset + i * 32L, nullScratch.getHh(), nullScratch.getHl(), nullScratch.getLh(), nullScratch.getLl());
@@ -438,7 +471,6 @@ public class LeadDecimalFunctionFactory extends AbstractWindowFunctionFactory {
             }
 
             arg.getDecimal256(record, scratch);
-            Decimal256 leadValue = new Decimal256();
             if (count < offset) {
                 if (defaultValue == null) {
                     leadValue.ofRawNull();
@@ -497,7 +529,7 @@ public class LeadDecimalFunctionFactory extends AbstractWindowFunctionFactory {
         }
     }
 
-    static class Decimal64LeadFunction extends LeadLagWindowFunctionFactoryHelper.BaseLeadFunction implements Reopenable, WindowDecimal64Function {
+    static class Decimal64LeadFunction extends LeadLagWindowFunctionFactoryHelper.BaseLeadFunction implements Reopenable {
 
         private final int type;
 
@@ -529,7 +561,7 @@ public class LeadDecimalFunctionFactory extends AbstractWindowFunctionFactory {
         }
     }
 
-    static class Decimal64LeadOverPartitionFunction extends LeadLagWindowFunctionFactoryHelper.BaseLeadOverPartitionFunction implements WindowDecimal64Function {
+    static class Decimal64LeadOverPartitionFunction extends LeadLagWindowFunctionFactoryHelper.BaseLeadOverPartitionFunction {
 
         private final int type;
 
@@ -575,7 +607,7 @@ public class LeadDecimalFunctionFactory extends AbstractWindowFunctionFactory {
         }
     }
 
-    static class Decimal8LeadFunction extends LeadLagWindowFunctionFactoryHelper.BaseLeadFunction implements Reopenable, WindowDecimal8Function {
+    static class Decimal8LeadFunction extends LeadLagWindowFunctionFactoryHelper.BaseLeadFunction implements Reopenable {
 
         private final int type;
 
@@ -595,19 +627,19 @@ public class LeadDecimalFunctionFactory extends AbstractWindowFunctionFactory {
             if (count < offset) {
                 leadValue = defaultValue == null ? Decimals.DECIMAL8_NULL : defaultValue.getDecimal8(record);
             } else {
-                leadValue = buffer.getByte((long) loIdx * Long.BYTES);
+                leadValue = buffer.getByte((long) loIdx * Byte.BYTES);
             }
             byte b = arg.getDecimal8(record);
             boolean respectNull = !ignoreNulls || b != Decimals.DECIMAL8_NULL;
             if (respectNull) {
-                buffer.putByte((long) loIdx * Long.BYTES, b);
+                buffer.putByte((long) loIdx * Byte.BYTES, b);
             }
             Unsafe.putByte(spi.getAddress(recordOffset, columnIndex), leadValue);
             return respectNull;
         }
     }
 
-    static class Decimal8LeadOverPartitionFunction extends LeadLagWindowFunctionFactoryHelper.BaseLeadOverPartitionFunction implements WindowDecimal8Function {
+    static class Decimal8LeadOverPartitionFunction extends LeadLagWindowFunctionFactoryHelper.BaseLeadOverPartitionFunction {
 
         private final int type;
 
@@ -642,18 +674,18 @@ public class LeadDecimalFunctionFactory extends AbstractWindowFunctionFactory {
             if (count < offset) {
                 leadValue = defaultValue == null ? Decimals.DECIMAL8_NULL : defaultValue.getDecimal8(record);
             } else {
-                leadValue = memory.getByte(startOffset + firstIdx * Long.BYTES);
+                leadValue = memory.getByte(startOffset + firstIdx * Byte.BYTES);
             }
             boolean respectNulls = !ignoreNulls || b != Decimals.DECIMAL8_NULL;
             if (respectNulls) {
-                memory.putByte(startOffset + firstIdx * Long.BYTES, b);
+                memory.putByte(startOffset + firstIdx * Byte.BYTES, b);
             }
             Unsafe.putByte(spi.getAddress(recordOffset, columnIndex), leadValue);
             return respectNulls;
         }
     }
 
-    static class Decimal16LeadFunction extends LeadLagWindowFunctionFactoryHelper.BaseLeadFunction implements Reopenable, WindowDecimal16Function {
+    static class Decimal16LeadFunction extends LeadLagWindowFunctionFactoryHelper.BaseLeadFunction implements Reopenable {
 
         private final int type;
 
@@ -673,19 +705,19 @@ public class LeadDecimalFunctionFactory extends AbstractWindowFunctionFactory {
             if (count < offset) {
                 leadValue = defaultValue == null ? Decimals.DECIMAL16_NULL : defaultValue.getDecimal16(record);
             } else {
-                leadValue = buffer.getShort((long) loIdx * Long.BYTES);
+                leadValue = buffer.getShort((long) loIdx * Short.BYTES);
             }
             short s = arg.getDecimal16(record);
             boolean respectNull = !ignoreNulls || s != Decimals.DECIMAL16_NULL;
             if (respectNull) {
-                buffer.putShort((long) loIdx * Long.BYTES, s);
+                buffer.putShort((long) loIdx * Short.BYTES, s);
             }
             Unsafe.putShort(spi.getAddress(recordOffset, columnIndex), leadValue);
             return respectNull;
         }
     }
 
-    static class Decimal16LeadOverPartitionFunction extends LeadLagWindowFunctionFactoryHelper.BaseLeadOverPartitionFunction implements WindowDecimal16Function {
+    static class Decimal16LeadOverPartitionFunction extends LeadLagWindowFunctionFactoryHelper.BaseLeadOverPartitionFunction {
 
         private final int type;
 
@@ -720,18 +752,18 @@ public class LeadDecimalFunctionFactory extends AbstractWindowFunctionFactory {
             if (count < offset) {
                 leadValue = defaultValue == null ? Decimals.DECIMAL16_NULL : defaultValue.getDecimal16(record);
             } else {
-                leadValue = memory.getShort(startOffset + firstIdx * Long.BYTES);
+                leadValue = memory.getShort(startOffset + firstIdx * Short.BYTES);
             }
             boolean respectNulls = !ignoreNulls || s != Decimals.DECIMAL16_NULL;
             if (respectNulls) {
-                memory.putShort(startOffset + firstIdx * Long.BYTES, s);
+                memory.putShort(startOffset + firstIdx * Short.BYTES, s);
             }
             Unsafe.putShort(spi.getAddress(recordOffset, columnIndex), leadValue);
             return respectNulls;
         }
     }
 
-    static class Decimal32LeadFunction extends LeadLagWindowFunctionFactoryHelper.BaseLeadFunction implements Reopenable, WindowDecimal32Function {
+    static class Decimal32LeadFunction extends LeadLagWindowFunctionFactoryHelper.BaseLeadFunction implements Reopenable {
 
         private final int type;
 
@@ -751,19 +783,19 @@ public class LeadDecimalFunctionFactory extends AbstractWindowFunctionFactory {
             if (count < offset) {
                 leadValue = defaultValue == null ? Decimals.DECIMAL32_NULL : defaultValue.getDecimal32(record);
             } else {
-                leadValue = buffer.getInt((long) loIdx * Long.BYTES);
+                leadValue = buffer.getInt((long) loIdx * Integer.BYTES);
             }
             int i = arg.getDecimal32(record);
             boolean respectNull = !ignoreNulls || i != Decimals.DECIMAL32_NULL;
             if (respectNull) {
-                buffer.putInt((long) loIdx * Long.BYTES, i);
+                buffer.putInt((long) loIdx * Integer.BYTES, i);
             }
             Unsafe.putInt(spi.getAddress(recordOffset, columnIndex), leadValue);
             return respectNull;
         }
     }
 
-    static class Decimal32LeadOverPartitionFunction extends LeadLagWindowFunctionFactoryHelper.BaseLeadOverPartitionFunction implements WindowDecimal32Function {
+    static class Decimal32LeadOverPartitionFunction extends LeadLagWindowFunctionFactoryHelper.BaseLeadOverPartitionFunction {
 
         private final int type;
 
@@ -798,11 +830,11 @@ public class LeadDecimalFunctionFactory extends AbstractWindowFunctionFactory {
             if (count < offset) {
                 leadValue = defaultValue == null ? Decimals.DECIMAL32_NULL : defaultValue.getDecimal32(record);
             } else {
-                leadValue = memory.getInt(startOffset + firstIdx * Long.BYTES);
+                leadValue = memory.getInt(startOffset + firstIdx * Integer.BYTES);
             }
             boolean respectNulls = !ignoreNulls || i != Decimals.DECIMAL32_NULL;
             if (respectNulls) {
-                memory.putInt(startOffset + firstIdx * Long.BYTES, i);
+                memory.putInt(startOffset + firstIdx * Integer.BYTES, i);
             }
             Unsafe.putInt(spi.getAddress(recordOffset, columnIndex), leadValue);
             return respectNulls;

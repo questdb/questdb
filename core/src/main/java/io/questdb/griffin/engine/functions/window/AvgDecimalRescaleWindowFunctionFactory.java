@@ -237,7 +237,7 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
         Unsafe.putLong(addr + 3 * Long.BYTES, v.getLl());
     }
 
-    static class Decimal64Rescale256AvgOverCurrentRowFunction extends BaseWindowFunction implements WindowDecimal256Function {
+    static class Decimal64Rescale256AvgOverCurrentRowFunction extends BaseWindowFunction {
 
         private final int argScale;
         private final Decimal256 outScratch = new Decimal256();
@@ -267,8 +267,67 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
         }
 
         @Override
+        public void getDecimal128(Record rec, Decimal128 sink) {
+            if (value.isNull()) {
+                sink.ofRawNull();
+                return;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            sink.ofRaw(value.getLh(), value.getLl());
+        }
+
+        @Override
+        public short getDecimal16(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL16_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return (short) value.getLl();
+        }
+
+        @Override
         public void getDecimal256(Record rec, Decimal256 sink) {
             sink.copyRaw(value);
+            if (!sink.isNull() && sink.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+        }
+
+        @Override
+        public int getDecimal32(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL32_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return (int) value.getLl();
+        }
+
+        @Override
+        public long getDecimal64(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL64_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return value.getLl();
+        }
+
+        @Override
+        public byte getDecimal8(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL8_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return (byte) value.getLl();
         }
 
         @Override
@@ -293,7 +352,7 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
         }
     }
 
-    static class Decimal64Rescale256AvgOverPartitionFunction extends BasePartitionedWindowFunction implements WindowDecimal256Function {
+    static class Decimal64Rescale256AvgOverPartitionFunction extends BasePartitionedWindowFunction {
 
         private final Decimal256 acc = new Decimal256();
         private final int argScale;
@@ -310,24 +369,62 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
             this.position = position;
         }
 
-        @Override
-        public void getDecimal256(Record rec, Decimal256 sink) {
+        private boolean computeAvg(Record rec) {
             partitionByRecord.of(rec);
             MapKey key = map.withKey();
             key.put(partitionByRecord, partitionBySink);
             MapValue mv = key.findValue();
             if (mv == null) {
-                sink.ofRawNull();
-                return;
+                return false;
             }
             long count = mv.getLong(1);
             if (count == 0) {
-                sink.ofRawNull();
-                return;
+                return false;
             }
             mv.getDecimal256(0, acc);
+            if (!acc.isNull() && acc.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
             doDivide(acc, count, argScale, targetScale, position, divScratch);
-            sink.copyRaw(divScratch);
+            return true;
+        }
+
+        @Override
+        public void getDecimal128(Record rec, Decimal128 sink) {
+            if (computeAvg(rec)) {
+                sink.ofRaw(divScratch.getLh(), divScratch.getLl());
+            } else {
+                sink.ofRawNull();
+            }
+        }
+
+        @Override
+        public short getDecimal16(Record rec) {
+            return computeAvg(rec) ? (short) divScratch.getLl() : Decimals.DECIMAL16_NULL;
+        }
+
+        @Override
+        public void getDecimal256(Record rec, Decimal256 sink) {
+            if (computeAvg(rec)) {
+                sink.copyRaw(divScratch);
+            } else {
+                sink.ofRawNull();
+            }
+        }
+
+        @Override
+        public int getDecimal32(Record rec) {
+            return computeAvg(rec) ? (int) divScratch.getLl() : Decimals.DECIMAL32_NULL;
+        }
+
+        @Override
+        public long getDecimal64(Record rec) {
+            return computeAvg(rec) ? divScratch.getLl() : Decimals.DECIMAL64_NULL;
+        }
+
+        @Override
+        public byte getDecimal8(Record rec) {
+            return computeAvg(rec) ? (byte) divScratch.getLl() : Decimals.DECIMAL8_NULL;
         }
 
         @Override
@@ -366,6 +463,9 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
                 } catch (NumericException e) {
                     throw CairoException.nonCritical().position(position).put("avg aggregation failed: ").put(e.getFlyweightMessage());
                 }
+                if (acc.hasOverflowed()) {
+                    throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+                }
                 mv.putDecimal256(0, acc);
                 mv.addLong(1, 1);
             }
@@ -403,7 +503,7 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
         }
     }
 
-    public static class Decimal64Rescale256AvgOverPartitionRangeFrameFunction extends BasePartitionedWindowFunction implements WindowDecimal256Function {
+    public static class Decimal64Rescale256AvgOverPartitionRangeFrameFunction extends BasePartitionedWindowFunction {
 
         private static final int RECORD_SIZE = Long.BYTES + Long.BYTES;
         private final Decimal256 acc = new Decimal256();
@@ -498,11 +598,11 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
                 }
             } else {
                 mapValue.getDecimal256(0, acc);
-                frameSize = mapValue.getLong(2);
-                startOffset = mapValue.getLong(3);
-                size = mapValue.getLong(4);
-                capacity = mapValue.getLong(5);
-                firstIdx = mapValue.getLong(6);
+                frameSize = mapValue.getLong(1);
+                startOffset = mapValue.getLong(2);
+                size = mapValue.getLong(3);
+                capacity = mapValue.getLong(4);
+                firstIdx = mapValue.getLong(5);
 
                 long newFirstIdx = firstIdx;
                 if (frameLoBounded) {
@@ -512,7 +612,7 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
                         if (Math.abs(timestamp - ts) > maxDiff) {
                             if (frameSize > 0) {
                                 long val = memory.getLong(startOffset + idx * RECORD_SIZE + Long.BYTES);
-                                acc.subtract(val < 0 ? -1L : 0L, val < 0 ? -1L : 0L, val < 0 ? -1L : 0L, val, argScale);
+                                acc.subtract(val < 0 ? -1L : 0L, val < 0 ? -1L : 0L, val < 0 ? -1L : 0L, val, 0);
                                 frameSize--;
                             }
                             newFirstIdx = (idx + 1) % capacity;
@@ -549,6 +649,9 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
                             } catch (NumericException e) {
                                 throw CairoException.nonCritical().position(position).put("avg aggregation failed: ").put(e.getFlyweightMessage());
                             }
+                            if (acc.hasOverflowed()) {
+                                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+                            }
                             frameSize++;
                         } else {
                             break;
@@ -565,6 +668,9 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
                                 Decimal256.uncheckedAdd(acc, val);
                             } catch (NumericException e) {
                                 throw CairoException.nonCritical().position(position).put("avg aggregation failed: ").put(e.getFlyweightMessage());
+                            }
+                            if (acc.hasOverflowed()) {
+                                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
                             }
                             frameSize++;
                             newFirstIdx = (idx + 1) % capacity;
@@ -584,16 +690,75 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
             }
 
             mapValue.putDecimal256(0, acc);
-            mapValue.putLong(2, frameSize);
-            mapValue.putLong(3, startOffset);
-            mapValue.putLong(4, size);
-            mapValue.putLong(5, capacity);
-            mapValue.putLong(6, firstIdx);
+            mapValue.putLong(1, frameSize);
+            mapValue.putLong(2, startOffset);
+            mapValue.putLong(3, size);
+            mapValue.putLong(4, capacity);
+            mapValue.putLong(5, firstIdx);
+        }
+
+        @Override
+        public void getDecimal128(Record rec, Decimal128 sink) {
+            if (value.isNull()) {
+                sink.ofRawNull();
+                return;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            sink.ofRaw(value.getLh(), value.getLl());
+        }
+
+        @Override
+        public short getDecimal16(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL16_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return (short) value.getLl();
         }
 
         @Override
         public void getDecimal256(Record rec, Decimal256 sink) {
             sink.copyRaw(value);
+            if (!sink.isNull() && sink.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+        }
+
+        @Override
+        public int getDecimal32(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL32_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return (int) value.getLl();
+        }
+
+        @Override
+        public long getDecimal64(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL64_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return value.getLl();
+        }
+
+        @Override
+        public byte getDecimal8(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL8_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return (byte) value.getLl();
         }
 
         @Override
@@ -659,7 +824,7 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
         }
     }
 
-    public static class Decimal64Rescale256AvgOverPartitionRowsFrameFunction extends BasePartitionedWindowFunction implements WindowDecimal256Function {
+    public static class Decimal64Rescale256AvgOverPartitionRowsFrameFunction extends BasePartitionedWindowFunction {
 
         private final Decimal256 acc = new Decimal256();
         private final int argScale;
@@ -751,6 +916,9 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
                     } catch (NumericException e) {
                         throw CairoException.nonCritical().position(position).put("avg aggregation failed: ").put(e.getFlyweightMessage());
                     }
+                    if (acc.hasOverflowed()) {
+                        throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+                    }
                 }
                 if (count != 0) {
                     doDivide(acc, count, argScale, targetScale, position, value);
@@ -761,7 +929,7 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
                 if (frameLoBounded) {
                     long loValue = memory.getLong(startOffset + loIdx * Long.BYTES);
                     if (loValue != Decimals.DECIMAL64_NULL) {
-                        acc.subtract(loValue < 0 ? -1L : 0L, loValue < 0 ? -1L : 0L, loValue < 0 ? -1L : 0L, loValue, argScale);
+                        acc.subtract(loValue < 0 ? -1L : 0L, loValue < 0 ? -1L : 0L, loValue < 0 ? -1L : 0L, loValue, 0);
                         count--;
                     }
                 }
@@ -775,8 +943,67 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
         }
 
         @Override
+        public void getDecimal128(Record rec, Decimal128 sink) {
+            if (value.isNull()) {
+                sink.ofRawNull();
+                return;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            sink.ofRaw(value.getLh(), value.getLl());
+        }
+
+        @Override
+        public short getDecimal16(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL16_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return (short) value.getLl();
+        }
+
+        @Override
         public void getDecimal256(Record rec, Decimal256 sink) {
             sink.copyRaw(value);
+            if (!sink.isNull() && sink.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+        }
+
+        @Override
+        public int getDecimal32(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL32_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return (int) value.getLl();
+        }
+
+        @Override
+        public long getDecimal64(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL64_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return value.getLl();
+        }
+
+        @Override
+        public byte getDecimal8(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL8_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return (byte) value.getLl();
         }
 
         @Override
@@ -839,7 +1066,7 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
         }
     }
 
-    static class Decimal64Rescale256AvgOverRangeFrameFunction extends BaseWindowFunction implements Reopenable, WindowDecimal256Function {
+    static class Decimal64Rescale256AvgOverRangeFrameFunction extends BaseWindowFunction implements Reopenable {
 
         private static final int RECORD_SIZE = Long.BYTES + Long.BYTES;
         private final Decimal256 acc = new Decimal256();
@@ -909,7 +1136,7 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
                     if (Math.abs(timestamp - ts) > maxDiff) {
                         if (frameSize > 0) {
                             long val = memory.getLong(startOffset + idx * RECORD_SIZE + Long.BYTES);
-                            acc.subtract(val < 0 ? -1L : 0L, val < 0 ? -1L : 0L, val < 0 ? -1L : 0L, val, argScale);
+                            acc.subtract(val < 0 ? -1L : 0L, val < 0 ? -1L : 0L, val < 0 ? -1L : 0L, val, 0);
                             frameSize--;
                         }
                         newFirstIdx = (idx + 1) % capacity;
@@ -954,6 +1181,9 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
                         } catch (NumericException e) {
                             throw CairoException.nonCritical().position(position).put("avg aggregation failed: ").put(e.getFlyweightMessage());
                         }
+                        if (acc.hasOverflowed()) {
+                            throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+                        }
                         frameSize++;
                     } else {
                         break;
@@ -970,6 +1200,9 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
                             Decimal256.uncheckedAdd(acc, val);
                         } catch (NumericException e) {
                             throw CairoException.nonCritical().position(position).put("avg aggregation failed: ").put(e.getFlyweightMessage());
+                        }
+                        if (acc.hasOverflowed()) {
+                            throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
                         }
                         frameSize++;
                         newFirstIdx = (idx + 1) % capacity;
@@ -988,8 +1221,67 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
         }
 
         @Override
+        public void getDecimal128(Record rec, Decimal128 sink) {
+            if (value.isNull()) {
+                sink.ofRawNull();
+                return;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            sink.ofRaw(value.getLh(), value.getLl());
+        }
+
+        @Override
+        public short getDecimal16(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL16_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return (short) value.getLl();
+        }
+
+        @Override
         public void getDecimal256(Record rec, Decimal256 sink) {
             sink.copyRaw(value);
+            if (!sink.isNull() && sink.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+        }
+
+        @Override
+        public int getDecimal32(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL32_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return (int) value.getLl();
+        }
+
+        @Override
+        public long getDecimal64(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL64_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return value.getLl();
+        }
+
+        @Override
+        public byte getDecimal8(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL8_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return (byte) value.getLl();
         }
 
         @Override
@@ -1064,7 +1356,7 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
         }
     }
 
-    static class Decimal64Rescale256AvgOverRowsFrameFunction extends BaseWindowFunction implements Reopenable, WindowDecimal256Function {
+    static class Decimal64Rescale256AvgOverRowsFrameFunction extends BaseWindowFunction implements Reopenable {
 
         private final Decimal256 acc = new Decimal256();
         private final int argScale;
@@ -1130,6 +1422,9 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
                 } catch (NumericException e) {
                     throw CairoException.nonCritical().position(position).put("avg aggregation failed: ").put(e.getFlyweightMessage());
                 }
+                if (acc.hasOverflowed()) {
+                    throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+                }
                 count++;
             }
             if (count != 0) {
@@ -1141,7 +1436,7 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
             if (frameLoBounded) {
                 long loValue = buffer.getLong((long) loIdx * Long.BYTES);
                 if (loValue != Decimals.DECIMAL64_NULL) {
-                    acc.subtract(loValue < 0 ? -1L : 0L, loValue < 0 ? -1L : 0L, loValue < 0 ? -1L : 0L, loValue, argScale);
+                    acc.subtract(loValue < 0 ? -1L : 0L, loValue < 0 ? -1L : 0L, loValue < 0 ? -1L : 0L, loValue, 0);
                     count--;
                 }
             }
@@ -1150,8 +1445,67 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
         }
 
         @Override
+        public void getDecimal128(Record rec, Decimal128 sink) {
+            if (value.isNull()) {
+                sink.ofRawNull();
+                return;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            sink.ofRaw(value.getLh(), value.getLl());
+        }
+
+        @Override
+        public short getDecimal16(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL16_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return (short) value.getLl();
+        }
+
+        @Override
         public void getDecimal256(Record rec, Decimal256 sink) {
             sink.copyRaw(value);
+            if (!sink.isNull() && sink.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+        }
+
+        @Override
+        public int getDecimal32(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL32_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return (int) value.getLl();
+        }
+
+        @Override
+        public long getDecimal64(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL64_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return value.getLl();
+        }
+
+        @Override
+        public byte getDecimal8(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL8_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return (byte) value.getLl();
         }
 
         @Override
@@ -1231,7 +1585,7 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
         }
     }
 
-    static class Decimal64Rescale256AvgOverUnboundedPartitionRowsFrameFunction extends BasePartitionedWindowFunction implements WindowDecimal256Function {
+    static class Decimal64Rescale256AvgOverUnboundedPartitionRowsFrameFunction extends BasePartitionedWindowFunction {
 
         private final Decimal256 acc = new Decimal256();
         private final int argScale;
@@ -1272,6 +1626,9 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
                 } catch (NumericException e) {
                     throw CairoException.nonCritical().position(position).put("avg aggregation failed: ").put(e.getFlyweightMessage());
                 }
+                if (acc.hasOverflowed()) {
+                    throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+                }
                 count++;
             }
             mv.putDecimal256(0, acc);
@@ -1284,8 +1641,67 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
         }
 
         @Override
+        public void getDecimal128(Record rec, Decimal128 sink) {
+            if (value.isNull()) {
+                sink.ofRawNull();
+                return;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            sink.ofRaw(value.getLh(), value.getLl());
+        }
+
+        @Override
+        public short getDecimal16(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL16_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return (short) value.getLl();
+        }
+
+        @Override
         public void getDecimal256(Record rec, Decimal256 sink) {
             sink.copyRaw(value);
+            if (!sink.isNull() && sink.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+        }
+
+        @Override
+        public int getDecimal32(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL32_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return (int) value.getLl();
+        }
+
+        @Override
+        public long getDecimal64(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL64_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return value.getLl();
+        }
+
+        @Override
+        public byte getDecimal8(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL8_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return (byte) value.getLl();
         }
 
         @Override
@@ -1319,7 +1735,7 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
         }
     }
 
-    static class Decimal64Rescale256AvgOverUnboundedRowsFrameFunction extends BaseWindowFunction implements WindowDecimal256Function {
+    static class Decimal64Rescale256AvgOverUnboundedRowsFrameFunction extends BaseWindowFunction {
 
         private final Decimal256 acc = new Decimal256();
         private final int argScale;
@@ -1349,6 +1765,9 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
                 } catch (NumericException e) {
                     throw CairoException.nonCritical().position(position).put("avg aggregation failed: ").put(e.getFlyweightMessage());
                 }
+                if (acc.hasOverflowed()) {
+                    throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+                }
                 count++;
             }
 
@@ -1360,8 +1779,67 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
         }
 
         @Override
+        public void getDecimal128(Record rec, Decimal128 sink) {
+            if (value.isNull()) {
+                sink.ofRawNull();
+                return;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            sink.ofRaw(value.getLh(), value.getLl());
+        }
+
+        @Override
+        public short getDecimal16(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL16_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return (short) value.getLl();
+        }
+
+        @Override
         public void getDecimal256(Record rec, Decimal256 sink) {
             sink.copyRaw(value);
+            if (!sink.isNull() && sink.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+        }
+
+        @Override
+        public int getDecimal32(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL32_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return (int) value.getLl();
+        }
+
+        @Override
+        public long getDecimal64(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL64_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return value.getLl();
+        }
+
+        @Override
+        public byte getDecimal8(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL8_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return (byte) value.getLl();
         }
 
         @Override
@@ -1409,7 +1887,7 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
         }
     }
 
-    static class Decimal64Rescale256AvgOverWholeResultSetFunction extends BaseWindowFunction implements WindowDecimal256Function {
+    static class Decimal64Rescale256AvgOverWholeResultSetFunction extends BaseWindowFunction {
 
         private final Decimal256 acc = new Decimal256();
         private final int argScale;
@@ -1431,8 +1909,67 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
         }
 
         @Override
+        public void getDecimal128(Record rec, Decimal128 sink) {
+            if (value.isNull()) {
+                sink.ofRawNull();
+                return;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            sink.ofRaw(value.getLh(), value.getLl());
+        }
+
+        @Override
+        public short getDecimal16(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL16_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return (short) value.getLl();
+        }
+
+        @Override
         public void getDecimal256(Record rec, Decimal256 sink) {
             sink.copyRaw(value);
+            if (!sink.isNull() && sink.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+        }
+
+        @Override
+        public int getDecimal32(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL32_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return (int) value.getLl();
+        }
+
+        @Override
+        public long getDecimal64(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL64_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return value.getLl();
+        }
+
+        @Override
+        public byte getDecimal8(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL8_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return (byte) value.getLl();
         }
 
         @Override
@@ -1458,6 +1995,9 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
                     Decimal256.uncheckedAdd(acc, d);
                 } catch (NumericException e) {
                     throw CairoException.nonCritical().position(position).put("avg aggregation failed: ").put(e.getFlyweightMessage());
+                }
+                if (acc.hasOverflowed()) {
+                    throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
                 }
                 count++;
             }
@@ -1907,7 +2447,7 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
         throw SqlException.$(position, "function not implemented for given window parameters");
     }
 
-    static class Decimal16Rescale256AvgOverCurrentRowFunction extends BaseWindowFunction implements WindowDecimal256Function {
+    static class Decimal16Rescale256AvgOverCurrentRowFunction extends BaseWindowFunction {
 
         private final int argScale;
         private final Decimal256 outScratch = new Decimal256();
@@ -1937,8 +2477,67 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
         }
 
         @Override
+        public void getDecimal128(Record rec, Decimal128 sink) {
+            if (value.isNull()) {
+                sink.ofRawNull();
+                return;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            sink.ofRaw(value.getLh(), value.getLl());
+        }
+
+        @Override
+        public short getDecimal16(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL16_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return (short) value.getLl();
+        }
+
+        @Override
         public void getDecimal256(Record rec, Decimal256 sink) {
             sink.copyRaw(value);
+            if (!sink.isNull() && sink.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+        }
+
+        @Override
+        public int getDecimal32(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL32_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return (int) value.getLl();
+        }
+
+        @Override
+        public long getDecimal64(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL64_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return value.getLl();
+        }
+
+        @Override
+        public byte getDecimal8(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL8_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return (byte) value.getLl();
         }
 
         @Override
@@ -1963,7 +2562,7 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
         }
     }
 
-    static class Decimal16Rescale256AvgOverPartitionFunction extends BasePartitionedWindowFunction implements WindowDecimal256Function {
+    static class Decimal16Rescale256AvgOverPartitionFunction extends BasePartitionedWindowFunction {
 
         private final Decimal256 acc = new Decimal256();
         private final int argScale;
@@ -1980,24 +2579,62 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
             this.position = position;
         }
 
-        @Override
-        public void getDecimal256(Record rec, Decimal256 sink) {
+        private boolean computeAvg(Record rec) {
             partitionByRecord.of(rec);
             MapKey key = map.withKey();
             key.put(partitionByRecord, partitionBySink);
             MapValue mv = key.findValue();
             if (mv == null) {
-                sink.ofRawNull();
-                return;
+                return false;
             }
             long count = mv.getLong(1);
             if (count == 0) {
-                sink.ofRawNull();
-                return;
+                return false;
             }
             mv.getDecimal256(0, acc);
+            if (!acc.isNull() && acc.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
             doDivide(acc, count, argScale, targetScale, position, divScratch);
-            sink.copyRaw(divScratch);
+            return true;
+        }
+
+        @Override
+        public void getDecimal128(Record rec, Decimal128 sink) {
+            if (computeAvg(rec)) {
+                sink.ofRaw(divScratch.getLh(), divScratch.getLl());
+            } else {
+                sink.ofRawNull();
+            }
+        }
+
+        @Override
+        public short getDecimal16(Record rec) {
+            return computeAvg(rec) ? (short) divScratch.getLl() : Decimals.DECIMAL16_NULL;
+        }
+
+        @Override
+        public void getDecimal256(Record rec, Decimal256 sink) {
+            if (computeAvg(rec)) {
+                sink.copyRaw(divScratch);
+            } else {
+                sink.ofRawNull();
+            }
+        }
+
+        @Override
+        public int getDecimal32(Record rec) {
+            return computeAvg(rec) ? (int) divScratch.getLl() : Decimals.DECIMAL32_NULL;
+        }
+
+        @Override
+        public long getDecimal64(Record rec) {
+            return computeAvg(rec) ? divScratch.getLl() : Decimals.DECIMAL64_NULL;
+        }
+
+        @Override
+        public byte getDecimal8(Record rec) {
+            return computeAvg(rec) ? (byte) divScratch.getLl() : Decimals.DECIMAL8_NULL;
         }
 
         @Override
@@ -2036,6 +2673,9 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
                 } catch (NumericException e) {
                     throw CairoException.nonCritical().position(position).put("avg aggregation failed: ").put(e.getFlyweightMessage());
                 }
+                if (acc.hasOverflowed()) {
+                    throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+                }
                 mv.putDecimal256(0, acc);
                 mv.addLong(1, 1);
             }
@@ -2073,7 +2713,7 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
         }
     }
 
-    static class Decimal16Rescale256AvgOverUnboundedPartitionRowsFrameFunction extends BasePartitionedWindowFunction implements WindowDecimal256Function {
+    static class Decimal16Rescale256AvgOverUnboundedPartitionRowsFrameFunction extends BasePartitionedWindowFunction {
 
         private final Decimal256 acc = new Decimal256();
         private final int argScale;
@@ -2114,6 +2754,9 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
                 } catch (NumericException e) {
                     throw CairoException.nonCritical().position(position).put("avg aggregation failed: ").put(e.getFlyweightMessage());
                 }
+                if (acc.hasOverflowed()) {
+                    throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+                }
                 count++;
             }
             mv.putDecimal256(0, acc);
@@ -2127,8 +2770,67 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
         }
 
         @Override
+        public void getDecimal128(Record rec, Decimal128 sink) {
+            if (value.isNull()) {
+                sink.ofRawNull();
+                return;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            sink.ofRaw(value.getLh(), value.getLl());
+        }
+
+        @Override
+        public short getDecimal16(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL16_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return (short) value.getLl();
+        }
+
+        @Override
         public void getDecimal256(Record rec, Decimal256 sink) {
             sink.copyRaw(value);
+            if (!sink.isNull() && sink.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+        }
+
+        @Override
+        public int getDecimal32(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL32_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return (int) value.getLl();
+        }
+
+        @Override
+        public long getDecimal64(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL64_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return value.getLl();
+        }
+
+        @Override
+        public byte getDecimal8(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL8_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return (byte) value.getLl();
         }
 
         @Override
@@ -2153,7 +2855,7 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
         }
     }
 
-    static class Decimal16Rescale256AvgOverUnboundedRowsFrameFunction extends BaseWindowFunction implements WindowDecimal256Function {
+    static class Decimal16Rescale256AvgOverUnboundedRowsFrameFunction extends BaseWindowFunction {
 
         private final Decimal256 acc = new Decimal256();
         private final int argScale;
@@ -2183,6 +2885,9 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
                 } catch (NumericException e) {
                     throw CairoException.nonCritical().position(position).put("avg aggregation failed: ").put(e.getFlyweightMessage());
                 }
+                if (acc.hasOverflowed()) {
+                    throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+                }
                 count++;
             }
             if (count != 0) {
@@ -2194,8 +2899,67 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
         }
 
         @Override
+        public void getDecimal128(Record rec, Decimal128 sink) {
+            if (value.isNull()) {
+                sink.ofRawNull();
+                return;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            sink.ofRaw(value.getLh(), value.getLl());
+        }
+
+        @Override
+        public short getDecimal16(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL16_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return (short) value.getLl();
+        }
+
+        @Override
         public void getDecimal256(Record rec, Decimal256 sink) {
             sink.copyRaw(value);
+            if (!sink.isNull() && sink.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+        }
+
+        @Override
+        public int getDecimal32(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL32_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return (int) value.getLl();
+        }
+
+        @Override
+        public long getDecimal64(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL64_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return value.getLl();
+        }
+
+        @Override
+        public byte getDecimal8(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL8_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return (byte) value.getLl();
         }
 
         @Override
@@ -2236,7 +3000,7 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
         }
     }
 
-    static class Decimal16Rescale256AvgOverWholeResultSetFunction extends BaseWindowFunction implements WindowDecimal256Function {
+    static class Decimal16Rescale256AvgOverWholeResultSetFunction extends BaseWindowFunction {
 
         private final Decimal256 acc = new Decimal256();
         private final int argScale;
@@ -2258,8 +3022,67 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
         }
 
         @Override
+        public void getDecimal128(Record rec, Decimal128 sink) {
+            if (value.isNull()) {
+                sink.ofRawNull();
+                return;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            sink.ofRaw(value.getLh(), value.getLl());
+        }
+
+        @Override
+        public short getDecimal16(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL16_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return (short) value.getLl();
+        }
+
+        @Override
         public void getDecimal256(Record rec, Decimal256 sink) {
             sink.copyRaw(value);
+            if (!sink.isNull() && sink.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+        }
+
+        @Override
+        public int getDecimal32(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL32_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return (int) value.getLl();
+        }
+
+        @Override
+        public long getDecimal64(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL64_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return value.getLl();
+        }
+
+        @Override
+        public byte getDecimal8(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL8_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return (byte) value.getLl();
         }
 
         @Override
@@ -2285,6 +3108,9 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
                     Decimal256.uncheckedAdd(acc, s);
                 } catch (NumericException e) {
                     throw CairoException.nonCritical().position(position).put("avg aggregation failed: ").put(e.getFlyweightMessage());
+                }
+                if (acc.hasOverflowed()) {
+                    throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
                 }
                 count++;
             }
@@ -2423,7 +3249,7 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
         throw SqlException.$(position, "function not implemented for given window parameters");
     }
 
-    static class Decimal8Rescale256AvgOverCurrentRowFunction extends BaseWindowFunction implements WindowDecimal256Function {
+    static class Decimal8Rescale256AvgOverCurrentRowFunction extends BaseWindowFunction {
 
         private final int argScale;
         private final Decimal256 outScratch = new Decimal256();
@@ -2453,8 +3279,67 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
         }
 
         @Override
+        public void getDecimal128(Record rec, Decimal128 sink) {
+            if (value.isNull()) {
+                sink.ofRawNull();
+                return;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            sink.ofRaw(value.getLh(), value.getLl());
+        }
+
+        @Override
+        public short getDecimal16(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL16_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return (short) value.getLl();
+        }
+
+        @Override
         public void getDecimal256(Record rec, Decimal256 sink) {
             sink.copyRaw(value);
+            if (!sink.isNull() && sink.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+        }
+
+        @Override
+        public int getDecimal32(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL32_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return (int) value.getLl();
+        }
+
+        @Override
+        public long getDecimal64(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL64_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return value.getLl();
+        }
+
+        @Override
+        public byte getDecimal8(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL8_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return (byte) value.getLl();
         }
 
         @Override
@@ -2479,7 +3364,7 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
         }
     }
 
-    static class Decimal8Rescale256AvgOverPartitionFunction extends BasePartitionedWindowFunction implements WindowDecimal256Function {
+    static class Decimal8Rescale256AvgOverPartitionFunction extends BasePartitionedWindowFunction {
 
         private final Decimal256 acc = new Decimal256();
         private final int argScale;
@@ -2496,24 +3381,62 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
             this.position = position;
         }
 
-        @Override
-        public void getDecimal256(Record rec, Decimal256 sink) {
+        private boolean computeAvg(Record rec) {
             partitionByRecord.of(rec);
             MapKey key = map.withKey();
             key.put(partitionByRecord, partitionBySink);
             MapValue mv = key.findValue();
             if (mv == null) {
-                sink.ofRawNull();
-                return;
+                return false;
             }
             long count = mv.getLong(1);
             if (count == 0) {
-                sink.ofRawNull();
-                return;
+                return false;
             }
             mv.getDecimal256(0, acc);
+            if (!acc.isNull() && acc.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
             doDivide(acc, count, argScale, targetScale, position, divScratch);
-            sink.copyRaw(divScratch);
+            return true;
+        }
+
+        @Override
+        public void getDecimal128(Record rec, Decimal128 sink) {
+            if (computeAvg(rec)) {
+                sink.ofRaw(divScratch.getLh(), divScratch.getLl());
+            } else {
+                sink.ofRawNull();
+            }
+        }
+
+        @Override
+        public short getDecimal16(Record rec) {
+            return computeAvg(rec) ? (short) divScratch.getLl() : Decimals.DECIMAL16_NULL;
+        }
+
+        @Override
+        public void getDecimal256(Record rec, Decimal256 sink) {
+            if (computeAvg(rec)) {
+                sink.copyRaw(divScratch);
+            } else {
+                sink.ofRawNull();
+            }
+        }
+
+        @Override
+        public int getDecimal32(Record rec) {
+            return computeAvg(rec) ? (int) divScratch.getLl() : Decimals.DECIMAL32_NULL;
+        }
+
+        @Override
+        public long getDecimal64(Record rec) {
+            return computeAvg(rec) ? divScratch.getLl() : Decimals.DECIMAL64_NULL;
+        }
+
+        @Override
+        public byte getDecimal8(Record rec) {
+            return computeAvg(rec) ? (byte) divScratch.getLl() : Decimals.DECIMAL8_NULL;
         }
 
         @Override
@@ -2552,6 +3475,9 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
                 } catch (NumericException e) {
                     throw CairoException.nonCritical().position(position).put("avg aggregation failed: ").put(e.getFlyweightMessage());
                 }
+                if (acc.hasOverflowed()) {
+                    throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+                }
                 mv.putDecimal256(0, acc);
                 mv.addLong(1, 1);
             }
@@ -2589,7 +3515,7 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
         }
     }
 
-    static class Decimal8Rescale256AvgOverUnboundedPartitionRowsFrameFunction extends BasePartitionedWindowFunction implements WindowDecimal256Function {
+    static class Decimal8Rescale256AvgOverUnboundedPartitionRowsFrameFunction extends BasePartitionedWindowFunction {
 
         private final Decimal256 acc = new Decimal256();
         private final int argScale;
@@ -2630,6 +3556,9 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
                 } catch (NumericException e) {
                     throw CairoException.nonCritical().position(position).put("avg aggregation failed: ").put(e.getFlyweightMessage());
                 }
+                if (acc.hasOverflowed()) {
+                    throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+                }
                 count++;
             }
             mv.putDecimal256(0, acc);
@@ -2643,8 +3572,67 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
         }
 
         @Override
+        public void getDecimal128(Record rec, Decimal128 sink) {
+            if (value.isNull()) {
+                sink.ofRawNull();
+                return;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            sink.ofRaw(value.getLh(), value.getLl());
+        }
+
+        @Override
+        public short getDecimal16(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL16_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return (short) value.getLl();
+        }
+
+        @Override
         public void getDecimal256(Record rec, Decimal256 sink) {
             sink.copyRaw(value);
+            if (!sink.isNull() && sink.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+        }
+
+        @Override
+        public int getDecimal32(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL32_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return (int) value.getLl();
+        }
+
+        @Override
+        public long getDecimal64(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL64_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return value.getLl();
+        }
+
+        @Override
+        public byte getDecimal8(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL8_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return (byte) value.getLl();
         }
 
         @Override
@@ -2669,7 +3657,7 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
         }
     }
 
-    static class Decimal8Rescale256AvgOverUnboundedRowsFrameFunction extends BaseWindowFunction implements WindowDecimal256Function {
+    static class Decimal8Rescale256AvgOverUnboundedRowsFrameFunction extends BaseWindowFunction {
 
         private final Decimal256 acc = new Decimal256();
         private final int argScale;
@@ -2699,6 +3687,9 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
                 } catch (NumericException e) {
                     throw CairoException.nonCritical().position(position).put("avg aggregation failed: ").put(e.getFlyweightMessage());
                 }
+                if (acc.hasOverflowed()) {
+                    throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+                }
                 count++;
             }
             if (count != 0) {
@@ -2710,8 +3701,67 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
         }
 
         @Override
+        public void getDecimal128(Record rec, Decimal128 sink) {
+            if (value.isNull()) {
+                sink.ofRawNull();
+                return;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            sink.ofRaw(value.getLh(), value.getLl());
+        }
+
+        @Override
+        public short getDecimal16(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL16_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return (short) value.getLl();
+        }
+
+        @Override
         public void getDecimal256(Record rec, Decimal256 sink) {
             sink.copyRaw(value);
+            if (!sink.isNull() && sink.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+        }
+
+        @Override
+        public int getDecimal32(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL32_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return (int) value.getLl();
+        }
+
+        @Override
+        public long getDecimal64(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL64_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return value.getLl();
+        }
+
+        @Override
+        public byte getDecimal8(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL8_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return (byte) value.getLl();
         }
 
         @Override
@@ -2752,7 +3802,7 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
         }
     }
 
-    static class Decimal8Rescale256AvgOverWholeResultSetFunction extends BaseWindowFunction implements WindowDecimal256Function {
+    static class Decimal8Rescale256AvgOverWholeResultSetFunction extends BaseWindowFunction {
 
         private final Decimal256 acc = new Decimal256();
         private final int argScale;
@@ -2774,8 +3824,67 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
         }
 
         @Override
+        public void getDecimal128(Record rec, Decimal128 sink) {
+            if (value.isNull()) {
+                sink.ofRawNull();
+                return;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            sink.ofRaw(value.getLh(), value.getLl());
+        }
+
+        @Override
+        public short getDecimal16(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL16_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return (short) value.getLl();
+        }
+
+        @Override
         public void getDecimal256(Record rec, Decimal256 sink) {
             sink.copyRaw(value);
+            if (!sink.isNull() && sink.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+        }
+
+        @Override
+        public int getDecimal32(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL32_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return (int) value.getLl();
+        }
+
+        @Override
+        public long getDecimal64(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL64_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return value.getLl();
+        }
+
+        @Override
+        public byte getDecimal8(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL8_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return (byte) value.getLl();
         }
 
         @Override
@@ -2801,6 +3910,9 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
                     Decimal256.uncheckedAdd(acc, b);
                 } catch (NumericException e) {
                     throw CairoException.nonCritical().position(position).put("avg aggregation failed: ").put(e.getFlyweightMessage());
+                }
+                if (acc.hasOverflowed()) {
+                    throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
                 }
                 count++;
             }
@@ -2838,7 +3950,7 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
         }
     }
 
-    public static class Decimal8Rescale256AvgOverPartitionRangeFrameFunction extends BasePartitionedWindowFunction implements WindowDecimal256Function {
+    public static class Decimal8Rescale256AvgOverPartitionRangeFrameFunction extends BasePartitionedWindowFunction {
 
         private static final int RECORD_SIZE = Long.BYTES + Byte.BYTES;
         private final Decimal256 acc = new Decimal256();
@@ -2932,11 +4044,11 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
                 }
             } else {
                 mapValue.getDecimal256(0, acc);
-                frameSize = mapValue.getLong(4);
-                startOffset = mapValue.getLong(5);
-                size = mapValue.getLong(6);
-                capacity = mapValue.getLong(7);
-                firstIdx = mapValue.getLong(8);
+                frameSize = mapValue.getLong(1);
+                startOffset = mapValue.getLong(2);
+                size = mapValue.getLong(3);
+                capacity = mapValue.getLong(4);
+                firstIdx = mapValue.getLong(5);
 
                 long newFirstIdx = firstIdx;
                 if (frameLoBounded) {
@@ -2946,7 +4058,7 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
                         if (Math.abs(timestamp - ts) > maxDiff) {
                             if (frameSize > 0) {
                                 byte v = memory.getByte(startOffset + idx * RECORD_SIZE + Long.BYTES);
-                                acc.subtract(v < 0 ? -1L : 0L, v < 0 ? -1L : 0L, v < 0 ? -1L : 0L, v, argScale);
+                                acc.subtract(v < 0 ? -1L : 0L, v < 0 ? -1L : 0L, v < 0 ? -1L : 0L, v, 0);
                                 frameSize--;
                             }
                             newFirstIdx = (idx + 1) % capacity;
@@ -2984,6 +4096,9 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
                             } catch (NumericException e) {
                                 throw CairoException.nonCritical().position(position).put("avg aggregation failed: ").put(e.getFlyweightMessage());
                             }
+                            if (acc.hasOverflowed()) {
+                                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+                            }
                             frameSize++;
                         } else {
                             break;
@@ -3001,6 +4116,9 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
                             } catch (NumericException e) {
                                 throw CairoException.nonCritical().position(position).put("avg aggregation failed: ").put(e.getFlyweightMessage());
                             }
+                            if (acc.hasOverflowed()) {
+                                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+                            }
                             frameSize++;
                             newFirstIdx = (idx + 1) % capacity;
                             size--;
@@ -3013,11 +4131,11 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
             }
 
             mapValue.putDecimal256(0, acc);
-            mapValue.putLong(4, frameSize);
-            mapValue.putLong(5, startOffset);
-            mapValue.putLong(6, size);
-            mapValue.putLong(7, capacity);
-            mapValue.putLong(8, firstIdx);
+            mapValue.putLong(1, frameSize);
+            mapValue.putLong(2, startOffset);
+            mapValue.putLong(3, size);
+            mapValue.putLong(4, capacity);
+            mapValue.putLong(5, firstIdx);
 
             if (frameSize != 0) {
                 doDivide(acc, frameSize, argScale, targetScale, position, divScratch);
@@ -3028,8 +4146,67 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
         }
 
         @Override
+        public void getDecimal128(Record rec, Decimal128 sink) {
+            if (value.isNull()) {
+                sink.ofRawNull();
+                return;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            sink.ofRaw(value.getLh(), value.getLl());
+        }
+
+        @Override
+        public short getDecimal16(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL16_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return (short) value.getLl();
+        }
+
+        @Override
         public void getDecimal256(Record rec, Decimal256 sink) {
             sink.copyRaw(value);
+            if (!sink.isNull() && sink.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+        }
+
+        @Override
+        public int getDecimal32(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL32_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return (int) value.getLl();
+        }
+
+        @Override
+        public long getDecimal64(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL64_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return value.getLl();
+        }
+
+        @Override
+        public byte getDecimal8(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL8_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return (byte) value.getLl();
         }
 
         @Override
@@ -3093,7 +4270,7 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
         }
     }
 
-    public static class Decimal8Rescale256AvgOverPartitionRowsFrameFunction extends BasePartitionedWindowFunction implements WindowDecimal256Function {
+    public static class Decimal8Rescale256AvgOverPartitionRowsFrameFunction extends BasePartitionedWindowFunction {
 
         private final Decimal256 acc = new Decimal256();
         private final int argScale;
@@ -3171,9 +4348,9 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
                 }
             } else {
                 mv.getDecimal256(0, acc);
-                count = mv.getLong(4);
-                loIdx = mv.getLong(5);
-                startOffset = mv.getLong(6);
+                count = mv.getLong(1);
+                loIdx = mv.getLong(2);
+                startOffset = mv.getLong(3);
 
                 byte hi = frameIncludesCurrentValue ? b : memory.getByte(startOffset + ((loIdx + frameSize - 1) % bufferSize) * Byte.BYTES);
                 if (hi != Decimals.DECIMAL8_NULL) {
@@ -3183,20 +4360,23 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
                     } catch (NumericException e) {
                         throw CairoException.nonCritical().position(position).put("avg aggregation failed: ").put(e.getFlyweightMessage());
                     }
+                    if (acc.hasOverflowed()) {
+                        throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+                    }
                 }
                 if (frameLoBounded) {
                     byte lo = memory.getByte(startOffset + loIdx * Byte.BYTES);
                     if (lo != Decimals.DECIMAL8_NULL) {
-                        acc.subtract(lo < 0 ? -1L : 0L, lo < 0 ? -1L : 0L, lo < 0 ? -1L : 0L, lo, argScale);
+                        acc.subtract(lo < 0 ? -1L : 0L, lo < 0 ? -1L : 0L, lo < 0 ? -1L : 0L, lo, 0);
                         count--;
                     }
                 }
             }
 
             mv.putDecimal256(0, acc);
-            mv.putLong(4, count);
-            mv.putLong(5, (loIdx + 1) % bufferSize);
-            mv.putLong(6, startOffset);
+            mv.putLong(1, count);
+            mv.putLong(2, (loIdx + 1) % bufferSize);
+            mv.putLong(3, startOffset);
             memory.putByte(startOffset + loIdx * Byte.BYTES, b);
 
             if (count != 0) {
@@ -3208,8 +4388,67 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
         }
 
         @Override
+        public void getDecimal128(Record rec, Decimal128 sink) {
+            if (value.isNull()) {
+                sink.ofRawNull();
+                return;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            sink.ofRaw(value.getLh(), value.getLl());
+        }
+
+        @Override
+        public short getDecimal16(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL16_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return (short) value.getLl();
+        }
+
+        @Override
         public void getDecimal256(Record rec, Decimal256 sink) {
             sink.copyRaw(value);
+            if (!sink.isNull() && sink.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+        }
+
+        @Override
+        public int getDecimal32(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL32_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return (int) value.getLl();
+        }
+
+        @Override
+        public long getDecimal64(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL64_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return value.getLl();
+        }
+
+        @Override
+        public byte getDecimal8(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL8_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return (byte) value.getLl();
         }
 
         @Override
@@ -3270,7 +4509,7 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
         }
     }
 
-    static class Decimal8Rescale256AvgOverRangeFrameFunction extends BaseWindowFunction implements Reopenable, WindowDecimal256Function {
+    static class Decimal8Rescale256AvgOverRangeFrameFunction extends BaseWindowFunction implements Reopenable {
 
         private static final int RECORD_SIZE = Long.BYTES + Byte.BYTES;
         private final Decimal256 acc = new Decimal256();
@@ -3341,7 +4580,7 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
                     if (Math.abs(timestamp - ts) > maxDiff) {
                         if (frameSize > 0) {
                             byte v = memory.getByte(startOffset + idx * RECORD_SIZE + Long.BYTES);
-                            acc.subtract(v < 0 ? -1L : 0L, v < 0 ? -1L : 0L, v < 0 ? -1L : 0L, v, argScale);
+                            acc.subtract(v < 0 ? -1L : 0L, v < 0 ? -1L : 0L, v < 0 ? -1L : 0L, v, 0);
                             frameSize--;
                         }
                         newFirstIdx = (idx + 1) % capacity;
@@ -3387,6 +4626,9 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
                         } catch (NumericException e) {
                             throw CairoException.nonCritical().position(position).put("avg aggregation failed: ").put(e.getFlyweightMessage());
                         }
+                        if (acc.hasOverflowed()) {
+                            throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+                        }
                         frameSize++;
                     } else {
                         break;
@@ -3403,6 +4645,9 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
                             Decimal256.uncheckedAdd(acc, v);
                         } catch (NumericException e) {
                             throw CairoException.nonCritical().position(position).put("avg aggregation failed: ").put(e.getFlyweightMessage());
+                        }
+                        if (acc.hasOverflowed()) {
+                            throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
                         }
                         frameSize++;
                         newFirstIdx = (idx + 1) % capacity;
@@ -3422,8 +4667,67 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
         }
 
         @Override
+        public void getDecimal128(Record rec, Decimal128 sink) {
+            if (value.isNull()) {
+                sink.ofRawNull();
+                return;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            sink.ofRaw(value.getLh(), value.getLl());
+        }
+
+        @Override
+        public short getDecimal16(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL16_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return (short) value.getLl();
+        }
+
+        @Override
         public void getDecimal256(Record rec, Decimal256 sink) {
             sink.copyRaw(value);
+            if (!sink.isNull() && sink.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+        }
+
+        @Override
+        public int getDecimal32(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL32_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return (int) value.getLl();
+        }
+
+        @Override
+        public long getDecimal64(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL64_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return value.getLl();
+        }
+
+        @Override
+        public byte getDecimal8(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL8_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return (byte) value.getLl();
         }
 
         @Override
@@ -3496,7 +4800,7 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
         }
     }
 
-    static class Decimal8Rescale256AvgOverRowsFrameFunction extends BaseWindowFunction implements Reopenable, WindowDecimal256Function {
+    static class Decimal8Rescale256AvgOverRowsFrameFunction extends BaseWindowFunction implements Reopenable {
 
         private final Decimal256 acc = new Decimal256();
         private final int argScale;
@@ -3564,6 +4868,9 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
                 } catch (NumericException e) {
                     throw CairoException.nonCritical().position(position).put("avg aggregation failed: ").put(e.getFlyweightMessage());
                 }
+                if (acc.hasOverflowed()) {
+                    throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+                }
                 count++;
             }
             if (count != 0) {
@@ -3576,7 +4883,7 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
             if (frameLoBounded) {
                 byte lo = buffer.getByte((long) loIdx * Byte.BYTES);
                 if (lo != Decimals.DECIMAL8_NULL) {
-                    acc.subtract(lo < 0 ? -1L : 0L, lo < 0 ? -1L : 0L, lo < 0 ? -1L : 0L, lo, argScale);
+                    acc.subtract(lo < 0 ? -1L : 0L, lo < 0 ? -1L : 0L, lo < 0 ? -1L : 0L, lo, 0);
                     count--;
                 }
             }
@@ -3585,8 +4892,67 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
         }
 
         @Override
+        public void getDecimal128(Record rec, Decimal128 sink) {
+            if (value.isNull()) {
+                sink.ofRawNull();
+                return;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            sink.ofRaw(value.getLh(), value.getLl());
+        }
+
+        @Override
+        public short getDecimal16(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL16_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return (short) value.getLl();
+        }
+
+        @Override
         public void getDecimal256(Record rec, Decimal256 sink) {
             sink.copyRaw(value);
+            if (!sink.isNull() && sink.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+        }
+
+        @Override
+        public int getDecimal32(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL32_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return (int) value.getLl();
+        }
+
+        @Override
+        public long getDecimal64(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL64_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return value.getLl();
+        }
+
+        @Override
+        public byte getDecimal8(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL8_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return (byte) value.getLl();
         }
 
         @Override
@@ -3664,7 +5030,7 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
         }
     }
 
-    public static class Decimal16Rescale256AvgOverPartitionRangeFrameFunction extends BasePartitionedWindowFunction implements WindowDecimal256Function {
+    public static class Decimal16Rescale256AvgOverPartitionRangeFrameFunction extends BasePartitionedWindowFunction {
 
         private static final int RECORD_SIZE = Long.BYTES + Short.BYTES;
         private final Decimal256 acc = new Decimal256();
@@ -3758,11 +5124,11 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
                 }
             } else {
                 mapValue.getDecimal256(0, acc);
-                frameSize = mapValue.getLong(4);
-                startOffset = mapValue.getLong(5);
-                size = mapValue.getLong(6);
-                capacity = mapValue.getLong(7);
-                firstIdx = mapValue.getLong(8);
+                frameSize = mapValue.getLong(1);
+                startOffset = mapValue.getLong(2);
+                size = mapValue.getLong(3);
+                capacity = mapValue.getLong(4);
+                firstIdx = mapValue.getLong(5);
 
                 long newFirstIdx = firstIdx;
                 if (frameLoBounded) {
@@ -3772,7 +5138,7 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
                         if (Math.abs(timestamp - ts) > maxDiff) {
                             if (frameSize > 0) {
                                 short v = memory.getShort(startOffset + idx * RECORD_SIZE + Long.BYTES);
-                                acc.subtract(v < 0 ? -1L : 0L, v < 0 ? -1L : 0L, v < 0 ? -1L : 0L, v, argScale);
+                                acc.subtract(v < 0 ? -1L : 0L, v < 0 ? -1L : 0L, v < 0 ? -1L : 0L, v, 0);
                                 frameSize--;
                             }
                             newFirstIdx = (idx + 1) % capacity;
@@ -3810,6 +5176,9 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
                             } catch (NumericException e) {
                                 throw CairoException.nonCritical().position(position).put("avg aggregation failed: ").put(e.getFlyweightMessage());
                             }
+                            if (acc.hasOverflowed()) {
+                                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+                            }
                             frameSize++;
                         } else {
                             break;
@@ -3827,6 +5196,9 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
                             } catch (NumericException e) {
                                 throw CairoException.nonCritical().position(position).put("avg aggregation failed: ").put(e.getFlyweightMessage());
                             }
+                            if (acc.hasOverflowed()) {
+                                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+                            }
                             frameSize++;
                             newFirstIdx = (idx + 1) % capacity;
                             size--;
@@ -3839,11 +5211,11 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
             }
 
             mapValue.putDecimal256(0, acc);
-            mapValue.putLong(4, frameSize);
-            mapValue.putLong(5, startOffset);
-            mapValue.putLong(6, size);
-            mapValue.putLong(7, capacity);
-            mapValue.putLong(8, firstIdx);
+            mapValue.putLong(1, frameSize);
+            mapValue.putLong(2, startOffset);
+            mapValue.putLong(3, size);
+            mapValue.putLong(4, capacity);
+            mapValue.putLong(5, firstIdx);
 
             if (frameSize != 0) {
                 doDivide(acc, frameSize, argScale, targetScale, position, divScratch);
@@ -3854,8 +5226,67 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
         }
 
         @Override
+        public void getDecimal128(Record rec, Decimal128 sink) {
+            if (value.isNull()) {
+                sink.ofRawNull();
+                return;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            sink.ofRaw(value.getLh(), value.getLl());
+        }
+
+        @Override
+        public short getDecimal16(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL16_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return (short) value.getLl();
+        }
+
+        @Override
         public void getDecimal256(Record rec, Decimal256 sink) {
             sink.copyRaw(value);
+            if (!sink.isNull() && sink.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+        }
+
+        @Override
+        public int getDecimal32(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL32_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return (int) value.getLl();
+        }
+
+        @Override
+        public long getDecimal64(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL64_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return value.getLl();
+        }
+
+        @Override
+        public byte getDecimal8(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL8_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return (byte) value.getLl();
         }
 
         @Override
@@ -3919,7 +5350,7 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
         }
     }
 
-    public static class Decimal16Rescale256AvgOverPartitionRowsFrameFunction extends BasePartitionedWindowFunction implements WindowDecimal256Function {
+    public static class Decimal16Rescale256AvgOverPartitionRowsFrameFunction extends BasePartitionedWindowFunction {
 
         private final Decimal256 acc = new Decimal256();
         private final int argScale;
@@ -3997,9 +5428,9 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
                 }
             } else {
                 mv.getDecimal256(0, acc);
-                count = mv.getLong(4);
-                loIdx = mv.getLong(5);
-                startOffset = mv.getLong(6);
+                count = mv.getLong(1);
+                loIdx = mv.getLong(2);
+                startOffset = mv.getLong(3);
 
                 short hi = frameIncludesCurrentValue ? s : memory.getShort(startOffset + ((loIdx + frameSize - 1) % bufferSize) * Short.BYTES);
                 if (hi != Decimals.DECIMAL16_NULL) {
@@ -4009,20 +5440,23 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
                     } catch (NumericException e) {
                         throw CairoException.nonCritical().position(position).put("avg aggregation failed: ").put(e.getFlyweightMessage());
                     }
+                    if (acc.hasOverflowed()) {
+                        throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+                    }
                 }
                 if (frameLoBounded) {
                     short lo = memory.getShort(startOffset + loIdx * Short.BYTES);
                     if (lo != Decimals.DECIMAL16_NULL) {
-                        acc.subtract(lo < 0 ? -1L : 0L, lo < 0 ? -1L : 0L, lo < 0 ? -1L : 0L, lo, argScale);
+                        acc.subtract(lo < 0 ? -1L : 0L, lo < 0 ? -1L : 0L, lo < 0 ? -1L : 0L, lo, 0);
                         count--;
                     }
                 }
             }
 
             mv.putDecimal256(0, acc);
-            mv.putLong(4, count);
-            mv.putLong(5, (loIdx + 1) % bufferSize);
-            mv.putLong(6, startOffset);
+            mv.putLong(1, count);
+            mv.putLong(2, (loIdx + 1) % bufferSize);
+            mv.putLong(3, startOffset);
             memory.putShort(startOffset + loIdx * Short.BYTES, s);
 
             if (count != 0) {
@@ -4034,8 +5468,67 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
         }
 
         @Override
+        public void getDecimal128(Record rec, Decimal128 sink) {
+            if (value.isNull()) {
+                sink.ofRawNull();
+                return;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            sink.ofRaw(value.getLh(), value.getLl());
+        }
+
+        @Override
+        public short getDecimal16(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL16_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return (short) value.getLl();
+        }
+
+        @Override
         public void getDecimal256(Record rec, Decimal256 sink) {
             sink.copyRaw(value);
+            if (!sink.isNull() && sink.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+        }
+
+        @Override
+        public int getDecimal32(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL32_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return (int) value.getLl();
+        }
+
+        @Override
+        public long getDecimal64(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL64_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return value.getLl();
+        }
+
+        @Override
+        public byte getDecimal8(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL8_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return (byte) value.getLl();
         }
 
         @Override
@@ -4096,7 +5589,7 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
         }
     }
 
-    static class Decimal16Rescale256AvgOverRangeFrameFunction extends BaseWindowFunction implements Reopenable, WindowDecimal256Function {
+    static class Decimal16Rescale256AvgOverRangeFrameFunction extends BaseWindowFunction implements Reopenable {
 
         private static final int RECORD_SIZE = Long.BYTES + Short.BYTES;
         private final Decimal256 acc = new Decimal256();
@@ -4167,7 +5660,7 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
                     if (Math.abs(timestamp - ts) > maxDiff) {
                         if (frameSize > 0) {
                             short v = memory.getShort(startOffset + idx * RECORD_SIZE + Long.BYTES);
-                            acc.subtract(v < 0 ? -1L : 0L, v < 0 ? -1L : 0L, v < 0 ? -1L : 0L, v, argScale);
+                            acc.subtract(v < 0 ? -1L : 0L, v < 0 ? -1L : 0L, v < 0 ? -1L : 0L, v, 0);
                             frameSize--;
                         }
                         newFirstIdx = (idx + 1) % capacity;
@@ -4213,6 +5706,9 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
                         } catch (NumericException e) {
                             throw CairoException.nonCritical().position(position).put("avg aggregation failed: ").put(e.getFlyweightMessage());
                         }
+                        if (acc.hasOverflowed()) {
+                            throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+                        }
                         frameSize++;
                     } else {
                         break;
@@ -4229,6 +5725,9 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
                             Decimal256.uncheckedAdd(acc, v);
                         } catch (NumericException e) {
                             throw CairoException.nonCritical().position(position).put("avg aggregation failed: ").put(e.getFlyweightMessage());
+                        }
+                        if (acc.hasOverflowed()) {
+                            throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
                         }
                         frameSize++;
                         newFirstIdx = (idx + 1) % capacity;
@@ -4248,8 +5747,67 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
         }
 
         @Override
+        public void getDecimal128(Record rec, Decimal128 sink) {
+            if (value.isNull()) {
+                sink.ofRawNull();
+                return;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            sink.ofRaw(value.getLh(), value.getLl());
+        }
+
+        @Override
+        public short getDecimal16(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL16_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return (short) value.getLl();
+        }
+
+        @Override
         public void getDecimal256(Record rec, Decimal256 sink) {
             sink.copyRaw(value);
+            if (!sink.isNull() && sink.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+        }
+
+        @Override
+        public int getDecimal32(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL32_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return (int) value.getLl();
+        }
+
+        @Override
+        public long getDecimal64(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL64_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return value.getLl();
+        }
+
+        @Override
+        public byte getDecimal8(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL8_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return (byte) value.getLl();
         }
 
         @Override
@@ -4322,7 +5880,7 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
         }
     }
 
-    static class Decimal16Rescale256AvgOverRowsFrameFunction extends BaseWindowFunction implements Reopenable, WindowDecimal256Function {
+    static class Decimal16Rescale256AvgOverRowsFrameFunction extends BaseWindowFunction implements Reopenable {
 
         private final Decimal256 acc = new Decimal256();
         private final int argScale;
@@ -4390,6 +5948,9 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
                 } catch (NumericException e) {
                     throw CairoException.nonCritical().position(position).put("avg aggregation failed: ").put(e.getFlyweightMessage());
                 }
+                if (acc.hasOverflowed()) {
+                    throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+                }
                 count++;
             }
             if (count != 0) {
@@ -4402,7 +5963,7 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
             if (frameLoBounded) {
                 short lo = buffer.getShort((long) loIdx * Short.BYTES);
                 if (lo != Decimals.DECIMAL16_NULL) {
-                    acc.subtract(lo < 0 ? -1L : 0L, lo < 0 ? -1L : 0L, lo < 0 ? -1L : 0L, lo, argScale);
+                    acc.subtract(lo < 0 ? -1L : 0L, lo < 0 ? -1L : 0L, lo < 0 ? -1L : 0L, lo, 0);
                     count--;
                 }
             }
@@ -4411,8 +5972,67 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
         }
 
         @Override
+        public void getDecimal128(Record rec, Decimal128 sink) {
+            if (value.isNull()) {
+                sink.ofRawNull();
+                return;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            sink.ofRaw(value.getLh(), value.getLl());
+        }
+
+        @Override
+        public short getDecimal16(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL16_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return (short) value.getLl();
+        }
+
+        @Override
         public void getDecimal256(Record rec, Decimal256 sink) {
             sink.copyRaw(value);
+            if (!sink.isNull() && sink.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+        }
+
+        @Override
+        public int getDecimal32(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL32_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return (int) value.getLl();
+        }
+
+        @Override
+        public long getDecimal64(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL64_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return value.getLl();
+        }
+
+        @Override
+        public byte getDecimal8(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL8_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return (byte) value.getLl();
         }
 
         @Override
@@ -4490,7 +6110,7 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
         }
     }
 
-    static class Decimal32Rescale256AvgOverCurrentRowFunction extends BaseWindowFunction implements WindowDecimal256Function {
+    static class Decimal32Rescale256AvgOverCurrentRowFunction extends BaseWindowFunction {
 
         private final int argScale;
         private final Decimal256 outScratch = new Decimal256();
@@ -4520,8 +6140,67 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
         }
 
         @Override
+        public void getDecimal128(Record rec, Decimal128 sink) {
+            if (value.isNull()) {
+                sink.ofRawNull();
+                return;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            sink.ofRaw(value.getLh(), value.getLl());
+        }
+
+        @Override
+        public short getDecimal16(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL16_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return (short) value.getLl();
+        }
+
+        @Override
         public void getDecimal256(Record rec, Decimal256 sink) {
             sink.copyRaw(value);
+            if (!sink.isNull() && sink.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+        }
+
+        @Override
+        public int getDecimal32(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL32_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return (int) value.getLl();
+        }
+
+        @Override
+        public long getDecimal64(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL64_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return value.getLl();
+        }
+
+        @Override
+        public byte getDecimal8(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL8_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return (byte) value.getLl();
         }
 
         @Override
@@ -4546,7 +6225,7 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
         }
     }
 
-    static class Decimal32Rescale256AvgOverPartitionFunction extends BasePartitionedWindowFunction implements WindowDecimal256Function {
+    static class Decimal32Rescale256AvgOverPartitionFunction extends BasePartitionedWindowFunction {
 
         private final Decimal256 acc = new Decimal256();
         private final int argScale;
@@ -4563,24 +6242,62 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
             this.position = position;
         }
 
-        @Override
-        public void getDecimal256(Record rec, Decimal256 sink) {
+        private boolean computeAvg(Record rec) {
             partitionByRecord.of(rec);
             MapKey key = map.withKey();
             key.put(partitionByRecord, partitionBySink);
             MapValue mv = key.findValue();
             if (mv == null) {
-                sink.ofRawNull();
-                return;
+                return false;
             }
             long count = mv.getLong(1);
             if (count == 0) {
-                sink.ofRawNull();
-                return;
+                return false;
             }
             mv.getDecimal256(0, acc);
+            if (!acc.isNull() && acc.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
             doDivide(acc, count, argScale, targetScale, position, divScratch);
-            sink.copyRaw(divScratch);
+            return true;
+        }
+
+        @Override
+        public void getDecimal128(Record rec, Decimal128 sink) {
+            if (computeAvg(rec)) {
+                sink.ofRaw(divScratch.getLh(), divScratch.getLl());
+            } else {
+                sink.ofRawNull();
+            }
+        }
+
+        @Override
+        public short getDecimal16(Record rec) {
+            return computeAvg(rec) ? (short) divScratch.getLl() : Decimals.DECIMAL16_NULL;
+        }
+
+        @Override
+        public void getDecimal256(Record rec, Decimal256 sink) {
+            if (computeAvg(rec)) {
+                sink.copyRaw(divScratch);
+            } else {
+                sink.ofRawNull();
+            }
+        }
+
+        @Override
+        public int getDecimal32(Record rec) {
+            return computeAvg(rec) ? (int) divScratch.getLl() : Decimals.DECIMAL32_NULL;
+        }
+
+        @Override
+        public long getDecimal64(Record rec) {
+            return computeAvg(rec) ? divScratch.getLl() : Decimals.DECIMAL64_NULL;
+        }
+
+        @Override
+        public byte getDecimal8(Record rec) {
+            return computeAvg(rec) ? (byte) divScratch.getLl() : Decimals.DECIMAL8_NULL;
         }
 
         @Override
@@ -4619,6 +6336,9 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
                 } catch (NumericException e) {
                     throw CairoException.nonCritical().position(position).put("avg aggregation failed: ").put(e.getFlyweightMessage());
                 }
+                if (acc.hasOverflowed()) {
+                    throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+                }
                 mv.putDecimal256(0, acc);
                 mv.addLong(1, 1);
             }
@@ -4656,7 +6376,7 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
         }
     }
 
-    static class Decimal32Rescale256AvgOverUnboundedPartitionRowsFrameFunction extends BasePartitionedWindowFunction implements WindowDecimal256Function {
+    static class Decimal32Rescale256AvgOverUnboundedPartitionRowsFrameFunction extends BasePartitionedWindowFunction {
 
         private final Decimal256 acc = new Decimal256();
         private final int argScale;
@@ -4697,6 +6417,9 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
                 } catch (NumericException e) {
                     throw CairoException.nonCritical().position(position).put("avg aggregation failed: ").put(e.getFlyweightMessage());
                 }
+                if (acc.hasOverflowed()) {
+                    throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+                }
                 count++;
             }
             mv.putDecimal256(0, acc);
@@ -4710,8 +6433,67 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
         }
 
         @Override
+        public void getDecimal128(Record rec, Decimal128 sink) {
+            if (value.isNull()) {
+                sink.ofRawNull();
+                return;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            sink.ofRaw(value.getLh(), value.getLl());
+        }
+
+        @Override
+        public short getDecimal16(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL16_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return (short) value.getLl();
+        }
+
+        @Override
         public void getDecimal256(Record rec, Decimal256 sink) {
             sink.copyRaw(value);
+            if (!sink.isNull() && sink.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+        }
+
+        @Override
+        public int getDecimal32(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL32_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return (int) value.getLl();
+        }
+
+        @Override
+        public long getDecimal64(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL64_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return value.getLl();
+        }
+
+        @Override
+        public byte getDecimal8(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL8_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return (byte) value.getLl();
         }
 
         @Override
@@ -4736,7 +6518,7 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
         }
     }
 
-    static class Decimal32Rescale256AvgOverUnboundedRowsFrameFunction extends BaseWindowFunction implements WindowDecimal256Function {
+    static class Decimal32Rescale256AvgOverUnboundedRowsFrameFunction extends BaseWindowFunction {
 
         private final Decimal256 acc = new Decimal256();
         private final int argScale;
@@ -4766,6 +6548,9 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
                 } catch (NumericException e) {
                     throw CairoException.nonCritical().position(position).put("avg aggregation failed: ").put(e.getFlyweightMessage());
                 }
+                if (acc.hasOverflowed()) {
+                    throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+                }
                 count++;
             }
             if (count != 0) {
@@ -4777,8 +6562,67 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
         }
 
         @Override
+        public void getDecimal128(Record rec, Decimal128 sink) {
+            if (value.isNull()) {
+                sink.ofRawNull();
+                return;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            sink.ofRaw(value.getLh(), value.getLl());
+        }
+
+        @Override
+        public short getDecimal16(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL16_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return (short) value.getLl();
+        }
+
+        @Override
         public void getDecimal256(Record rec, Decimal256 sink) {
             sink.copyRaw(value);
+            if (!sink.isNull() && sink.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+        }
+
+        @Override
+        public int getDecimal32(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL32_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return (int) value.getLl();
+        }
+
+        @Override
+        public long getDecimal64(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL64_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return value.getLl();
+        }
+
+        @Override
+        public byte getDecimal8(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL8_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return (byte) value.getLl();
         }
 
         @Override
@@ -4819,7 +6663,7 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
         }
     }
 
-    static class Decimal32Rescale256AvgOverWholeResultSetFunction extends BaseWindowFunction implements WindowDecimal256Function {
+    static class Decimal32Rescale256AvgOverWholeResultSetFunction extends BaseWindowFunction {
 
         private final Decimal256 acc = new Decimal256();
         private final int argScale;
@@ -4841,8 +6685,67 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
         }
 
         @Override
+        public void getDecimal128(Record rec, Decimal128 sink) {
+            if (value.isNull()) {
+                sink.ofRawNull();
+                return;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            sink.ofRaw(value.getLh(), value.getLl());
+        }
+
+        @Override
+        public short getDecimal16(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL16_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return (short) value.getLl();
+        }
+
+        @Override
         public void getDecimal256(Record rec, Decimal256 sink) {
             sink.copyRaw(value);
+            if (!sink.isNull() && sink.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+        }
+
+        @Override
+        public int getDecimal32(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL32_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return (int) value.getLl();
+        }
+
+        @Override
+        public long getDecimal64(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL64_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return value.getLl();
+        }
+
+        @Override
+        public byte getDecimal8(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL8_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return (byte) value.getLl();
         }
 
         @Override
@@ -4868,6 +6771,9 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
                     Decimal256.uncheckedAdd(acc, i);
                 } catch (NumericException e) {
                     throw CairoException.nonCritical().position(position).put("avg aggregation failed: ").put(e.getFlyweightMessage());
+                }
+                if (acc.hasOverflowed()) {
+                    throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
                 }
                 count++;
             }
@@ -4905,7 +6811,7 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
         }
     }
 
-    public static class Decimal32Rescale256AvgOverPartitionRangeFrameFunction extends BasePartitionedWindowFunction implements WindowDecimal256Function {
+    public static class Decimal32Rescale256AvgOverPartitionRangeFrameFunction extends BasePartitionedWindowFunction {
 
         private static final int RECORD_SIZE = Long.BYTES + Integer.BYTES;
         private final Decimal256 acc = new Decimal256();
@@ -4999,11 +6905,11 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
                 }
             } else {
                 mapValue.getDecimal256(0, acc);
-                frameSize = mapValue.getLong(4);
-                startOffset = mapValue.getLong(5);
-                size = mapValue.getLong(6);
-                capacity = mapValue.getLong(7);
-                firstIdx = mapValue.getLong(8);
+                frameSize = mapValue.getLong(1);
+                startOffset = mapValue.getLong(2);
+                size = mapValue.getLong(3);
+                capacity = mapValue.getLong(4);
+                firstIdx = mapValue.getLong(5);
 
                 long newFirstIdx = firstIdx;
                 if (frameLoBounded) {
@@ -5013,7 +6919,7 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
                         if (Math.abs(timestamp - ts) > maxDiff) {
                             if (frameSize > 0) {
                                 int v = memory.getInt(startOffset + idx * RECORD_SIZE + Long.BYTES);
-                                acc.subtract(v < 0 ? -1L : 0L, v < 0 ? -1L : 0L, v < 0 ? -1L : 0L, v, argScale);
+                                acc.subtract(v < 0 ? -1L : 0L, v < 0 ? -1L : 0L, v < 0 ? -1L : 0L, v, 0);
                                 frameSize--;
                             }
                             newFirstIdx = (idx + 1) % capacity;
@@ -5051,6 +6957,9 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
                             } catch (NumericException e) {
                                 throw CairoException.nonCritical().position(position).put("avg aggregation failed: ").put(e.getFlyweightMessage());
                             }
+                            if (acc.hasOverflowed()) {
+                                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+                            }
                             frameSize++;
                         } else {
                             break;
@@ -5068,6 +6977,9 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
                             } catch (NumericException e) {
                                 throw CairoException.nonCritical().position(position).put("avg aggregation failed: ").put(e.getFlyweightMessage());
                             }
+                            if (acc.hasOverflowed()) {
+                                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+                            }
                             frameSize++;
                             newFirstIdx = (idx + 1) % capacity;
                             size--;
@@ -5080,11 +6992,11 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
             }
 
             mapValue.putDecimal256(0, acc);
-            mapValue.putLong(4, frameSize);
-            mapValue.putLong(5, startOffset);
-            mapValue.putLong(6, size);
-            mapValue.putLong(7, capacity);
-            mapValue.putLong(8, firstIdx);
+            mapValue.putLong(1, frameSize);
+            mapValue.putLong(2, startOffset);
+            mapValue.putLong(3, size);
+            mapValue.putLong(4, capacity);
+            mapValue.putLong(5, firstIdx);
 
             if (frameSize != 0) {
                 doDivide(acc, frameSize, argScale, targetScale, position, divScratch);
@@ -5095,8 +7007,67 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
         }
 
         @Override
+        public void getDecimal128(Record rec, Decimal128 sink) {
+            if (value.isNull()) {
+                sink.ofRawNull();
+                return;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            sink.ofRaw(value.getLh(), value.getLl());
+        }
+
+        @Override
+        public short getDecimal16(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL16_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return (short) value.getLl();
+        }
+
+        @Override
         public void getDecimal256(Record rec, Decimal256 sink) {
             sink.copyRaw(value);
+            if (!sink.isNull() && sink.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+        }
+
+        @Override
+        public int getDecimal32(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL32_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return (int) value.getLl();
+        }
+
+        @Override
+        public long getDecimal64(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL64_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return value.getLl();
+        }
+
+        @Override
+        public byte getDecimal8(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL8_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return (byte) value.getLl();
         }
 
         @Override
@@ -5160,7 +7131,7 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
         }
     }
 
-    public static class Decimal32Rescale256AvgOverPartitionRowsFrameFunction extends BasePartitionedWindowFunction implements WindowDecimal256Function {
+    public static class Decimal32Rescale256AvgOverPartitionRowsFrameFunction extends BasePartitionedWindowFunction {
 
         private final Decimal256 acc = new Decimal256();
         private final int argScale;
@@ -5238,9 +7209,9 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
                 }
             } else {
                 mv.getDecimal256(0, acc);
-                count = mv.getLong(4);
-                loIdx = mv.getLong(5);
-                startOffset = mv.getLong(6);
+                count = mv.getLong(1);
+                loIdx = mv.getLong(2);
+                startOffset = mv.getLong(3);
 
                 int hi = frameIncludesCurrentValue ? i : memory.getInt(startOffset + ((loIdx + frameSize - 1) % bufferSize) * Integer.BYTES);
                 if (hi != Decimals.DECIMAL32_NULL) {
@@ -5250,20 +7221,23 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
                     } catch (NumericException e) {
                         throw CairoException.nonCritical().position(position).put("avg aggregation failed: ").put(e.getFlyweightMessage());
                     }
+                    if (acc.hasOverflowed()) {
+                        throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+                    }
                 }
                 if (frameLoBounded) {
                     int lo = memory.getInt(startOffset + loIdx * Integer.BYTES);
                     if (lo != Decimals.DECIMAL32_NULL) {
-                        acc.subtract(lo < 0 ? -1L : 0L, lo < 0 ? -1L : 0L, lo < 0 ? -1L : 0L, lo, argScale);
+                        acc.subtract(lo < 0 ? -1L : 0L, lo < 0 ? -1L : 0L, lo < 0 ? -1L : 0L, lo, 0);
                         count--;
                     }
                 }
             }
 
             mv.putDecimal256(0, acc);
-            mv.putLong(4, count);
-            mv.putLong(5, (loIdx + 1) % bufferSize);
-            mv.putLong(6, startOffset);
+            mv.putLong(1, count);
+            mv.putLong(2, (loIdx + 1) % bufferSize);
+            mv.putLong(3, startOffset);
             memory.putInt(startOffset + loIdx * Integer.BYTES, i);
 
             if (count != 0) {
@@ -5275,8 +7249,67 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
         }
 
         @Override
+        public void getDecimal128(Record rec, Decimal128 sink) {
+            if (value.isNull()) {
+                sink.ofRawNull();
+                return;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            sink.ofRaw(value.getLh(), value.getLl());
+        }
+
+        @Override
+        public short getDecimal16(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL16_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return (short) value.getLl();
+        }
+
+        @Override
         public void getDecimal256(Record rec, Decimal256 sink) {
             sink.copyRaw(value);
+            if (!sink.isNull() && sink.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+        }
+
+        @Override
+        public int getDecimal32(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL32_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return (int) value.getLl();
+        }
+
+        @Override
+        public long getDecimal64(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL64_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return value.getLl();
+        }
+
+        @Override
+        public byte getDecimal8(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL8_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return (byte) value.getLl();
         }
 
         @Override
@@ -5337,7 +7370,7 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
         }
     }
 
-    static class Decimal32Rescale256AvgOverRangeFrameFunction extends BaseWindowFunction implements Reopenable, WindowDecimal256Function {
+    static class Decimal32Rescale256AvgOverRangeFrameFunction extends BaseWindowFunction implements Reopenable {
 
         private static final int RECORD_SIZE = Long.BYTES + Integer.BYTES;
         private final Decimal256 acc = new Decimal256();
@@ -5408,7 +7441,7 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
                     if (Math.abs(timestamp - ts) > maxDiff) {
                         if (frameSize > 0) {
                             int v = memory.getInt(startOffset + idx * RECORD_SIZE + Long.BYTES);
-                            acc.subtract(v < 0 ? -1L : 0L, v < 0 ? -1L : 0L, v < 0 ? -1L : 0L, v, argScale);
+                            acc.subtract(v < 0 ? -1L : 0L, v < 0 ? -1L : 0L, v < 0 ? -1L : 0L, v, 0);
                             frameSize--;
                         }
                         newFirstIdx = (idx + 1) % capacity;
@@ -5454,6 +7487,9 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
                         } catch (NumericException e) {
                             throw CairoException.nonCritical().position(position).put("avg aggregation failed: ").put(e.getFlyweightMessage());
                         }
+                        if (acc.hasOverflowed()) {
+                            throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+                        }
                         frameSize++;
                     } else {
                         break;
@@ -5470,6 +7506,9 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
                             Decimal256.uncheckedAdd(acc, v);
                         } catch (NumericException e) {
                             throw CairoException.nonCritical().position(position).put("avg aggregation failed: ").put(e.getFlyweightMessage());
+                        }
+                        if (acc.hasOverflowed()) {
+                            throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
                         }
                         frameSize++;
                         newFirstIdx = (idx + 1) % capacity;
@@ -5489,8 +7528,67 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
         }
 
         @Override
+        public void getDecimal128(Record rec, Decimal128 sink) {
+            if (value.isNull()) {
+                sink.ofRawNull();
+                return;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            sink.ofRaw(value.getLh(), value.getLl());
+        }
+
+        @Override
+        public short getDecimal16(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL16_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return (short) value.getLl();
+        }
+
+        @Override
         public void getDecimal256(Record rec, Decimal256 sink) {
             sink.copyRaw(value);
+            if (!sink.isNull() && sink.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+        }
+
+        @Override
+        public int getDecimal32(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL32_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return (int) value.getLl();
+        }
+
+        @Override
+        public long getDecimal64(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL64_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return value.getLl();
+        }
+
+        @Override
+        public byte getDecimal8(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL8_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return (byte) value.getLl();
         }
 
         @Override
@@ -5563,7 +7661,7 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
         }
     }
 
-    static class Decimal32Rescale256AvgOverRowsFrameFunction extends BaseWindowFunction implements Reopenable, WindowDecimal256Function {
+    static class Decimal32Rescale256AvgOverRowsFrameFunction extends BaseWindowFunction implements Reopenable {
 
         private final Decimal256 acc = new Decimal256();
         private final int argScale;
@@ -5631,6 +7729,9 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
                 } catch (NumericException e) {
                     throw CairoException.nonCritical().position(position).put("avg aggregation failed: ").put(e.getFlyweightMessage());
                 }
+                if (acc.hasOverflowed()) {
+                    throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+                }
                 count++;
             }
             if (count != 0) {
@@ -5643,7 +7744,7 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
             if (frameLoBounded) {
                 int lo = buffer.getInt((long) loIdx * Integer.BYTES);
                 if (lo != Decimals.DECIMAL32_NULL) {
-                    acc.subtract(lo < 0 ? -1L : 0L, lo < 0 ? -1L : 0L, lo < 0 ? -1L : 0L, lo, argScale);
+                    acc.subtract(lo < 0 ? -1L : 0L, lo < 0 ? -1L : 0L, lo < 0 ? -1L : 0L, lo, 0);
                     count--;
                 }
             }
@@ -5652,8 +7753,67 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
         }
 
         @Override
+        public void getDecimal128(Record rec, Decimal128 sink) {
+            if (value.isNull()) {
+                sink.ofRawNull();
+                return;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            sink.ofRaw(value.getLh(), value.getLl());
+        }
+
+        @Override
+        public short getDecimal16(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL16_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return (short) value.getLl();
+        }
+
+        @Override
         public void getDecimal256(Record rec, Decimal256 sink) {
             sink.copyRaw(value);
+            if (!sink.isNull() && sink.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+        }
+
+        @Override
+        public int getDecimal32(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL32_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return (int) value.getLl();
+        }
+
+        @Override
+        public long getDecimal64(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL64_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return value.getLl();
+        }
+
+        @Override
+        public byte getDecimal8(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL8_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return (byte) value.getLl();
         }
 
         @Override
@@ -5731,7 +7891,7 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
         }
     }
 
-    static class Decimal128Rescale256AvgOverCurrentRowFunction extends BaseWindowFunction implements WindowDecimal256Function {
+    static class Decimal128Rescale256AvgOverCurrentRowFunction extends BaseWindowFunction {
 
         private final int argScale;
         private final Decimal256 outScratch = new Decimal256();
@@ -5762,8 +7922,67 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
         }
 
         @Override
+        public void getDecimal128(Record rec, Decimal128 sink) {
+            if (value.isNull()) {
+                sink.ofRawNull();
+                return;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            sink.ofRaw(value.getLh(), value.getLl());
+        }
+
+        @Override
+        public short getDecimal16(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL16_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return (short) value.getLl();
+        }
+
+        @Override
         public void getDecimal256(Record rec, Decimal256 sink) {
             sink.copyRaw(value);
+            if (!sink.isNull() && sink.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+        }
+
+        @Override
+        public int getDecimal32(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL32_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return (int) value.getLl();
+        }
+
+        @Override
+        public long getDecimal64(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL64_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return value.getLl();
+        }
+
+        @Override
+        public byte getDecimal8(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL8_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return (byte) value.getLl();
         }
 
         @Override
@@ -5788,7 +8007,7 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
         }
     }
 
-    static class Decimal128Rescale256AvgOverPartitionFunction extends BasePartitionedWindowFunction implements WindowDecimal256Function {
+    static class Decimal128Rescale256AvgOverPartitionFunction extends BasePartitionedWindowFunction {
 
         private final Decimal256 acc = new Decimal256();
         private final int argScale;
@@ -5806,24 +8025,62 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
             this.position = position;
         }
 
-        @Override
-        public void getDecimal256(Record rec, Decimal256 sink) {
+        private boolean computeAvg(Record rec) {
             partitionByRecord.of(rec);
             MapKey key = map.withKey();
             key.put(partitionByRecord, partitionBySink);
             MapValue mv = key.findValue();
             if (mv == null) {
-                sink.ofRawNull();
-                return;
+                return false;
             }
             long count = mv.getLong(1);
             if (count == 0) {
-                sink.ofRawNull();
-                return;
+                return false;
             }
             mv.getDecimal256(0, acc);
+            if (!acc.isNull() && acc.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
             doDivide(acc, count, argScale, targetScale, position, divScratch);
-            sink.copyRaw(divScratch);
+            return true;
+        }
+
+        @Override
+        public void getDecimal128(Record rec, Decimal128 sink) {
+            if (computeAvg(rec)) {
+                sink.ofRaw(divScratch.getLh(), divScratch.getLl());
+            } else {
+                sink.ofRawNull();
+            }
+        }
+
+        @Override
+        public short getDecimal16(Record rec) {
+            return computeAvg(rec) ? (short) divScratch.getLl() : Decimals.DECIMAL16_NULL;
+        }
+
+        @Override
+        public void getDecimal256(Record rec, Decimal256 sink) {
+            if (computeAvg(rec)) {
+                sink.copyRaw(divScratch);
+            } else {
+                sink.ofRawNull();
+            }
+        }
+
+        @Override
+        public int getDecimal32(Record rec) {
+            return computeAvg(rec) ? (int) divScratch.getLl() : Decimals.DECIMAL32_NULL;
+        }
+
+        @Override
+        public long getDecimal64(Record rec) {
+            return computeAvg(rec) ? divScratch.getLl() : Decimals.DECIMAL64_NULL;
+        }
+
+        @Override
+        public byte getDecimal8(Record rec) {
+            return computeAvg(rec) ? (byte) divScratch.getLl() : Decimals.DECIMAL8_NULL;
         }
 
         @Override
@@ -5862,6 +8119,9 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
                 } catch (NumericException e) {
                     throw CairoException.nonCritical().position(position).put("avg aggregation failed: ").put(e.getFlyweightMessage());
                 }
+                if (acc.hasOverflowed()) {
+                    throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+                }
                 mv.putDecimal256(0, acc);
                 mv.addLong(1, 1);
             }
@@ -5899,7 +8159,7 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
         }
     }
 
-    static class Decimal128Rescale256AvgOverUnboundedPartitionRowsFrameFunction extends BasePartitionedWindowFunction implements WindowDecimal256Function {
+    static class Decimal128Rescale256AvgOverUnboundedPartitionRowsFrameFunction extends BasePartitionedWindowFunction {
 
         private final Decimal256 acc = new Decimal256();
         private final int argScale;
@@ -5941,6 +8201,9 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
                 } catch (NumericException e) {
                     throw CairoException.nonCritical().position(position).put("avg aggregation failed: ").put(e.getFlyweightMessage());
                 }
+                if (acc.hasOverflowed()) {
+                    throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+                }
                 count++;
             }
             mv.putDecimal256(0, acc);
@@ -5954,8 +8217,67 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
         }
 
         @Override
+        public void getDecimal128(Record rec, Decimal128 sink) {
+            if (value.isNull()) {
+                sink.ofRawNull();
+                return;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            sink.ofRaw(value.getLh(), value.getLl());
+        }
+
+        @Override
+        public short getDecimal16(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL16_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return (short) value.getLl();
+        }
+
+        @Override
         public void getDecimal256(Record rec, Decimal256 sink) {
             sink.copyRaw(value);
+            if (!sink.isNull() && sink.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+        }
+
+        @Override
+        public int getDecimal32(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL32_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return (int) value.getLl();
+        }
+
+        @Override
+        public long getDecimal64(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL64_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return value.getLl();
+        }
+
+        @Override
+        public byte getDecimal8(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL8_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return (byte) value.getLl();
         }
 
         @Override
@@ -5980,7 +8302,7 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
         }
     }
 
-    static class Decimal128Rescale256AvgOverUnboundedRowsFrameFunction extends BaseWindowFunction implements WindowDecimal256Function {
+    static class Decimal128Rescale256AvgOverUnboundedRowsFrameFunction extends BaseWindowFunction {
 
         private final Decimal256 acc = new Decimal256();
         private final int argScale;
@@ -6011,6 +8333,9 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
                 } catch (NumericException e) {
                     throw CairoException.nonCritical().position(position).put("avg aggregation failed: ").put(e.getFlyweightMessage());
                 }
+                if (acc.hasOverflowed()) {
+                    throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+                }
                 count++;
             }
             if (count != 0) {
@@ -6022,8 +8347,67 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
         }
 
         @Override
+        public void getDecimal128(Record rec, Decimal128 sink) {
+            if (value.isNull()) {
+                sink.ofRawNull();
+                return;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            sink.ofRaw(value.getLh(), value.getLl());
+        }
+
+        @Override
+        public short getDecimal16(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL16_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return (short) value.getLl();
+        }
+
+        @Override
         public void getDecimal256(Record rec, Decimal256 sink) {
             sink.copyRaw(value);
+            if (!sink.isNull() && sink.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+        }
+
+        @Override
+        public int getDecimal32(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL32_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return (int) value.getLl();
+        }
+
+        @Override
+        public long getDecimal64(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL64_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return value.getLl();
+        }
+
+        @Override
+        public byte getDecimal8(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL8_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return (byte) value.getLl();
         }
 
         @Override
@@ -6064,7 +8448,7 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
         }
     }
 
-    static class Decimal128Rescale256AvgOverWholeResultSetFunction extends BaseWindowFunction implements WindowDecimal256Function {
+    static class Decimal128Rescale256AvgOverWholeResultSetFunction extends BaseWindowFunction {
 
         private final Decimal256 acc = new Decimal256();
         private final int argScale;
@@ -6087,8 +8471,67 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
         }
 
         @Override
+        public void getDecimal128(Record rec, Decimal128 sink) {
+            if (value.isNull()) {
+                sink.ofRawNull();
+                return;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            sink.ofRaw(value.getLh(), value.getLl());
+        }
+
+        @Override
+        public short getDecimal16(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL16_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return (short) value.getLl();
+        }
+
+        @Override
         public void getDecimal256(Record rec, Decimal256 sink) {
             sink.copyRaw(value);
+            if (!sink.isNull() && sink.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+        }
+
+        @Override
+        public int getDecimal32(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL32_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return (int) value.getLl();
+        }
+
+        @Override
+        public long getDecimal64(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL64_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return value.getLl();
+        }
+
+        @Override
+        public byte getDecimal8(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL8_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return (byte) value.getLl();
         }
 
         @Override
@@ -6114,6 +8557,9 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
                     Decimal256.uncheckedAdd(acc, scratch);
                 } catch (NumericException e) {
                     throw CairoException.nonCritical().position(position).put("avg aggregation failed: ").put(e.getFlyweightMessage());
+                }
+                if (acc.hasOverflowed()) {
+                    throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
                 }
                 count++;
             }
@@ -6151,7 +8597,7 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
         }
     }
 
-    public static class Decimal128Rescale256AvgOverPartitionRangeFrameFunction extends BasePartitionedWindowFunction implements WindowDecimal256Function {
+    public static class Decimal128Rescale256AvgOverPartitionRangeFrameFunction extends BasePartitionedWindowFunction {
 
         private static final int RECORD_SIZE = Long.BYTES + 16;
         private final Decimal256 acc = new Decimal256();
@@ -6248,11 +8694,11 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
                 }
             } else {
                 mapValue.getDecimal256(0, acc);
-                frameSize = mapValue.getLong(4);
-                startOffset = mapValue.getLong(5);
-                size = mapValue.getLong(6);
-                capacity = mapValue.getLong(7);
-                firstIdx = mapValue.getLong(8);
+                frameSize = mapValue.getLong(1);
+                startOffset = mapValue.getLong(2);
+                size = mapValue.getLong(3);
+                capacity = mapValue.getLong(4);
+                firstIdx = mapValue.getLong(5);
 
                 long newFirstIdx = firstIdx;
                 if (frameLoBounded) {
@@ -6263,7 +8709,7 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
                             if (frameSize > 0) {
                                 memory.getDecimal128(startOffset + idx * RECORD_SIZE + Long.BYTES, scratch);
                                 long h = scratch.getHigh();
-                                acc.subtract(h < 0 ? -1L : 0L, h < 0 ? -1L : 0L, h, scratch.getLow(), argScale);
+                                acc.subtract(h < 0 ? -1L : 0L, h < 0 ? -1L : 0L, h, scratch.getLow(), 0);
                                 frameSize--;
                             }
                             newFirstIdx = (idx + 1) % capacity;
@@ -6302,6 +8748,9 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
                             } catch (NumericException e) {
                                 throw CairoException.nonCritical().position(position).put("avg aggregation failed: ").put(e.getFlyweightMessage());
                             }
+                            if (acc.hasOverflowed()) {
+                                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+                            }
                             frameSize++;
                         } else {
                             break;
@@ -6319,6 +8768,9 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
                             } catch (NumericException e) {
                                 throw CairoException.nonCritical().position(position).put("avg aggregation failed: ").put(e.getFlyweightMessage());
                             }
+                            if (acc.hasOverflowed()) {
+                                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+                            }
                             frameSize++;
                             newFirstIdx = (idx + 1) % capacity;
                             size--;
@@ -6331,11 +8783,11 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
             }
 
             mapValue.putDecimal256(0, acc);
-            mapValue.putLong(4, frameSize);
-            mapValue.putLong(5, startOffset);
-            mapValue.putLong(6, size);
-            mapValue.putLong(7, capacity);
-            mapValue.putLong(8, firstIdx);
+            mapValue.putLong(1, frameSize);
+            mapValue.putLong(2, startOffset);
+            mapValue.putLong(3, size);
+            mapValue.putLong(4, capacity);
+            mapValue.putLong(5, firstIdx);
 
             if (frameSize != 0) {
                 doDivide(acc, frameSize, argScale, targetScale, position, divScratch);
@@ -6346,8 +8798,67 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
         }
 
         @Override
+        public void getDecimal128(Record rec, Decimal128 sink) {
+            if (value.isNull()) {
+                sink.ofRawNull();
+                return;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            sink.ofRaw(value.getLh(), value.getLl());
+        }
+
+        @Override
+        public short getDecimal16(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL16_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return (short) value.getLl();
+        }
+
+        @Override
         public void getDecimal256(Record rec, Decimal256 sink) {
             sink.copyRaw(value);
+            if (!sink.isNull() && sink.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+        }
+
+        @Override
+        public int getDecimal32(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL32_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return (int) value.getLl();
+        }
+
+        @Override
+        public long getDecimal64(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL64_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return value.getLl();
+        }
+
+        @Override
+        public byte getDecimal8(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL8_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return (byte) value.getLl();
         }
 
         @Override
@@ -6411,7 +8922,7 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
         }
     }
 
-    public static class Decimal128Rescale256AvgOverPartitionRowsFrameFunction extends BasePartitionedWindowFunction implements WindowDecimal256Function {
+    public static class Decimal128Rescale256AvgOverPartitionRowsFrameFunction extends BasePartitionedWindowFunction {
 
         private final Decimal256 acc = new Decimal256();
         private final int argScale;
@@ -6494,9 +9005,9 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
                 }
             } else {
                 mv.getDecimal256(0, acc);
-                count = mv.getLong(4);
-                loIdx = mv.getLong(5);
-                startOffset = mv.getLong(6);
+                count = mv.getLong(1);
+                loIdx = mv.getLong(2);
+                startOffset = mv.getLong(3);
 
                 long hiH;
                 long hiL;
@@ -6516,21 +9027,24 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
                     } catch (NumericException e) {
                         throw CairoException.nonCritical().position(position).put("avg aggregation failed: ").put(e.getFlyweightMessage());
                     }
+                    if (acc.hasOverflowed()) {
+                        throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+                    }
                 }
                 if (frameLoBounded) {
                     long loH = memory.getLong(startOffset + loIdx * 16L);
                     long loL = memory.getLong(startOffset + loIdx * 16L + Long.BYTES);
                     if (!Decimal128.isNull(loH, loL)) {
-                        acc.subtract(loH < 0 ? -1L : 0L, loH < 0 ? -1L : 0L, loH, loL, argScale);
+                        acc.subtract(loH < 0 ? -1L : 0L, loH < 0 ? -1L : 0L, loH, loL, 0);
                         count--;
                     }
                 }
             }
 
             mv.putDecimal256(0, acc);
-            mv.putLong(4, count);
-            mv.putLong(5, (loIdx + 1) % bufferSize);
-            mv.putLong(6, startOffset);
+            mv.putLong(1, count);
+            mv.putLong(2, (loIdx + 1) % bufferSize);
+            mv.putLong(3, startOffset);
             memory.putLong(startOffset + loIdx * 16L, inHigh);
             memory.putLong(startOffset + loIdx * 16L + Long.BYTES, inLow);
 
@@ -6543,8 +9057,67 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
         }
 
         @Override
+        public void getDecimal128(Record rec, Decimal128 sink) {
+            if (value.isNull()) {
+                sink.ofRawNull();
+                return;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            sink.ofRaw(value.getLh(), value.getLl());
+        }
+
+        @Override
+        public short getDecimal16(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL16_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return (short) value.getLl();
+        }
+
+        @Override
         public void getDecimal256(Record rec, Decimal256 sink) {
             sink.copyRaw(value);
+            if (!sink.isNull() && sink.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+        }
+
+        @Override
+        public int getDecimal32(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL32_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return (int) value.getLl();
+        }
+
+        @Override
+        public long getDecimal64(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL64_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return value.getLl();
+        }
+
+        @Override
+        public byte getDecimal8(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL8_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return (byte) value.getLl();
         }
 
         @Override
@@ -6605,7 +9178,7 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
         }
     }
 
-    static class Decimal128Rescale256AvgOverRangeFrameFunction extends BaseWindowFunction implements Reopenable, WindowDecimal256Function {
+    static class Decimal128Rescale256AvgOverRangeFrameFunction extends BaseWindowFunction implements Reopenable {
 
         private static final int RECORD_SIZE = Long.BYTES + 16;
         private final Decimal256 acc = new Decimal256();
@@ -6680,7 +9253,7 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
                         if (frameSize > 0) {
                             memory.getDecimal128(startOffset + idx * RECORD_SIZE + Long.BYTES, scratch);
                             long h = scratch.getHigh();
-                            acc.subtract(h < 0 ? -1L : 0L, h < 0 ? -1L : 0L, h, scratch.getLow(), argScale);
+                            acc.subtract(h < 0 ? -1L : 0L, h < 0 ? -1L : 0L, h, scratch.getLow(), 0);
                             frameSize--;
                         }
                         newFirstIdx = (idx + 1) % capacity;
@@ -6727,6 +9300,9 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
                         } catch (NumericException e) {
                             throw CairoException.nonCritical().position(position).put("avg aggregation failed: ").put(e.getFlyweightMessage());
                         }
+                        if (acc.hasOverflowed()) {
+                            throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+                        }
                         frameSize++;
                     } else {
                         break;
@@ -6743,6 +9319,9 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
                             Decimal256.uncheckedAdd(acc, scratch);
                         } catch (NumericException e) {
                             throw CairoException.nonCritical().position(position).put("avg aggregation failed: ").put(e.getFlyweightMessage());
+                        }
+                        if (acc.hasOverflowed()) {
+                            throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
                         }
                         frameSize++;
                         newFirstIdx = (idx + 1) % capacity;
@@ -6762,8 +9341,67 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
         }
 
         @Override
+        public void getDecimal128(Record rec, Decimal128 sink) {
+            if (value.isNull()) {
+                sink.ofRawNull();
+                return;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            sink.ofRaw(value.getLh(), value.getLl());
+        }
+
+        @Override
+        public short getDecimal16(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL16_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return (short) value.getLl();
+        }
+
+        @Override
         public void getDecimal256(Record rec, Decimal256 sink) {
             sink.copyRaw(value);
+            if (!sink.isNull() && sink.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+        }
+
+        @Override
+        public int getDecimal32(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL32_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return (int) value.getLl();
+        }
+
+        @Override
+        public long getDecimal64(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL64_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return value.getLl();
+        }
+
+        @Override
+        public byte getDecimal8(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL8_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return (byte) value.getLl();
         }
 
         @Override
@@ -6836,7 +9474,7 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
         }
     }
 
-    static class Decimal128Rescale256AvgOverRowsFrameFunction extends BaseWindowFunction implements Reopenable, WindowDecimal256Function {
+    static class Decimal128Rescale256AvgOverRowsFrameFunction extends BaseWindowFunction implements Reopenable {
 
         private final Decimal256 acc = new Decimal256();
         private final int argScale;
@@ -6914,6 +9552,9 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
                 } catch (NumericException e) {
                     throw CairoException.nonCritical().position(position).put("avg aggregation failed: ").put(e.getFlyweightMessage());
                 }
+                if (acc.hasOverflowed()) {
+                    throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+                }
                 count++;
             }
             if (count != 0) {
@@ -6928,7 +9569,7 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
                 long loH = buffer.getLong(off);
                 long loL = buffer.getLong(off + Long.BYTES);
                 if (!Decimal128.isNull(loH, loL)) {
-                    acc.subtract(loH < 0 ? -1L : 0L, loH < 0 ? -1L : 0L, loH, loL, argScale);
+                    acc.subtract(loH < 0 ? -1L : 0L, loH < 0 ? -1L : 0L, loH, loL, 0);
                     count--;
                 }
             }
@@ -6939,8 +9580,67 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
         }
 
         @Override
+        public void getDecimal128(Record rec, Decimal128 sink) {
+            if (value.isNull()) {
+                sink.ofRawNull();
+                return;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            sink.ofRaw(value.getLh(), value.getLl());
+        }
+
+        @Override
+        public short getDecimal16(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL16_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return (short) value.getLl();
+        }
+
+        @Override
         public void getDecimal256(Record rec, Decimal256 sink) {
             sink.copyRaw(value);
+            if (!sink.isNull() && sink.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+        }
+
+        @Override
+        public int getDecimal32(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL32_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return (int) value.getLl();
+        }
+
+        @Override
+        public long getDecimal64(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL64_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return value.getLl();
+        }
+
+        @Override
+        public byte getDecimal8(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL8_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return (byte) value.getLl();
         }
 
         @Override
@@ -7019,7 +9719,7 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
         }
     }
 
-    static class Decimal256Rescale256AvgOverCurrentRowFunction extends BaseWindowFunction implements WindowDecimal256Function {
+    static class Decimal256Rescale256AvgOverCurrentRowFunction extends BaseWindowFunction {
 
         private final int argScale;
         private final Decimal256 outScratch = new Decimal256();
@@ -7049,8 +9749,67 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
         }
 
         @Override
+        public void getDecimal128(Record rec, Decimal128 sink) {
+            if (value.isNull()) {
+                sink.ofRawNull();
+                return;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            sink.ofRaw(value.getLh(), value.getLl());
+        }
+
+        @Override
+        public short getDecimal16(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL16_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return (short) value.getLl();
+        }
+
+        @Override
         public void getDecimal256(Record rec, Decimal256 sink) {
             sink.copyRaw(value);
+            if (!sink.isNull() && sink.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+        }
+
+        @Override
+        public int getDecimal32(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL32_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return (int) value.getLl();
+        }
+
+        @Override
+        public long getDecimal64(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL64_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return value.getLl();
+        }
+
+        @Override
+        public byte getDecimal8(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL8_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return (byte) value.getLl();
         }
 
         @Override
@@ -7075,7 +9834,7 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
         }
     }
 
-    static class Decimal256Rescale256AvgOverPartitionFunction extends BasePartitionedWindowFunction implements WindowDecimal256Function {
+    static class Decimal256Rescale256AvgOverPartitionFunction extends BasePartitionedWindowFunction {
 
         private final Decimal256 acc = new Decimal256();
         private final int argScale;
@@ -7093,24 +9852,62 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
             this.position = position;
         }
 
-        @Override
-        public void getDecimal256(Record rec, Decimal256 sink) {
+        private boolean computeAvg(Record rec) {
             partitionByRecord.of(rec);
             MapKey key = map.withKey();
             key.put(partitionByRecord, partitionBySink);
             MapValue mv = key.findValue();
             if (mv == null) {
-                sink.ofRawNull();
-                return;
+                return false;
             }
             long count = mv.getLong(1);
             if (count == 0) {
-                sink.ofRawNull();
-                return;
+                return false;
             }
             mv.getDecimal256(0, acc);
+            if (!acc.isNull() && acc.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
             doDivide(acc, count, argScale, targetScale, position, divScratch);
-            sink.copyRaw(divScratch);
+            return true;
+        }
+
+        @Override
+        public void getDecimal128(Record rec, Decimal128 sink) {
+            if (computeAvg(rec)) {
+                sink.ofRaw(divScratch.getLh(), divScratch.getLl());
+            } else {
+                sink.ofRawNull();
+            }
+        }
+
+        @Override
+        public short getDecimal16(Record rec) {
+            return computeAvg(rec) ? (short) divScratch.getLl() : Decimals.DECIMAL16_NULL;
+        }
+
+        @Override
+        public void getDecimal256(Record rec, Decimal256 sink) {
+            if (computeAvg(rec)) {
+                sink.copyRaw(divScratch);
+            } else {
+                sink.ofRawNull();
+            }
+        }
+
+        @Override
+        public int getDecimal32(Record rec) {
+            return computeAvg(rec) ? (int) divScratch.getLl() : Decimals.DECIMAL32_NULL;
+        }
+
+        @Override
+        public long getDecimal64(Record rec) {
+            return computeAvg(rec) ? divScratch.getLl() : Decimals.DECIMAL64_NULL;
+        }
+
+        @Override
+        public byte getDecimal8(Record rec) {
+            return computeAvg(rec) ? (byte) divScratch.getLl() : Decimals.DECIMAL8_NULL;
         }
 
         @Override
@@ -7149,6 +9946,9 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
                 } catch (NumericException e) {
                     throw CairoException.nonCritical().position(position).put("avg aggregation failed: ").put(e.getFlyweightMessage());
                 }
+                if (acc.hasOverflowed()) {
+                    throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+                }
                 mv.putDecimal256(0, acc);
                 mv.addLong(1, 1);
             }
@@ -7186,7 +9986,7 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
         }
     }
 
-    static class Decimal256Rescale256AvgOverUnboundedPartitionRowsFrameFunction extends BasePartitionedWindowFunction implements WindowDecimal256Function {
+    static class Decimal256Rescale256AvgOverUnboundedPartitionRowsFrameFunction extends BasePartitionedWindowFunction {
 
         private final Decimal256 acc = new Decimal256();
         private final int argScale;
@@ -7228,6 +10028,9 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
                 } catch (NumericException e) {
                     throw CairoException.nonCritical().position(position).put("avg aggregation failed: ").put(e.getFlyweightMessage());
                 }
+                if (acc.hasOverflowed()) {
+                    throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+                }
                 count++;
             }
             mv.putDecimal256(0, acc);
@@ -7241,8 +10044,67 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
         }
 
         @Override
+        public void getDecimal128(Record rec, Decimal128 sink) {
+            if (value.isNull()) {
+                sink.ofRawNull();
+                return;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            sink.ofRaw(value.getLh(), value.getLl());
+        }
+
+        @Override
+        public short getDecimal16(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL16_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return (short) value.getLl();
+        }
+
+        @Override
         public void getDecimal256(Record rec, Decimal256 sink) {
             sink.copyRaw(value);
+            if (!sink.isNull() && sink.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+        }
+
+        @Override
+        public int getDecimal32(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL32_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return (int) value.getLl();
+        }
+
+        @Override
+        public long getDecimal64(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL64_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return value.getLl();
+        }
+
+        @Override
+        public byte getDecimal8(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL8_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return (byte) value.getLl();
         }
 
         @Override
@@ -7267,7 +10129,7 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
         }
     }
 
-    static class Decimal256Rescale256AvgOverUnboundedRowsFrameFunction extends BaseWindowFunction implements WindowDecimal256Function {
+    static class Decimal256Rescale256AvgOverUnboundedRowsFrameFunction extends BaseWindowFunction {
 
         private final Decimal256 acc = new Decimal256();
         private final int argScale;
@@ -7298,6 +10160,9 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
                 } catch (NumericException e) {
                     throw CairoException.nonCritical().position(position).put("avg aggregation failed: ").put(e.getFlyweightMessage());
                 }
+                if (acc.hasOverflowed()) {
+                    throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+                }
                 count++;
             }
             if (count != 0) {
@@ -7309,8 +10174,67 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
         }
 
         @Override
+        public void getDecimal128(Record rec, Decimal128 sink) {
+            if (value.isNull()) {
+                sink.ofRawNull();
+                return;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            sink.ofRaw(value.getLh(), value.getLl());
+        }
+
+        @Override
+        public short getDecimal16(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL16_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return (short) value.getLl();
+        }
+
+        @Override
         public void getDecimal256(Record rec, Decimal256 sink) {
             sink.copyRaw(value);
+            if (!sink.isNull() && sink.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+        }
+
+        @Override
+        public int getDecimal32(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL32_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return (int) value.getLl();
+        }
+
+        @Override
+        public long getDecimal64(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL64_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return value.getLl();
+        }
+
+        @Override
+        public byte getDecimal8(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL8_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return (byte) value.getLl();
         }
 
         @Override
@@ -7351,7 +10275,7 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
         }
     }
 
-    static class Decimal256Rescale256AvgOverWholeResultSetFunction extends BaseWindowFunction implements WindowDecimal256Function {
+    static class Decimal256Rescale256AvgOverWholeResultSetFunction extends BaseWindowFunction {
 
         private final Decimal256 acc = new Decimal256();
         private final int argScale;
@@ -7374,8 +10298,67 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
         }
 
         @Override
+        public void getDecimal128(Record rec, Decimal128 sink) {
+            if (value.isNull()) {
+                sink.ofRawNull();
+                return;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            sink.ofRaw(value.getLh(), value.getLl());
+        }
+
+        @Override
+        public short getDecimal16(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL16_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return (short) value.getLl();
+        }
+
+        @Override
         public void getDecimal256(Record rec, Decimal256 sink) {
             sink.copyRaw(value);
+            if (!sink.isNull() && sink.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+        }
+
+        @Override
+        public int getDecimal32(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL32_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return (int) value.getLl();
+        }
+
+        @Override
+        public long getDecimal64(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL64_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return value.getLl();
+        }
+
+        @Override
+        public byte getDecimal8(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL8_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return (byte) value.getLl();
         }
 
         @Override
@@ -7401,6 +10384,9 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
                     Decimal256.uncheckedAdd(acc, scratch);
                 } catch (NumericException e) {
                     throw CairoException.nonCritical().position(position).put("avg aggregation failed: ").put(e.getFlyweightMessage());
+                }
+                if (acc.hasOverflowed()) {
+                    throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
                 }
                 count++;
             }
@@ -7438,7 +10424,7 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
         }
     }
 
-    public static class Decimal256Rescale256AvgOverPartitionRangeFrameFunction extends BasePartitionedWindowFunction implements WindowDecimal256Function {
+    public static class Decimal256Rescale256AvgOverPartitionRangeFrameFunction extends BasePartitionedWindowFunction {
 
         private static final int RECORD_SIZE = Long.BYTES + 32;
         private final Decimal256 acc = new Decimal256();
@@ -7540,11 +10526,11 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
                 }
             } else {
                 mapValue.getDecimal256(0, acc);
-                frameSize = mapValue.getLong(4);
-                startOffset = mapValue.getLong(5);
-                size = mapValue.getLong(6);
-                capacity = mapValue.getLong(7);
-                firstIdx = mapValue.getLong(8);
+                frameSize = mapValue.getLong(1);
+                startOffset = mapValue.getLong(2);
+                size = mapValue.getLong(3);
+                capacity = mapValue.getLong(4);
+                firstIdx = mapValue.getLong(5);
 
                 long newFirstIdx = firstIdx;
                 if (frameLoBounded) {
@@ -7595,6 +10581,9 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
                             } catch (NumericException e) {
                                 throw CairoException.nonCritical().position(position).put("avg aggregation failed: ").put(e.getFlyweightMessage());
                             }
+                            if (acc.hasOverflowed()) {
+                                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+                            }
                             frameSize++;
                         } else {
                             break;
@@ -7612,6 +10601,9 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
                             } catch (NumericException e) {
                                 throw CairoException.nonCritical().position(position).put("avg aggregation failed: ").put(e.getFlyweightMessage());
                             }
+                            if (acc.hasOverflowed()) {
+                                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+                            }
                             frameSize++;
                             newFirstIdx = (idx + 1) % capacity;
                             size--;
@@ -7624,11 +10616,11 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
             }
 
             mapValue.putDecimal256(0, acc);
-            mapValue.putLong(4, frameSize);
-            mapValue.putLong(5, startOffset);
-            mapValue.putLong(6, size);
-            mapValue.putLong(7, capacity);
-            mapValue.putLong(8, firstIdx);
+            mapValue.putLong(1, frameSize);
+            mapValue.putLong(2, startOffset);
+            mapValue.putLong(3, size);
+            mapValue.putLong(4, capacity);
+            mapValue.putLong(5, firstIdx);
 
             if (frameSize != 0) {
                 doDivide(acc, frameSize, argScale, targetScale, position, divScratch);
@@ -7639,8 +10631,67 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
         }
 
         @Override
+        public void getDecimal128(Record rec, Decimal128 sink) {
+            if (value.isNull()) {
+                sink.ofRawNull();
+                return;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            sink.ofRaw(value.getLh(), value.getLl());
+        }
+
+        @Override
+        public short getDecimal16(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL16_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return (short) value.getLl();
+        }
+
+        @Override
         public void getDecimal256(Record rec, Decimal256 sink) {
             sink.copyRaw(value);
+            if (!sink.isNull() && sink.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+        }
+
+        @Override
+        public int getDecimal32(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL32_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return (int) value.getLl();
+        }
+
+        @Override
+        public long getDecimal64(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL64_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return value.getLl();
+        }
+
+        @Override
+        public byte getDecimal8(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL8_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return (byte) value.getLl();
         }
 
         @Override
@@ -7704,7 +10755,7 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
         }
     }
 
-    public static class Decimal256Rescale256AvgOverPartitionRowsFrameFunction extends BasePartitionedWindowFunction implements WindowDecimal256Function {
+    public static class Decimal256Rescale256AvgOverPartitionRowsFrameFunction extends BasePartitionedWindowFunction {
 
         private final Decimal256 acc = new Decimal256();
         private final int argScale;
@@ -7792,9 +10843,9 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
                 }
             } else {
                 mv.getDecimal256(0, acc);
-                count = mv.getLong(4);
-                loIdx = mv.getLong(5);
-                startOffset = mv.getLong(6);
+                count = mv.getLong(1);
+                loIdx = mv.getLong(2);
+                startOffset = mv.getLong(3);
 
                 if (frameIncludesCurrentValue) {
                     if (!isNull) {
@@ -7802,6 +10853,9 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
                             Decimal256.uncheckedAdd(acc, scratch);
                         } catch (NumericException e) {
                             throw CairoException.nonCritical().position(position).put("avg aggregation failed: ").put(e.getFlyweightMessage());
+                        }
+                        if (acc.hasOverflowed()) {
+                            throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
                         }
                         count++;
                     }
@@ -7812,6 +10866,9 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
                             Decimal256.uncheckedAdd(acc, scratch);
                         } catch (NumericException e) {
                             throw CairoException.nonCritical().position(position).put("avg aggregation failed: ").put(e.getFlyweightMessage());
+                        }
+                        if (acc.hasOverflowed()) {
+                            throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
                         }
                         count++;
                     }
@@ -7826,9 +10883,9 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
             }
 
             mv.putDecimal256(0, acc);
-            mv.putLong(4, count);
-            mv.putLong(5, (loIdx + 1) % bufferSize);
-            mv.putLong(6, startOffset);
+            mv.putLong(1, count);
+            mv.putLong(2, (loIdx + 1) % bufferSize);
+            mv.putLong(3, startOffset);
             long writeOff = startOffset + loIdx * 32L;
             memory.putLong(writeOff, inHh);
             memory.putLong(writeOff + Long.BYTES, inHl);
@@ -7844,8 +10901,67 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
         }
 
         @Override
+        public void getDecimal128(Record rec, Decimal128 sink) {
+            if (value.isNull()) {
+                sink.ofRawNull();
+                return;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            sink.ofRaw(value.getLh(), value.getLl());
+        }
+
+        @Override
+        public short getDecimal16(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL16_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return (short) value.getLl();
+        }
+
+        @Override
         public void getDecimal256(Record rec, Decimal256 sink) {
             sink.copyRaw(value);
+            if (!sink.isNull() && sink.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+        }
+
+        @Override
+        public int getDecimal32(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL32_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return (int) value.getLl();
+        }
+
+        @Override
+        public long getDecimal64(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL64_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return value.getLl();
+        }
+
+        @Override
+        public byte getDecimal8(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL8_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return (byte) value.getLl();
         }
 
         @Override
@@ -7906,7 +11022,7 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
         }
     }
 
-    static class Decimal256Rescale256AvgOverRangeFrameFunction extends BaseWindowFunction implements Reopenable, WindowDecimal256Function {
+    static class Decimal256Rescale256AvgOverRangeFrameFunction extends BaseWindowFunction implements Reopenable {
 
         private static final int RECORD_SIZE = Long.BYTES + 32;
         private final Decimal256 acc = new Decimal256();
@@ -8031,6 +11147,9 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
                         } catch (NumericException e) {
                             throw CairoException.nonCritical().position(position).put("avg aggregation failed: ").put(e.getFlyweightMessage());
                         }
+                        if (acc.hasOverflowed()) {
+                            throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+                        }
                         frameSize++;
                     } else {
                         break;
@@ -8047,6 +11166,9 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
                             Decimal256.uncheckedAdd(acc, scratch);
                         } catch (NumericException e) {
                             throw CairoException.nonCritical().position(position).put("avg aggregation failed: ").put(e.getFlyweightMessage());
+                        }
+                        if (acc.hasOverflowed()) {
+                            throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
                         }
                         frameSize++;
                         newFirstIdx = (idx + 1) % capacity;
@@ -8066,8 +11188,67 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
         }
 
         @Override
+        public void getDecimal128(Record rec, Decimal128 sink) {
+            if (value.isNull()) {
+                sink.ofRawNull();
+                return;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            sink.ofRaw(value.getLh(), value.getLl());
+        }
+
+        @Override
+        public short getDecimal16(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL16_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return (short) value.getLl();
+        }
+
+        @Override
         public void getDecimal256(Record rec, Decimal256 sink) {
             sink.copyRaw(value);
+            if (!sink.isNull() && sink.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+        }
+
+        @Override
+        public int getDecimal32(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL32_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return (int) value.getLl();
+        }
+
+        @Override
+        public long getDecimal64(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL64_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return value.getLl();
+        }
+
+        @Override
+        public byte getDecimal8(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL8_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return (byte) value.getLl();
         }
 
         @Override
@@ -8140,7 +11321,7 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
         }
     }
 
-    static class Decimal256Rescale256AvgOverRowsFrameFunction extends BaseWindowFunction implements Reopenable, WindowDecimal256Function {
+    static class Decimal256Rescale256AvgOverRowsFrameFunction extends BaseWindowFunction implements Reopenable {
 
         private final Decimal256 acc = new Decimal256();
         private final int argScale;
@@ -8206,6 +11387,9 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
                     } catch (NumericException e) {
                         throw CairoException.nonCritical().position(position).put("avg aggregation failed: ").put(e.getFlyweightMessage());
                     }
+                    if (acc.hasOverflowed()) {
+                        throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+                    }
                     count++;
                 }
             } else {
@@ -8218,6 +11402,9 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
                         Decimal256.uncheckedAdd(acc, scratch);
                     } catch (NumericException e) {
                         throw CairoException.nonCritical().position(position).put("avg aggregation failed: ").put(e.getFlyweightMessage());
+                    }
+                    if (acc.hasOverflowed()) {
+                        throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
                     }
                     count++;
                 }
@@ -8245,8 +11432,67 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
         }
 
         @Override
+        public void getDecimal128(Record rec, Decimal128 sink) {
+            if (value.isNull()) {
+                sink.ofRawNull();
+                return;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            sink.ofRaw(value.getLh(), value.getLl());
+        }
+
+        @Override
+        public short getDecimal16(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL16_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return (short) value.getLl();
+        }
+
+        @Override
         public void getDecimal256(Record rec, Decimal256 sink) {
             sink.copyRaw(value);
+            if (!sink.isNull() && sink.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+        }
+
+        @Override
+        public int getDecimal32(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL32_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return (int) value.getLl();
+        }
+
+        @Override
+        public long getDecimal64(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL64_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return value.getLl();
+        }
+
+        @Override
+        public byte getDecimal8(Record rec) {
+            if (value.isNull()) {
+                return Decimals.DECIMAL8_NULL;
+            }
+            if (value.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
+            }
+            return (byte) value.getLl();
         }
 
         @Override

@@ -32,6 +32,7 @@ import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.cairo.sql.VirtualRecord;
 import io.questdb.cairo.sql.WindowSPI;
 import io.questdb.cairo.vm.api.MemoryARW;
@@ -57,6 +58,11 @@ public class LagDecimalFunctionFactory extends AbstractWindowFunctionFactory {
     }
 
     @Override
+    protected boolean supportNullsDesc() {
+        return true;
+    }
+
+    @Override
     public Function newInstance(
             int position,
             ObjList<Function> args,
@@ -72,7 +78,7 @@ public class LagDecimalFunctionFactory extends AbstractWindowFunctionFactory {
                         position, args, argPositions, configuration, sqlExecutionContext,
                         (defaultValue) -> {
                             if (!ColumnType.isSameOrBuiltInWideningCast(defaultValue.getType(), argType)) {
-                                throw SqlException.$(argPositions.getQuick(2), "default value must be can cast to decimal");
+                                throw SqlException.$(argPositions.getQuick(2), "default value must be castable to decimal");
                             }
                         },
                         (arg, defaultValueFunc, offset, memory, ignoreNulls) -> new Decimal8LagFunction(arg, defaultValueFunc, offset, memory, ignoreNulls, argType),
@@ -84,7 +90,7 @@ public class LagDecimalFunctionFactory extends AbstractWindowFunctionFactory {
                         position, args, argPositions, configuration, sqlExecutionContext,
                         (defaultValue) -> {
                             if (!ColumnType.isSameOrBuiltInWideningCast(defaultValue.getType(), argType)) {
-                                throw SqlException.$(argPositions.getQuick(2), "default value must be can cast to decimal");
+                                throw SqlException.$(argPositions.getQuick(2), "default value must be castable to decimal");
                             }
                         },
                         (arg, defaultValueFunc, offset, memory, ignoreNulls) -> new Decimal16LagFunction(arg, defaultValueFunc, offset, memory, ignoreNulls, argType),
@@ -96,7 +102,7 @@ public class LagDecimalFunctionFactory extends AbstractWindowFunctionFactory {
                         position, args, argPositions, configuration, sqlExecutionContext,
                         (defaultValue) -> {
                             if (!ColumnType.isSameOrBuiltInWideningCast(defaultValue.getType(), argType)) {
-                                throw SqlException.$(argPositions.getQuick(2), "default value must be can cast to decimal");
+                                throw SqlException.$(argPositions.getQuick(2), "default value must be castable to decimal");
                             }
                         },
                         (arg, defaultValueFunc, offset, memory, ignoreNulls) -> new Decimal32LagFunction(arg, defaultValueFunc, offset, memory, ignoreNulls, argType),
@@ -108,7 +114,7 @@ public class LagDecimalFunctionFactory extends AbstractWindowFunctionFactory {
                         position, args, argPositions, configuration, sqlExecutionContext,
                         (defaultValue) -> {
                             if (!ColumnType.isSameOrBuiltInWideningCast(defaultValue.getType(), argType)) {
-                                throw SqlException.$(argPositions.getQuick(2), "default value must be can cast to decimal");
+                                throw SqlException.$(argPositions.getQuick(2), "default value must be castable to decimal");
                             }
                         },
                         (arg, defaultValueFunc, offset, memory, ignoreNulls) -> new Decimal64LagFunction(arg, defaultValueFunc, offset, memory, ignoreNulls, argType),
@@ -120,7 +126,7 @@ public class LagDecimalFunctionFactory extends AbstractWindowFunctionFactory {
                         position, args, argPositions, configuration, sqlExecutionContext,
                         (defaultValue) -> {
                             if (!ColumnType.isSameOrBuiltInWideningCast(defaultValue.getType(), argType)) {
-                                throw SqlException.$(argPositions.getQuick(2), "default value must be can cast to decimal");
+                                throw SqlException.$(argPositions.getQuick(2), "default value must be castable to decimal");
                             }
                         },
                         (arg, defaultValueFunc, offset, memory, ignoreNulls) -> new Decimal128LagFunction(arg, defaultValueFunc, offset, memory, ignoreNulls, argType),
@@ -132,7 +138,7 @@ public class LagDecimalFunctionFactory extends AbstractWindowFunctionFactory {
                         position, args, argPositions, configuration, sqlExecutionContext,
                         (defaultValue) -> {
                             if (!ColumnType.isSameOrBuiltInWideningCast(defaultValue.getType(), argType)) {
-                                throw SqlException.$(argPositions.getQuick(2), "default value must be can cast to decimal");
+                                throw SqlException.$(argPositions.getQuick(2), "default value must be castable to decimal");
                             }
                         },
                         (arg, defaultValueFunc, offset, memory, ignoreNulls) -> new Decimal256LagFunction(arg, defaultValueFunc, offset, memory, ignoreNulls, argType),
@@ -144,7 +150,7 @@ public class LagDecimalFunctionFactory extends AbstractWindowFunctionFactory {
         }
     }
 
-    public static class Decimal128LagFunction extends LeadLagWindowFunctionFactoryHelper.BaseLagFunction implements WindowDecimal128Function {
+    public static class Decimal128LagFunction extends LeadLagWindowFunctionFactoryHelper.BaseLagFunction {
 
         private final Decimal128 defaultScratch = new Decimal128();
         private final Decimal128 lagValue = new Decimal128();
@@ -195,12 +201,13 @@ public class LagDecimalFunctionFactory extends AbstractWindowFunctionFactory {
         }
     }
 
-    static class Decimal128LagOverPartitionFunction extends BasePartitionedWindowFunction implements WindowDecimal128Function {
+    static class Decimal128LagOverPartitionFunction extends BasePartitionedWindowFunction {
 
         private final Function defaultValue;
         private final boolean ignoreNulls;
         private final Decimal128 lagValue = new Decimal128();
         private final MemoryARW memory;
+        private final Decimal128 nullScratch = new Decimal128();
         private final long offset;
         private final Decimal128 scratch = new Decimal128();
         private final Decimal128 slotValue = new Decimal128();
@@ -244,7 +251,6 @@ public class LagDecimalFunctionFactory extends AbstractWindowFunctionFactory {
             if (mapValue.isNew()) {
                 startOffset = memory.appendAddressFor(offset * 16L) - memory.getPageAddress(0);
                 firstIdx = 0;
-                Decimal128 nullScratch = new Decimal128();
                 nullScratch.ofRawNull();
                 for (long i = 0; i < offset; i++) {
                     memory.putDecimal128(startOffset + i * 16L, nullScratch.getHigh(), nullScratch.getLow());
@@ -298,6 +304,14 @@ public class LagDecimalFunctionFactory extends AbstractWindowFunctionFactory {
         }
 
         @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            super.init(symbolTableSource, executionContext);
+            if (defaultValue != null) {
+                defaultValue.init(symbolTableSource, executionContext);
+            }
+        }
+
+        @Override
         public boolean isIgnoreNulls() {
             return ignoreNulls;
         }
@@ -342,7 +356,7 @@ public class LagDecimalFunctionFactory extends AbstractWindowFunctionFactory {
         }
     }
 
-    static class Decimal128LeadLagValueCurrentRow extends LeadLagWindowFunctionFactoryHelper.BaseLeadLagCurrentRow implements WindowDecimal128Function {
+    static class Decimal128LeadLagValueCurrentRow extends LeadLagWindowFunctionFactoryHelper.BaseLeadLagCurrentRow {
 
         private final int type;
         private final Decimal128 value = new Decimal128();
@@ -377,7 +391,7 @@ public class LagDecimalFunctionFactory extends AbstractWindowFunctionFactory {
         }
     }
 
-    public static class Decimal256LagFunction extends LeadLagWindowFunctionFactoryHelper.BaseLagFunction implements WindowDecimal256Function {
+    public static class Decimal256LagFunction extends LeadLagWindowFunctionFactoryHelper.BaseLagFunction {
 
         private final Decimal256 lagValue = new Decimal256();
         private final Decimal256 scratch = new Decimal256();
@@ -429,12 +443,13 @@ public class LagDecimalFunctionFactory extends AbstractWindowFunctionFactory {
         }
     }
 
-    static class Decimal256LagOverPartitionFunction extends BasePartitionedWindowFunction implements WindowDecimal256Function {
+    static class Decimal256LagOverPartitionFunction extends BasePartitionedWindowFunction {
 
         private final Function defaultValue;
         private final boolean ignoreNulls;
         private final Decimal256 lagValue = new Decimal256();
         private final MemoryARW memory;
+        private final Decimal256 nullScratch = new Decimal256();
         private final long offset;
         private final Decimal256 scratch = new Decimal256();
         private final int type;
@@ -477,7 +492,6 @@ public class LagDecimalFunctionFactory extends AbstractWindowFunctionFactory {
             if (mapValue.isNew()) {
                 startOffset = memory.appendAddressFor(offset * 32L) - memory.getPageAddress(0);
                 firstIdx = 0;
-                Decimal256 nullScratch = new Decimal256();
                 nullScratch.ofRawNull();
                 for (long i = 0; i < offset; i++) {
                     memory.putDecimal256(startOffset + i * 32L, nullScratch.getHh(), nullScratch.getHl(), nullScratch.getLh(), nullScratch.getLl());
@@ -531,6 +545,14 @@ public class LagDecimalFunctionFactory extends AbstractWindowFunctionFactory {
         }
 
         @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            super.init(symbolTableSource, executionContext);
+            if (defaultValue != null) {
+                defaultValue.init(symbolTableSource, executionContext);
+            }
+        }
+
+        @Override
         public boolean isIgnoreNulls() {
             return ignoreNulls;
         }
@@ -577,7 +599,7 @@ public class LagDecimalFunctionFactory extends AbstractWindowFunctionFactory {
         }
     }
 
-    static class Decimal256LeadLagValueCurrentRow extends LeadLagWindowFunctionFactoryHelper.BaseLeadLagCurrentRow implements WindowDecimal256Function {
+    static class Decimal256LeadLagValueCurrentRow extends LeadLagWindowFunctionFactoryHelper.BaseLeadLagCurrentRow {
 
         private final int type;
         private final Decimal256 value = new Decimal256();
@@ -614,7 +636,7 @@ public class LagDecimalFunctionFactory extends AbstractWindowFunctionFactory {
         }
     }
 
-    public static class Decimal64LagFunction extends LeadLagWindowFunctionFactoryHelper.BaseLagFunction implements WindowDecimal64Function {
+    public static class Decimal64LagFunction extends LeadLagWindowFunctionFactoryHelper.BaseLagFunction {
 
         private final int type;
         private long lagValue;
@@ -656,7 +678,7 @@ public class LagDecimalFunctionFactory extends AbstractWindowFunctionFactory {
         }
     }
 
-    static class Decimal64LagOverPartitionFunction extends LeadLagWindowFunctionFactoryHelper.BaseLagOverPartitionFunction implements WindowDecimal64Function {
+    static class Decimal64LagOverPartitionFunction extends LeadLagWindowFunctionFactoryHelper.BaseLagOverPartitionFunction {
 
         private final int type;
         private long lagValue;
@@ -706,7 +728,7 @@ public class LagDecimalFunctionFactory extends AbstractWindowFunctionFactory {
         }
     }
 
-    static class Decimal64LeadLagValueCurrentRow extends LeadLagWindowFunctionFactoryHelper.BaseLeadLagCurrentRow implements WindowDecimal64Function {
+    static class Decimal64LeadLagValueCurrentRow extends LeadLagWindowFunctionFactoryHelper.BaseLeadLagCurrentRow {
 
         private final int type;
         private long value;
@@ -738,7 +760,7 @@ public class LagDecimalFunctionFactory extends AbstractWindowFunctionFactory {
         }
     }
 
-    public static class Decimal8LagFunction extends LeadLagWindowFunctionFactoryHelper.BaseLagFunction implements WindowDecimal8Function {
+    public static class Decimal8LagFunction extends LeadLagWindowFunctionFactoryHelper.BaseLagFunction {
 
         private final int type;
         private byte lagValue;
@@ -753,12 +775,12 @@ public class LagDecimalFunctionFactory extends AbstractWindowFunctionFactory {
             if (count < offset) {
                 lagValue = defaultValue == null ? Decimals.DECIMAL8_NULL : defaultValue.getDecimal8(record);
             } else {
-                lagValue = buffer.getByte((long) loIdx * Long.BYTES);
+                lagValue = buffer.getByte((long) loIdx * Byte.BYTES);
             }
             byte b = arg.getDecimal8(record);
             boolean respectNulls = !ignoreNulls || b != Decimals.DECIMAL8_NULL;
             if (respectNulls) {
-                buffer.putByte((long) loIdx * Long.BYTES, b);
+                buffer.putByte((long) loIdx * Byte.BYTES, b);
             }
             return respectNulls;
         }
@@ -780,7 +802,7 @@ public class LagDecimalFunctionFactory extends AbstractWindowFunctionFactory {
         }
     }
 
-    static class Decimal8LagOverPartitionFunction extends LeadLagWindowFunctionFactoryHelper.BaseLagOverPartitionFunction implements WindowDecimal8Function {
+    static class Decimal8LagOverPartitionFunction extends LeadLagWindowFunctionFactoryHelper.BaseLagOverPartitionFunction {
 
         private final int type;
         private byte lagValue;
@@ -820,17 +842,17 @@ public class LagDecimalFunctionFactory extends AbstractWindowFunctionFactory {
             if (count < offset) {
                 lagValue = defaultValue == null ? Decimals.DECIMAL8_NULL : defaultValue.getDecimal8(record);
             } else {
-                lagValue = memory.getByte(startOffset + firstIdx * Long.BYTES);
+                lagValue = memory.getByte(startOffset + firstIdx * Byte.BYTES);
             }
             boolean respectNulls = !ignoreNulls || Decimals.DECIMAL8_NULL != b;
             if (respectNulls) {
-                memory.putByte(startOffset + firstIdx * Long.BYTES, b);
+                memory.putByte(startOffset + firstIdx * Byte.BYTES, b);
             }
             return respectNulls;
         }
     }
 
-    static class Decimal8LeadLagValueCurrentRow extends LeadLagWindowFunctionFactoryHelper.BaseLeadLagCurrentRow implements WindowDecimal8Function {
+    static class Decimal8LeadLagValueCurrentRow extends LeadLagWindowFunctionFactoryHelper.BaseLeadLagCurrentRow {
 
         private final int type;
         private byte value;
@@ -862,7 +884,7 @@ public class LagDecimalFunctionFactory extends AbstractWindowFunctionFactory {
         }
     }
 
-    public static class Decimal16LagFunction extends LeadLagWindowFunctionFactoryHelper.BaseLagFunction implements WindowDecimal16Function {
+    public static class Decimal16LagFunction extends LeadLagWindowFunctionFactoryHelper.BaseLagFunction {
 
         private final int type;
         private short lagValue;
@@ -877,12 +899,12 @@ public class LagDecimalFunctionFactory extends AbstractWindowFunctionFactory {
             if (count < offset) {
                 lagValue = defaultValue == null ? Decimals.DECIMAL16_NULL : defaultValue.getDecimal16(record);
             } else {
-                lagValue = buffer.getShort((long) loIdx * Long.BYTES);
+                lagValue = buffer.getShort((long) loIdx * Short.BYTES);
             }
             short s = arg.getDecimal16(record);
             boolean respectNulls = !ignoreNulls || s != Decimals.DECIMAL16_NULL;
             if (respectNulls) {
-                buffer.putShort((long) loIdx * Long.BYTES, s);
+                buffer.putShort((long) loIdx * Short.BYTES, s);
             }
             return respectNulls;
         }
@@ -904,7 +926,7 @@ public class LagDecimalFunctionFactory extends AbstractWindowFunctionFactory {
         }
     }
 
-    static class Decimal16LagOverPartitionFunction extends LeadLagWindowFunctionFactoryHelper.BaseLagOverPartitionFunction implements WindowDecimal16Function {
+    static class Decimal16LagOverPartitionFunction extends LeadLagWindowFunctionFactoryHelper.BaseLagOverPartitionFunction {
 
         private final int type;
         private short lagValue;
@@ -944,17 +966,17 @@ public class LagDecimalFunctionFactory extends AbstractWindowFunctionFactory {
             if (count < offset) {
                 lagValue = defaultValue == null ? Decimals.DECIMAL16_NULL : defaultValue.getDecimal16(record);
             } else {
-                lagValue = memory.getShort(startOffset + firstIdx * Long.BYTES);
+                lagValue = memory.getShort(startOffset + firstIdx * Short.BYTES);
             }
             boolean respectNulls = !ignoreNulls || Decimals.DECIMAL16_NULL != s;
             if (respectNulls) {
-                memory.putShort(startOffset + firstIdx * Long.BYTES, s);
+                memory.putShort(startOffset + firstIdx * Short.BYTES, s);
             }
             return respectNulls;
         }
     }
 
-    static class Decimal16LeadLagValueCurrentRow extends LeadLagWindowFunctionFactoryHelper.BaseLeadLagCurrentRow implements WindowDecimal16Function {
+    static class Decimal16LeadLagValueCurrentRow extends LeadLagWindowFunctionFactoryHelper.BaseLeadLagCurrentRow {
 
         private final int type;
         private short value;
@@ -986,7 +1008,7 @@ public class LagDecimalFunctionFactory extends AbstractWindowFunctionFactory {
         }
     }
 
-    public static class Decimal32LagFunction extends LeadLagWindowFunctionFactoryHelper.BaseLagFunction implements WindowDecimal32Function {
+    public static class Decimal32LagFunction extends LeadLagWindowFunctionFactoryHelper.BaseLagFunction {
 
         private final int type;
         private int lagValue;
@@ -1001,12 +1023,12 @@ public class LagDecimalFunctionFactory extends AbstractWindowFunctionFactory {
             if (count < offset) {
                 lagValue = defaultValue == null ? Decimals.DECIMAL32_NULL : defaultValue.getDecimal32(record);
             } else {
-                lagValue = buffer.getInt((long) loIdx * Long.BYTES);
+                lagValue = buffer.getInt((long) loIdx * Integer.BYTES);
             }
             int i = arg.getDecimal32(record);
             boolean respectNulls = !ignoreNulls || i != Decimals.DECIMAL32_NULL;
             if (respectNulls) {
-                buffer.putInt((long) loIdx * Long.BYTES, i);
+                buffer.putInt((long) loIdx * Integer.BYTES, i);
             }
             return respectNulls;
         }
@@ -1028,7 +1050,7 @@ public class LagDecimalFunctionFactory extends AbstractWindowFunctionFactory {
         }
     }
 
-    static class Decimal32LagOverPartitionFunction extends LeadLagWindowFunctionFactoryHelper.BaseLagOverPartitionFunction implements WindowDecimal32Function {
+    static class Decimal32LagOverPartitionFunction extends LeadLagWindowFunctionFactoryHelper.BaseLagOverPartitionFunction {
 
         private final int type;
         private int lagValue;
@@ -1068,17 +1090,17 @@ public class LagDecimalFunctionFactory extends AbstractWindowFunctionFactory {
             if (count < offset) {
                 lagValue = defaultValue == null ? Decimals.DECIMAL32_NULL : defaultValue.getDecimal32(record);
             } else {
-                lagValue = memory.getInt(startOffset + firstIdx * Long.BYTES);
+                lagValue = memory.getInt(startOffset + firstIdx * Integer.BYTES);
             }
             boolean respectNulls = !ignoreNulls || Decimals.DECIMAL32_NULL != i;
             if (respectNulls) {
-                memory.putInt(startOffset + firstIdx * Long.BYTES, i);
+                memory.putInt(startOffset + firstIdx * Integer.BYTES, i);
             }
             return respectNulls;
         }
     }
 
-    static class Decimal32LeadLagValueCurrentRow extends LeadLagWindowFunctionFactoryHelper.BaseLeadLagCurrentRow implements WindowDecimal32Function {
+    static class Decimal32LeadLagValueCurrentRow extends LeadLagWindowFunctionFactoryHelper.BaseLeadLagCurrentRow {
 
         private final int type;
         private int value;

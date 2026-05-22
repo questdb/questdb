@@ -160,7 +160,7 @@ public abstract class AbstractWindowFunctionFactory implements FunctionFactory {
         }
     }
 
-    static class Decimal128NullFunction extends BaseNullFunction implements WindowDecimal128Function {
+    static class Decimal128NullFunction extends BaseNullFunction {
         private final int type;
 
         Decimal128NullFunction(Function arg, String name, long rowLo, long rowHi, boolean isRange, VirtualRecord partitionByRecord, int type) {
@@ -186,7 +186,7 @@ public abstract class AbstractWindowFunctionFactory implements FunctionFactory {
         }
     }
 
-    static class Decimal16NullFunction extends BaseNullFunction implements WindowDecimal16Function {
+    static class Decimal16NullFunction extends BaseNullFunction {
         private final int type;
 
         Decimal16NullFunction(Function arg, String name, long rowLo, long rowHi, boolean isRange, VirtualRecord partitionByRecord, int type) {
@@ -210,7 +210,7 @@ public abstract class AbstractWindowFunctionFactory implements FunctionFactory {
         }
     }
 
-    static class Decimal256NullFunction extends BaseNullFunction implements WindowDecimal256Function {
+    static class Decimal256NullFunction extends BaseNullFunction {
         private final int type;
 
         Decimal256NullFunction(Function arg, String name, long rowLo, long rowHi, boolean isRange, VirtualRecord partitionByRecord, int type) {
@@ -238,7 +238,7 @@ public abstract class AbstractWindowFunctionFactory implements FunctionFactory {
         }
     }
 
-    static class Decimal32NullFunction extends BaseNullFunction implements WindowDecimal32Function {
+    static class Decimal32NullFunction extends BaseNullFunction {
         private final int type;
 
         Decimal32NullFunction(Function arg, String name, long rowLo, long rowHi, boolean isRange, VirtualRecord partitionByRecord, int type) {
@@ -262,7 +262,7 @@ public abstract class AbstractWindowFunctionFactory implements FunctionFactory {
         }
     }
 
-    static class Decimal64NullFunction extends BaseNullFunction implements WindowDecimal64Function {
+    static class Decimal64NullFunction extends BaseNullFunction {
         private final int type;
 
         Decimal64NullFunction(Function arg, String name, long rowLo, long rowHi, boolean isRange, VirtualRecord partitionByRecord, int type) {
@@ -286,7 +286,7 @@ public abstract class AbstractWindowFunctionFactory implements FunctionFactory {
         }
     }
 
-    static class Decimal8NullFunction extends BaseNullFunction implements WindowDecimal8Function {
+    static class Decimal8NullFunction extends BaseNullFunction {
         private final int type;
 
         Decimal8NullFunction(Function arg, String name, long rowLo, long rowHi, boolean isRange, VirtualRecord partitionByRecord, int type) {

@@ -72,6 +72,10 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
     public static final ArrayColumnTypes MAX_DECIMAL64_OVER_PARTITION_ROWS_TYPES;
     public static final ArrayColumnTypes MAX_DECIMAL64_TYPES;
     public static final String NAME = "max";
+    private static final Decimal128Comparator GREATER_THAN_128 = (a, b) -> a.compareTo(b) > 0;
+    private static final Decimal128Comparator LESS_THAN_128 = (a, b) -> a.compareTo(b) < 0;
+    private static final Decimal256Comparator GREATER_THAN_256 = (a, b) -> a.compareTo(b) > 0;
+    private static final Decimal256Comparator LESS_THAN_256 = (a, b) -> a.compareTo(b) < 0;
     private static final Decimal64Comparator GREATER_THAN = (a, b) -> a > b;
     private static final String SIGNATURE = NAME + "(Ξ)";
 
@@ -127,10 +131,10 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             return newMaxMinInstanceDecimal32(position, args, configuration, sqlExecutionContext, comparator, name);
         }
         if (tag == ColumnType.DECIMAL128) {
-            return newMaxMinInstanceDecimal128(position, args, configuration, sqlExecutionContext, comparator == GREATER_THAN, name);
+            return newMaxMinInstanceDecimal128(position, args, configuration, sqlExecutionContext, comparator == GREATER_THAN ? GREATER_THAN_128 : LESS_THAN_128, name);
         }
         if (tag == ColumnType.DECIMAL256) {
-            return newMaxMinInstanceDecimal256(position, args, configuration, sqlExecutionContext, comparator == GREATER_THAN, name);
+            return newMaxMinInstanceDecimal256(position, args, configuration, sqlExecutionContext, comparator == GREATER_THAN ? GREATER_THAN_256 : LESS_THAN_256, name);
         }
         if (tag != ColumnType.DECIMAL64) {
             throw SqlException.$(position, name).put(" is not yet implemented for ").put(ColumnType.nameOf(tag));
@@ -261,11 +265,21 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
     }
 
     @FunctionalInterface
+    public interface Decimal128Comparator {
+        boolean isBetter(Decimal128 candidate, Decimal128 current);
+    }
+
+    @FunctionalInterface
+    public interface Decimal256Comparator {
+        boolean isBetter(Decimal256 candidate, Decimal256 current);
+    }
+
+    @FunctionalInterface
     public interface Decimal64Comparator {
         boolean isBetter(long a, long b);
     }
 
-    public static class Decimal64MaxMinOverCurrentRowFunction extends BaseWindowFunction implements WindowDecimal64Function {
+    public static class Decimal64MaxMinOverCurrentRowFunction extends BaseWindowFunction {
 
         private final String name;
         private final int type;
@@ -309,7 +323,7 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         }
     }
 
-    public static class Decimal64MaxMinOverPartitionFunction extends BasePartitionedWindowFunction implements WindowDecimal64Function {
+    public static class Decimal64MaxMinOverPartitionFunction extends BasePartitionedWindowFunction {
 
         private final Decimal64Comparator comparator;
         private final String name;
@@ -327,10 +341,6 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             return name;
         }
 
-        @Override
-        public Pass1ScanDirection getPass1ScanDirection() {
-            return Pass1ScanDirection.BACKWARD;
-        }
 
         @Override
         public int getPassCount() {
@@ -373,7 +383,7 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         }
     }
 
-    public static class Decimal64MaxMinOverPartitionRangeFrameFunction extends BasePartitionedWindowFunction implements WindowDecimal64Function {
+    public static class Decimal64MaxMinOverPartitionRangeFrameFunction extends BasePartitionedWindowFunction {
 
         private static final int DEQUE_RECORD_SIZE = Long.BYTES;
         private static final int RECORD_SIZE = Long.BYTES + Long.BYTES;
@@ -672,7 +682,7 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         }
     }
 
-    public static class Decimal64MaxMinOverPartitionRowsFrameFunction extends BasePartitionedWindowFunction implements WindowDecimal64Function {
+    public static class Decimal64MaxMinOverPartitionRowsFrameFunction extends BasePartitionedWindowFunction {
 
         private final int bufferSize;
         private final Decimal64Comparator comparator;
@@ -880,7 +890,7 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         }
     }
 
-    public static class Decimal64MaxMinOverRangeFrameFunction extends BaseWindowFunction implements Reopenable, WindowDecimal64Function {
+    public static class Decimal64MaxMinOverRangeFrameFunction extends BaseWindowFunction implements Reopenable {
 
         private static final int RECORD_SIZE = Long.BYTES + Long.BYTES;
         private final Decimal64Comparator comparator;
@@ -1145,7 +1155,7 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         }
     }
 
-    public static class Decimal64MaxMinOverRowsFrameFunction extends BaseWindowFunction implements Reopenable, WindowDecimal64Function {
+    public static class Decimal64MaxMinOverRowsFrameFunction extends BaseWindowFunction implements Reopenable {
 
         private final MemoryARW buffer;
         private final int bufferSize;
@@ -1349,7 +1359,7 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         }
     }
 
-    public static class Decimal64MaxMinOverUnboundedPartitionRowsFrameFunction extends BasePartitionedWindowFunction implements WindowDecimal64Function {
+    public static class Decimal64MaxMinOverUnboundedPartitionRowsFrameFunction extends BasePartitionedWindowFunction {
 
         private final Decimal64Comparator comparator;
         private final String name;
@@ -1424,7 +1434,7 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         }
     }
 
-    public static class Decimal64MaxMinOverUnboundedRowsFrameFunction extends BaseWindowFunction implements WindowDecimal64Function {
+    public static class Decimal64MaxMinOverUnboundedRowsFrameFunction extends BaseWindowFunction {
 
         private final Decimal64Comparator comparator;
         private final String name;
@@ -1491,7 +1501,7 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         }
     }
 
-    public static class Decimal64MaxMinOverWholeResultSetFunction extends BaseWindowFunction implements WindowDecimal64Function {
+    public static class Decimal64MaxMinOverWholeResultSetFunction extends BaseWindowFunction {
 
         private final Decimal64Comparator comparator;
         private final String name;
@@ -1515,10 +1525,6 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             return name;
         }
 
-        @Override
-        public Pass1ScanDirection getPass1ScanDirection() {
-            return Pass1ScanDirection.BACKWARD;
-        }
 
         @Override
         public int getPassCount() {
@@ -1556,7 +1562,13 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         }
     }
 
-    public static class Decimal128MaxMinOverPartitionRangeFrameFunction extends BasePartitionedWindowFunction implements WindowDecimal128Function {
+    public static class Decimal128MaxMinOverPartitionRangeFrameFunction extends BasePartitionedWindowFunction {
+        private final Decimal128 dequeFront = new Decimal128();
+        private final Decimal128 evicted = new Decimal128();
+        private final Decimal128 value = new Decimal128();
+        private final Decimal128 dequeBack = new Decimal128();
+        private final Decimal128 oldMax = new Decimal128();
+        private final Decimal128 val = new Decimal128();
 
         private static final int DEQUE_RECORD_SIZE = 16;
         private static final int RECORD_SIZE = Long.BYTES + 16;
@@ -1567,7 +1579,7 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         private final boolean frameLoBounded;
         private final LongList freeList = new LongList();
         private final int initialBufferSize;
-        private final boolean isMax;
+        private final Decimal128Comparator comparator;
         private final long maxDiff;
         private final Decimal128 maxMin = new Decimal128();
         private final MemoryARW memory;
@@ -1589,7 +1601,7 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                 MemoryARW dequeMemory,
                 int initialBufferSize,
                 int timestampIdx,
-                boolean isMax,
+                Decimal128Comparator comparator,
                 String name,
                 int type
         ) {
@@ -1603,7 +1615,7 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             this.frameIncludesCurrentValue = rangeHi == 0;
             this.dequeMemory = dequeMemory;
             this.dequeInitialBufferSize = initialBufferSize;
-            this.isMax = isMax;
+            this.comparator = comparator;
             this.name = name;
             this.type = type;
             maxMin.ofRawNull();
@@ -1685,9 +1697,7 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                         if (Math.abs(timestamp - ts) > maxDiff) {
                             if (frameSize > 0) {
                                 if (dequeStartIndex != dequeEndIndex) {
-                                    Decimal128 dequeFront = new Decimal128();
                                     dequeMemory.getDecimal128(dequeStartOffset + (dequeStartIndex % dequeCapacity) * DEQUE_RECORD_SIZE, dequeFront);
-                                    Decimal128 evicted = new Decimal128();
                                     memory.getDecimal128(startOffset + idx * RECORD_SIZE + Long.BYTES, evicted);
                                     if (dequeFront.compareTo(evicted) == 0) {
                                         dequeStartIndex++;
@@ -1718,8 +1728,6 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                 }
 
                 if (frameLoBounded) {
-                    Decimal128 value = new Decimal128();
-                    Decimal128 dequeBack = new Decimal128();
                     for (long i = frameSize; i < size; i++) {
                         long idx = (firstIdx + i) % capacity;
                         long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
@@ -1755,10 +1763,8 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                         dequeMemory.getDecimal128(dequeStartOffset + (dequeStartIndex % dequeCapacity) * DEQUE_RECORD_SIZE, maxMin);
                     }
                 } else {
-                    Decimal128 oldMax = new Decimal128();
                     mapValue.getDecimal128(5, oldMax);
                     newFirstIdx = firstIdx;
-                    Decimal128 val = new Decimal128();
                     for (long i = 0, n = size; i < n; i++) {
                         long idx = (firstIdx + i) % capacity;
                         long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
@@ -1871,12 +1877,17 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         }
 
         private boolean isBetter(Decimal128 candidate, Decimal128 current) {
-            int cmp = candidate.compareTo(current);
-            return isMax ? cmp > 0 : cmp < 0;
+            return comparator.isBetter(candidate, current);
         }
     }
 
-    public static class Decimal128MaxMinOverPartitionRowsFrameFunction extends BasePartitionedWindowFunction implements WindowDecimal128Function {
+    public static class Decimal128MaxMinOverPartitionRowsFrameFunction extends BasePartitionedWindowFunction {
+        private final Decimal128 nullScratch = new Decimal128();
+        private final Decimal128 hiValue = new Decimal128();
+        private final Decimal128 dequeBack = new Decimal128();
+        private final Decimal128 max = new Decimal128();
+        private final Decimal128 loValue = new Decimal128();
+        private final Decimal128 dequeFront = new Decimal128();
 
         private final int bufferSize;
         private final int dequeBufferSize;
@@ -1884,7 +1895,7 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         private final boolean frameIncludesCurrentValue;
         private final boolean frameLoBounded;
         private final int frameSize;
-        private final boolean isMax;
+        private final Decimal128Comparator comparator;
         private final Decimal128 maxMin = new Decimal128();
         private final MemoryARW memory;
         private final String name;
@@ -1900,7 +1911,7 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                 Function arg,
                 MemoryARW memory,
                 MemoryARW dequeMemory,
-                boolean isMax,
+                Decimal128Comparator comparator,
                 String name,
                 int type
         ) {
@@ -1919,7 +1930,7 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             frameIncludesCurrentValue = rowsHi == 0;
             this.memory = memory;
             this.dequeMemory = dequeMemory;
-            this.isMax = isMax;
+            this.comparator = comparator;
             this.name = name;
             this.type = type;
         }
@@ -1951,7 +1962,6 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                 } else {
                     maxMin.ofRawNull();
                 }
-                Decimal128 nullScratch = new Decimal128();
                 nullScratch.ofRawNull();
                 for (int i = 0; i < bufferSize; i++) {
                     memory.putDecimal128(startOffset + (long) i * 16L, nullScratch.getHigh(), nullScratch.getLow());
@@ -1968,7 +1978,6 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             } else {
                 loIdx = value.getLong(0);
                 startOffset = value.getLong(1);
-                Decimal128 hiValue = new Decimal128();
                 if (frameIncludesCurrentValue) {
                     hiValue.copyFrom(scratch);
                 } else {
@@ -1978,7 +1987,6 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                     dequeStartOffset = value.getLong(2);
                     dequeStartIndex = value.getLong(3);
                     dequeEndIndex = value.getLong(4);
-                    Decimal128 dequeBack = new Decimal128();
                     if (!hiValue.isNull()) {
                         while (dequeStartIndex != dequeEndIndex) {
                             dequeMemory.getDecimal128(dequeStartOffset + ((dequeEndIndex - 1) % dequeBufferSize) * 16L, dequeBack);
@@ -1999,7 +2007,6 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                         }
                     }
                 } else {
-                    Decimal128 max = new Decimal128();
                     value.getDecimal128(2, max);
                     if (!hiValue.isNull()) {
                         if (max.isNull() || isBetter(hiValue, max)) {
@@ -2010,10 +2017,8 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                     maxMin.copyFrom(max);
                 }
                 if (frameLoBounded) {
-                    Decimal128 loValue = new Decimal128();
                     memory.getDecimal128(startOffset + loIdx * 16L, loValue);
                     if (!loValue.isNull() && dequeStartIndex != dequeEndIndex) {
-                        Decimal128 dequeFront = new Decimal128();
                         dequeMemory.getDecimal128(dequeStartOffset + (dequeStartIndex % dequeBufferSize) * 16L, dequeFront);
                         if (loValue.compareTo(dequeFront) == 0) {
                             dequeStartIndex++;
@@ -2104,17 +2109,20 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         }
 
         private boolean isBetter(Decimal128 candidate, Decimal128 current) {
-            int cmp = candidate.compareTo(current);
-            return isMax ? cmp > 0 : cmp < 0;
+            return comparator.isBetter(candidate, current);
         }
     }
 
-    public static class Decimal128MaxMinOverRangeFrameFunction extends BaseWindowFunction implements Reopenable, WindowDecimal128Function {
+    public static class Decimal128MaxMinOverRangeFrameFunction extends BaseWindowFunction implements Reopenable {
+        private final Decimal128 val = new Decimal128();
+        private final Decimal128 dequeFront = new Decimal128();
+        private final Decimal128 value = new Decimal128();
+        private final Decimal128 dequeBack = new Decimal128();
 
         private static final int RECORD_SIZE = Long.BYTES + 16;
         private final boolean frameLoBounded;
         private final long initialCapacity;
-        private final boolean isMax;
+        private final Decimal128Comparator comparator;
         private final long maxDiff;
         private final Decimal128 maxMin = new Decimal128();
         private final MemoryARW memory;
@@ -2142,7 +2150,7 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                 MemoryARW memory,
                 MemoryARW dequeMemory,
                 int timestampIdx,
-                boolean isMax,
+                Decimal128Comparator comparator,
                 String name,
                 int type
         ) {
@@ -2163,7 +2171,7 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                 dequeCapacity = initialCapacity;
                 dequeStartOffset = dequeMemory.appendAddressFor(dequeCapacity * 16L) - dequeMemory.getPageAddress(0);
             }
-            this.isMax = isMax;
+            this.comparator = comparator;
             this.name = name;
             this.type = type;
         }
@@ -2188,10 +2196,8 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                     long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
                     if (Math.abs(timestamp - ts) > maxDiff) {
                         if (frameSize > 0) {
-                            Decimal128 val = new Decimal128();
                             memory.getDecimal128(startOffset + idx * RECORD_SIZE + Long.BYTES, val);
                             if (!val.isNull() && dequeStartIndex != dequeEndIndex) {
-                                Decimal128 dequeFront = new Decimal128();
                                 dequeMemory.getDecimal128(dequeStartOffset + (dequeStartIndex % dequeCapacity) * 16L, dequeFront);
                                 if (val.compareTo(dequeFront) == 0) {
                                     dequeStartIndex++;
@@ -2230,8 +2236,6 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             }
 
             if (frameLoBounded) {
-                Decimal128 value = new Decimal128();
-                Decimal128 dequeBack = new Decimal128();
                 for (long i = frameSize, n = size; i < n; i++) {
                     long idx = (firstIdx + i) % capacity;
                     long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
@@ -2276,7 +2280,6 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                 }
             } else {
                 newFirstIdx = firstIdx;
-                Decimal128 val = new Decimal128();
                 for (long i = 0, n = size; i < n; i++) {
                     long idx = (firstIdx + i) % capacity;
                     long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
@@ -2388,12 +2391,16 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         }
 
         private boolean isBetter(Decimal128 candidate, Decimal128 current) {
-            int cmp = candidate.compareTo(current);
-            return isMax ? cmp > 0 : cmp < 0;
+            return comparator.isBetter(candidate, current);
         }
     }
 
-    public static class Decimal128MaxMinOverRowsFrameFunction extends BaseWindowFunction implements Reopenable, WindowDecimal128Function {
+    public static class Decimal128MaxMinOverRowsFrameFunction extends BaseWindowFunction implements Reopenable {
+        private final Decimal128 hiValue = new Decimal128();
+        private final Decimal128 dequeBack = new Decimal128();
+        private final Decimal128 loValue = new Decimal128();
+        private final Decimal128 dequeFront = new Decimal128();
+        private final Decimal128 nullScratch = new Decimal128();
 
         private final MemoryARW buffer;
         private final int bufferSize;
@@ -2402,7 +2409,7 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         private final boolean frameIncludesCurrentValue;
         private final boolean frameLoBounded;
         private final int frameSize;
-        private final boolean isMax;
+        private final Decimal128Comparator comparator;
         private final Decimal128 max = new Decimal128();
         private final Decimal128 maxMin = new Decimal128();
         private final String name;
@@ -2419,7 +2426,7 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                 long rowsHi,
                 MemoryARW memory,
                 MemoryARW dequeMemory,
-                boolean isMax,
+                Decimal128Comparator comparator,
                 String name,
                 int type
         ) {
@@ -2439,7 +2446,7 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             frameIncludesCurrentValue = rowsHi == 0;
             this.buffer = memory;
             this.dequeMemory = dequeMemory;
-            this.isMax = isMax;
+            this.comparator = comparator;
             this.name = name;
             this.type = type;
             max.ofRawNull();
@@ -2464,7 +2471,6 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         @Override
         public void computeNext(Record record) {
             arg.getDecimal128(record, scratch);
-            Decimal128 hiValue = new Decimal128();
             if (frameLoBounded && !frameIncludesCurrentValue) {
                 buffer.getDecimal128((long) ((loIdx + frameSize - 1) % bufferSize) * 16L, hiValue);
             } else if (!frameLoBounded && !frameIncludesCurrentValue) {
@@ -2473,7 +2479,6 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                 hiValue.copyFrom(scratch);
             }
             if (frameLoBounded) {
-                Decimal128 dequeBack = new Decimal128();
                 if (!hiValue.isNull()) {
                     while (dequeStartIndex != dequeEndIndex) {
                         dequeMemory.getDecimal128(((dequeEndIndex - 1) % dequeBufferSize) * 16L, dequeBack);
@@ -2503,10 +2508,8 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             }
 
             if (frameLoBounded) {
-                Decimal128 loValue = new Decimal128();
                 buffer.getDecimal128((long) loIdx * 16L, loValue);
                 if (!loValue.isNull() && dequeStartIndex != dequeEndIndex) {
-                    Decimal128 dequeFront = new Decimal128();
                     dequeMemory.getDecimal128((dequeStartIndex % dequeBufferSize) * 16L, dequeFront);
                     if (loValue.compareTo(dequeFront) == 0) {
                         dequeStartIndex++;
@@ -2604,7 +2607,6 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         }
 
         private void initBuffer() {
-            Decimal128 nullScratch = new Decimal128();
             nullScratch.ofRawNull();
             for (int i = 0; i < bufferSize; i++) {
                 buffer.putDecimal128((long) i * 16L, nullScratch.getHigh(), nullScratch.getLow());
@@ -2615,8 +2617,7 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         }
 
         private boolean isBetter(Decimal128 candidate, Decimal128 current) {
-            int cmp = candidate.compareTo(current);
-            return isMax ? cmp > 0 : cmp < 0;
+            return comparator.isBetter(candidate, current);
         }
     }
 
@@ -2625,7 +2626,7 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             ObjList<Function> args,
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext,
-            boolean isMax,
+            Decimal256Comparator comparator,
             String name
     ) throws SqlException {
         WindowContext windowContext = sqlExecutionContext.getWindowContext();
@@ -2642,10 +2643,10 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             if (framingMode == WindowExpression.FRAMING_RANGE) {
                 if (windowContext.isDefaultFrame() && (!windowContext.isOrdered() || windowContext.getRowsHi() == Long.MAX_VALUE)) {
                     Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, MAX_DECIMAL256_TYPES);
-                    return new Decimal256MaxMinOverPartitionFunction(map, partitionByRecord, partitionBySink, arg, isMax, name, argType);
+                    return new Decimal256MaxMinOverPartitionFunction(map, partitionByRecord, partitionBySink, arg, comparator, name, argType);
                 } else if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
                     Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, MAX_DECIMAL256_TYPES);
-                    return new Decimal256MaxMinOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, arg, isMax, name, argType);
+                    return new Decimal256MaxMinOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, arg, comparator, name, argType);
                 } else {
                     if (windowContext.isOrdered() && !windowContext.isOrderedByDesignatedTimestamp()) {
                         throw SqlException.$(windowContext.getOrderByPos(), "RANGE is supported only for queries ordered by designated timestamp");
@@ -2665,7 +2666,7 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                         }
                         return new Decimal256MaxMinOverPartitionRangeFrameFunction(map, partitionByRecord, partitionBySink,
                                 rowsLo, rowsHi, arg, mem, dequeMem, configuration.getSqlWindowInitialRangeBufferSize(),
-                                timestampIndex, isMax, name, argType);
+                                timestampIndex, comparator, name, argType);
                     } catch (Throwable th) {
                         Misc.free(map);
                         Misc.free(mem);
@@ -2676,12 +2677,12 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             } else if (framingMode == WindowExpression.FRAMING_ROWS) {
                 if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
                     Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, MAX_DECIMAL256_TYPES);
-                    return new Decimal256MaxMinOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, arg, isMax, name, argType);
+                    return new Decimal256MaxMinOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, arg, comparator, name, argType);
                 } else if (rowsLo == 0 && rowsHi == 0) {
                     return new Decimal256MaxMinOverCurrentRowFunction(arg, name, argType);
                 } else if (rowsLo == Long.MIN_VALUE && rowsHi == Long.MAX_VALUE) {
                     Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, MAX_DECIMAL256_TYPES);
-                    return new Decimal256MaxMinOverPartitionFunction(map, partitionByRecord, partitionBySink, arg, isMax, name, argType);
+                    return new Decimal256MaxMinOverPartitionFunction(map, partitionByRecord, partitionBySink, arg, comparator, name, argType);
                 } else {
                     Map map = null;
                     MemoryARW mem = null;
@@ -2696,7 +2697,7 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                                     configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
                         }
                         return new Decimal256MaxMinOverPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink,
-                                rowsLo, rowsHi, arg, mem, dequeMem, isMax, name, argType);
+                                rowsLo, rowsHi, arg, mem, dequeMem, comparator, name, argType);
                     } catch (Throwable th) {
                         Misc.free(map);
                         Misc.free(mem);
@@ -2708,9 +2709,9 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         } else {
             if (framingMode == WindowExpression.FRAMING_RANGE) {
                 if (!windowContext.isOrdered() && windowContext.isDefaultFrame()) {
-                    return new Decimal256MaxMinOverWholeResultSetFunction(arg, isMax, name, argType);
+                    return new Decimal256MaxMinOverWholeResultSetFunction(arg, comparator, name, argType);
                 } else if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
-                    return new Decimal256MaxMinOverUnboundedRowsFrameFunction(arg, isMax, name, argType);
+                    return new Decimal256MaxMinOverUnboundedRowsFrameFunction(arg, comparator, name, argType);
                 } else {
                     if (windowContext.isOrdered() && !windowContext.isOrderedByDesignatedTimestamp()) {
                         throw SqlException.$(windowContext.getOrderByPos(), "RANGE is supported only for queries ordered by designated timestamp");
@@ -2725,7 +2726,7 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                             dequeMem = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
                                     configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
                         }
-                        return new Decimal256MaxMinOverRangeFrameFunction(rowsLo, rowsHi, arg, configuration, mem, dequeMem, timestampIndex, isMax, name, argType);
+                        return new Decimal256MaxMinOverRangeFrameFunction(rowsLo, rowsHi, arg, configuration, mem, dequeMem, timestampIndex, comparator, name, argType);
                     } catch (Throwable th) {
                         Misc.free(mem);
                         Misc.free(dequeMem);
@@ -2734,11 +2735,11 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                 }
             } else if (framingMode == WindowExpression.FRAMING_ROWS) {
                 if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
-                    return new Decimal256MaxMinOverUnboundedRowsFrameFunction(arg, isMax, name, argType);
+                    return new Decimal256MaxMinOverUnboundedRowsFrameFunction(arg, comparator, name, argType);
                 } else if (rowsLo == 0 && rowsHi == 0) {
                     return new Decimal256MaxMinOverCurrentRowFunction(arg, name, argType);
                 } else if (rowsLo == Long.MIN_VALUE && rowsHi == Long.MAX_VALUE) {
-                    return new Decimal256MaxMinOverWholeResultSetFunction(arg, isMax, name, argType);
+                    return new Decimal256MaxMinOverWholeResultSetFunction(arg, comparator, name, argType);
                 } else {
                     MemoryARW mem = null;
                     MemoryARW dequeMem = null;
@@ -2749,7 +2750,7 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                             dequeMem = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
                                     configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
                         }
-                        return new Decimal256MaxMinOverRowsFrameFunction(arg, rowsLo, rowsHi, mem, dequeMem, isMax, name, argType);
+                        return new Decimal256MaxMinOverRowsFrameFunction(arg, rowsLo, rowsHi, mem, dequeMem, comparator, name, argType);
                     } catch (Throwable th) {
                         Misc.free(mem);
                         Misc.free(dequeMem);
@@ -2762,7 +2763,7 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         throw SqlException.$(position, "function not implemented for given window parameters");
     }
 
-    public static class Decimal256MaxMinOverCurrentRowFunction extends BaseWindowFunction implements WindowDecimal256Function {
+    public static class Decimal256MaxMinOverCurrentRowFunction extends BaseWindowFunction {
 
         private final String name;
         private final int type;
@@ -2811,16 +2812,17 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         }
     }
 
-    public static class Decimal256MaxMinOverPartitionFunction extends BasePartitionedWindowFunction implements WindowDecimal256Function {
+    public static class Decimal256MaxMinOverPartitionFunction extends BasePartitionedWindowFunction {
+        private final Decimal256 curr = new Decimal256();
 
-        private final boolean isMax;
+        private final Decimal256Comparator comparator;
         private final String name;
         private final Decimal256 scratch = new Decimal256();
         private final int type;
 
-        public Decimal256MaxMinOverPartitionFunction(Map map, VirtualRecord partitionByRecord, RecordSink partitionBySink, Function arg, boolean isMax, String name, int type) {
+        public Decimal256MaxMinOverPartitionFunction(Map map, VirtualRecord partitionByRecord, RecordSink partitionBySink, Function arg, Decimal256Comparator comparator, String name, int type) {
             super(map, partitionByRecord, partitionBySink, arg);
-            this.isMax = isMax;
+            this.comparator = comparator;
             this.name = name;
             this.type = type;
         }
@@ -2830,10 +2832,6 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             return name;
         }
 
-        @Override
-        public Pass1ScanDirection getPass1ScanDirection() {
-            return Pass1ScanDirection.BACKWARD;
-        }
 
         @Override
         public int getPassCount() {
@@ -2858,7 +2856,6 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             if (mv.isNew()) {
                 mv.putDecimal256(0, scratch);
             } else {
-                Decimal256 curr = new Decimal256();
                 mv.getDecimal256(0, curr);
                 if (curr.isNull() || isBetter(scratch, curr)) {
                     mv.putDecimal256(0, scratch);
@@ -2888,22 +2885,23 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         }
 
         private boolean isBetter(Decimal256 candidate, Decimal256 current) {
-            int cmp = candidate.compareTo(current);
-            return isMax ? cmp > 0 : cmp < 0;
+            return comparator.isBetter(candidate, current);
         }
     }
 
-    public static class Decimal256MaxMinOverUnboundedPartitionRowsFrameFunction extends BasePartitionedWindowFunction implements WindowDecimal256Function {
+    public static class Decimal256MaxMinOverUnboundedPartitionRowsFrameFunction extends BasePartitionedWindowFunction {
+        private final Decimal256 nullVal = new Decimal256();
+        private final Decimal256 curr = new Decimal256();
 
-        private final boolean isMax;
+        private final Decimal256Comparator comparator;
         private final String name;
         private final Decimal256 scratch = new Decimal256();
         private final int type;
         private final Decimal256 value = new Decimal256();
 
-        public Decimal256MaxMinOverUnboundedPartitionRowsFrameFunction(Map map, VirtualRecord partitionByRecord, RecordSink partitionBySink, Function arg, boolean isMax, String name, int type) {
+        public Decimal256MaxMinOverUnboundedPartitionRowsFrameFunction(Map map, VirtualRecord partitionByRecord, RecordSink partitionBySink, Function arg, Decimal256Comparator comparator, String name, int type) {
             super(map, partitionByRecord, partitionBySink, arg);
-            this.isMax = isMax;
+            this.comparator = comparator;
             this.name = name;
             this.type = type;
         }
@@ -2920,13 +2918,11 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                     mv.putDecimal256(0, scratch);
                     value.copyRaw(scratch);
                 } else {
-                    Decimal256 nullVal = new Decimal256();
                     nullVal.ofRawNull();
                     mv.putDecimal256(0, nullVal);
                     value.ofRawNull();
                 }
             } else {
-                Decimal256 curr = new Decimal256();
                 mv.getDecimal256(0, curr);
                 if (!scratch.isNull() && (curr.isNull() || isBetter(scratch, curr))) {
                     mv.putDecimal256(0, scratch);
@@ -2976,22 +2972,21 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         }
 
         private boolean isBetter(Decimal256 candidate, Decimal256 current) {
-            int cmp = candidate.compareTo(current);
-            return isMax ? cmp > 0 : cmp < 0;
+            return comparator.isBetter(candidate, current);
         }
     }
 
-    public static class Decimal256MaxMinOverUnboundedRowsFrameFunction extends BaseWindowFunction implements WindowDecimal256Function {
+    public static class Decimal256MaxMinOverUnboundedRowsFrameFunction extends BaseWindowFunction {
 
-        private final boolean isMax;
+        private final Decimal256Comparator comparator;
         private final String name;
         private final Decimal256 scratch = new Decimal256();
         private final int type;
         private final Decimal256 value = new Decimal256();
 
-        public Decimal256MaxMinOverUnboundedRowsFrameFunction(Function arg, boolean isMax, String name, int type) {
+        public Decimal256MaxMinOverUnboundedRowsFrameFunction(Function arg, Decimal256Comparator comparator, String name, int type) {
             super(arg);
-            this.isMax = isMax;
+            this.comparator = comparator;
             this.name = name;
             this.type = type;
             value.ofRawNull();
@@ -3054,22 +3049,21 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         }
 
         private boolean isBetter(Decimal256 candidate, Decimal256 current) {
-            int cmp = candidate.compareTo(current);
-            return isMax ? cmp > 0 : cmp < 0;
+            return comparator.isBetter(candidate, current);
         }
     }
 
-    public static class Decimal256MaxMinOverWholeResultSetFunction extends BaseWindowFunction implements WindowDecimal256Function {
+    public static class Decimal256MaxMinOverWholeResultSetFunction extends BaseWindowFunction {
 
-        private final boolean isMax;
+        private final Decimal256Comparator comparator;
         private final String name;
         private final Decimal256 scratch = new Decimal256();
         private final int type;
         private final Decimal256 value = new Decimal256();
 
-        public Decimal256MaxMinOverWholeResultSetFunction(Function arg, boolean isMax, String name, int type) {
+        public Decimal256MaxMinOverWholeResultSetFunction(Function arg, Decimal256Comparator comparator, String name, int type) {
             super(arg);
-            this.isMax = isMax;
+            this.comparator = comparator;
             this.name = name;
             this.type = type;
             value.ofRawNull();
@@ -3085,10 +3079,6 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             return name;
         }
 
-        @Override
-        public Pass1ScanDirection getPass1ScanDirection() {
-            return Pass1ScanDirection.BACKWARD;
-        }
 
         @Override
         public int getPassCount() {
@@ -3130,12 +3120,17 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         }
 
         private boolean isBetter(Decimal256 candidate, Decimal256 current) {
-            int cmp = candidate.compareTo(current);
-            return isMax ? cmp > 0 : cmp < 0;
+            return comparator.isBetter(candidate, current);
         }
     }
 
-    public static class Decimal256MaxMinOverPartitionRangeFrameFunction extends BasePartitionedWindowFunction implements WindowDecimal256Function {
+    public static class Decimal256MaxMinOverPartitionRangeFrameFunction extends BasePartitionedWindowFunction {
+        private final Decimal256 dequeFront = new Decimal256();
+        private final Decimal256 evicted = new Decimal256();
+        private final Decimal256 value = new Decimal256();
+        private final Decimal256 dequeBack = new Decimal256();
+        private final Decimal256 oldMax = new Decimal256();
+        private final Decimal256 val = new Decimal256();
 
         private static final int DEQUE_RECORD_SIZE = 32;
         private static final int RECORD_SIZE = Long.BYTES + 32;
@@ -3146,7 +3141,7 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         private final boolean frameLoBounded;
         private final LongList freeList = new LongList();
         private final int initialBufferSize;
-        private final boolean isMax;
+        private final Decimal256Comparator comparator;
         private final long maxDiff;
         private final Decimal256 maxMin = new Decimal256();
         private final MemoryARW memory;
@@ -3168,7 +3163,7 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                 MemoryARW dequeMemory,
                 int initialBufferSize,
                 int timestampIdx,
-                boolean isMax,
+                Decimal256Comparator comparator,
                 String name,
                 int type
         ) {
@@ -3182,7 +3177,7 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             this.frameIncludesCurrentValue = rangeHi == 0;
             this.dequeMemory = dequeMemory;
             this.dequeInitialBufferSize = initialBufferSize;
-            this.isMax = isMax;
+            this.comparator = comparator;
             this.name = name;
             this.type = type;
             maxMin.ofRawNull();
@@ -3264,9 +3259,7 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                         if (Math.abs(timestamp - ts) > maxDiff) {
                             if (frameSize > 0) {
                                 if (dequeStartIndex != dequeEndIndex) {
-                                    Decimal256 dequeFront = new Decimal256();
                                     dequeMemory.getDecimal256(dequeStartOffset + (dequeStartIndex % dequeCapacity) * DEQUE_RECORD_SIZE, dequeFront);
-                                    Decimal256 evicted = new Decimal256();
                                     memory.getDecimal256(startOffset + idx * RECORD_SIZE + Long.BYTES, evicted);
                                     if (dequeFront.compareTo(evicted) == 0) {
                                         dequeStartIndex++;
@@ -3297,8 +3290,6 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                 }
 
                 if (frameLoBounded) {
-                    Decimal256 value = new Decimal256();
-                    Decimal256 dequeBack = new Decimal256();
                     for (long i = frameSize; i < size; i++) {
                         long idx = (firstIdx + i) % capacity;
                         long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
@@ -3334,10 +3325,8 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                         dequeMemory.getDecimal256(dequeStartOffset + (dequeStartIndex % dequeCapacity) * DEQUE_RECORD_SIZE, maxMin);
                     }
                 } else {
-                    Decimal256 oldMax = new Decimal256();
                     mapValue.getDecimal256(5, oldMax);
                     newFirstIdx = firstIdx;
-                    Decimal256 val = new Decimal256();
                     for (long i = 0, n = size; i < n; i++) {
                         long idx = (firstIdx + i) % capacity;
                         long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
@@ -3452,12 +3441,17 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         }
 
         private boolean isBetter(Decimal256 candidate, Decimal256 current) {
-            int cmp = candidate.compareTo(current);
-            return isMax ? cmp > 0 : cmp < 0;
+            return comparator.isBetter(candidate, current);
         }
     }
 
-    public static class Decimal256MaxMinOverPartitionRowsFrameFunction extends BasePartitionedWindowFunction implements WindowDecimal256Function {
+    public static class Decimal256MaxMinOverPartitionRowsFrameFunction extends BasePartitionedWindowFunction {
+        private final Decimal256 nullScratch = new Decimal256();
+        private final Decimal256 hiValue = new Decimal256();
+        private final Decimal256 dequeBack = new Decimal256();
+        private final Decimal256 max = new Decimal256();
+        private final Decimal256 loValue = new Decimal256();
+        private final Decimal256 dequeFront = new Decimal256();
 
         private final int bufferSize;
         private final int dequeBufferSize;
@@ -3465,7 +3459,7 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         private final boolean frameIncludesCurrentValue;
         private final boolean frameLoBounded;
         private final int frameSize;
-        private final boolean isMax;
+        private final Decimal256Comparator comparator;
         private final Decimal256 maxMin = new Decimal256();
         private final MemoryARW memory;
         private final String name;
@@ -3481,7 +3475,7 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                 Function arg,
                 MemoryARW memory,
                 MemoryARW dequeMemory,
-                boolean isMax,
+                Decimal256Comparator comparator,
                 String name,
                 int type
         ) {
@@ -3500,7 +3494,7 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             frameIncludesCurrentValue = rowsHi == 0;
             this.memory = memory;
             this.dequeMemory = dequeMemory;
-            this.isMax = isMax;
+            this.comparator = comparator;
             this.name = name;
             this.type = type;
         }
@@ -3532,7 +3526,6 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                 } else {
                     maxMin.ofRawNull();
                 }
-                Decimal256 nullScratch = new Decimal256();
                 nullScratch.ofRawNull();
                 for (int i = 0; i < bufferSize; i++) {
                     memory.putDecimal256(startOffset + (long) i * 32L, nullScratch.getHh(), nullScratch.getHl(), nullScratch.getLh(), nullScratch.getLl());
@@ -3549,7 +3542,6 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             } else {
                 loIdx = value.getLong(0);
                 startOffset = value.getLong(1);
-                Decimal256 hiValue = new Decimal256();
                 if (frameIncludesCurrentValue) {
                     hiValue.copyRaw(scratch);
                 } else {
@@ -3559,7 +3551,6 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                     dequeStartOffset = value.getLong(2);
                     dequeStartIndex = value.getLong(3);
                     dequeEndIndex = value.getLong(4);
-                    Decimal256 dequeBack = new Decimal256();
                     if (!hiValue.isNull()) {
                         while (dequeStartIndex != dequeEndIndex) {
                             dequeMemory.getDecimal256(dequeStartOffset + ((dequeEndIndex - 1) % dequeBufferSize) * 32L, dequeBack);
@@ -3580,7 +3571,6 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                         }
                     }
                 } else {
-                    Decimal256 max = new Decimal256();
                     value.getDecimal256(2, max);
                     if (!hiValue.isNull()) {
                         if (max.isNull() || isBetter(hiValue, max)) {
@@ -3591,10 +3581,8 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                     maxMin.copyRaw(max);
                 }
                 if (frameLoBounded) {
-                    Decimal256 loValue = new Decimal256();
                     memory.getDecimal256(startOffset + loIdx * 32L, loValue);
                     if (!loValue.isNull() && dequeStartIndex != dequeEndIndex) {
-                        Decimal256 dequeFront = new Decimal256();
                         dequeMemory.getDecimal256(dequeStartOffset + (dequeStartIndex % dequeBufferSize) * 32L, dequeFront);
                         if (loValue.compareTo(dequeFront) == 0) {
                             dequeStartIndex++;
@@ -3687,17 +3675,20 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         }
 
         private boolean isBetter(Decimal256 candidate, Decimal256 current) {
-            int cmp = candidate.compareTo(current);
-            return isMax ? cmp > 0 : cmp < 0;
+            return comparator.isBetter(candidate, current);
         }
     }
 
-    public static class Decimal256MaxMinOverRangeFrameFunction extends BaseWindowFunction implements Reopenable, WindowDecimal256Function {
+    public static class Decimal256MaxMinOverRangeFrameFunction extends BaseWindowFunction implements Reopenable {
+        private final Decimal256 val = new Decimal256();
+        private final Decimal256 dequeFront = new Decimal256();
+        private final Decimal256 value = new Decimal256();
+        private final Decimal256 dequeBack = new Decimal256();
 
         private static final int RECORD_SIZE = Long.BYTES + 32;
         private final boolean frameLoBounded;
         private final long initialCapacity;
-        private final boolean isMax;
+        private final Decimal256Comparator comparator;
         private final long maxDiff;
         private final Decimal256 maxMin = new Decimal256();
         private final MemoryARW memory;
@@ -3725,7 +3716,7 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                 MemoryARW memory,
                 MemoryARW dequeMemory,
                 int timestampIdx,
-                boolean isMax,
+                Decimal256Comparator comparator,
                 String name,
                 int type
         ) {
@@ -3746,7 +3737,7 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                 dequeCapacity = initialCapacity;
                 dequeStartOffset = dequeMemory.appendAddressFor(dequeCapacity * 32L) - dequeMemory.getPageAddress(0);
             }
-            this.isMax = isMax;
+            this.comparator = comparator;
             this.name = name;
             this.type = type;
         }
@@ -3771,10 +3762,8 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                     long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
                     if (Math.abs(timestamp - ts) > maxDiff) {
                         if (frameSize > 0) {
-                            Decimal256 val = new Decimal256();
                             memory.getDecimal256(startOffset + idx * RECORD_SIZE + Long.BYTES, val);
                             if (!val.isNull() && dequeStartIndex != dequeEndIndex) {
-                                Decimal256 dequeFront = new Decimal256();
                                 dequeMemory.getDecimal256(dequeStartOffset + (dequeStartIndex % dequeCapacity) * 32L, dequeFront);
                                 if (val.compareTo(dequeFront) == 0) {
                                     dequeStartIndex++;
@@ -3813,8 +3802,6 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             }
 
             if (frameLoBounded) {
-                Decimal256 value = new Decimal256();
-                Decimal256 dequeBack = new Decimal256();
                 for (long i = frameSize, n = size; i < n; i++) {
                     long idx = (firstIdx + i) % capacity;
                     long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
@@ -3859,7 +3846,6 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                 }
             } else {
                 newFirstIdx = firstIdx;
-                Decimal256 val = new Decimal256();
                 for (long i = 0, n = size; i < n; i++) {
                     long idx = (firstIdx + i) % capacity;
                     long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
@@ -3973,12 +3959,16 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         }
 
         private boolean isBetter(Decimal256 candidate, Decimal256 current) {
-            int cmp = candidate.compareTo(current);
-            return isMax ? cmp > 0 : cmp < 0;
+            return comparator.isBetter(candidate, current);
         }
     }
 
-    public static class Decimal256MaxMinOverRowsFrameFunction extends BaseWindowFunction implements Reopenable, WindowDecimal256Function {
+    public static class Decimal256MaxMinOverRowsFrameFunction extends BaseWindowFunction implements Reopenable {
+        private final Decimal256 hiValue = new Decimal256();
+        private final Decimal256 dequeBack = new Decimal256();
+        private final Decimal256 loValue = new Decimal256();
+        private final Decimal256 dequeFront = new Decimal256();
+        private final Decimal256 nullScratch = new Decimal256();
 
         private final MemoryARW buffer;
         private final int bufferSize;
@@ -3987,7 +3977,7 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         private final boolean frameIncludesCurrentValue;
         private final boolean frameLoBounded;
         private final int frameSize;
-        private final boolean isMax;
+        private final Decimal256Comparator comparator;
         private final Decimal256 max = new Decimal256();
         private final Decimal256 maxMin = new Decimal256();
         private final String name;
@@ -4004,7 +3994,7 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                 long rowsHi,
                 MemoryARW memory,
                 MemoryARW dequeMemory,
-                boolean isMax,
+                Decimal256Comparator comparator,
                 String name,
                 int type
         ) {
@@ -4024,7 +4014,7 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             frameIncludesCurrentValue = rowsHi == 0;
             this.buffer = memory;
             this.dequeMemory = dequeMemory;
-            this.isMax = isMax;
+            this.comparator = comparator;
             this.name = name;
             this.type = type;
             max.ofRawNull();
@@ -4049,7 +4039,6 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         @Override
         public void computeNext(Record record) {
             arg.getDecimal256(record, scratch);
-            Decimal256 hiValue = new Decimal256();
             if (frameLoBounded && !frameIncludesCurrentValue) {
                 buffer.getDecimal256((long) ((loIdx + frameSize - 1) % bufferSize) * 32L, hiValue);
             } else if (!frameLoBounded && !frameIncludesCurrentValue) {
@@ -4058,7 +4047,6 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                 hiValue.copyRaw(scratch);
             }
             if (frameLoBounded) {
-                Decimal256 dequeBack = new Decimal256();
                 if (!hiValue.isNull()) {
                     while (dequeStartIndex != dequeEndIndex) {
                         dequeMemory.getDecimal256(((dequeEndIndex - 1) % dequeBufferSize) * 32L, dequeBack);
@@ -4088,10 +4076,8 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             }
 
             if (frameLoBounded) {
-                Decimal256 loValue = new Decimal256();
                 buffer.getDecimal256((long) loIdx * 32L, loValue);
                 if (!loValue.isNull() && dequeStartIndex != dequeEndIndex) {
-                    Decimal256 dequeFront = new Decimal256();
                     dequeMemory.getDecimal256((dequeStartIndex % dequeBufferSize) * 32L, dequeFront);
                     if (loValue.compareTo(dequeFront) == 0) {
                         dequeStartIndex++;
@@ -4191,7 +4177,6 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         }
 
         private void initBuffer() {
-            Decimal256 nullScratch = new Decimal256();
             nullScratch.ofRawNull();
             for (int i = 0; i < bufferSize; i++) {
                 buffer.putDecimal256((long) i * 32L, nullScratch.getHh(), nullScratch.getHl(), nullScratch.getLh(), nullScratch.getLl());
@@ -4202,8 +4187,7 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         }
 
         private boolean isBetter(Decimal256 candidate, Decimal256 current) {
-            int cmp = candidate.compareTo(current);
-            return isMax ? cmp > 0 : cmp < 0;
+            return comparator.isBetter(candidate, current);
         }
     }
 
@@ -4212,7 +4196,7 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             ObjList<Function> args,
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext,
-            boolean isMax,
+            Decimal128Comparator comparator,
             String name
     ) throws SqlException {
         WindowContext windowContext = sqlExecutionContext.getWindowContext();
@@ -4229,10 +4213,10 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             if (framingMode == WindowExpression.FRAMING_RANGE) {
                 if (windowContext.isDefaultFrame() && (!windowContext.isOrdered() || windowContext.getRowsHi() == Long.MAX_VALUE)) {
                     Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, MAX_DECIMAL128_TYPES);
-                    return new Decimal128MaxMinOverPartitionFunction(map, partitionByRecord, partitionBySink, arg, isMax, name, argType);
+                    return new Decimal128MaxMinOverPartitionFunction(map, partitionByRecord, partitionBySink, arg, comparator, name, argType);
                 } else if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
                     Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, MAX_DECIMAL128_TYPES);
-                    return new Decimal128MaxMinOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, arg, isMax, name, argType);
+                    return new Decimal128MaxMinOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, arg, comparator, name, argType);
                 } else {
                     if (windowContext.isOrdered() && !windowContext.isOrderedByDesignatedTimestamp()) {
                         throw SqlException.$(windowContext.getOrderByPos(), "RANGE is supported only for queries ordered by designated timestamp");
@@ -4252,7 +4236,7 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                         }
                         return new Decimal128MaxMinOverPartitionRangeFrameFunction(map, partitionByRecord, partitionBySink,
                                 rowsLo, rowsHi, arg, mem, dequeMem, configuration.getSqlWindowInitialRangeBufferSize(),
-                                timestampIndex, isMax, name, argType);
+                                timestampIndex, comparator, name, argType);
                     } catch (Throwable th) {
                         Misc.free(map);
                         Misc.free(mem);
@@ -4263,12 +4247,12 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             } else if (framingMode == WindowExpression.FRAMING_ROWS) {
                 if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
                     Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, MAX_DECIMAL128_TYPES);
-                    return new Decimal128MaxMinOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, arg, isMax, name, argType);
+                    return new Decimal128MaxMinOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, arg, comparator, name, argType);
                 } else if (rowsLo == 0 && rowsHi == 0) {
                     return new Decimal128MaxMinOverCurrentRowFunction(arg, name, argType);
                 } else if (rowsLo == Long.MIN_VALUE && rowsHi == Long.MAX_VALUE) {
                     Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, MAX_DECIMAL128_TYPES);
-                    return new Decimal128MaxMinOverPartitionFunction(map, partitionByRecord, partitionBySink, arg, isMax, name, argType);
+                    return new Decimal128MaxMinOverPartitionFunction(map, partitionByRecord, partitionBySink, arg, comparator, name, argType);
                 } else {
                     Map map = null;
                     MemoryARW mem = null;
@@ -4283,7 +4267,7 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                                     configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
                         }
                         return new Decimal128MaxMinOverPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink,
-                                rowsLo, rowsHi, arg, mem, dequeMem, isMax, name, argType);
+                                rowsLo, rowsHi, arg, mem, dequeMem, comparator, name, argType);
                     } catch (Throwable th) {
                         Misc.free(map);
                         Misc.free(mem);
@@ -4295,9 +4279,9 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         } else {
             if (framingMode == WindowExpression.FRAMING_RANGE) {
                 if (!windowContext.isOrdered() && windowContext.isDefaultFrame()) {
-                    return new Decimal128MaxMinOverWholeResultSetFunction(arg, isMax, name, argType);
+                    return new Decimal128MaxMinOverWholeResultSetFunction(arg, comparator, name, argType);
                 } else if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
-                    return new Decimal128MaxMinOverUnboundedRowsFrameFunction(arg, isMax, name, argType);
+                    return new Decimal128MaxMinOverUnboundedRowsFrameFunction(arg, comparator, name, argType);
                 } else {
                     if (windowContext.isOrdered() && !windowContext.isOrderedByDesignatedTimestamp()) {
                         throw SqlException.$(windowContext.getOrderByPos(), "RANGE is supported only for queries ordered by designated timestamp");
@@ -4312,7 +4296,7 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                             dequeMem = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
                                     configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
                         }
-                        return new Decimal128MaxMinOverRangeFrameFunction(rowsLo, rowsHi, arg, configuration, mem, dequeMem, timestampIndex, isMax, name, argType);
+                        return new Decimal128MaxMinOverRangeFrameFunction(rowsLo, rowsHi, arg, configuration, mem, dequeMem, timestampIndex, comparator, name, argType);
                     } catch (Throwable th) {
                         Misc.free(mem);
                         Misc.free(dequeMem);
@@ -4321,11 +4305,11 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                 }
             } else if (framingMode == WindowExpression.FRAMING_ROWS) {
                 if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
-                    return new Decimal128MaxMinOverUnboundedRowsFrameFunction(arg, isMax, name, argType);
+                    return new Decimal128MaxMinOverUnboundedRowsFrameFunction(arg, comparator, name, argType);
                 } else if (rowsLo == 0 && rowsHi == 0) {
                     return new Decimal128MaxMinOverCurrentRowFunction(arg, name, argType);
                 } else if (rowsLo == Long.MIN_VALUE && rowsHi == Long.MAX_VALUE) {
-                    return new Decimal128MaxMinOverWholeResultSetFunction(arg, isMax, name, argType);
+                    return new Decimal128MaxMinOverWholeResultSetFunction(arg, comparator, name, argType);
                 } else {
                     MemoryARW mem = null;
                     MemoryARW dequeMem = null;
@@ -4336,7 +4320,7 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                             dequeMem = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
                                     configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
                         }
-                        return new Decimal128MaxMinOverRowsFrameFunction(arg, rowsLo, rowsHi, mem, dequeMem, isMax, name, argType);
+                        return new Decimal128MaxMinOverRowsFrameFunction(arg, rowsLo, rowsHi, mem, dequeMem, comparator, name, argType);
                     } catch (Throwable th) {
                         Misc.free(mem);
                         Misc.free(dequeMem);
@@ -4349,7 +4333,7 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         throw SqlException.$(position, "function not implemented for given window parameters");
     }
 
-    public static class Decimal128MaxMinOverCurrentRowFunction extends BaseWindowFunction implements WindowDecimal128Function {
+    public static class Decimal128MaxMinOverCurrentRowFunction extends BaseWindowFunction {
 
         private final String name;
         private final int type;
@@ -4396,16 +4380,17 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         }
     }
 
-    public static class Decimal128MaxMinOverPartitionFunction extends BasePartitionedWindowFunction implements WindowDecimal128Function {
+    public static class Decimal128MaxMinOverPartitionFunction extends BasePartitionedWindowFunction {
+        private final Decimal128 curr = new Decimal128();
 
-        private final boolean isMax;
+        private final Decimal128Comparator comparator;
         private final String name;
         private final Decimal128 scratch = new Decimal128();
         private final int type;
 
-        public Decimal128MaxMinOverPartitionFunction(Map map, VirtualRecord partitionByRecord, RecordSink partitionBySink, Function arg, boolean isMax, String name, int type) {
+        public Decimal128MaxMinOverPartitionFunction(Map map, VirtualRecord partitionByRecord, RecordSink partitionBySink, Function arg, Decimal128Comparator comparator, String name, int type) {
             super(map, partitionByRecord, partitionBySink, arg);
-            this.isMax = isMax;
+            this.comparator = comparator;
             this.name = name;
             this.type = type;
         }
@@ -4415,10 +4400,6 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             return name;
         }
 
-        @Override
-        public Pass1ScanDirection getPass1ScanDirection() {
-            return Pass1ScanDirection.BACKWARD;
-        }
 
         @Override
         public int getPassCount() {
@@ -4443,7 +4424,6 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             if (mv.isNew()) {
                 mv.putDecimal128(0, scratch);
             } else {
-                Decimal128 curr = new Decimal128();
                 mv.getDecimal128(0, curr);
                 if (curr.isNull() || isBetter(scratch, curr)) {
                     mv.putDecimal128(0, scratch);
@@ -4469,22 +4449,23 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         }
 
         private boolean isBetter(Decimal128 candidate, Decimal128 current) {
-            int cmp = candidate.compareTo(current);
-            return isMax ? cmp > 0 : cmp < 0;
+            return comparator.isBetter(candidate, current);
         }
     }
 
-    public static class Decimal128MaxMinOverUnboundedPartitionRowsFrameFunction extends BasePartitionedWindowFunction implements WindowDecimal128Function {
+    public static class Decimal128MaxMinOverUnboundedPartitionRowsFrameFunction extends BasePartitionedWindowFunction {
+        private final Decimal128 nullVal = new Decimal128();
+        private final Decimal128 curr = new Decimal128();
 
-        private final boolean isMax;
+        private final Decimal128Comparator comparator;
         private final String name;
         private final Decimal128 scratch = new Decimal128();
         private final int type;
         private final Decimal128 value = new Decimal128();
 
-        public Decimal128MaxMinOverUnboundedPartitionRowsFrameFunction(Map map, VirtualRecord partitionByRecord, RecordSink partitionBySink, Function arg, boolean isMax, String name, int type) {
+        public Decimal128MaxMinOverUnboundedPartitionRowsFrameFunction(Map map, VirtualRecord partitionByRecord, RecordSink partitionBySink, Function arg, Decimal128Comparator comparator, String name, int type) {
             super(map, partitionByRecord, partitionBySink, arg);
-            this.isMax = isMax;
+            this.comparator = comparator;
             this.name = name;
             this.type = type;
         }
@@ -4501,13 +4482,11 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                     mv.putDecimal128(0, scratch);
                     value.copyFrom(scratch);
                 } else {
-                    Decimal128 nullVal = new Decimal128();
                     nullVal.ofRawNull();
                     mv.putDecimal128(0, nullVal);
                     value.ofRawNull();
                 }
             } else {
-                Decimal128 curr = new Decimal128();
                 mv.getDecimal128(0, curr);
                 if (!scratch.isNull() && (curr.isNull() || isBetter(scratch, curr))) {
                     mv.putDecimal128(0, scratch);
@@ -4555,22 +4534,21 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         }
 
         private boolean isBetter(Decimal128 candidate, Decimal128 current) {
-            int cmp = candidate.compareTo(current);
-            return isMax ? cmp > 0 : cmp < 0;
+            return comparator.isBetter(candidate, current);
         }
     }
 
-    public static class Decimal128MaxMinOverUnboundedRowsFrameFunction extends BaseWindowFunction implements WindowDecimal128Function {
+    public static class Decimal128MaxMinOverUnboundedRowsFrameFunction extends BaseWindowFunction {
 
-        private final boolean isMax;
+        private final Decimal128Comparator comparator;
         private final String name;
         private final Decimal128 scratch = new Decimal128();
         private final int type;
         private final Decimal128 value = new Decimal128();
 
-        public Decimal128MaxMinOverUnboundedRowsFrameFunction(Function arg, boolean isMax, String name, int type) {
+        public Decimal128MaxMinOverUnboundedRowsFrameFunction(Function arg, Decimal128Comparator comparator, String name, int type) {
             super(arg);
-            this.isMax = isMax;
+            this.comparator = comparator;
             this.name = name;
             this.type = type;
             value.ofRawNull();
@@ -4631,22 +4609,21 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         }
 
         private boolean isBetter(Decimal128 candidate, Decimal128 current) {
-            int cmp = candidate.compareTo(current);
-            return isMax ? cmp > 0 : cmp < 0;
+            return comparator.isBetter(candidate, current);
         }
     }
 
-    public static class Decimal128MaxMinOverWholeResultSetFunction extends BaseWindowFunction implements WindowDecimal128Function {
+    public static class Decimal128MaxMinOverWholeResultSetFunction extends BaseWindowFunction {
 
-        private final boolean isMax;
+        private final Decimal128Comparator comparator;
         private final String name;
         private final Decimal128 scratch = new Decimal128();
         private final int type;
         private final Decimal128 value = new Decimal128();
 
-        public Decimal128MaxMinOverWholeResultSetFunction(Function arg, boolean isMax, String name, int type) {
+        public Decimal128MaxMinOverWholeResultSetFunction(Function arg, Decimal128Comparator comparator, String name, int type) {
             super(arg);
-            this.isMax = isMax;
+            this.comparator = comparator;
             this.name = name;
             this.type = type;
             value.ofRawNull();
@@ -4662,10 +4639,6 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             return name;
         }
 
-        @Override
-        public Pass1ScanDirection getPass1ScanDirection() {
-            return Pass1ScanDirection.BACKWARD;
-        }
 
         @Override
         public int getPassCount() {
@@ -4705,8 +4678,7 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         }
 
         private boolean isBetter(Decimal128 candidate, Decimal128 current) {
-            int cmp = candidate.compareTo(current);
-            return isMax ? cmp > 0 : cmp < 0;
+            return comparator.isBetter(candidate, current);
         }
     }
 
@@ -4852,7 +4824,7 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         throw SqlException.$(position, "function not implemented for given window parameters");
     }
 
-    public static class Decimal32MaxMinOverCurrentRowFunction extends BaseWindowFunction implements WindowDecimal32Function {
+    public static class Decimal32MaxMinOverCurrentRowFunction extends BaseWindowFunction {
 
         private final String name;
         private final int type;
@@ -4896,7 +4868,7 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         }
     }
 
-    public static class Decimal32MaxMinOverPartitionFunction extends BasePartitionedWindowFunction implements WindowDecimal32Function {
+    public static class Decimal32MaxMinOverPartitionFunction extends BasePartitionedWindowFunction {
 
         private final Decimal64Comparator comparator;
         private final String name;
@@ -4914,10 +4886,6 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             return name;
         }
 
-        @Override
-        public Pass1ScanDirection getPass1ScanDirection() {
-            return Pass1ScanDirection.BACKWARD;
-        }
 
         @Override
         public int getPassCount() {
@@ -4960,7 +4928,7 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         }
     }
 
-    public static class Decimal32MaxMinOverPartitionRangeFrameFunction extends BasePartitionedWindowFunction implements WindowDecimal32Function {
+    public static class Decimal32MaxMinOverPartitionRangeFrameFunction extends BasePartitionedWindowFunction {
 
         private static final int DEQUE_RECORD_SIZE = Integer.BYTES;
         private static final int RECORD_SIZE = Long.BYTES + Integer.BYTES;
@@ -5258,7 +5226,7 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         }
     }
 
-    public static class Decimal32MaxMinOverPartitionRowsFrameFunction extends BasePartitionedWindowFunction implements WindowDecimal32Function {
+    public static class Decimal32MaxMinOverPartitionRowsFrameFunction extends BasePartitionedWindowFunction {
 
         private final int bufferSize;
         private final Decimal64Comparator comparator;
@@ -5465,7 +5433,7 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         }
     }
 
-    public static class Decimal32MaxMinOverRangeFrameFunction extends BaseWindowFunction implements Reopenable, WindowDecimal32Function {
+    public static class Decimal32MaxMinOverRangeFrameFunction extends BaseWindowFunction implements Reopenable {
 
         private static final int RECORD_SIZE = Long.BYTES + Integer.BYTES;
         private final Decimal64Comparator comparator;
@@ -5729,7 +5697,7 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         }
     }
 
-    public static class Decimal32MaxMinOverRowsFrameFunction extends BaseWindowFunction implements Reopenable, WindowDecimal32Function {
+    public static class Decimal32MaxMinOverRowsFrameFunction extends BaseWindowFunction implements Reopenable {
 
         private final MemoryARW buffer;
         private final int bufferSize;
@@ -5933,7 +5901,7 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         }
     }
 
-    public static class Decimal32MaxMinOverUnboundedPartitionRowsFrameFunction extends BasePartitionedWindowFunction implements WindowDecimal32Function {
+    public static class Decimal32MaxMinOverUnboundedPartitionRowsFrameFunction extends BasePartitionedWindowFunction {
 
         private final Decimal64Comparator comparator;
         private final String name;
@@ -6007,7 +5975,7 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         }
     }
 
-    public static class Decimal32MaxMinOverUnboundedRowsFrameFunction extends BaseWindowFunction implements WindowDecimal32Function {
+    public static class Decimal32MaxMinOverUnboundedRowsFrameFunction extends BaseWindowFunction {
 
         private final Decimal64Comparator comparator;
         private final String name;
@@ -6074,7 +6042,7 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         }
     }
 
-    public static class Decimal32MaxMinOverWholeResultSetFunction extends BaseWindowFunction implements WindowDecimal32Function {
+    public static class Decimal32MaxMinOverWholeResultSetFunction extends BaseWindowFunction {
 
         private final Decimal64Comparator comparator;
         private final String name;
@@ -6098,10 +6066,6 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             return name;
         }
 
-        @Override
-        public Pass1ScanDirection getPass1ScanDirection() {
-            return Pass1ScanDirection.BACKWARD;
-        }
 
         @Override
         public int getPassCount() {
@@ -6281,7 +6245,7 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         throw SqlException.$(position, "function not implemented for given window parameters");
     }
 
-    public static class Decimal16MaxMinOverCurrentRowFunction extends BaseWindowFunction implements WindowDecimal16Function {
+    public static class Decimal16MaxMinOverCurrentRowFunction extends BaseWindowFunction {
 
         private final String name;
         private final int type;
@@ -6325,7 +6289,7 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         }
     }
 
-    public static class Decimal16MaxMinOverPartitionFunction extends BasePartitionedWindowFunction implements WindowDecimal16Function {
+    public static class Decimal16MaxMinOverPartitionFunction extends BasePartitionedWindowFunction {
 
         private final Decimal64Comparator comparator;
         private final String name;
@@ -6343,10 +6307,6 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             return name;
         }
 
-        @Override
-        public Pass1ScanDirection getPass1ScanDirection() {
-            return Pass1ScanDirection.BACKWARD;
-        }
 
         @Override
         public int getPassCount() {
@@ -6389,7 +6349,7 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         }
     }
 
-    public static class Decimal16MaxMinOverPartitionRangeFrameFunction extends BasePartitionedWindowFunction implements WindowDecimal16Function {
+    public static class Decimal16MaxMinOverPartitionRangeFrameFunction extends BasePartitionedWindowFunction {
 
         private static final int DEQUE_RECORD_SIZE = Short.BYTES;
         private static final int RECORD_SIZE = Long.BYTES + Short.BYTES;
@@ -6687,7 +6647,7 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         }
     }
 
-    public static class Decimal16MaxMinOverPartitionRowsFrameFunction extends BasePartitionedWindowFunction implements WindowDecimal16Function {
+    public static class Decimal16MaxMinOverPartitionRowsFrameFunction extends BasePartitionedWindowFunction {
 
         private final int bufferSize;
         private final Decimal64Comparator comparator;
@@ -6894,7 +6854,7 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         }
     }
 
-    public static class Decimal16MaxMinOverRangeFrameFunction extends BaseWindowFunction implements Reopenable, WindowDecimal16Function {
+    public static class Decimal16MaxMinOverRangeFrameFunction extends BaseWindowFunction implements Reopenable {
 
         private static final int RECORD_SIZE = Long.BYTES + Short.BYTES;
         private final Decimal64Comparator comparator;
@@ -7158,7 +7118,7 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         }
     }
 
-    public static class Decimal16MaxMinOverRowsFrameFunction extends BaseWindowFunction implements Reopenable, WindowDecimal16Function {
+    public static class Decimal16MaxMinOverRowsFrameFunction extends BaseWindowFunction implements Reopenable {
 
         private final MemoryARW buffer;
         private final int bufferSize;
@@ -7362,7 +7322,7 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         }
     }
 
-    public static class Decimal16MaxMinOverUnboundedPartitionRowsFrameFunction extends BasePartitionedWindowFunction implements WindowDecimal16Function {
+    public static class Decimal16MaxMinOverUnboundedPartitionRowsFrameFunction extends BasePartitionedWindowFunction {
 
         private final Decimal64Comparator comparator;
         private final String name;
@@ -7436,7 +7396,7 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         }
     }
 
-    public static class Decimal16MaxMinOverUnboundedRowsFrameFunction extends BaseWindowFunction implements WindowDecimal16Function {
+    public static class Decimal16MaxMinOverUnboundedRowsFrameFunction extends BaseWindowFunction {
 
         private final Decimal64Comparator comparator;
         private final String name;
@@ -7503,7 +7463,7 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         }
     }
 
-    public static class Decimal16MaxMinOverWholeResultSetFunction extends BaseWindowFunction implements WindowDecimal16Function {
+    public static class Decimal16MaxMinOverWholeResultSetFunction extends BaseWindowFunction {
 
         private final Decimal64Comparator comparator;
         private final String name;
@@ -7527,10 +7487,6 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             return name;
         }
 
-        @Override
-        public Pass1ScanDirection getPass1ScanDirection() {
-            return Pass1ScanDirection.BACKWARD;
-        }
 
         @Override
         public int getPassCount() {
@@ -7710,7 +7666,7 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         throw SqlException.$(position, "function not implemented for given window parameters");
     }
 
-    public static class Decimal8MaxMinOverCurrentRowFunction extends BaseWindowFunction implements WindowDecimal8Function {
+    public static class Decimal8MaxMinOverCurrentRowFunction extends BaseWindowFunction {
 
         private final String name;
         private final int type;
@@ -7754,7 +7710,7 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         }
     }
 
-    public static class Decimal8MaxMinOverPartitionFunction extends BasePartitionedWindowFunction implements WindowDecimal8Function {
+    public static class Decimal8MaxMinOverPartitionFunction extends BasePartitionedWindowFunction {
 
         private final Decimal64Comparator comparator;
         private final String name;
@@ -7772,10 +7728,6 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             return name;
         }
 
-        @Override
-        public Pass1ScanDirection getPass1ScanDirection() {
-            return Pass1ScanDirection.BACKWARD;
-        }
 
         @Override
         public int getPassCount() {
@@ -7818,7 +7770,7 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         }
     }
 
-    public static class Decimal8MaxMinOverPartitionRangeFrameFunction extends BasePartitionedWindowFunction implements WindowDecimal8Function {
+    public static class Decimal8MaxMinOverPartitionRangeFrameFunction extends BasePartitionedWindowFunction {
 
         private static final int DEQUE_RECORD_SIZE = Byte.BYTES;
         private static final int RECORD_SIZE = Long.BYTES + Byte.BYTES;
@@ -8117,7 +8069,7 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         }
     }
 
-    public static class Decimal8MaxMinOverPartitionRowsFrameFunction extends BasePartitionedWindowFunction implements WindowDecimal8Function {
+    public static class Decimal8MaxMinOverPartitionRowsFrameFunction extends BasePartitionedWindowFunction {
 
         private final int bufferSize;
         private final Decimal64Comparator comparator;
@@ -8325,7 +8277,7 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         }
     }
 
-    public static class Decimal8MaxMinOverRangeFrameFunction extends BaseWindowFunction implements Reopenable, WindowDecimal8Function {
+    public static class Decimal8MaxMinOverRangeFrameFunction extends BaseWindowFunction implements Reopenable {
 
         private static final int RECORD_SIZE = Long.BYTES + Byte.BYTES;
         private final Decimal64Comparator comparator;
@@ -8590,7 +8542,7 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         }
     }
 
-    public static class Decimal8MaxMinOverRowsFrameFunction extends BaseWindowFunction implements Reopenable, WindowDecimal8Function {
+    public static class Decimal8MaxMinOverRowsFrameFunction extends BaseWindowFunction implements Reopenable {
 
         private final MemoryARW buffer;
         private final int bufferSize;
@@ -8794,7 +8746,7 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         }
     }
 
-    public static class Decimal8MaxMinOverUnboundedPartitionRowsFrameFunction extends BasePartitionedWindowFunction implements WindowDecimal8Function {
+    public static class Decimal8MaxMinOverUnboundedPartitionRowsFrameFunction extends BasePartitionedWindowFunction {
 
         private final Decimal64Comparator comparator;
         private final String name;
@@ -8869,7 +8821,7 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         }
     }
 
-    public static class Decimal8MaxMinOverUnboundedRowsFrameFunction extends BaseWindowFunction implements WindowDecimal8Function {
+    public static class Decimal8MaxMinOverUnboundedRowsFrameFunction extends BaseWindowFunction {
 
         private final Decimal64Comparator comparator;
         private final String name;
@@ -8936,7 +8888,7 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         }
     }
 
-    public static class Decimal8MaxMinOverWholeResultSetFunction extends BaseWindowFunction implements WindowDecimal8Function {
+    public static class Decimal8MaxMinOverWholeResultSetFunction extends BaseWindowFunction {
 
         private final Decimal64Comparator comparator;
         private final String name;
@@ -8960,10 +8912,6 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             return name;
         }
 
-        @Override
-        public Pass1ScanDirection getPass1ScanDirection() {
-            return Pass1ScanDirection.BACKWARD;
-        }
 
         @Override
         public int getPassCount() {

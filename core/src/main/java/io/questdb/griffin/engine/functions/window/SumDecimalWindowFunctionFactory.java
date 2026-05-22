@@ -61,9 +61,18 @@ import io.questdb.std.Vect;
 
 public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFactory {
 
+    public static final ArrayColumnTypes SUM_DECIMAL128_OVER_PARTITION_RANGE_TYPES;
+    public static final ArrayColumnTypes SUM_DECIMAL128_OVER_PARTITION_ROWS_TYPES;
+    public static final ArrayColumnTypes SUM_DECIMAL128_TYPES;
+    public static final ArrayColumnTypes SUM_DECIMAL16_OVER_PARTITION_RANGE_TYPES;
+    public static final ArrayColumnTypes SUM_DECIMAL16_OVER_PARTITION_ROWS_TYPES;
+    public static final ArrayColumnTypes SUM_DECIMAL16_TYPES;
     public static final ArrayColumnTypes SUM_DECIMAL64_OVER_PARTITION_RANGE_TYPES;
     public static final ArrayColumnTypes SUM_DECIMAL64_OVER_PARTITION_ROWS_TYPES;
     public static final ArrayColumnTypes SUM_DECIMAL64_TYPES;
+    public static final ArrayColumnTypes SUM_DECIMAL8_OVER_PARTITION_RANGE_TYPES;
+    public static final ArrayColumnTypes SUM_DECIMAL8_OVER_PARTITION_ROWS_TYPES;
+    public static final ArrayColumnTypes SUM_DECIMAL8_TYPES;
     private static final String NAME = "sum";
     private static final String SIGNATURE = NAME + "(Ξ)";
 
@@ -102,11 +111,11 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
 
         if (tag == ColumnType.DECIMAL8) {
             int d8OutputType = ColumnType.getDecimalType(Decimals.getDecimalTagPrecision(ColumnType.DECIMAL64), ColumnType.getDecimalScale(argType));
-            return newInstanceDecimal8(position, args, configuration, sqlExecutionContext, d8OutputType, argPos);
+            return newInstanceDecimal8(position, args, configuration, sqlExecutionContext, d8OutputType);
         }
         if (tag == ColumnType.DECIMAL16) {
             int d16OutputType = ColumnType.getDecimalType(Decimals.getDecimalTagPrecision(ColumnType.DECIMAL64), ColumnType.getDecimalScale(argType));
-            return newInstanceDecimal16(position, args, configuration, sqlExecutionContext, d16OutputType, argPos);
+            return newInstanceDecimal16(position, args, configuration, sqlExecutionContext, d16OutputType);
         }
         if (tag == ColumnType.DECIMAL32) {
             int d32OutputType = ColumnType.getDecimalType(Decimals.getDecimalTagPrecision(ColumnType.DECIMAL128), ColumnType.getDecimalScale(argType));
@@ -117,8 +126,7 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             return newInstanceDecimal128(position, args, configuration, sqlExecutionContext, d128OutputType, argPos);
         }
         if (tag == ColumnType.DECIMAL256) {
-            int d256OutputType = argType;
-            return newInstanceDecimal256(position, args, configuration, sqlExecutionContext, d256OutputType, argPos);
+            return newInstanceDecimal256(position, args, configuration, sqlExecutionContext, argType, argPos);
         }
         if (tag != ColumnType.DECIMAL64) {
             throw SqlException.$(position, "sum is not yet implemented for ").put(ColumnType.nameOf(tag));
@@ -207,7 +215,5563 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         throw SqlException.$(position, "function not implemented for given window parameters");
     }
 
-    static class Decimal64SumOverCurrentRowFunction extends BaseWindowFunction implements WindowDecimal128Function {
+    private static void readD256(MemoryARW mem, long offset, Decimal256 sink) {
+        sink.ofRaw(
+                mem.getLong(offset),
+                mem.getLong(offset + Long.BYTES),
+                mem.getLong(offset + 2 * Long.BYTES),
+                mem.getLong(offset + 3 * Long.BYTES)
+        );
+    }
+
+    private static void writeD256(MemoryARW mem, long offset, Decimal256 src) {
+        mem.putLong(offset, src.getHh());
+        mem.putLong(offset + Long.BYTES, src.getHl());
+        mem.putLong(offset + 2 * Long.BYTES, src.getLh());
+        mem.putLong(offset + 3 * Long.BYTES, src.getLl());
+    }
+
+    private Function newInstanceDecimal128(
+            int position,
+            ObjList<Function> args,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext,
+            int outputType,
+            int argPos
+    ) throws SqlException {
+        WindowContext windowContext = sqlExecutionContext.getWindowContext();
+        int framingMode = windowContext.getFramingMode();
+        RecordSink partitionBySink = windowContext.getPartitionBySink();
+        ColumnTypes partitionByKeyTypes = windowContext.getPartitionByKeyTypes();
+        VirtualRecord partitionByRecord = windowContext.getPartitionByRecord();
+        long rowsLo = windowContext.getRowsLo();
+        long rowsHi = windowContext.getRowsHi();
+        Function arg = args.get(0);
+
+        if (partitionByRecord != null) {
+            if (framingMode == WindowExpression.FRAMING_RANGE) {
+                if (windowContext.isDefaultFrame() && (!windowContext.isOrdered() || windowContext.getRowsHi() == Long.MAX_VALUE)) {
+                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, SUM_DECIMAL128_TYPES);
+                    return new Decimal128SumOverPartitionFunction(map, partitionByRecord, partitionBySink, arg, outputType, argPos);
+                } else if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
+                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, SUM_DECIMAL128_TYPES);
+                    return new Decimal128SumOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, arg, outputType, argPos);
+                } else {
+                    if (windowContext.isOrdered() && !windowContext.isOrderedByDesignatedTimestamp()) {
+                        throw SqlException.$(windowContext.getOrderByPos(), "RANGE is supported only for queries ordered by designated timestamp");
+                    }
+                    int timestampIndex = windowContext.getTimestampIndex();
+                    Map map = null;
+                    MemoryARW mem = null;
+                    try {
+                        map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, SUM_DECIMAL128_OVER_PARTITION_RANGE_TYPES);
+                        mem = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
+                                configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
+                        return new Decimal128SumOverPartitionRangeFrameFunction(map, partitionByRecord, partitionBySink,
+                                rowsLo, rowsHi, arg, mem, configuration.getSqlWindowInitialRangeBufferSize(), timestampIndex, outputType, argPos);
+                    } catch (Throwable th) {
+                        Misc.free(map);
+                        Misc.free(mem);
+                        throw th;
+                    }
+                }
+            } else if (framingMode == WindowExpression.FRAMING_ROWS) {
+                if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
+                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, SUM_DECIMAL128_TYPES);
+                    return new Decimal128SumOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, arg, outputType, argPos);
+                } else if (rowsLo == 0 && rowsHi == 0) {
+                    return new Decimal128SumOverCurrentRowFunction(arg, outputType, argPos);
+                } else if (rowsLo == Long.MIN_VALUE && rowsHi == Long.MAX_VALUE) {
+                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, SUM_DECIMAL128_TYPES);
+                    return new Decimal128SumOverPartitionFunction(map, partitionByRecord, partitionBySink, arg, outputType, argPos);
+                } else {
+                    Map map = null;
+                    MemoryARW mem = null;
+                    try {
+                        map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, SUM_DECIMAL128_OVER_PARTITION_ROWS_TYPES);
+                        mem = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
+                                configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
+                        return new Decimal128SumOverPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink,
+                                rowsLo, rowsHi, arg, mem, outputType, argPos);
+                    } catch (Throwable th) {
+                        Misc.free(map);
+                        Misc.free(mem);
+                        throw th;
+                    }
+                }
+            }
+        } else {
+            if (framingMode == WindowExpression.FRAMING_RANGE) {
+                if (!windowContext.isOrdered() && windowContext.isDefaultFrame()) {
+                    return new Decimal128SumOverWholeResultSetFunction(arg, outputType, argPos);
+                } else if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
+                    return new Decimal128SumOverUnboundedRowsFrameFunction(arg, outputType, argPos);
+                } else {
+                    if (windowContext.isOrdered() && !windowContext.isOrderedByDesignatedTimestamp()) {
+                        throw SqlException.$(windowContext.getOrderByPos(), "RANGE is supported only for queries ordered by designated timestamp");
+                    }
+                    int timestampIndex = windowContext.getTimestampIndex();
+                    return new Decimal128SumOverRangeFrameFunction(rowsLo, rowsHi, arg, configuration, timestampIndex, outputType, argPos);
+                }
+            } else if (framingMode == WindowExpression.FRAMING_ROWS) {
+                if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
+                    return new Decimal128SumOverUnboundedRowsFrameFunction(arg, outputType, argPos);
+                } else if (rowsLo == 0 && rowsHi == 0) {
+                    return new Decimal128SumOverCurrentRowFunction(arg, outputType, argPos);
+                } else if (rowsLo == Long.MIN_VALUE && rowsHi == Long.MAX_VALUE) {
+                    return new Decimal128SumOverWholeResultSetFunction(arg, outputType, argPos);
+                } else {
+                    MemoryARW mem = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
+                            configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
+                    return new Decimal128SumOverRowsFrameFunction(arg, rowsLo, rowsHi, mem, outputType, argPos);
+                }
+            }
+        }
+
+        throw SqlException.$(position, "function not implemented for given window parameters");
+    }
+
+    private Function newInstanceDecimal16(
+            int position,
+            ObjList<Function> args,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext,
+            int outputType
+    ) throws SqlException {
+        WindowContext windowContext = sqlExecutionContext.getWindowContext();
+        int framingMode = windowContext.getFramingMode();
+        RecordSink partitionBySink = windowContext.getPartitionBySink();
+        ColumnTypes partitionByKeyTypes = windowContext.getPartitionByKeyTypes();
+        VirtualRecord partitionByRecord = windowContext.getPartitionByRecord();
+        long rowsLo = windowContext.getRowsLo();
+        long rowsHi = windowContext.getRowsHi();
+        Function arg = args.get(0);
+
+        if (partitionByRecord != null) {
+            if (framingMode == WindowExpression.FRAMING_RANGE) {
+                if (windowContext.isDefaultFrame() && (!windowContext.isOrdered() || windowContext.getRowsHi() == Long.MAX_VALUE)) {
+                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, SUM_DECIMAL16_TYPES);
+                    return new Decimal16SumOverPartitionFunction(map, partitionByRecord, partitionBySink, arg, outputType);
+                } else if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
+                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, SUM_DECIMAL16_TYPES);
+                    return new Decimal16SumOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, arg, outputType);
+                } else {
+                    if (windowContext.isOrdered() && !windowContext.isOrderedByDesignatedTimestamp()) {
+                        throw SqlException.$(windowContext.getOrderByPos(), "RANGE is supported only for queries ordered by designated timestamp");
+                    }
+                    int timestampIndex = windowContext.getTimestampIndex();
+                    Map map = null;
+                    MemoryARW mem = null;
+                    try {
+                        map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, SUM_DECIMAL16_OVER_PARTITION_RANGE_TYPES);
+                        mem = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
+                                configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
+                        return new Decimal16SumOverPartitionRangeFrameFunction(map, partitionByRecord, partitionBySink,
+                                rowsLo, rowsHi, arg, mem, configuration.getSqlWindowInitialRangeBufferSize(), timestampIndex, outputType);
+                    } catch (Throwable th) {
+                        Misc.free(map);
+                        Misc.free(mem);
+                        throw th;
+                    }
+                }
+            } else if (framingMode == WindowExpression.FRAMING_ROWS) {
+                if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
+                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, SUM_DECIMAL16_TYPES);
+                    return new Decimal16SumOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, arg, outputType);
+                } else if (rowsLo == 0 && rowsHi == 0) {
+                    return new Decimal16SumOverCurrentRowFunction(arg, outputType);
+                } else if (rowsLo == Long.MIN_VALUE && rowsHi == Long.MAX_VALUE) {
+                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, SUM_DECIMAL16_TYPES);
+                    return new Decimal16SumOverPartitionFunction(map, partitionByRecord, partitionBySink, arg, outputType);
+                } else {
+                    Map map = null;
+                    MemoryARW mem = null;
+                    try {
+                        map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, SUM_DECIMAL16_OVER_PARTITION_ROWS_TYPES);
+                        mem = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
+                                configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
+                        return new Decimal16SumOverPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink,
+                                rowsLo, rowsHi, arg, mem, outputType);
+                    } catch (Throwable th) {
+                        Misc.free(map);
+                        Misc.free(mem);
+                        throw th;
+                    }
+                }
+            }
+        } else {
+            if (framingMode == WindowExpression.FRAMING_RANGE) {
+                if (!windowContext.isOrdered() && windowContext.isDefaultFrame()) {
+                    return new Decimal16SumOverWholeResultSetFunction(arg, outputType);
+                } else if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
+                    return new Decimal16SumOverUnboundedRowsFrameFunction(arg, outputType);
+                } else {
+                    if (windowContext.isOrdered() && !windowContext.isOrderedByDesignatedTimestamp()) {
+                        throw SqlException.$(windowContext.getOrderByPos(), "RANGE is supported only for queries ordered by designated timestamp");
+                    }
+                    int timestampIndex = windowContext.getTimestampIndex();
+                    return new Decimal16SumOverRangeFrameFunction(rowsLo, rowsHi, arg, configuration, timestampIndex, outputType);
+                }
+            } else if (framingMode == WindowExpression.FRAMING_ROWS) {
+                if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
+                    return new Decimal16SumOverUnboundedRowsFrameFunction(arg, outputType);
+                } else if (rowsLo == 0 && rowsHi == 0) {
+                    return new Decimal16SumOverCurrentRowFunction(arg, outputType);
+                } else if (rowsLo == Long.MIN_VALUE && rowsHi == Long.MAX_VALUE) {
+                    return new Decimal16SumOverWholeResultSetFunction(arg, outputType);
+                } else {
+                    MemoryARW mem = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
+                            configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
+                    return new Decimal16SumOverRowsFrameFunction(arg, rowsLo, rowsHi, mem, outputType);
+                }
+            }
+        }
+
+        throw SqlException.$(position, "function not implemented for given window parameters");
+    }
+
+    private Function newInstanceDecimal256(
+            int position,
+            ObjList<Function> args,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext,
+            int outputType,
+            int argPos
+    ) throws SqlException {
+        WindowContext windowContext = sqlExecutionContext.getWindowContext();
+        int framingMode = windowContext.getFramingMode();
+        RecordSink partitionBySink = windowContext.getPartitionBySink();
+        ColumnTypes partitionByKeyTypes = windowContext.getPartitionByKeyTypes();
+        VirtualRecord partitionByRecord = windowContext.getPartitionByRecord();
+        long rowsLo = windowContext.getRowsLo();
+        long rowsHi = windowContext.getRowsHi();
+        Function arg = args.get(0);
+
+        if (partitionByRecord != null) {
+            if (framingMode == WindowExpression.FRAMING_RANGE) {
+                if (windowContext.isDefaultFrame() && (!windowContext.isOrdered() || windowContext.getRowsHi() == Long.MAX_VALUE)) {
+                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, SUM_DECIMAL128_TYPES);
+                    return new Decimal256SumOverPartitionFunction(map, partitionByRecord, partitionBySink, arg, outputType, argPos);
+                } else if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
+                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, SUM_DECIMAL128_TYPES);
+                    return new Decimal256SumOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, arg, outputType, argPos);
+                } else {
+                    if (windowContext.isOrdered() && !windowContext.isOrderedByDesignatedTimestamp()) {
+                        throw SqlException.$(windowContext.getOrderByPos(), "RANGE is supported only for queries ordered by designated timestamp");
+                    }
+                    int timestampIndex = windowContext.getTimestampIndex();
+                    Map map = null;
+                    MemoryARW mem = null;
+                    try {
+                        map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, SUM_DECIMAL128_OVER_PARTITION_RANGE_TYPES);
+                        mem = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
+                                configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
+                        return new Decimal256SumOverPartitionRangeFrameFunction(map, partitionByRecord, partitionBySink,
+                                rowsLo, rowsHi, arg, mem, configuration.getSqlWindowInitialRangeBufferSize(), timestampIndex, outputType, argPos);
+                    } catch (Throwable th) {
+                        Misc.free(map);
+                        Misc.free(mem);
+                        throw th;
+                    }
+                }
+            } else if (framingMode == WindowExpression.FRAMING_ROWS) {
+                if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
+                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, SUM_DECIMAL128_TYPES);
+                    return new Decimal256SumOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, arg, outputType, argPos);
+                } else if (rowsLo == 0 && rowsHi == 0) {
+                    return new Decimal256SumOverCurrentRowFunction(arg, outputType, argPos);
+                } else if (rowsLo == Long.MIN_VALUE && rowsHi == Long.MAX_VALUE) {
+                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, SUM_DECIMAL128_TYPES);
+                    return new Decimal256SumOverPartitionFunction(map, partitionByRecord, partitionBySink, arg, outputType, argPos);
+                } else {
+                    Map map = null;
+                    MemoryARW mem = null;
+                    try {
+                        map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, SUM_DECIMAL128_OVER_PARTITION_ROWS_TYPES);
+                        mem = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
+                                configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
+                        return new Decimal256SumOverPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink,
+                                rowsLo, rowsHi, arg, mem, outputType, argPos);
+                    } catch (Throwable th) {
+                        Misc.free(map);
+                        Misc.free(mem);
+                        throw th;
+                    }
+                }
+            }
+        } else {
+            if (framingMode == WindowExpression.FRAMING_RANGE) {
+                if (!windowContext.isOrdered() && windowContext.isDefaultFrame()) {
+                    return new Decimal256SumOverWholeResultSetFunction(arg, outputType, argPos);
+                } else if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
+                    return new Decimal256SumOverUnboundedRowsFrameFunction(arg, outputType, argPos);
+                } else {
+                    if (windowContext.isOrdered() && !windowContext.isOrderedByDesignatedTimestamp()) {
+                        throw SqlException.$(windowContext.getOrderByPos(), "RANGE is supported only for queries ordered by designated timestamp");
+                    }
+                    int timestampIndex = windowContext.getTimestampIndex();
+                    return new Decimal256SumOverRangeFrameFunction(rowsLo, rowsHi, arg, configuration, timestampIndex, outputType, argPos);
+                }
+            } else if (framingMode == WindowExpression.FRAMING_ROWS) {
+                if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
+                    return new Decimal256SumOverUnboundedRowsFrameFunction(arg, outputType, argPos);
+                } else if (rowsLo == 0 && rowsHi == 0) {
+                    return new Decimal256SumOverCurrentRowFunction(arg, outputType, argPos);
+                } else if (rowsLo == Long.MIN_VALUE && rowsHi == Long.MAX_VALUE) {
+                    return new Decimal256SumOverWholeResultSetFunction(arg, outputType, argPos);
+                } else {
+                    MemoryARW mem = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
+                            configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
+                    return new Decimal256SumOverRowsFrameFunction(arg, rowsLo, rowsHi, mem, outputType, argPos);
+                }
+            }
+        }
+
+        throw SqlException.$(position, "function not implemented for given window parameters");
+    }
+
+    private Function newInstanceDecimal32(
+            int position,
+            ObjList<Function> args,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext,
+            int outputType,
+            int argPos
+    ) throws SqlException {
+        WindowContext windowContext = sqlExecutionContext.getWindowContext();
+        int framingMode = windowContext.getFramingMode();
+        RecordSink partitionBySink = windowContext.getPartitionBySink();
+        ColumnTypes partitionByKeyTypes = windowContext.getPartitionByKeyTypes();
+        VirtualRecord partitionByRecord = windowContext.getPartitionByRecord();
+        long rowsLo = windowContext.getRowsLo();
+        long rowsHi = windowContext.getRowsHi();
+        Function arg = args.get(0);
+
+        if (partitionByRecord != null) {
+            if (framingMode == WindowExpression.FRAMING_RANGE) {
+                if (windowContext.isDefaultFrame() && (!windowContext.isOrdered() || windowContext.getRowsHi() == Long.MAX_VALUE)) {
+                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, SUM_DECIMAL64_TYPES);
+                    return new Decimal32SumOverPartitionFunction(map, partitionByRecord, partitionBySink, arg, outputType, argPos);
+                } else if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
+                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, SUM_DECIMAL64_TYPES);
+                    return new Decimal32SumOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, arg, outputType, argPos);
+                } else {
+                    if (windowContext.isOrdered() && !windowContext.isOrderedByDesignatedTimestamp()) {
+                        throw SqlException.$(windowContext.getOrderByPos(), "RANGE is supported only for queries ordered by designated timestamp");
+                    }
+                    int timestampIndex = windowContext.getTimestampIndex();
+                    Map map = null;
+                    MemoryARW mem = null;
+                    try {
+                        map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, SUM_DECIMAL64_OVER_PARTITION_RANGE_TYPES);
+                        mem = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
+                                configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
+                        return new Decimal32SumOverPartitionRangeFrameFunction(map, partitionByRecord, partitionBySink,
+                                rowsLo, rowsHi, arg, mem, configuration.getSqlWindowInitialRangeBufferSize(), timestampIndex, outputType, argPos);
+                    } catch (Throwable th) {
+                        Misc.free(map);
+                        Misc.free(mem);
+                        throw th;
+                    }
+                }
+            } else if (framingMode == WindowExpression.FRAMING_ROWS) {
+                if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
+                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, SUM_DECIMAL64_TYPES);
+                    return new Decimal32SumOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, arg, outputType, argPos);
+                } else if (rowsLo == 0 && rowsHi == 0) {
+                    return new Decimal32SumOverCurrentRowFunction(arg, outputType);
+                } else if (rowsLo == Long.MIN_VALUE && rowsHi == Long.MAX_VALUE) {
+                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, SUM_DECIMAL64_TYPES);
+                    return new Decimal32SumOverPartitionFunction(map, partitionByRecord, partitionBySink, arg, outputType, argPos);
+                } else {
+                    Map map = null;
+                    MemoryARW mem = null;
+                    try {
+                        map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, SUM_DECIMAL64_OVER_PARTITION_ROWS_TYPES);
+                        mem = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
+                                configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
+                        return new Decimal32SumOverPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink,
+                                rowsLo, rowsHi, arg, mem, outputType, argPos);
+                    } catch (Throwable th) {
+                        Misc.free(map);
+                        Misc.free(mem);
+                        throw th;
+                    }
+                }
+            }
+        } else {
+            if (framingMode == WindowExpression.FRAMING_RANGE) {
+                if (!windowContext.isOrdered() && windowContext.isDefaultFrame()) {
+                    return new Decimal32SumOverWholeResultSetFunction(arg, outputType, argPos);
+                } else if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
+                    return new Decimal32SumOverUnboundedRowsFrameFunction(arg, outputType, argPos);
+                } else {
+                    if (windowContext.isOrdered() && !windowContext.isOrderedByDesignatedTimestamp()) {
+                        throw SqlException.$(windowContext.getOrderByPos(), "RANGE is supported only for queries ordered by designated timestamp");
+                    }
+                    int timestampIndex = windowContext.getTimestampIndex();
+                    return new Decimal32SumOverRangeFrameFunction(rowsLo, rowsHi, arg, configuration, timestampIndex, outputType, argPos);
+                }
+            } else if (framingMode == WindowExpression.FRAMING_ROWS) {
+                if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
+                    return new Decimal32SumOverUnboundedRowsFrameFunction(arg, outputType, argPos);
+                } else if (rowsLo == 0 && rowsHi == 0) {
+                    return new Decimal32SumOverCurrentRowFunction(arg, outputType);
+                } else if (rowsLo == Long.MIN_VALUE && rowsHi == Long.MAX_VALUE) {
+                    return new Decimal32SumOverWholeResultSetFunction(arg, outputType, argPos);
+                } else {
+                    MemoryARW mem = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
+                            configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
+                    return new Decimal32SumOverRowsFrameFunction(arg, rowsLo, rowsHi, mem, outputType, argPos);
+                }
+            }
+        }
+
+        throw SqlException.$(position, "function not implemented for given window parameters");
+    }
+
+    private Function newInstanceDecimal8(
+            int position,
+            ObjList<Function> args,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext,
+            int outputType
+    ) throws SqlException {
+        WindowContext windowContext = sqlExecutionContext.getWindowContext();
+        int framingMode = windowContext.getFramingMode();
+        RecordSink partitionBySink = windowContext.getPartitionBySink();
+        ColumnTypes partitionByKeyTypes = windowContext.getPartitionByKeyTypes();
+        VirtualRecord partitionByRecord = windowContext.getPartitionByRecord();
+        long rowsLo = windowContext.getRowsLo();
+        long rowsHi = windowContext.getRowsHi();
+        Function arg = args.get(0);
+
+        if (partitionByRecord != null) {
+            if (framingMode == WindowExpression.FRAMING_RANGE) {
+                if (windowContext.isDefaultFrame() && (!windowContext.isOrdered() || windowContext.getRowsHi() == Long.MAX_VALUE)) {
+                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, SUM_DECIMAL8_TYPES);
+                    return new Decimal8SumOverPartitionFunction(map, partitionByRecord, partitionBySink, arg, outputType);
+                } else if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
+                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, SUM_DECIMAL8_TYPES);
+                    return new Decimal8SumOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, arg, outputType);
+                } else {
+                    if (windowContext.isOrdered() && !windowContext.isOrderedByDesignatedTimestamp()) {
+                        throw SqlException.$(windowContext.getOrderByPos(), "RANGE is supported only for queries ordered by designated timestamp");
+                    }
+                    int timestampIndex = windowContext.getTimestampIndex();
+                    Map map = null;
+                    MemoryARW mem = null;
+                    try {
+                        map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, SUM_DECIMAL8_OVER_PARTITION_RANGE_TYPES);
+                        mem = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
+                                configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
+                        return new Decimal8SumOverPartitionRangeFrameFunction(map, partitionByRecord, partitionBySink,
+                                rowsLo, rowsHi, arg, mem, configuration.getSqlWindowInitialRangeBufferSize(), timestampIndex, outputType);
+                    } catch (Throwable th) {
+                        Misc.free(map);
+                        Misc.free(mem);
+                        throw th;
+                    }
+                }
+            } else if (framingMode == WindowExpression.FRAMING_ROWS) {
+                if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
+                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, SUM_DECIMAL8_TYPES);
+                    return new Decimal8SumOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, arg, outputType);
+                } else if (rowsLo == 0 && rowsHi == 0) {
+                    return new Decimal8SumOverCurrentRowFunction(arg, outputType);
+                } else if (rowsLo == Long.MIN_VALUE && rowsHi == Long.MAX_VALUE) {
+                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, SUM_DECIMAL8_TYPES);
+                    return new Decimal8SumOverPartitionFunction(map, partitionByRecord, partitionBySink, arg, outputType);
+                } else {
+                    Map map = null;
+                    MemoryARW mem = null;
+                    try {
+                        map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, SUM_DECIMAL8_OVER_PARTITION_ROWS_TYPES);
+                        mem = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
+                                configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
+                        return new Decimal8SumOverPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink,
+                                rowsLo, rowsHi, arg, mem, outputType);
+                    } catch (Throwable th) {
+                        Misc.free(map);
+                        Misc.free(mem);
+                        throw th;
+                    }
+                }
+            }
+        } else {
+            if (framingMode == WindowExpression.FRAMING_RANGE) {
+                if (!windowContext.isOrdered() && windowContext.isDefaultFrame()) {
+                    return new Decimal8SumOverWholeResultSetFunction(arg, outputType);
+                } else if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
+                    return new Decimal8SumOverUnboundedRowsFrameFunction(arg, outputType);
+                } else {
+                    if (windowContext.isOrdered() && !windowContext.isOrderedByDesignatedTimestamp()) {
+                        throw SqlException.$(windowContext.getOrderByPos(), "RANGE is supported only for queries ordered by designated timestamp");
+                    }
+                    int timestampIndex = windowContext.getTimestampIndex();
+                    return new Decimal8SumOverRangeFrameFunction(rowsLo, rowsHi, arg, configuration, timestampIndex, outputType);
+                }
+            } else if (framingMode == WindowExpression.FRAMING_ROWS) {
+                if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
+                    return new Decimal8SumOverUnboundedRowsFrameFunction(arg, outputType);
+                } else if (rowsLo == 0 && rowsHi == 0) {
+                    return new Decimal8SumOverCurrentRowFunction(arg, outputType);
+                } else if (rowsLo == Long.MIN_VALUE && rowsHi == Long.MAX_VALUE) {
+                    return new Decimal8SumOverWholeResultSetFunction(arg, outputType);
+                } else {
+                    MemoryARW mem = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
+                            configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
+                    return new Decimal8SumOverRowsFrameFunction(arg, rowsLo, rowsHi, mem, outputType);
+                }
+            }
+        }
+
+        throw SqlException.$(position, "function not implemented for given window parameters");
+    }
+
+    static class Decimal128SumOverCurrentRowFunction extends BaseWindowFunction {
+
+        private final int position;
+        private final Decimal128 scratch = new Decimal128();
+        private final int type;
+        private final Decimal256 value = new Decimal256();
+
+        Decimal128SumOverCurrentRowFunction(Function arg, int type, int position) {
+            super(arg);
+            this.type = type;
+            this.position = position;
+        }
+
+        @Override
+        public void computeNext(Record record) {
+            arg.getDecimal128(record, scratch);
+            if (scratch.isNull()) {
+                value.ofRawNull();
+            } else {
+                value.ofRaw(scratch.getHigh(), scratch.getLow());
+            }
+        }
+
+        @Override
+        public void getDecimal256(Record rec, Decimal256 sink) {
+            sink.copyRaw(value);
+            if (!sink.isNull() && sink.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("sum aggregation failed: an overflow occurred");
+            }
+        }
+
+        @Override
+        public String getName() {
+            return NAME;
+        }
+
+        @Override
+        public int getPassCount() {
+            return ZERO_PASS;
+        }
+
+        @Override
+        public int getType() {
+            return type;
+        }
+
+        @Override
+        public void pass1(Record record, long recordOffset, WindowSPI spi) {
+            computeNext(record);
+            long addr = spi.getAddress(recordOffset, columnIndex);
+            Unsafe.putLong(addr, value.getHh());
+            Unsafe.putLong(addr + Long.BYTES, value.getHl());
+            Unsafe.putLong(addr + 2 * Long.BYTES, value.getLh());
+            Unsafe.putLong(addr + 3 * Long.BYTES, value.getLl());
+        }
+    }
+
+    static class Decimal128SumOverPartitionFunction extends BasePartitionedWindowFunction {
+        private final Decimal256 acc = new Decimal256();
+        private final Decimal256 nullVal = new Decimal256();
+        private final int position;
+        private final Decimal128 scratch = new Decimal128();
+        private final int type;
+        private final Decimal256 value = new Decimal256();
+
+        public Decimal128SumOverPartitionFunction(Map map, VirtualRecord partitionByRecord, RecordSink partitionBySink, Function arg, int type, int position) {
+            super(map, partitionByRecord, partitionBySink, arg);
+            this.type = type;
+            this.position = position;
+        }
+
+        @Override
+        public void getDecimal256(Record rec, Decimal256 sink) {
+            sink.copyRaw(value);
+            if (!sink.isNull() && sink.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("sum aggregation failed: an overflow occurred");
+            }
+        }
+
+        @Override
+        public String getName() {
+            return NAME;
+        }
+
+        @Override
+        public int getPassCount() {
+            return WindowFunction.TWO_PASS;
+        }
+
+        @Override
+        public int getType() {
+            return type;
+        }
+
+        @Override
+        public void pass1(Record record, long recordOffset, WindowSPI spi) {
+            partitionByRecord.of(record);
+            MapKey key = map.withKey();
+            key.put(partitionByRecord, partitionBySink);
+            MapValue mv = key.createValue();
+            arg.getDecimal128(record, scratch);
+            if (!scratch.isNull()) {
+                if (mv.isNew()) {
+                    acc.ofRaw(scratch.getHigh(), scratch.getLow());
+                    mv.putDecimal256(0, acc);
+                    mv.putBool(1, false);
+                } else if (mv.getBool(1)) {
+                    acc.ofRaw(scratch.getHigh(), scratch.getLow());
+                    mv.putDecimal256(0, acc);
+                    mv.putBool(1, false);
+                } else {
+                    mv.getDecimal256(0, acc);
+                    try {
+                        Decimal256.uncheckedAdd(acc, scratch);
+                    } catch (NumericException e) {
+                        throw CairoException.nonCritical().position(position).put("sum aggregation failed: ").put(e.getFlyweightMessage());
+                    }
+                    if (acc.hasOverflowed()) {
+                        throw CairoException.nonCritical().position(position).put("sum aggregation failed: an overflow occurred");
+                    }
+                    mv.putDecimal256(0, acc);
+                }
+            } else if (mv.isNew()) {
+                nullVal.ofRawNull();
+                mv.putDecimal256(0, nullVal);
+                mv.putBool(1, true);
+            }
+        }
+
+        @Override
+        public void pass2(Record record, long recordOffset, WindowSPI spi) {
+            partitionByRecord.of(record);
+            MapKey key = map.withKey();
+            key.put(partitionByRecord, partitionBySink);
+            MapValue mv = key.findValue();
+            long addr = spi.getAddress(recordOffset, columnIndex);
+            if (mv != null && !mv.getBool(1)) {
+                mv.getDecimal256(0, acc);
+                Unsafe.putLong(addr, acc.getHh());
+                Unsafe.putLong(addr + Long.BYTES, acc.getHl());
+                Unsafe.putLong(addr + 2 * Long.BYTES, acc.getLh());
+                Unsafe.putLong(addr + 3 * Long.BYTES, acc.getLl());
+            } else {
+                Unsafe.putLong(addr, Decimals.DECIMAL256_HH_NULL);
+                Unsafe.putLong(addr + Long.BYTES, Decimals.DECIMAL256_HL_NULL);
+                Unsafe.putLong(addr + 2 * Long.BYTES, Decimals.DECIMAL256_LH_NULL);
+                Unsafe.putLong(addr + 3 * Long.BYTES, Decimals.DECIMAL256_LL_NULL);
+            }
+        }
+    }
+
+    public static class Decimal128SumOverPartitionRangeFrameFunction extends BasePartitionedWindowFunction {
+
+        private static final int RECORD_SIZE = Long.BYTES + 16;
+        private final Decimal256 acc = new Decimal256();
+        private final boolean frameIncludesCurrentValue;
+        private final boolean frameLoBounded;
+        private final LongList freeList = new LongList();
+        private final int initialBufferSize;
+        private final long maxDiff;
+        private final MemoryARW memory;
+        private final RingBufferDesc memoryDesc = new RingBufferDesc();
+        private final long minDiff;
+        private final int position;
+        private final int scale;
+        private final Decimal128 scratch = new Decimal128();
+        private final int timestampIndex;
+        private final int type;
+        private final Decimal256 value = new Decimal256();
+
+        public Decimal128SumOverPartitionRangeFrameFunction(
+                Map map,
+                VirtualRecord partitionByRecord,
+                RecordSink partitionBySink,
+                long rangeLo,
+                long rangeHi,
+                Function arg,
+                MemoryARW memory,
+                int initialBufferSize,
+                int timestampIdx,
+                int type,
+                int position
+        ) {
+            super(map, partitionByRecord, partitionBySink, arg);
+            this.frameLoBounded = rangeLo != Long.MIN_VALUE;
+            this.maxDiff = frameLoBounded ? Math.abs(rangeLo) : Long.MAX_VALUE;
+            this.minDiff = Math.abs(rangeHi);
+            this.memory = memory;
+            this.initialBufferSize = initialBufferSize;
+            this.timestampIndex = timestampIdx;
+            this.frameIncludesCurrentValue = rangeHi == 0;
+            this.type = type;
+            this.scale = ColumnType.getDecimalScale(type);
+            this.position = position;
+        }
+
+        @Override
+        public void close() {
+            super.close();
+            memory.close();
+            freeList.clear();
+        }
+
+        @Override
+        public void computeNext(Record record) {
+            partitionByRecord.of(record);
+            MapKey key = map.withKey();
+            key.put(partitionByRecord, partitionBySink);
+            MapValue mapValue = key.createValue();
+
+            long frameSize;
+            long startOffset;
+            long size;
+            long capacity;
+            long firstIdx;
+            long timestamp = record.getTimestamp(timestampIndex);
+            arg.getDecimal128(record, scratch);
+            boolean inputNull = scratch.isNull();
+            long inHigh = scratch.getHigh();
+            long inLow = scratch.getLow();
+
+            if (mapValue.isNew()) {
+                capacity = initialBufferSize;
+                startOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
+                firstIdx = 0;
+                if (!inputNull) {
+                    memory.putLong(startOffset, timestamp);
+                    memory.putLong(startOffset + Long.BYTES, inHigh);
+                    memory.putLong(startOffset + Long.BYTES + Long.BYTES, inLow);
+                    if (frameIncludesCurrentValue) {
+                        long signExt = inHigh < 0 ? -1L : 0L;
+                        acc.ofRaw(signExt, signExt, inHigh, inLow);
+                        value.copyRaw(acc);
+                        frameSize = 1;
+                        size = frameLoBounded ? 1 : 0;
+                    } else {
+                        acc.ofRaw(0);
+                        value.ofRawNull();
+                        frameSize = 0;
+                        size = 1;
+                    }
+                } else {
+                    size = 0;
+                    acc.ofRaw(0);
+                    value.ofRawNull();
+                    frameSize = 0;
+                }
+            } else {
+                mapValue.getDecimal256(0, acc);
+                frameSize = mapValue.getLong(1);
+                startOffset = mapValue.getLong(2);
+                size = mapValue.getLong(3);
+                capacity = mapValue.getLong(4);
+                firstIdx = mapValue.getLong(5);
+
+                long newFirstIdx = firstIdx;
+                if (frameLoBounded) {
+                    for (long i = 0, n = size; i < n; i++) {
+                        long idx = (firstIdx + i) % capacity;
+                        long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
+                        if (Math.abs(timestamp - ts) > maxDiff) {
+                            if (frameSize > 0) {
+                                memory.getDecimal128(startOffset + idx * RECORD_SIZE + Long.BYTES, scratch);
+                                long h = scratch.getHigh();
+                                acc.subtract(h < 0 ? -1L : 0L, h < 0 ? -1L : 0L, h, scratch.getLow(), 0);
+                                frameSize--;
+                            }
+                            newFirstIdx = (idx + 1) % capacity;
+                            size--;
+                        } else {
+                            break;
+                        }
+                    }
+                }
+                firstIdx = newFirstIdx;
+
+                if (!inputNull) {
+                    if (size == capacity) {
+                        memoryDesc.reset(capacity, startOffset, size, firstIdx, freeList);
+                        expandRingBuffer(memory, memoryDesc, RECORD_SIZE);
+                        capacity = memoryDesc.capacity;
+                        startOffset = memoryDesc.startOffset;
+                        firstIdx = memoryDesc.firstIdx;
+                    }
+                    long slotOffset = startOffset + ((firstIdx + size) % capacity) * RECORD_SIZE;
+                    memory.putLong(slotOffset, timestamp);
+                    memory.putLong(slotOffset + Long.BYTES, inHigh);
+                    memory.putLong(slotOffset + Long.BYTES + Long.BYTES, inLow);
+                    size++;
+                }
+
+                if (frameLoBounded) {
+                    for (long i = frameSize; i < size; i++) {
+                        long idx = (firstIdx + i) % capacity;
+                        long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
+                        long diff = Math.abs(ts - timestamp);
+                        if (diff <= maxDiff && diff >= minDiff) {
+                            memory.getDecimal128(startOffset + idx * RECORD_SIZE + Long.BYTES, scratch);
+                            try {
+                                Decimal256.uncheckedAdd(acc, scratch);
+                            } catch (NumericException e) {
+                                throw CairoException.nonCritical().position(position).put("sum aggregation failed: ").put(e.getFlyweightMessage());
+                            }
+                            if (acc.hasOverflowed()) {
+                                throw CairoException.nonCritical().position(position).put("sum aggregation failed: an overflow occurred");
+                            }
+                            frameSize++;
+                        } else {
+                            break;
+                        }
+                    }
+                } else {
+                    newFirstIdx = firstIdx;
+                    for (long i = 0, n = size; i < n; i++) {
+                        long idx = (firstIdx + i) % capacity;
+                        long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
+                        if (Math.abs(timestamp - ts) >= minDiff) {
+                            memory.getDecimal128(startOffset + idx * RECORD_SIZE + Long.BYTES, scratch);
+                            try {
+                                Decimal256.uncheckedAdd(acc, scratch);
+                            } catch (NumericException e) {
+                                throw CairoException.nonCritical().position(position).put("sum aggregation failed: ").put(e.getFlyweightMessage());
+                            }
+                            if (acc.hasOverflowed()) {
+                                throw CairoException.nonCritical().position(position).put("sum aggregation failed: an overflow occurred");
+                            }
+                            frameSize++;
+                            newFirstIdx = (idx + 1) % capacity;
+                            size--;
+                        } else {
+                            break;
+                        }
+                    }
+                    firstIdx = newFirstIdx;
+                }
+
+                if (frameSize != 0) {
+                    value.copyRaw(acc);
+                } else {
+                    value.ofRawNull();
+                }
+            }
+
+            mapValue.putDecimal256(0, acc);
+            mapValue.putLong(1, frameSize);
+            mapValue.putLong(2, startOffset);
+            mapValue.putLong(3, size);
+            mapValue.putLong(4, capacity);
+            mapValue.putLong(5, firstIdx);
+        }
+
+        @Override
+        public void getDecimal256(Record rec, Decimal256 sink) {
+            sink.copyRaw(value);
+            if (!sink.isNull() && sink.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("sum aggregation failed: an overflow occurred");
+            }
+        }
+
+        @Override
+        public String getName() {
+            return NAME;
+        }
+
+        @Override
+        public int getPassCount() {
+            return WindowFunction.ZERO_PASS;
+        }
+
+        @Override
+        public int getType() {
+            return type;
+        }
+
+        @Override
+        public void pass1(Record record, long recordOffset, WindowSPI spi) {
+            computeNext(record);
+            long addr = spi.getAddress(recordOffset, columnIndex);
+            Unsafe.putLong(addr, value.getHh());
+            Unsafe.putLong(addr + Long.BYTES, value.getHl());
+            Unsafe.putLong(addr + 2 * Long.BYTES, value.getLh());
+            Unsafe.putLong(addr + 3 * Long.BYTES, value.getLl());
+        }
+
+        @Override
+        public void reopen() {
+            super.reopen();
+            value.ofRawNull();
+        }
+
+        @Override
+        public void reset() {
+            super.reset();
+            memory.close();
+            freeList.clear();
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(getName());
+            sink.val('(').val(arg).val(')');
+            sink.val(" over (");
+            sink.val("partition by ");
+            sink.val(partitionByRecord.getFunctions());
+            sink.val(" range between ");
+            if (frameLoBounded) {
+                sink.val(maxDiff);
+            } else {
+                sink.val("unbounded");
+            }
+            sink.val(" preceding and ");
+            if (minDiff == 0) {
+                sink.val("current row");
+            } else {
+                sink.val(minDiff).val(" preceding");
+            }
+            sink.val(')');
+        }
+
+        @Override
+        public void toTop() {
+            super.toTop();
+            memory.truncate();
+            freeList.clear();
+        }
+    }
+
+    public static class Decimal128SumOverPartitionRowsFrameFunction extends BasePartitionedWindowFunction {
+
+        private final Decimal256 acc = new Decimal256();
+        private final int bufferSize;
+        private final boolean frameIncludesCurrentValue;
+        private final boolean frameLoBounded;
+        private final int frameSize;
+        private final MemoryARW memory;
+        private final int position;
+        private final int scale;
+        private final Decimal128 scratch = new Decimal128();
+        private final int type;
+        private final Decimal256 value = new Decimal256();
+
+        public Decimal128SumOverPartitionRowsFrameFunction(
+                Map map,
+                VirtualRecord partitionByRecord,
+                RecordSink partitionBySink,
+                long rowsLo,
+                long rowsHi,
+                Function arg,
+                MemoryARW memory,
+                int type,
+                int position
+        ) {
+            super(map, partitionByRecord, partitionBySink, arg);
+            if (rowsLo > Long.MIN_VALUE) {
+                frameSize = (int) (rowsHi - rowsLo + (rowsHi < 0 ? 1 : 0));
+                bufferSize = (int) Math.abs(rowsLo);
+                frameLoBounded = true;
+            } else {
+                frameSize = 1;
+                bufferSize = (int) Math.abs(rowsHi);
+                frameLoBounded = false;
+            }
+            frameIncludesCurrentValue = rowsHi == 0;
+            this.memory = memory;
+            this.type = type;
+            this.scale = ColumnType.getDecimalScale(type);
+            this.position = position;
+        }
+
+        @Override
+        public void close() {
+            super.close();
+            memory.close();
+        }
+
+        @Override
+        public void computeNext(Record record) {
+            partitionByRecord.of(record);
+            MapKey key = map.withKey();
+            key.put(partitionByRecord, partitionBySink);
+            MapValue mv = key.createValue();
+
+            long count;
+            long loIdx;
+            long startOffset;
+            arg.getDecimal128(record, scratch);
+            boolean isNull = scratch.isNull();
+            long inHigh = scratch.getHigh();
+            long inLow = scratch.getLow();
+
+            if (mv.isNew()) {
+                loIdx = 0;
+                startOffset = memory.appendAddressFor((long) bufferSize * 16L) - memory.getPageAddress(0);
+                if (frameIncludesCurrentValue && !isNull) {
+                    acc.ofRaw(inHigh, inLow);
+                    count = 1;
+                    value.copyRaw(acc);
+                } else {
+                    acc.ofRaw(0);
+                    value.ofRawNull();
+                    count = 0;
+                }
+                for (int i = 0; i < bufferSize; i++) {
+                    memory.putLong(startOffset + (long) i * 16L, Decimals.DECIMAL128_HI_NULL);
+                    memory.putLong(startOffset + (long) i * 16L + Long.BYTES, Decimals.DECIMAL128_LO_NULL);
+                }
+            } else {
+                mv.getDecimal256(0, acc);
+                count = mv.getLong(1);
+                loIdx = mv.getLong(2);
+                startOffset = mv.getLong(3);
+
+                long hiOffset = frameIncludesCurrentValue
+                        ? -1
+                        : startOffset + ((loIdx + frameSize - 1) % bufferSize) * 16L;
+                long hiH;
+                long hiL;
+                if (frameIncludesCurrentValue) {
+                    hiH = inHigh;
+                    hiL = inLow;
+                } else {
+                    hiH = memory.getLong(hiOffset);
+                    hiL = memory.getLong(hiOffset + Long.BYTES);
+                }
+                if (!Decimal128.isNull(hiH, hiL)) {
+                    count++;
+                    scratch.ofRaw(hiH, hiL);
+                    try {
+                        Decimal256.uncheckedAdd(acc, scratch);
+                    } catch (NumericException e) {
+                        throw CairoException.nonCritical().position(position).put("sum aggregation failed: ").put(e.getFlyweightMessage());
+                    }
+                    if (acc.hasOverflowed()) {
+                        throw CairoException.nonCritical().position(position).put("sum aggregation failed: an overflow occurred");
+                    }
+                }
+                if (count != 0) {
+                    value.copyRaw(acc);
+                } else {
+                    value.ofRawNull();
+                }
+                if (frameLoBounded) {
+                    long loH = memory.getLong(startOffset + loIdx * 16L);
+                    long loL = memory.getLong(startOffset + loIdx * 16L + Long.BYTES);
+                    if (!Decimal128.isNull(loH, loL)) {
+                        acc.subtract(loH < 0 ? -1L : 0L, loH < 0 ? -1L : 0L, loH, loL, 0);
+                        count--;
+                    }
+                }
+            }
+
+            mv.putDecimal256(0, acc);
+            mv.putLong(1, count);
+            mv.putLong(2, (loIdx + 1) % bufferSize);
+            mv.putLong(3, startOffset);
+            memory.putLong(startOffset + loIdx * 16L, inHigh);
+            memory.putLong(startOffset + loIdx * 16L + Long.BYTES, inLow);
+        }
+
+        @Override
+        public void getDecimal256(Record rec, Decimal256 sink) {
+            sink.copyRaw(value);
+            if (!sink.isNull() && sink.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("sum aggregation failed: an overflow occurred");
+            }
+        }
+
+        @Override
+        public String getName() {
+            return NAME;
+        }
+
+        @Override
+        public int getPassCount() {
+            return WindowFunction.ZERO_PASS;
+        }
+
+        @Override
+        public int getType() {
+            return type;
+        }
+
+        @Override
+        public void pass1(Record record, long recordOffset, WindowSPI spi) {
+            computeNext(record);
+            long addr = spi.getAddress(recordOffset, columnIndex);
+            Unsafe.putLong(addr, value.getHh());
+            Unsafe.putLong(addr + Long.BYTES, value.getHl());
+            Unsafe.putLong(addr + 2 * Long.BYTES, value.getLh());
+            Unsafe.putLong(addr + 3 * Long.BYTES, value.getLl());
+        }
+
+        @Override
+        public void reopen() {
+            super.reopen();
+        }
+
+        @Override
+        public void reset() {
+            super.reset();
+            memory.close();
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(getName()).val('(').val(arg).val(')');
+            sink.val(" over (partition by ").val(partitionByRecord.getFunctions());
+            sink.val(" rows between ");
+            if (frameLoBounded) {
+                sink.val(bufferSize);
+            } else {
+                sink.val("unbounded");
+            }
+            sink.val(" preceding and ");
+            if (frameIncludesCurrentValue) {
+                sink.val("current row");
+            } else {
+                sink.val(bufferSize - frameSize).val(" preceding");
+            }
+            sink.val(')');
+        }
+
+        @Override
+        public void toTop() {
+            super.toTop();
+            memory.truncate();
+        }
+    }
+
+    static class Decimal128SumOverRangeFrameFunction extends BaseWindowFunction implements Reopenable {
+
+        private static final int RECORD_SIZE = Long.BYTES + 16;
+        private final Decimal256 acc = new Decimal256();
+        private final boolean frameLoBounded;
+        private final long initialCapacity;
+        private final long maxDiff;
+        private final MemoryARW memory;
+        private final long minDiff;
+        private final int position;
+        private final int scale;
+        private final Decimal128 scratch = new Decimal128();
+        private final int timestampIndex;
+        private final int type;
+        private final Decimal256 value = new Decimal256();
+        private long capacity;
+        private long firstIdx;
+        private long frameSize;
+        private long size;
+        private long startOffset;
+
+        public Decimal128SumOverRangeFrameFunction(
+                long rangeLo,
+                long rangeHi,
+                Function arg,
+                CairoConfiguration configuration,
+                int timestampIdx,
+                int type,
+                int position
+        ) {
+            super(arg);
+            this.initialCapacity = configuration.getSqlWindowStorePageSize() / RECORD_SIZE;
+            this.memory = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
+                    configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
+            this.frameLoBounded = rangeLo != Long.MIN_VALUE;
+            this.maxDiff = frameLoBounded ? Math.abs(rangeLo) : Long.MAX_VALUE;
+            this.minDiff = Math.abs(rangeHi);
+            this.timestampIndex = timestampIdx;
+            this.type = type;
+            this.scale = ColumnType.getDecimalScale(type);
+            this.position = position;
+            capacity = initialCapacity;
+            startOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
+            firstIdx = 0;
+            frameSize = 0;
+            acc.ofRaw(0);
+            value.ofRawNull();
+        }
+
+        @Override
+        public void close() {
+            super.close();
+            memory.close();
+        }
+
+        @Override
+        public void computeNext(Record record) {
+            long timestamp = record.getTimestamp(timestampIndex);
+            arg.getDecimal128(record, scratch);
+            boolean isNull = scratch.isNull();
+            long inHigh = scratch.getHigh();
+            long inLow = scratch.getLow();
+            long newFirstIdx = firstIdx;
+            if (frameLoBounded) {
+                for (long i = 0, n = size; i < n; i++) {
+                    long idx = (firstIdx + i) % capacity;
+                    long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
+                    if (Math.abs(timestamp - ts) > maxDiff) {
+                        if (frameSize > 0) {
+                            memory.getDecimal128(startOffset + idx * RECORD_SIZE + Long.BYTES, scratch);
+                            long h = scratch.getHigh();
+                            acc.subtract(h < 0 ? -1L : 0L, h < 0 ? -1L : 0L, h, scratch.getLow(), 0);
+                            frameSize--;
+                        }
+                        newFirstIdx = (idx + 1) % capacity;
+                        size--;
+                    } else {
+                        break;
+                    }
+                }
+            }
+            firstIdx = newFirstIdx;
+
+            if (!isNull) {
+                if (size == capacity) {
+                    long newAddress = memory.appendAddressFor((capacity << 1) * RECORD_SIZE);
+                    long oldAddress = memory.getPageAddress(0) + startOffset;
+                    if (firstIdx == 0) {
+                        Vect.memcpy(newAddress, oldAddress, size * RECORD_SIZE);
+                    } else {
+                        firstIdx %= size;
+                        long firstPieceSize = (size - firstIdx) * RECORD_SIZE;
+                        Vect.memcpy(newAddress, oldAddress + firstIdx * RECORD_SIZE, firstPieceSize);
+                        Vect.memcpy(newAddress + firstPieceSize, oldAddress, firstIdx * RECORD_SIZE);
+                        firstIdx = 0;
+                    }
+                    startOffset = newAddress - memory.getPageAddress(0);
+                    capacity <<= 1;
+                }
+                long slotOffset = startOffset + ((firstIdx + size) % capacity) * RECORD_SIZE;
+                memory.putLong(slotOffset, timestamp);
+                memory.putLong(slotOffset + Long.BYTES, inHigh);
+                memory.putLong(slotOffset + Long.BYTES + Long.BYTES, inLow);
+                size++;
+            }
+
+            if (frameLoBounded) {
+                for (long i = frameSize, n = size; i < n; i++) {
+                    long idx = (firstIdx + i) % capacity;
+                    long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
+                    long diff = Math.abs(ts - timestamp);
+                    if (diff <= maxDiff && diff >= minDiff) {
+                        memory.getDecimal128(startOffset + idx * RECORD_SIZE + Long.BYTES, scratch);
+                        try {
+                            Decimal256.uncheckedAdd(acc, scratch);
+                        } catch (NumericException e) {
+                            throw CairoException.nonCritical().position(position).put("sum aggregation failed: ").put(e.getFlyweightMessage());
+                        }
+                        if (acc.hasOverflowed()) {
+                            throw CairoException.nonCritical().position(position).put("sum aggregation failed: an overflow occurred");
+                        }
+                        frameSize++;
+                    } else {
+                        break;
+                    }
+                }
+            } else {
+                newFirstIdx = firstIdx;
+                for (long i = 0, n = size; i < n; i++) {
+                    long idx = (firstIdx + i) % capacity;
+                    long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
+                    if (Math.abs(timestamp - ts) >= minDiff) {
+                        memory.getDecimal128(startOffset + idx * RECORD_SIZE + Long.BYTES, scratch);
+                        try {
+                            Decimal256.uncheckedAdd(acc, scratch);
+                        } catch (NumericException e) {
+                            throw CairoException.nonCritical().position(position).put("sum aggregation failed: ").put(e.getFlyweightMessage());
+                        }
+                        if (acc.hasOverflowed()) {
+                            throw CairoException.nonCritical().position(position).put("sum aggregation failed: an overflow occurred");
+                        }
+                        frameSize++;
+                        newFirstIdx = (idx + 1) % capacity;
+                        size--;
+                    } else {
+                        break;
+                    }
+                }
+                firstIdx = newFirstIdx;
+            }
+            if (frameSize != 0) {
+                value.copyRaw(acc);
+            } else {
+                value.ofRawNull();
+            }
+        }
+
+        @Override
+        public void getDecimal256(Record rec, Decimal256 sink) {
+            sink.copyRaw(value);
+            if (!sink.isNull() && sink.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("sum aggregation failed: an overflow occurred");
+            }
+        }
+
+        @Override
+        public String getName() {
+            return NAME;
+        }
+
+        @Override
+        public int getPassCount() {
+            return WindowFunction.ZERO_PASS;
+        }
+
+        @Override
+        public int getType() {
+            return type;
+        }
+
+        @Override
+        public void pass1(Record record, long recordOffset, WindowSPI spi) {
+            computeNext(record);
+            long addr = spi.getAddress(recordOffset, columnIndex);
+            Unsafe.putLong(addr, value.getHh());
+            Unsafe.putLong(addr + Long.BYTES, value.getHl());
+            Unsafe.putLong(addr + 2 * Long.BYTES, value.getLh());
+            Unsafe.putLong(addr + 3 * Long.BYTES, value.getLl());
+        }
+
+        @Override
+        public void reopen() {
+            value.ofRawNull();
+            capacity = initialCapacity;
+            startOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
+            firstIdx = 0;
+            frameSize = 0;
+            size = 0;
+            acc.ofRaw(0);
+        }
+
+        @Override
+        public void reset() {
+            super.reset();
+            memory.close();
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(getName()).val('(').val(arg).val(')');
+            sink.val(" over (range between ");
+            if (frameLoBounded) {
+                sink.val(maxDiff);
+            } else {
+                sink.val("unbounded");
+            }
+            sink.val(" preceding and ");
+            if (minDiff == 0) {
+                sink.val("current row");
+            } else {
+                sink.val(minDiff).val(" preceding");
+            }
+            sink.val(')');
+        }
+
+        @Override
+        public void toTop() {
+            super.toTop();
+            value.ofRawNull();
+            capacity = initialCapacity;
+            memory.truncate();
+            startOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
+            firstIdx = 0;
+            frameSize = 0;
+            size = 0;
+            acc.ofRaw(0);
+        }
+    }
+
+    static class Decimal128SumOverRowsFrameFunction extends BaseWindowFunction implements Reopenable {
+
+        private final Decimal256 acc = new Decimal256();
+        private final MemoryARW buffer;
+        private final int bufferSize;
+        private final boolean frameIncludesCurrentValue;
+        private final boolean frameLoBounded;
+        private final int frameSize;
+        private final int position;
+        private final int scale;
+        private final Decimal128 scratch = new Decimal128();
+        private final int type;
+        private final Decimal256 value = new Decimal256();
+        private long count = 0;
+        private int loIdx = 0;
+
+        public Decimal128SumOverRowsFrameFunction(Function arg, long rowsLo, long rowsHi, MemoryARW memory, int type, int position) {
+            super(arg);
+            assert rowsLo != Long.MIN_VALUE || rowsHi != 0;
+            if (rowsLo > Long.MIN_VALUE) {
+                frameSize = (int) (rowsHi - rowsLo + (rowsHi < 0 ? 1 : 0));
+                bufferSize = (int) Math.abs(rowsLo);
+                frameLoBounded = true;
+            } else {
+                frameSize = (int) Math.abs(rowsHi);
+                bufferSize = frameSize;
+                frameLoBounded = false;
+            }
+            frameIncludesCurrentValue = rowsHi == 0;
+            this.buffer = memory;
+            this.type = type;
+            this.scale = ColumnType.getDecimalScale(type);
+            this.position = position;
+            acc.ofRaw(0);
+            value.ofRawNull();
+            try {
+                initBuffer();
+            } catch (Throwable t) {
+                close();
+                throw t;
+            }
+        }
+
+        @Override
+        public void close() {
+            super.close();
+            buffer.close();
+        }
+
+        @Override
+        public void computeNext(Record record) {
+            arg.getDecimal128(record, scratch);
+            long inHigh = scratch.getHigh();
+            long inLow = scratch.getLow();
+            long hiH;
+            long hiL;
+            if (frameLoBounded && !frameIncludesCurrentValue) {
+                long off = (long) ((loIdx + frameSize - 1) % bufferSize) * 16L;
+                hiH = buffer.getLong(off);
+                hiL = buffer.getLong(off + Long.BYTES);
+            } else if (!frameLoBounded && !frameIncludesCurrentValue) {
+                long off = (long) (loIdx % bufferSize) * 16L;
+                hiH = buffer.getLong(off);
+                hiL = buffer.getLong(off + Long.BYTES);
+            } else {
+                hiH = inHigh;
+                hiL = inLow;
+            }
+            if (!Decimal128.isNull(hiH, hiL)) {
+                scratch.ofRaw(hiH, hiL);
+                try {
+                    Decimal256.uncheckedAdd(acc, scratch);
+                } catch (NumericException e) {
+                    throw CairoException.nonCritical().position(position).put("sum aggregation failed: ").put(e.getFlyweightMessage());
+                }
+                if (acc.hasOverflowed()) {
+                    throw CairoException.nonCritical().position(position).put("sum aggregation failed: an overflow occurred");
+                }
+                count++;
+            }
+            if (count != 0) {
+                value.copyRaw(acc);
+            } else {
+                value.ofRawNull();
+            }
+
+            if (frameLoBounded) {
+                long off = (long) loIdx * 16L;
+                long loH = buffer.getLong(off);
+                long loL = buffer.getLong(off + Long.BYTES);
+                if (!Decimal128.isNull(loH, loL)) {
+                    acc.subtract(loH < 0 ? -1L : 0L, loH < 0 ? -1L : 0L, loH, loL, 0);
+                    count--;
+                }
+            }
+            long writeOff = (long) loIdx * 16L;
+            buffer.putLong(writeOff, inHigh);
+            buffer.putLong(writeOff + Long.BYTES, inLow);
+            loIdx = (loIdx + 1) % bufferSize;
+        }
+
+        @Override
+        public void getDecimal256(Record rec, Decimal256 sink) {
+            sink.copyRaw(value);
+            if (!sink.isNull() && sink.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("sum aggregation failed: an overflow occurred");
+            }
+        }
+
+        @Override
+        public String getName() {
+            return NAME;
+        }
+
+        @Override
+        public int getPassCount() {
+            return WindowFunction.ZERO_PASS;
+        }
+
+        @Override
+        public int getType() {
+            return type;
+        }
+
+        @Override
+        public void pass1(Record record, long recordOffset, WindowSPI spi) {
+            computeNext(record);
+            long addr = spi.getAddress(recordOffset, columnIndex);
+            Unsafe.putLong(addr, value.getHh());
+            Unsafe.putLong(addr + Long.BYTES, value.getHl());
+            Unsafe.putLong(addr + 2 * Long.BYTES, value.getLh());
+            Unsafe.putLong(addr + 3 * Long.BYTES, value.getLl());
+        }
+
+        @Override
+        public void reopen() {
+            value.ofRawNull();
+            count = 0;
+            loIdx = 0;
+            acc.ofRaw(0);
+            initBuffer();
+        }
+
+        @Override
+        public void reset() {
+            super.reset();
+            buffer.close();
+            value.ofRawNull();
+            count = 0;
+            loIdx = 0;
+            acc.ofRaw(0);
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(getName()).val('(').val(arg).val(')');
+            sink.val(" over (");
+            sink.val(" rows between ");
+            if (frameLoBounded) {
+                sink.val(bufferSize);
+            } else {
+                sink.val("unbounded");
+            }
+            sink.val(" preceding and ");
+            if (frameIncludesCurrentValue) {
+                sink.val("current row");
+            } else {
+                sink.val(bufferSize - frameSize).val(" preceding");
+            }
+            sink.val(')');
+        }
+
+        @Override
+        public void toTop() {
+            super.toTop();
+            value.ofRawNull();
+            count = 0;
+            loIdx = 0;
+            acc.ofRaw(0);
+            initBuffer();
+        }
+
+        private void initBuffer() {
+            for (int i = 0; i < bufferSize; i++) {
+                buffer.putLong((long) i * 16L, Decimals.DECIMAL128_HI_NULL);
+                buffer.putLong((long) i * 16L + Long.BYTES, Decimals.DECIMAL128_LO_NULL);
+            }
+        }
+    }
+
+    static class Decimal128SumOverUnboundedPartitionRowsFrameFunction extends BasePartitionedWindowFunction {
+
+        private final Decimal256 acc = new Decimal256();
+        private final int position;
+        private final Decimal128 scratch = new Decimal128();
+        private final int type;
+        private final Decimal256 value = new Decimal256();
+
+        public Decimal128SumOverUnboundedPartitionRowsFrameFunction(Map map, VirtualRecord partitionByRecord, RecordSink partitionBySink, Function arg, int type, int position) {
+            super(map, partitionByRecord, partitionBySink, arg);
+            this.type = type;
+            this.position = position;
+        }
+
+        @Override
+        public void computeNext(Record record) {
+            partitionByRecord.of(record);
+            MapKey key = map.withKey();
+            key.put(partitionByRecord, partitionBySink);
+            MapValue mv = key.createValue();
+
+            boolean wasNullState;
+            if (mv.isNew()) {
+                acc.ofRaw(0);
+                wasNullState = true;
+            } else {
+                mv.getDecimal256(0, acc);
+                wasNullState = mv.getBool(1);
+            }
+
+            arg.getDecimal128(record, scratch);
+            if (!scratch.isNull()) {
+                if (wasNullState) {
+                    acc.ofRaw(scratch.getHigh(), scratch.getLow());
+                    wasNullState = false;
+                } else {
+                    try {
+                        Decimal256.uncheckedAdd(acc, scratch);
+                    } catch (NumericException e) {
+                        throw CairoException.nonCritical().position(position).put("sum aggregation failed: ").put(e.getFlyweightMessage());
+                    }
+                    if (acc.hasOverflowed()) {
+                        throw CairoException.nonCritical().position(position).put("sum aggregation failed: an overflow occurred");
+                    }
+                }
+            }
+            mv.putDecimal256(0, acc);
+            mv.putBool(1, wasNullState);
+            if (wasNullState) {
+                value.ofRawNull();
+            } else {
+                value.copyRaw(acc);
+            }
+        }
+
+        @Override
+        public void getDecimal256(Record rec, Decimal256 sink) {
+            sink.copyRaw(value);
+            if (!sink.isNull() && sink.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("sum aggregation failed: an overflow occurred");
+            }
+        }
+
+        @Override
+        public String getName() {
+            return NAME;
+        }
+
+        @Override
+        public int getPassCount() {
+            return WindowFunction.ZERO_PASS;
+        }
+
+        @Override
+        public int getType() {
+            return type;
+        }
+
+        @Override
+        public void pass1(Record record, long recordOffset, WindowSPI spi) {
+            computeNext(record);
+            long addr = spi.getAddress(recordOffset, columnIndex);
+            Unsafe.putLong(addr, value.getHh());
+            Unsafe.putLong(addr + Long.BYTES, value.getHl());
+            Unsafe.putLong(addr + 2 * Long.BYTES, value.getLh());
+            Unsafe.putLong(addr + 3 * Long.BYTES, value.getLl());
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(NAME).val('(').val(arg).val(')');
+            sink.val(" over (partition by ").val(partitionByRecord.getFunctions());
+            sink.val(" rows between unbounded preceding and current row)");
+        }
+    }
+
+    static class Decimal128SumOverUnboundedRowsFrameFunction extends BaseWindowFunction {
+
+        private final Decimal256 acc = new Decimal256();
+        private final int position;
+        private final Decimal128 scratch = new Decimal128();
+        private final int type;
+        private final Decimal256 value = new Decimal256();
+        private boolean isNullState = true;
+
+        public Decimal128SumOverUnboundedRowsFrameFunction(Function arg, int type, int position) {
+            super(arg);
+            this.type = type;
+            this.position = position;
+            acc.ofRaw(0);
+            value.ofRawNull();
+        }
+
+        @Override
+        public void computeNext(Record record) {
+            arg.getDecimal128(record, scratch);
+            if (!scratch.isNull()) {
+                if (isNullState) {
+                    acc.ofRaw(scratch.getHigh(), scratch.getLow());
+                    isNullState = false;
+                } else {
+                    try {
+                        Decimal256.uncheckedAdd(acc, scratch);
+                    } catch (NumericException e) {
+                        throw CairoException.nonCritical().position(position).put("sum aggregation failed: ").put(e.getFlyweightMessage());
+                    }
+                    if (acc.hasOverflowed()) {
+                        throw CairoException.nonCritical().position(position).put("sum aggregation failed: an overflow occurred");
+                    }
+                }
+            }
+            if (isNullState) {
+                value.ofRawNull();
+            } else {
+                value.copyRaw(acc);
+            }
+        }
+
+        @Override
+        public void getDecimal256(Record rec, Decimal256 sink) {
+            sink.copyRaw(value);
+            if (!sink.isNull() && sink.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("sum aggregation failed: an overflow occurred");
+            }
+        }
+
+        @Override
+        public String getName() {
+            return NAME;
+        }
+
+        @Override
+        public int getPassCount() {
+            return WindowFunction.ZERO_PASS;
+        }
+
+        @Override
+        public int getType() {
+            return type;
+        }
+
+        @Override
+        public void pass1(Record record, long recordOffset, WindowSPI spi) {
+            computeNext(record);
+            long addr = spi.getAddress(recordOffset, columnIndex);
+            Unsafe.putLong(addr, value.getHh());
+            Unsafe.putLong(addr + Long.BYTES, value.getHl());
+            Unsafe.putLong(addr + 2 * Long.BYTES, value.getLh());
+            Unsafe.putLong(addr + 3 * Long.BYTES, value.getLl());
+        }
+
+        @Override
+        public void reset() {
+            super.reset();
+            value.ofRawNull();
+            isNullState = true;
+            acc.ofRaw(0);
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(NAME).val('(').val(arg).val(')');
+            sink.val(" over (rows between unbounded preceding and current row)");
+        }
+
+        @Override
+        public void toTop() {
+            super.toTop();
+            value.ofRawNull();
+            isNullState = true;
+            acc.ofRaw(0);
+        }
+    }
+
+    static class Decimal128SumOverWholeResultSetFunction extends BaseWindowFunction {
+
+        private final Decimal256 acc = new Decimal256();
+        private final int position;
+        private final Decimal128 scratch = new Decimal128();
+        private final int type;
+        private final Decimal256 value = new Decimal256();
+        private boolean isNullState = true;
+
+        public Decimal128SumOverWholeResultSetFunction(Function arg, int type, int position) {
+            super(arg);
+            this.type = type;
+            this.position = position;
+            acc.ofRaw(0);
+            value.ofRawNull();
+        }
+
+        @Override
+        public void getDecimal256(Record rec, Decimal256 sink) {
+            sink.copyRaw(value);
+            if (!sink.isNull() && sink.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("sum aggregation failed: an overflow occurred");
+            }
+        }
+
+        @Override
+        public String getName() {
+            return NAME;
+        }
+
+        @Override
+        public int getPassCount() {
+            return WindowFunction.TWO_PASS;
+        }
+
+        @Override
+        public int getType() {
+            return type;
+        }
+
+        @Override
+        public void pass1(Record record, long recordOffset, WindowSPI spi) {
+            arg.getDecimal128(record, scratch);
+            if (!scratch.isNull()) {
+                if (isNullState) {
+                    acc.ofRaw(scratch.getHigh(), scratch.getLow());
+                    isNullState = false;
+                } else {
+                    try {
+                        Decimal256.uncheckedAdd(acc, scratch);
+                    } catch (NumericException e) {
+                        throw CairoException.nonCritical().position(position).put("sum aggregation failed: ").put(e.getFlyweightMessage());
+                    }
+                    if (acc.hasOverflowed()) {
+                        throw CairoException.nonCritical().position(position).put("sum aggregation failed: an overflow occurred");
+                    }
+                }
+            }
+        }
+
+        @Override
+        public void pass2(Record record, long recordOffset, WindowSPI spi) {
+            long addr = spi.getAddress(recordOffset, columnIndex);
+            Unsafe.putLong(addr, value.getHh());
+            Unsafe.putLong(addr + Long.BYTES, value.getHl());
+            Unsafe.putLong(addr + 2 * Long.BYTES, value.getLh());
+            Unsafe.putLong(addr + 3 * Long.BYTES, value.getLl());
+        }
+
+        @Override
+        public void preparePass2() {
+            if (isNullState) {
+                value.ofRawNull();
+            } else {
+                value.copyRaw(acc);
+            }
+        }
+
+        @Override
+        public void reset() {
+            super.reset();
+            value.ofRawNull();
+            isNullState = true;
+            acc.ofRaw(0);
+        }
+
+        @Override
+        public void toTop() {
+            super.toTop();
+            value.ofRawNull();
+            isNullState = true;
+            acc.ofRaw(0);
+        }
+    }
+
+    static class Decimal16SumOverCurrentRowFunction extends BaseWindowFunction {
+
+        private final int type;
+        private long value;
+
+        Decimal16SumOverCurrentRowFunction(Function arg, int type) {
+            super(arg);
+            this.type = type;
+        }
+
+        @Override
+        public void computeNext(Record record) {
+            short s = arg.getDecimal16(record);
+            value = s == Decimals.DECIMAL16_NULL ? Decimals.DECIMAL64_NULL : s;
+        }
+
+        @Override
+        public long getDecimal64(Record rec) {
+            return value;
+        }
+
+        @Override
+        public String getName() {
+            return NAME;
+        }
+
+        @Override
+        public int getPassCount() {
+            return ZERO_PASS;
+        }
+
+        @Override
+        public int getType() {
+            return type;
+        }
+
+        @Override
+        public void pass1(Record record, long recordOffset, WindowSPI spi) {
+            computeNext(record);
+            Unsafe.putLong(spi.getAddress(recordOffset, columnIndex), value);
+        }
+    }
+
+    static class Decimal16SumOverPartitionFunction extends BasePartitionedWindowFunction {
+
+        private final int type;
+
+        public Decimal16SumOverPartitionFunction(Map map, VirtualRecord partitionByRecord, RecordSink partitionBySink, Function arg, int type) {
+            super(map, partitionByRecord, partitionBySink, arg);
+            this.type = type;
+        }
+
+        @Override
+        public String getName() {
+            return NAME;
+        }
+
+        @Override
+        public int getPassCount() {
+            return WindowFunction.TWO_PASS;
+        }
+
+        @Override
+        public int getType() {
+            return type;
+        }
+
+        @Override
+        public void pass1(Record record, long recordOffset, WindowSPI spi) {
+            partitionByRecord.of(record);
+            MapKey key = map.withKey();
+            key.put(partitionByRecord, partitionBySink);
+            MapValue mv = key.createValue();
+            short s = arg.getDecimal16(record);
+            if (s != Decimals.DECIMAL16_NULL) {
+                if (mv.isNew()) {
+                    mv.putLong(0, s);
+                    mv.putBool(1, false);
+                } else if (mv.getBool(1)) {
+                    mv.putLong(0, s);
+                    mv.putBool(1, false);
+                } else {
+                    mv.putLong(0, mv.getLong(0) + s);
+                }
+            } else if (mv.isNew()) {
+                mv.putLong(0, 0L);
+                mv.putBool(1, true);
+            }
+        }
+
+        @Override
+        public void pass2(Record record, long recordOffset, WindowSPI spi) {
+            partitionByRecord.of(record);
+            MapKey key = map.withKey();
+            key.put(partitionByRecord, partitionBySink);
+            MapValue mv = key.findValue();
+            long addr = spi.getAddress(recordOffset, columnIndex);
+            if (mv != null && !mv.getBool(1)) {
+                Unsafe.putLong(addr, mv.getLong(0));
+            } else {
+                Unsafe.putLong(addr, Decimals.DECIMAL64_NULL);
+            }
+        }
+    }
+
+    public static class Decimal16SumOverPartitionRangeFrameFunction extends BasePartitionedWindowFunction {
+
+        private static final int RECORD_SIZE = Long.BYTES + Short.BYTES;
+        private final boolean frameIncludesCurrentValue;
+        private final boolean frameLoBounded;
+        private final LongList freeList = new LongList();
+        private final int initialBufferSize;
+        private final long maxDiff;
+        private final MemoryARW memory;
+        private final RingBufferDesc memoryDesc = new RingBufferDesc();
+        private final long minDiff;
+        private final int timestampIndex;
+        private final int type;
+        private long value;
+
+        public Decimal16SumOverPartitionRangeFrameFunction(
+                Map map,
+                VirtualRecord partitionByRecord,
+                RecordSink partitionBySink,
+                long rangeLo,
+                long rangeHi,
+                Function arg,
+                MemoryARW memory,
+                int initialBufferSize,
+                int timestampIdx,
+                int type
+        ) {
+            super(map, partitionByRecord, partitionBySink, arg);
+            this.frameLoBounded = rangeLo != Long.MIN_VALUE;
+            this.maxDiff = frameLoBounded ? Math.abs(rangeLo) : Long.MAX_VALUE;
+            this.minDiff = Math.abs(rangeHi);
+            this.memory = memory;
+            this.initialBufferSize = initialBufferSize;
+            this.timestampIndex = timestampIdx;
+            this.frameIncludesCurrentValue = rangeHi == 0;
+            this.type = type;
+        }
+
+        @Override
+        public void close() {
+            super.close();
+            memory.close();
+            freeList.clear();
+        }
+
+        @Override
+        public void computeNext(Record record) {
+            partitionByRecord.of(record);
+            MapKey key = map.withKey();
+            key.put(partitionByRecord, partitionBySink);
+            MapValue mapValue = key.createValue();
+
+            long acc;
+            long frameSize;
+            long startOffset;
+            long size;
+            long capacity;
+            long firstIdx;
+            long timestamp = record.getTimestamp(timestampIndex);
+            short s = arg.getDecimal16(record);
+
+            if (mapValue.isNew()) {
+                capacity = initialBufferSize;
+                startOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
+                firstIdx = 0;
+                if (s != Decimals.DECIMAL16_NULL) {
+                    memory.putLong(startOffset, timestamp);
+                    memory.putShort(startOffset + Long.BYTES, s);
+                    if (frameIncludesCurrentValue) {
+                        acc = s;
+                        value = acc;
+                        frameSize = 1;
+                        size = frameLoBounded ? 1 : 0;
+                    } else {
+                        acc = 0L;
+                        value = Decimals.DECIMAL64_NULL;
+                        frameSize = 0;
+                        size = 1;
+                    }
+                } else {
+                    size = 0;
+                    acc = 0L;
+                    value = Decimals.DECIMAL64_NULL;
+                    frameSize = 0;
+                }
+            } else {
+                acc = mapValue.getLong(0);
+                frameSize = mapValue.getLong(1);
+                startOffset = mapValue.getLong(2);
+                size = mapValue.getLong(3);
+                capacity = mapValue.getLong(4);
+                firstIdx = mapValue.getLong(5);
+
+                long newFirstIdx = firstIdx;
+                if (frameLoBounded) {
+                    for (long i = 0, n = size; i < n; i++) {
+                        long idx = (firstIdx + i) % capacity;
+                        long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
+                        if (Math.abs(timestamp - ts) > maxDiff) {
+                            if (frameSize > 0) {
+                                short val = memory.getShort(startOffset + idx * RECORD_SIZE + Long.BYTES);
+                                acc -= val;
+                                frameSize--;
+                            }
+                            newFirstIdx = (idx + 1) % capacity;
+                            size--;
+                        } else {
+                            break;
+                        }
+                    }
+                }
+                firstIdx = newFirstIdx;
+
+                if (s != Decimals.DECIMAL16_NULL) {
+                    if (size == capacity) {
+                        memoryDesc.reset(capacity, startOffset, size, firstIdx, freeList);
+                        expandRingBuffer(memory, memoryDesc, RECORD_SIZE);
+                        capacity = memoryDesc.capacity;
+                        startOffset = memoryDesc.startOffset;
+                        firstIdx = memoryDesc.firstIdx;
+                    }
+                    memory.putLong(startOffset + ((firstIdx + size) % capacity) * RECORD_SIZE, timestamp);
+                    memory.putShort(startOffset + ((firstIdx + size) % capacity) * RECORD_SIZE + Long.BYTES, s);
+                    size++;
+                }
+
+                if (frameLoBounded) {
+                    for (long i = frameSize; i < size; i++) {
+                        long idx = (firstIdx + i) % capacity;
+                        long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
+                        long diff = Math.abs(ts - timestamp);
+                        if (diff <= maxDiff && diff >= minDiff) {
+                            short val = memory.getShort(startOffset + idx * RECORD_SIZE + Long.BYTES);
+                            acc += val;
+                            frameSize++;
+                        } else {
+                            break;
+                        }
+                    }
+                } else {
+                    newFirstIdx = firstIdx;
+                    for (long i = 0, n = size; i < n; i++) {
+                        long idx = (firstIdx + i) % capacity;
+                        long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
+                        if (Math.abs(timestamp - ts) >= minDiff) {
+                            short val = memory.getShort(startOffset + idx * RECORD_SIZE + Long.BYTES);
+                            acc += val;
+                            frameSize++;
+                            newFirstIdx = (idx + 1) % capacity;
+                            size--;
+                        } else {
+                            break;
+                        }
+                    }
+                    firstIdx = newFirstIdx;
+                }
+
+                if (frameSize != 0) {
+                    value = acc;
+                } else {
+                    value = Decimals.DECIMAL64_NULL;
+                }
+            }
+
+            mapValue.putLong(0, acc);
+            mapValue.putLong(1, frameSize);
+            mapValue.putLong(2, startOffset);
+            mapValue.putLong(3, size);
+            mapValue.putLong(4, capacity);
+            mapValue.putLong(5, firstIdx);
+        }
+
+        @Override
+        public long getDecimal64(Record rec) {
+            return value;
+        }
+
+        @Override
+        public String getName() {
+            return NAME;
+        }
+
+        @Override
+        public int getPassCount() {
+            return WindowFunction.ZERO_PASS;
+        }
+
+        @Override
+        public int getType() {
+            return type;
+        }
+
+        @Override
+        public void pass1(Record record, long recordOffset, WindowSPI spi) {
+            computeNext(record);
+            Unsafe.putLong(spi.getAddress(recordOffset, columnIndex), value);
+        }
+
+        @Override
+        public void reopen() {
+            super.reopen();
+            value = Decimals.DECIMAL64_NULL;
+        }
+
+        @Override
+        public void reset() {
+            super.reset();
+            memory.close();
+            freeList.clear();
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(getName());
+            sink.val('(').val(arg).val(')');
+            sink.val(" over (partition by ").val(partitionByRecord.getFunctions());
+            sink.val(" range between ");
+            if (frameLoBounded) {
+                sink.val(maxDiff);
+            } else {
+                sink.val("unbounded");
+            }
+            sink.val(" preceding and ");
+            if (minDiff == 0) {
+                sink.val("current row");
+            } else {
+                sink.val(minDiff).val(" preceding");
+            }
+            sink.val(')');
+        }
+
+        @Override
+        public void toTop() {
+            super.toTop();
+            memory.truncate();
+            freeList.clear();
+        }
+    }
+
+    public static class Decimal16SumOverPartitionRowsFrameFunction extends BasePartitionedWindowFunction {
+
+        private final int bufferSize;
+        private final boolean frameIncludesCurrentValue;
+        private final boolean frameLoBounded;
+        private final int frameSize;
+        private final MemoryARW memory;
+        private final int type;
+        private long value;
+
+        public Decimal16SumOverPartitionRowsFrameFunction(
+                Map map,
+                VirtualRecord partitionByRecord,
+                RecordSink partitionBySink,
+                long rowsLo,
+                long rowsHi,
+                Function arg,
+                MemoryARW memory,
+                int type
+        ) {
+            super(map, partitionByRecord, partitionBySink, arg);
+            if (rowsLo > Long.MIN_VALUE) {
+                frameSize = (int) (rowsHi - rowsLo + (rowsHi < 0 ? 1 : 0));
+                bufferSize = (int) Math.abs(rowsLo);
+                frameLoBounded = true;
+            } else {
+                frameSize = 1;
+                bufferSize = (int) Math.abs(rowsHi);
+                frameLoBounded = false;
+            }
+            frameIncludesCurrentValue = rowsHi == 0;
+            this.memory = memory;
+            this.type = type;
+        }
+
+        @Override
+        public void close() {
+            super.close();
+            memory.close();
+        }
+
+        @Override
+        public void computeNext(Record record) {
+            partitionByRecord.of(record);
+            MapKey key = map.withKey();
+            key.put(partitionByRecord, partitionBySink);
+            MapValue mv = key.createValue();
+
+            long count;
+            long loIdx;
+            long startOffset;
+            long acc;
+            short s = arg.getDecimal16(record);
+
+            if (mv.isNew()) {
+                loIdx = 0;
+                startOffset = memory.appendAddressFor((long) bufferSize * Short.BYTES) - memory.getPageAddress(0);
+                if (frameIncludesCurrentValue && s != Decimals.DECIMAL16_NULL) {
+                    acc = s;
+                    count = 1;
+                    value = acc;
+                } else {
+                    acc = 0L;
+                    value = Decimals.DECIMAL64_NULL;
+                    count = 0;
+                }
+                for (int i = 0; i < bufferSize; i++) {
+                    memory.putShort(startOffset + (long) i * Short.BYTES, Decimals.DECIMAL16_NULL);
+                }
+            } else {
+                acc = mv.getLong(0);
+                count = mv.getLong(1);
+                loIdx = mv.getLong(2);
+                startOffset = mv.getLong(3);
+
+                short hiValue = frameIncludesCurrentValue ? s : memory.getShort(startOffset + ((loIdx + frameSize - 1) % bufferSize) * Short.BYTES);
+                if (hiValue != Decimals.DECIMAL16_NULL) {
+                    count++;
+                    acc += hiValue;
+                }
+                if (count != 0) {
+                    value = acc;
+                } else {
+                    value = Decimals.DECIMAL64_NULL;
+                }
+                if (frameLoBounded) {
+                    short loValue = memory.getShort(startOffset + loIdx * Short.BYTES);
+                    if (loValue != Decimals.DECIMAL16_NULL) {
+                        acc -= loValue;
+                        count--;
+                    }
+                }
+            }
+
+            mv.putLong(0, acc);
+            mv.putLong(1, count);
+            mv.putLong(2, (loIdx + 1) % bufferSize);
+            mv.putLong(3, startOffset);
+            memory.putShort(startOffset + loIdx * Short.BYTES, s);
+        }
+
+        @Override
+        public long getDecimal64(Record rec) {
+            return value;
+        }
+
+        @Override
+        public String getName() {
+            return NAME;
+        }
+
+        @Override
+        public int getPassCount() {
+            return WindowFunction.ZERO_PASS;
+        }
+
+        @Override
+        public int getType() {
+            return type;
+        }
+
+        @Override
+        public void pass1(Record record, long recordOffset, WindowSPI spi) {
+            computeNext(record);
+            Unsafe.putLong(spi.getAddress(recordOffset, columnIndex), value);
+        }
+
+        @Override
+        public void reopen() {
+            super.reopen();
+        }
+
+        @Override
+        public void reset() {
+            super.reset();
+            memory.close();
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(getName());
+            sink.val('(').val(arg).val(')');
+            sink.val(" over (partition by ").val(partitionByRecord.getFunctions());
+            sink.val(" rows between ");
+            if (frameLoBounded) {
+                sink.val(bufferSize);
+            } else {
+                sink.val("unbounded");
+            }
+            sink.val(" preceding and ");
+            if (frameIncludesCurrentValue) {
+                sink.val("current row");
+            } else {
+                sink.val(bufferSize - frameSize).val(" preceding");
+            }
+            sink.val(')');
+        }
+
+        @Override
+        public void toTop() {
+            super.toTop();
+            memory.truncate();
+        }
+    }
+
+    static class Decimal16SumOverRangeFrameFunction extends BaseWindowFunction implements Reopenable {
+
+        private static final int RECORD_SIZE = Long.BYTES + Short.BYTES;
+        private final boolean frameLoBounded;
+        private final long initialCapacity;
+        private final long maxDiff;
+        private final MemoryARW memory;
+        private final long minDiff;
+        private final int timestampIndex;
+        private final int type;
+        private long acc;
+        private long capacity;
+        private long firstIdx;
+        private long frameSize;
+        private long size;
+        private long startOffset;
+        private long value;
+
+        public Decimal16SumOverRangeFrameFunction(
+                long rangeLo,
+                long rangeHi,
+                Function arg,
+                CairoConfiguration configuration,
+                int timestampIdx,
+                int type
+        ) {
+            super(arg);
+            this.initialCapacity = configuration.getSqlWindowStorePageSize() / RECORD_SIZE;
+            this.memory = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
+                    configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
+            this.frameLoBounded = rangeLo != Long.MIN_VALUE;
+            this.maxDiff = frameLoBounded ? Math.abs(rangeLo) : Long.MAX_VALUE;
+            this.minDiff = Math.abs(rangeHi);
+            this.timestampIndex = timestampIdx;
+            this.type = type;
+            capacity = initialCapacity;
+            startOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
+            firstIdx = 0;
+            frameSize = 0;
+            acc = 0L;
+            value = Decimals.DECIMAL64_NULL;
+        }
+
+        @Override
+        public void close() {
+            super.close();
+            memory.close();
+        }
+
+        @Override
+        public void computeNext(Record record) {
+            long timestamp = record.getTimestamp(timestampIndex);
+            short s = arg.getDecimal16(record);
+            long newFirstIdx = firstIdx;
+            if (frameLoBounded) {
+                for (long i = 0, n = size; i < n; i++) {
+                    long idx = (firstIdx + i) % capacity;
+                    long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
+                    if (Math.abs(timestamp - ts) > maxDiff) {
+                        if (frameSize > 0) {
+                            short val = memory.getShort(startOffset + idx * RECORD_SIZE + Long.BYTES);
+                            acc -= val;
+                            frameSize--;
+                        }
+                        newFirstIdx = (idx + 1) % capacity;
+                        size--;
+                    } else {
+                        break;
+                    }
+                }
+            }
+            firstIdx = newFirstIdx;
+
+            if (s != Decimals.DECIMAL16_NULL) {
+                if (size == capacity) {
+                    long newAddress = memory.appendAddressFor((capacity << 1) * RECORD_SIZE);
+                    long oldAddress = memory.getPageAddress(0) + startOffset;
+                    if (firstIdx == 0) {
+                        Vect.memcpy(newAddress, oldAddress, size * RECORD_SIZE);
+                    } else {
+                        firstIdx %= size;
+                        long firstPieceSize = (size - firstIdx) * RECORD_SIZE;
+                        Vect.memcpy(newAddress, oldAddress + firstIdx * RECORD_SIZE, firstPieceSize);
+                        Vect.memcpy(newAddress + firstPieceSize, oldAddress, firstIdx * RECORD_SIZE);
+                        firstIdx = 0;
+                    }
+                    startOffset = newAddress - memory.getPageAddress(0);
+                    capacity <<= 1;
+                }
+                memory.putLong(startOffset + ((firstIdx + size) % capacity) * RECORD_SIZE, timestamp);
+                memory.putShort(startOffset + ((firstIdx + size) % capacity) * RECORD_SIZE + Long.BYTES, s);
+                size++;
+            }
+
+            if (frameLoBounded) {
+                for (long i = frameSize, n = size; i < n; i++) {
+                    long idx = (firstIdx + i) % capacity;
+                    long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
+                    long diff = Math.abs(ts - timestamp);
+                    if (diff <= maxDiff && diff >= minDiff) {
+                        short val = memory.getShort(startOffset + idx * RECORD_SIZE + Long.BYTES);
+                        acc += val;
+                        frameSize++;
+                    } else {
+                        break;
+                    }
+                }
+            } else {
+                newFirstIdx = firstIdx;
+                for (long i = 0, n = size; i < n; i++) {
+                    long idx = (firstIdx + i) % capacity;
+                    long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
+                    if (Math.abs(timestamp - ts) >= minDiff) {
+                        short val = memory.getShort(startOffset + idx * RECORD_SIZE + Long.BYTES);
+                        acc += val;
+                        frameSize++;
+                        newFirstIdx = (idx + 1) % capacity;
+                        size--;
+                    } else {
+                        break;
+                    }
+                }
+                firstIdx = newFirstIdx;
+            }
+            value = frameSize != 0 ? acc : Decimals.DECIMAL64_NULL;
+        }
+
+        @Override
+        public long getDecimal64(Record rec) {
+            return value;
+        }
+
+        @Override
+        public String getName() {
+            return NAME;
+        }
+
+        @Override
+        public int getPassCount() {
+            return WindowFunction.ZERO_PASS;
+        }
+
+        @Override
+        public int getType() {
+            return type;
+        }
+
+        @Override
+        public void pass1(Record record, long recordOffset, WindowSPI spi) {
+            computeNext(record);
+            Unsafe.putLong(spi.getAddress(recordOffset, columnIndex), value);
+        }
+
+        @Override
+        public void reopen() {
+            value = Decimals.DECIMAL64_NULL;
+            capacity = initialCapacity;
+            startOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
+            firstIdx = 0;
+            frameSize = 0;
+            size = 0;
+            acc = 0L;
+        }
+
+        @Override
+        public void reset() {
+            super.reset();
+            memory.close();
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(getName());
+            sink.val('(').val(arg).val(')');
+            sink.val(" over (range between ");
+            if (frameLoBounded) {
+                sink.val(maxDiff);
+            } else {
+                sink.val("unbounded");
+            }
+            sink.val(" preceding and ");
+            if (minDiff == 0) {
+                sink.val("current row");
+            } else {
+                sink.val(minDiff).val(" preceding");
+            }
+            sink.val(')');
+        }
+
+        @Override
+        public void toTop() {
+            super.toTop();
+            value = Decimals.DECIMAL64_NULL;
+            capacity = initialCapacity;
+            memory.truncate();
+            startOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
+            firstIdx = 0;
+            frameSize = 0;
+            size = 0;
+            acc = 0L;
+        }
+    }
+
+    static class Decimal16SumOverRowsFrameFunction extends BaseWindowFunction implements Reopenable {
+
+        private final MemoryARW buffer;
+        private final int bufferSize;
+        private final boolean frameIncludesCurrentValue;
+        private final boolean frameLoBounded;
+        private final int frameSize;
+        private final int type;
+        private long acc;
+        private long count = 0;
+        private int loIdx = 0;
+        private long value;
+
+        public Decimal16SumOverRowsFrameFunction(Function arg, long rowsLo, long rowsHi, MemoryARW memory, int type) {
+            super(arg);
+            assert rowsLo != Long.MIN_VALUE || rowsHi != 0;
+            if (rowsLo > Long.MIN_VALUE) {
+                frameSize = (int) (rowsHi - rowsLo + (rowsHi < 0 ? 1 : 0));
+                bufferSize = (int) Math.abs(rowsLo);
+                frameLoBounded = true;
+            } else {
+                frameSize = (int) Math.abs(rowsHi);
+                bufferSize = frameSize;
+                frameLoBounded = false;
+            }
+            frameIncludesCurrentValue = rowsHi == 0;
+            this.buffer = memory;
+            this.type = type;
+            acc = 0L;
+            value = Decimals.DECIMAL64_NULL;
+            try {
+                initBuffer();
+            } catch (Throwable t) {
+                close();
+                throw t;
+            }
+        }
+
+        @Override
+        public void close() {
+            super.close();
+            buffer.close();
+        }
+
+        @Override
+        public void computeNext(Record record) {
+            short s = arg.getDecimal16(record);
+            short hiValue = s;
+            if (frameLoBounded && !frameIncludesCurrentValue) {
+                hiValue = buffer.getShort((long) ((loIdx + frameSize - 1) % bufferSize) * Short.BYTES);
+            } else if (!frameLoBounded && !frameIncludesCurrentValue) {
+                hiValue = buffer.getShort((long) (loIdx % bufferSize) * Short.BYTES);
+            }
+            if (hiValue != Decimals.DECIMAL16_NULL) {
+                acc += hiValue;
+                count++;
+            }
+            value = count != 0 ? acc : Decimals.DECIMAL64_NULL;
+
+            if (frameLoBounded) {
+                short loValue = buffer.getShort((long) loIdx * Short.BYTES);
+                if (loValue != Decimals.DECIMAL16_NULL) {
+                    acc -= loValue;
+                    count--;
+                }
+            }
+            buffer.putShort((long) loIdx * Short.BYTES, s);
+            loIdx = (loIdx + 1) % bufferSize;
+        }
+
+        @Override
+        public long getDecimal64(Record rec) {
+            return value;
+        }
+
+        @Override
+        public String getName() {
+            return NAME;
+        }
+
+        @Override
+        public int getPassCount() {
+            return WindowFunction.ZERO_PASS;
+        }
+
+        @Override
+        public int getType() {
+            return type;
+        }
+
+        @Override
+        public void pass1(Record record, long recordOffset, WindowSPI spi) {
+            computeNext(record);
+            Unsafe.putLong(spi.getAddress(recordOffset, columnIndex), value);
+        }
+
+        @Override
+        public void reopen() {
+            value = Decimals.DECIMAL64_NULL;
+            count = 0;
+            loIdx = 0;
+            acc = 0L;
+            initBuffer();
+        }
+
+        @Override
+        public void reset() {
+            super.reset();
+            buffer.close();
+            value = Decimals.DECIMAL64_NULL;
+            count = 0;
+            loIdx = 0;
+            acc = 0L;
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(getName());
+            sink.val('(').val(arg).val(')');
+            sink.val(" over (");
+            sink.val(" rows between ");
+            if (frameLoBounded) {
+                sink.val(bufferSize);
+            } else {
+                sink.val("unbounded");
+            }
+            sink.val(" preceding and ");
+            if (frameIncludesCurrentValue) {
+                sink.val("current row");
+            } else {
+                sink.val(bufferSize - frameSize).val(" preceding");
+            }
+            sink.val(')');
+        }
+
+        @Override
+        public void toTop() {
+            super.toTop();
+            value = Decimals.DECIMAL64_NULL;
+            count = 0;
+            loIdx = 0;
+            acc = 0L;
+            initBuffer();
+        }
+
+        private void initBuffer() {
+            for (int i = 0; i < bufferSize; i++) {
+                buffer.putShort((long) i * Short.BYTES, Decimals.DECIMAL16_NULL);
+            }
+        }
+    }
+
+    static class Decimal16SumOverUnboundedPartitionRowsFrameFunction extends BasePartitionedWindowFunction {
+
+        private final int type;
+        private long value;
+
+        public Decimal16SumOverUnboundedPartitionRowsFrameFunction(Map map, VirtualRecord partitionByRecord, RecordSink partitionBySink, Function arg, int type) {
+            super(map, partitionByRecord, partitionBySink, arg);
+            this.type = type;
+        }
+
+        @Override
+        public void computeNext(Record record) {
+            partitionByRecord.of(record);
+            MapKey key = map.withKey();
+            key.put(partitionByRecord, partitionBySink);
+            MapValue mv = key.createValue();
+
+            long acc;
+            boolean wasNullState;
+            if (mv.isNew()) {
+                acc = 0L;
+                wasNullState = true;
+            } else {
+                acc = mv.getLong(0);
+                wasNullState = mv.getBool(1);
+            }
+
+            short s = arg.getDecimal16(record);
+            if (s != Decimals.DECIMAL16_NULL) {
+                if (wasNullState) {
+                    acc = s;
+                    wasNullState = false;
+                } else {
+                    acc += s;
+                }
+            }
+            mv.putLong(0, acc);
+            mv.putBool(1, wasNullState);
+            value = wasNullState ? Decimals.DECIMAL64_NULL : acc;
+        }
+
+        @Override
+        public long getDecimal64(Record rec) {
+            return value;
+        }
+
+        @Override
+        public String getName() {
+            return NAME;
+        }
+
+        @Override
+        public int getPassCount() {
+            return WindowFunction.ZERO_PASS;
+        }
+
+        @Override
+        public int getType() {
+            return type;
+        }
+
+        @Override
+        public void pass1(Record record, long recordOffset, WindowSPI spi) {
+            computeNext(record);
+            Unsafe.putLong(spi.getAddress(recordOffset, columnIndex), value);
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(NAME);
+            sink.val('(').val(arg).val(')');
+            sink.val(" over (partition by ").val(partitionByRecord.getFunctions());
+            sink.val(" rows between unbounded preceding and current row)");
+        }
+    }
+
+    static class Decimal16SumOverUnboundedRowsFrameFunction extends BaseWindowFunction {
+
+        private final int type;
+        private long acc;
+        private boolean isNullState = true;
+        private long value;
+
+        public Decimal16SumOverUnboundedRowsFrameFunction(Function arg, int type) {
+            super(arg);
+            this.type = type;
+            acc = 0L;
+            value = Decimals.DECIMAL64_NULL;
+        }
+
+        @Override
+        public void computeNext(Record record) {
+            short s = arg.getDecimal16(record);
+            if (s != Decimals.DECIMAL16_NULL) {
+                if (isNullState) {
+                    acc = s;
+                    isNullState = false;
+                } else {
+                    acc += s;
+                }
+            }
+            value = isNullState ? Decimals.DECIMAL64_NULL : acc;
+        }
+
+        @Override
+        public long getDecimal64(Record rec) {
+            return value;
+        }
+
+        @Override
+        public String getName() {
+            return NAME;
+        }
+
+        @Override
+        public int getPassCount() {
+            return WindowFunction.ZERO_PASS;
+        }
+
+        @Override
+        public int getType() {
+            return type;
+        }
+
+        @Override
+        public void pass1(Record record, long recordOffset, WindowSPI spi) {
+            computeNext(record);
+            Unsafe.putLong(spi.getAddress(recordOffset, columnIndex), value);
+        }
+
+        @Override
+        public void reset() {
+            super.reset();
+            value = Decimals.DECIMAL64_NULL;
+            isNullState = true;
+            acc = 0L;
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(NAME);
+            sink.val('(').val(arg).val(')');
+            sink.val(" over (rows between unbounded preceding and current row)");
+        }
+
+        @Override
+        public void toTop() {
+            super.toTop();
+            value = Decimals.DECIMAL64_NULL;
+            isNullState = true;
+            acc = 0L;
+        }
+    }
+
+    static class Decimal16SumOverWholeResultSetFunction extends BaseWindowFunction {
+
+        private final int type;
+        private long acc;
+        private boolean isNullState = true;
+        private long value;
+
+        public Decimal16SumOverWholeResultSetFunction(Function arg, int type) {
+            super(arg);
+            this.type = type;
+            acc = 0L;
+            value = Decimals.DECIMAL64_NULL;
+        }
+
+        @Override
+        public long getDecimal64(Record rec) {
+            return value;
+        }
+
+        @Override
+        public String getName() {
+            return NAME;
+        }
+
+        @Override
+        public int getPassCount() {
+            return WindowFunction.TWO_PASS;
+        }
+
+        @Override
+        public int getType() {
+            return type;
+        }
+
+        @Override
+        public void pass1(Record record, long recordOffset, WindowSPI spi) {
+            short s = arg.getDecimal16(record);
+            if (s != Decimals.DECIMAL16_NULL) {
+                if (isNullState) {
+                    acc = s;
+                    isNullState = false;
+                } else {
+                    acc += s;
+                }
+            }
+        }
+
+        @Override
+        public void pass2(Record record, long recordOffset, WindowSPI spi) {
+            Unsafe.putLong(spi.getAddress(recordOffset, columnIndex), value);
+        }
+
+        @Override
+        public void preparePass2() {
+            value = isNullState ? Decimals.DECIMAL64_NULL : acc;
+        }
+
+        @Override
+        public void reset() {
+            super.reset();
+            value = Decimals.DECIMAL64_NULL;
+            isNullState = true;
+            acc = 0L;
+        }
+
+        @Override
+        public void toTop() {
+            super.toTop();
+            value = Decimals.DECIMAL64_NULL;
+            isNullState = true;
+            acc = 0L;
+        }
+    }
+
+    static class Decimal256SumOverCurrentRowFunction extends BaseWindowFunction {
+
+        private final int position;
+        private final Decimal256 scratch = new Decimal256();
+        private final int type;
+        private final Decimal256 value = new Decimal256();
+
+        Decimal256SumOverCurrentRowFunction(Function arg, int type, int position) {
+            super(arg);
+            this.type = type;
+            this.position = position;
+        }
+
+        @Override
+        public void computeNext(Record record) {
+            arg.getDecimal256(record, scratch);
+            if (scratch.isNull()) {
+                value.ofRawNull();
+            } else {
+                value.copyRaw(scratch);
+            }
+        }
+
+        @Override
+        public void getDecimal256(Record rec, Decimal256 sink) {
+            sink.copyRaw(value);
+            if (!sink.isNull() && sink.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("sum aggregation failed: an overflow occurred");
+            }
+        }
+
+        @Override
+        public String getName() {
+            return NAME;
+        }
+
+        @Override
+        public int getPassCount() {
+            return ZERO_PASS;
+        }
+
+        @Override
+        public int getType() {
+            return type;
+        }
+
+        @Override
+        public void pass1(Record record, long recordOffset, WindowSPI spi) {
+            computeNext(record);
+            long addr = spi.getAddress(recordOffset, columnIndex);
+            Unsafe.putLong(addr, value.getHh());
+            Unsafe.putLong(addr + Long.BYTES, value.getHl());
+            Unsafe.putLong(addr + 2 * Long.BYTES, value.getLh());
+            Unsafe.putLong(addr + 3 * Long.BYTES, value.getLl());
+        }
+    }
+
+    static class Decimal256SumOverPartitionFunction extends BasePartitionedWindowFunction {
+
+        private final Decimal256 acc = new Decimal256();
+        private final int position;
+        private final Decimal256 scratch = new Decimal256();
+        private final int type;
+        private final Decimal256 value = new Decimal256();
+
+        public Decimal256SumOverPartitionFunction(Map map, VirtualRecord partitionByRecord, RecordSink partitionBySink, Function arg, int type, int position) {
+            super(map, partitionByRecord, partitionBySink, arg);
+            this.type = type;
+            this.position = position;
+        }
+
+        @Override
+        public void getDecimal256(Record rec, Decimal256 sink) {
+            sink.copyRaw(value);
+            if (!sink.isNull() && sink.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("sum aggregation failed: an overflow occurred");
+            }
+        }
+
+        @Override
+        public String getName() {
+            return NAME;
+        }
+
+        @Override
+        public int getPassCount() {
+            return WindowFunction.TWO_PASS;
+        }
+
+        @Override
+        public int getType() {
+            return type;
+        }
+
+        @Override
+        public void pass1(Record record, long recordOffset, WindowSPI spi) {
+            partitionByRecord.of(record);
+            MapKey key = map.withKey();
+            key.put(partitionByRecord, partitionBySink);
+            MapValue mv = key.createValue();
+            arg.getDecimal256(record, scratch);
+            if (!scratch.isNull()) {
+                if (mv.isNew()) {
+                    acc.copyRaw(scratch);
+                    mv.putDecimal256(0, acc);
+                    mv.putBool(1, false);
+                } else if (mv.getBool(1)) {
+                    acc.copyRaw(scratch);
+                    mv.putDecimal256(0, acc);
+                    mv.putBool(1, false);
+                } else {
+                    mv.getDecimal256(0, acc);
+                    try {
+                        Decimal256.uncheckedAdd(acc, scratch);
+                    } catch (NumericException e) {
+                        throw CairoException.nonCritical().position(position).put("sum aggregation failed: ").put(e.getFlyweightMessage());
+                    }
+                    if (acc.hasOverflowed()) {
+                        throw CairoException.nonCritical().position(position).put("sum aggregation failed: an overflow occurred");
+                    }
+                    mv.putDecimal256(0, acc);
+                }
+            } else if (mv.isNew()) {
+                acc.ofRawNull();
+                mv.putDecimal256(0, acc);
+                mv.putBool(1, true);
+            }
+        }
+
+        @Override
+        public void pass2(Record record, long recordOffset, WindowSPI spi) {
+            partitionByRecord.of(record);
+            MapKey key = map.withKey();
+            key.put(partitionByRecord, partitionBySink);
+            MapValue mv = key.findValue();
+            long addr = spi.getAddress(recordOffset, columnIndex);
+            if (mv != null && !mv.getBool(1)) {
+                mv.getDecimal256(0, acc);
+                Unsafe.putLong(addr, acc.getHh());
+                Unsafe.putLong(addr + Long.BYTES, acc.getHl());
+                Unsafe.putLong(addr + 2 * Long.BYTES, acc.getLh());
+                Unsafe.putLong(addr + 3 * Long.BYTES, acc.getLl());
+            } else {
+                Unsafe.putLong(addr, Decimals.DECIMAL256_HH_NULL);
+                Unsafe.putLong(addr + Long.BYTES, Decimals.DECIMAL256_HL_NULL);
+                Unsafe.putLong(addr + 2 * Long.BYTES, Decimals.DECIMAL256_LH_NULL);
+                Unsafe.putLong(addr + 3 * Long.BYTES, Decimals.DECIMAL256_LL_NULL);
+            }
+        }
+    }
+
+    public static class Decimal256SumOverPartitionRangeFrameFunction extends BasePartitionedWindowFunction {
+
+        private static final int RECORD_SIZE = Long.BYTES + 32;
+        private final Decimal256 acc = new Decimal256();
+        private final boolean frameIncludesCurrentValue;
+        private final boolean frameLoBounded;
+        private final LongList freeList = new LongList();
+        private final int initialBufferSize;
+        private final long maxDiff;
+        private final MemoryARW memory;
+        private final RingBufferDesc memoryDesc = new RingBufferDesc();
+        private final long minDiff;
+        private final int position;
+        private final Decimal256 scratch = new Decimal256();
+        private final int timestampIndex;
+        private final int type;
+        private final Decimal256 value = new Decimal256();
+
+        public Decimal256SumOverPartitionRangeFrameFunction(
+                Map map,
+                VirtualRecord partitionByRecord,
+                RecordSink partitionBySink,
+                long rangeLo,
+                long rangeHi,
+                Function arg,
+                MemoryARW memory,
+                int initialBufferSize,
+                int timestampIdx,
+                int type,
+                int position
+        ) {
+            super(map, partitionByRecord, partitionBySink, arg);
+            this.frameLoBounded = rangeLo != Long.MIN_VALUE;
+            this.maxDiff = frameLoBounded ? Math.abs(rangeLo) : Long.MAX_VALUE;
+            this.minDiff = Math.abs(rangeHi);
+            this.memory = memory;
+            this.initialBufferSize = initialBufferSize;
+            this.timestampIndex = timestampIdx;
+            this.frameIncludesCurrentValue = rangeHi == 0;
+            this.type = type;
+            this.position = position;
+        }
+
+        @Override
+        public void close() {
+            super.close();
+            memory.close();
+            freeList.clear();
+        }
+
+        @Override
+        public void computeNext(Record record) {
+            partitionByRecord.of(record);
+            MapKey key = map.withKey();
+            key.put(partitionByRecord, partitionBySink);
+            MapValue mapValue = key.createValue();
+
+            long frameSize;
+            long startOffset;
+            long size;
+            long capacity;
+            long firstIdx;
+            long timestamp = record.getTimestamp(timestampIndex);
+            arg.getDecimal256(record, scratch);
+            boolean isNull = scratch.isNull();
+
+            if (mapValue.isNew()) {
+                capacity = initialBufferSize;
+                startOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
+                firstIdx = 0;
+                if (!isNull) {
+                    memory.putLong(startOffset, timestamp);
+                    writeD256(memory, startOffset + Long.BYTES, scratch);
+                    if (frameIncludesCurrentValue) {
+                        acc.copyRaw(scratch);
+                        value.copyRaw(acc);
+                        frameSize = 1;
+                        size = frameLoBounded ? 1 : 0;
+                    } else {
+                        acc.ofRaw(0);
+                        value.ofRawNull();
+                        frameSize = 0;
+                        size = 1;
+                    }
+                } else {
+                    size = 0;
+                    acc.ofRaw(0);
+                    value.ofRawNull();
+                    frameSize = 0;
+                }
+            } else {
+                mapValue.getDecimal256(0, acc);
+                frameSize = mapValue.getLong(1);
+                startOffset = mapValue.getLong(2);
+                size = mapValue.getLong(3);
+                capacity = mapValue.getLong(4);
+                firstIdx = mapValue.getLong(5);
+
+                long newFirstIdx = firstIdx;
+                if (frameLoBounded) {
+                    for (long i = 0, n = size; i < n; i++) {
+                        long idx = (firstIdx + i) % capacity;
+                        long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
+                        if (Math.abs(timestamp - ts) > maxDiff) {
+                            if (frameSize > 0) {
+                                readD256(memory, startOffset + idx * RECORD_SIZE + Long.BYTES, scratch);
+                                acc.subtract(scratch);
+                                frameSize--;
+                            }
+                            newFirstIdx = (idx + 1) % capacity;
+                            size--;
+                        } else {
+                            break;
+                        }
+                    }
+                }
+                firstIdx = newFirstIdx;
+
+                if (!isNull) {
+                    if (size == capacity) {
+                        memoryDesc.reset(capacity, startOffset, size, firstIdx, freeList);
+                        expandRingBuffer(memory, memoryDesc, RECORD_SIZE);
+                        capacity = memoryDesc.capacity;
+                        startOffset = memoryDesc.startOffset;
+                        firstIdx = memoryDesc.firstIdx;
+                    }
+                    long slotOffset = startOffset + ((firstIdx + size) % capacity) * RECORD_SIZE;
+                    memory.putLong(slotOffset, timestamp);
+                    writeD256(memory, slotOffset + Long.BYTES, scratch);
+                    size++;
+                }
+
+                if (frameLoBounded) {
+                    for (long i = frameSize; i < size; i++) {
+                        long idx = (firstIdx + i) % capacity;
+                        long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
+                        long diff = Math.abs(ts - timestamp);
+                        if (diff <= maxDiff && diff >= minDiff) {
+                            readD256(memory, startOffset + idx * RECORD_SIZE + Long.BYTES, scratch);
+                            try {
+                                Decimal256.uncheckedAdd(acc, scratch);
+                            } catch (NumericException e) {
+                                throw CairoException.nonCritical().position(position).put("sum aggregation failed: ").put(e.getFlyweightMessage());
+                            }
+                            if (acc.hasOverflowed()) {
+                                throw CairoException.nonCritical().position(position).put("sum aggregation failed: an overflow occurred");
+                            }
+                            frameSize++;
+                        } else {
+                            break;
+                        }
+                    }
+                } else {
+                    newFirstIdx = firstIdx;
+                    for (long i = 0, n = size; i < n; i++) {
+                        long idx = (firstIdx + i) % capacity;
+                        long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
+                        if (Math.abs(timestamp - ts) >= minDiff) {
+                            readD256(memory, startOffset + idx * RECORD_SIZE + Long.BYTES, scratch);
+                            try {
+                                Decimal256.uncheckedAdd(acc, scratch);
+                            } catch (NumericException e) {
+                                throw CairoException.nonCritical().position(position).put("sum aggregation failed: ").put(e.getFlyweightMessage());
+                            }
+                            if (acc.hasOverflowed()) {
+                                throw CairoException.nonCritical().position(position).put("sum aggregation failed: an overflow occurred");
+                            }
+                            frameSize++;
+                            newFirstIdx = (idx + 1) % capacity;
+                            size--;
+                        } else {
+                            break;
+                        }
+                    }
+                    firstIdx = newFirstIdx;
+                }
+
+                if (frameSize != 0) {
+                    value.copyRaw(acc);
+                } else {
+                    value.ofRawNull();
+                }
+            }
+
+            mapValue.putDecimal256(0, acc);
+            mapValue.putLong(1, frameSize);
+            mapValue.putLong(2, startOffset);
+            mapValue.putLong(3, size);
+            mapValue.putLong(4, capacity);
+            mapValue.putLong(5, firstIdx);
+        }
+
+        @Override
+        public void getDecimal256(Record rec, Decimal256 sink) {
+            sink.copyRaw(value);
+            if (!sink.isNull() && sink.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("sum aggregation failed: an overflow occurred");
+            }
+        }
+
+        @Override
+        public String getName() {
+            return NAME;
+        }
+
+        @Override
+        public int getPassCount() {
+            return WindowFunction.ZERO_PASS;
+        }
+
+        @Override
+        public int getType() {
+            return type;
+        }
+
+        @Override
+        public void pass1(Record record, long recordOffset, WindowSPI spi) {
+            computeNext(record);
+            long addr = spi.getAddress(recordOffset, columnIndex);
+            Unsafe.putLong(addr, value.getHh());
+            Unsafe.putLong(addr + Long.BYTES, value.getHl());
+            Unsafe.putLong(addr + 2 * Long.BYTES, value.getLh());
+            Unsafe.putLong(addr + 3 * Long.BYTES, value.getLl());
+        }
+
+        @Override
+        public void reopen() {
+            super.reopen();
+            value.ofRawNull();
+        }
+
+        @Override
+        public void reset() {
+            super.reset();
+            memory.close();
+            freeList.clear();
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(getName()).val('(').val(arg).val(')');
+            sink.val(" over (partition by ").val(partitionByRecord.getFunctions());
+            sink.val(" range between ");
+            if (frameLoBounded) {
+                sink.val(maxDiff);
+            } else {
+                sink.val("unbounded");
+            }
+            sink.val(" preceding and ");
+            if (minDiff == 0) {
+                sink.val("current row");
+            } else {
+                sink.val(minDiff).val(" preceding");
+            }
+            sink.val(')');
+        }
+
+        @Override
+        public void toTop() {
+            super.toTop();
+            memory.truncate();
+            freeList.clear();
+        }
+    }
+
+    public static class Decimal256SumOverPartitionRowsFrameFunction extends BasePartitionedWindowFunction {
+
+        private final Decimal256 acc = new Decimal256();
+        private final int bufferSize;
+        private final boolean frameIncludesCurrentValue;
+        private final boolean frameLoBounded;
+        private final int frameSize;
+        private final MemoryARW memory;
+        private final int position;
+        private final Decimal256 scratch = new Decimal256();
+        private final int type;
+        private final Decimal256 value = new Decimal256();
+
+        public Decimal256SumOverPartitionRowsFrameFunction(
+                Map map,
+                VirtualRecord partitionByRecord,
+                RecordSink partitionBySink,
+                long rowsLo,
+                long rowsHi,
+                Function arg,
+                MemoryARW memory,
+                int type,
+                int position
+        ) {
+            super(map, partitionByRecord, partitionBySink, arg);
+            if (rowsLo > Long.MIN_VALUE) {
+                frameSize = (int) (rowsHi - rowsLo + (rowsHi < 0 ? 1 : 0));
+                bufferSize = (int) Math.abs(rowsLo);
+                frameLoBounded = true;
+            } else {
+                frameSize = 1;
+                bufferSize = (int) Math.abs(rowsHi);
+                frameLoBounded = false;
+            }
+            frameIncludesCurrentValue = rowsHi == 0;
+            this.memory = memory;
+            this.type = type;
+            this.position = position;
+        }
+
+        @Override
+        public void close() {
+            super.close();
+            memory.close();
+        }
+
+        @Override
+        public void computeNext(Record record) {
+            partitionByRecord.of(record);
+            MapKey key = map.withKey();
+            key.put(partitionByRecord, partitionBySink);
+            MapValue mv = key.createValue();
+
+            long count;
+            long loIdx;
+            long startOffset;
+            arg.getDecimal256(record, scratch);
+            long inHh = scratch.getHh();
+            long inHl = scratch.getHl();
+            long inLh = scratch.getLh();
+            long inLl = scratch.getLl();
+            boolean isNull = scratch.isNull();
+
+            if (mv.isNew()) {
+                loIdx = 0;
+                startOffset = memory.appendAddressFor((long) bufferSize * 32L) - memory.getPageAddress(0);
+                if (frameIncludesCurrentValue && !isNull) {
+                    acc.copyRaw(scratch);
+                    count = 1;
+                    value.copyRaw(acc);
+                } else {
+                    acc.ofRaw(0);
+                    value.ofRawNull();
+                    count = 0;
+                }
+                for (int i = 0; i < bufferSize; i++) {
+                    long off = startOffset + (long) i * 32L;
+                    memory.putLong(off, Decimals.DECIMAL256_HH_NULL);
+                    memory.putLong(off + Long.BYTES, Decimals.DECIMAL256_HL_NULL);
+                    memory.putLong(off + 2 * Long.BYTES, Decimals.DECIMAL256_LH_NULL);
+                    memory.putLong(off + 3 * Long.BYTES, Decimals.DECIMAL256_LL_NULL);
+                }
+            } else {
+                mv.getDecimal256(0, acc);
+                count = mv.getLong(1);
+                loIdx = mv.getLong(2);
+                startOffset = mv.getLong(3);
+
+                if (frameIncludesCurrentValue) {
+                    if (!isNull) {
+                        try {
+                            Decimal256.uncheckedAdd(acc, scratch);
+                        } catch (NumericException e) {
+                            throw CairoException.nonCritical().position(position).put("sum aggregation failed: ").put(e.getFlyweightMessage());
+                        }
+                        if (acc.hasOverflowed()) {
+                            throw CairoException.nonCritical().position(position).put("sum aggregation failed: an overflow occurred");
+                        }
+                        count++;
+                    }
+                } else {
+                    readD256(memory, startOffset + ((loIdx + frameSize - 1) % bufferSize) * 32L, scratch);
+                    if (!scratch.isNull()) {
+                        try {
+                            Decimal256.uncheckedAdd(acc, scratch);
+                        } catch (NumericException e) {
+                            throw CairoException.nonCritical().position(position).put("sum aggregation failed: ").put(e.getFlyweightMessage());
+                        }
+                        if (acc.hasOverflowed()) {
+                            throw CairoException.nonCritical().position(position).put("sum aggregation failed: an overflow occurred");
+                        }
+                        count++;
+                    }
+                }
+                if (count != 0) {
+                    value.copyRaw(acc);
+                } else {
+                    value.ofRawNull();
+                }
+                if (frameLoBounded) {
+                    readD256(memory, startOffset + loIdx * 32L, scratch);
+                    if (!scratch.isNull()) {
+                        acc.subtract(scratch);
+                        count--;
+                    }
+                }
+            }
+
+            mv.putDecimal256(0, acc);
+            mv.putLong(1, count);
+            mv.putLong(2, (loIdx + 1) % bufferSize);
+            mv.putLong(3, startOffset);
+            long writeOff = startOffset + loIdx * 32L;
+            memory.putLong(writeOff, inHh);
+            memory.putLong(writeOff + Long.BYTES, inHl);
+            memory.putLong(writeOff + 2 * Long.BYTES, inLh);
+            memory.putLong(writeOff + 3 * Long.BYTES, inLl);
+        }
+
+        @Override
+        public void getDecimal256(Record rec, Decimal256 sink) {
+            sink.copyRaw(value);
+            if (!sink.isNull() && sink.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("sum aggregation failed: an overflow occurred");
+            }
+        }
+
+        @Override
+        public String getName() {
+            return NAME;
+        }
+
+        @Override
+        public int getPassCount() {
+            return WindowFunction.ZERO_PASS;
+        }
+
+        @Override
+        public int getType() {
+            return type;
+        }
+
+        @Override
+        public void pass1(Record record, long recordOffset, WindowSPI spi) {
+            computeNext(record);
+            long addr = spi.getAddress(recordOffset, columnIndex);
+            Unsafe.putLong(addr, value.getHh());
+            Unsafe.putLong(addr + Long.BYTES, value.getHl());
+            Unsafe.putLong(addr + 2 * Long.BYTES, value.getLh());
+            Unsafe.putLong(addr + 3 * Long.BYTES, value.getLl());
+        }
+
+        @Override
+        public void reopen() {
+            super.reopen();
+        }
+
+        @Override
+        public void reset() {
+            super.reset();
+            memory.close();
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(getName()).val('(').val(arg).val(')');
+            sink.val(" over (partition by ").val(partitionByRecord.getFunctions());
+            sink.val(" rows between ");
+            if (frameLoBounded) {
+                sink.val(bufferSize);
+            } else {
+                sink.val("unbounded");
+            }
+            sink.val(" preceding and ");
+            if (frameIncludesCurrentValue) {
+                sink.val("current row");
+            } else {
+                sink.val(bufferSize - frameSize).val(" preceding");
+            }
+            sink.val(')');
+        }
+
+        @Override
+        public void toTop() {
+            super.toTop();
+            memory.truncate();
+        }
+    }
+
+    static class Decimal256SumOverRangeFrameFunction extends BaseWindowFunction implements Reopenable {
+
+        private static final int RECORD_SIZE = Long.BYTES + 32;
+        private final Decimal256 acc = new Decimal256();
+        private final boolean frameLoBounded;
+        private final long initialCapacity;
+        private final long maxDiff;
+        private final MemoryARW memory;
+        private final long minDiff;
+        private final int position;
+        private final Decimal256 scratch = new Decimal256();
+        private final int timestampIndex;
+        private final int type;
+        private final Decimal256 value = new Decimal256();
+        private long capacity;
+        private long firstIdx;
+        private long frameSize;
+        private long size;
+        private long startOffset;
+
+        public Decimal256SumOverRangeFrameFunction(
+                long rangeLo,
+                long rangeHi,
+                Function arg,
+                CairoConfiguration configuration,
+                int timestampIdx,
+                int type,
+                int position
+        ) {
+            super(arg);
+            this.initialCapacity = configuration.getSqlWindowStorePageSize() / RECORD_SIZE;
+            this.memory = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
+                    configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
+            this.frameLoBounded = rangeLo != Long.MIN_VALUE;
+            this.maxDiff = frameLoBounded ? Math.abs(rangeLo) : Long.MAX_VALUE;
+            this.minDiff = Math.abs(rangeHi);
+            this.timestampIndex = timestampIdx;
+            this.type = type;
+            this.position = position;
+            capacity = initialCapacity;
+            startOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
+            firstIdx = 0;
+            frameSize = 0;
+            acc.ofRaw(0);
+            value.ofRawNull();
+        }
+
+        @Override
+        public void close() {
+            super.close();
+            memory.close();
+        }
+
+        @Override
+        public void computeNext(Record record) {
+            long timestamp = record.getTimestamp(timestampIndex);
+            arg.getDecimal256(record, scratch);
+            boolean isNull = scratch.isNull();
+            long inHh = scratch.getHh();
+            long inHl = scratch.getHl();
+            long inLh = scratch.getLh();
+            long inLl = scratch.getLl();
+            long newFirstIdx = firstIdx;
+            if (frameLoBounded) {
+                for (long i = 0, n = size; i < n; i++) {
+                    long idx = (firstIdx + i) % capacity;
+                    long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
+                    if (Math.abs(timestamp - ts) > maxDiff) {
+                        if (frameSize > 0) {
+                            readD256(memory, startOffset + idx * RECORD_SIZE + Long.BYTES, scratch);
+                            acc.subtract(scratch);
+                            frameSize--;
+                        }
+                        newFirstIdx = (idx + 1) % capacity;
+                        size--;
+                    } else {
+                        break;
+                    }
+                }
+            }
+            firstIdx = newFirstIdx;
+
+            if (!isNull) {
+                if (size == capacity) {
+                    long newAddress = memory.appendAddressFor((capacity << 1) * RECORD_SIZE);
+                    long oldAddress = memory.getPageAddress(0) + startOffset;
+                    if (firstIdx == 0) {
+                        Vect.memcpy(newAddress, oldAddress, size * RECORD_SIZE);
+                    } else {
+                        firstIdx %= size;
+                        long firstPieceSize = (size - firstIdx) * RECORD_SIZE;
+                        Vect.memcpy(newAddress, oldAddress + firstIdx * RECORD_SIZE, firstPieceSize);
+                        Vect.memcpy(newAddress + firstPieceSize, oldAddress, firstIdx * RECORD_SIZE);
+                        firstIdx = 0;
+                    }
+                    startOffset = newAddress - memory.getPageAddress(0);
+                    capacity <<= 1;
+                }
+                long slotOffset = startOffset + ((firstIdx + size) % capacity) * RECORD_SIZE;
+                memory.putLong(slotOffset, timestamp);
+                memory.putLong(slotOffset + Long.BYTES, inHh);
+                memory.putLong(slotOffset + Long.BYTES + Long.BYTES, inHl);
+                memory.putLong(slotOffset + Long.BYTES + 2 * Long.BYTES, inLh);
+                memory.putLong(slotOffset + Long.BYTES + 3 * Long.BYTES, inLl);
+                size++;
+            }
+
+            if (frameLoBounded) {
+                for (long i = frameSize, n = size; i < n; i++) {
+                    long idx = (firstIdx + i) % capacity;
+                    long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
+                    long diff = Math.abs(ts - timestamp);
+                    if (diff <= maxDiff && diff >= minDiff) {
+                        readD256(memory, startOffset + idx * RECORD_SIZE + Long.BYTES, scratch);
+                        try {
+                            Decimal256.uncheckedAdd(acc, scratch);
+                        } catch (NumericException e) {
+                            throw CairoException.nonCritical().position(position).put("sum aggregation failed: ").put(e.getFlyweightMessage());
+                        }
+                        if (acc.hasOverflowed()) {
+                            throw CairoException.nonCritical().position(position).put("sum aggregation failed: an overflow occurred");
+                        }
+                        frameSize++;
+                    } else {
+                        break;
+                    }
+                }
+            } else {
+                newFirstIdx = firstIdx;
+                for (long i = 0, n = size; i < n; i++) {
+                    long idx = (firstIdx + i) % capacity;
+                    long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
+                    if (Math.abs(timestamp - ts) >= minDiff) {
+                        readD256(memory, startOffset + idx * RECORD_SIZE + Long.BYTES, scratch);
+                        try {
+                            Decimal256.uncheckedAdd(acc, scratch);
+                        } catch (NumericException e) {
+                            throw CairoException.nonCritical().position(position).put("sum aggregation failed: ").put(e.getFlyweightMessage());
+                        }
+                        if (acc.hasOverflowed()) {
+                            throw CairoException.nonCritical().position(position).put("sum aggregation failed: an overflow occurred");
+                        }
+                        frameSize++;
+                        newFirstIdx = (idx + 1) % capacity;
+                        size--;
+                    } else {
+                        break;
+                    }
+                }
+                firstIdx = newFirstIdx;
+            }
+            if (frameSize != 0) {
+                value.copyRaw(acc);
+            } else {
+                value.ofRawNull();
+            }
+        }
+
+        @Override
+        public void getDecimal256(Record rec, Decimal256 sink) {
+            sink.copyRaw(value);
+            if (!sink.isNull() && sink.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("sum aggregation failed: an overflow occurred");
+            }
+        }
+
+        @Override
+        public String getName() {
+            return NAME;
+        }
+
+        @Override
+        public int getPassCount() {
+            return WindowFunction.ZERO_PASS;
+        }
+
+        @Override
+        public int getType() {
+            return type;
+        }
+
+        @Override
+        public void pass1(Record record, long recordOffset, WindowSPI spi) {
+            computeNext(record);
+            long addr = spi.getAddress(recordOffset, columnIndex);
+            Unsafe.putLong(addr, value.getHh());
+            Unsafe.putLong(addr + Long.BYTES, value.getHl());
+            Unsafe.putLong(addr + 2 * Long.BYTES, value.getLh());
+            Unsafe.putLong(addr + 3 * Long.BYTES, value.getLl());
+        }
+
+        @Override
+        public void reopen() {
+            value.ofRawNull();
+            capacity = initialCapacity;
+            startOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
+            firstIdx = 0;
+            frameSize = 0;
+            size = 0;
+            acc.ofRaw(0);
+        }
+
+        @Override
+        public void reset() {
+            super.reset();
+            memory.close();
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(getName()).val('(').val(arg).val(')');
+            sink.val(" over (range between ");
+            if (frameLoBounded) {
+                sink.val(maxDiff);
+            } else {
+                sink.val("unbounded");
+            }
+            sink.val(" preceding and ");
+            if (minDiff == 0) {
+                sink.val("current row");
+            } else {
+                sink.val(minDiff).val(" preceding");
+            }
+            sink.val(')');
+        }
+
+        @Override
+        public void toTop() {
+            super.toTop();
+            value.ofRawNull();
+            capacity = initialCapacity;
+            memory.truncate();
+            startOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
+            firstIdx = 0;
+            frameSize = 0;
+            size = 0;
+            acc.ofRaw(0);
+        }
+    }
+
+    static class Decimal256SumOverRowsFrameFunction extends BaseWindowFunction implements Reopenable {
+
+        private final Decimal256 acc = new Decimal256();
+        private final MemoryARW buffer;
+        private final int bufferSize;
+        private final boolean frameIncludesCurrentValue;
+        private final boolean frameLoBounded;
+        private final int frameSize;
+        private final int position;
+        private final Decimal256 scratch = new Decimal256();
+        private final int type;
+        private final Decimal256 value = new Decimal256();
+        private long count = 0;
+        private int loIdx = 0;
+
+        public Decimal256SumOverRowsFrameFunction(Function arg, long rowsLo, long rowsHi, MemoryARW memory, int type, int position) {
+            super(arg);
+            assert rowsLo != Long.MIN_VALUE || rowsHi != 0;
+            if (rowsLo > Long.MIN_VALUE) {
+                frameSize = (int) (rowsHi - rowsLo + (rowsHi < 0 ? 1 : 0));
+                bufferSize = (int) Math.abs(rowsLo);
+                frameLoBounded = true;
+            } else {
+                frameSize = (int) Math.abs(rowsHi);
+                bufferSize = frameSize;
+                frameLoBounded = false;
+            }
+            frameIncludesCurrentValue = rowsHi == 0;
+            this.buffer = memory;
+            this.type = type;
+            this.position = position;
+            acc.ofRaw(0);
+            value.ofRawNull();
+            try {
+                initBuffer();
+            } catch (Throwable t) {
+                close();
+                throw t;
+            }
+        }
+
+        @Override
+        public void close() {
+            super.close();
+            buffer.close();
+        }
+
+        @Override
+        public void computeNext(Record record) {
+            arg.getDecimal256(record, scratch);
+            long inHh = scratch.getHh();
+            long inHl = scratch.getHl();
+            long inLh = scratch.getLh();
+            long inLl = scratch.getLl();
+            if (frameIncludesCurrentValue) {
+                if (!scratch.isNull()) {
+                    try {
+                        Decimal256.uncheckedAdd(acc, scratch);
+                    } catch (NumericException e) {
+                        throw CairoException.nonCritical().position(position).put("sum aggregation failed: ").put(e.getFlyweightMessage());
+                    }
+                    if (acc.hasOverflowed()) {
+                        throw CairoException.nonCritical().position(position).put("sum aggregation failed: an overflow occurred");
+                    }
+                    count++;
+                }
+            } else {
+                long hiOff = frameLoBounded
+                        ? (long) ((loIdx + frameSize - 1) % bufferSize) * 32L
+                        : (long) (loIdx % bufferSize) * 32L;
+                readD256(buffer, hiOff, scratch);
+                if (!scratch.isNull()) {
+                    try {
+                        Decimal256.uncheckedAdd(acc, scratch);
+                    } catch (NumericException e) {
+                        throw CairoException.nonCritical().position(position).put("sum aggregation failed: ").put(e.getFlyweightMessage());
+                    }
+                    if (acc.hasOverflowed()) {
+                        throw CairoException.nonCritical().position(position).put("sum aggregation failed: an overflow occurred");
+                    }
+                    count++;
+                }
+            }
+            if (count != 0) {
+                value.copyRaw(acc);
+            } else {
+                value.ofRawNull();
+            }
+
+            if (frameLoBounded) {
+                readD256(buffer, (long) loIdx * 32L, scratch);
+                if (!scratch.isNull()) {
+                    acc.subtract(scratch);
+                    count--;
+                }
+            }
+            long writeOff = (long) loIdx * 32L;
+            buffer.putLong(writeOff, inHh);
+            buffer.putLong(writeOff + Long.BYTES, inHl);
+            buffer.putLong(writeOff + 2 * Long.BYTES, inLh);
+            buffer.putLong(writeOff + 3 * Long.BYTES, inLl);
+            loIdx = (loIdx + 1) % bufferSize;
+        }
+
+        @Override
+        public void getDecimal256(Record rec, Decimal256 sink) {
+            sink.copyRaw(value);
+            if (!sink.isNull() && sink.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("sum aggregation failed: an overflow occurred");
+            }
+        }
+
+        @Override
+        public String getName() {
+            return NAME;
+        }
+
+        @Override
+        public int getPassCount() {
+            return WindowFunction.ZERO_PASS;
+        }
+
+        @Override
+        public int getType() {
+            return type;
+        }
+
+        @Override
+        public void pass1(Record record, long recordOffset, WindowSPI spi) {
+            computeNext(record);
+            long addr = spi.getAddress(recordOffset, columnIndex);
+            Unsafe.putLong(addr, value.getHh());
+            Unsafe.putLong(addr + Long.BYTES, value.getHl());
+            Unsafe.putLong(addr + 2 * Long.BYTES, value.getLh());
+            Unsafe.putLong(addr + 3 * Long.BYTES, value.getLl());
+        }
+
+        @Override
+        public void reopen() {
+            value.ofRawNull();
+            count = 0;
+            loIdx = 0;
+            acc.ofRaw(0);
+            initBuffer();
+        }
+
+        @Override
+        public void reset() {
+            super.reset();
+            buffer.close();
+            value.ofRawNull();
+            count = 0;
+            loIdx = 0;
+            acc.ofRaw(0);
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(getName()).val('(').val(arg).val(')');
+            sink.val(" over (");
+            sink.val(" rows between ");
+            if (frameLoBounded) {
+                sink.val(bufferSize);
+            } else {
+                sink.val("unbounded");
+            }
+            sink.val(" preceding and ");
+            if (frameIncludesCurrentValue) {
+                sink.val("current row");
+            } else {
+                sink.val(bufferSize - frameSize).val(" preceding");
+            }
+            sink.val(')');
+        }
+
+        @Override
+        public void toTop() {
+            super.toTop();
+            value.ofRawNull();
+            count = 0;
+            loIdx = 0;
+            acc.ofRaw(0);
+            initBuffer();
+        }
+
+        private void initBuffer() {
+            for (int i = 0; i < bufferSize; i++) {
+                long off = (long) i * 32L;
+                buffer.putLong(off, Decimals.DECIMAL256_HH_NULL);
+                buffer.putLong(off + Long.BYTES, Decimals.DECIMAL256_HL_NULL);
+                buffer.putLong(off + 2 * Long.BYTES, Decimals.DECIMAL256_LH_NULL);
+                buffer.putLong(off + 3 * Long.BYTES, Decimals.DECIMAL256_LL_NULL);
+            }
+        }
+    }
+
+    static class Decimal256SumOverUnboundedPartitionRowsFrameFunction extends BasePartitionedWindowFunction {
+
+        private final Decimal256 acc = new Decimal256();
+        private final int position;
+        private final Decimal256 scratch = new Decimal256();
+        private final int type;
+        private final Decimal256 value = new Decimal256();
+
+        public Decimal256SumOverUnboundedPartitionRowsFrameFunction(Map map, VirtualRecord partitionByRecord, RecordSink partitionBySink, Function arg, int type, int position) {
+            super(map, partitionByRecord, partitionBySink, arg);
+            this.type = type;
+            this.position = position;
+        }
+
+        @Override
+        public void computeNext(Record record) {
+            partitionByRecord.of(record);
+            MapKey key = map.withKey();
+            key.put(partitionByRecord, partitionBySink);
+            MapValue mv = key.createValue();
+
+            boolean wasNullState;
+            if (mv.isNew()) {
+                acc.ofRaw(0);
+                wasNullState = true;
+            } else {
+                mv.getDecimal256(0, acc);
+                wasNullState = mv.getBool(1);
+            }
+
+            arg.getDecimal256(record, scratch);
+            if (!scratch.isNull()) {
+                if (wasNullState) {
+                    acc.copyRaw(scratch);
+                    wasNullState = false;
+                } else {
+                    try {
+                        Decimal256.uncheckedAdd(acc, scratch);
+                    } catch (NumericException e) {
+                        throw CairoException.nonCritical().position(position).put("sum aggregation failed: ").put(e.getFlyweightMessage());
+                    }
+                    if (acc.hasOverflowed()) {
+                        throw CairoException.nonCritical().position(position).put("sum aggregation failed: an overflow occurred");
+                    }
+                }
+            }
+            mv.putDecimal256(0, acc);
+            mv.putBool(1, wasNullState);
+            if (wasNullState) {
+                value.ofRawNull();
+            } else {
+                value.copyRaw(acc);
+            }
+        }
+
+        @Override
+        public void getDecimal256(Record rec, Decimal256 sink) {
+            sink.copyRaw(value);
+            if (!sink.isNull() && sink.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("sum aggregation failed: an overflow occurred");
+            }
+        }
+
+        @Override
+        public String getName() {
+            return NAME;
+        }
+
+        @Override
+        public int getPassCount() {
+            return WindowFunction.ZERO_PASS;
+        }
+
+        @Override
+        public int getType() {
+            return type;
+        }
+
+        @Override
+        public void pass1(Record record, long recordOffset, WindowSPI spi) {
+            computeNext(record);
+            long addr = spi.getAddress(recordOffset, columnIndex);
+            Unsafe.putLong(addr, value.getHh());
+            Unsafe.putLong(addr + Long.BYTES, value.getHl());
+            Unsafe.putLong(addr + 2 * Long.BYTES, value.getLh());
+            Unsafe.putLong(addr + 3 * Long.BYTES, value.getLl());
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(NAME).val('(').val(arg).val(')');
+            sink.val(" over (partition by ").val(partitionByRecord.getFunctions());
+            sink.val(" rows between unbounded preceding and current row)");
+        }
+    }
+
+    static class Decimal256SumOverUnboundedRowsFrameFunction extends BaseWindowFunction {
+
+        private final Decimal256 acc = new Decimal256();
+        private final int position;
+        private final Decimal256 scratch = new Decimal256();
+        private final int type;
+        private final Decimal256 value = new Decimal256();
+        private boolean isNullState = true;
+
+        public Decimal256SumOverUnboundedRowsFrameFunction(Function arg, int type, int position) {
+            super(arg);
+            this.type = type;
+            this.position = position;
+            acc.ofRaw(0);
+            value.ofRawNull();
+        }
+
+        @Override
+        public void computeNext(Record record) {
+            arg.getDecimal256(record, scratch);
+            if (!scratch.isNull()) {
+                if (isNullState) {
+                    acc.copyRaw(scratch);
+                    isNullState = false;
+                } else {
+                    try {
+                        Decimal256.uncheckedAdd(acc, scratch);
+                    } catch (NumericException e) {
+                        throw CairoException.nonCritical().position(position).put("sum aggregation failed: ").put(e.getFlyweightMessage());
+                    }
+                    if (acc.hasOverflowed()) {
+                        throw CairoException.nonCritical().position(position).put("sum aggregation failed: an overflow occurred");
+                    }
+                }
+            }
+            if (isNullState) {
+                value.ofRawNull();
+            } else {
+                value.copyRaw(acc);
+            }
+        }
+
+        @Override
+        public void getDecimal256(Record rec, Decimal256 sink) {
+            sink.copyRaw(value);
+            if (!sink.isNull() && sink.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("sum aggregation failed: an overflow occurred");
+            }
+        }
+
+        @Override
+        public String getName() {
+            return NAME;
+        }
+
+        @Override
+        public int getPassCount() {
+            return WindowFunction.ZERO_PASS;
+        }
+
+        @Override
+        public int getType() {
+            return type;
+        }
+
+        @Override
+        public void pass1(Record record, long recordOffset, WindowSPI spi) {
+            computeNext(record);
+            long addr = spi.getAddress(recordOffset, columnIndex);
+            Unsafe.putLong(addr, value.getHh());
+            Unsafe.putLong(addr + Long.BYTES, value.getHl());
+            Unsafe.putLong(addr + 2 * Long.BYTES, value.getLh());
+            Unsafe.putLong(addr + 3 * Long.BYTES, value.getLl());
+        }
+
+        @Override
+        public void reset() {
+            super.reset();
+            value.ofRawNull();
+            isNullState = true;
+            acc.ofRaw(0);
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(NAME).val('(').val(arg).val(')');
+            sink.val(" over (rows between unbounded preceding and current row)");
+        }
+
+        @Override
+        public void toTop() {
+            super.toTop();
+            value.ofRawNull();
+            isNullState = true;
+            acc.ofRaw(0);
+        }
+    }
+
+    static class Decimal256SumOverWholeResultSetFunction extends BaseWindowFunction {
+
+        private final Decimal256 acc = new Decimal256();
+        private final int position;
+        private final Decimal256 scratch = new Decimal256();
+        private final int type;
+        private final Decimal256 value = new Decimal256();
+        private boolean isNullState = true;
+
+        public Decimal256SumOverWholeResultSetFunction(Function arg, int type, int position) {
+            super(arg);
+            this.type = type;
+            this.position = position;
+            acc.ofRaw(0);
+            value.ofRawNull();
+        }
+
+        @Override
+        public void getDecimal256(Record rec, Decimal256 sink) {
+            sink.copyRaw(value);
+            if (!sink.isNull() && sink.hasOverflowed()) {
+                throw CairoException.nonCritical().position(position).put("sum aggregation failed: an overflow occurred");
+            }
+        }
+
+        @Override
+        public String getName() {
+            return NAME;
+        }
+
+        @Override
+        public int getPassCount() {
+            return WindowFunction.TWO_PASS;
+        }
+
+        @Override
+        public int getType() {
+            return type;
+        }
+
+        @Override
+        public void pass1(Record record, long recordOffset, WindowSPI spi) {
+            arg.getDecimal256(record, scratch);
+            if (!scratch.isNull()) {
+                if (isNullState) {
+                    acc.copyRaw(scratch);
+                    isNullState = false;
+                } else {
+                    try {
+                        Decimal256.uncheckedAdd(acc, scratch);
+                    } catch (NumericException e) {
+                        throw CairoException.nonCritical().position(position).put("sum aggregation failed: ").put(e.getFlyweightMessage());
+                    }
+                    if (acc.hasOverflowed()) {
+                        throw CairoException.nonCritical().position(position).put("sum aggregation failed: an overflow occurred");
+                    }
+                }
+            }
+        }
+
+        @Override
+        public void pass2(Record record, long recordOffset, WindowSPI spi) {
+            long addr = spi.getAddress(recordOffset, columnIndex);
+            Unsafe.putLong(addr, value.getHh());
+            Unsafe.putLong(addr + Long.BYTES, value.getHl());
+            Unsafe.putLong(addr + 2 * Long.BYTES, value.getLh());
+            Unsafe.putLong(addr + 3 * Long.BYTES, value.getLl());
+        }
+
+        @Override
+        public void preparePass2() {
+            if (isNullState) {
+                value.ofRawNull();
+            } else {
+                value.copyRaw(acc);
+            }
+        }
+
+        @Override
+        public void reset() {
+            super.reset();
+            value.ofRawNull();
+            isNullState = true;
+            acc.ofRaw(0);
+        }
+
+        @Override
+        public void toTop() {
+            super.toTop();
+            value.ofRawNull();
+            isNullState = true;
+            acc.ofRaw(0);
+        }
+    }
+
+    static class Decimal32SumOverCurrentRowFunction extends BaseWindowFunction {
+
+        private final int type;
+        private final Decimal128 value = new Decimal128();
+
+        Decimal32SumOverCurrentRowFunction(Function arg, int type) {
+            super(arg);
+            this.type = type;
+        }
+
+        @Override
+        public void computeNext(Record record) {
+            int i = arg.getDecimal32(record);
+            if (i == Decimals.DECIMAL32_NULL) {
+                value.ofRawNull();
+            } else {
+                value.ofRaw(i);
+            }
+        }
+
+        @Override
+        public void getDecimal128(Record rec, Decimal128 sink) {
+            sink.copyFrom(value);
+        }
+
+        @Override
+        public String getName() {
+            return NAME;
+        }
+
+        @Override
+        public int getPassCount() {
+            return ZERO_PASS;
+        }
+
+        @Override
+        public int getType() {
+            return type;
+        }
+
+        @Override
+        public void pass1(Record record, long recordOffset, WindowSPI spi) {
+            computeNext(record);
+            long addr = spi.getAddress(recordOffset, columnIndex);
+            Unsafe.putLong(addr, value.getHigh());
+            Unsafe.putLong(addr + Long.BYTES, value.getLow());
+        }
+    }
+
+    static class Decimal32SumOverPartitionFunction extends BasePartitionedWindowFunction {
+
+        private final Decimal128 acc = new Decimal128();
+        private final int position;
+        private final int type;
+        private final Decimal128 value = new Decimal128();
+
+        public Decimal32SumOverPartitionFunction(Map map, VirtualRecord partitionByRecord, RecordSink partitionBySink, Function arg, int type, int position) {
+            super(map, partitionByRecord, partitionBySink, arg);
+            this.type = type;
+            this.position = position;
+        }
+
+        @Override
+        public void computeNext(Record record) {
+            partitionByRecord.of(record);
+            MapKey key = map.withKey();
+            key.put(partitionByRecord, partitionBySink);
+            MapValue mv = key.createValue();
+            int i = arg.getDecimal32(record);
+            boolean isNull = i == Decimals.DECIMAL32_NULL;
+            if (mv.isNew()) {
+                if (isNull) {
+                    acc.ofRawNull();
+                    value.ofRawNull();
+                    mv.putDecimal128Null(0);
+                    mv.putBool(1, true);
+                } else {
+                    acc.ofRaw(i);
+                    value.copyFrom(acc);
+                    mv.putDecimal128(0, acc);
+                    mv.putBool(1, false);
+                }
+            } else {
+                boolean wasNull = mv.getBool(1);
+                if (wasNull) {
+                    if (isNull) {
+                        acc.ofRawNull();
+                    } else {
+                        acc.ofRaw(i);
+                        mv.putBool(1, false);
+                        mv.putDecimal128(0, acc);
+                    }
+                } else {
+                    mv.getDecimal128(0, acc);
+                    if (!isNull) {
+                        try {
+                            Decimal128.uncheckedAdd(acc, i);
+                        } catch (NumericException e) {
+                            throw CairoException.nonCritical().position(position).put("sum aggregation failed: ").put(e.getFlyweightMessage());
+                        }
+                        mv.putDecimal128(0, acc);
+                    }
+                }
+                value.copyFrom(acc);
+            }
+        }
+
+        @Override
+        public void getDecimal128(Record rec, Decimal128 sink) {
+            sink.copyFrom(value);
+        }
+
+        @Override
+        public String getName() {
+            return NAME;
+        }
+
+        @Override
+        public int getPassCount() {
+            return WindowFunction.TWO_PASS;
+        }
+
+        @Override
+        public int getType() {
+            return type;
+        }
+
+        @Override
+        public void pass1(Record record, long recordOffset, WindowSPI spi) {
+            partitionByRecord.of(record);
+            MapKey key = map.withKey();
+            key.put(partitionByRecord, partitionBySink);
+            MapValue mv = key.createValue();
+            int i = arg.getDecimal32(record);
+            if (i != Decimals.DECIMAL32_NULL) {
+                if (mv.isNew()) {
+                    acc.ofRaw(i);
+                    mv.putDecimal128(0, acc);
+                    mv.putBool(1, false);
+                } else if (mv.getBool(1)) {
+                    acc.ofRaw(i);
+                    mv.putDecimal128(0, acc);
+                    mv.putBool(1, false);
+                } else {
+                    mv.getDecimal128(0, acc);
+                    try {
+                        Decimal128.uncheckedAdd(acc, i);
+                    } catch (NumericException e) {
+                        throw CairoException.nonCritical().position(position).put("sum aggregation failed: ").put(e.getFlyweightMessage());
+                    }
+                    mv.putDecimal128(0, acc);
+                }
+            } else if (mv.isNew()) {
+                mv.putDecimal128Null(0);
+                mv.putBool(1, true);
+            }
+        }
+
+        @Override
+        public void pass2(Record record, long recordOffset, WindowSPI spi) {
+            partitionByRecord.of(record);
+            MapKey key = map.withKey();
+            key.put(partitionByRecord, partitionBySink);
+            MapValue mv = key.findValue();
+            long addr = spi.getAddress(recordOffset, columnIndex);
+            if (mv != null && !mv.getBool(1)) {
+                mv.getDecimal128(0, acc);
+                Unsafe.putLong(addr, acc.getHigh());
+                Unsafe.putLong(addr + Long.BYTES, acc.getLow());
+            } else {
+                Unsafe.putLong(addr, Decimals.DECIMAL128_HI_NULL);
+                Unsafe.putLong(addr + Long.BYTES, Decimals.DECIMAL128_LO_NULL);
+            }
+        }
+    }
+
+    public static class Decimal32SumOverPartitionRangeFrameFunction extends BasePartitionedWindowFunction {
+
+        private static final int RECORD_SIZE = Long.BYTES + Integer.BYTES;
+        private final Decimal128 acc = new Decimal128();
+        private final boolean frameIncludesCurrentValue;
+        private final boolean frameLoBounded;
+        private final LongList freeList = new LongList();
+        private final int initialBufferSize;
+        private final long maxDiff;
+        private final MemoryARW memory;
+        private final RingBufferDesc memoryDesc = new RingBufferDesc();
+        private final long minDiff;
+        private final int position;
+        private final int scale;
+        private final int timestampIndex;
+        private final int type;
+        private final Decimal128 value = new Decimal128();
+
+        public Decimal32SumOverPartitionRangeFrameFunction(
+                Map map,
+                VirtualRecord partitionByRecord,
+                RecordSink partitionBySink,
+                long rangeLo,
+                long rangeHi,
+                Function arg,
+                MemoryARW memory,
+                int initialBufferSize,
+                int timestampIdx,
+                int type,
+                int position
+        ) {
+            super(map, partitionByRecord, partitionBySink, arg);
+            this.frameLoBounded = rangeLo != Long.MIN_VALUE;
+            this.maxDiff = frameLoBounded ? Math.abs(rangeLo) : Long.MAX_VALUE;
+            this.minDiff = Math.abs(rangeHi);
+            this.memory = memory;
+            this.initialBufferSize = initialBufferSize;
+            this.timestampIndex = timestampIdx;
+            this.frameIncludesCurrentValue = rangeHi == 0;
+            this.type = type;
+            this.scale = ColumnType.getDecimalScale(type);
+            this.position = position;
+        }
+
+        @Override
+        public void close() {
+            super.close();
+            memory.close();
+            freeList.clear();
+        }
+
+        @Override
+        public void computeNext(Record record) {
+            partitionByRecord.of(record);
+            MapKey key = map.withKey();
+            key.put(partitionByRecord, partitionBySink);
+            MapValue mapValue = key.createValue();
+
+            long frameSize;
+            long startOffset;
+            long size;
+            long capacity;
+            long firstIdx;
+            long timestamp = record.getTimestamp(timestampIndex);
+            int d = arg.getDecimal32(record);
+
+            if (mapValue.isNew()) {
+                capacity = initialBufferSize;
+                startOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
+                firstIdx = 0;
+                if (d != Decimals.DECIMAL32_NULL) {
+                    memory.putLong(startOffset, timestamp);
+                    memory.putInt(startOffset + Long.BYTES, d);
+                    if (frameIncludesCurrentValue) {
+                        acc.ofRaw(d);
+                        value.copyFrom(acc);
+                        frameSize = 1;
+                        size = frameLoBounded ? 1 : 0;
+                    } else {
+                        acc.ofRaw(0);
+                        value.ofRawNull();
+                        frameSize = 0;
+                        size = 1;
+                    }
+                } else {
+                    size = 0;
+                    acc.ofRaw(0);
+                    value.ofRawNull();
+                    frameSize = 0;
+                }
+            } else {
+                mapValue.getDecimal128(0, acc);
+                frameSize = mapValue.getLong(1);
+                startOffset = mapValue.getLong(2);
+                size = mapValue.getLong(3);
+                capacity = mapValue.getLong(4);
+                firstIdx = mapValue.getLong(5);
+
+                long newFirstIdx = firstIdx;
+                if (frameLoBounded) {
+                    for (long i = 0, n = size; i < n; i++) {
+                        long idx = (firstIdx + i) % capacity;
+                        long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
+                        if (Math.abs(timestamp - ts) > maxDiff) {
+                            if (frameSize > 0) {
+                                int val = memory.getInt(startOffset + idx * RECORD_SIZE + Long.BYTES);
+                                acc.subtract(val < 0 ? -1L : 0L, val, 0);
+                                frameSize--;
+                            }
+                            newFirstIdx = (idx + 1) % capacity;
+                            size--;
+                        } else {
+                            break;
+                        }
+                    }
+                }
+                firstIdx = newFirstIdx;
+
+                if (d != Decimals.DECIMAL32_NULL) {
+                    if (size == capacity) {
+                        memoryDesc.reset(capacity, startOffset, size, firstIdx, freeList);
+                        expandRingBuffer(memory, memoryDesc, RECORD_SIZE);
+                        capacity = memoryDesc.capacity;
+                        startOffset = memoryDesc.startOffset;
+                        firstIdx = memoryDesc.firstIdx;
+                    }
+                    memory.putLong(startOffset + ((firstIdx + size) % capacity) * RECORD_SIZE, timestamp);
+                    memory.putInt(startOffset + ((firstIdx + size) % capacity) * RECORD_SIZE + Long.BYTES, d);
+                    size++;
+                }
+
+                if (frameLoBounded) {
+                    for (long i = frameSize; i < size; i++) {
+                        long idx = (firstIdx + i) % capacity;
+                        long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
+                        long diff = Math.abs(ts - timestamp);
+                        if (diff <= maxDiff && diff >= minDiff) {
+                            int val = memory.getInt(startOffset + idx * RECORD_SIZE + Long.BYTES);
+                            try {
+                                Decimal128.uncheckedAdd(acc, val);
+                            } catch (NumericException e) {
+                                throw CairoException.nonCritical().position(position).put("sum aggregation failed: ").put(e.getFlyweightMessage());
+                            }
+                            frameSize++;
+                        } else {
+                            break;
+                        }
+                    }
+                } else {
+                    newFirstIdx = firstIdx;
+                    for (long i = 0, n = size; i < n; i++) {
+                        long idx = (firstIdx + i) % capacity;
+                        long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
+                        if (Math.abs(timestamp - ts) >= minDiff) {
+                            int val = memory.getInt(startOffset + idx * RECORD_SIZE + Long.BYTES);
+                            try {
+                                Decimal128.uncheckedAdd(acc, val);
+                            } catch (NumericException e) {
+                                throw CairoException.nonCritical().position(position).put("sum aggregation failed: ").put(e.getFlyweightMessage());
+                            }
+                            frameSize++;
+                            newFirstIdx = (idx + 1) % capacity;
+                            size--;
+                        } else {
+                            break;
+                        }
+                    }
+                    firstIdx = newFirstIdx;
+                }
+
+                if (frameSize != 0) {
+                    value.copyFrom(acc);
+                } else {
+                    value.ofRawNull();
+                }
+            }
+
+            mapValue.putDecimal128(0, acc);
+            mapValue.putLong(1, frameSize);
+            mapValue.putLong(2, startOffset);
+            mapValue.putLong(3, size);
+            mapValue.putLong(4, capacity);
+            mapValue.putLong(5, firstIdx);
+        }
+
+        @Override
+        public void getDecimal128(Record rec, Decimal128 sink) {
+            sink.copyFrom(value);
+        }
+
+        @Override
+        public String getName() {
+            return NAME;
+        }
+
+        @Override
+        public int getPassCount() {
+            return WindowFunction.ZERO_PASS;
+        }
+
+        @Override
+        public int getType() {
+            return type;
+        }
+
+        @Override
+        public void pass1(Record record, long recordOffset, WindowSPI spi) {
+            computeNext(record);
+            long addr = spi.getAddress(recordOffset, columnIndex);
+            Unsafe.putLong(addr, value.getHigh());
+            Unsafe.putLong(addr + Long.BYTES, value.getLow());
+        }
+
+        @Override
+        public void reopen() {
+            super.reopen();
+            value.ofRawNull();
+        }
+
+        @Override
+        public void reset() {
+            super.reset();
+            memory.close();
+            freeList.clear();
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(getName());
+            sink.val('(').val(arg).val(')');
+            sink.val(" over (partition by ").val(partitionByRecord.getFunctions());
+            sink.val(" range between ");
+            if (frameLoBounded) {
+                sink.val(maxDiff);
+            } else {
+                sink.val("unbounded");
+            }
+            sink.val(" preceding and ");
+            if (minDiff == 0) {
+                sink.val("current row");
+            } else {
+                sink.val(minDiff).val(" preceding");
+            }
+            sink.val(')');
+        }
+
+        @Override
+        public void toTop() {
+            super.toTop();
+            memory.truncate();
+            freeList.clear();
+        }
+    }
+
+    public static class Decimal32SumOverPartitionRowsFrameFunction extends BasePartitionedWindowFunction {
+
+        private final Decimal128 acc = new Decimal128();
+        private final int bufferSize;
+        private final boolean frameIncludesCurrentValue;
+        private final boolean frameLoBounded;
+        private final int frameSize;
+        private final MemoryARW memory;
+        private final int position;
+        private final int scale;
+        private final int type;
+        private final Decimal128 value = new Decimal128();
+
+        public Decimal32SumOverPartitionRowsFrameFunction(
+                Map map,
+                VirtualRecord partitionByRecord,
+                RecordSink partitionBySink,
+                long rowsLo,
+                long rowsHi,
+                Function arg,
+                MemoryARW memory,
+                int type,
+                int position
+        ) {
+            super(map, partitionByRecord, partitionBySink, arg);
+            if (rowsLo > Long.MIN_VALUE) {
+                frameSize = (int) (rowsHi - rowsLo + (rowsHi < 0 ? 1 : 0));
+                bufferSize = (int) Math.abs(rowsLo);
+                frameLoBounded = true;
+            } else {
+                frameSize = 1;
+                bufferSize = (int) Math.abs(rowsHi);
+                frameLoBounded = false;
+            }
+            frameIncludesCurrentValue = rowsHi == 0;
+            this.memory = memory;
+            this.type = type;
+            this.scale = ColumnType.getDecimalScale(type);
+            this.position = position;
+        }
+
+        @Override
+        public void close() {
+            super.close();
+            memory.close();
+        }
+
+        @Override
+        public void computeNext(Record record) {
+            partitionByRecord.of(record);
+            MapKey key = map.withKey();
+            key.put(partitionByRecord, partitionBySink);
+            MapValue mv = key.createValue();
+
+            long count;
+            long loIdx;
+            long startOffset;
+            int d = arg.getDecimal32(record);
+
+            if (mv.isNew()) {
+                loIdx = 0;
+                startOffset = memory.appendAddressFor((long) bufferSize * Integer.BYTES) - memory.getPageAddress(0);
+                if (frameIncludesCurrentValue && d != Decimals.DECIMAL32_NULL) {
+                    acc.ofRaw(d);
+                    count = 1;
+                    value.copyFrom(acc);
+                } else {
+                    acc.ofRaw(0);
+                    value.ofRawNull();
+                    count = 0;
+                }
+                for (int i = 0; i < bufferSize; i++) {
+                    memory.putInt(startOffset + (long) i * Integer.BYTES, Decimals.DECIMAL32_NULL);
+                }
+            } else {
+                mv.getDecimal128(0, acc);
+                count = mv.getLong(1);
+                loIdx = mv.getLong(2);
+                startOffset = mv.getLong(3);
+
+                int hiValue = frameIncludesCurrentValue ? d : memory.getInt(startOffset + ((loIdx + frameSize - 1) % bufferSize) * Integer.BYTES);
+                if (hiValue != Decimals.DECIMAL32_NULL) {
+                    count++;
+                    try {
+                        Decimal128.uncheckedAdd(acc, hiValue);
+                    } catch (NumericException e) {
+                        throw CairoException.nonCritical().position(position).put("sum aggregation failed: ").put(e.getFlyweightMessage());
+                    }
+                }
+                if (count != 0) {
+                    value.copyFrom(acc);
+                } else {
+                    value.ofRawNull();
+                }
+                if (frameLoBounded) {
+                    int loValue = memory.getInt(startOffset + loIdx * Integer.BYTES);
+                    if (loValue != Decimals.DECIMAL32_NULL) {
+                        acc.subtract(loValue < 0 ? -1L : 0L, loValue, 0);
+                        count--;
+                    }
+                }
+            }
+
+            mv.putDecimal128(0, acc);
+            mv.putLong(1, count);
+            mv.putLong(2, (loIdx + 1) % bufferSize);
+            mv.putLong(3, startOffset);
+            memory.putInt(startOffset + loIdx * Integer.BYTES, d);
+        }
+
+        @Override
+        public void getDecimal128(Record rec, Decimal128 sink) {
+            sink.copyFrom(value);
+        }
+
+        @Override
+        public String getName() {
+            return NAME;
+        }
+
+        @Override
+        public int getPassCount() {
+            return WindowFunction.ZERO_PASS;
+        }
+
+        @Override
+        public int getType() {
+            return type;
+        }
+
+        @Override
+        public void pass1(Record record, long recordOffset, WindowSPI spi) {
+            computeNext(record);
+            long addr = spi.getAddress(recordOffset, columnIndex);
+            Unsafe.putLong(addr, value.getHigh());
+            Unsafe.putLong(addr + Long.BYTES, value.getLow());
+        }
+
+        @Override
+        public void reopen() {
+            super.reopen();
+        }
+
+        @Override
+        public void reset() {
+            super.reset();
+            memory.close();
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(getName()).val('(').val(arg).val(')');
+            sink.val(" over (partition by ").val(partitionByRecord.getFunctions());
+            sink.val(" rows between ");
+            if (frameLoBounded) {
+                sink.val(bufferSize);
+            } else {
+                sink.val("unbounded");
+            }
+            sink.val(" preceding and ");
+            if (frameIncludesCurrentValue) {
+                sink.val("current row");
+            } else {
+                sink.val(bufferSize - frameSize).val(" preceding");
+            }
+            sink.val(')');
+        }
+
+        @Override
+        public void toTop() {
+            super.toTop();
+            memory.truncate();
+        }
+    }
+
+    static class Decimal32SumOverRangeFrameFunction extends BaseWindowFunction implements Reopenable {
+
+        private static final int RECORD_SIZE = Long.BYTES + Integer.BYTES;
+        private final Decimal128 acc = new Decimal128();
+        private final boolean frameLoBounded;
+        private final long initialCapacity;
+        private final long maxDiff;
+        private final MemoryARW memory;
+        private final long minDiff;
+        private final int position;
+        private final int scale;
+        private final int timestampIndex;
+        private final int type;
+        private final Decimal128 value = new Decimal128();
+        private long capacity;
+        private long firstIdx;
+        private long frameSize;
+        private long size;
+        private long startOffset;
+
+        public Decimal32SumOverRangeFrameFunction(
+                long rangeLo,
+                long rangeHi,
+                Function arg,
+                CairoConfiguration configuration,
+                int timestampIdx,
+                int type,
+                int position
+        ) {
+            super(arg);
+            this.initialCapacity = configuration.getSqlWindowStorePageSize() / RECORD_SIZE;
+            this.memory = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
+                    configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
+            this.frameLoBounded = rangeLo != Long.MIN_VALUE;
+            this.maxDiff = frameLoBounded ? Math.abs(rangeLo) : Long.MAX_VALUE;
+            this.minDiff = Math.abs(rangeHi);
+            this.timestampIndex = timestampIdx;
+            this.type = type;
+            this.scale = ColumnType.getDecimalScale(type);
+            this.position = position;
+            capacity = initialCapacity;
+            startOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
+            firstIdx = 0;
+            frameSize = 0;
+            acc.ofRaw(0);
+            value.ofRawNull();
+        }
+
+        @Override
+        public void close() {
+            super.close();
+            memory.close();
+        }
+
+        @Override
+        public void computeNext(Record record) {
+            long timestamp = record.getTimestamp(timestampIndex);
+            int d = arg.getDecimal32(record);
+            long newFirstIdx = firstIdx;
+            if (frameLoBounded) {
+                for (long i = 0, n = size; i < n; i++) {
+                    long idx = (firstIdx + i) % capacity;
+                    long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
+                    if (Math.abs(timestamp - ts) > maxDiff) {
+                        if (frameSize > 0) {
+                            int val = memory.getInt(startOffset + idx * RECORD_SIZE + Long.BYTES);
+                            acc.subtract(val < 0 ? -1L : 0L, val, 0);
+                            frameSize--;
+                        }
+                        newFirstIdx = (idx + 1) % capacity;
+                        size--;
+                    } else {
+                        break;
+                    }
+                }
+            }
+            firstIdx = newFirstIdx;
+
+            if (d != Decimals.DECIMAL32_NULL) {
+                if (size == capacity) {
+                    long newAddress = memory.appendAddressFor((capacity << 1) * RECORD_SIZE);
+                    long oldAddress = memory.getPageAddress(0) + startOffset;
+                    if (firstIdx == 0) {
+                        Vect.memcpy(newAddress, oldAddress, size * RECORD_SIZE);
+                    } else {
+                        firstIdx %= size;
+                        long firstPieceSize = (size - firstIdx) * RECORD_SIZE;
+                        Vect.memcpy(newAddress, oldAddress + firstIdx * RECORD_SIZE, firstPieceSize);
+                        Vect.memcpy(newAddress + firstPieceSize, oldAddress, firstIdx * RECORD_SIZE);
+                        firstIdx = 0;
+                    }
+                    startOffset = newAddress - memory.getPageAddress(0);
+                    capacity <<= 1;
+                }
+                memory.putLong(startOffset + ((firstIdx + size) % capacity) * RECORD_SIZE, timestamp);
+                memory.putInt(startOffset + ((firstIdx + size) % capacity) * RECORD_SIZE + Long.BYTES, d);
+                size++;
+            }
+
+            if (frameLoBounded) {
+                for (long i = frameSize, n = size; i < n; i++) {
+                    long idx = (firstIdx + i) % capacity;
+                    long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
+                    long diff = Math.abs(ts - timestamp);
+                    if (diff <= maxDiff && diff >= minDiff) {
+                        int val = memory.getInt(startOffset + idx * RECORD_SIZE + Long.BYTES);
+                        try {
+                            Decimal128.uncheckedAdd(acc, val);
+                        } catch (NumericException e) {
+                            throw CairoException.nonCritical().position(position).put("sum aggregation failed: ").put(e.getFlyweightMessage());
+                        }
+                        frameSize++;
+                    } else {
+                        break;
+                    }
+                }
+            } else {
+                newFirstIdx = firstIdx;
+                for (long i = 0, n = size; i < n; i++) {
+                    long idx = (firstIdx + i) % capacity;
+                    long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
+                    if (Math.abs(timestamp - ts) >= minDiff) {
+                        int val = memory.getInt(startOffset + idx * RECORD_SIZE + Long.BYTES);
+                        try {
+                            Decimal128.uncheckedAdd(acc, val);
+                        } catch (NumericException e) {
+                            throw CairoException.nonCritical().position(position).put("sum aggregation failed: ").put(e.getFlyweightMessage());
+                        }
+                        frameSize++;
+                        newFirstIdx = (idx + 1) % capacity;
+                        size--;
+                    } else {
+                        break;
+                    }
+                }
+                firstIdx = newFirstIdx;
+            }
+            if (frameSize != 0) {
+                value.copyFrom(acc);
+            } else {
+                value.ofRawNull();
+            }
+        }
+
+        @Override
+        public void getDecimal128(Record rec, Decimal128 sink) {
+            sink.copyFrom(value);
+        }
+
+        @Override
+        public String getName() {
+            return NAME;
+        }
+
+        @Override
+        public int getPassCount() {
+            return WindowFunction.ZERO_PASS;
+        }
+
+        @Override
+        public int getType() {
+            return type;
+        }
+
+        @Override
+        public void pass1(Record record, long recordOffset, WindowSPI spi) {
+            computeNext(record);
+            long addr = spi.getAddress(recordOffset, columnIndex);
+            Unsafe.putLong(addr, value.getHigh());
+            Unsafe.putLong(addr + Long.BYTES, value.getLow());
+        }
+
+        @Override
+        public void reopen() {
+            value.ofRawNull();
+            capacity = initialCapacity;
+            startOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
+            firstIdx = 0;
+            frameSize = 0;
+            size = 0;
+            acc.ofRaw(0);
+        }
+
+        @Override
+        public void reset() {
+            super.reset();
+            memory.close();
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(getName()).val('(').val(arg).val(')');
+            sink.val(" over (range between ");
+            if (frameLoBounded) {
+                sink.val(maxDiff);
+            } else {
+                sink.val("unbounded");
+            }
+            sink.val(" preceding and ");
+            if (minDiff == 0) {
+                sink.val("current row");
+            } else {
+                sink.val(minDiff).val(" preceding");
+            }
+            sink.val(')');
+        }
+
+        @Override
+        public void toTop() {
+            super.toTop();
+            value.ofRawNull();
+            capacity = initialCapacity;
+            memory.truncate();
+            startOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
+            firstIdx = 0;
+            frameSize = 0;
+            size = 0;
+            acc.ofRaw(0);
+        }
+    }
+
+    static class Decimal32SumOverRowsFrameFunction extends BaseWindowFunction implements Reopenable {
+
+        private final Decimal128 acc = new Decimal128();
+        private final MemoryARW buffer;
+        private final int bufferSize;
+        private final boolean frameIncludesCurrentValue;
+        private final boolean frameLoBounded;
+        private final int frameSize;
+        private final int position;
+        private final int scale;
+        private final int type;
+        private final Decimal128 value = new Decimal128();
+        private long count = 0;
+        private int loIdx = 0;
+
+        public Decimal32SumOverRowsFrameFunction(Function arg, long rowsLo, long rowsHi, MemoryARW memory, int type, int position) {
+            super(arg);
+            assert rowsLo != Long.MIN_VALUE || rowsHi != 0;
+            if (rowsLo > Long.MIN_VALUE) {
+                frameSize = (int) (rowsHi - rowsLo + (rowsHi < 0 ? 1 : 0));
+                bufferSize = (int) Math.abs(rowsLo);
+                frameLoBounded = true;
+            } else {
+                frameSize = (int) Math.abs(rowsHi);
+                bufferSize = frameSize;
+                frameLoBounded = false;
+            }
+            frameIncludesCurrentValue = rowsHi == 0;
+            this.buffer = memory;
+            this.type = type;
+            this.scale = ColumnType.getDecimalScale(type);
+            this.position = position;
+            acc.ofRaw(0);
+            value.ofRawNull();
+            try {
+                initBuffer();
+            } catch (Throwable t) {
+                close();
+                throw t;
+            }
+        }
+
+        @Override
+        public void close() {
+            super.close();
+            buffer.close();
+        }
+
+        @Override
+        public void computeNext(Record record) {
+            int d = arg.getDecimal32(record);
+            int hiValue = d;
+            if (frameLoBounded && !frameIncludesCurrentValue) {
+                hiValue = buffer.getInt((long) ((loIdx + frameSize - 1) % bufferSize) * Integer.BYTES);
+            } else if (!frameLoBounded && !frameIncludesCurrentValue) {
+                hiValue = buffer.getInt((long) (loIdx % bufferSize) * Integer.BYTES);
+            }
+            if (hiValue != Decimals.DECIMAL32_NULL) {
+                try {
+                    Decimal128.uncheckedAdd(acc, hiValue);
+                } catch (NumericException e) {
+                    throw CairoException.nonCritical().position(position).put("sum aggregation failed: ").put(e.getFlyweightMessage());
+                }
+                count++;
+            }
+            if (count != 0) {
+                value.copyFrom(acc);
+            } else {
+                value.ofRawNull();
+            }
+
+            if (frameLoBounded) {
+                int loValue = buffer.getInt((long) loIdx * Integer.BYTES);
+                if (loValue != Decimals.DECIMAL32_NULL) {
+                    acc.subtract(loValue < 0 ? -1L : 0L, loValue, 0);
+                    count--;
+                }
+            }
+            buffer.putInt((long) loIdx * Integer.BYTES, d);
+            loIdx = (loIdx + 1) % bufferSize;
+        }
+
+        @Override
+        public void getDecimal128(Record rec, Decimal128 sink) {
+            sink.copyFrom(value);
+        }
+
+        @Override
+        public String getName() {
+            return NAME;
+        }
+
+        @Override
+        public int getPassCount() {
+            return WindowFunction.ZERO_PASS;
+        }
+
+        @Override
+        public int getType() {
+            return type;
+        }
+
+        @Override
+        public void pass1(Record record, long recordOffset, WindowSPI spi) {
+            computeNext(record);
+            long addr = spi.getAddress(recordOffset, columnIndex);
+            Unsafe.putLong(addr, value.getHigh());
+            Unsafe.putLong(addr + Long.BYTES, value.getLow());
+        }
+
+        @Override
+        public void reopen() {
+            value.ofRawNull();
+            count = 0;
+            loIdx = 0;
+            acc.ofRaw(0);
+            initBuffer();
+        }
+
+        @Override
+        public void reset() {
+            super.reset();
+            buffer.close();
+            value.ofRawNull();
+            count = 0;
+            loIdx = 0;
+            acc.ofRaw(0);
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(getName()).val('(').val(arg).val(')');
+            sink.val(" over (");
+            sink.val(" rows between ");
+            if (frameLoBounded) {
+                sink.val(bufferSize);
+            } else {
+                sink.val("unbounded");
+            }
+            sink.val(" preceding and ");
+            if (frameIncludesCurrentValue) {
+                sink.val("current row");
+            } else {
+                sink.val(bufferSize - frameSize).val(" preceding");
+            }
+            sink.val(')');
+        }
+
+        @Override
+        public void toTop() {
+            super.toTop();
+            value.ofRawNull();
+            count = 0;
+            loIdx = 0;
+            acc.ofRaw(0);
+            initBuffer();
+        }
+
+        private void initBuffer() {
+            for (int i = 0; i < bufferSize; i++) {
+                buffer.putInt((long) i * Integer.BYTES, Decimals.DECIMAL32_NULL);
+            }
+        }
+    }
+
+    static class Decimal32SumOverUnboundedPartitionRowsFrameFunction extends BasePartitionedWindowFunction {
+
+        private final Decimal128 acc = new Decimal128();
+        private final int position;
+        private final int type;
+        private final Decimal128 value = new Decimal128();
+
+        public Decimal32SumOverUnboundedPartitionRowsFrameFunction(Map map, VirtualRecord partitionByRecord, RecordSink partitionBySink, Function arg, int type, int position) {
+            super(map, partitionByRecord, partitionBySink, arg);
+            this.type = type;
+            this.position = position;
+        }
+
+        @Override
+        public void computeNext(Record record) {
+            partitionByRecord.of(record);
+            MapKey key = map.withKey();
+            key.put(partitionByRecord, partitionBySink);
+            MapValue mv = key.createValue();
+
+            boolean wasNullState;
+            if (mv.isNew()) {
+                acc.ofRaw(0);
+                wasNullState = true;
+            } else {
+                mv.getDecimal128(0, acc);
+                wasNullState = mv.getBool(1);
+            }
+
+            int d = arg.getDecimal32(record);
+            if (d != Decimals.DECIMAL32_NULL) {
+                if (wasNullState) {
+                    acc.ofRaw(d);
+                    wasNullState = false;
+                } else {
+                    try {
+                        Decimal128.uncheckedAdd(acc, d);
+                    } catch (NumericException e) {
+                        throw CairoException.nonCritical().position(position).put("sum aggregation failed: ").put(e.getFlyweightMessage());
+                    }
+                }
+            }
+            mv.putDecimal128(0, acc);
+            mv.putBool(1, wasNullState);
+            if (wasNullState) {
+                value.ofRawNull();
+            } else {
+                value.copyFrom(acc);
+            }
+        }
+
+        @Override
+        public void getDecimal128(Record rec, Decimal128 sink) {
+            sink.copyFrom(value);
+        }
+
+        @Override
+        public String getName() {
+            return NAME;
+        }
+
+        @Override
+        public int getPassCount() {
+            return WindowFunction.ZERO_PASS;
+        }
+
+        @Override
+        public int getType() {
+            return type;
+        }
+
+        @Override
+        public void pass1(Record record, long recordOffset, WindowSPI spi) {
+            computeNext(record);
+            long addr = spi.getAddress(recordOffset, columnIndex);
+            Unsafe.putLong(addr, value.getHigh());
+            Unsafe.putLong(addr + Long.BYTES, value.getLow());
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(NAME).val('(').val(arg).val(')');
+            sink.val(" over (partition by ").val(partitionByRecord.getFunctions());
+            sink.val(" rows between unbounded preceding and current row)");
+        }
+    }
+
+    static class Decimal32SumOverUnboundedRowsFrameFunction extends BaseWindowFunction {
+
+        private final Decimal128 acc = new Decimal128();
+        private final int position;
+        private final int type;
+        private final Decimal128 value = new Decimal128();
+        private boolean isNullState = true;
+
+        public Decimal32SumOverUnboundedRowsFrameFunction(Function arg, int type, int position) {
+            super(arg);
+            this.type = type;
+            this.position = position;
+            acc.ofRaw(0);
+            value.ofRawNull();
+        }
+
+        @Override
+        public void computeNext(Record record) {
+            int d = arg.getDecimal32(record);
+            if (d != Decimals.DECIMAL32_NULL) {
+                if (isNullState) {
+                    acc.ofRaw(d);
+                    isNullState = false;
+                } else {
+                    try {
+                        Decimal128.uncheckedAdd(acc, d);
+                    } catch (NumericException e) {
+                        throw CairoException.nonCritical().position(position).put("sum aggregation failed: ").put(e.getFlyweightMessage());
+                    }
+                }
+            }
+            if (isNullState) {
+                value.ofRawNull();
+            } else {
+                value.copyFrom(acc);
+            }
+        }
+
+        @Override
+        public void getDecimal128(Record rec, Decimal128 sink) {
+            sink.copyFrom(value);
+        }
+
+        @Override
+        public String getName() {
+            return NAME;
+        }
+
+        @Override
+        public int getPassCount() {
+            return WindowFunction.ZERO_PASS;
+        }
+
+        @Override
+        public int getType() {
+            return type;
+        }
+
+        @Override
+        public void pass1(Record record, long recordOffset, WindowSPI spi) {
+            computeNext(record);
+            long addr = spi.getAddress(recordOffset, columnIndex);
+            Unsafe.putLong(addr, value.getHigh());
+            Unsafe.putLong(addr + Long.BYTES, value.getLow());
+        }
+
+        @Override
+        public void reset() {
+            super.reset();
+            value.ofRawNull();
+            isNullState = true;
+            acc.ofRaw(0);
+        }
+
+        @Override
+        public void toPlan(PlanSink sink) {
+            sink.val(NAME).val('(').val(arg).val(')');
+            sink.val(" over (rows between unbounded preceding and current row)");
+        }
+
+        @Override
+        public void toTop() {
+            super.toTop();
+            value.ofRawNull();
+            isNullState = true;
+            acc.ofRaw(0);
+        }
+    }
+
+    static class Decimal32SumOverWholeResultSetFunction extends BaseWindowFunction {
+
+        private final Decimal128 acc = new Decimal128();
+        private final int position;
+        private final int type;
+        private final Decimal128 value = new Decimal128();
+        private boolean isNullState = true;
+
+        public Decimal32SumOverWholeResultSetFunction(Function arg, int type, int position) {
+            super(arg);
+            this.type = type;
+            this.position = position;
+            acc.ofRaw(0);
+            value.ofRawNull();
+        }
+
+        @Override
+        public void getDecimal128(Record rec, Decimal128 sink) {
+            sink.copyFrom(value);
+        }
+
+        @Override
+        public String getName() {
+            return NAME;
+        }
+
+        @Override
+        public int getPassCount() {
+            return WindowFunction.TWO_PASS;
+        }
+
+        @Override
+        public int getType() {
+            return type;
+        }
+
+        @Override
+        public void pass1(Record record, long recordOffset, WindowSPI spi) {
+            int d = arg.getDecimal32(record);
+            if (d != Decimals.DECIMAL32_NULL) {
+                if (isNullState) {
+                    acc.ofRaw(d);
+                    isNullState = false;
+                } else {
+                    try {
+                        Decimal128.uncheckedAdd(acc, d);
+                    } catch (NumericException e) {
+                        throw CairoException.nonCritical().position(position).put("sum aggregation failed: ").put(e.getFlyweightMessage());
+                    }
+                }
+            }
+        }
+
+        @Override
+        public void pass2(Record record, long recordOffset, WindowSPI spi) {
+            long addr = spi.getAddress(recordOffset, columnIndex);
+            Unsafe.putLong(addr, value.getHigh());
+            Unsafe.putLong(addr + Long.BYTES, value.getLow());
+        }
+
+        @Override
+        public void preparePass2() {
+            if (isNullState) {
+                value.ofRawNull();
+            } else {
+                value.copyFrom(acc);
+            }
+        }
+
+        @Override
+        public void reset() {
+            super.reset();
+            value.ofRawNull();
+            isNullState = true;
+            acc.ofRaw(0);
+        }
+
+        @Override
+        public void toTop() {
+            super.toTop();
+            value.ofRawNull();
+            isNullState = true;
+            acc.ofRaw(0);
+        }
+    }
+
+    static class Decimal64SumOverCurrentRowFunction extends BaseWindowFunction {
 
         private final int type;
         private final Decimal128 value = new Decimal128();
@@ -256,7 +5820,7 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         }
     }
 
-    static class Decimal64SumOverPartitionFunction extends BasePartitionedWindowFunction implements WindowDecimal128Function {
+    static class Decimal64SumOverPartitionFunction extends BasePartitionedWindowFunction {
 
         private final Decimal128 acc = new Decimal128();
         private final int position;
@@ -282,21 +5846,21 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                     acc.ofRawNull();
                     value.ofRawNull();
                     mv.putDecimal128Null(0);
-                    mv.putBool(2, true);
+                    mv.putBool(1, true);
                 } else {
                     acc.ofRaw(d);
                     value.copyFrom(acc);
                     mv.putDecimal128(0, acc);
-                    mv.putBool(2, false);
+                    mv.putBool(1, false);
                 }
             } else {
-                boolean wasNull = mv.getBool(2);
+                boolean wasNull = mv.getBool(1);
                 if (wasNull) {
                     if (dNull) {
                         acc.ofRawNull();
                     } else {
                         acc.ofRaw(d);
-                        mv.putBool(2, false);
+                        mv.putBool(1, false);
                         mv.putDecimal128(0, acc);
                     }
                 } else {
@@ -345,11 +5909,11 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                 if (mv.isNew()) {
                     acc.ofRaw(d);
                     mv.putDecimal128(0, acc);
-                    mv.putBool(2, false);
-                } else if (mv.getBool(2)) {
+                    mv.putBool(1, false);
+                } else if (mv.getBool(1)) {
                     acc.ofRaw(d);
                     mv.putDecimal128(0, acc);
-                    mv.putBool(2, false);
+                    mv.putBool(1, false);
                 } else {
                     mv.getDecimal128(0, acc);
                     try {
@@ -361,7 +5925,7 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                 }
             } else if (mv.isNew()) {
                 mv.putDecimal128Null(0);
-                mv.putBool(2, true);
+                mv.putBool(1, true);
             }
         }
 
@@ -372,7 +5936,7 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             key.put(partitionByRecord, partitionBySink);
             MapValue mv = key.findValue();
             long addr = spi.getAddress(recordOffset, columnIndex);
-            if (mv != null && !mv.getBool(2)) {
+            if (mv != null && !mv.getBool(1)) {
                 mv.getDecimal128(0, acc);
                 Unsafe.putLong(addr, acc.getHigh());
                 Unsafe.putLong(addr + Long.BYTES, acc.getLow());
@@ -383,7 +5947,7 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         }
     }
 
-    public static class Decimal64SumOverPartitionRangeFrameFunction extends BasePartitionedWindowFunction implements WindowDecimal128Function {
+    public static class Decimal64SumOverPartitionRangeFrameFunction extends BasePartitionedWindowFunction {
 
         private static final int RECORD_SIZE = Long.BYTES + Long.BYTES;
         private final Decimal128 acc = new Decimal128();
@@ -396,6 +5960,7 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         private final RingBufferDesc memoryDesc = new RingBufferDesc();
         private final long minDiff;
         private final int position;
+        private final int scale;
         private final int timestampIndex;
         private final int type;
         private final Decimal128 value = new Decimal128();
@@ -422,6 +5987,7 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             this.timestampIndex = timestampIdx;
             this.frameIncludesCurrentValue = rangeHi == 0;
             this.type = type;
+            this.scale = ColumnType.getDecimalScale(type);
             this.position = position;
         }
 
@@ -473,11 +6039,11 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                 }
             } else {
                 mapValue.getDecimal128(0, acc);
-                frameSize = mapValue.getLong(2);
-                startOffset = mapValue.getLong(3);
-                size = mapValue.getLong(4);
-                capacity = mapValue.getLong(5);
-                firstIdx = mapValue.getLong(6);
+                frameSize = mapValue.getLong(1);
+                startOffset = mapValue.getLong(2);
+                size = mapValue.getLong(3);
+                capacity = mapValue.getLong(4);
+                firstIdx = mapValue.getLong(5);
 
                 long newFirstIdx = firstIdx;
                 if (frameLoBounded) {
@@ -487,7 +6053,7 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                         if (Math.abs(timestamp - ts) > maxDiff) {
                             if (frameSize > 0) {
                                 long val = memory.getLong(startOffset + idx * RECORD_SIZE + Long.BYTES);
-                                acc.subtract(val < 0 ? -1L : 0L, val, ColumnType.getDecimalScale(type));
+                                acc.subtract(val < 0 ? -1L : 0L, val, 0);
                                 frameSize--;
                             }
                             newFirstIdx = (idx + 1) % capacity;
@@ -559,11 +6125,11 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             }
 
             mapValue.putDecimal128(0, acc);
-            mapValue.putLong(2, frameSize);
-            mapValue.putLong(3, startOffset);
-            mapValue.putLong(4, size);
-            mapValue.putLong(5, capacity);
-            mapValue.putLong(6, firstIdx);
+            mapValue.putLong(1, frameSize);
+            mapValue.putLong(2, startOffset);
+            mapValue.putLong(3, size);
+            mapValue.putLong(4, capacity);
+            mapValue.putLong(5, firstIdx);
         }
 
         @Override
@@ -637,7 +6203,7 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         }
     }
 
-    public static class Decimal64SumOverPartitionRowsFrameFunction extends BasePartitionedWindowFunction implements WindowDecimal128Function {
+    public static class Decimal64SumOverPartitionRowsFrameFunction extends BasePartitionedWindowFunction {
 
         private final Decimal128 acc = new Decimal128();
         private final int bufferSize;
@@ -646,6 +6212,7 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         private final int frameSize;
         private final MemoryARW memory;
         private final int position;
+        private final int scale;
         private final int type;
         private final Decimal128 value = new Decimal128();
 
@@ -673,6 +6240,7 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             frameIncludesCurrentValue = rowsHi == 0;
             this.memory = memory;
             this.type = type;
+            this.scale = ColumnType.getDecimalScale(type);
             this.position = position;
         }
 
@@ -711,9 +6279,9 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                 }
             } else {
                 mv.getDecimal128(0, acc);
-                count = mv.getLong(2);
-                loIdx = mv.getLong(3);
-                startOffset = mv.getLong(4);
+                count = mv.getLong(1);
+                loIdx = mv.getLong(2);
+                startOffset = mv.getLong(3);
 
                 long hiValue = frameIncludesCurrentValue ? d : memory.getLong(startOffset + ((loIdx + frameSize - 1) % bufferSize) * Long.BYTES);
                 if (hiValue != Decimals.DECIMAL64_NULL) {
@@ -732,16 +6300,16 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                 if (frameLoBounded) {
                     long loValue = memory.getLong(startOffset + loIdx * Long.BYTES);
                     if (loValue != Decimals.DECIMAL64_NULL) {
-                        acc.subtract(loValue < 0 ? -1L : 0L, loValue, ColumnType.getDecimalScale(type));
+                        acc.subtract(loValue < 0 ? -1L : 0L, loValue, 0);
                         count--;
                     }
                 }
             }
 
             mv.putDecimal128(0, acc);
-            mv.putLong(2, count);
-            mv.putLong(3, (loIdx + 1) % bufferSize);
-            mv.putLong(4, startOffset);
+            mv.putLong(1, count);
+            mv.putLong(2, (loIdx + 1) % bufferSize);
+            mv.putLong(3, startOffset);
             memory.putLong(startOffset + loIdx * Long.BYTES, d);
         }
 
@@ -813,7 +6381,7 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         }
     }
 
-    static class Decimal64SumOverRangeFrameFunction extends BaseWindowFunction implements Reopenable, WindowDecimal128Function {
+    static class Decimal64SumOverRangeFrameFunction extends BaseWindowFunction implements Reopenable {
 
         private static final int RECORD_SIZE = Long.BYTES + Long.BYTES;
         private final Decimal128 acc = new Decimal128();
@@ -823,6 +6391,7 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         private final MemoryARW memory;
         private final long minDiff;
         private final int position;
+        private final int scale;
         private final int timestampIndex;
         private final int type;
         private final Decimal128 value = new Decimal128();
@@ -850,6 +6419,7 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             this.minDiff = Math.abs(rangeHi);
             this.timestampIndex = timestampIdx;
             this.type = type;
+            this.scale = ColumnType.getDecimalScale(type);
             this.position = position;
             capacity = initialCapacity;
             startOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
@@ -877,7 +6447,7 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                     if (Math.abs(timestamp - ts) > maxDiff) {
                         if (frameSize > 0) {
                             long val = memory.getLong(startOffset + idx * RECORD_SIZE + Long.BYTES);
-                            acc.subtract(val < 0 ? -1L : 0L, val, ColumnType.getDecimalScale(type));
+                            acc.subtract(val < 0 ? -1L : 0L, val, 0);
                             frameSize--;
                         }
                         newFirstIdx = (idx + 1) % capacity;
@@ -1034,7 +6604,7 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         }
     }
 
-    static class Decimal64SumOverRowsFrameFunction extends BaseWindowFunction implements Reopenable, WindowDecimal128Function {
+    static class Decimal64SumOverRowsFrameFunction extends BaseWindowFunction implements Reopenable {
 
         private final Decimal128 acc = new Decimal128();
         private final MemoryARW buffer;
@@ -1043,6 +6613,7 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         private final boolean frameLoBounded;
         private final int frameSize;
         private final int position;
+        private final int scale;
         private final int type;
         private final Decimal128 value = new Decimal128();
         private long count = 0;
@@ -1063,6 +6634,7 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             frameIncludesCurrentValue = rowsHi == 0;
             this.buffer = memory;
             this.type = type;
+            this.scale = ColumnType.getDecimalScale(type);
             this.position = position;
             acc.ofRaw(0);
             value.ofRawNull();
@@ -1106,7 +6678,7 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             if (frameLoBounded) {
                 long loValue = buffer.getLong((long) loIdx * Long.BYTES);
                 if (loValue != Decimals.DECIMAL64_NULL) {
-                    acc.subtract(loValue < 0 ? -1L : 0L, loValue, ColumnType.getDecimalScale(type));
+                    acc.subtract(loValue < 0 ? -1L : 0L, loValue, 0);
                     count--;
                 }
             }
@@ -1198,7 +6770,7 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         }
     }
 
-    static class Decimal64SumOverUnboundedPartitionRowsFrameFunction extends BasePartitionedWindowFunction implements WindowDecimal128Function {
+    static class Decimal64SumOverUnboundedPartitionRowsFrameFunction extends BasePartitionedWindowFunction {
 
         private final Decimal128 acc = new Decimal128();
         private final int position;
@@ -1224,7 +6796,7 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                 wasNullState = true;
             } else {
                 mv.getDecimal128(0, acc);
-                wasNullState = mv.getBool(2);
+                wasNullState = mv.getBool(1);
             }
 
             long d = arg.getDecimal64(record);
@@ -1241,7 +6813,7 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                 }
             }
             mv.putDecimal128(0, acc);
-            mv.putBool(2, wasNullState);
+            mv.putBool(1, wasNullState);
             if (wasNullState) {
                 value.ofRawNull();
             } else {
@@ -1288,7 +6860,7 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         }
     }
 
-    static class Decimal64SumOverUnboundedRowsFrameFunction extends BaseWindowFunction implements WindowDecimal128Function {
+    static class Decimal64SumOverUnboundedRowsFrameFunction extends BaseWindowFunction {
 
         private final Decimal128 acc = new Decimal128();
         private final int position;
@@ -1378,7 +6950,7 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         }
     }
 
-    static class Decimal64SumOverWholeResultSetFunction extends BaseWindowFunction implements WindowDecimal128Function {
+    static class Decimal64SumOverWholeResultSetFunction extends BaseWindowFunction {
 
         private final Decimal128 acc = new Decimal128();
         private final int position;
@@ -1464,107 +7036,7 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         }
     }
 
-    private Function newInstanceDecimal8(
-            int position,
-            ObjList<Function> args,
-            CairoConfiguration configuration,
-            SqlExecutionContext sqlExecutionContext,
-            int outputType,
-            int argPos
-    ) throws SqlException {
-        WindowContext windowContext = sqlExecutionContext.getWindowContext();
-        int framingMode = windowContext.getFramingMode();
-        RecordSink partitionBySink = windowContext.getPartitionBySink();
-        ColumnTypes partitionByKeyTypes = windowContext.getPartitionByKeyTypes();
-        VirtualRecord partitionByRecord = windowContext.getPartitionByRecord();
-        long rowsLo = windowContext.getRowsLo();
-        long rowsHi = windowContext.getRowsHi();
-        Function arg = args.get(0);
-
-        if (partitionByRecord != null) {
-            if (framingMode == WindowExpression.FRAMING_RANGE) {
-                if (windowContext.isDefaultFrame() && (!windowContext.isOrdered() || windowContext.getRowsHi() == Long.MAX_VALUE)) {
-                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, SUM_DECIMAL8_TYPES);
-                    return new Decimal8SumOverPartitionFunction(map, partitionByRecord, partitionBySink, arg, outputType);
-                } else if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
-                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, SUM_DECIMAL8_TYPES);
-                    return new Decimal8SumOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, arg, outputType);
-                } else {
-                    if (windowContext.isOrdered() && !windowContext.isOrderedByDesignatedTimestamp()) {
-                        throw SqlException.$(windowContext.getOrderByPos(), "RANGE is supported only for queries ordered by designated timestamp");
-                    }
-                    int timestampIndex = windowContext.getTimestampIndex();
-                    Map map = null;
-                    MemoryARW mem = null;
-                    try {
-                        map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, SUM_DECIMAL8_OVER_PARTITION_RANGE_TYPES);
-                        mem = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
-                                configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
-                        return new Decimal8SumOverPartitionRangeFrameFunction(map, partitionByRecord, partitionBySink,
-                                rowsLo, rowsHi, arg, mem, configuration.getSqlWindowInitialRangeBufferSize(), timestampIndex, outputType);
-                    } catch (Throwable th) {
-                        Misc.free(map);
-                        Misc.free(mem);
-                        throw th;
-                    }
-                }
-            } else if (framingMode == WindowExpression.FRAMING_ROWS) {
-                if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
-                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, SUM_DECIMAL8_TYPES);
-                    return new Decimal8SumOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, arg, outputType);
-                } else if (rowsLo == 0 && rowsHi == 0) {
-                    return new Decimal8SumOverCurrentRowFunction(arg, outputType);
-                } else if (rowsLo == Long.MIN_VALUE && rowsHi == Long.MAX_VALUE) {
-                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, SUM_DECIMAL8_TYPES);
-                    return new Decimal8SumOverPartitionFunction(map, partitionByRecord, partitionBySink, arg, outputType);
-                } else {
-                    Map map = null;
-                    MemoryARW mem = null;
-                    try {
-                        map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, SUM_DECIMAL8_OVER_PARTITION_ROWS_TYPES);
-                        mem = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
-                                configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
-                        return new Decimal8SumOverPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink,
-                                rowsLo, rowsHi, arg, mem, outputType);
-                    } catch (Throwable th) {
-                        Misc.free(map);
-                        Misc.free(mem);
-                        throw th;
-                    }
-                }
-            }
-        } else {
-            if (framingMode == WindowExpression.FRAMING_RANGE) {
-                if (!windowContext.isOrdered() && windowContext.isDefaultFrame()) {
-                    return new Decimal8SumOverWholeResultSetFunction(arg, outputType);
-                } else if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
-                    return new Decimal8SumOverUnboundedRowsFrameFunction(arg, outputType);
-                } else {
-                    if (windowContext.isOrdered() && !windowContext.isOrderedByDesignatedTimestamp()) {
-                        throw SqlException.$(windowContext.getOrderByPos(), "RANGE is supported only for queries ordered by designated timestamp");
-                    }
-                    int timestampIndex = windowContext.getTimestampIndex();
-                    return new Decimal8SumOverRangeFrameFunction(rowsLo, rowsHi, arg, configuration, timestampIndex, outputType);
-                }
-            } else if (framingMode == WindowExpression.FRAMING_ROWS) {
-                if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
-                    return new Decimal8SumOverUnboundedRowsFrameFunction(arg, outputType);
-                } else if (rowsLo == 0 && rowsHi == 0) {
-                    return new Decimal8SumOverCurrentRowFunction(arg, outputType);
-                } else if (rowsLo == Long.MIN_VALUE && rowsHi == Long.MAX_VALUE) {
-                    return new Decimal8SumOverWholeResultSetFunction(arg, outputType);
-                } else {
-                    MemoryARW mem = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
-                            configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
-                    return new Decimal8SumOverRowsFrameFunction(arg, rowsLo, rowsHi, mem, outputType);
-                }
-            }
-        }
-
-        throw SqlException.$(position, "function not implemented for given window parameters");
-    }
-
-    static class Decimal8SumOverCurrentRowFunction extends BaseWindowFunction implements WindowDecimal64Function {
+    static class Decimal8SumOverCurrentRowFunction extends BaseWindowFunction {
 
         private final int type;
         private long value;
@@ -1607,49 +7079,13 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         }
     }
 
-    static class Decimal8SumOverPartitionFunction extends BasePartitionedWindowFunction implements WindowDecimal64Function {
+    static class Decimal8SumOverPartitionFunction extends BasePartitionedWindowFunction {
 
         private final int type;
-        private long value;
 
         public Decimal8SumOverPartitionFunction(Map map, VirtualRecord partitionByRecord, RecordSink partitionBySink, Function arg, int type) {
             super(map, partitionByRecord, partitionBySink, arg);
             this.type = type;
-        }
-
-        @Override
-        public void computeNext(Record record) {
-            partitionByRecord.of(record);
-            MapKey key = map.withKey();
-            key.put(partitionByRecord, partitionBySink);
-            MapValue mv = key.createValue();
-            byte b = arg.getDecimal8(record);
-            boolean isNull = b == Decimals.DECIMAL8_NULL;
-            long acc;
-            boolean wasNull;
-            if (mv.isNew()) {
-                if (isNull) {
-                    acc = 0L;
-                    wasNull = true;
-                } else {
-                    acc = b;
-                    wasNull = false;
-                }
-            } else {
-                acc = mv.getLong(0);
-                wasNull = mv.getBool(1);
-                if (!isNull) {
-                    if (wasNull) {
-                        acc = b;
-                        wasNull = false;
-                    } else {
-                        acc += b;
-                    }
-                }
-            }
-            mv.putLong(0, acc);
-            mv.putBool(1, wasNull);
-            value = wasNull ? Decimals.DECIMAL64_NULL : acc;
         }
 
         @Override
@@ -1705,7 +7141,7 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         }
     }
 
-    public static class Decimal8SumOverPartitionRangeFrameFunction extends BasePartitionedWindowFunction implements WindowDecimal64Function {
+    public static class Decimal8SumOverPartitionRangeFrameFunction extends BasePartitionedWindowFunction {
 
         private static final int RECORD_SIZE = Long.BYTES + Byte.BYTES;
         private final boolean frameIncludesCurrentValue;
@@ -1946,7 +7382,7 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         }
     }
 
-    public static class Decimal8SumOverPartitionRowsFrameFunction extends BasePartitionedWindowFunction implements WindowDecimal64Function {
+    public static class Decimal8SumOverPartitionRowsFrameFunction extends BasePartitionedWindowFunction {
 
         private final int bufferSize;
         private final boolean frameIncludesCurrentValue;
@@ -2113,7 +7549,7 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         }
     }
 
-    static class Decimal8SumOverRangeFrameFunction extends BaseWindowFunction implements Reopenable, WindowDecimal64Function {
+    static class Decimal8SumOverRangeFrameFunction extends BaseWindowFunction implements Reopenable {
 
         private static final int RECORD_SIZE = Long.BYTES + Byte.BYTES;
         private final boolean frameLoBounded;
@@ -2317,7 +7753,7 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         }
     }
 
-    static class Decimal8SumOverRowsFrameFunction extends BaseWindowFunction implements Reopenable, WindowDecimal64Function {
+    static class Decimal8SumOverRowsFrameFunction extends BaseWindowFunction implements Reopenable {
 
         private final MemoryARW buffer;
         private final int bufferSize;
@@ -2469,7 +7905,7 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         }
     }
 
-    static class Decimal8SumOverUnboundedPartitionRowsFrameFunction extends BasePartitionedWindowFunction implements WindowDecimal64Function {
+    static class Decimal8SumOverUnboundedPartitionRowsFrameFunction extends BasePartitionedWindowFunction {
 
         private final int type;
         private long value;
@@ -2547,7 +7983,7 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         }
     }
 
-    static class Decimal8SumOverUnboundedRowsFrameFunction extends BaseWindowFunction implements WindowDecimal64Function {
+    static class Decimal8SumOverUnboundedRowsFrameFunction extends BaseWindowFunction {
 
         private final int type;
         private long acc;
@@ -2625,7 +8061,7 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         }
     }
 
-    static class Decimal8SumOverWholeResultSetFunction extends BaseWindowFunction implements WindowDecimal64Function {
+    static class Decimal8SumOverWholeResultSetFunction extends BaseWindowFunction {
 
         private final int type;
         private long acc;
@@ -2668,5372 +8104,6 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                     isNullState = false;
                 } else {
                     acc += b;
-                }
-            }
-        }
-
-        @Override
-        public void pass2(Record record, long recordOffset, WindowSPI spi) {
-            Unsafe.putLong(spi.getAddress(recordOffset, columnIndex), value);
-        }
-
-        @Override
-        public void preparePass2() {
-            value = isNullState ? Decimals.DECIMAL64_NULL : acc;
-        }
-
-        @Override
-        public void reset() {
-            super.reset();
-            value = Decimals.DECIMAL64_NULL;
-            isNullState = true;
-            acc = 0L;
-        }
-
-        @Override
-        public void toTop() {
-            super.toTop();
-            value = Decimals.DECIMAL64_NULL;
-            isNullState = true;
-            acc = 0L;
-        }
-    }
-
-    public static final ArrayColumnTypes SUM_DECIMAL128_OVER_PARTITION_RANGE_TYPES;
-    public static final ArrayColumnTypes SUM_DECIMAL128_OVER_PARTITION_ROWS_TYPES;
-    public static final ArrayColumnTypes SUM_DECIMAL128_TYPES;
-    public static final ArrayColumnTypes SUM_DECIMAL16_OVER_PARTITION_RANGE_TYPES;
-    public static final ArrayColumnTypes SUM_DECIMAL16_OVER_PARTITION_ROWS_TYPES;
-    public static final ArrayColumnTypes SUM_DECIMAL16_TYPES;
-
-    private static void readD256(MemoryARW mem, long offset, Decimal256 sink) {
-        sink.ofRaw(
-                mem.getLong(offset),
-                mem.getLong(offset + Long.BYTES),
-                mem.getLong(offset + 2 * Long.BYTES),
-                mem.getLong(offset + 3 * Long.BYTES)
-        );
-    }
-
-    private static void writeD256(MemoryARW mem, long offset, Decimal256 src) {
-        mem.putLong(offset, src.getHh());
-        mem.putLong(offset + Long.BYTES, src.getHl());
-        mem.putLong(offset + 2 * Long.BYTES, src.getLh());
-        mem.putLong(offset + 3 * Long.BYTES, src.getLl());
-    }
-
-    static class Decimal256SumOverCurrentRowFunction extends BaseWindowFunction implements WindowDecimal256Function {
-
-        private final Decimal256 scratch = new Decimal256();
-        private final int type;
-        private final Decimal256 value = new Decimal256();
-
-        Decimal256SumOverCurrentRowFunction(Function arg, int type) {
-            super(arg);
-            this.type = type;
-        }
-
-        @Override
-        public void computeNext(Record record) {
-            arg.getDecimal256(record, scratch);
-            if (scratch.isNull()) {
-                value.ofRawNull();
-            } else {
-                value.copyRaw(scratch);
-            }
-        }
-
-        @Override
-        public void getDecimal256(Record rec, Decimal256 sink) {
-            sink.copyRaw(value);
-        }
-
-        @Override
-        public String getName() {
-            return NAME;
-        }
-
-        @Override
-        public int getPassCount() {
-            return ZERO_PASS;
-        }
-
-        @Override
-        public int getType() {
-            return type;
-        }
-
-        @Override
-        public void pass1(Record record, long recordOffset, WindowSPI spi) {
-            computeNext(record);
-            long addr = spi.getAddress(recordOffset, columnIndex);
-            Unsafe.putLong(addr, value.getHh());
-            Unsafe.putLong(addr + Long.BYTES, value.getHl());
-            Unsafe.putLong(addr + 2 * Long.BYTES, value.getLh());
-            Unsafe.putLong(addr + 3 * Long.BYTES, value.getLl());
-        }
-    }
-
-    static class Decimal256SumOverPartitionFunction extends BasePartitionedWindowFunction implements WindowDecimal256Function {
-
-        private final Decimal256 acc = new Decimal256();
-        private final int position;
-        private final Decimal256 scratch = new Decimal256();
-        private final int type;
-        private final Decimal256 value = new Decimal256();
-
-        public Decimal256SumOverPartitionFunction(Map map, VirtualRecord partitionByRecord, RecordSink partitionBySink, Function arg, int type, int position) {
-            super(map, partitionByRecord, partitionBySink, arg);
-            this.type = type;
-            this.position = position;
-        }
-
-        @Override
-        public void getDecimal256(Record rec, Decimal256 sink) {
-            sink.copyRaw(value);
-        }
-
-        @Override
-        public String getName() {
-            return NAME;
-        }
-
-        @Override
-        public int getPassCount() {
-            return WindowFunction.TWO_PASS;
-        }
-
-        @Override
-        public int getType() {
-            return type;
-        }
-
-        @Override
-        public void pass1(Record record, long recordOffset, WindowSPI spi) {
-            partitionByRecord.of(record);
-            MapKey key = map.withKey();
-            key.put(partitionByRecord, partitionBySink);
-            MapValue mv = key.createValue();
-            arg.getDecimal256(record, scratch);
-            if (!scratch.isNull()) {
-                if (mv.isNew()) {
-                    acc.copyRaw(scratch);
-                    mv.putDecimal256(0, acc);
-                    mv.putBool(4, false);
-                } else if (mv.getBool(4)) {
-                    acc.copyRaw(scratch);
-                    mv.putDecimal256(0, acc);
-                    mv.putBool(4, false);
-                } else {
-                    mv.getDecimal256(0, acc);
-                    try {
-                        Decimal256.uncheckedAdd(acc, scratch);
-                    } catch (NumericException e) {
-                        throw CairoException.nonCritical().position(position).put("sum aggregation failed: ").put(e.getFlyweightMessage());
-                    }
-                    mv.putDecimal256(0, acc);
-                }
-            } else if (mv.isNew()) {
-                acc.ofRawNull();
-                mv.putDecimal256(0, acc);
-                mv.putBool(4, true);
-            }
-        }
-
-        @Override
-        public void pass2(Record record, long recordOffset, WindowSPI spi) {
-            partitionByRecord.of(record);
-            MapKey key = map.withKey();
-            key.put(partitionByRecord, partitionBySink);
-            MapValue mv = key.findValue();
-            long addr = spi.getAddress(recordOffset, columnIndex);
-            if (mv != null && !mv.getBool(4)) {
-                mv.getDecimal256(0, acc);
-                Unsafe.putLong(addr, acc.getHh());
-                Unsafe.putLong(addr + Long.BYTES, acc.getHl());
-                Unsafe.putLong(addr + 2 * Long.BYTES, acc.getLh());
-                Unsafe.putLong(addr + 3 * Long.BYTES, acc.getLl());
-            } else {
-                Unsafe.putLong(addr, Decimals.DECIMAL256_HH_NULL);
-                Unsafe.putLong(addr + Long.BYTES, Decimals.DECIMAL256_HL_NULL);
-                Unsafe.putLong(addr + 2 * Long.BYTES, Decimals.DECIMAL256_LH_NULL);
-                Unsafe.putLong(addr + 3 * Long.BYTES, Decimals.DECIMAL256_LL_NULL);
-            }
-        }
-    }
-
-    public static class Decimal256SumOverPartitionRangeFrameFunction extends BasePartitionedWindowFunction implements WindowDecimal256Function {
-
-        private static final int RECORD_SIZE = Long.BYTES + 32;
-        private final Decimal256 acc = new Decimal256();
-        private final boolean frameIncludesCurrentValue;
-        private final boolean frameLoBounded;
-        private final LongList freeList = new LongList();
-        private final int initialBufferSize;
-        private final long maxDiff;
-        private final MemoryARW memory;
-        private final RingBufferDesc memoryDesc = new RingBufferDesc();
-        private final long minDiff;
-        private final int position;
-        private final Decimal256 scratch = new Decimal256();
-        private final int timestampIndex;
-        private final int type;
-        private final Decimal256 value = new Decimal256();
-
-        public Decimal256SumOverPartitionRangeFrameFunction(
-                Map map,
-                VirtualRecord partitionByRecord,
-                RecordSink partitionBySink,
-                long rangeLo,
-                long rangeHi,
-                Function arg,
-                MemoryARW memory,
-                int initialBufferSize,
-                int timestampIdx,
-                int type,
-                int position
-        ) {
-            super(map, partitionByRecord, partitionBySink, arg);
-            this.frameLoBounded = rangeLo != Long.MIN_VALUE;
-            this.maxDiff = frameLoBounded ? Math.abs(rangeLo) : Long.MAX_VALUE;
-            this.minDiff = Math.abs(rangeHi);
-            this.memory = memory;
-            this.initialBufferSize = initialBufferSize;
-            this.timestampIndex = timestampIdx;
-            this.frameIncludesCurrentValue = rangeHi == 0;
-            this.type = type;
-            this.position = position;
-        }
-
-        @Override
-        public void close() {
-            super.close();
-            memory.close();
-            freeList.clear();
-        }
-
-        @Override
-        public void computeNext(Record record) {
-            partitionByRecord.of(record);
-            MapKey key = map.withKey();
-            key.put(partitionByRecord, partitionBySink);
-            MapValue mapValue = key.createValue();
-
-            long frameSize;
-            long startOffset;
-            long size;
-            long capacity;
-            long firstIdx;
-            long timestamp = record.getTimestamp(timestampIndex);
-            arg.getDecimal256(record, scratch);
-            boolean isNull = scratch.isNull();
-
-            if (mapValue.isNew()) {
-                capacity = initialBufferSize;
-                startOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
-                firstIdx = 0;
-                if (!isNull) {
-                    memory.putLong(startOffset, timestamp);
-                    writeD256(memory, startOffset + Long.BYTES, scratch);
-                    if (frameIncludesCurrentValue) {
-                        acc.copyRaw(scratch);
-                        value.copyRaw(acc);
-                        frameSize = 1;
-                        size = frameLoBounded ? 1 : 0;
-                    } else {
-                        acc.ofRaw(0);
-                        value.ofRawNull();
-                        frameSize = 0;
-                        size = 1;
-                    }
-                } else {
-                    size = 0;
-                    acc.ofRaw(0);
-                    value.ofRawNull();
-                    frameSize = 0;
-                }
-            } else {
-                mapValue.getDecimal256(0, acc);
-                frameSize = mapValue.getLong(4);
-                startOffset = mapValue.getLong(5);
-                size = mapValue.getLong(6);
-                capacity = mapValue.getLong(7);
-                firstIdx = mapValue.getLong(8);
-
-                long newFirstIdx = firstIdx;
-                if (frameLoBounded) {
-                    for (long i = 0, n = size; i < n; i++) {
-                        long idx = (firstIdx + i) % capacity;
-                        long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                        if (Math.abs(timestamp - ts) > maxDiff) {
-                            if (frameSize > 0) {
-                                readD256(memory, startOffset + idx * RECORD_SIZE + Long.BYTES, scratch);
-                                acc.subtract(scratch);
-                                frameSize--;
-                            }
-                            newFirstIdx = (idx + 1) % capacity;
-                            size--;
-                        } else {
-                            break;
-                        }
-                    }
-                }
-                firstIdx = newFirstIdx;
-
-                if (!isNull) {
-                    if (size == capacity) {
-                        memoryDesc.reset(capacity, startOffset, size, firstIdx, freeList);
-                        expandRingBuffer(memory, memoryDesc, RECORD_SIZE);
-                        capacity = memoryDesc.capacity;
-                        startOffset = memoryDesc.startOffset;
-                        firstIdx = memoryDesc.firstIdx;
-                    }
-                    long slotOffset = startOffset + ((firstIdx + size) % capacity) * RECORD_SIZE;
-                    memory.putLong(slotOffset, timestamp);
-                    writeD256(memory, slotOffset + Long.BYTES, scratch);
-                    size++;
-                }
-
-                if (frameLoBounded) {
-                    for (long i = frameSize; i < size; i++) {
-                        long idx = (firstIdx + i) % capacity;
-                        long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                        long diff = Math.abs(ts - timestamp);
-                        if (diff <= maxDiff && diff >= minDiff) {
-                            readD256(memory, startOffset + idx * RECORD_SIZE + Long.BYTES, scratch);
-                            try {
-                                Decimal256.uncheckedAdd(acc, scratch);
-                            } catch (NumericException e) {
-                                throw CairoException.nonCritical().position(position).put("sum aggregation failed: ").put(e.getFlyweightMessage());
-                            }
-                            frameSize++;
-                        } else {
-                            break;
-                        }
-                    }
-                } else {
-                    newFirstIdx = firstIdx;
-                    for (long i = 0, n = size; i < n; i++) {
-                        long idx = (firstIdx + i) % capacity;
-                        long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                        if (Math.abs(timestamp - ts) >= minDiff) {
-                            readD256(memory, startOffset + idx * RECORD_SIZE + Long.BYTES, scratch);
-                            try {
-                                Decimal256.uncheckedAdd(acc, scratch);
-                            } catch (NumericException e) {
-                                throw CairoException.nonCritical().position(position).put("sum aggregation failed: ").put(e.getFlyweightMessage());
-                            }
-                            frameSize++;
-                            newFirstIdx = (idx + 1) % capacity;
-                            size--;
-                        } else {
-                            break;
-                        }
-                    }
-                    firstIdx = newFirstIdx;
-                }
-
-                if (frameSize != 0) {
-                    value.copyRaw(acc);
-                } else {
-                    value.ofRawNull();
-                }
-            }
-
-            mapValue.putDecimal256(0, acc);
-            mapValue.putLong(4, frameSize);
-            mapValue.putLong(5, startOffset);
-            mapValue.putLong(6, size);
-            mapValue.putLong(7, capacity);
-            mapValue.putLong(8, firstIdx);
-        }
-
-        @Override
-        public void getDecimal256(Record rec, Decimal256 sink) {
-            sink.copyRaw(value);
-        }
-
-        @Override
-        public String getName() {
-            return NAME;
-        }
-
-        @Override
-        public int getPassCount() {
-            return WindowFunction.ZERO_PASS;
-        }
-
-        @Override
-        public int getType() {
-            return type;
-        }
-
-        @Override
-        public void pass1(Record record, long recordOffset, WindowSPI spi) {
-            computeNext(record);
-            long addr = spi.getAddress(recordOffset, columnIndex);
-            Unsafe.putLong(addr, value.getHh());
-            Unsafe.putLong(addr + Long.BYTES, value.getHl());
-            Unsafe.putLong(addr + 2 * Long.BYTES, value.getLh());
-            Unsafe.putLong(addr + 3 * Long.BYTES, value.getLl());
-        }
-
-        @Override
-        public void reopen() {
-            super.reopen();
-            value.ofRawNull();
-        }
-
-        @Override
-        public void reset() {
-            super.reset();
-            memory.close();
-            freeList.clear();
-        }
-
-        @Override
-        public void toPlan(PlanSink sink) {
-            sink.val(getName()).val('(').val(arg).val(')');
-            sink.val(" over (partition by ").val(partitionByRecord.getFunctions());
-            sink.val(" range between ");
-            if (frameLoBounded) {
-                sink.val(maxDiff);
-            } else {
-                sink.val("unbounded");
-            }
-            sink.val(" preceding and ");
-            if (minDiff == 0) {
-                sink.val("current row");
-            } else {
-                sink.val(minDiff).val(" preceding");
-            }
-            sink.val(')');
-        }
-
-        @Override
-        public void toTop() {
-            super.toTop();
-            memory.truncate();
-            freeList.clear();
-        }
-    }
-
-    public static class Decimal256SumOverPartitionRowsFrameFunction extends BasePartitionedWindowFunction implements WindowDecimal256Function {
-
-        private final Decimal256 acc = new Decimal256();
-        private final int bufferSize;
-        private final boolean frameIncludesCurrentValue;
-        private final boolean frameLoBounded;
-        private final int frameSize;
-        private final MemoryARW memory;
-        private final int position;
-        private final Decimal256 scratch = new Decimal256();
-        private final int type;
-        private final Decimal256 value = new Decimal256();
-
-        public Decimal256SumOverPartitionRowsFrameFunction(
-                Map map,
-                VirtualRecord partitionByRecord,
-                RecordSink partitionBySink,
-                long rowsLo,
-                long rowsHi,
-                Function arg,
-                MemoryARW memory,
-                int type,
-                int position
-        ) {
-            super(map, partitionByRecord, partitionBySink, arg);
-            if (rowsLo > Long.MIN_VALUE) {
-                frameSize = (int) (rowsHi - rowsLo + (rowsHi < 0 ? 1 : 0));
-                bufferSize = (int) Math.abs(rowsLo);
-                frameLoBounded = true;
-            } else {
-                frameSize = 1;
-                bufferSize = (int) Math.abs(rowsHi);
-                frameLoBounded = false;
-            }
-            frameIncludesCurrentValue = rowsHi == 0;
-            this.memory = memory;
-            this.type = type;
-            this.position = position;
-        }
-
-        @Override
-        public void close() {
-            super.close();
-            memory.close();
-        }
-
-        @Override
-        public void computeNext(Record record) {
-            partitionByRecord.of(record);
-            MapKey key = map.withKey();
-            key.put(partitionByRecord, partitionBySink);
-            MapValue mv = key.createValue();
-
-            long count;
-            long loIdx;
-            long startOffset;
-            arg.getDecimal256(record, scratch);
-            long inHh = scratch.getHh();
-            long inHl = scratch.getHl();
-            long inLh = scratch.getLh();
-            long inLl = scratch.getLl();
-            boolean isNull = scratch.isNull();
-
-            if (mv.isNew()) {
-                loIdx = 0;
-                startOffset = memory.appendAddressFor((long) bufferSize * 32L) - memory.getPageAddress(0);
-                if (frameIncludesCurrentValue && !isNull) {
-                    acc.copyRaw(scratch);
-                    count = 1;
-                    value.copyRaw(acc);
-                } else {
-                    acc.ofRaw(0);
-                    value.ofRawNull();
-                    count = 0;
-                }
-                for (int i = 0; i < bufferSize; i++) {
-                    long off = startOffset + (long) i * 32L;
-                    memory.putLong(off, Decimals.DECIMAL256_HH_NULL);
-                    memory.putLong(off + Long.BYTES, Decimals.DECIMAL256_HL_NULL);
-                    memory.putLong(off + 2 * Long.BYTES, Decimals.DECIMAL256_LH_NULL);
-                    memory.putLong(off + 3 * Long.BYTES, Decimals.DECIMAL256_LL_NULL);
-                }
-            } else {
-                mv.getDecimal256(0, acc);
-                count = mv.getLong(4);
-                loIdx = mv.getLong(5);
-                startOffset = mv.getLong(6);
-
-                if (frameIncludesCurrentValue) {
-                    if (!isNull) {
-                        try {
-                            Decimal256.uncheckedAdd(acc, scratch);
-                        } catch (NumericException e) {
-                            throw CairoException.nonCritical().position(position).put("sum aggregation failed: ").put(e.getFlyweightMessage());
-                        }
-                        count++;
-                    }
-                } else {
-                    readD256(memory, startOffset + ((loIdx + frameSize - 1) % bufferSize) * 32L, scratch);
-                    if (!scratch.isNull()) {
-                        try {
-                            Decimal256.uncheckedAdd(acc, scratch);
-                        } catch (NumericException e) {
-                            throw CairoException.nonCritical().position(position).put("sum aggregation failed: ").put(e.getFlyweightMessage());
-                        }
-                        count++;
-                    }
-                }
-                if (count != 0) {
-                    value.copyRaw(acc);
-                } else {
-                    value.ofRawNull();
-                }
-                if (frameLoBounded) {
-                    readD256(memory, startOffset + loIdx * 32L, scratch);
-                    if (!scratch.isNull()) {
-                        acc.subtract(scratch);
-                        count--;
-                    }
-                }
-            }
-
-            mv.putDecimal256(0, acc);
-            mv.putLong(4, count);
-            mv.putLong(5, (loIdx + 1) % bufferSize);
-            mv.putLong(6, startOffset);
-            long writeOff = startOffset + loIdx * 32L;
-            memory.putLong(writeOff, inHh);
-            memory.putLong(writeOff + Long.BYTES, inHl);
-            memory.putLong(writeOff + 2 * Long.BYTES, inLh);
-            memory.putLong(writeOff + 3 * Long.BYTES, inLl);
-        }
-
-        @Override
-        public void getDecimal256(Record rec, Decimal256 sink) {
-            sink.copyRaw(value);
-        }
-
-        @Override
-        public String getName() {
-            return NAME;
-        }
-
-        @Override
-        public int getPassCount() {
-            return WindowFunction.ZERO_PASS;
-        }
-
-        @Override
-        public int getType() {
-            return type;
-        }
-
-        @Override
-        public void pass1(Record record, long recordOffset, WindowSPI spi) {
-            computeNext(record);
-            long addr = spi.getAddress(recordOffset, columnIndex);
-            Unsafe.putLong(addr, value.getHh());
-            Unsafe.putLong(addr + Long.BYTES, value.getHl());
-            Unsafe.putLong(addr + 2 * Long.BYTES, value.getLh());
-            Unsafe.putLong(addr + 3 * Long.BYTES, value.getLl());
-        }
-
-        @Override
-        public void reopen() {
-            super.reopen();
-        }
-
-        @Override
-        public void reset() {
-            super.reset();
-            memory.close();
-        }
-
-        @Override
-        public void toPlan(PlanSink sink) {
-            sink.val(getName()).val('(').val(arg).val(')');
-            sink.val(" over (partition by ").val(partitionByRecord.getFunctions());
-            sink.val(" rows between ");
-            if (frameLoBounded) {
-                sink.val(bufferSize);
-            } else {
-                sink.val("unbounded");
-            }
-            sink.val(" preceding and ");
-            if (frameIncludesCurrentValue) {
-                sink.val("current row");
-            } else {
-                sink.val(bufferSize - frameSize).val(" preceding");
-            }
-            sink.val(')');
-        }
-
-        @Override
-        public void toTop() {
-            super.toTop();
-            memory.truncate();
-        }
-    }
-
-    static class Decimal256SumOverRangeFrameFunction extends BaseWindowFunction implements Reopenable, WindowDecimal256Function {
-
-        private static final int RECORD_SIZE = Long.BYTES + 32;
-        private final Decimal256 acc = new Decimal256();
-        private final boolean frameLoBounded;
-        private final long initialCapacity;
-        private final long maxDiff;
-        private final MemoryARW memory;
-        private final long minDiff;
-        private final int position;
-        private final Decimal256 scratch = new Decimal256();
-        private final int timestampIndex;
-        private final int type;
-        private final Decimal256 value = new Decimal256();
-        private long capacity;
-        private long firstIdx;
-        private long frameSize;
-        private long size;
-        private long startOffset;
-
-        public Decimal256SumOverRangeFrameFunction(
-                long rangeLo,
-                long rangeHi,
-                Function arg,
-                CairoConfiguration configuration,
-                int timestampIdx,
-                int type,
-                int position
-        ) {
-            super(arg);
-            this.initialCapacity = configuration.getSqlWindowStorePageSize() / RECORD_SIZE;
-            this.memory = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
-                    configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
-            this.frameLoBounded = rangeLo != Long.MIN_VALUE;
-            this.maxDiff = frameLoBounded ? Math.abs(rangeLo) : Long.MAX_VALUE;
-            this.minDiff = Math.abs(rangeHi);
-            this.timestampIndex = timestampIdx;
-            this.type = type;
-            this.position = position;
-            capacity = initialCapacity;
-            startOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
-            firstIdx = 0;
-            frameSize = 0;
-            acc.ofRaw(0);
-            value.ofRawNull();
-        }
-
-        @Override
-        public void close() {
-            super.close();
-            memory.close();
-        }
-
-        @Override
-        public void computeNext(Record record) {
-            long timestamp = record.getTimestamp(timestampIndex);
-            arg.getDecimal256(record, scratch);
-            boolean isNull = scratch.isNull();
-            long inHh = scratch.getHh();
-            long inHl = scratch.getHl();
-            long inLh = scratch.getLh();
-            long inLl = scratch.getLl();
-            long newFirstIdx = firstIdx;
-            if (frameLoBounded) {
-                for (long i = 0, n = size; i < n; i++) {
-                    long idx = (firstIdx + i) % capacity;
-                    long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                    if (Math.abs(timestamp - ts) > maxDiff) {
-                        if (frameSize > 0) {
-                            readD256(memory, startOffset + idx * RECORD_SIZE + Long.BYTES, scratch);
-                            acc.subtract(scratch);
-                            frameSize--;
-                        }
-                        newFirstIdx = (idx + 1) % capacity;
-                        size--;
-                    } else {
-                        break;
-                    }
-                }
-            }
-            firstIdx = newFirstIdx;
-
-            if (!isNull) {
-                if (size == capacity) {
-                    long newAddress = memory.appendAddressFor((capacity << 1) * RECORD_SIZE);
-                    long oldAddress = memory.getPageAddress(0) + startOffset;
-                    if (firstIdx == 0) {
-                        Vect.memcpy(newAddress, oldAddress, size * RECORD_SIZE);
-                    } else {
-                        firstIdx %= size;
-                        long firstPieceSize = (size - firstIdx) * RECORD_SIZE;
-                        Vect.memcpy(newAddress, oldAddress + firstIdx * RECORD_SIZE, firstPieceSize);
-                        Vect.memcpy(newAddress + firstPieceSize, oldAddress, firstIdx * RECORD_SIZE);
-                        firstIdx = 0;
-                    }
-                    startOffset = newAddress - memory.getPageAddress(0);
-                    capacity <<= 1;
-                }
-                long slotOffset = startOffset + ((firstIdx + size) % capacity) * RECORD_SIZE;
-                memory.putLong(slotOffset, timestamp);
-                memory.putLong(slotOffset + Long.BYTES, inHh);
-                memory.putLong(slotOffset + Long.BYTES + Long.BYTES, inHl);
-                memory.putLong(slotOffset + Long.BYTES + 2 * Long.BYTES, inLh);
-                memory.putLong(slotOffset + Long.BYTES + 3 * Long.BYTES, inLl);
-                size++;
-            }
-
-            if (frameLoBounded) {
-                for (long i = frameSize, n = size; i < n; i++) {
-                    long idx = (firstIdx + i) % capacity;
-                    long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                    long diff = Math.abs(ts - timestamp);
-                    if (diff <= maxDiff && diff >= minDiff) {
-                        readD256(memory, startOffset + idx * RECORD_SIZE + Long.BYTES, scratch);
-                        try {
-                            Decimal256.uncheckedAdd(acc, scratch);
-                        } catch (NumericException e) {
-                            throw CairoException.nonCritical().position(position).put("sum aggregation failed: ").put(e.getFlyweightMessage());
-                        }
-                        frameSize++;
-                    } else {
-                        break;
-                    }
-                }
-            } else {
-                newFirstIdx = firstIdx;
-                for (long i = 0, n = size; i < n; i++) {
-                    long idx = (firstIdx + i) % capacity;
-                    long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                    if (Math.abs(timestamp - ts) >= minDiff) {
-                        readD256(memory, startOffset + idx * RECORD_SIZE + Long.BYTES, scratch);
-                        try {
-                            Decimal256.uncheckedAdd(acc, scratch);
-                        } catch (NumericException e) {
-                            throw CairoException.nonCritical().position(position).put("sum aggregation failed: ").put(e.getFlyweightMessage());
-                        }
-                        frameSize++;
-                        newFirstIdx = (idx + 1) % capacity;
-                        size--;
-                    } else {
-                        break;
-                    }
-                }
-                firstIdx = newFirstIdx;
-            }
-            if (frameSize != 0) {
-                value.copyRaw(acc);
-            } else {
-                value.ofRawNull();
-            }
-        }
-
-        @Override
-        public void getDecimal256(Record rec, Decimal256 sink) {
-            sink.copyRaw(value);
-        }
-
-        @Override
-        public String getName() {
-            return NAME;
-        }
-
-        @Override
-        public int getPassCount() {
-            return WindowFunction.ZERO_PASS;
-        }
-
-        @Override
-        public int getType() {
-            return type;
-        }
-
-        @Override
-        public void pass1(Record record, long recordOffset, WindowSPI spi) {
-            computeNext(record);
-            long addr = spi.getAddress(recordOffset, columnIndex);
-            Unsafe.putLong(addr, value.getHh());
-            Unsafe.putLong(addr + Long.BYTES, value.getHl());
-            Unsafe.putLong(addr + 2 * Long.BYTES, value.getLh());
-            Unsafe.putLong(addr + 3 * Long.BYTES, value.getLl());
-        }
-
-        @Override
-        public void reopen() {
-            value.ofRawNull();
-            capacity = initialCapacity;
-            startOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
-            firstIdx = 0;
-            frameSize = 0;
-            size = 0;
-            acc.ofRaw(0);
-        }
-
-        @Override
-        public void reset() {
-            super.reset();
-            memory.close();
-        }
-
-        @Override
-        public void toPlan(PlanSink sink) {
-            sink.val(getName()).val('(').val(arg).val(')');
-            sink.val(" over (range between ");
-            if (frameLoBounded) {
-                sink.val(maxDiff);
-            } else {
-                sink.val("unbounded");
-            }
-            sink.val(" preceding and ");
-            if (minDiff == 0) {
-                sink.val("current row");
-            } else {
-                sink.val(minDiff).val(" preceding");
-            }
-            sink.val(')');
-        }
-
-        @Override
-        public void toTop() {
-            super.toTop();
-            value.ofRawNull();
-            capacity = initialCapacity;
-            memory.truncate();
-            startOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
-            firstIdx = 0;
-            frameSize = 0;
-            size = 0;
-            acc.ofRaw(0);
-        }
-    }
-
-    static class Decimal256SumOverRowsFrameFunction extends BaseWindowFunction implements Reopenable, WindowDecimal256Function {
-
-        private final Decimal256 acc = new Decimal256();
-        private final MemoryARW buffer;
-        private final int bufferSize;
-        private final boolean frameIncludesCurrentValue;
-        private final boolean frameLoBounded;
-        private final int frameSize;
-        private final int position;
-        private final Decimal256 scratch = new Decimal256();
-        private final int type;
-        private final Decimal256 value = new Decimal256();
-        private long count = 0;
-        private int loIdx = 0;
-
-        public Decimal256SumOverRowsFrameFunction(Function arg, long rowsLo, long rowsHi, MemoryARW memory, int type, int position) {
-            super(arg);
-            assert rowsLo != Long.MIN_VALUE || rowsHi != 0;
-            if (rowsLo > Long.MIN_VALUE) {
-                frameSize = (int) (rowsHi - rowsLo + (rowsHi < 0 ? 1 : 0));
-                bufferSize = (int) Math.abs(rowsLo);
-                frameLoBounded = true;
-            } else {
-                frameSize = (int) Math.abs(rowsHi);
-                bufferSize = frameSize;
-                frameLoBounded = false;
-            }
-            frameIncludesCurrentValue = rowsHi == 0;
-            this.buffer = memory;
-            this.type = type;
-            this.position = position;
-            acc.ofRaw(0);
-            value.ofRawNull();
-            try {
-                initBuffer();
-            } catch (Throwable t) {
-                close();
-                throw t;
-            }
-        }
-
-        @Override
-        public void close() {
-            super.close();
-            buffer.close();
-        }
-
-        @Override
-        public void computeNext(Record record) {
-            arg.getDecimal256(record, scratch);
-            long inHh = scratch.getHh();
-            long inHl = scratch.getHl();
-            long inLh = scratch.getLh();
-            long inLl = scratch.getLl();
-            if (frameIncludesCurrentValue) {
-                if (!scratch.isNull()) {
-                    try {
-                        Decimal256.uncheckedAdd(acc, scratch);
-                    } catch (NumericException e) {
-                        throw CairoException.nonCritical().position(position).put("sum aggregation failed: ").put(e.getFlyweightMessage());
-                    }
-                    count++;
-                }
-            } else {
-                long hiOff = frameLoBounded
-                        ? (long) ((loIdx + frameSize - 1) % bufferSize) * 32L
-                        : (long) (loIdx % bufferSize) * 32L;
-                readD256(buffer, hiOff, scratch);
-                if (!scratch.isNull()) {
-                    try {
-                        Decimal256.uncheckedAdd(acc, scratch);
-                    } catch (NumericException e) {
-                        throw CairoException.nonCritical().position(position).put("sum aggregation failed: ").put(e.getFlyweightMessage());
-                    }
-                    count++;
-                }
-            }
-            if (count != 0) {
-                value.copyRaw(acc);
-            } else {
-                value.ofRawNull();
-            }
-
-            if (frameLoBounded) {
-                readD256(buffer, (long) loIdx * 32L, scratch);
-                if (!scratch.isNull()) {
-                    acc.subtract(scratch);
-                    count--;
-                }
-            }
-            long writeOff = (long) loIdx * 32L;
-            buffer.putLong(writeOff, inHh);
-            buffer.putLong(writeOff + Long.BYTES, inHl);
-            buffer.putLong(writeOff + 2 * Long.BYTES, inLh);
-            buffer.putLong(writeOff + 3 * Long.BYTES, inLl);
-            loIdx = (loIdx + 1) % bufferSize;
-        }
-
-        @Override
-        public void getDecimal256(Record rec, Decimal256 sink) {
-            sink.copyRaw(value);
-        }
-
-        @Override
-        public String getName() {
-            return NAME;
-        }
-
-        @Override
-        public int getPassCount() {
-            return WindowFunction.ZERO_PASS;
-        }
-
-        @Override
-        public int getType() {
-            return type;
-        }
-
-        @Override
-        public void pass1(Record record, long recordOffset, WindowSPI spi) {
-            computeNext(record);
-            long addr = spi.getAddress(recordOffset, columnIndex);
-            Unsafe.putLong(addr, value.getHh());
-            Unsafe.putLong(addr + Long.BYTES, value.getHl());
-            Unsafe.putLong(addr + 2 * Long.BYTES, value.getLh());
-            Unsafe.putLong(addr + 3 * Long.BYTES, value.getLl());
-        }
-
-        @Override
-        public void reopen() {
-            value.ofRawNull();
-            count = 0;
-            loIdx = 0;
-            acc.ofRaw(0);
-            initBuffer();
-        }
-
-        @Override
-        public void reset() {
-            super.reset();
-            buffer.close();
-            value.ofRawNull();
-            count = 0;
-            loIdx = 0;
-            acc.ofRaw(0);
-        }
-
-        @Override
-        public void toPlan(PlanSink sink) {
-            sink.val(getName()).val('(').val(arg).val(')');
-            sink.val(" over (");
-            sink.val(" rows between ");
-            if (frameLoBounded) {
-                sink.val(bufferSize);
-            } else {
-                sink.val("unbounded");
-            }
-            sink.val(" preceding and ");
-            if (frameIncludesCurrentValue) {
-                sink.val("current row");
-            } else {
-                sink.val(bufferSize - frameSize).val(" preceding");
-            }
-            sink.val(')');
-        }
-
-        @Override
-        public void toTop() {
-            super.toTop();
-            value.ofRawNull();
-            count = 0;
-            loIdx = 0;
-            acc.ofRaw(0);
-            initBuffer();
-        }
-
-        private void initBuffer() {
-            for (int i = 0; i < bufferSize; i++) {
-                long off = (long) i * 32L;
-                buffer.putLong(off, Decimals.DECIMAL256_HH_NULL);
-                buffer.putLong(off + Long.BYTES, Decimals.DECIMAL256_HL_NULL);
-                buffer.putLong(off + 2 * Long.BYTES, Decimals.DECIMAL256_LH_NULL);
-                buffer.putLong(off + 3 * Long.BYTES, Decimals.DECIMAL256_LL_NULL);
-            }
-        }
-    }
-
-    static class Decimal256SumOverUnboundedPartitionRowsFrameFunction extends BasePartitionedWindowFunction implements WindowDecimal256Function {
-
-        private final Decimal256 acc = new Decimal256();
-        private final int position;
-        private final Decimal256 scratch = new Decimal256();
-        private final int type;
-        private final Decimal256 value = new Decimal256();
-
-        public Decimal256SumOverUnboundedPartitionRowsFrameFunction(Map map, VirtualRecord partitionByRecord, RecordSink partitionBySink, Function arg, int type, int position) {
-            super(map, partitionByRecord, partitionBySink, arg);
-            this.type = type;
-            this.position = position;
-        }
-
-        @Override
-        public void computeNext(Record record) {
-            partitionByRecord.of(record);
-            MapKey key = map.withKey();
-            key.put(partitionByRecord, partitionBySink);
-            MapValue mv = key.createValue();
-
-            boolean wasNullState;
-            if (mv.isNew()) {
-                acc.ofRaw(0);
-                wasNullState = true;
-            } else {
-                mv.getDecimal256(0, acc);
-                wasNullState = mv.getBool(4);
-            }
-
-            arg.getDecimal256(record, scratch);
-            if (!scratch.isNull()) {
-                if (wasNullState) {
-                    acc.copyRaw(scratch);
-                    wasNullState = false;
-                } else {
-                    try {
-                        Decimal256.uncheckedAdd(acc, scratch);
-                    } catch (NumericException e) {
-                        throw CairoException.nonCritical().position(position).put("sum aggregation failed: ").put(e.getFlyweightMessage());
-                    }
-                }
-            }
-            mv.putDecimal256(0, acc);
-            mv.putBool(4, wasNullState);
-            if (wasNullState) {
-                value.ofRawNull();
-            } else {
-                value.copyRaw(acc);
-            }
-        }
-
-        @Override
-        public void getDecimal256(Record rec, Decimal256 sink) {
-            sink.copyRaw(value);
-        }
-
-        @Override
-        public String getName() {
-            return NAME;
-        }
-
-        @Override
-        public int getPassCount() {
-            return WindowFunction.ZERO_PASS;
-        }
-
-        @Override
-        public int getType() {
-            return type;
-        }
-
-        @Override
-        public void pass1(Record record, long recordOffset, WindowSPI spi) {
-            computeNext(record);
-            long addr = spi.getAddress(recordOffset, columnIndex);
-            Unsafe.putLong(addr, value.getHh());
-            Unsafe.putLong(addr + Long.BYTES, value.getHl());
-            Unsafe.putLong(addr + 2 * Long.BYTES, value.getLh());
-            Unsafe.putLong(addr + 3 * Long.BYTES, value.getLl());
-        }
-
-        @Override
-        public void toPlan(PlanSink sink) {
-            sink.val(NAME).val('(').val(arg).val(')');
-            sink.val(" over (partition by ").val(partitionByRecord.getFunctions());
-            sink.val(" rows between unbounded preceding and current row)");
-        }
-    }
-
-    static class Decimal256SumOverUnboundedRowsFrameFunction extends BaseWindowFunction implements WindowDecimal256Function {
-
-        private final Decimal256 acc = new Decimal256();
-        private final int position;
-        private final Decimal256 scratch = new Decimal256();
-        private final int type;
-        private final Decimal256 value = new Decimal256();
-        private boolean isNullState = true;
-
-        public Decimal256SumOverUnboundedRowsFrameFunction(Function arg, int type, int position) {
-            super(arg);
-            this.type = type;
-            this.position = position;
-            acc.ofRaw(0);
-            value.ofRawNull();
-        }
-
-        @Override
-        public void computeNext(Record record) {
-            arg.getDecimal256(record, scratch);
-            if (!scratch.isNull()) {
-                if (isNullState) {
-                    acc.copyRaw(scratch);
-                    isNullState = false;
-                } else {
-                    try {
-                        Decimal256.uncheckedAdd(acc, scratch);
-                    } catch (NumericException e) {
-                        throw CairoException.nonCritical().position(position).put("sum aggregation failed: ").put(e.getFlyweightMessage());
-                    }
-                }
-            }
-            if (isNullState) {
-                value.ofRawNull();
-            } else {
-                value.copyRaw(acc);
-            }
-        }
-
-        @Override
-        public void getDecimal256(Record rec, Decimal256 sink) {
-            sink.copyRaw(value);
-        }
-
-        @Override
-        public String getName() {
-            return NAME;
-        }
-
-        @Override
-        public int getPassCount() {
-            return WindowFunction.ZERO_PASS;
-        }
-
-        @Override
-        public int getType() {
-            return type;
-        }
-
-        @Override
-        public void pass1(Record record, long recordOffset, WindowSPI spi) {
-            computeNext(record);
-            long addr = spi.getAddress(recordOffset, columnIndex);
-            Unsafe.putLong(addr, value.getHh());
-            Unsafe.putLong(addr + Long.BYTES, value.getHl());
-            Unsafe.putLong(addr + 2 * Long.BYTES, value.getLh());
-            Unsafe.putLong(addr + 3 * Long.BYTES, value.getLl());
-        }
-
-        @Override
-        public void reset() {
-            super.reset();
-            value.ofRawNull();
-            isNullState = true;
-            acc.ofRaw(0);
-        }
-
-        @Override
-        public void toPlan(PlanSink sink) {
-            sink.val(NAME).val('(').val(arg).val(')');
-            sink.val(" over (rows between unbounded preceding and current row)");
-        }
-
-        @Override
-        public void toTop() {
-            super.toTop();
-            value.ofRawNull();
-            isNullState = true;
-            acc.ofRaw(0);
-        }
-    }
-
-    static class Decimal256SumOverWholeResultSetFunction extends BaseWindowFunction implements WindowDecimal256Function {
-
-        private final Decimal256 acc = new Decimal256();
-        private final int position;
-        private final Decimal256 scratch = new Decimal256();
-        private final int type;
-        private final Decimal256 value = new Decimal256();
-        private boolean isNullState = true;
-
-        public Decimal256SumOverWholeResultSetFunction(Function arg, int type, int position) {
-            super(arg);
-            this.type = type;
-            this.position = position;
-            acc.ofRaw(0);
-            value.ofRawNull();
-        }
-
-        @Override
-        public void getDecimal256(Record rec, Decimal256 sink) {
-            sink.copyRaw(value);
-        }
-
-        @Override
-        public String getName() {
-            return NAME;
-        }
-
-        @Override
-        public int getPassCount() {
-            return WindowFunction.TWO_PASS;
-        }
-
-        @Override
-        public int getType() {
-            return type;
-        }
-
-        @Override
-        public void pass1(Record record, long recordOffset, WindowSPI spi) {
-            arg.getDecimal256(record, scratch);
-            if (!scratch.isNull()) {
-                if (isNullState) {
-                    acc.copyRaw(scratch);
-                    isNullState = false;
-                } else {
-                    try {
-                        Decimal256.uncheckedAdd(acc, scratch);
-                    } catch (NumericException e) {
-                        throw CairoException.nonCritical().position(position).put("sum aggregation failed: ").put(e.getFlyweightMessage());
-                    }
-                }
-            }
-        }
-
-        @Override
-        public void pass2(Record record, long recordOffset, WindowSPI spi) {
-            long addr = spi.getAddress(recordOffset, columnIndex);
-            Unsafe.putLong(addr, value.getHh());
-            Unsafe.putLong(addr + Long.BYTES, value.getHl());
-            Unsafe.putLong(addr + 2 * Long.BYTES, value.getLh());
-            Unsafe.putLong(addr + 3 * Long.BYTES, value.getLl());
-        }
-
-        @Override
-        public void preparePass2() {
-            if (isNullState) {
-                value.ofRawNull();
-            } else {
-                value.copyRaw(acc);
-            }
-        }
-
-        @Override
-        public void reset() {
-            super.reset();
-            value.ofRawNull();
-            isNullState = true;
-            acc.ofRaw(0);
-        }
-
-        @Override
-        public void toTop() {
-            super.toTop();
-            value.ofRawNull();
-            isNullState = true;
-            acc.ofRaw(0);
-        }
-    }
-
-    static class Decimal128SumOverCurrentRowFunction extends BaseWindowFunction implements WindowDecimal256Function {
-
-        private final Decimal128 scratch = new Decimal128();
-        private final int type;
-        private final Decimal256 value = new Decimal256();
-
-        Decimal128SumOverCurrentRowFunction(Function arg, int type) {
-            super(arg);
-            this.type = type;
-        }
-
-        @Override
-        public void computeNext(Record record) {
-            arg.getDecimal128(record, scratch);
-            if (scratch.isNull()) {
-                value.ofRawNull();
-            } else {
-                value.ofRaw(scratch.getHigh(), scratch.getLow());
-            }
-        }
-
-        @Override
-        public void getDecimal256(Record rec, Decimal256 sink) {
-            sink.copyRaw(value);
-        }
-
-        @Override
-        public String getName() {
-            return NAME;
-        }
-
-        @Override
-        public int getPassCount() {
-            return ZERO_PASS;
-        }
-
-        @Override
-        public int getType() {
-            return type;
-        }
-
-        @Override
-        public void pass1(Record record, long recordOffset, WindowSPI spi) {
-            computeNext(record);
-            long addr = spi.getAddress(recordOffset, columnIndex);
-            Unsafe.putLong(addr, value.getHh());
-            Unsafe.putLong(addr + Long.BYTES, value.getHl());
-            Unsafe.putLong(addr + 2 * Long.BYTES, value.getLh());
-            Unsafe.putLong(addr + 3 * Long.BYTES, value.getLl());
-        }
-    }
-
-    static class Decimal128SumOverPartitionFunction extends BasePartitionedWindowFunction implements WindowDecimal256Function {
-
-        private final Decimal256 acc = new Decimal256();
-        private final int position;
-        private final Decimal128 scratch = new Decimal128();
-        private final int type;
-        private final Decimal256 value = new Decimal256();
-
-        public Decimal128SumOverPartitionFunction(Map map, VirtualRecord partitionByRecord, RecordSink partitionBySink, Function arg, int type, int position) {
-            super(map, partitionByRecord, partitionBySink, arg);
-            this.type = type;
-            this.position = position;
-        }
-
-        @Override
-        public void getDecimal256(Record rec, Decimal256 sink) {
-            sink.copyRaw(value);
-        }
-
-        @Override
-        public String getName() {
-            return NAME;
-        }
-
-        @Override
-        public int getPassCount() {
-            return WindowFunction.TWO_PASS;
-        }
-
-        @Override
-        public int getType() {
-            return type;
-        }
-
-        @Override
-        public void pass1(Record record, long recordOffset, WindowSPI spi) {
-            partitionByRecord.of(record);
-            MapKey key = map.withKey();
-            key.put(partitionByRecord, partitionBySink);
-            MapValue mv = key.createValue();
-            arg.getDecimal128(record, scratch);
-            if (!scratch.isNull()) {
-                if (mv.isNew()) {
-                    acc.ofRaw(scratch.getHigh(), scratch.getLow());
-                    mv.putDecimal256(0, acc);
-                    mv.putBool(1, false);
-                } else if (mv.getBool(1)) {
-                    acc.ofRaw(scratch.getHigh(), scratch.getLow());
-                    mv.putDecimal256(0, acc);
-                    mv.putBool(1, false);
-                } else {
-                    mv.getDecimal256(0, acc);
-                    try {
-                        Decimal256.uncheckedAdd(acc, scratch);
-                    } catch (NumericException e) {
-                        throw CairoException.nonCritical().position(position).put("sum aggregation failed: ").put(e.getFlyweightMessage());
-                    }
-                    mv.putDecimal256(0, acc);
-                }
-            } else if (mv.isNew()) {
-                Decimal256 nullVal = new Decimal256();
-                nullVal.ofRawNull();
-                mv.putDecimal256(0, nullVal);
-                mv.putBool(1, true);
-            }
-        }
-
-        @Override
-        public void pass2(Record record, long recordOffset, WindowSPI spi) {
-            partitionByRecord.of(record);
-            MapKey key = map.withKey();
-            key.put(partitionByRecord, partitionBySink);
-            MapValue mv = key.findValue();
-            long addr = spi.getAddress(recordOffset, columnIndex);
-            if (mv != null && !mv.getBool(1)) {
-                mv.getDecimal256(0, acc);
-                Unsafe.putLong(addr, acc.getHh());
-                Unsafe.putLong(addr + Long.BYTES, acc.getHl());
-                Unsafe.putLong(addr + 2 * Long.BYTES, acc.getLh());
-                Unsafe.putLong(addr + 3 * Long.BYTES, acc.getLl());
-            } else {
-                Unsafe.putLong(addr, Decimals.DECIMAL256_HH_NULL);
-                Unsafe.putLong(addr + Long.BYTES, Decimals.DECIMAL256_HL_NULL);
-                Unsafe.putLong(addr + 2 * Long.BYTES, Decimals.DECIMAL256_LH_NULL);
-                Unsafe.putLong(addr + 3 * Long.BYTES, Decimals.DECIMAL256_LL_NULL);
-            }
-        }
-    }
-
-    public static class Decimal128SumOverPartitionRangeFrameFunction extends BasePartitionedWindowFunction implements WindowDecimal256Function {
-
-        private static final int RECORD_SIZE = Long.BYTES + 16;
-        private final Decimal256 acc = new Decimal256();
-        private final boolean frameIncludesCurrentValue;
-        private final boolean frameLoBounded;
-        private final LongList freeList = new LongList();
-        private final int initialBufferSize;
-        private final long maxDiff;
-        private final MemoryARW memory;
-        private final RingBufferDesc memoryDesc = new RingBufferDesc();
-        private final long minDiff;
-        private final int position;
-        private final Decimal128 scratch = new Decimal128();
-        private final int timestampIndex;
-        private final int type;
-        private final Decimal256 value = new Decimal256();
-
-        public Decimal128SumOverPartitionRangeFrameFunction(
-                Map map,
-                VirtualRecord partitionByRecord,
-                RecordSink partitionBySink,
-                long rangeLo,
-                long rangeHi,
-                Function arg,
-                MemoryARW memory,
-                int initialBufferSize,
-                int timestampIdx,
-                int type,
-                int position
-        ) {
-            super(map, partitionByRecord, partitionBySink, arg);
-            this.frameLoBounded = rangeLo != Long.MIN_VALUE;
-            this.maxDiff = frameLoBounded ? Math.abs(rangeLo) : Long.MAX_VALUE;
-            this.minDiff = Math.abs(rangeHi);
-            this.memory = memory;
-            this.initialBufferSize = initialBufferSize;
-            this.timestampIndex = timestampIdx;
-            this.frameIncludesCurrentValue = rangeHi == 0;
-            this.type = type;
-            this.position = position;
-        }
-
-        @Override
-        public void close() {
-            super.close();
-            memory.close();
-            freeList.clear();
-        }
-
-        @Override
-        public void computeNext(Record record) {
-            partitionByRecord.of(record);
-            MapKey key = map.withKey();
-            key.put(partitionByRecord, partitionBySink);
-            MapValue mapValue = key.createValue();
-
-            long frameSize;
-            long startOffset;
-            long size;
-            long capacity;
-            long firstIdx;
-            long timestamp = record.getTimestamp(timestampIndex);
-            arg.getDecimal128(record, scratch);
-            boolean inputNull = scratch.isNull();
-            long inHigh = scratch.getHigh();
-            long inLow = scratch.getLow();
-
-            if (mapValue.isNew()) {
-                capacity = initialBufferSize;
-                startOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
-                firstIdx = 0;
-                if (!inputNull) {
-                    long slotOffset = startOffset;
-                    memory.putLong(slotOffset, timestamp);
-                    memory.putLong(slotOffset + Long.BYTES, inHigh);
-                    memory.putLong(slotOffset + Long.BYTES + Long.BYTES, inLow);
-                    if (frameIncludesCurrentValue) {
-                        long signExt = inHigh < 0 ? -1L : 0L;
-                        acc.ofRaw(signExt, signExt, inHigh, inLow);
-                        value.copyRaw(acc);
-                        frameSize = 1;
-                        size = frameLoBounded ? 1 : 0;
-                    } else {
-                        acc.ofRaw(0);
-                        value.ofRawNull();
-                        frameSize = 0;
-                        size = 1;
-                    }
-                } else {
-                    size = 0;
-                    acc.ofRaw(0);
-                    value.ofRawNull();
-                    frameSize = 0;
-                }
-            } else {
-                mapValue.getDecimal256(0, acc);
-                frameSize = mapValue.getLong(2);
-                startOffset = mapValue.getLong(3);
-                size = mapValue.getLong(4);
-                capacity = mapValue.getLong(5);
-                firstIdx = mapValue.getLong(6);
-
-                long newFirstIdx = firstIdx;
-                if (frameLoBounded) {
-                    for (long i = 0, n = size; i < n; i++) {
-                        long idx = (firstIdx + i) % capacity;
-                        long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                        if (Math.abs(timestamp - ts) > maxDiff) {
-                            if (frameSize > 0) {
-                                memory.getDecimal128(startOffset + idx * RECORD_SIZE + Long.BYTES, scratch);
-                                long h = scratch.getHigh();
-                                acc.subtract(h < 0 ? -1L : 0L, h < 0 ? -1L : 0L, h, scratch.getLow(), ColumnType.getDecimalScale(type));
-                                frameSize--;
-                            }
-                            newFirstIdx = (idx + 1) % capacity;
-                            size--;
-                        } else {
-                            break;
-                        }
-                    }
-                }
-                firstIdx = newFirstIdx;
-
-                if (!inputNull) {
-                    if (size == capacity) {
-                        memoryDesc.reset(capacity, startOffset, size, firstIdx, freeList);
-                        expandRingBuffer(memory, memoryDesc, RECORD_SIZE);
-                        capacity = memoryDesc.capacity;
-                        startOffset = memoryDesc.startOffset;
-                        firstIdx = memoryDesc.firstIdx;
-                    }
-                    long slotOffset = startOffset + ((firstIdx + size) % capacity) * RECORD_SIZE;
-                    memory.putLong(slotOffset, timestamp);
-                    memory.putLong(slotOffset + Long.BYTES, inHigh);
-                    memory.putLong(slotOffset + Long.BYTES + Long.BYTES, inLow);
-                    size++;
-                }
-
-                if (frameLoBounded) {
-                    for (long i = frameSize; i < size; i++) {
-                        long idx = (firstIdx + i) % capacity;
-                        long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                        long diff = Math.abs(ts - timestamp);
-                        if (diff <= maxDiff && diff >= minDiff) {
-                            memory.getDecimal128(startOffset + idx * RECORD_SIZE + Long.BYTES, scratch);
-                            try {
-                                Decimal256.uncheckedAdd(acc, scratch);
-                            } catch (NumericException e) {
-                                throw CairoException.nonCritical().position(position).put("sum aggregation failed: ").put(e.getFlyweightMessage());
-                            }
-                            frameSize++;
-                        } else {
-                            break;
-                        }
-                    }
-                } else {
-                    newFirstIdx = firstIdx;
-                    for (long i = 0, n = size; i < n; i++) {
-                        long idx = (firstIdx + i) % capacity;
-                        long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                        if (Math.abs(timestamp - ts) >= minDiff) {
-                            memory.getDecimal128(startOffset + idx * RECORD_SIZE + Long.BYTES, scratch);
-                            try {
-                                Decimal256.uncheckedAdd(acc, scratch);
-                            } catch (NumericException e) {
-                                throw CairoException.nonCritical().position(position).put("sum aggregation failed: ").put(e.getFlyweightMessage());
-                            }
-                            frameSize++;
-                            newFirstIdx = (idx + 1) % capacity;
-                            size--;
-                        } else {
-                            break;
-                        }
-                    }
-                    firstIdx = newFirstIdx;
-                }
-
-                if (frameSize != 0) {
-                    value.copyRaw(acc);
-                } else {
-                    value.ofRawNull();
-                }
-            }
-
-            mapValue.putDecimal256(0, acc);
-            mapValue.putLong(2, frameSize);
-            mapValue.putLong(3, startOffset);
-            mapValue.putLong(4, size);
-            mapValue.putLong(5, capacity);
-            mapValue.putLong(6, firstIdx);
-        }
-
-        @Override
-        public void getDecimal256(Record rec, Decimal256 sink) {
-            sink.copyRaw(value);
-        }
-
-        @Override
-        public String getName() {
-            return NAME;
-        }
-
-        @Override
-        public int getPassCount() {
-            return WindowFunction.ZERO_PASS;
-        }
-
-        @Override
-        public int getType() {
-            return type;
-        }
-
-        @Override
-        public void pass1(Record record, long recordOffset, WindowSPI spi) {
-            computeNext(record);
-            long addr = spi.getAddress(recordOffset, columnIndex);
-            Unsafe.putLong(addr, value.getHh());
-            Unsafe.putLong(addr + Long.BYTES, value.getHl());
-            Unsafe.putLong(addr + 2 * Long.BYTES, value.getLh());
-            Unsafe.putLong(addr + 3 * Long.BYTES, value.getLl());
-        }
-
-        @Override
-        public void reopen() {
-            super.reopen();
-            value.ofRawNull();
-        }
-
-        @Override
-        public void reset() {
-            super.reset();
-            memory.close();
-            freeList.clear();
-        }
-
-        @Override
-        public void toPlan(PlanSink sink) {
-            sink.val(getName());
-            sink.val('(').val(arg).val(')');
-            sink.val(" over (");
-            sink.val("partition by ");
-            sink.val(partitionByRecord.getFunctions());
-            sink.val(" range between ");
-            if (frameLoBounded) {
-                sink.val(maxDiff);
-            } else {
-                sink.val("unbounded");
-            }
-            sink.val(" preceding and ");
-            if (minDiff == 0) {
-                sink.val("current row");
-            } else {
-                sink.val(minDiff).val(" preceding");
-            }
-            sink.val(')');
-        }
-
-        @Override
-        public void toTop() {
-            super.toTop();
-            memory.truncate();
-            freeList.clear();
-        }
-    }
-
-    public static class Decimal128SumOverPartitionRowsFrameFunction extends BasePartitionedWindowFunction implements WindowDecimal256Function {
-
-        private final Decimal256 acc = new Decimal256();
-        private final int bufferSize;
-        private final boolean frameIncludesCurrentValue;
-        private final boolean frameLoBounded;
-        private final int frameSize;
-        private final MemoryARW memory;
-        private final int position;
-        private final Decimal128 scratch = new Decimal128();
-        private final int type;
-        private final Decimal256 value = new Decimal256();
-
-        public Decimal128SumOverPartitionRowsFrameFunction(
-                Map map,
-                VirtualRecord partitionByRecord,
-                RecordSink partitionBySink,
-                long rowsLo,
-                long rowsHi,
-                Function arg,
-                MemoryARW memory,
-                int type,
-                int position
-        ) {
-            super(map, partitionByRecord, partitionBySink, arg);
-            if (rowsLo > Long.MIN_VALUE) {
-                frameSize = (int) (rowsHi - rowsLo + (rowsHi < 0 ? 1 : 0));
-                bufferSize = (int) Math.abs(rowsLo);
-                frameLoBounded = true;
-            } else {
-                frameSize = 1;
-                bufferSize = (int) Math.abs(rowsHi);
-                frameLoBounded = false;
-            }
-            frameIncludesCurrentValue = rowsHi == 0;
-            this.memory = memory;
-            this.type = type;
-            this.position = position;
-        }
-
-        @Override
-        public void close() {
-            super.close();
-            memory.close();
-        }
-
-        @Override
-        public void computeNext(Record record) {
-            partitionByRecord.of(record);
-            MapKey key = map.withKey();
-            key.put(partitionByRecord, partitionBySink);
-            MapValue mv = key.createValue();
-
-            long count;
-            long loIdx;
-            long startOffset;
-            arg.getDecimal128(record, scratch);
-            boolean isNull = scratch.isNull();
-            long inHigh = scratch.getHigh();
-            long inLow = scratch.getLow();
-
-            if (mv.isNew()) {
-                loIdx = 0;
-                startOffset = memory.appendAddressFor((long) bufferSize * 16L) - memory.getPageAddress(0);
-                if (frameIncludesCurrentValue && !isNull) {
-                    acc.ofRaw(inHigh, inLow);
-                    count = 1;
-                    value.copyRaw(acc);
-                } else {
-                    acc.ofRaw(0);
-                    value.ofRawNull();
-                    count = 0;
-                }
-                for (int i = 0; i < bufferSize; i++) {
-                    memory.putLong(startOffset + (long) i * 16L, Decimals.DECIMAL128_HI_NULL);
-                    memory.putLong(startOffset + (long) i * 16L + Long.BYTES, Decimals.DECIMAL128_LO_NULL);
-                }
-            } else {
-                mv.getDecimal256(0, acc);
-                count = mv.getLong(4);
-                loIdx = mv.getLong(5);
-                startOffset = mv.getLong(6);
-
-                long hiOffset = frameIncludesCurrentValue
-                        ? -1
-                        : startOffset + ((loIdx + frameSize - 1) % bufferSize) * 16L;
-                long hiH;
-                long hiL;
-                if (frameIncludesCurrentValue) {
-                    hiH = inHigh;
-                    hiL = inLow;
-                } else {
-                    hiH = memory.getLong(hiOffset);
-                    hiL = memory.getLong(hiOffset + Long.BYTES);
-                }
-                if (!Decimal128.isNull(hiH, hiL)) {
-                    count++;
-                    scratch.ofRaw(hiH, hiL);
-                    try {
-                        Decimal256.uncheckedAdd(acc, scratch);
-                    } catch (NumericException e) {
-                        throw CairoException.nonCritical().position(position).put("sum aggregation failed: ").put(e.getFlyweightMessage());
-                    }
-                }
-                if (count != 0) {
-                    value.copyRaw(acc);
-                } else {
-                    value.ofRawNull();
-                }
-                if (frameLoBounded) {
-                    long loH = memory.getLong(startOffset + loIdx * 16L);
-                    long loL = memory.getLong(startOffset + loIdx * 16L + Long.BYTES);
-                    if (!Decimal128.isNull(loH, loL)) {
-                        acc.subtract(loH < 0 ? -1L : 0L, loH < 0 ? -1L : 0L, loH, loL, ColumnType.getDecimalScale(type));
-                        count--;
-                    }
-                }
-            }
-
-            mv.putDecimal256(0, acc);
-            mv.putLong(4, count);
-            mv.putLong(5, (loIdx + 1) % bufferSize);
-            mv.putLong(6, startOffset);
-            memory.putLong(startOffset + loIdx * 16L, inHigh);
-            memory.putLong(startOffset + loIdx * 16L + Long.BYTES, inLow);
-        }
-
-        @Override
-        public void getDecimal256(Record rec, Decimal256 sink) {
-            sink.copyRaw(value);
-        }
-
-        @Override
-        public String getName() {
-            return NAME;
-        }
-
-        @Override
-        public int getPassCount() {
-            return WindowFunction.ZERO_PASS;
-        }
-
-        @Override
-        public int getType() {
-            return type;
-        }
-
-        @Override
-        public void pass1(Record record, long recordOffset, WindowSPI spi) {
-            computeNext(record);
-            long addr = spi.getAddress(recordOffset, columnIndex);
-            Unsafe.putLong(addr, value.getHh());
-            Unsafe.putLong(addr + Long.BYTES, value.getHl());
-            Unsafe.putLong(addr + 2 * Long.BYTES, value.getLh());
-            Unsafe.putLong(addr + 3 * Long.BYTES, value.getLl());
-        }
-
-        @Override
-        public void reopen() {
-            super.reopen();
-        }
-
-        @Override
-        public void reset() {
-            super.reset();
-            memory.close();
-        }
-
-        @Override
-        public void toPlan(PlanSink sink) {
-            sink.val(getName()).val('(').val(arg).val(')');
-            sink.val(" over (partition by ").val(partitionByRecord.getFunctions());
-            sink.val(" rows between ");
-            if (frameLoBounded) {
-                sink.val(bufferSize);
-            } else {
-                sink.val("unbounded");
-            }
-            sink.val(" preceding and ");
-            if (frameIncludesCurrentValue) {
-                sink.val("current row");
-            } else {
-                sink.val(bufferSize - frameSize).val(" preceding");
-            }
-            sink.val(')');
-        }
-
-        @Override
-        public void toTop() {
-            super.toTop();
-            memory.truncate();
-        }
-    }
-
-    static class Decimal128SumOverRangeFrameFunction extends BaseWindowFunction implements Reopenable, WindowDecimal256Function {
-
-        private static final int RECORD_SIZE = Long.BYTES + 16;
-        private final Decimal256 acc = new Decimal256();
-        private final boolean frameLoBounded;
-        private final long initialCapacity;
-        private final long maxDiff;
-        private final MemoryARW memory;
-        private final long minDiff;
-        private final int position;
-        private final Decimal128 scratch = new Decimal128();
-        private final int timestampIndex;
-        private final int type;
-        private final Decimal256 value = new Decimal256();
-        private long capacity;
-        private long firstIdx;
-        private long frameSize;
-        private long size;
-        private long startOffset;
-
-        public Decimal128SumOverRangeFrameFunction(
-                long rangeLo,
-                long rangeHi,
-                Function arg,
-                CairoConfiguration configuration,
-                int timestampIdx,
-                int type,
-                int position
-        ) {
-            super(arg);
-            this.initialCapacity = configuration.getSqlWindowStorePageSize() / RECORD_SIZE;
-            this.memory = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
-                    configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
-            this.frameLoBounded = rangeLo != Long.MIN_VALUE;
-            this.maxDiff = frameLoBounded ? Math.abs(rangeLo) : Long.MAX_VALUE;
-            this.minDiff = Math.abs(rangeHi);
-            this.timestampIndex = timestampIdx;
-            this.type = type;
-            this.position = position;
-            capacity = initialCapacity;
-            startOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
-            firstIdx = 0;
-            frameSize = 0;
-            acc.ofRaw(0);
-            value.ofRawNull();
-        }
-
-        @Override
-        public void close() {
-            super.close();
-            memory.close();
-        }
-
-        @Override
-        public void computeNext(Record record) {
-            long timestamp = record.getTimestamp(timestampIndex);
-            arg.getDecimal128(record, scratch);
-            boolean isNull = scratch.isNull();
-            long inHigh = scratch.getHigh();
-            long inLow = scratch.getLow();
-            long newFirstIdx = firstIdx;
-            if (frameLoBounded) {
-                for (long i = 0, n = size; i < n; i++) {
-                    long idx = (firstIdx + i) % capacity;
-                    long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                    if (Math.abs(timestamp - ts) > maxDiff) {
-                        if (frameSize > 0) {
-                            memory.getDecimal128(startOffset + idx * RECORD_SIZE + Long.BYTES, scratch);
-                            long h = scratch.getHigh();
-                            acc.subtract(h < 0 ? -1L : 0L, h < 0 ? -1L : 0L, h, scratch.getLow(), ColumnType.getDecimalScale(type));
-                            frameSize--;
-                        }
-                        newFirstIdx = (idx + 1) % capacity;
-                        size--;
-                    } else {
-                        break;
-                    }
-                }
-            }
-            firstIdx = newFirstIdx;
-
-            if (!isNull) {
-                if (size == capacity) {
-                    long newAddress = memory.appendAddressFor((capacity << 1) * RECORD_SIZE);
-                    long oldAddress = memory.getPageAddress(0) + startOffset;
-                    if (firstIdx == 0) {
-                        Vect.memcpy(newAddress, oldAddress, size * RECORD_SIZE);
-                    } else {
-                        firstIdx %= size;
-                        long firstPieceSize = (size - firstIdx) * RECORD_SIZE;
-                        Vect.memcpy(newAddress, oldAddress + firstIdx * RECORD_SIZE, firstPieceSize);
-                        Vect.memcpy(newAddress + firstPieceSize, oldAddress, firstIdx * RECORD_SIZE);
-                        firstIdx = 0;
-                    }
-                    startOffset = newAddress - memory.getPageAddress(0);
-                    capacity <<= 1;
-                }
-                long slotOffset = startOffset + ((firstIdx + size) % capacity) * RECORD_SIZE;
-                memory.putLong(slotOffset, timestamp);
-                memory.putLong(slotOffset + Long.BYTES, inHigh);
-                memory.putLong(slotOffset + Long.BYTES + Long.BYTES, inLow);
-                size++;
-            }
-
-            if (frameLoBounded) {
-                for (long i = frameSize, n = size; i < n; i++) {
-                    long idx = (firstIdx + i) % capacity;
-                    long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                    long diff = Math.abs(ts - timestamp);
-                    if (diff <= maxDiff && diff >= minDiff) {
-                        memory.getDecimal128(startOffset + idx * RECORD_SIZE + Long.BYTES, scratch);
-                        try {
-                            Decimal256.uncheckedAdd(acc, scratch);
-                        } catch (NumericException e) {
-                            throw CairoException.nonCritical().position(position).put("sum aggregation failed: ").put(e.getFlyweightMessage());
-                        }
-                        frameSize++;
-                    } else {
-                        break;
-                    }
-                }
-            } else {
-                newFirstIdx = firstIdx;
-                for (long i = 0, n = size; i < n; i++) {
-                    long idx = (firstIdx + i) % capacity;
-                    long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                    if (Math.abs(timestamp - ts) >= minDiff) {
-                        memory.getDecimal128(startOffset + idx * RECORD_SIZE + Long.BYTES, scratch);
-                        try {
-                            Decimal256.uncheckedAdd(acc, scratch);
-                        } catch (NumericException e) {
-                            throw CairoException.nonCritical().position(position).put("sum aggregation failed: ").put(e.getFlyweightMessage());
-                        }
-                        frameSize++;
-                        newFirstIdx = (idx + 1) % capacity;
-                        size--;
-                    } else {
-                        break;
-                    }
-                }
-                firstIdx = newFirstIdx;
-            }
-            if (frameSize != 0) {
-                value.copyRaw(acc);
-            } else {
-                value.ofRawNull();
-            }
-        }
-
-        @Override
-        public void getDecimal256(Record rec, Decimal256 sink) {
-            sink.copyRaw(value);
-        }
-
-        @Override
-        public String getName() {
-            return NAME;
-        }
-
-        @Override
-        public int getPassCount() {
-            return WindowFunction.ZERO_PASS;
-        }
-
-        @Override
-        public int getType() {
-            return type;
-        }
-
-        @Override
-        public void pass1(Record record, long recordOffset, WindowSPI spi) {
-            computeNext(record);
-            long addr = spi.getAddress(recordOffset, columnIndex);
-            Unsafe.putLong(addr, value.getHh());
-            Unsafe.putLong(addr + Long.BYTES, value.getHl());
-            Unsafe.putLong(addr + 2 * Long.BYTES, value.getLh());
-            Unsafe.putLong(addr + 3 * Long.BYTES, value.getLl());
-        }
-
-        @Override
-        public void reopen() {
-            value.ofRawNull();
-            capacity = initialCapacity;
-            startOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
-            firstIdx = 0;
-            frameSize = 0;
-            size = 0;
-            acc.ofRaw(0);
-        }
-
-        @Override
-        public void reset() {
-            super.reset();
-            memory.close();
-        }
-
-        @Override
-        public void toPlan(PlanSink sink) {
-            sink.val(getName()).val('(').val(arg).val(')');
-            sink.val(" over (range between ");
-            if (frameLoBounded) {
-                sink.val(maxDiff);
-            } else {
-                sink.val("unbounded");
-            }
-            sink.val(" preceding and ");
-            if (minDiff == 0) {
-                sink.val("current row");
-            } else {
-                sink.val(minDiff).val(" preceding");
-            }
-            sink.val(')');
-        }
-
-        @Override
-        public void toTop() {
-            super.toTop();
-            value.ofRawNull();
-            capacity = initialCapacity;
-            memory.truncate();
-            startOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
-            firstIdx = 0;
-            frameSize = 0;
-            size = 0;
-            acc.ofRaw(0);
-        }
-    }
-
-    static class Decimal128SumOverRowsFrameFunction extends BaseWindowFunction implements Reopenable, WindowDecimal256Function {
-
-        private final Decimal256 acc = new Decimal256();
-        private final MemoryARW buffer;
-        private final int bufferSize;
-        private final boolean frameIncludesCurrentValue;
-        private final boolean frameLoBounded;
-        private final int frameSize;
-        private final int position;
-        private final Decimal128 scratch = new Decimal128();
-        private final int type;
-        private final Decimal256 value = new Decimal256();
-        private long count = 0;
-        private int loIdx = 0;
-
-        public Decimal128SumOverRowsFrameFunction(Function arg, long rowsLo, long rowsHi, MemoryARW memory, int type, int position) {
-            super(arg);
-            assert rowsLo != Long.MIN_VALUE || rowsHi != 0;
-            if (rowsLo > Long.MIN_VALUE) {
-                frameSize = (int) (rowsHi - rowsLo + (rowsHi < 0 ? 1 : 0));
-                bufferSize = (int) Math.abs(rowsLo);
-                frameLoBounded = true;
-            } else {
-                frameSize = (int) Math.abs(rowsHi);
-                bufferSize = frameSize;
-                frameLoBounded = false;
-            }
-            frameIncludesCurrentValue = rowsHi == 0;
-            this.buffer = memory;
-            this.type = type;
-            this.position = position;
-            acc.ofRaw(0);
-            value.ofRawNull();
-            try {
-                initBuffer();
-            } catch (Throwable t) {
-                close();
-                throw t;
-            }
-        }
-
-        @Override
-        public void close() {
-            super.close();
-            buffer.close();
-        }
-
-        @Override
-        public void computeNext(Record record) {
-            arg.getDecimal128(record, scratch);
-            long inHigh = scratch.getHigh();
-            long inLow = scratch.getLow();
-            long hiH;
-            long hiL;
-            if (frameLoBounded && !frameIncludesCurrentValue) {
-                long off = (long) ((loIdx + frameSize - 1) % bufferSize) * 16L;
-                hiH = buffer.getLong(off);
-                hiL = buffer.getLong(off + Long.BYTES);
-            } else if (!frameLoBounded && !frameIncludesCurrentValue) {
-                long off = (long) (loIdx % bufferSize) * 16L;
-                hiH = buffer.getLong(off);
-                hiL = buffer.getLong(off + Long.BYTES);
-            } else {
-                hiH = inHigh;
-                hiL = inLow;
-            }
-            if (!Decimal128.isNull(hiH, hiL)) {
-                scratch.ofRaw(hiH, hiL);
-                try {
-                    Decimal256.uncheckedAdd(acc, scratch);
-                } catch (NumericException e) {
-                    throw CairoException.nonCritical().position(position).put("sum aggregation failed: ").put(e.getFlyweightMessage());
-                }
-                count++;
-            }
-            if (count != 0) {
-                value.copyRaw(acc);
-            } else {
-                value.ofRawNull();
-            }
-
-            if (frameLoBounded) {
-                long off = (long) loIdx * 16L;
-                long loH = buffer.getLong(off);
-                long loL = buffer.getLong(off + Long.BYTES);
-                if (!Decimal128.isNull(loH, loL)) {
-                    acc.subtract(loH < 0 ? -1L : 0L, loH < 0 ? -1L : 0L, loH, loL, ColumnType.getDecimalScale(type));
-                    count--;
-                }
-            }
-            long writeOff = (long) loIdx * 16L;
-            buffer.putLong(writeOff, inHigh);
-            buffer.putLong(writeOff + Long.BYTES, inLow);
-            loIdx = (loIdx + 1) % bufferSize;
-        }
-
-        @Override
-        public void getDecimal256(Record rec, Decimal256 sink) {
-            sink.copyRaw(value);
-        }
-
-        @Override
-        public String getName() {
-            return NAME;
-        }
-
-        @Override
-        public int getPassCount() {
-            return WindowFunction.ZERO_PASS;
-        }
-
-        @Override
-        public int getType() {
-            return type;
-        }
-
-        @Override
-        public void pass1(Record record, long recordOffset, WindowSPI spi) {
-            computeNext(record);
-            long addr = spi.getAddress(recordOffset, columnIndex);
-            Unsafe.putLong(addr, value.getHh());
-            Unsafe.putLong(addr + Long.BYTES, value.getHl());
-            Unsafe.putLong(addr + 2 * Long.BYTES, value.getLh());
-            Unsafe.putLong(addr + 3 * Long.BYTES, value.getLl());
-        }
-
-        @Override
-        public void reopen() {
-            value.ofRawNull();
-            count = 0;
-            loIdx = 0;
-            acc.ofRaw(0);
-            initBuffer();
-        }
-
-        @Override
-        public void reset() {
-            super.reset();
-            buffer.close();
-            value.ofRawNull();
-            count = 0;
-            loIdx = 0;
-            acc.ofRaw(0);
-        }
-
-        @Override
-        public void toPlan(PlanSink sink) {
-            sink.val(getName()).val('(').val(arg).val(')');
-            sink.val(" over (");
-            sink.val(" rows between ");
-            if (frameLoBounded) {
-                sink.val(bufferSize);
-            } else {
-                sink.val("unbounded");
-            }
-            sink.val(" preceding and ");
-            if (frameIncludesCurrentValue) {
-                sink.val("current row");
-            } else {
-                sink.val(bufferSize - frameSize).val(" preceding");
-            }
-            sink.val(')');
-        }
-
-        @Override
-        public void toTop() {
-            super.toTop();
-            value.ofRawNull();
-            count = 0;
-            loIdx = 0;
-            acc.ofRaw(0);
-            initBuffer();
-        }
-
-        private void initBuffer() {
-            for (int i = 0; i < bufferSize; i++) {
-                buffer.putLong((long) i * 16L, Decimals.DECIMAL128_HI_NULL);
-                buffer.putLong((long) i * 16L + Long.BYTES, Decimals.DECIMAL128_LO_NULL);
-            }
-        }
-    }
-
-    static class Decimal128SumOverUnboundedPartitionRowsFrameFunction extends BasePartitionedWindowFunction implements WindowDecimal256Function {
-
-        private final Decimal256 acc = new Decimal256();
-        private final int position;
-        private final Decimal128 scratch = new Decimal128();
-        private final int type;
-        private final Decimal256 value = new Decimal256();
-
-        public Decimal128SumOverUnboundedPartitionRowsFrameFunction(Map map, VirtualRecord partitionByRecord, RecordSink partitionBySink, Function arg, int type, int position) {
-            super(map, partitionByRecord, partitionBySink, arg);
-            this.type = type;
-            this.position = position;
-        }
-
-        @Override
-        public void computeNext(Record record) {
-            partitionByRecord.of(record);
-            MapKey key = map.withKey();
-            key.put(partitionByRecord, partitionBySink);
-            MapValue mv = key.createValue();
-
-            boolean wasNullState;
-            if (mv.isNew()) {
-                acc.ofRaw(0);
-                wasNullState = true;
-            } else {
-                mv.getDecimal256(0, acc);
-                wasNullState = mv.getBool(4);
-            }
-
-            arg.getDecimal128(record, scratch);
-            if (!scratch.isNull()) {
-                if (wasNullState) {
-                    acc.ofRaw(scratch.getHigh(), scratch.getLow());
-                    wasNullState = false;
-                } else {
-                    try {
-                        Decimal256.uncheckedAdd(acc, scratch);
-                    } catch (NumericException e) {
-                        throw CairoException.nonCritical().position(position).put("sum aggregation failed: ").put(e.getFlyweightMessage());
-                    }
-                }
-            }
-            mv.putDecimal256(0, acc);
-            mv.putBool(4, wasNullState);
-            if (wasNullState) {
-                value.ofRawNull();
-            } else {
-                value.copyRaw(acc);
-            }
-        }
-
-        @Override
-        public void getDecimal256(Record rec, Decimal256 sink) {
-            sink.copyRaw(value);
-        }
-
-        @Override
-        public String getName() {
-            return NAME;
-        }
-
-        @Override
-        public int getPassCount() {
-            return WindowFunction.ZERO_PASS;
-        }
-
-        @Override
-        public int getType() {
-            return type;
-        }
-
-        @Override
-        public void pass1(Record record, long recordOffset, WindowSPI spi) {
-            computeNext(record);
-            long addr = spi.getAddress(recordOffset, columnIndex);
-            Unsafe.putLong(addr, value.getHh());
-            Unsafe.putLong(addr + Long.BYTES, value.getHl());
-            Unsafe.putLong(addr + 2 * Long.BYTES, value.getLh());
-            Unsafe.putLong(addr + 3 * Long.BYTES, value.getLl());
-        }
-
-        @Override
-        public void toPlan(PlanSink sink) {
-            sink.val(NAME).val('(').val(arg).val(')');
-            sink.val(" over (partition by ").val(partitionByRecord.getFunctions());
-            sink.val(" rows between unbounded preceding and current row)");
-        }
-    }
-
-    static class Decimal128SumOverUnboundedRowsFrameFunction extends BaseWindowFunction implements WindowDecimal256Function {
-
-        private final Decimal256 acc = new Decimal256();
-        private final int position;
-        private final Decimal128 scratch = new Decimal128();
-        private final int type;
-        private final Decimal256 value = new Decimal256();
-        private boolean isNullState = true;
-
-        public Decimal128SumOverUnboundedRowsFrameFunction(Function arg, int type, int position) {
-            super(arg);
-            this.type = type;
-            this.position = position;
-            acc.ofRaw(0);
-            value.ofRawNull();
-        }
-
-        @Override
-        public void computeNext(Record record) {
-            arg.getDecimal128(record, scratch);
-            if (!scratch.isNull()) {
-                if (isNullState) {
-                    acc.ofRaw(scratch.getHigh(), scratch.getLow());
-                    isNullState = false;
-                } else {
-                    try {
-                        Decimal256.uncheckedAdd(acc, scratch);
-                    } catch (NumericException e) {
-                        throw CairoException.nonCritical().position(position).put("sum aggregation failed: ").put(e.getFlyweightMessage());
-                    }
-                }
-            }
-            if (isNullState) {
-                value.ofRawNull();
-            } else {
-                value.copyRaw(acc);
-            }
-        }
-
-        @Override
-        public void getDecimal256(Record rec, Decimal256 sink) {
-            sink.copyRaw(value);
-        }
-
-        @Override
-        public String getName() {
-            return NAME;
-        }
-
-        @Override
-        public int getPassCount() {
-            return WindowFunction.ZERO_PASS;
-        }
-
-        @Override
-        public int getType() {
-            return type;
-        }
-
-        @Override
-        public void pass1(Record record, long recordOffset, WindowSPI spi) {
-            computeNext(record);
-            long addr = spi.getAddress(recordOffset, columnIndex);
-            Unsafe.putLong(addr, value.getHh());
-            Unsafe.putLong(addr + Long.BYTES, value.getHl());
-            Unsafe.putLong(addr + 2 * Long.BYTES, value.getLh());
-            Unsafe.putLong(addr + 3 * Long.BYTES, value.getLl());
-        }
-
-        @Override
-        public void reset() {
-            super.reset();
-            value.ofRawNull();
-            isNullState = true;
-            acc.ofRaw(0);
-        }
-
-        @Override
-        public void toPlan(PlanSink sink) {
-            sink.val(NAME).val('(').val(arg).val(')');
-            sink.val(" over (rows between unbounded preceding and current row)");
-        }
-
-        @Override
-        public void toTop() {
-            super.toTop();
-            value.ofRawNull();
-            isNullState = true;
-            acc.ofRaw(0);
-        }
-    }
-
-    static class Decimal128SumOverWholeResultSetFunction extends BaseWindowFunction implements WindowDecimal256Function {
-
-        private final Decimal256 acc = new Decimal256();
-        private final int position;
-        private final Decimal128 scratch = new Decimal128();
-        private final int type;
-        private final Decimal256 value = new Decimal256();
-        private boolean isNullState = true;
-
-        public Decimal128SumOverWholeResultSetFunction(Function arg, int type, int position) {
-            super(arg);
-            this.type = type;
-            this.position = position;
-            acc.ofRaw(0);
-            value.ofRawNull();
-        }
-
-        @Override
-        public void getDecimal256(Record rec, Decimal256 sink) {
-            sink.copyRaw(value);
-        }
-
-        @Override
-        public String getName() {
-            return NAME;
-        }
-
-        @Override
-        public int getPassCount() {
-            return WindowFunction.TWO_PASS;
-        }
-
-        @Override
-        public int getType() {
-            return type;
-        }
-
-        @Override
-        public void pass1(Record record, long recordOffset, WindowSPI spi) {
-            arg.getDecimal128(record, scratch);
-            if (!scratch.isNull()) {
-                if (isNullState) {
-                    acc.ofRaw(scratch.getHigh(), scratch.getLow());
-                    isNullState = false;
-                } else {
-                    try {
-                        Decimal256.uncheckedAdd(acc, scratch);
-                    } catch (NumericException e) {
-                        throw CairoException.nonCritical().position(position).put("sum aggregation failed: ").put(e.getFlyweightMessage());
-                    }
-                }
-            }
-        }
-
-        @Override
-        public void pass2(Record record, long recordOffset, WindowSPI spi) {
-            long addr = spi.getAddress(recordOffset, columnIndex);
-            Unsafe.putLong(addr, value.getHh());
-            Unsafe.putLong(addr + Long.BYTES, value.getHl());
-            Unsafe.putLong(addr + 2 * Long.BYTES, value.getLh());
-            Unsafe.putLong(addr + 3 * Long.BYTES, value.getLl());
-        }
-
-        @Override
-        public void preparePass2() {
-            if (isNullState) {
-                value.ofRawNull();
-            } else {
-                value.copyRaw(acc);
-            }
-        }
-
-        @Override
-        public void reset() {
-            super.reset();
-            value.ofRawNull();
-            isNullState = true;
-            acc.ofRaw(0);
-        }
-
-        @Override
-        public void toTop() {
-            super.toTop();
-            value.ofRawNull();
-            isNullState = true;
-            acc.ofRaw(0);
-        }
-    }
-    public static final ArrayColumnTypes SUM_DECIMAL8_OVER_PARTITION_RANGE_TYPES;
-    public static final ArrayColumnTypes SUM_DECIMAL8_OVER_PARTITION_ROWS_TYPES;
-    public static final ArrayColumnTypes SUM_DECIMAL8_TYPES;
-
-    private Function newInstanceDecimal128(
-            int position,
-            ObjList<Function> args,
-            CairoConfiguration configuration,
-            SqlExecutionContext sqlExecutionContext,
-            int outputType,
-            int argPos
-    ) throws SqlException {
-        WindowContext windowContext = sqlExecutionContext.getWindowContext();
-        int framingMode = windowContext.getFramingMode();
-        RecordSink partitionBySink = windowContext.getPartitionBySink();
-        ColumnTypes partitionByKeyTypes = windowContext.getPartitionByKeyTypes();
-        VirtualRecord partitionByRecord = windowContext.getPartitionByRecord();
-        long rowsLo = windowContext.getRowsLo();
-        long rowsHi = windowContext.getRowsHi();
-        Function arg = args.get(0);
-
-        if (partitionByRecord != null) {
-            if (framingMode == WindowExpression.FRAMING_RANGE) {
-                if (windowContext.isDefaultFrame() && (!windowContext.isOrdered() || windowContext.getRowsHi() == Long.MAX_VALUE)) {
-                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, SUM_DECIMAL128_TYPES);
-                    return new Decimal128SumOverPartitionFunction(map, partitionByRecord, partitionBySink, arg, outputType, argPos);
-                } else if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
-                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, SUM_DECIMAL128_TYPES);
-                    return new Decimal128SumOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, arg, outputType, argPos);
-                } else {
-                    if (windowContext.isOrdered() && !windowContext.isOrderedByDesignatedTimestamp()) {
-                        throw SqlException.$(windowContext.getOrderByPos(), "RANGE is supported only for queries ordered by designated timestamp");
-                    }
-                    int timestampIndex = windowContext.getTimestampIndex();
-                    Map map = null;
-                    MemoryARW mem = null;
-                    try {
-                        map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, SUM_DECIMAL128_OVER_PARTITION_RANGE_TYPES);
-                        mem = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
-                                configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
-                        return new Decimal128SumOverPartitionRangeFrameFunction(map, partitionByRecord, partitionBySink,
-                                rowsLo, rowsHi, arg, mem, configuration.getSqlWindowInitialRangeBufferSize(), timestampIndex, outputType, argPos);
-                    } catch (Throwable th) {
-                        Misc.free(map);
-                        Misc.free(mem);
-                        throw th;
-                    }
-                }
-            } else if (framingMode == WindowExpression.FRAMING_ROWS) {
-                if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
-                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, SUM_DECIMAL128_TYPES);
-                    return new Decimal128SumOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, arg, outputType, argPos);
-                } else if (rowsLo == 0 && rowsHi == 0) {
-                    return new Decimal128SumOverCurrentRowFunction(arg, outputType);
-                } else if (rowsLo == Long.MIN_VALUE && rowsHi == Long.MAX_VALUE) {
-                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, SUM_DECIMAL128_TYPES);
-                    return new Decimal128SumOverPartitionFunction(map, partitionByRecord, partitionBySink, arg, outputType, argPos);
-                } else {
-                    Map map = null;
-                    MemoryARW mem = null;
-                    try {
-                        map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, SUM_DECIMAL128_OVER_PARTITION_ROWS_TYPES);
-                        mem = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
-                                configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
-                        return new Decimal128SumOverPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink,
-                                rowsLo, rowsHi, arg, mem, outputType, argPos);
-                    } catch (Throwable th) {
-                        Misc.free(map);
-                        Misc.free(mem);
-                        throw th;
-                    }
-                }
-            }
-        } else {
-            if (framingMode == WindowExpression.FRAMING_RANGE) {
-                if (!windowContext.isOrdered() && windowContext.isDefaultFrame()) {
-                    return new Decimal128SumOverWholeResultSetFunction(arg, outputType, argPos);
-                } else if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
-                    return new Decimal128SumOverUnboundedRowsFrameFunction(arg, outputType, argPos);
-                } else {
-                    if (windowContext.isOrdered() && !windowContext.isOrderedByDesignatedTimestamp()) {
-                        throw SqlException.$(windowContext.getOrderByPos(), "RANGE is supported only for queries ordered by designated timestamp");
-                    }
-                    int timestampIndex = windowContext.getTimestampIndex();
-                    return new Decimal128SumOverRangeFrameFunction(rowsLo, rowsHi, arg, configuration, timestampIndex, outputType, argPos);
-                }
-            } else if (framingMode == WindowExpression.FRAMING_ROWS) {
-                if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
-                    return new Decimal128SumOverUnboundedRowsFrameFunction(arg, outputType, argPos);
-                } else if (rowsLo == 0 && rowsHi == 0) {
-                    return new Decimal128SumOverCurrentRowFunction(arg, outputType);
-                } else if (rowsLo == Long.MIN_VALUE && rowsHi == Long.MAX_VALUE) {
-                    return new Decimal128SumOverWholeResultSetFunction(arg, outputType, argPos);
-                } else {
-                    MemoryARW mem = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
-                            configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
-                    return new Decimal128SumOverRowsFrameFunction(arg, rowsLo, rowsHi, mem, outputType, argPos);
-                }
-            }
-        }
-
-        throw SqlException.$(position, "function not implemented for given window parameters");
-    }
-
-    private Function newInstanceDecimal256(
-            int position,
-            ObjList<Function> args,
-            CairoConfiguration configuration,
-            SqlExecutionContext sqlExecutionContext,
-            int outputType,
-            int argPos
-    ) throws SqlException {
-        WindowContext windowContext = sqlExecutionContext.getWindowContext();
-        int framingMode = windowContext.getFramingMode();
-        RecordSink partitionBySink = windowContext.getPartitionBySink();
-        ColumnTypes partitionByKeyTypes = windowContext.getPartitionByKeyTypes();
-        VirtualRecord partitionByRecord = windowContext.getPartitionByRecord();
-        long rowsLo = windowContext.getRowsLo();
-        long rowsHi = windowContext.getRowsHi();
-        Function arg = args.get(0);
-
-        if (partitionByRecord != null) {
-            if (framingMode == WindowExpression.FRAMING_RANGE) {
-                if (windowContext.isDefaultFrame() && (!windowContext.isOrdered() || windowContext.getRowsHi() == Long.MAX_VALUE)) {
-                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, SUM_DECIMAL128_TYPES);
-                    return new Decimal256SumOverPartitionFunction(map, partitionByRecord, partitionBySink, arg, outputType, argPos);
-                } else if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
-                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, SUM_DECIMAL128_TYPES);
-                    return new Decimal256SumOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, arg, outputType, argPos);
-                } else {
-                    if (windowContext.isOrdered() && !windowContext.isOrderedByDesignatedTimestamp()) {
-                        throw SqlException.$(windowContext.getOrderByPos(), "RANGE is supported only for queries ordered by designated timestamp");
-                    }
-                    int timestampIndex = windowContext.getTimestampIndex();
-                    Map map = null;
-                    MemoryARW mem = null;
-                    try {
-                        map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, SUM_DECIMAL128_OVER_PARTITION_RANGE_TYPES);
-                        mem = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
-                                configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
-                        return new Decimal256SumOverPartitionRangeFrameFunction(map, partitionByRecord, partitionBySink,
-                                rowsLo, rowsHi, arg, mem, configuration.getSqlWindowInitialRangeBufferSize(), timestampIndex, outputType, argPos);
-                    } catch (Throwable th) {
-                        Misc.free(map);
-                        Misc.free(mem);
-                        throw th;
-                    }
-                }
-            } else if (framingMode == WindowExpression.FRAMING_ROWS) {
-                if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
-                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, SUM_DECIMAL128_TYPES);
-                    return new Decimal256SumOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, arg, outputType, argPos);
-                } else if (rowsLo == 0 && rowsHi == 0) {
-                    return new Decimal256SumOverCurrentRowFunction(arg, outputType);
-                } else if (rowsLo == Long.MIN_VALUE && rowsHi == Long.MAX_VALUE) {
-                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, SUM_DECIMAL128_TYPES);
-                    return new Decimal256SumOverPartitionFunction(map, partitionByRecord, partitionBySink, arg, outputType, argPos);
-                } else {
-                    Map map = null;
-                    MemoryARW mem = null;
-                    try {
-                        map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, SUM_DECIMAL128_OVER_PARTITION_ROWS_TYPES);
-                        mem = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
-                                configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
-                        return new Decimal256SumOverPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink,
-                                rowsLo, rowsHi, arg, mem, outputType, argPos);
-                    } catch (Throwable th) {
-                        Misc.free(map);
-                        Misc.free(mem);
-                        throw th;
-                    }
-                }
-            }
-        } else {
-            if (framingMode == WindowExpression.FRAMING_RANGE) {
-                if (!windowContext.isOrdered() && windowContext.isDefaultFrame()) {
-                    return new Decimal256SumOverWholeResultSetFunction(arg, outputType, argPos);
-                } else if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
-                    return new Decimal256SumOverUnboundedRowsFrameFunction(arg, outputType, argPos);
-                } else {
-                    if (windowContext.isOrdered() && !windowContext.isOrderedByDesignatedTimestamp()) {
-                        throw SqlException.$(windowContext.getOrderByPos(), "RANGE is supported only for queries ordered by designated timestamp");
-                    }
-                    int timestampIndex = windowContext.getTimestampIndex();
-                    return new Decimal256SumOverRangeFrameFunction(rowsLo, rowsHi, arg, configuration, timestampIndex, outputType, argPos);
-                }
-            } else if (framingMode == WindowExpression.FRAMING_ROWS) {
-                if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
-                    return new Decimal256SumOverUnboundedRowsFrameFunction(arg, outputType, argPos);
-                } else if (rowsLo == 0 && rowsHi == 0) {
-                    return new Decimal256SumOverCurrentRowFunction(arg, outputType);
-                } else if (rowsLo == Long.MIN_VALUE && rowsHi == Long.MAX_VALUE) {
-                    return new Decimal256SumOverWholeResultSetFunction(arg, outputType, argPos);
-                } else {
-                    MemoryARW mem = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
-                            configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
-                    return new Decimal256SumOverRowsFrameFunction(arg, rowsLo, rowsHi, mem, outputType, argPos);
-                }
-            }
-        }
-
-        throw SqlException.$(position, "function not implemented for given window parameters");
-    }
-
-    private Function newInstanceDecimal32(
-            int position,
-            ObjList<Function> args,
-            CairoConfiguration configuration,
-            SqlExecutionContext sqlExecutionContext,
-            int outputType,
-            int argPos
-    ) throws SqlException {
-        WindowContext windowContext = sqlExecutionContext.getWindowContext();
-        int framingMode = windowContext.getFramingMode();
-        RecordSink partitionBySink = windowContext.getPartitionBySink();
-        ColumnTypes partitionByKeyTypes = windowContext.getPartitionByKeyTypes();
-        VirtualRecord partitionByRecord = windowContext.getPartitionByRecord();
-        long rowsLo = windowContext.getRowsLo();
-        long rowsHi = windowContext.getRowsHi();
-        Function arg = args.get(0);
-
-        if (partitionByRecord != null) {
-            if (framingMode == WindowExpression.FRAMING_RANGE) {
-                if (windowContext.isDefaultFrame() && (!windowContext.isOrdered() || windowContext.getRowsHi() == Long.MAX_VALUE)) {
-                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, SUM_DECIMAL64_TYPES);
-                    return new Decimal32SumOverPartitionFunction(map, partitionByRecord, partitionBySink, arg, outputType, argPos);
-                } else if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
-                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, SUM_DECIMAL64_TYPES);
-                    return new Decimal32SumOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, arg, outputType, argPos);
-                } else {
-                    if (windowContext.isOrdered() && !windowContext.isOrderedByDesignatedTimestamp()) {
-                        throw SqlException.$(windowContext.getOrderByPos(), "RANGE is supported only for queries ordered by designated timestamp");
-                    }
-                    int timestampIndex = windowContext.getTimestampIndex();
-                    Map map = null;
-                    MemoryARW mem = null;
-                    try {
-                        map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, SUM_DECIMAL64_OVER_PARTITION_RANGE_TYPES);
-                        mem = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
-                                configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
-                        return new Decimal32SumOverPartitionRangeFrameFunction(map, partitionByRecord, partitionBySink,
-                                rowsLo, rowsHi, arg, mem, configuration.getSqlWindowInitialRangeBufferSize(), timestampIndex, outputType, argPos);
-                    } catch (Throwable th) {
-                        Misc.free(map);
-                        Misc.free(mem);
-                        throw th;
-                    }
-                }
-            } else if (framingMode == WindowExpression.FRAMING_ROWS) {
-                if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
-                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, SUM_DECIMAL64_TYPES);
-                    return new Decimal32SumOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, arg, outputType, argPos);
-                } else if (rowsLo == 0 && rowsHi == 0) {
-                    return new Decimal32SumOverCurrentRowFunction(arg, outputType);
-                } else if (rowsLo == Long.MIN_VALUE && rowsHi == Long.MAX_VALUE) {
-                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, SUM_DECIMAL64_TYPES);
-                    return new Decimal32SumOverPartitionFunction(map, partitionByRecord, partitionBySink, arg, outputType, argPos);
-                } else {
-                    Map map = null;
-                    MemoryARW mem = null;
-                    try {
-                        map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, SUM_DECIMAL64_OVER_PARTITION_ROWS_TYPES);
-                        mem = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
-                                configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
-                        return new Decimal32SumOverPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink,
-                                rowsLo, rowsHi, arg, mem, outputType, argPos);
-                    } catch (Throwable th) {
-                        Misc.free(map);
-                        Misc.free(mem);
-                        throw th;
-                    }
-                }
-            }
-        } else {
-            if (framingMode == WindowExpression.FRAMING_RANGE) {
-                if (!windowContext.isOrdered() && windowContext.isDefaultFrame()) {
-                    return new Decimal32SumOverWholeResultSetFunction(arg, outputType, argPos);
-                } else if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
-                    return new Decimal32SumOverUnboundedRowsFrameFunction(arg, outputType, argPos);
-                } else {
-                    if (windowContext.isOrdered() && !windowContext.isOrderedByDesignatedTimestamp()) {
-                        throw SqlException.$(windowContext.getOrderByPos(), "RANGE is supported only for queries ordered by designated timestamp");
-                    }
-                    int timestampIndex = windowContext.getTimestampIndex();
-                    return new Decimal32SumOverRangeFrameFunction(rowsLo, rowsHi, arg, configuration, timestampIndex, outputType, argPos);
-                }
-            } else if (framingMode == WindowExpression.FRAMING_ROWS) {
-                if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
-                    return new Decimal32SumOverUnboundedRowsFrameFunction(arg, outputType, argPos);
-                } else if (rowsLo == 0 && rowsHi == 0) {
-                    return new Decimal32SumOverCurrentRowFunction(arg, outputType);
-                } else if (rowsLo == Long.MIN_VALUE && rowsHi == Long.MAX_VALUE) {
-                    return new Decimal32SumOverWholeResultSetFunction(arg, outputType, argPos);
-                } else {
-                    MemoryARW mem = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
-                            configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
-                    return new Decimal32SumOverRowsFrameFunction(arg, rowsLo, rowsHi, mem, outputType, argPos);
-                }
-            }
-        }
-
-        throw SqlException.$(position, "function not implemented for given window parameters");
-    }
-
-    static class Decimal32SumOverCurrentRowFunction extends BaseWindowFunction implements WindowDecimal128Function {
-
-        private final int type;
-        private final Decimal128 value = new Decimal128();
-
-        Decimal32SumOverCurrentRowFunction(Function arg, int type) {
-            super(arg);
-            this.type = type;
-        }
-
-        @Override
-        public void computeNext(Record record) {
-            int i = arg.getDecimal32(record);
-            if (i == Decimals.DECIMAL32_NULL) {
-                value.ofRawNull();
-            } else {
-                value.ofRaw(i);
-            }
-        }
-
-        @Override
-        public void getDecimal128(Record rec, Decimal128 sink) {
-            sink.copyFrom(value);
-        }
-
-        @Override
-        public String getName() {
-            return NAME;
-        }
-
-        @Override
-        public int getPassCount() {
-            return ZERO_PASS;
-        }
-
-        @Override
-        public int getType() {
-            return type;
-        }
-
-        @Override
-        public void pass1(Record record, long recordOffset, WindowSPI spi) {
-            computeNext(record);
-            long addr = spi.getAddress(recordOffset, columnIndex);
-            Unsafe.putLong(addr, value.getHigh());
-            Unsafe.putLong(addr + Long.BYTES, value.getLow());
-        }
-    }
-
-    static class Decimal32SumOverPartitionFunction extends BasePartitionedWindowFunction implements WindowDecimal128Function {
-
-        private final Decimal128 acc = new Decimal128();
-        private final int position;
-        private final int type;
-        private final Decimal128 value = new Decimal128();
-
-        public Decimal32SumOverPartitionFunction(Map map, VirtualRecord partitionByRecord, RecordSink partitionBySink, Function arg, int type, int position) {
-            super(map, partitionByRecord, partitionBySink, arg);
-            this.type = type;
-            this.position = position;
-        }
-
-        @Override
-        public void computeNext(Record record) {
-            partitionByRecord.of(record);
-            MapKey key = map.withKey();
-            key.put(partitionByRecord, partitionBySink);
-            MapValue mv = key.createValue();
-            int i = arg.getDecimal32(record);
-            boolean isNull = i == Decimals.DECIMAL32_NULL;
-            if (mv.isNew()) {
-                if (isNull) {
-                    acc.ofRawNull();
-                    value.ofRawNull();
-                    mv.putDecimal128Null(0);
-                    mv.putBool(2, true);
-                } else {
-                    acc.ofRaw(i);
-                    value.copyFrom(acc);
-                    mv.putDecimal128(0, acc);
-                    mv.putBool(2, false);
-                }
-            } else {
-                boolean wasNull = mv.getBool(2);
-                if (wasNull) {
-                    if (isNull) {
-                        acc.ofRawNull();
-                    } else {
-                        acc.ofRaw(i);
-                        mv.putBool(2, false);
-                        mv.putDecimal128(0, acc);
-                    }
-                } else {
-                    mv.getDecimal128(0, acc);
-                    if (!isNull) {
-                        try {
-                            Decimal128.uncheckedAdd(acc, i);
-                        } catch (NumericException e) {
-                            throw CairoException.nonCritical().position(position).put("sum aggregation failed: ").put(e.getFlyweightMessage());
-                        }
-                        mv.putDecimal128(0, acc);
-                    }
-                }
-                value.copyFrom(acc);
-            }
-        }
-
-        @Override
-        public void getDecimal128(Record rec, Decimal128 sink) {
-            sink.copyFrom(value);
-        }
-
-        @Override
-        public String getName() {
-            return NAME;
-        }
-
-        @Override
-        public int getPassCount() {
-            return WindowFunction.TWO_PASS;
-        }
-
-        @Override
-        public int getType() {
-            return type;
-        }
-
-        @Override
-        public void pass1(Record record, long recordOffset, WindowSPI spi) {
-            partitionByRecord.of(record);
-            MapKey key = map.withKey();
-            key.put(partitionByRecord, partitionBySink);
-            MapValue mv = key.createValue();
-            int i = arg.getDecimal32(record);
-            if (i != Decimals.DECIMAL32_NULL) {
-                if (mv.isNew()) {
-                    acc.ofRaw(i);
-                    mv.putDecimal128(0, acc);
-                    mv.putBool(2, false);
-                } else if (mv.getBool(2)) {
-                    acc.ofRaw(i);
-                    mv.putDecimal128(0, acc);
-                    mv.putBool(2, false);
-                } else {
-                    mv.getDecimal128(0, acc);
-                    try {
-                        Decimal128.uncheckedAdd(acc, i);
-                    } catch (NumericException e) {
-                        throw CairoException.nonCritical().position(position).put("sum aggregation failed: ").put(e.getFlyweightMessage());
-                    }
-                    mv.putDecimal128(0, acc);
-                }
-            } else if (mv.isNew()) {
-                mv.putDecimal128Null(0);
-                mv.putBool(2, true);
-            }
-        }
-
-        @Override
-        public void pass2(Record record, long recordOffset, WindowSPI spi) {
-            partitionByRecord.of(record);
-            MapKey key = map.withKey();
-            key.put(partitionByRecord, partitionBySink);
-            MapValue mv = key.findValue();
-            long addr = spi.getAddress(recordOffset, columnIndex);
-            if (mv != null && !mv.getBool(2)) {
-                mv.getDecimal128(0, acc);
-                Unsafe.putLong(addr, acc.getHigh());
-                Unsafe.putLong(addr + Long.BYTES, acc.getLow());
-            } else {
-                Unsafe.putLong(addr, Decimals.DECIMAL128_HI_NULL);
-                Unsafe.putLong(addr + Long.BYTES, Decimals.DECIMAL128_LO_NULL);
-            }
-        }
-    }
-
-    public static class Decimal32SumOverPartitionRangeFrameFunction extends BasePartitionedWindowFunction implements WindowDecimal128Function {
-
-        private static final int RECORD_SIZE = Long.BYTES + Integer.BYTES;
-        private final Decimal128 acc = new Decimal128();
-        private final boolean frameIncludesCurrentValue;
-        private final boolean frameLoBounded;
-        private final LongList freeList = new LongList();
-        private final int initialBufferSize;
-        private final long maxDiff;
-        private final MemoryARW memory;
-        private final RingBufferDesc memoryDesc = new RingBufferDesc();
-        private final long minDiff;
-        private final int position;
-        private final int timestampIndex;
-        private final int type;
-        private final Decimal128 value = new Decimal128();
-
-        public Decimal32SumOverPartitionRangeFrameFunction(
-                Map map,
-                VirtualRecord partitionByRecord,
-                RecordSink partitionBySink,
-                long rangeLo,
-                long rangeHi,
-                Function arg,
-                MemoryARW memory,
-                int initialBufferSize,
-                int timestampIdx,
-                int type,
-                int position
-        ) {
-            super(map, partitionByRecord, partitionBySink, arg);
-            this.frameLoBounded = rangeLo != Long.MIN_VALUE;
-            this.maxDiff = frameLoBounded ? Math.abs(rangeLo) : Long.MAX_VALUE;
-            this.minDiff = Math.abs(rangeHi);
-            this.memory = memory;
-            this.initialBufferSize = initialBufferSize;
-            this.timestampIndex = timestampIdx;
-            this.frameIncludesCurrentValue = rangeHi == 0;
-            this.type = type;
-            this.position = position;
-        }
-
-        @Override
-        public void close() {
-            super.close();
-            memory.close();
-            freeList.clear();
-        }
-
-        @Override
-        public void computeNext(Record record) {
-            partitionByRecord.of(record);
-            MapKey key = map.withKey();
-            key.put(partitionByRecord, partitionBySink);
-            MapValue mapValue = key.createValue();
-
-            long frameSize;
-            long startOffset;
-            long size;
-            long capacity;
-            long firstIdx;
-            long timestamp = record.getTimestamp(timestampIndex);
-            int d = arg.getDecimal32(record);
-
-            if (mapValue.isNew()) {
-                capacity = initialBufferSize;
-                startOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
-                firstIdx = 0;
-                if (d != Decimals.DECIMAL32_NULL) {
-                    memory.putLong(startOffset, timestamp);
-                    memory.putInt(startOffset + Long.BYTES, d);
-                    if (frameIncludesCurrentValue) {
-                        acc.ofRaw(d);
-                        value.copyFrom(acc);
-                        frameSize = 1;
-                        size = frameLoBounded ? 1 : 0;
-                    } else {
-                        acc.ofRaw(0);
-                        value.ofRawNull();
-                        frameSize = 0;
-                        size = 1;
-                    }
-                } else {
-                    size = 0;
-                    acc.ofRaw(0);
-                    value.ofRawNull();
-                    frameSize = 0;
-                }
-            } else {
-                mapValue.getDecimal128(0, acc);
-                frameSize = mapValue.getLong(2);
-                startOffset = mapValue.getLong(3);
-                size = mapValue.getLong(4);
-                capacity = mapValue.getLong(5);
-                firstIdx = mapValue.getLong(6);
-
-                long newFirstIdx = firstIdx;
-                if (frameLoBounded) {
-                    for (long i = 0, n = size; i < n; i++) {
-                        long idx = (firstIdx + i) % capacity;
-                        long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                        if (Math.abs(timestamp - ts) > maxDiff) {
-                            if (frameSize > 0) {
-                                int val = memory.getInt(startOffset + idx * RECORD_SIZE + Long.BYTES);
-                                acc.subtract(val < 0 ? -1L : 0L, val, ColumnType.getDecimalScale(type));
-                                frameSize--;
-                            }
-                            newFirstIdx = (idx + 1) % capacity;
-                            size--;
-                        } else {
-                            break;
-                        }
-                    }
-                }
-                firstIdx = newFirstIdx;
-
-                if (d != Decimals.DECIMAL32_NULL) {
-                    if (size == capacity) {
-                        memoryDesc.reset(capacity, startOffset, size, firstIdx, freeList);
-                        expandRingBuffer(memory, memoryDesc, RECORD_SIZE);
-                        capacity = memoryDesc.capacity;
-                        startOffset = memoryDesc.startOffset;
-                        firstIdx = memoryDesc.firstIdx;
-                    }
-                    memory.putLong(startOffset + ((firstIdx + size) % capacity) * RECORD_SIZE, timestamp);
-                    memory.putInt(startOffset + ((firstIdx + size) % capacity) * RECORD_SIZE + Long.BYTES, d);
-                    size++;
-                }
-
-                if (frameLoBounded) {
-                    for (long i = frameSize; i < size; i++) {
-                        long idx = (firstIdx + i) % capacity;
-                        long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                        long diff = Math.abs(ts - timestamp);
-                        if (diff <= maxDiff && diff >= minDiff) {
-                            int val = memory.getInt(startOffset + idx * RECORD_SIZE + Long.BYTES);
-                            try {
-                                Decimal128.uncheckedAdd(acc, val);
-                            } catch (NumericException e) {
-                                throw CairoException.nonCritical().position(position).put("sum aggregation failed: ").put(e.getFlyweightMessage());
-                            }
-                            frameSize++;
-                        } else {
-                            break;
-                        }
-                    }
-                } else {
-                    newFirstIdx = firstIdx;
-                    for (long i = 0, n = size; i < n; i++) {
-                        long idx = (firstIdx + i) % capacity;
-                        long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                        if (Math.abs(timestamp - ts) >= minDiff) {
-                            int val = memory.getInt(startOffset + idx * RECORD_SIZE + Long.BYTES);
-                            try {
-                                Decimal128.uncheckedAdd(acc, val);
-                            } catch (NumericException e) {
-                                throw CairoException.nonCritical().position(position).put("sum aggregation failed: ").put(e.getFlyweightMessage());
-                            }
-                            frameSize++;
-                            newFirstIdx = (idx + 1) % capacity;
-                            size--;
-                        } else {
-                            break;
-                        }
-                    }
-                    firstIdx = newFirstIdx;
-                }
-
-                if (frameSize != 0) {
-                    value.copyFrom(acc);
-                } else {
-                    value.ofRawNull();
-                }
-            }
-
-            mapValue.putDecimal128(0, acc);
-            mapValue.putLong(2, frameSize);
-            mapValue.putLong(3, startOffset);
-            mapValue.putLong(4, size);
-            mapValue.putLong(5, capacity);
-            mapValue.putLong(6, firstIdx);
-        }
-
-        @Override
-        public void getDecimal128(Record rec, Decimal128 sink) {
-            sink.copyFrom(value);
-        }
-
-        @Override
-        public String getName() {
-            return NAME;
-        }
-
-        @Override
-        public int getPassCount() {
-            return WindowFunction.ZERO_PASS;
-        }
-
-        @Override
-        public int getType() {
-            return type;
-        }
-
-        @Override
-        public void pass1(Record record, long recordOffset, WindowSPI spi) {
-            computeNext(record);
-            long addr = spi.getAddress(recordOffset, columnIndex);
-            Unsafe.putLong(addr, value.getHigh());
-            Unsafe.putLong(addr + Long.BYTES, value.getLow());
-        }
-
-        @Override
-        public void reopen() {
-            super.reopen();
-            value.ofRawNull();
-        }
-
-        @Override
-        public void reset() {
-            super.reset();
-            memory.close();
-            freeList.clear();
-        }
-
-        @Override
-        public void toPlan(PlanSink sink) {
-            sink.val(getName());
-            sink.val('(').val(arg).val(')');
-            sink.val(" over (partition by ").val(partitionByRecord.getFunctions());
-            sink.val(" range between ");
-            if (frameLoBounded) {
-                sink.val(maxDiff);
-            } else {
-                sink.val("unbounded");
-            }
-            sink.val(" preceding and ");
-            if (minDiff == 0) {
-                sink.val("current row");
-            } else {
-                sink.val(minDiff).val(" preceding");
-            }
-            sink.val(')');
-        }
-
-        @Override
-        public void toTop() {
-            super.toTop();
-            memory.truncate();
-            freeList.clear();
-        }
-    }
-
-    public static class Decimal32SumOverPartitionRowsFrameFunction extends BasePartitionedWindowFunction implements WindowDecimal128Function {
-
-        private final Decimal128 acc = new Decimal128();
-        private final int bufferSize;
-        private final boolean frameIncludesCurrentValue;
-        private final boolean frameLoBounded;
-        private final int frameSize;
-        private final MemoryARW memory;
-        private final int position;
-        private final int type;
-        private final Decimal128 value = new Decimal128();
-
-        public Decimal32SumOverPartitionRowsFrameFunction(
-                Map map,
-                VirtualRecord partitionByRecord,
-                RecordSink partitionBySink,
-                long rowsLo,
-                long rowsHi,
-                Function arg,
-                MemoryARW memory,
-                int type,
-                int position
-        ) {
-            super(map, partitionByRecord, partitionBySink, arg);
-            if (rowsLo > Long.MIN_VALUE) {
-                frameSize = (int) (rowsHi - rowsLo + (rowsHi < 0 ? 1 : 0));
-                bufferSize = (int) Math.abs(rowsLo);
-                frameLoBounded = true;
-            } else {
-                frameSize = 1;
-                bufferSize = (int) Math.abs(rowsHi);
-                frameLoBounded = false;
-            }
-            frameIncludesCurrentValue = rowsHi == 0;
-            this.memory = memory;
-            this.type = type;
-            this.position = position;
-        }
-
-        @Override
-        public void close() {
-            super.close();
-            memory.close();
-        }
-
-        @Override
-        public void computeNext(Record record) {
-            partitionByRecord.of(record);
-            MapKey key = map.withKey();
-            key.put(partitionByRecord, partitionBySink);
-            MapValue mv = key.createValue();
-
-            long count;
-            long loIdx;
-            long startOffset;
-            int d = arg.getDecimal32(record);
-
-            if (mv.isNew()) {
-                loIdx = 0;
-                startOffset = memory.appendAddressFor((long) bufferSize * Integer.BYTES) - memory.getPageAddress(0);
-                if (frameIncludesCurrentValue && d != Decimals.DECIMAL32_NULL) {
-                    acc.ofRaw(d);
-                    count = 1;
-                    value.copyFrom(acc);
-                } else {
-                    acc.ofRaw(0);
-                    value.ofRawNull();
-                    count = 0;
-                }
-                for (int i = 0; i < bufferSize; i++) {
-                    memory.putInt(startOffset + (long) i * Integer.BYTES, Decimals.DECIMAL32_NULL);
-                }
-            } else {
-                mv.getDecimal128(0, acc);
-                count = mv.getLong(2);
-                loIdx = mv.getLong(3);
-                startOffset = mv.getLong(4);
-
-                int hiValue = frameIncludesCurrentValue ? d : memory.getInt(startOffset + ((loIdx + frameSize - 1) % bufferSize) * Integer.BYTES);
-                if (hiValue != Decimals.DECIMAL32_NULL) {
-                    count++;
-                    try {
-                        Decimal128.uncheckedAdd(acc, hiValue);
-                    } catch (NumericException e) {
-                        throw CairoException.nonCritical().position(position).put("sum aggregation failed: ").put(e.getFlyweightMessage());
-                    }
-                }
-                if (count != 0) {
-                    value.copyFrom(acc);
-                } else {
-                    value.ofRawNull();
-                }
-                if (frameLoBounded) {
-                    int loValue = memory.getInt(startOffset + loIdx * Integer.BYTES);
-                    if (loValue != Decimals.DECIMAL32_NULL) {
-                        acc.subtract(loValue < 0 ? -1L : 0L, loValue, ColumnType.getDecimalScale(type));
-                        count--;
-                    }
-                }
-            }
-
-            mv.putDecimal128(0, acc);
-            mv.putLong(2, count);
-            mv.putLong(3, (loIdx + 1) % bufferSize);
-            mv.putLong(4, startOffset);
-            memory.putInt(startOffset + loIdx * Integer.BYTES, d);
-        }
-
-        @Override
-        public void getDecimal128(Record rec, Decimal128 sink) {
-            sink.copyFrom(value);
-        }
-
-        @Override
-        public String getName() {
-            return NAME;
-        }
-
-        @Override
-        public int getPassCount() {
-            return WindowFunction.ZERO_PASS;
-        }
-
-        @Override
-        public int getType() {
-            return type;
-        }
-
-        @Override
-        public void pass1(Record record, long recordOffset, WindowSPI spi) {
-            computeNext(record);
-            long addr = spi.getAddress(recordOffset, columnIndex);
-            Unsafe.putLong(addr, value.getHigh());
-            Unsafe.putLong(addr + Long.BYTES, value.getLow());
-        }
-
-        @Override
-        public void reopen() {
-            super.reopen();
-        }
-
-        @Override
-        public void reset() {
-            super.reset();
-            memory.close();
-        }
-
-        @Override
-        public void toPlan(PlanSink sink) {
-            sink.val(getName()).val('(').val(arg).val(')');
-            sink.val(" over (partition by ").val(partitionByRecord.getFunctions());
-            sink.val(" rows between ");
-            if (frameLoBounded) {
-                sink.val(bufferSize);
-            } else {
-                sink.val("unbounded");
-            }
-            sink.val(" preceding and ");
-            if (frameIncludesCurrentValue) {
-                sink.val("current row");
-            } else {
-                sink.val(bufferSize - frameSize).val(" preceding");
-            }
-            sink.val(')');
-        }
-
-        @Override
-        public void toTop() {
-            super.toTop();
-            memory.truncate();
-        }
-    }
-
-    static class Decimal32SumOverRangeFrameFunction extends BaseWindowFunction implements Reopenable, WindowDecimal128Function {
-
-        private static final int RECORD_SIZE = Long.BYTES + Integer.BYTES;
-        private final Decimal128 acc = new Decimal128();
-        private final boolean frameLoBounded;
-        private final long initialCapacity;
-        private final long maxDiff;
-        private final MemoryARW memory;
-        private final long minDiff;
-        private final int position;
-        private final int timestampIndex;
-        private final int type;
-        private final Decimal128 value = new Decimal128();
-        private long capacity;
-        private long firstIdx;
-        private long frameSize;
-        private long size;
-        private long startOffset;
-
-        public Decimal32SumOverRangeFrameFunction(
-                long rangeLo,
-                long rangeHi,
-                Function arg,
-                CairoConfiguration configuration,
-                int timestampIdx,
-                int type,
-                int position
-        ) {
-            super(arg);
-            this.initialCapacity = configuration.getSqlWindowStorePageSize() / RECORD_SIZE;
-            this.memory = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
-                    configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
-            this.frameLoBounded = rangeLo != Long.MIN_VALUE;
-            this.maxDiff = frameLoBounded ? Math.abs(rangeLo) : Long.MAX_VALUE;
-            this.minDiff = Math.abs(rangeHi);
-            this.timestampIndex = timestampIdx;
-            this.type = type;
-            this.position = position;
-            capacity = initialCapacity;
-            startOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
-            firstIdx = 0;
-            frameSize = 0;
-            acc.ofRaw(0);
-            value.ofRawNull();
-        }
-
-        @Override
-        public void close() {
-            super.close();
-            memory.close();
-        }
-
-        @Override
-        public void computeNext(Record record) {
-            long timestamp = record.getTimestamp(timestampIndex);
-            int d = arg.getDecimal32(record);
-            long newFirstIdx = firstIdx;
-            if (frameLoBounded) {
-                for (long i = 0, n = size; i < n; i++) {
-                    long idx = (firstIdx + i) % capacity;
-                    long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                    if (Math.abs(timestamp - ts) > maxDiff) {
-                        if (frameSize > 0) {
-                            int val = memory.getInt(startOffset + idx * RECORD_SIZE + Long.BYTES);
-                            acc.subtract(val < 0 ? -1L : 0L, val, ColumnType.getDecimalScale(type));
-                            frameSize--;
-                        }
-                        newFirstIdx = (idx + 1) % capacity;
-                        size--;
-                    } else {
-                        break;
-                    }
-                }
-            }
-            firstIdx = newFirstIdx;
-
-            if (d != Decimals.DECIMAL32_NULL) {
-                if (size == capacity) {
-                    long newAddress = memory.appendAddressFor((capacity << 1) * RECORD_SIZE);
-                    long oldAddress = memory.getPageAddress(0) + startOffset;
-                    if (firstIdx == 0) {
-                        Vect.memcpy(newAddress, oldAddress, size * RECORD_SIZE);
-                    } else {
-                        firstIdx %= size;
-                        long firstPieceSize = (size - firstIdx) * RECORD_SIZE;
-                        Vect.memcpy(newAddress, oldAddress + firstIdx * RECORD_SIZE, firstPieceSize);
-                        Vect.memcpy(newAddress + firstPieceSize, oldAddress, firstIdx * RECORD_SIZE);
-                        firstIdx = 0;
-                    }
-                    startOffset = newAddress - memory.getPageAddress(0);
-                    capacity <<= 1;
-                }
-                memory.putLong(startOffset + ((firstIdx + size) % capacity) * RECORD_SIZE, timestamp);
-                memory.putInt(startOffset + ((firstIdx + size) % capacity) * RECORD_SIZE + Long.BYTES, d);
-                size++;
-            }
-
-            if (frameLoBounded) {
-                for (long i = frameSize, n = size; i < n; i++) {
-                    long idx = (firstIdx + i) % capacity;
-                    long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                    long diff = Math.abs(ts - timestamp);
-                    if (diff <= maxDiff && diff >= minDiff) {
-                        int val = memory.getInt(startOffset + idx * RECORD_SIZE + Long.BYTES);
-                        try {
-                            Decimal128.uncheckedAdd(acc, val);
-                        } catch (NumericException e) {
-                            throw CairoException.nonCritical().position(position).put("sum aggregation failed: ").put(e.getFlyweightMessage());
-                        }
-                        frameSize++;
-                    } else {
-                        break;
-                    }
-                }
-            } else {
-                newFirstIdx = firstIdx;
-                for (long i = 0, n = size; i < n; i++) {
-                    long idx = (firstIdx + i) % capacity;
-                    long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                    if (Math.abs(timestamp - ts) >= minDiff) {
-                        int val = memory.getInt(startOffset + idx * RECORD_SIZE + Long.BYTES);
-                        try {
-                            Decimal128.uncheckedAdd(acc, val);
-                        } catch (NumericException e) {
-                            throw CairoException.nonCritical().position(position).put("sum aggregation failed: ").put(e.getFlyweightMessage());
-                        }
-                        frameSize++;
-                        newFirstIdx = (idx + 1) % capacity;
-                        size--;
-                    } else {
-                        break;
-                    }
-                }
-                firstIdx = newFirstIdx;
-            }
-            if (frameSize != 0) {
-                value.copyFrom(acc);
-            } else {
-                value.ofRawNull();
-            }
-        }
-
-        @Override
-        public void getDecimal128(Record rec, Decimal128 sink) {
-            sink.copyFrom(value);
-        }
-
-        @Override
-        public String getName() {
-            return NAME;
-        }
-
-        @Override
-        public int getPassCount() {
-            return WindowFunction.ZERO_PASS;
-        }
-
-        @Override
-        public int getType() {
-            return type;
-        }
-
-        @Override
-        public void pass1(Record record, long recordOffset, WindowSPI spi) {
-            computeNext(record);
-            long addr = spi.getAddress(recordOffset, columnIndex);
-            Unsafe.putLong(addr, value.getHigh());
-            Unsafe.putLong(addr + Long.BYTES, value.getLow());
-        }
-
-        @Override
-        public void reopen() {
-            value.ofRawNull();
-            capacity = initialCapacity;
-            startOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
-            firstIdx = 0;
-            frameSize = 0;
-            size = 0;
-            acc.ofRaw(0);
-        }
-
-        @Override
-        public void reset() {
-            super.reset();
-            memory.close();
-        }
-
-        @Override
-        public void toPlan(PlanSink sink) {
-            sink.val(getName()).val('(').val(arg).val(')');
-            sink.val(" over (range between ");
-            if (frameLoBounded) {
-                sink.val(maxDiff);
-            } else {
-                sink.val("unbounded");
-            }
-            sink.val(" preceding and ");
-            if (minDiff == 0) {
-                sink.val("current row");
-            } else {
-                sink.val(minDiff).val(" preceding");
-            }
-            sink.val(')');
-        }
-
-        @Override
-        public void toTop() {
-            super.toTop();
-            value.ofRawNull();
-            capacity = initialCapacity;
-            memory.truncate();
-            startOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
-            firstIdx = 0;
-            frameSize = 0;
-            size = 0;
-            acc.ofRaw(0);
-        }
-    }
-
-    static class Decimal32SumOverRowsFrameFunction extends BaseWindowFunction implements Reopenable, WindowDecimal128Function {
-
-        private final Decimal128 acc = new Decimal128();
-        private final MemoryARW buffer;
-        private final int bufferSize;
-        private final boolean frameIncludesCurrentValue;
-        private final boolean frameLoBounded;
-        private final int frameSize;
-        private final int position;
-        private final int type;
-        private final Decimal128 value = new Decimal128();
-        private long count = 0;
-        private int loIdx = 0;
-
-        public Decimal32SumOverRowsFrameFunction(Function arg, long rowsLo, long rowsHi, MemoryARW memory, int type, int position) {
-            super(arg);
-            assert rowsLo != Long.MIN_VALUE || rowsHi != 0;
-            if (rowsLo > Long.MIN_VALUE) {
-                frameSize = (int) (rowsHi - rowsLo + (rowsHi < 0 ? 1 : 0));
-                bufferSize = (int) Math.abs(rowsLo);
-                frameLoBounded = true;
-            } else {
-                frameSize = (int) Math.abs(rowsHi);
-                bufferSize = frameSize;
-                frameLoBounded = false;
-            }
-            frameIncludesCurrentValue = rowsHi == 0;
-            this.buffer = memory;
-            this.type = type;
-            this.position = position;
-            acc.ofRaw(0);
-            value.ofRawNull();
-            try {
-                initBuffer();
-            } catch (Throwable t) {
-                close();
-                throw t;
-            }
-        }
-
-        @Override
-        public void close() {
-            super.close();
-            buffer.close();
-        }
-
-        @Override
-        public void computeNext(Record record) {
-            int d = arg.getDecimal32(record);
-            int hiValue = d;
-            if (frameLoBounded && !frameIncludesCurrentValue) {
-                hiValue = buffer.getInt((long) ((loIdx + frameSize - 1) % bufferSize) * Integer.BYTES);
-            } else if (!frameLoBounded && !frameIncludesCurrentValue) {
-                hiValue = buffer.getInt((long) (loIdx % bufferSize) * Integer.BYTES);
-            }
-            if (hiValue != Decimals.DECIMAL32_NULL) {
-                try {
-                    Decimal128.uncheckedAdd(acc, hiValue);
-                } catch (NumericException e) {
-                    throw CairoException.nonCritical().position(position).put("sum aggregation failed: ").put(e.getFlyweightMessage());
-                }
-                count++;
-            }
-            if (count != 0) {
-                value.copyFrom(acc);
-            } else {
-                value.ofRawNull();
-            }
-
-            if (frameLoBounded) {
-                int loValue = buffer.getInt((long) loIdx * Integer.BYTES);
-                if (loValue != Decimals.DECIMAL32_NULL) {
-                    acc.subtract(loValue < 0 ? -1L : 0L, loValue, ColumnType.getDecimalScale(type));
-                    count--;
-                }
-            }
-            buffer.putInt((long) loIdx * Integer.BYTES, d);
-            loIdx = (loIdx + 1) % bufferSize;
-        }
-
-        @Override
-        public void getDecimal128(Record rec, Decimal128 sink) {
-            sink.copyFrom(value);
-        }
-
-        @Override
-        public String getName() {
-            return NAME;
-        }
-
-        @Override
-        public int getPassCount() {
-            return WindowFunction.ZERO_PASS;
-        }
-
-        @Override
-        public int getType() {
-            return type;
-        }
-
-        @Override
-        public void pass1(Record record, long recordOffset, WindowSPI spi) {
-            computeNext(record);
-            long addr = spi.getAddress(recordOffset, columnIndex);
-            Unsafe.putLong(addr, value.getHigh());
-            Unsafe.putLong(addr + Long.BYTES, value.getLow());
-        }
-
-        @Override
-        public void reopen() {
-            value.ofRawNull();
-            count = 0;
-            loIdx = 0;
-            acc.ofRaw(0);
-            initBuffer();
-        }
-
-        @Override
-        public void reset() {
-            super.reset();
-            buffer.close();
-            value.ofRawNull();
-            count = 0;
-            loIdx = 0;
-            acc.ofRaw(0);
-        }
-
-        @Override
-        public void toPlan(PlanSink sink) {
-            sink.val(getName()).val('(').val(arg).val(')');
-            sink.val(" over (");
-            sink.val(" rows between ");
-            if (frameLoBounded) {
-                sink.val(bufferSize);
-            } else {
-                sink.val("unbounded");
-            }
-            sink.val(" preceding and ");
-            if (frameIncludesCurrentValue) {
-                sink.val("current row");
-            } else {
-                sink.val(bufferSize - frameSize).val(" preceding");
-            }
-            sink.val(')');
-        }
-
-        @Override
-        public void toTop() {
-            super.toTop();
-            value.ofRawNull();
-            count = 0;
-            loIdx = 0;
-            acc.ofRaw(0);
-            initBuffer();
-        }
-
-        private void initBuffer() {
-            for (int i = 0; i < bufferSize; i++) {
-                buffer.putInt((long) i * Integer.BYTES, Decimals.DECIMAL32_NULL);
-            }
-        }
-    }
-
-    static class Decimal32SumOverUnboundedPartitionRowsFrameFunction extends BasePartitionedWindowFunction implements WindowDecimal128Function {
-
-        private final Decimal128 acc = new Decimal128();
-        private final int position;
-        private final int type;
-        private final Decimal128 value = new Decimal128();
-
-        public Decimal32SumOverUnboundedPartitionRowsFrameFunction(Map map, VirtualRecord partitionByRecord, RecordSink partitionBySink, Function arg, int type, int position) {
-            super(map, partitionByRecord, partitionBySink, arg);
-            this.type = type;
-            this.position = position;
-        }
-
-        @Override
-        public void computeNext(Record record) {
-            partitionByRecord.of(record);
-            MapKey key = map.withKey();
-            key.put(partitionByRecord, partitionBySink);
-            MapValue mv = key.createValue();
-
-            boolean wasNullState;
-            if (mv.isNew()) {
-                acc.ofRaw(0);
-                wasNullState = true;
-            } else {
-                mv.getDecimal128(0, acc);
-                wasNullState = mv.getBool(2);
-            }
-
-            int d = arg.getDecimal32(record);
-            if (d != Decimals.DECIMAL32_NULL) {
-                if (wasNullState) {
-                    acc.ofRaw(d);
-                    wasNullState = false;
-                } else {
-                    try {
-                        Decimal128.uncheckedAdd(acc, d);
-                    } catch (NumericException e) {
-                        throw CairoException.nonCritical().position(position).put("sum aggregation failed: ").put(e.getFlyweightMessage());
-                    }
-                }
-            }
-            mv.putDecimal128(0, acc);
-            mv.putBool(2, wasNullState);
-            if (wasNullState) {
-                value.ofRawNull();
-            } else {
-                value.copyFrom(acc);
-            }
-        }
-
-        @Override
-        public void getDecimal128(Record rec, Decimal128 sink) {
-            sink.copyFrom(value);
-        }
-
-        @Override
-        public String getName() {
-            return NAME;
-        }
-
-        @Override
-        public int getPassCount() {
-            return WindowFunction.ZERO_PASS;
-        }
-
-        @Override
-        public int getType() {
-            return type;
-        }
-
-        @Override
-        public void pass1(Record record, long recordOffset, WindowSPI spi) {
-            computeNext(record);
-            long addr = spi.getAddress(recordOffset, columnIndex);
-            Unsafe.putLong(addr, value.getHigh());
-            Unsafe.putLong(addr + Long.BYTES, value.getLow());
-        }
-
-        @Override
-        public void toPlan(PlanSink sink) {
-            sink.val(NAME).val('(').val(arg).val(')');
-            sink.val(" over (partition by ").val(partitionByRecord.getFunctions());
-            sink.val(" rows between unbounded preceding and current row)");
-        }
-    }
-
-    static class Decimal32SumOverUnboundedRowsFrameFunction extends BaseWindowFunction implements WindowDecimal128Function {
-
-        private final Decimal128 acc = new Decimal128();
-        private final int position;
-        private final int type;
-        private final Decimal128 value = new Decimal128();
-        private boolean isNullState = true;
-
-        public Decimal32SumOverUnboundedRowsFrameFunction(Function arg, int type, int position) {
-            super(arg);
-            this.type = type;
-            this.position = position;
-            acc.ofRaw(0);
-            value.ofRawNull();
-        }
-
-        @Override
-        public void computeNext(Record record) {
-            int d = arg.getDecimal32(record);
-            if (d != Decimals.DECIMAL32_NULL) {
-                if (isNullState) {
-                    acc.ofRaw(d);
-                    isNullState = false;
-                } else {
-                    try {
-                        Decimal128.uncheckedAdd(acc, d);
-                    } catch (NumericException e) {
-                        throw CairoException.nonCritical().position(position).put("sum aggregation failed: ").put(e.getFlyweightMessage());
-                    }
-                }
-            }
-            if (isNullState) {
-                value.ofRawNull();
-            } else {
-                value.copyFrom(acc);
-            }
-        }
-
-        @Override
-        public void getDecimal128(Record rec, Decimal128 sink) {
-            sink.copyFrom(value);
-        }
-
-        @Override
-        public String getName() {
-            return NAME;
-        }
-
-        @Override
-        public int getPassCount() {
-            return WindowFunction.ZERO_PASS;
-        }
-
-        @Override
-        public int getType() {
-            return type;
-        }
-
-        @Override
-        public void pass1(Record record, long recordOffset, WindowSPI spi) {
-            computeNext(record);
-            long addr = spi.getAddress(recordOffset, columnIndex);
-            Unsafe.putLong(addr, value.getHigh());
-            Unsafe.putLong(addr + Long.BYTES, value.getLow());
-        }
-
-        @Override
-        public void reset() {
-            super.reset();
-            value.ofRawNull();
-            isNullState = true;
-            acc.ofRaw(0);
-        }
-
-        @Override
-        public void toPlan(PlanSink sink) {
-            sink.val(NAME).val('(').val(arg).val(')');
-            sink.val(" over (rows between unbounded preceding and current row)");
-        }
-
-        @Override
-        public void toTop() {
-            super.toTop();
-            value.ofRawNull();
-            isNullState = true;
-            acc.ofRaw(0);
-        }
-    }
-
-    static class Decimal32SumOverWholeResultSetFunction extends BaseWindowFunction implements WindowDecimal128Function {
-
-        private final Decimal128 acc = new Decimal128();
-        private final int position;
-        private final int type;
-        private final Decimal128 value = new Decimal128();
-        private boolean isNullState = true;
-
-        public Decimal32SumOverWholeResultSetFunction(Function arg, int type, int position) {
-            super(arg);
-            this.type = type;
-            this.position = position;
-            acc.ofRaw(0);
-            value.ofRawNull();
-        }
-
-        @Override
-        public void getDecimal128(Record rec, Decimal128 sink) {
-            sink.copyFrom(value);
-        }
-
-        @Override
-        public String getName() {
-            return NAME;
-        }
-
-        @Override
-        public int getPassCount() {
-            return WindowFunction.TWO_PASS;
-        }
-
-        @Override
-        public int getType() {
-            return type;
-        }
-
-        @Override
-        public void pass1(Record record, long recordOffset, WindowSPI spi) {
-            int d = arg.getDecimal32(record);
-            if (d != Decimals.DECIMAL32_NULL) {
-                if (isNullState) {
-                    acc.ofRaw(d);
-                    isNullState = false;
-                } else {
-                    try {
-                        Decimal128.uncheckedAdd(acc, d);
-                    } catch (NumericException e) {
-                        throw CairoException.nonCritical().position(position).put("sum aggregation failed: ").put(e.getFlyweightMessage());
-                    }
-                }
-            }
-        }
-
-        @Override
-        public void pass2(Record record, long recordOffset, WindowSPI spi) {
-            long addr = spi.getAddress(recordOffset, columnIndex);
-            Unsafe.putLong(addr, value.getHigh());
-            Unsafe.putLong(addr + Long.BYTES, value.getLow());
-        }
-
-        @Override
-        public void preparePass2() {
-            if (isNullState) {
-                value.ofRawNull();
-            } else {
-                value.copyFrom(acc);
-            }
-        }
-
-        @Override
-        public void reset() {
-            super.reset();
-            value.ofRawNull();
-            isNullState = true;
-            acc.ofRaw(0);
-        }
-
-        @Override
-        public void toTop() {
-            super.toTop();
-            value.ofRawNull();
-            isNullState = true;
-            acc.ofRaw(0);
-        }
-    }
-
-    private Function newInstanceDecimal16(
-            int position,
-            ObjList<Function> args,
-            CairoConfiguration configuration,
-            SqlExecutionContext sqlExecutionContext,
-            int outputType,
-            int argPos
-    ) throws SqlException {
-        WindowContext windowContext = sqlExecutionContext.getWindowContext();
-        int framingMode = windowContext.getFramingMode();
-        RecordSink partitionBySink = windowContext.getPartitionBySink();
-        ColumnTypes partitionByKeyTypes = windowContext.getPartitionByKeyTypes();
-        VirtualRecord partitionByRecord = windowContext.getPartitionByRecord();
-        long rowsLo = windowContext.getRowsLo();
-        long rowsHi = windowContext.getRowsHi();
-        Function arg = args.get(0);
-
-        if (partitionByRecord != null) {
-            if (framingMode == WindowExpression.FRAMING_RANGE) {
-                if (windowContext.isDefaultFrame() && (!windowContext.isOrdered() || windowContext.getRowsHi() == Long.MAX_VALUE)) {
-                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, SUM_DECIMAL16_TYPES);
-                    return new Decimal16SumOverPartitionFunction(map, partitionByRecord, partitionBySink, arg, outputType);
-                } else if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
-                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, SUM_DECIMAL16_TYPES);
-                    return new Decimal16SumOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, arg, outputType);
-                } else {
-                    if (windowContext.isOrdered() && !windowContext.isOrderedByDesignatedTimestamp()) {
-                        throw SqlException.$(windowContext.getOrderByPos(), "RANGE is supported only for queries ordered by designated timestamp");
-                    }
-                    int timestampIndex = windowContext.getTimestampIndex();
-                    Map map = null;
-                    MemoryARW mem = null;
-                    try {
-                        map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, SUM_DECIMAL16_OVER_PARTITION_RANGE_TYPES);
-                        mem = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
-                                configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
-                        return new Decimal16SumOverPartitionRangeFrameFunction(map, partitionByRecord, partitionBySink,
-                                rowsLo, rowsHi, arg, mem, configuration.getSqlWindowInitialRangeBufferSize(), timestampIndex, outputType);
-                    } catch (Throwable th) {
-                        Misc.free(map);
-                        Misc.free(mem);
-                        throw th;
-                    }
-                }
-            } else if (framingMode == WindowExpression.FRAMING_ROWS) {
-                if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
-                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, SUM_DECIMAL16_TYPES);
-                    return new Decimal16SumOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, arg, outputType);
-                } else if (rowsLo == 0 && rowsHi == 0) {
-                    return new Decimal16SumOverCurrentRowFunction(arg, outputType);
-                } else if (rowsLo == Long.MIN_VALUE && rowsHi == Long.MAX_VALUE) {
-                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, SUM_DECIMAL16_TYPES);
-                    return new Decimal16SumOverPartitionFunction(map, partitionByRecord, partitionBySink, arg, outputType);
-                } else {
-                    Map map = null;
-                    MemoryARW mem = null;
-                    try {
-                        map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, SUM_DECIMAL16_OVER_PARTITION_ROWS_TYPES);
-                        mem = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
-                                configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
-                        return new Decimal16SumOverPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink,
-                                rowsLo, rowsHi, arg, mem, outputType);
-                    } catch (Throwable th) {
-                        Misc.free(map);
-                        Misc.free(mem);
-                        throw th;
-                    }
-                }
-            }
-        } else {
-            if (framingMode == WindowExpression.FRAMING_RANGE) {
-                if (!windowContext.isOrdered() && windowContext.isDefaultFrame()) {
-                    return new Decimal16SumOverWholeResultSetFunction(arg, outputType);
-                } else if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
-                    return new Decimal16SumOverUnboundedRowsFrameFunction(arg, outputType);
-                } else {
-                    if (windowContext.isOrdered() && !windowContext.isOrderedByDesignatedTimestamp()) {
-                        throw SqlException.$(windowContext.getOrderByPos(), "RANGE is supported only for queries ordered by designated timestamp");
-                    }
-                    int timestampIndex = windowContext.getTimestampIndex();
-                    return new Decimal16SumOverRangeFrameFunction(rowsLo, rowsHi, arg, configuration, timestampIndex, outputType);
-                }
-            } else if (framingMode == WindowExpression.FRAMING_ROWS) {
-                if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
-                    return new Decimal16SumOverUnboundedRowsFrameFunction(arg, outputType);
-                } else if (rowsLo == 0 && rowsHi == 0) {
-                    return new Decimal16SumOverCurrentRowFunction(arg, outputType);
-                } else if (rowsLo == Long.MIN_VALUE && rowsHi == Long.MAX_VALUE) {
-                    return new Decimal16SumOverWholeResultSetFunction(arg, outputType);
-                } else {
-                    MemoryARW mem = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
-                            configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
-                    return new Decimal16SumOverRowsFrameFunction(arg, rowsLo, rowsHi, mem, outputType);
-                }
-            }
-        }
-
-        throw SqlException.$(position, "function not implemented for given window parameters");
-    }
-
-    static class Decimal16SumOverCurrentRowFunction extends BaseWindowFunction implements WindowDecimal64Function {
-
-        private final int type;
-        private long value;
-
-        Decimal16SumOverCurrentRowFunction(Function arg, int type) {
-            super(arg);
-            this.type = type;
-        }
-
-        @Override
-        public void computeNext(Record record) {
-            short s = arg.getDecimal16(record);
-            value = s == Decimals.DECIMAL16_NULL ? Decimals.DECIMAL64_NULL : s;
-        }
-
-        @Override
-        public long getDecimal64(Record rec) {
-            return value;
-        }
-
-        @Override
-        public String getName() {
-            return NAME;
-        }
-
-        @Override
-        public int getPassCount() {
-            return ZERO_PASS;
-        }
-
-        @Override
-        public int getType() {
-            return type;
-        }
-
-        @Override
-        public void pass1(Record record, long recordOffset, WindowSPI spi) {
-            computeNext(record);
-            Unsafe.putLong(spi.getAddress(recordOffset, columnIndex), value);
-        }
-    }
-
-    static class Decimal16SumOverPartitionFunction extends BasePartitionedWindowFunction implements WindowDecimal64Function {
-
-        private final int type;
-        private long value;
-
-        public Decimal16SumOverPartitionFunction(Map map, VirtualRecord partitionByRecord, RecordSink partitionBySink, Function arg, int type) {
-            super(map, partitionByRecord, partitionBySink, arg);
-            this.type = type;
-        }
-
-        @Override
-        public void computeNext(Record record) {
-            partitionByRecord.of(record);
-            MapKey key = map.withKey();
-            key.put(partitionByRecord, partitionBySink);
-            MapValue mv = key.createValue();
-            short s = arg.getDecimal16(record);
-            boolean isNull = s == Decimals.DECIMAL16_NULL;
-            long acc;
-            boolean wasNull;
-            if (mv.isNew()) {
-                if (isNull) {
-                    acc = 0L;
-                    wasNull = true;
-                } else {
-                    acc = s;
-                    wasNull = false;
-                }
-            } else {
-                acc = mv.getLong(0);
-                wasNull = mv.getBool(1);
-                if (!isNull) {
-                    if (wasNull) {
-                        acc = s;
-                        wasNull = false;
-                    } else {
-                        acc += s;
-                    }
-                }
-            }
-            mv.putLong(0, acc);
-            mv.putBool(1, wasNull);
-            value = wasNull ? Decimals.DECIMAL64_NULL : acc;
-        }
-
-        @Override
-        public String getName() {
-            return NAME;
-        }
-
-        @Override
-        public int getPassCount() {
-            return WindowFunction.TWO_PASS;
-        }
-
-        @Override
-        public int getType() {
-            return type;
-        }
-
-        @Override
-        public void pass1(Record record, long recordOffset, WindowSPI spi) {
-            partitionByRecord.of(record);
-            MapKey key = map.withKey();
-            key.put(partitionByRecord, partitionBySink);
-            MapValue mv = key.createValue();
-            short s = arg.getDecimal16(record);
-            if (s != Decimals.DECIMAL16_NULL) {
-                if (mv.isNew()) {
-                    mv.putLong(0, s);
-                    mv.putBool(1, false);
-                } else if (mv.getBool(1)) {
-                    mv.putLong(0, s);
-                    mv.putBool(1, false);
-                } else {
-                    mv.putLong(0, mv.getLong(0) + s);
-                }
-            } else if (mv.isNew()) {
-                mv.putLong(0, 0L);
-                mv.putBool(1, true);
-            }
-        }
-
-        @Override
-        public void pass2(Record record, long recordOffset, WindowSPI spi) {
-            partitionByRecord.of(record);
-            MapKey key = map.withKey();
-            key.put(partitionByRecord, partitionBySink);
-            MapValue mv = key.findValue();
-            long addr = spi.getAddress(recordOffset, columnIndex);
-            if (mv != null && !mv.getBool(1)) {
-                Unsafe.putLong(addr, mv.getLong(0));
-            } else {
-                Unsafe.putLong(addr, Decimals.DECIMAL64_NULL);
-            }
-        }
-    }
-
-    public static class Decimal16SumOverPartitionRangeFrameFunction extends BasePartitionedWindowFunction implements WindowDecimal64Function {
-
-        private static final int RECORD_SIZE = Long.BYTES + Short.BYTES;
-        private final boolean frameIncludesCurrentValue;
-        private final boolean frameLoBounded;
-        private final LongList freeList = new LongList();
-        private final int initialBufferSize;
-        private final long maxDiff;
-        private final MemoryARW memory;
-        private final RingBufferDesc memoryDesc = new RingBufferDesc();
-        private final long minDiff;
-        private final int timestampIndex;
-        private final int type;
-        private long value;
-
-        public Decimal16SumOverPartitionRangeFrameFunction(
-                Map map,
-                VirtualRecord partitionByRecord,
-                RecordSink partitionBySink,
-                long rangeLo,
-                long rangeHi,
-                Function arg,
-                MemoryARW memory,
-                int initialBufferSize,
-                int timestampIdx,
-                int type
-        ) {
-            super(map, partitionByRecord, partitionBySink, arg);
-            this.frameLoBounded = rangeLo != Long.MIN_VALUE;
-            this.maxDiff = frameLoBounded ? Math.abs(rangeLo) : Long.MAX_VALUE;
-            this.minDiff = Math.abs(rangeHi);
-            this.memory = memory;
-            this.initialBufferSize = initialBufferSize;
-            this.timestampIndex = timestampIdx;
-            this.frameIncludesCurrentValue = rangeHi == 0;
-            this.type = type;
-        }
-
-        @Override
-        public void close() {
-            super.close();
-            memory.close();
-            freeList.clear();
-        }
-
-        @Override
-        public void computeNext(Record record) {
-            partitionByRecord.of(record);
-            MapKey key = map.withKey();
-            key.put(partitionByRecord, partitionBySink);
-            MapValue mapValue = key.createValue();
-
-            long acc;
-            long frameSize;
-            long startOffset;
-            long size;
-            long capacity;
-            long firstIdx;
-            long timestamp = record.getTimestamp(timestampIndex);
-            short s = arg.getDecimal16(record);
-
-            if (mapValue.isNew()) {
-                capacity = initialBufferSize;
-                startOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
-                firstIdx = 0;
-                if (s != Decimals.DECIMAL16_NULL) {
-                    memory.putLong(startOffset, timestamp);
-                    memory.putShort(startOffset + Long.BYTES, s);
-                    if (frameIncludesCurrentValue) {
-                        acc = s;
-                        value = acc;
-                        frameSize = 1;
-                        size = frameLoBounded ? 1 : 0;
-                    } else {
-                        acc = 0L;
-                        value = Decimals.DECIMAL64_NULL;
-                        frameSize = 0;
-                        size = 1;
-                    }
-                } else {
-                    size = 0;
-                    acc = 0L;
-                    value = Decimals.DECIMAL64_NULL;
-                    frameSize = 0;
-                }
-            } else {
-                acc = mapValue.getLong(0);
-                frameSize = mapValue.getLong(1);
-                startOffset = mapValue.getLong(2);
-                size = mapValue.getLong(3);
-                capacity = mapValue.getLong(4);
-                firstIdx = mapValue.getLong(5);
-
-                long newFirstIdx = firstIdx;
-                if (frameLoBounded) {
-                    for (long i = 0, n = size; i < n; i++) {
-                        long idx = (firstIdx + i) % capacity;
-                        long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                        if (Math.abs(timestamp - ts) > maxDiff) {
-                            if (frameSize > 0) {
-                                short val = memory.getShort(startOffset + idx * RECORD_SIZE + Long.BYTES);
-                                acc -= val;
-                                frameSize--;
-                            }
-                            newFirstIdx = (idx + 1) % capacity;
-                            size--;
-                        } else {
-                            break;
-                        }
-                    }
-                }
-                firstIdx = newFirstIdx;
-
-                if (s != Decimals.DECIMAL16_NULL) {
-                    if (size == capacity) {
-                        memoryDesc.reset(capacity, startOffset, size, firstIdx, freeList);
-                        expandRingBuffer(memory, memoryDesc, RECORD_SIZE);
-                        capacity = memoryDesc.capacity;
-                        startOffset = memoryDesc.startOffset;
-                        firstIdx = memoryDesc.firstIdx;
-                    }
-                    memory.putLong(startOffset + ((firstIdx + size) % capacity) * RECORD_SIZE, timestamp);
-                    memory.putShort(startOffset + ((firstIdx + size) % capacity) * RECORD_SIZE + Long.BYTES, s);
-                    size++;
-                }
-
-                if (frameLoBounded) {
-                    for (long i = frameSize; i < size; i++) {
-                        long idx = (firstIdx + i) % capacity;
-                        long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                        long diff = Math.abs(ts - timestamp);
-                        if (diff <= maxDiff && diff >= minDiff) {
-                            short val = memory.getShort(startOffset + idx * RECORD_SIZE + Long.BYTES);
-                            acc += val;
-                            frameSize++;
-                        } else {
-                            break;
-                        }
-                    }
-                } else {
-                    newFirstIdx = firstIdx;
-                    for (long i = 0, n = size; i < n; i++) {
-                        long idx = (firstIdx + i) % capacity;
-                        long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                        if (Math.abs(timestamp - ts) >= minDiff) {
-                            short val = memory.getShort(startOffset + idx * RECORD_SIZE + Long.BYTES);
-                            acc += val;
-                            frameSize++;
-                            newFirstIdx = (idx + 1) % capacity;
-                            size--;
-                        } else {
-                            break;
-                        }
-                    }
-                    firstIdx = newFirstIdx;
-                }
-
-                if (frameSize != 0) {
-                    value = acc;
-                } else {
-                    value = Decimals.DECIMAL64_NULL;
-                }
-            }
-
-            mapValue.putLong(0, acc);
-            mapValue.putLong(1, frameSize);
-            mapValue.putLong(2, startOffset);
-            mapValue.putLong(3, size);
-            mapValue.putLong(4, capacity);
-            mapValue.putLong(5, firstIdx);
-        }
-
-        @Override
-        public long getDecimal64(Record rec) {
-            return value;
-        }
-
-        @Override
-        public String getName() {
-            return NAME;
-        }
-
-        @Override
-        public int getPassCount() {
-            return WindowFunction.ZERO_PASS;
-        }
-
-        @Override
-        public int getType() {
-            return type;
-        }
-
-        @Override
-        public void pass1(Record record, long recordOffset, WindowSPI spi) {
-            computeNext(record);
-            Unsafe.putLong(spi.getAddress(recordOffset, columnIndex), value);
-        }
-
-        @Override
-        public void reopen() {
-            super.reopen();
-            value = Decimals.DECIMAL64_NULL;
-        }
-
-        @Override
-        public void reset() {
-            super.reset();
-            memory.close();
-            freeList.clear();
-        }
-
-        @Override
-        public void toPlan(PlanSink sink) {
-            sink.val(getName());
-            sink.val('(').val(arg).val(')');
-            sink.val(" over (partition by ").val(partitionByRecord.getFunctions());
-            sink.val(" range between ");
-            if (frameLoBounded) {
-                sink.val(maxDiff);
-            } else {
-                sink.val("unbounded");
-            }
-            sink.val(" preceding and ");
-            if (minDiff == 0) {
-                sink.val("current row");
-            } else {
-                sink.val(minDiff).val(" preceding");
-            }
-            sink.val(')');
-        }
-
-        @Override
-        public void toTop() {
-            super.toTop();
-            memory.truncate();
-            freeList.clear();
-        }
-    }
-
-    public static class Decimal16SumOverPartitionRowsFrameFunction extends BasePartitionedWindowFunction implements WindowDecimal64Function {
-
-        private final int bufferSize;
-        private final boolean frameIncludesCurrentValue;
-        private final boolean frameLoBounded;
-        private final int frameSize;
-        private final MemoryARW memory;
-        private final int type;
-        private long value;
-
-        public Decimal16SumOverPartitionRowsFrameFunction(
-                Map map,
-                VirtualRecord partitionByRecord,
-                RecordSink partitionBySink,
-                long rowsLo,
-                long rowsHi,
-                Function arg,
-                MemoryARW memory,
-                int type
-        ) {
-            super(map, partitionByRecord, partitionBySink, arg);
-            if (rowsLo > Long.MIN_VALUE) {
-                frameSize = (int) (rowsHi - rowsLo + (rowsHi < 0 ? 1 : 0));
-                bufferSize = (int) Math.abs(rowsLo);
-                frameLoBounded = true;
-            } else {
-                frameSize = 1;
-                bufferSize = (int) Math.abs(rowsHi);
-                frameLoBounded = false;
-            }
-            frameIncludesCurrentValue = rowsHi == 0;
-            this.memory = memory;
-            this.type = type;
-        }
-
-        @Override
-        public void close() {
-            super.close();
-            memory.close();
-        }
-
-        @Override
-        public void computeNext(Record record) {
-            partitionByRecord.of(record);
-            MapKey key = map.withKey();
-            key.put(partitionByRecord, partitionBySink);
-            MapValue mv = key.createValue();
-
-            long count;
-            long loIdx;
-            long startOffset;
-            long acc;
-            short s = arg.getDecimal16(record);
-
-            if (mv.isNew()) {
-                loIdx = 0;
-                startOffset = memory.appendAddressFor((long) bufferSize * Short.BYTES) - memory.getPageAddress(0);
-                if (frameIncludesCurrentValue && s != Decimals.DECIMAL16_NULL) {
-                    acc = s;
-                    count = 1;
-                    value = acc;
-                } else {
-                    acc = 0L;
-                    value = Decimals.DECIMAL64_NULL;
-                    count = 0;
-                }
-                for (int i = 0; i < bufferSize; i++) {
-                    memory.putShort(startOffset + (long) i * Short.BYTES, Decimals.DECIMAL16_NULL);
-                }
-            } else {
-                acc = mv.getLong(0);
-                count = mv.getLong(1);
-                loIdx = mv.getLong(2);
-                startOffset = mv.getLong(3);
-
-                short hiValue = frameIncludesCurrentValue ? s : memory.getShort(startOffset + ((loIdx + frameSize - 1) % bufferSize) * Short.BYTES);
-                if (hiValue != Decimals.DECIMAL16_NULL) {
-                    count++;
-                    acc += hiValue;
-                }
-                if (count != 0) {
-                    value = acc;
-                } else {
-                    value = Decimals.DECIMAL64_NULL;
-                }
-                if (frameLoBounded) {
-                    short loValue = memory.getShort(startOffset + loIdx * Short.BYTES);
-                    if (loValue != Decimals.DECIMAL16_NULL) {
-                        acc -= loValue;
-                        count--;
-                    }
-                }
-            }
-
-            mv.putLong(0, acc);
-            mv.putLong(1, count);
-            mv.putLong(2, (loIdx + 1) % bufferSize);
-            mv.putLong(3, startOffset);
-            memory.putShort(startOffset + loIdx * Short.BYTES, s);
-        }
-
-        @Override
-        public long getDecimal64(Record rec) {
-            return value;
-        }
-
-        @Override
-        public String getName() {
-            return NAME;
-        }
-
-        @Override
-        public int getPassCount() {
-            return WindowFunction.ZERO_PASS;
-        }
-
-        @Override
-        public int getType() {
-            return type;
-        }
-
-        @Override
-        public void pass1(Record record, long recordOffset, WindowSPI spi) {
-            computeNext(record);
-            Unsafe.putLong(spi.getAddress(recordOffset, columnIndex), value);
-        }
-
-        @Override
-        public void reopen() {
-            super.reopen();
-        }
-
-        @Override
-        public void reset() {
-            super.reset();
-            memory.close();
-        }
-
-        @Override
-        public void toPlan(PlanSink sink) {
-            sink.val(getName());
-            sink.val('(').val(arg).val(')');
-            sink.val(" over (partition by ").val(partitionByRecord.getFunctions());
-            sink.val(" rows between ");
-            if (frameLoBounded) {
-                sink.val(bufferSize);
-            } else {
-                sink.val("unbounded");
-            }
-            sink.val(" preceding and ");
-            if (frameIncludesCurrentValue) {
-                sink.val("current row");
-            } else {
-                sink.val(bufferSize - frameSize).val(" preceding");
-            }
-            sink.val(')');
-        }
-
-        @Override
-        public void toTop() {
-            super.toTop();
-            memory.truncate();
-        }
-    }
-
-    static class Decimal16SumOverRangeFrameFunction extends BaseWindowFunction implements Reopenable, WindowDecimal64Function {
-
-        private static final int RECORD_SIZE = Long.BYTES + Short.BYTES;
-        private final boolean frameLoBounded;
-        private final long initialCapacity;
-        private final long maxDiff;
-        private final MemoryARW memory;
-        private final long minDiff;
-        private final int timestampIndex;
-        private final int type;
-        private long acc;
-        private long capacity;
-        private long firstIdx;
-        private long frameSize;
-        private long size;
-        private long startOffset;
-        private long value;
-
-        public Decimal16SumOverRangeFrameFunction(
-                long rangeLo,
-                long rangeHi,
-                Function arg,
-                CairoConfiguration configuration,
-                int timestampIdx,
-                int type
-        ) {
-            super(arg);
-            this.initialCapacity = configuration.getSqlWindowStorePageSize() / RECORD_SIZE;
-            this.memory = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
-                    configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
-            this.frameLoBounded = rangeLo != Long.MIN_VALUE;
-            this.maxDiff = frameLoBounded ? Math.abs(rangeLo) : Long.MAX_VALUE;
-            this.minDiff = Math.abs(rangeHi);
-            this.timestampIndex = timestampIdx;
-            this.type = type;
-            capacity = initialCapacity;
-            startOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
-            firstIdx = 0;
-            frameSize = 0;
-            acc = 0L;
-            value = Decimals.DECIMAL64_NULL;
-        }
-
-        @Override
-        public void close() {
-            super.close();
-            memory.close();
-        }
-
-        @Override
-        public void computeNext(Record record) {
-            long timestamp = record.getTimestamp(timestampIndex);
-            short s = arg.getDecimal16(record);
-            long newFirstIdx = firstIdx;
-            if (frameLoBounded) {
-                for (long i = 0, n = size; i < n; i++) {
-                    long idx = (firstIdx + i) % capacity;
-                    long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                    if (Math.abs(timestamp - ts) > maxDiff) {
-                        if (frameSize > 0) {
-                            short val = memory.getShort(startOffset + idx * RECORD_SIZE + Long.BYTES);
-                            acc -= val;
-                            frameSize--;
-                        }
-                        newFirstIdx = (idx + 1) % capacity;
-                        size--;
-                    } else {
-                        break;
-                    }
-                }
-            }
-            firstIdx = newFirstIdx;
-
-            if (s != Decimals.DECIMAL16_NULL) {
-                if (size == capacity) {
-                    long newAddress = memory.appendAddressFor((capacity << 1) * RECORD_SIZE);
-                    long oldAddress = memory.getPageAddress(0) + startOffset;
-                    if (firstIdx == 0) {
-                        Vect.memcpy(newAddress, oldAddress, size * RECORD_SIZE);
-                    } else {
-                        firstIdx %= size;
-                        long firstPieceSize = (size - firstIdx) * RECORD_SIZE;
-                        Vect.memcpy(newAddress, oldAddress + firstIdx * RECORD_SIZE, firstPieceSize);
-                        Vect.memcpy(newAddress + firstPieceSize, oldAddress, firstIdx * RECORD_SIZE);
-                        firstIdx = 0;
-                    }
-                    startOffset = newAddress - memory.getPageAddress(0);
-                    capacity <<= 1;
-                }
-                memory.putLong(startOffset + ((firstIdx + size) % capacity) * RECORD_SIZE, timestamp);
-                memory.putShort(startOffset + ((firstIdx + size) % capacity) * RECORD_SIZE + Long.BYTES, s);
-                size++;
-            }
-
-            if (frameLoBounded) {
-                for (long i = frameSize, n = size; i < n; i++) {
-                    long idx = (firstIdx + i) % capacity;
-                    long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                    long diff = Math.abs(ts - timestamp);
-                    if (diff <= maxDiff && diff >= minDiff) {
-                        short val = memory.getShort(startOffset + idx * RECORD_SIZE + Long.BYTES);
-                        acc += val;
-                        frameSize++;
-                    } else {
-                        break;
-                    }
-                }
-            } else {
-                newFirstIdx = firstIdx;
-                for (long i = 0, n = size; i < n; i++) {
-                    long idx = (firstIdx + i) % capacity;
-                    long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
-                    if (Math.abs(timestamp - ts) >= minDiff) {
-                        short val = memory.getShort(startOffset + idx * RECORD_SIZE + Long.BYTES);
-                        acc += val;
-                        frameSize++;
-                        newFirstIdx = (idx + 1) % capacity;
-                        size--;
-                    } else {
-                        break;
-                    }
-                }
-                firstIdx = newFirstIdx;
-            }
-            value = frameSize != 0 ? acc : Decimals.DECIMAL64_NULL;
-        }
-
-        @Override
-        public long getDecimal64(Record rec) {
-            return value;
-        }
-
-        @Override
-        public String getName() {
-            return NAME;
-        }
-
-        @Override
-        public int getPassCount() {
-            return WindowFunction.ZERO_PASS;
-        }
-
-        @Override
-        public int getType() {
-            return type;
-        }
-
-        @Override
-        public void pass1(Record record, long recordOffset, WindowSPI spi) {
-            computeNext(record);
-            Unsafe.putLong(spi.getAddress(recordOffset, columnIndex), value);
-        }
-
-        @Override
-        public void reopen() {
-            value = Decimals.DECIMAL64_NULL;
-            capacity = initialCapacity;
-            startOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
-            firstIdx = 0;
-            frameSize = 0;
-            size = 0;
-            acc = 0L;
-        }
-
-        @Override
-        public void reset() {
-            super.reset();
-            memory.close();
-        }
-
-        @Override
-        public void toPlan(PlanSink sink) {
-            sink.val(getName());
-            sink.val('(').val(arg).val(')');
-            sink.val(" over (range between ");
-            if (frameLoBounded) {
-                sink.val(maxDiff);
-            } else {
-                sink.val("unbounded");
-            }
-            sink.val(" preceding and ");
-            if (minDiff == 0) {
-                sink.val("current row");
-            } else {
-                sink.val(minDiff).val(" preceding");
-            }
-            sink.val(')');
-        }
-
-        @Override
-        public void toTop() {
-            super.toTop();
-            value = Decimals.DECIMAL64_NULL;
-            capacity = initialCapacity;
-            memory.truncate();
-            startOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
-            firstIdx = 0;
-            frameSize = 0;
-            size = 0;
-            acc = 0L;
-        }
-    }
-
-    static class Decimal16SumOverRowsFrameFunction extends BaseWindowFunction implements Reopenable, WindowDecimal64Function {
-
-        private final MemoryARW buffer;
-        private final int bufferSize;
-        private final boolean frameIncludesCurrentValue;
-        private final boolean frameLoBounded;
-        private final int frameSize;
-        private final int type;
-        private long acc;
-        private long count = 0;
-        private int loIdx = 0;
-        private long value;
-
-        public Decimal16SumOverRowsFrameFunction(Function arg, long rowsLo, long rowsHi, MemoryARW memory, int type) {
-            super(arg);
-            assert rowsLo != Long.MIN_VALUE || rowsHi != 0;
-            if (rowsLo > Long.MIN_VALUE) {
-                frameSize = (int) (rowsHi - rowsLo + (rowsHi < 0 ? 1 : 0));
-                bufferSize = (int) Math.abs(rowsLo);
-                frameLoBounded = true;
-            } else {
-                frameSize = (int) Math.abs(rowsHi);
-                bufferSize = frameSize;
-                frameLoBounded = false;
-            }
-            frameIncludesCurrentValue = rowsHi == 0;
-            this.buffer = memory;
-            this.type = type;
-            acc = 0L;
-            value = Decimals.DECIMAL64_NULL;
-            try {
-                initBuffer();
-            } catch (Throwable t) {
-                close();
-                throw t;
-            }
-        }
-
-        @Override
-        public void close() {
-            super.close();
-            buffer.close();
-        }
-
-        @Override
-        public void computeNext(Record record) {
-            short s = arg.getDecimal16(record);
-            short hiValue = s;
-            if (frameLoBounded && !frameIncludesCurrentValue) {
-                hiValue = buffer.getShort((long) ((loIdx + frameSize - 1) % bufferSize) * Short.BYTES);
-            } else if (!frameLoBounded && !frameIncludesCurrentValue) {
-                hiValue = buffer.getShort((long) (loIdx % bufferSize) * Short.BYTES);
-            }
-            if (hiValue != Decimals.DECIMAL16_NULL) {
-                acc += hiValue;
-                count++;
-            }
-            value = count != 0 ? acc : Decimals.DECIMAL64_NULL;
-
-            if (frameLoBounded) {
-                short loValue = buffer.getShort((long) loIdx * Short.BYTES);
-                if (loValue != Decimals.DECIMAL16_NULL) {
-                    acc -= loValue;
-                    count--;
-                }
-            }
-            buffer.putShort((long) loIdx * Short.BYTES, s);
-            loIdx = (loIdx + 1) % bufferSize;
-        }
-
-        @Override
-        public long getDecimal64(Record rec) {
-            return value;
-        }
-
-        @Override
-        public String getName() {
-            return NAME;
-        }
-
-        @Override
-        public int getPassCount() {
-            return WindowFunction.ZERO_PASS;
-        }
-
-        @Override
-        public int getType() {
-            return type;
-        }
-
-        @Override
-        public void pass1(Record record, long recordOffset, WindowSPI spi) {
-            computeNext(record);
-            Unsafe.putLong(spi.getAddress(recordOffset, columnIndex), value);
-        }
-
-        @Override
-        public void reopen() {
-            value = Decimals.DECIMAL64_NULL;
-            count = 0;
-            loIdx = 0;
-            acc = 0L;
-            initBuffer();
-        }
-
-        @Override
-        public void reset() {
-            super.reset();
-            buffer.close();
-            value = Decimals.DECIMAL64_NULL;
-            count = 0;
-            loIdx = 0;
-            acc = 0L;
-        }
-
-        @Override
-        public void toPlan(PlanSink sink) {
-            sink.val(getName());
-            sink.val('(').val(arg).val(')');
-            sink.val(" over (");
-            sink.val(" rows between ");
-            if (frameLoBounded) {
-                sink.val(bufferSize);
-            } else {
-                sink.val("unbounded");
-            }
-            sink.val(" preceding and ");
-            if (frameIncludesCurrentValue) {
-                sink.val("current row");
-            } else {
-                sink.val(bufferSize - frameSize).val(" preceding");
-            }
-            sink.val(')');
-        }
-
-        @Override
-        public void toTop() {
-            super.toTop();
-            value = Decimals.DECIMAL64_NULL;
-            count = 0;
-            loIdx = 0;
-            acc = 0L;
-            initBuffer();
-        }
-
-        private void initBuffer() {
-            for (int i = 0; i < bufferSize; i++) {
-                buffer.putShort((long) i * Short.BYTES, Decimals.DECIMAL16_NULL);
-            }
-        }
-    }
-
-    static class Decimal16SumOverUnboundedPartitionRowsFrameFunction extends BasePartitionedWindowFunction implements WindowDecimal64Function {
-
-        private final int type;
-        private long value;
-
-        public Decimal16SumOverUnboundedPartitionRowsFrameFunction(Map map, VirtualRecord partitionByRecord, RecordSink partitionBySink, Function arg, int type) {
-            super(map, partitionByRecord, partitionBySink, arg);
-            this.type = type;
-        }
-
-        @Override
-        public void computeNext(Record record) {
-            partitionByRecord.of(record);
-            MapKey key = map.withKey();
-            key.put(partitionByRecord, partitionBySink);
-            MapValue mv = key.createValue();
-
-            long acc;
-            boolean wasNullState;
-            if (mv.isNew()) {
-                acc = 0L;
-                wasNullState = true;
-            } else {
-                acc = mv.getLong(0);
-                wasNullState = mv.getBool(1);
-            }
-
-            short s = arg.getDecimal16(record);
-            if (s != Decimals.DECIMAL16_NULL) {
-                if (wasNullState) {
-                    acc = s;
-                    wasNullState = false;
-                } else {
-                    acc += s;
-                }
-            }
-            mv.putLong(0, acc);
-            mv.putBool(1, wasNullState);
-            value = wasNullState ? Decimals.DECIMAL64_NULL : acc;
-        }
-
-        @Override
-        public long getDecimal64(Record rec) {
-            return value;
-        }
-
-        @Override
-        public String getName() {
-            return NAME;
-        }
-
-        @Override
-        public int getPassCount() {
-            return WindowFunction.ZERO_PASS;
-        }
-
-        @Override
-        public int getType() {
-            return type;
-        }
-
-        @Override
-        public void pass1(Record record, long recordOffset, WindowSPI spi) {
-            computeNext(record);
-            Unsafe.putLong(spi.getAddress(recordOffset, columnIndex), value);
-        }
-
-        @Override
-        public void toPlan(PlanSink sink) {
-            sink.val(NAME);
-            sink.val('(').val(arg).val(')');
-            sink.val(" over (partition by ").val(partitionByRecord.getFunctions());
-            sink.val(" rows between unbounded preceding and current row)");
-        }
-    }
-
-    static class Decimal16SumOverUnboundedRowsFrameFunction extends BaseWindowFunction implements WindowDecimal64Function {
-
-        private final int type;
-        private long acc;
-        private boolean isNullState = true;
-        private long value;
-
-        public Decimal16SumOverUnboundedRowsFrameFunction(Function arg, int type) {
-            super(arg);
-            this.type = type;
-            acc = 0L;
-            value = Decimals.DECIMAL64_NULL;
-        }
-
-        @Override
-        public void computeNext(Record record) {
-            short s = arg.getDecimal16(record);
-            if (s != Decimals.DECIMAL16_NULL) {
-                if (isNullState) {
-                    acc = s;
-                    isNullState = false;
-                } else {
-                    acc += s;
-                }
-            }
-            value = isNullState ? Decimals.DECIMAL64_NULL : acc;
-        }
-
-        @Override
-        public long getDecimal64(Record rec) {
-            return value;
-        }
-
-        @Override
-        public String getName() {
-            return NAME;
-        }
-
-        @Override
-        public int getPassCount() {
-            return WindowFunction.ZERO_PASS;
-        }
-
-        @Override
-        public int getType() {
-            return type;
-        }
-
-        @Override
-        public void pass1(Record record, long recordOffset, WindowSPI spi) {
-            computeNext(record);
-            Unsafe.putLong(spi.getAddress(recordOffset, columnIndex), value);
-        }
-
-        @Override
-        public void reset() {
-            super.reset();
-            value = Decimals.DECIMAL64_NULL;
-            isNullState = true;
-            acc = 0L;
-        }
-
-        @Override
-        public void toPlan(PlanSink sink) {
-            sink.val(NAME);
-            sink.val('(').val(arg).val(')');
-            sink.val(" over (rows between unbounded preceding and current row)");
-        }
-
-        @Override
-        public void toTop() {
-            super.toTop();
-            value = Decimals.DECIMAL64_NULL;
-            isNullState = true;
-            acc = 0L;
-        }
-    }
-
-    static class Decimal16SumOverWholeResultSetFunction extends BaseWindowFunction implements WindowDecimal64Function {
-
-        private final int type;
-        private long acc;
-        private boolean isNullState = true;
-        private long value;
-
-        public Decimal16SumOverWholeResultSetFunction(Function arg, int type) {
-            super(arg);
-            this.type = type;
-            acc = 0L;
-            value = Decimals.DECIMAL64_NULL;
-        }
-
-        @Override
-        public long getDecimal64(Record rec) {
-            return value;
-        }
-
-        @Override
-        public String getName() {
-            return NAME;
-        }
-
-        @Override
-        public int getPassCount() {
-            return WindowFunction.TWO_PASS;
-        }
-
-        @Override
-        public int getType() {
-            return type;
-        }
-
-        @Override
-        public void pass1(Record record, long recordOffset, WindowSPI spi) {
-            short s = arg.getDecimal16(record);
-            if (s != Decimals.DECIMAL16_NULL) {
-                if (isNullState) {
-                    acc = s;
-                    isNullState = false;
-                } else {
-                    acc += s;
                 }
             }
         }

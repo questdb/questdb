@@ -52,6 +52,7 @@ import io.questdb.std.Decimals;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
@@ -158,10 +159,20 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
             if (framingMode == WindowExpression.FRAMING_RANGE) {
                 if (windowContext.isDefaultFrame() && (!windowContext.isOrdered() || windowContext.getRowsHi() == Long.MAX_VALUE)) {
                     Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, FIRST_VALUE_DECIMAL8_TYPES);
-                    return new Decimal8FirstNotNullOverPartitionFunction(map, partitionByRecord, partitionBySink, args.get(0), argType);
+                    try {
+                        return new Decimal8FirstNotNullOverPartitionFunction(map, partitionByRecord, partitionBySink, args.get(0), argType);
+                    } catch (Throwable th) {
+                        Misc.free(map);
+                        throw th;
+                    }
                 } else if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
                     Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, FIRST_VALUE_DECIMAL8_TYPES);
-                    return new Decimal8FirstNotNullOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, args.get(0), argType);
+                    try {
+                        return new Decimal8FirstNotNullOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, args.get(0), argType);
+                    } catch (Throwable th) {
+                        Misc.free(map);
+                        throw th;
+                    }
                 } else {
                     if (windowContext.isOrdered() && !windowContext.isOrderedByDesignatedTimestamp()) {
                         throw SqlException.$(windowContext.getOrderByPos(), "RANGE is supported only for queries ordered by designated timestamp");
@@ -175,20 +186,42 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
                     columnTypes.add(ColumnType.LONG);
                     Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, columnTypes);
                     final int initialBufferSize = configuration.getSqlWindowInitialRangeBufferSize();
-                    MemoryARW mem = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
+                    MemoryARW mem;
+                    try {
+                        mem = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
                             configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
-                    return new Decimal8FirstNotNullOverPartitionRangeFrameFunction(map, partitionByRecord, partitionBySink,
+                    } catch (Throwable th) {
+                        Misc.free(map);
+                        throw th;
+                    }
+                    try {
+                        return new Decimal8FirstNotNullOverPartitionRangeFrameFunction(map, partitionByRecord, partitionBySink,
                             rowsLo, rowsHi, args.get(0), mem, initialBufferSize, timestampIndex, argType);
+                    } catch (Throwable th) {
+                        Misc.free(map);
+                        Misc.free(mem);
+                        throw th;
+                    }
                 }
             } else if (framingMode == WindowExpression.FRAMING_ROWS) {
                 if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
                     Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, FIRST_VALUE_DECIMAL8_TYPES);
-                    return new Decimal8FirstNotNullOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, args.get(0), argType);
+                    try {
+                        return new Decimal8FirstNotNullOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, args.get(0), argType);
+                    } catch (Throwable th) {
+                        Misc.free(map);
+                        throw th;
+                    }
                 } else if (rowsLo == 0 && rowsHi == 0) {
                     return new Decimal8FirstValueOverCurrentRowFunction(args.get(0), true, argType);
                 } else if (rowsLo == Long.MIN_VALUE && rowsHi == Long.MAX_VALUE) {
                     Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, FIRST_VALUE_DECIMAL8_TYPES);
-                    return new Decimal8FirstNotNullOverPartitionFunction(map, partitionByRecord, partitionBySink, args.get(0), argType);
+                    try {
+                        return new Decimal8FirstNotNullOverPartitionFunction(map, partitionByRecord, partitionBySink, args.get(0), argType);
+                    } catch (Throwable th) {
+                        Misc.free(map);
+                        throw th;
+                    }
                 } else {
                     ArrayColumnTypes columnTypes = new ArrayColumnTypes();
                     columnTypes.add(ColumnType.LONG);
@@ -196,10 +229,22 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
                     columnTypes.add(ColumnType.LONG);
                     columnTypes.add(ColumnType.LONG);
                     Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, columnTypes);
-                    MemoryARW mem = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
+                    MemoryARW mem;
+                    try {
+                        mem = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
                             configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
-                    return new Decimal8FirstNotNullOverPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink,
+                    } catch (Throwable th) {
+                        Misc.free(map);
+                        throw th;
+                    }
+                    try {
+                        return new Decimal8FirstNotNullOverPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink,
                             rowsLo, rowsHi, args.get(0), mem, argType);
+                    } catch (Throwable th) {
+                        Misc.free(map);
+                        Misc.free(mem);
+                        throw th;
+                    }
                 }
             }
         } else {
@@ -249,10 +294,20 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
             if (framingMode == WindowExpression.FRAMING_RANGE) {
                 if (windowContext.isDefaultFrame() && (!windowContext.isOrdered() || windowContext.getRowsHi() == Long.MAX_VALUE)) {
                     Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, FIRST_VALUE_DECIMAL8_TYPES);
-                    return new Decimal8FirstValueOverPartitionFunction(map, partitionByRecord, partitionBySink, args.get(0), argType);
+                    try {
+                        return new Decimal8FirstValueOverPartitionFunction(map, partitionByRecord, partitionBySink, args.get(0), argType);
+                    } catch (Throwable th) {
+                        Misc.free(map);
+                        throw th;
+                    }
                 } else if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
                     Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, FIRST_VALUE_DECIMAL8_TYPES);
-                    return new Decimal8FirstValueOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, args.get(0), argType);
+                    try {
+                        return new Decimal8FirstValueOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, args.get(0), argType);
+                    } catch (Throwable th) {
+                        Misc.free(map);
+                        throw th;
+                    }
                 } else {
                     if (windowContext.isOrdered() && !windowContext.isOrderedByDesignatedTimestamp()) {
                         throw SqlException.$(windowContext.getOrderByPos(), "RANGE is supported only for queries ordered by designated timestamp");
@@ -266,30 +321,64 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
                     columnTypes.add(ColumnType.LONG);
                     Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, columnTypes);
                     final int initialBufferSize = configuration.getSqlWindowInitialRangeBufferSize();
-                    MemoryARW mem = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
+                    MemoryARW mem;
+                    try {
+                        mem = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
                             configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
-                    return new Decimal8FirstValueOverPartitionRangeFrameFunction(map, partitionByRecord, partitionBySink,
+                    } catch (Throwable th) {
+                        Misc.free(map);
+                        throw th;
+                    }
+                    try {
+                        return new Decimal8FirstValueOverPartitionRangeFrameFunction(map, partitionByRecord, partitionBySink,
                             rowsLo, rowsHi, args.get(0), mem, initialBufferSize, timestampIndex, argType);
+                    } catch (Throwable th) {
+                        Misc.free(map);
+                        Misc.free(mem);
+                        throw th;
+                    }
                 }
             } else if (framingMode == WindowExpression.FRAMING_ROWS) {
                 if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
                     Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, FIRST_VALUE_DECIMAL8_TYPES);
-                    return new Decimal8FirstValueOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, args.get(0), argType);
+                    try {
+                        return new Decimal8FirstValueOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, args.get(0), argType);
+                    } catch (Throwable th) {
+                        Misc.free(map);
+                        throw th;
+                    }
                 } else if (rowsLo == 0 && rowsHi == 0) {
                     return new Decimal8FirstValueOverCurrentRowFunction(args.get(0), false, argType);
                 } else if (rowsLo == Long.MIN_VALUE && rowsHi == Long.MAX_VALUE) {
                     Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, FIRST_VALUE_DECIMAL8_TYPES);
-                    return new Decimal8FirstValueOverPartitionFunction(map, partitionByRecord, partitionBySink, args.get(0), argType);
+                    try {
+                        return new Decimal8FirstValueOverPartitionFunction(map, partitionByRecord, partitionBySink, args.get(0), argType);
+                    } catch (Throwable th) {
+                        Misc.free(map);
+                        throw th;
+                    }
                 } else {
                     ArrayColumnTypes columnTypes = new ArrayColumnTypes();
                     columnTypes.add(ColumnType.LONG);
                     columnTypes.add(ColumnType.LONG);
                     columnTypes.add(ColumnType.LONG);
                     Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, columnTypes);
-                    MemoryARW mem = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
+                    MemoryARW mem;
+                    try {
+                        mem = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
                             configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
-                    return new Decimal8FirstValueOverPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink,
+                    } catch (Throwable th) {
+                        Misc.free(map);
+                        throw th;
+                    }
+                    try {
+                        return new Decimal8FirstValueOverPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink,
                             rowsLo, rowsHi, args.get(0), mem, argType);
+                    } catch (Throwable th) {
+                        Misc.free(map);
+                        Misc.free(mem);
+                        throw th;
+                    }
                 }
             }
         } else {
@@ -339,10 +428,20 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
             if (framingMode == WindowExpression.FRAMING_RANGE) {
                 if (windowContext.isDefaultFrame() && (!windowContext.isOrdered() || windowContext.getRowsHi() == Long.MAX_VALUE)) {
                     Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, FIRST_VALUE_DECIMAL128_TYPES);
-                    return new Decimal128FirstNotNullOverPartitionFunction(map, partitionByRecord, partitionBySink, args.get(0), argType);
+                    try {
+                        return new Decimal128FirstNotNullOverPartitionFunction(map, partitionByRecord, partitionBySink, args.get(0), argType);
+                    } catch (Throwable th) {
+                        Misc.free(map);
+                        throw th;
+                    }
                 } else if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
                     Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, FIRST_VALUE_DECIMAL128_TYPES);
-                    return new Decimal128FirstNotNullOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, args.get(0), argType);
+                    try {
+                        return new Decimal128FirstNotNullOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, args.get(0), argType);
+                    } catch (Throwable th) {
+                        Misc.free(map);
+                        throw th;
+                    }
                 } else {
                     if (windowContext.isOrdered() && !windowContext.isOrderedByDesignatedTimestamp()) {
                         throw SqlException.$(windowContext.getOrderByPos(), "RANGE is supported only for queries ordered by designated timestamp");
@@ -356,20 +455,42 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
                     columnTypes.add(ColumnType.LONG);
                     Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, columnTypes);
                     final int initialBufferSize = configuration.getSqlWindowInitialRangeBufferSize();
-                    MemoryARW mem = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
+                    MemoryARW mem;
+                    try {
+                        mem = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
                             configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
-                    return new Decimal128FirstNotNullOverPartitionRangeFrameFunction(map, partitionByRecord, partitionBySink,
+                    } catch (Throwable th) {
+                        Misc.free(map);
+                        throw th;
+                    }
+                    try {
+                        return new Decimal128FirstNotNullOverPartitionRangeFrameFunction(map, partitionByRecord, partitionBySink,
                             rowsLo, rowsHi, args.get(0), mem, initialBufferSize, timestampIndex, argType);
+                    } catch (Throwable th) {
+                        Misc.free(map);
+                        Misc.free(mem);
+                        throw th;
+                    }
                 }
             } else if (framingMode == WindowExpression.FRAMING_ROWS) {
                 if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
                     Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, FIRST_VALUE_DECIMAL128_TYPES);
-                    return new Decimal128FirstNotNullOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, args.get(0), argType);
+                    try {
+                        return new Decimal128FirstNotNullOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, args.get(0), argType);
+                    } catch (Throwable th) {
+                        Misc.free(map);
+                        throw th;
+                    }
                 } else if (rowsLo == 0 && rowsHi == 0) {
                     return new Decimal128FirstValueOverCurrentRowFunction(args.get(0), true, argType);
                 } else if (rowsLo == Long.MIN_VALUE && rowsHi == Long.MAX_VALUE) {
                     Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, FIRST_VALUE_DECIMAL128_TYPES);
-                    return new Decimal128FirstNotNullOverPartitionFunction(map, partitionByRecord, partitionBySink, args.get(0), argType);
+                    try {
+                        return new Decimal128FirstNotNullOverPartitionFunction(map, partitionByRecord, partitionBySink, args.get(0), argType);
+                    } catch (Throwable th) {
+                        Misc.free(map);
+                        throw th;
+                    }
                 } else {
                     ArrayColumnTypes columnTypes = new ArrayColumnTypes();
                     columnTypes.add(ColumnType.LONG);
@@ -377,10 +498,22 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
                     columnTypes.add(ColumnType.LONG);
                     columnTypes.add(ColumnType.LONG);
                     Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, columnTypes);
-                    MemoryARW mem = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
+                    MemoryARW mem;
+                    try {
+                        mem = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
                             configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
-                    return new Decimal128FirstNotNullOverPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink,
+                    } catch (Throwable th) {
+                        Misc.free(map);
+                        throw th;
+                    }
+                    try {
+                        return new Decimal128FirstNotNullOverPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink,
                             rowsLo, rowsHi, args.get(0), mem, argType);
+                    } catch (Throwable th) {
+                        Misc.free(map);
+                        Misc.free(mem);
+                        throw th;
+                    }
                 }
             }
         } else {
@@ -429,10 +562,20 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
             if (framingMode == WindowExpression.FRAMING_RANGE) {
                 if (windowContext.isDefaultFrame() && (!windowContext.isOrdered() || windowContext.getRowsHi() == Long.MAX_VALUE)) {
                     Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, FIRST_VALUE_DECIMAL128_TYPES);
-                    return new Decimal128FirstValueOverPartitionFunction(map, partitionByRecord, partitionBySink, args.get(0), argType);
+                    try {
+                        return new Decimal128FirstValueOverPartitionFunction(map, partitionByRecord, partitionBySink, args.get(0), argType);
+                    } catch (Throwable th) {
+                        Misc.free(map);
+                        throw th;
+                    }
                 } else if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
                     Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, FIRST_VALUE_DECIMAL128_TYPES);
-                    return new Decimal128FirstValueOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, args.get(0), argType);
+                    try {
+                        return new Decimal128FirstValueOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, args.get(0), argType);
+                    } catch (Throwable th) {
+                        Misc.free(map);
+                        throw th;
+                    }
                 } else {
                     if (windowContext.isOrdered() && !windowContext.isOrderedByDesignatedTimestamp()) {
                         throw SqlException.$(windowContext.getOrderByPos(), "RANGE is supported only for queries ordered by designated timestamp");
@@ -446,30 +589,64 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
                     columnTypes.add(ColumnType.LONG);
                     Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, columnTypes);
                     final int initialBufferSize = configuration.getSqlWindowInitialRangeBufferSize();
-                    MemoryARW mem = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
+                    MemoryARW mem;
+                    try {
+                        mem = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
                             configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
-                    return new Decimal128FirstValueOverPartitionRangeFrameFunction(map, partitionByRecord, partitionBySink,
+                    } catch (Throwable th) {
+                        Misc.free(map);
+                        throw th;
+                    }
+                    try {
+                        return new Decimal128FirstValueOverPartitionRangeFrameFunction(map, partitionByRecord, partitionBySink,
                             rowsLo, rowsHi, args.get(0), mem, initialBufferSize, timestampIndex, argType);
+                    } catch (Throwable th) {
+                        Misc.free(map);
+                        Misc.free(mem);
+                        throw th;
+                    }
                 }
             } else if (framingMode == WindowExpression.FRAMING_ROWS) {
                 if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
                     Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, FIRST_VALUE_DECIMAL128_TYPES);
-                    return new Decimal128FirstValueOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, args.get(0), argType);
+                    try {
+                        return new Decimal128FirstValueOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, args.get(0), argType);
+                    } catch (Throwable th) {
+                        Misc.free(map);
+                        throw th;
+                    }
                 } else if (rowsLo == 0 && rowsHi == 0) {
                     return new Decimal128FirstValueOverCurrentRowFunction(args.get(0), false, argType);
                 } else if (rowsLo == Long.MIN_VALUE && rowsHi == Long.MAX_VALUE) {
                     Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, FIRST_VALUE_DECIMAL128_TYPES);
-                    return new Decimal128FirstValueOverPartitionFunction(map, partitionByRecord, partitionBySink, args.get(0), argType);
+                    try {
+                        return new Decimal128FirstValueOverPartitionFunction(map, partitionByRecord, partitionBySink, args.get(0), argType);
+                    } catch (Throwable th) {
+                        Misc.free(map);
+                        throw th;
+                    }
                 } else {
                     ArrayColumnTypes columnTypes = new ArrayColumnTypes();
                     columnTypes.add(ColumnType.LONG);
                     columnTypes.add(ColumnType.LONG);
                     columnTypes.add(ColumnType.LONG);
                     Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, columnTypes);
-                    MemoryARW mem = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
+                    MemoryARW mem;
+                    try {
+                        mem = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
                             configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
-                    return new Decimal128FirstValueOverPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink,
+                    } catch (Throwable th) {
+                        Misc.free(map);
+                        throw th;
+                    }
+                    try {
+                        return new Decimal128FirstValueOverPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink,
                             rowsLo, rowsHi, args.get(0), mem, argType);
+                    } catch (Throwable th) {
+                        Misc.free(map);
+                        Misc.free(mem);
+                        throw th;
+                    }
                 }
             }
         } else {
@@ -518,10 +695,20 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
             if (framingMode == WindowExpression.FRAMING_RANGE) {
                 if (windowContext.isDefaultFrame() && (!windowContext.isOrdered() || windowContext.getRowsHi() == Long.MAX_VALUE)) {
                     Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, FIRST_VALUE_DECIMAL256_TYPES);
-                    return new Decimal256FirstNotNullOverPartitionFunction(map, partitionByRecord, partitionBySink, args.get(0), argType);
+                    try {
+                        return new Decimal256FirstNotNullOverPartitionFunction(map, partitionByRecord, partitionBySink, args.get(0), argType);
+                    } catch (Throwable th) {
+                        Misc.free(map);
+                        throw th;
+                    }
                 } else if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
                     Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, FIRST_VALUE_DECIMAL256_TYPES);
-                    return new Decimal256FirstNotNullOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, args.get(0), argType);
+                    try {
+                        return new Decimal256FirstNotNullOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, args.get(0), argType);
+                    } catch (Throwable th) {
+                        Misc.free(map);
+                        throw th;
+                    }
                 } else {
                     if (windowContext.isOrdered() && !windowContext.isOrderedByDesignatedTimestamp()) {
                         throw SqlException.$(windowContext.getOrderByPos(), "RANGE is supported only for queries ordered by designated timestamp");
@@ -535,20 +722,42 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
                     columnTypes.add(ColumnType.LONG);
                     Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, columnTypes);
                     final int initialBufferSize = configuration.getSqlWindowInitialRangeBufferSize();
-                    MemoryARW mem = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
+                    MemoryARW mem;
+                    try {
+                        mem = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
                             configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
-                    return new Decimal256FirstNotNullOverPartitionRangeFrameFunction(map, partitionByRecord, partitionBySink,
+                    } catch (Throwable th) {
+                        Misc.free(map);
+                        throw th;
+                    }
+                    try {
+                        return new Decimal256FirstNotNullOverPartitionRangeFrameFunction(map, partitionByRecord, partitionBySink,
                             rowsLo, rowsHi, args.get(0), mem, initialBufferSize, timestampIndex, argType);
+                    } catch (Throwable th) {
+                        Misc.free(map);
+                        Misc.free(mem);
+                        throw th;
+                    }
                 }
             } else if (framingMode == WindowExpression.FRAMING_ROWS) {
                 if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
                     Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, FIRST_VALUE_DECIMAL256_TYPES);
-                    return new Decimal256FirstNotNullOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, args.get(0), argType);
+                    try {
+                        return new Decimal256FirstNotNullOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, args.get(0), argType);
+                    } catch (Throwable th) {
+                        Misc.free(map);
+                        throw th;
+                    }
                 } else if (rowsLo == 0 && rowsHi == 0) {
                     return new Decimal256FirstValueOverCurrentRowFunction(args.get(0), true, argType);
                 } else if (rowsLo == Long.MIN_VALUE && rowsHi == Long.MAX_VALUE) {
                     Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, FIRST_VALUE_DECIMAL256_TYPES);
-                    return new Decimal256FirstNotNullOverPartitionFunction(map, partitionByRecord, partitionBySink, args.get(0), argType);
+                    try {
+                        return new Decimal256FirstNotNullOverPartitionFunction(map, partitionByRecord, partitionBySink, args.get(0), argType);
+                    } catch (Throwable th) {
+                        Misc.free(map);
+                        throw th;
+                    }
                 } else {
                     ArrayColumnTypes columnTypes = new ArrayColumnTypes();
                     columnTypes.add(ColumnType.LONG);
@@ -556,10 +765,22 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
                     columnTypes.add(ColumnType.LONG);
                     columnTypes.add(ColumnType.LONG);
                     Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, columnTypes);
-                    MemoryARW mem = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
+                    MemoryARW mem;
+                    try {
+                        mem = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
                             configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
-                    return new Decimal256FirstNotNullOverPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink,
+                    } catch (Throwable th) {
+                        Misc.free(map);
+                        throw th;
+                    }
+                    try {
+                        return new Decimal256FirstNotNullOverPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink,
                             rowsLo, rowsHi, args.get(0), mem, argType);
+                    } catch (Throwable th) {
+                        Misc.free(map);
+                        Misc.free(mem);
+                        throw th;
+                    }
                 }
             }
         } else {
@@ -608,10 +829,20 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
             if (framingMode == WindowExpression.FRAMING_RANGE) {
                 if (windowContext.isDefaultFrame() && (!windowContext.isOrdered() || windowContext.getRowsHi() == Long.MAX_VALUE)) {
                     Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, FIRST_VALUE_DECIMAL256_TYPES);
-                    return new Decimal256FirstValueOverPartitionFunction(map, partitionByRecord, partitionBySink, args.get(0), argType);
+                    try {
+                        return new Decimal256FirstValueOverPartitionFunction(map, partitionByRecord, partitionBySink, args.get(0), argType);
+                    } catch (Throwable th) {
+                        Misc.free(map);
+                        throw th;
+                    }
                 } else if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
                     Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, FIRST_VALUE_DECIMAL256_TYPES);
-                    return new Decimal256FirstValueOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, args.get(0), argType);
+                    try {
+                        return new Decimal256FirstValueOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, args.get(0), argType);
+                    } catch (Throwable th) {
+                        Misc.free(map);
+                        throw th;
+                    }
                 } else {
                     if (windowContext.isOrdered() && !windowContext.isOrderedByDesignatedTimestamp()) {
                         throw SqlException.$(windowContext.getOrderByPos(), "RANGE is supported only for queries ordered by designated timestamp");
@@ -625,30 +856,64 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
                     columnTypes.add(ColumnType.LONG);
                     Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, columnTypes);
                     final int initialBufferSize = configuration.getSqlWindowInitialRangeBufferSize();
-                    MemoryARW mem = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
+                    MemoryARW mem;
+                    try {
+                        mem = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
                             configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
-                    return new Decimal256FirstValueOverPartitionRangeFrameFunction(map, partitionByRecord, partitionBySink,
+                    } catch (Throwable th) {
+                        Misc.free(map);
+                        throw th;
+                    }
+                    try {
+                        return new Decimal256FirstValueOverPartitionRangeFrameFunction(map, partitionByRecord, partitionBySink,
                             rowsLo, rowsHi, args.get(0), mem, initialBufferSize, timestampIndex, argType);
+                    } catch (Throwable th) {
+                        Misc.free(map);
+                        Misc.free(mem);
+                        throw th;
+                    }
                 }
             } else if (framingMode == WindowExpression.FRAMING_ROWS) {
                 if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
                     Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, FIRST_VALUE_DECIMAL256_TYPES);
-                    return new Decimal256FirstValueOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, args.get(0), argType);
+                    try {
+                        return new Decimal256FirstValueOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, args.get(0), argType);
+                    } catch (Throwable th) {
+                        Misc.free(map);
+                        throw th;
+                    }
                 } else if (rowsLo == 0 && rowsHi == 0) {
                     return new Decimal256FirstValueOverCurrentRowFunction(args.get(0), false, argType);
                 } else if (rowsLo == Long.MIN_VALUE && rowsHi == Long.MAX_VALUE) {
                     Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, FIRST_VALUE_DECIMAL256_TYPES);
-                    return new Decimal256FirstValueOverPartitionFunction(map, partitionByRecord, partitionBySink, args.get(0), argType);
+                    try {
+                        return new Decimal256FirstValueOverPartitionFunction(map, partitionByRecord, partitionBySink, args.get(0), argType);
+                    } catch (Throwable th) {
+                        Misc.free(map);
+                        throw th;
+                    }
                 } else {
                     ArrayColumnTypes columnTypes = new ArrayColumnTypes();
                     columnTypes.add(ColumnType.LONG);
                     columnTypes.add(ColumnType.LONG);
                     columnTypes.add(ColumnType.LONG);
                     Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, columnTypes);
-                    MemoryARW mem = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
+                    MemoryARW mem;
+                    try {
+                        mem = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
                             configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
-                    return new Decimal256FirstValueOverPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink,
+                    } catch (Throwable th) {
+                        Misc.free(map);
+                        throw th;
+                    }
+                    try {
+                        return new Decimal256FirstValueOverPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink,
                             rowsLo, rowsHi, args.get(0), mem, argType);
+                    } catch (Throwable th) {
+                        Misc.free(map);
+                        Misc.free(mem);
+                        throw th;
+                    }
                 }
             }
         } else {
@@ -697,10 +962,20 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
             if (framingMode == WindowExpression.FRAMING_RANGE) {
                 if (windowContext.isDefaultFrame() && (!windowContext.isOrdered() || windowContext.getRowsHi() == Long.MAX_VALUE)) {
                     Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, FIRST_VALUE_DECIMAL16_TYPES);
-                    return new Decimal16FirstNotNullOverPartitionFunction(map, partitionByRecord, partitionBySink, args.get(0), argType);
+                    try {
+                        return new Decimal16FirstNotNullOverPartitionFunction(map, partitionByRecord, partitionBySink, args.get(0), argType);
+                    } catch (Throwable th) {
+                        Misc.free(map);
+                        throw th;
+                    }
                 } else if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
                     Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, FIRST_VALUE_DECIMAL16_TYPES);
-                    return new Decimal16FirstNotNullOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, args.get(0), argType);
+                    try {
+                        return new Decimal16FirstNotNullOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, args.get(0), argType);
+                    } catch (Throwable th) {
+                        Misc.free(map);
+                        throw th;
+                    }
                 } else {
                     if (windowContext.isOrdered() && !windowContext.isOrderedByDesignatedTimestamp()) {
                         throw SqlException.$(windowContext.getOrderByPos(), "RANGE is supported only for queries ordered by designated timestamp");
@@ -714,20 +989,42 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
                     columnTypes.add(ColumnType.LONG);
                     Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, columnTypes);
                     final int initialBufferSize = configuration.getSqlWindowInitialRangeBufferSize();
-                    MemoryARW mem = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
+                    MemoryARW mem;
+                    try {
+                        mem = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
                             configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
-                    return new Decimal16FirstNotNullOverPartitionRangeFrameFunction(map, partitionByRecord, partitionBySink,
+                    } catch (Throwable th) {
+                        Misc.free(map);
+                        throw th;
+                    }
+                    try {
+                        return new Decimal16FirstNotNullOverPartitionRangeFrameFunction(map, partitionByRecord, partitionBySink,
                             rowsLo, rowsHi, args.get(0), mem, initialBufferSize, timestampIndex, argType);
+                    } catch (Throwable th) {
+                        Misc.free(map);
+                        Misc.free(mem);
+                        throw th;
+                    }
                 }
             } else if (framingMode == WindowExpression.FRAMING_ROWS) {
                 if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
                     Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, FIRST_VALUE_DECIMAL16_TYPES);
-                    return new Decimal16FirstNotNullOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, args.get(0), argType);
+                    try {
+                        return new Decimal16FirstNotNullOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, args.get(0), argType);
+                    } catch (Throwable th) {
+                        Misc.free(map);
+                        throw th;
+                    }
                 } else if (rowsLo == 0 && rowsHi == 0) {
                     return new Decimal16FirstValueOverCurrentRowFunction(args.get(0), true, argType);
                 } else if (rowsLo == Long.MIN_VALUE && rowsHi == Long.MAX_VALUE) {
                     Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, FIRST_VALUE_DECIMAL16_TYPES);
-                    return new Decimal16FirstNotNullOverPartitionFunction(map, partitionByRecord, partitionBySink, args.get(0), argType);
+                    try {
+                        return new Decimal16FirstNotNullOverPartitionFunction(map, partitionByRecord, partitionBySink, args.get(0), argType);
+                    } catch (Throwable th) {
+                        Misc.free(map);
+                        throw th;
+                    }
                 } else {
                     ArrayColumnTypes columnTypes = new ArrayColumnTypes();
                     columnTypes.add(ColumnType.LONG);
@@ -735,10 +1032,22 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
                     columnTypes.add(ColumnType.LONG);
                     columnTypes.add(ColumnType.LONG);
                     Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, columnTypes);
-                    MemoryARW mem = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
+                    MemoryARW mem;
+                    try {
+                        mem = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
                             configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
-                    return new Decimal16FirstNotNullOverPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink,
+                    } catch (Throwable th) {
+                        Misc.free(map);
+                        throw th;
+                    }
+                    try {
+                        return new Decimal16FirstNotNullOverPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink,
                             rowsLo, rowsHi, args.get(0), mem, argType);
+                    } catch (Throwable th) {
+                        Misc.free(map);
+                        Misc.free(mem);
+                        throw th;
+                    }
                 }
             }
         } else {
@@ -788,10 +1097,20 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
             if (framingMode == WindowExpression.FRAMING_RANGE) {
                 if (windowContext.isDefaultFrame() && (!windowContext.isOrdered() || windowContext.getRowsHi() == Long.MAX_VALUE)) {
                     Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, FIRST_VALUE_DECIMAL16_TYPES);
-                    return new Decimal16FirstValueOverPartitionFunction(map, partitionByRecord, partitionBySink, args.get(0), argType);
+                    try {
+                        return new Decimal16FirstValueOverPartitionFunction(map, partitionByRecord, partitionBySink, args.get(0), argType);
+                    } catch (Throwable th) {
+                        Misc.free(map);
+                        throw th;
+                    }
                 } else if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
                     Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, FIRST_VALUE_DECIMAL16_TYPES);
-                    return new Decimal16FirstValueOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, args.get(0), argType);
+                    try {
+                        return new Decimal16FirstValueOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, args.get(0), argType);
+                    } catch (Throwable th) {
+                        Misc.free(map);
+                        throw th;
+                    }
                 } else {
                     if (windowContext.isOrdered() && !windowContext.isOrderedByDesignatedTimestamp()) {
                         throw SqlException.$(windowContext.getOrderByPos(), "RANGE is supported only for queries ordered by designated timestamp");
@@ -805,30 +1124,64 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
                     columnTypes.add(ColumnType.LONG);
                     Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, columnTypes);
                     final int initialBufferSize = configuration.getSqlWindowInitialRangeBufferSize();
-                    MemoryARW mem = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
+                    MemoryARW mem;
+                    try {
+                        mem = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
                             configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
-                    return new Decimal16FirstValueOverPartitionRangeFrameFunction(map, partitionByRecord, partitionBySink,
+                    } catch (Throwable th) {
+                        Misc.free(map);
+                        throw th;
+                    }
+                    try {
+                        return new Decimal16FirstValueOverPartitionRangeFrameFunction(map, partitionByRecord, partitionBySink,
                             rowsLo, rowsHi, args.get(0), mem, initialBufferSize, timestampIndex, argType);
+                    } catch (Throwable th) {
+                        Misc.free(map);
+                        Misc.free(mem);
+                        throw th;
+                    }
                 }
             } else if (framingMode == WindowExpression.FRAMING_ROWS) {
                 if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
                     Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, FIRST_VALUE_DECIMAL16_TYPES);
-                    return new Decimal16FirstValueOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, args.get(0), argType);
+                    try {
+                        return new Decimal16FirstValueOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, args.get(0), argType);
+                    } catch (Throwable th) {
+                        Misc.free(map);
+                        throw th;
+                    }
                 } else if (rowsLo == 0 && rowsHi == 0) {
                     return new Decimal16FirstValueOverCurrentRowFunction(args.get(0), false, argType);
                 } else if (rowsLo == Long.MIN_VALUE && rowsHi == Long.MAX_VALUE) {
                     Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, FIRST_VALUE_DECIMAL16_TYPES);
-                    return new Decimal16FirstValueOverPartitionFunction(map, partitionByRecord, partitionBySink, args.get(0), argType);
+                    try {
+                        return new Decimal16FirstValueOverPartitionFunction(map, partitionByRecord, partitionBySink, args.get(0), argType);
+                    } catch (Throwable th) {
+                        Misc.free(map);
+                        throw th;
+                    }
                 } else {
                     ArrayColumnTypes columnTypes = new ArrayColumnTypes();
                     columnTypes.add(ColumnType.LONG);
                     columnTypes.add(ColumnType.LONG);
                     columnTypes.add(ColumnType.LONG);
                     Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, columnTypes);
-                    MemoryARW mem = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
+                    MemoryARW mem;
+                    try {
+                        mem = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
                             configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
-                    return new Decimal16FirstValueOverPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink,
+                    } catch (Throwable th) {
+                        Misc.free(map);
+                        throw th;
+                    }
+                    try {
+                        return new Decimal16FirstValueOverPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink,
                             rowsLo, rowsHi, args.get(0), mem, argType);
+                    } catch (Throwable th) {
+                        Misc.free(map);
+                        Misc.free(mem);
+                        throw th;
+                    }
                 }
             }
         } else {
@@ -878,10 +1231,20 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
             if (framingMode == WindowExpression.FRAMING_RANGE) {
                 if (windowContext.isDefaultFrame() && (!windowContext.isOrdered() || windowContext.getRowsHi() == Long.MAX_VALUE)) {
                     Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, FIRST_VALUE_DECIMAL32_TYPES);
-                    return new Decimal32FirstNotNullOverPartitionFunction(map, partitionByRecord, partitionBySink, args.get(0), argType);
+                    try {
+                        return new Decimal32FirstNotNullOverPartitionFunction(map, partitionByRecord, partitionBySink, args.get(0), argType);
+                    } catch (Throwable th) {
+                        Misc.free(map);
+                        throw th;
+                    }
                 } else if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
                     Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, FIRST_VALUE_DECIMAL32_TYPES);
-                    return new Decimal32FirstNotNullOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, args.get(0), argType);
+                    try {
+                        return new Decimal32FirstNotNullOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, args.get(0), argType);
+                    } catch (Throwable th) {
+                        Misc.free(map);
+                        throw th;
+                    }
                 } else {
                     if (windowContext.isOrdered() && !windowContext.isOrderedByDesignatedTimestamp()) {
                         throw SqlException.$(windowContext.getOrderByPos(), "RANGE is supported only for queries ordered by designated timestamp");
@@ -895,20 +1258,42 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
                     columnTypes.add(ColumnType.LONG);
                     Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, columnTypes);
                     final int initialBufferSize = configuration.getSqlWindowInitialRangeBufferSize();
-                    MemoryARW mem = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
+                    MemoryARW mem;
+                    try {
+                        mem = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
                             configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
-                    return new Decimal32FirstNotNullOverPartitionRangeFrameFunction(map, partitionByRecord, partitionBySink,
+                    } catch (Throwable th) {
+                        Misc.free(map);
+                        throw th;
+                    }
+                    try {
+                        return new Decimal32FirstNotNullOverPartitionRangeFrameFunction(map, partitionByRecord, partitionBySink,
                             rowsLo, rowsHi, args.get(0), mem, initialBufferSize, timestampIndex, argType);
+                    } catch (Throwable th) {
+                        Misc.free(map);
+                        Misc.free(mem);
+                        throw th;
+                    }
                 }
             } else if (framingMode == WindowExpression.FRAMING_ROWS) {
                 if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
                     Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, FIRST_VALUE_DECIMAL32_TYPES);
-                    return new Decimal32FirstNotNullOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, args.get(0), argType);
+                    try {
+                        return new Decimal32FirstNotNullOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, args.get(0), argType);
+                    } catch (Throwable th) {
+                        Misc.free(map);
+                        throw th;
+                    }
                 } else if (rowsLo == 0 && rowsHi == 0) {
                     return new Decimal32FirstValueOverCurrentRowFunction(args.get(0), true, argType);
                 } else if (rowsLo == Long.MIN_VALUE && rowsHi == Long.MAX_VALUE) {
                     Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, FIRST_VALUE_DECIMAL32_TYPES);
-                    return new Decimal32FirstNotNullOverPartitionFunction(map, partitionByRecord, partitionBySink, args.get(0), argType);
+                    try {
+                        return new Decimal32FirstNotNullOverPartitionFunction(map, partitionByRecord, partitionBySink, args.get(0), argType);
+                    } catch (Throwable th) {
+                        Misc.free(map);
+                        throw th;
+                    }
                 } else {
                     ArrayColumnTypes columnTypes = new ArrayColumnTypes();
                     columnTypes.add(ColumnType.LONG);
@@ -916,10 +1301,22 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
                     columnTypes.add(ColumnType.LONG);
                     columnTypes.add(ColumnType.LONG);
                     Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, columnTypes);
-                    MemoryARW mem = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
+                    MemoryARW mem;
+                    try {
+                        mem = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
                             configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
-                    return new Decimal32FirstNotNullOverPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink,
+                    } catch (Throwable th) {
+                        Misc.free(map);
+                        throw th;
+                    }
+                    try {
+                        return new Decimal32FirstNotNullOverPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink,
                             rowsLo, rowsHi, args.get(0), mem, argType);
+                    } catch (Throwable th) {
+                        Misc.free(map);
+                        Misc.free(mem);
+                        throw th;
+                    }
                 }
             }
         } else {
@@ -969,10 +1366,20 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
             if (framingMode == WindowExpression.FRAMING_RANGE) {
                 if (windowContext.isDefaultFrame() && (!windowContext.isOrdered() || windowContext.getRowsHi() == Long.MAX_VALUE)) {
                     Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, FIRST_VALUE_DECIMAL32_TYPES);
-                    return new Decimal32FirstValueOverPartitionFunction(map, partitionByRecord, partitionBySink, args.get(0), argType);
+                    try {
+                        return new Decimal32FirstValueOverPartitionFunction(map, partitionByRecord, partitionBySink, args.get(0), argType);
+                    } catch (Throwable th) {
+                        Misc.free(map);
+                        throw th;
+                    }
                 } else if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
                     Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, FIRST_VALUE_DECIMAL32_TYPES);
-                    return new Decimal32FirstValueOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, args.get(0), argType);
+                    try {
+                        return new Decimal32FirstValueOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, args.get(0), argType);
+                    } catch (Throwable th) {
+                        Misc.free(map);
+                        throw th;
+                    }
                 } else {
                     if (windowContext.isOrdered() && !windowContext.isOrderedByDesignatedTimestamp()) {
                         throw SqlException.$(windowContext.getOrderByPos(), "RANGE is supported only for queries ordered by designated timestamp");
@@ -986,30 +1393,64 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
                     columnTypes.add(ColumnType.LONG);
                     Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, columnTypes);
                     final int initialBufferSize = configuration.getSqlWindowInitialRangeBufferSize();
-                    MemoryARW mem = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
+                    MemoryARW mem;
+                    try {
+                        mem = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
                             configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
-                    return new Decimal32FirstValueOverPartitionRangeFrameFunction(map, partitionByRecord, partitionBySink,
+                    } catch (Throwable th) {
+                        Misc.free(map);
+                        throw th;
+                    }
+                    try {
+                        return new Decimal32FirstValueOverPartitionRangeFrameFunction(map, partitionByRecord, partitionBySink,
                             rowsLo, rowsHi, args.get(0), mem, initialBufferSize, timestampIndex, argType);
+                    } catch (Throwable th) {
+                        Misc.free(map);
+                        Misc.free(mem);
+                        throw th;
+                    }
                 }
             } else if (framingMode == WindowExpression.FRAMING_ROWS) {
                 if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
                     Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, FIRST_VALUE_DECIMAL32_TYPES);
-                    return new Decimal32FirstValueOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, args.get(0), argType);
+                    try {
+                        return new Decimal32FirstValueOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, args.get(0), argType);
+                    } catch (Throwable th) {
+                        Misc.free(map);
+                        throw th;
+                    }
                 } else if (rowsLo == 0 && rowsHi == 0) {
                     return new Decimal32FirstValueOverCurrentRowFunction(args.get(0), false, argType);
                 } else if (rowsLo == Long.MIN_VALUE && rowsHi == Long.MAX_VALUE) {
                     Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, FIRST_VALUE_DECIMAL32_TYPES);
-                    return new Decimal32FirstValueOverPartitionFunction(map, partitionByRecord, partitionBySink, args.get(0), argType);
+                    try {
+                        return new Decimal32FirstValueOverPartitionFunction(map, partitionByRecord, partitionBySink, args.get(0), argType);
+                    } catch (Throwable th) {
+                        Misc.free(map);
+                        throw th;
+                    }
                 } else {
                     ArrayColumnTypes columnTypes = new ArrayColumnTypes();
                     columnTypes.add(ColumnType.LONG);
                     columnTypes.add(ColumnType.LONG);
                     columnTypes.add(ColumnType.LONG);
                     Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, columnTypes);
-                    MemoryARW mem = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
+                    MemoryARW mem;
+                    try {
+                        mem = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
                             configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
-                    return new Decimal32FirstValueOverPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink,
+                    } catch (Throwable th) {
+                        Misc.free(map);
+                        throw th;
+                    }
+                    try {
+                        return new Decimal32FirstValueOverPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink,
                             rowsLo, rowsHi, args.get(0), mem, argType);
+                    } catch (Throwable th) {
+                        Misc.free(map);
+                        Misc.free(mem);
+                        throw th;
+                    }
                 }
             }
         } else {
@@ -1059,10 +1500,20 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
             if (framingMode == WindowExpression.FRAMING_RANGE) {
                 if (windowContext.isDefaultFrame() && (!windowContext.isOrdered() || windowContext.getRowsHi() == Long.MAX_VALUE)) {
                     Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, FIRST_VALUE_DECIMAL64_TYPES);
-                    return new Decimal64FirstNotNullOverPartitionFunction(map, partitionByRecord, partitionBySink, args.get(0), argType);
+                    try {
+                        return new Decimal64FirstNotNullOverPartitionFunction(map, partitionByRecord, partitionBySink, args.get(0), argType);
+                    } catch (Throwable th) {
+                        Misc.free(map);
+                        throw th;
+                    }
                 } else if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
                     Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, FIRST_VALUE_DECIMAL64_TYPES);
-                    return new Decimal64FirstNotNullOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, args.get(0), argType);
+                    try {
+                        return new Decimal64FirstNotNullOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, args.get(0), argType);
+                    } catch (Throwable th) {
+                        Misc.free(map);
+                        throw th;
+                    }
                 } else {
                     if (windowContext.isOrdered() && !windowContext.isOrderedByDesignatedTimestamp()) {
                         throw SqlException.$(windowContext.getOrderByPos(), "RANGE is supported only for queries ordered by designated timestamp");
@@ -1076,20 +1527,42 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
                     columnTypes.add(ColumnType.LONG);
                     Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, columnTypes);
                     final int initialBufferSize = configuration.getSqlWindowInitialRangeBufferSize();
-                    MemoryARW mem = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
+                    MemoryARW mem;
+                    try {
+                        mem = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
                             configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
-                    return new Decimal64FirstNotNullOverPartitionRangeFrameFunction(map, partitionByRecord, partitionBySink,
+                    } catch (Throwable th) {
+                        Misc.free(map);
+                        throw th;
+                    }
+                    try {
+                        return new Decimal64FirstNotNullOverPartitionRangeFrameFunction(map, partitionByRecord, partitionBySink,
                             rowsLo, rowsHi, args.get(0), mem, initialBufferSize, timestampIndex, argType);
+                    } catch (Throwable th) {
+                        Misc.free(map);
+                        Misc.free(mem);
+                        throw th;
+                    }
                 }
             } else if (framingMode == WindowExpression.FRAMING_ROWS) {
                 if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
                     Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, FIRST_VALUE_DECIMAL64_TYPES);
-                    return new Decimal64FirstNotNullOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, args.get(0), argType);
+                    try {
+                        return new Decimal64FirstNotNullOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, args.get(0), argType);
+                    } catch (Throwable th) {
+                        Misc.free(map);
+                        throw th;
+                    }
                 } else if (rowsLo == 0 && rowsHi == 0) {
                     return new Decimal64FirstValueOverCurrentRowFunction(args.get(0), true, argType);
                 } else if (rowsLo == Long.MIN_VALUE && rowsHi == Long.MAX_VALUE) {
                     Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, FIRST_VALUE_DECIMAL64_TYPES);
-                    return new Decimal64FirstNotNullOverPartitionFunction(map, partitionByRecord, partitionBySink, args.get(0), argType);
+                    try {
+                        return new Decimal64FirstNotNullOverPartitionFunction(map, partitionByRecord, partitionBySink, args.get(0), argType);
+                    } catch (Throwable th) {
+                        Misc.free(map);
+                        throw th;
+                    }
                 } else {
                     ArrayColumnTypes columnTypes = new ArrayColumnTypes();
                     columnTypes.add(ColumnType.LONG);
@@ -1097,10 +1570,22 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
                     columnTypes.add(ColumnType.LONG);
                     columnTypes.add(ColumnType.LONG);
                     Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, columnTypes);
-                    MemoryARW mem = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
+                    MemoryARW mem;
+                    try {
+                        mem = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
                             configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
-                    return new Decimal64FirstNotNullOverPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink,
+                    } catch (Throwable th) {
+                        Misc.free(map);
+                        throw th;
+                    }
+                    try {
+                        return new Decimal64FirstNotNullOverPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink,
                             rowsLo, rowsHi, args.get(0), mem, argType);
+                    } catch (Throwable th) {
+                        Misc.free(map);
+                        Misc.free(mem);
+                        throw th;
+                    }
                 }
             }
         } else {
@@ -1150,10 +1635,20 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
             if (framingMode == WindowExpression.FRAMING_RANGE) {
                 if (windowContext.isDefaultFrame() && (!windowContext.isOrdered() || windowContext.getRowsHi() == Long.MAX_VALUE)) {
                     Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, FIRST_VALUE_DECIMAL64_TYPES);
-                    return new Decimal64FirstValueOverPartitionFunction(map, partitionByRecord, partitionBySink, args.get(0), argType);
+                    try {
+                        return new Decimal64FirstValueOverPartitionFunction(map, partitionByRecord, partitionBySink, args.get(0), argType);
+                    } catch (Throwable th) {
+                        Misc.free(map);
+                        throw th;
+                    }
                 } else if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
                     Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, FIRST_VALUE_DECIMAL64_TYPES);
-                    return new Decimal64FirstValueOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, args.get(0), argType);
+                    try {
+                        return new Decimal64FirstValueOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, args.get(0), argType);
+                    } catch (Throwable th) {
+                        Misc.free(map);
+                        throw th;
+                    }
                 } else {
                     if (windowContext.isOrdered() && !windowContext.isOrderedByDesignatedTimestamp()) {
                         throw SqlException.$(windowContext.getOrderByPos(), "RANGE is supported only for queries ordered by designated timestamp");
@@ -1167,30 +1662,64 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
                     columnTypes.add(ColumnType.LONG);
                     Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, columnTypes);
                     final int initialBufferSize = configuration.getSqlWindowInitialRangeBufferSize();
-                    MemoryARW mem = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
+                    MemoryARW mem;
+                    try {
+                        mem = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
                             configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
-                    return new Decimal64FirstValueOverPartitionRangeFrameFunction(map, partitionByRecord, partitionBySink,
+                    } catch (Throwable th) {
+                        Misc.free(map);
+                        throw th;
+                    }
+                    try {
+                        return new Decimal64FirstValueOverPartitionRangeFrameFunction(map, partitionByRecord, partitionBySink,
                             rowsLo, rowsHi, args.get(0), mem, initialBufferSize, timestampIndex, argType);
+                    } catch (Throwable th) {
+                        Misc.free(map);
+                        Misc.free(mem);
+                        throw th;
+                    }
                 }
             } else if (framingMode == WindowExpression.FRAMING_ROWS) {
                 if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
                     Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, FIRST_VALUE_DECIMAL64_TYPES);
-                    return new Decimal64FirstValueOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, args.get(0), argType);
+                    try {
+                        return new Decimal64FirstValueOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, args.get(0), argType);
+                    } catch (Throwable th) {
+                        Misc.free(map);
+                        throw th;
+                    }
                 } else if (rowsLo == 0 && rowsHi == 0) {
                     return new Decimal64FirstValueOverCurrentRowFunction(args.get(0), false, argType);
                 } else if (rowsLo == Long.MIN_VALUE && rowsHi == Long.MAX_VALUE) {
                     Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, FIRST_VALUE_DECIMAL64_TYPES);
-                    return new Decimal64FirstValueOverPartitionFunction(map, partitionByRecord, partitionBySink, args.get(0), argType);
+                    try {
+                        return new Decimal64FirstValueOverPartitionFunction(map, partitionByRecord, partitionBySink, args.get(0), argType);
+                    } catch (Throwable th) {
+                        Misc.free(map);
+                        throw th;
+                    }
                 } else {
                     ArrayColumnTypes columnTypes = new ArrayColumnTypes();
                     columnTypes.add(ColumnType.LONG);
                     columnTypes.add(ColumnType.LONG);
                     columnTypes.add(ColumnType.LONG);
                     Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, columnTypes);
-                    MemoryARW mem = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
+                    MemoryARW mem;
+                    try {
+                        mem = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
                             configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
-                    return new Decimal64FirstValueOverPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink,
+                    } catch (Throwable th) {
+                        Misc.free(map);
+                        throw th;
+                    }
+                    try {
+                        return new Decimal64FirstValueOverPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink,
                             rowsLo, rowsHi, args.get(0), mem, argType);
+                    } catch (Throwable th) {
+                        Misc.free(map);
+                        Misc.free(mem);
+                        throw th;
+                    }
                 }
             }
         } else {
@@ -1469,7 +1998,7 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
         }
     }
 
-    public static class Decimal64FirstNotNullOverRangeFrameFunction extends Decimal64FirstValueOverRangeFrameFunction implements Reopenable, WindowDecimal64Function {
+    public static class Decimal64FirstNotNullOverRangeFrameFunction extends Decimal64FirstValueOverRangeFrameFunction implements Reopenable {
 
         public Decimal64FirstNotNullOverRangeFrameFunction(
                 long rangeLo,
@@ -1549,7 +2078,7 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
         }
     }
 
-    public static class Decimal64FirstNotNullOverRowsFrameFunction extends Decimal64FirstValueOverRowsFrameFunction implements Reopenable, WindowDecimal64Function {
+    public static class Decimal64FirstNotNullOverRowsFrameFunction extends Decimal64FirstValueOverRowsFrameFunction implements Reopenable {
         private long firstNotNullIdx = -1;
 
         public Decimal64FirstNotNullOverRowsFrameFunction(Function arg, long rowsLo, long rowsHi, MemoryARW memory, int type) {
@@ -1677,7 +2206,7 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
 
         @Override
         public int getPassCount() {
-            return WindowFunction.TWO_PASS;
+            return WindowFunction.ZERO_PASS;
         }
 
         @Override
@@ -1694,10 +2223,6 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
                     found = true;
                 }
             }
-        }
-
-        @Override
-        public void pass2(Record record, long recordOffset, WindowSPI spi) {
             Unsafe.putLong(spi.getAddress(recordOffset, columnIndex), value);
         }
 
@@ -1716,7 +2241,7 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
         }
     }
 
-    static class Decimal64FirstValueOverCurrentRowFunction extends BaseWindowFunction implements WindowDecimal64Function {
+    static class Decimal64FirstValueOverCurrentRowFunction extends BaseWindowFunction {
 
         private final boolean ignoreNulls;
         private final int type;
@@ -1765,7 +2290,7 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
         }
     }
 
-    static class Decimal64FirstValueOverPartitionFunction extends BasePartitionedWindowFunction implements WindowDecimal64Function {
+    static class Decimal64FirstValueOverPartitionFunction extends BasePartitionedWindowFunction {
 
         protected final int type;
         protected long firstValue;
@@ -1816,7 +2341,7 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
         }
     }
 
-    public static class Decimal64FirstValueOverPartitionRangeFrameFunction extends BasePartitionedWindowFunction implements WindowDecimal64Function {
+    public static class Decimal64FirstValueOverPartitionRangeFrameFunction extends BasePartitionedWindowFunction {
 
         protected static final int RECORD_SIZE = Long.BYTES + Long.BYTES;
         protected final boolean frameIncludesCurrentValue;
@@ -2035,7 +2560,7 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
         }
     }
 
-    public static class Decimal64FirstValueOverPartitionRowsFrameFunction extends BasePartitionedWindowFunction implements WindowDecimal64Function {
+    public static class Decimal64FirstValueOverPartitionRowsFrameFunction extends BasePartitionedWindowFunction {
 
         protected final int bufferSize;
         protected final boolean frameIncludesCurrentValue;
@@ -2189,7 +2714,7 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
         }
     }
 
-    static class Decimal64FirstValueOverRangeFrameFunction extends BaseWindowFunction implements Reopenable, WindowDecimal64Function {
+    static class Decimal64FirstValueOverRangeFrameFunction extends BaseWindowFunction implements Reopenable {
 
         protected static final int RECORD_SIZE = Long.BYTES + Long.BYTES;
         protected final boolean frameIncludesCurrentValue;
@@ -2397,7 +2922,7 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
         }
     }
 
-    static class Decimal64FirstValueOverRowsFrameFunction extends BaseWindowFunction implements Reopenable, WindowDecimal64Function {
+    static class Decimal64FirstValueOverRowsFrameFunction extends BaseWindowFunction implements Reopenable {
 
         protected final MemoryARW buffer;
         protected final int bufferSize;
@@ -2540,7 +3065,7 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
         }
     }
 
-    static class Decimal64FirstValueOverUnboundedPartitionRowsFrameFunction extends BasePartitionedWindowFunction implements WindowDecimal64Function {
+    static class Decimal64FirstValueOverUnboundedPartitionRowsFrameFunction extends BasePartitionedWindowFunction {
 
         protected final int type;
         protected long value;
@@ -2604,7 +3129,7 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
         }
     }
 
-    static class Decimal64FirstValueOverWholeResultSetFunction extends BaseWindowFunction implements WindowDecimal64Function {
+    static class Decimal64FirstValueOverWholeResultSetFunction extends BaseWindowFunction {
 
         protected final int type;
         protected boolean found;
@@ -2635,7 +3160,7 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
 
         @Override
         public int getPassCount() {
-            return WindowFunction.TWO_PASS;
+            return WindowFunction.ZERO_PASS;
         }
 
         @Override
@@ -2649,10 +3174,6 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
                 value = arg.getDecimal64(record);
                 found = true;
             }
-        }
-
-        @Override
-        public void pass2(Record record, long recordOffset, WindowSPI spi) {
             Unsafe.putLong(spi.getAddress(recordOffset, columnIndex), value);
         }
 
@@ -2918,7 +3439,7 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
         }
     }
 
-    public static class Decimal8FirstNotNullOverRangeFrameFunction extends Decimal8FirstValueOverRangeFrameFunction implements Reopenable, WindowDecimal8Function {
+    public static class Decimal8FirstNotNullOverRangeFrameFunction extends Decimal8FirstValueOverRangeFrameFunction implements Reopenable {
 
         public Decimal8FirstNotNullOverRangeFrameFunction(
                 long rangeLo,
@@ -2998,7 +3519,7 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
         }
     }
 
-    public static class Decimal8FirstNotNullOverRowsFrameFunction extends Decimal8FirstValueOverRowsFrameFunction implements Reopenable, WindowDecimal8Function {
+    public static class Decimal8FirstNotNullOverRowsFrameFunction extends Decimal8FirstValueOverRowsFrameFunction implements Reopenable {
         private long firstNotNullIdx = -1;
 
         public Decimal8FirstNotNullOverRowsFrameFunction(Function arg, long rowsLo, long rowsHi, MemoryARW memory, int type) {
@@ -3126,7 +3647,7 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
 
         @Override
         public int getPassCount() {
-            return WindowFunction.TWO_PASS;
+            return WindowFunction.ZERO_PASS;
         }
 
         @Override
@@ -3143,10 +3664,6 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
                     found = true;
                 }
             }
-        }
-
-        @Override
-        public void pass2(Record record, long recordOffset, WindowSPI spi) {
             Unsafe.putByte(spi.getAddress(recordOffset, columnIndex), value);
         }
 
@@ -3165,7 +3682,7 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
         }
     }
 
-    static class Decimal8FirstValueOverCurrentRowFunction extends BaseWindowFunction implements WindowDecimal8Function {
+    static class Decimal8FirstValueOverCurrentRowFunction extends BaseWindowFunction {
 
         private final boolean ignoreNulls;
         private final int type;
@@ -3214,7 +3731,7 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
         }
     }
 
-    static class Decimal8FirstValueOverPartitionFunction extends BasePartitionedWindowFunction implements WindowDecimal8Function {
+    static class Decimal8FirstValueOverPartitionFunction extends BasePartitionedWindowFunction {
 
         protected final int type;
         protected byte firstValue;
@@ -3265,7 +3782,7 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
         }
     }
 
-    public static class Decimal8FirstValueOverPartitionRangeFrameFunction extends BasePartitionedWindowFunction implements WindowDecimal8Function {
+    public static class Decimal8FirstValueOverPartitionRangeFrameFunction extends BasePartitionedWindowFunction {
 
         protected static final int RECORD_SIZE = Long.BYTES + Byte.BYTES;
         protected final boolean frameIncludesCurrentValue;
@@ -3484,7 +4001,7 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
         }
     }
 
-    public static class Decimal8FirstValueOverPartitionRowsFrameFunction extends BasePartitionedWindowFunction implements WindowDecimal8Function {
+    public static class Decimal8FirstValueOverPartitionRowsFrameFunction extends BasePartitionedWindowFunction {
 
         protected final int bufferSize;
         protected final boolean frameIncludesCurrentValue;
@@ -3638,7 +4155,7 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
         }
     }
 
-    static class Decimal8FirstValueOverRangeFrameFunction extends BaseWindowFunction implements Reopenable, WindowDecimal8Function {
+    static class Decimal8FirstValueOverRangeFrameFunction extends BaseWindowFunction implements Reopenable {
 
         protected static final int RECORD_SIZE = Long.BYTES + Byte.BYTES;
         protected final boolean frameIncludesCurrentValue;
@@ -3846,7 +4363,7 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
         }
     }
 
-    static class Decimal8FirstValueOverRowsFrameFunction extends BaseWindowFunction implements Reopenable, WindowDecimal8Function {
+    static class Decimal8FirstValueOverRowsFrameFunction extends BaseWindowFunction implements Reopenable {
 
         protected final MemoryARW buffer;
         protected final int bufferSize;
@@ -3989,7 +4506,7 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
         }
     }
 
-    static class Decimal8FirstValueOverUnboundedPartitionRowsFrameFunction extends BasePartitionedWindowFunction implements WindowDecimal8Function {
+    static class Decimal8FirstValueOverUnboundedPartitionRowsFrameFunction extends BasePartitionedWindowFunction {
 
         protected final int type;
         protected byte value;
@@ -4053,7 +4570,7 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
         }
     }
 
-    static class Decimal8FirstValueOverWholeResultSetFunction extends BaseWindowFunction implements WindowDecimal8Function {
+    static class Decimal8FirstValueOverWholeResultSetFunction extends BaseWindowFunction {
 
         protected final int type;
         protected boolean found;
@@ -4084,7 +4601,7 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
 
         @Override
         public int getPassCount() {
-            return WindowFunction.TWO_PASS;
+            return WindowFunction.ZERO_PASS;
         }
 
         @Override
@@ -4098,10 +4615,6 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
                 value = arg.getDecimal8(record);
                 found = true;
             }
-        }
-
-        @Override
-        public void pass2(Record record, long recordOffset, WindowSPI spi) {
             Unsafe.putByte(spi.getAddress(recordOffset, columnIndex), value);
         }
 
@@ -4367,7 +4880,7 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
         }
     }
 
-    public static class Decimal16FirstNotNullOverRangeFrameFunction extends Decimal16FirstValueOverRangeFrameFunction implements Reopenable, WindowDecimal16Function {
+    public static class Decimal16FirstNotNullOverRangeFrameFunction extends Decimal16FirstValueOverRangeFrameFunction implements Reopenable {
 
         public Decimal16FirstNotNullOverRangeFrameFunction(
                 long rangeLo,
@@ -4447,7 +4960,7 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
         }
     }
 
-    public static class Decimal16FirstNotNullOverRowsFrameFunction extends Decimal16FirstValueOverRowsFrameFunction implements Reopenable, WindowDecimal16Function {
+    public static class Decimal16FirstNotNullOverRowsFrameFunction extends Decimal16FirstValueOverRowsFrameFunction implements Reopenable {
         private long firstNotNullIdx = -1;
 
         public Decimal16FirstNotNullOverRowsFrameFunction(Function arg, long rowsLo, long rowsHi, MemoryARW memory, int type) {
@@ -4575,7 +5088,7 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
 
         @Override
         public int getPassCount() {
-            return WindowFunction.TWO_PASS;
+            return WindowFunction.ZERO_PASS;
         }
 
         @Override
@@ -4592,10 +5105,6 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
                     found = true;
                 }
             }
-        }
-
-        @Override
-        public void pass2(Record record, long recordOffset, WindowSPI spi) {
             Unsafe.putShort(spi.getAddress(recordOffset, columnIndex), value);
         }
 
@@ -4614,7 +5123,7 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
         }
     }
 
-    static class Decimal16FirstValueOverCurrentRowFunction extends BaseWindowFunction implements WindowDecimal16Function {
+    static class Decimal16FirstValueOverCurrentRowFunction extends BaseWindowFunction {
 
         private final boolean ignoreNulls;
         private final int type;
@@ -4663,7 +5172,7 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
         }
     }
 
-    static class Decimal16FirstValueOverPartitionFunction extends BasePartitionedWindowFunction implements WindowDecimal16Function {
+    static class Decimal16FirstValueOverPartitionFunction extends BasePartitionedWindowFunction {
 
         protected final int type;
         protected short firstValue;
@@ -4714,7 +5223,7 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
         }
     }
 
-    public static class Decimal16FirstValueOverPartitionRangeFrameFunction extends BasePartitionedWindowFunction implements WindowDecimal16Function {
+    public static class Decimal16FirstValueOverPartitionRangeFrameFunction extends BasePartitionedWindowFunction {
 
         protected static final int RECORD_SIZE = Long.BYTES + Short.BYTES;
         protected final boolean frameIncludesCurrentValue;
@@ -4933,7 +5442,7 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
         }
     }
 
-    public static class Decimal16FirstValueOverPartitionRowsFrameFunction extends BasePartitionedWindowFunction implements WindowDecimal16Function {
+    public static class Decimal16FirstValueOverPartitionRowsFrameFunction extends BasePartitionedWindowFunction {
 
         protected final int bufferSize;
         protected final boolean frameIncludesCurrentValue;
@@ -5087,7 +5596,7 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
         }
     }
 
-    static class Decimal16FirstValueOverRangeFrameFunction extends BaseWindowFunction implements Reopenable, WindowDecimal16Function {
+    static class Decimal16FirstValueOverRangeFrameFunction extends BaseWindowFunction implements Reopenable {
 
         protected static final int RECORD_SIZE = Long.BYTES + Short.BYTES;
         protected final boolean frameIncludesCurrentValue;
@@ -5295,7 +5804,7 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
         }
     }
 
-    static class Decimal16FirstValueOverRowsFrameFunction extends BaseWindowFunction implements Reopenable, WindowDecimal16Function {
+    static class Decimal16FirstValueOverRowsFrameFunction extends BaseWindowFunction implements Reopenable {
 
         protected final MemoryARW buffer;
         protected final int bufferSize;
@@ -5438,7 +5947,7 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
         }
     }
 
-    static class Decimal16FirstValueOverUnboundedPartitionRowsFrameFunction extends BasePartitionedWindowFunction implements WindowDecimal16Function {
+    static class Decimal16FirstValueOverUnboundedPartitionRowsFrameFunction extends BasePartitionedWindowFunction {
 
         protected final int type;
         protected short value;
@@ -5502,7 +6011,7 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
         }
     }
 
-    static class Decimal16FirstValueOverWholeResultSetFunction extends BaseWindowFunction implements WindowDecimal16Function {
+    static class Decimal16FirstValueOverWholeResultSetFunction extends BaseWindowFunction {
 
         protected final int type;
         protected boolean found;
@@ -5533,7 +6042,7 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
 
         @Override
         public int getPassCount() {
-            return WindowFunction.TWO_PASS;
+            return WindowFunction.ZERO_PASS;
         }
 
         @Override
@@ -5547,10 +6056,6 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
                 value = arg.getDecimal16(record);
                 found = true;
             }
-        }
-
-        @Override
-        public void pass2(Record record, long recordOffset, WindowSPI spi) {
             Unsafe.putShort(spi.getAddress(recordOffset, columnIndex), value);
         }
 
@@ -5816,7 +6321,7 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
         }
     }
 
-    public static class Decimal32FirstNotNullOverRangeFrameFunction extends Decimal32FirstValueOverRangeFrameFunction implements Reopenable, WindowDecimal32Function {
+    public static class Decimal32FirstNotNullOverRangeFrameFunction extends Decimal32FirstValueOverRangeFrameFunction implements Reopenable {
 
         public Decimal32FirstNotNullOverRangeFrameFunction(
                 long rangeLo,
@@ -5896,7 +6401,7 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
         }
     }
 
-    public static class Decimal32FirstNotNullOverRowsFrameFunction extends Decimal32FirstValueOverRowsFrameFunction implements Reopenable, WindowDecimal32Function {
+    public static class Decimal32FirstNotNullOverRowsFrameFunction extends Decimal32FirstValueOverRowsFrameFunction implements Reopenable {
         private long firstNotNullIdx = -1;
 
         public Decimal32FirstNotNullOverRowsFrameFunction(Function arg, long rowsLo, long rowsHi, MemoryARW memory, int type) {
@@ -6024,7 +6529,7 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
 
         @Override
         public int getPassCount() {
-            return WindowFunction.TWO_PASS;
+            return WindowFunction.ZERO_PASS;
         }
 
         @Override
@@ -6041,10 +6546,6 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
                     found = true;
                 }
             }
-        }
-
-        @Override
-        public void pass2(Record record, long recordOffset, WindowSPI spi) {
             Unsafe.putInt(spi.getAddress(recordOffset, columnIndex), value);
         }
 
@@ -6063,7 +6564,7 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
         }
     }
 
-    static class Decimal32FirstValueOverCurrentRowFunction extends BaseWindowFunction implements WindowDecimal32Function {
+    static class Decimal32FirstValueOverCurrentRowFunction extends BaseWindowFunction {
 
         private final boolean ignoreNulls;
         private final int type;
@@ -6112,7 +6613,7 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
         }
     }
 
-    static class Decimal32FirstValueOverPartitionFunction extends BasePartitionedWindowFunction implements WindowDecimal32Function {
+    static class Decimal32FirstValueOverPartitionFunction extends BasePartitionedWindowFunction {
 
         protected final int type;
         protected int firstValue;
@@ -6163,7 +6664,7 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
         }
     }
 
-    public static class Decimal32FirstValueOverPartitionRangeFrameFunction extends BasePartitionedWindowFunction implements WindowDecimal32Function {
+    public static class Decimal32FirstValueOverPartitionRangeFrameFunction extends BasePartitionedWindowFunction {
 
         protected static final int RECORD_SIZE = Long.BYTES + Integer.BYTES;
         protected final boolean frameIncludesCurrentValue;
@@ -6382,7 +6883,7 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
         }
     }
 
-    public static class Decimal32FirstValueOverPartitionRowsFrameFunction extends BasePartitionedWindowFunction implements WindowDecimal32Function {
+    public static class Decimal32FirstValueOverPartitionRowsFrameFunction extends BasePartitionedWindowFunction {
 
         protected final int bufferSize;
         protected final boolean frameIncludesCurrentValue;
@@ -6536,7 +7037,7 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
         }
     }
 
-    static class Decimal32FirstValueOverRangeFrameFunction extends BaseWindowFunction implements Reopenable, WindowDecimal32Function {
+    static class Decimal32FirstValueOverRangeFrameFunction extends BaseWindowFunction implements Reopenable {
 
         protected static final int RECORD_SIZE = Long.BYTES + Integer.BYTES;
         protected final boolean frameIncludesCurrentValue;
@@ -6744,7 +7245,7 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
         }
     }
 
-    static class Decimal32FirstValueOverRowsFrameFunction extends BaseWindowFunction implements Reopenable, WindowDecimal32Function {
+    static class Decimal32FirstValueOverRowsFrameFunction extends BaseWindowFunction implements Reopenable {
 
         protected final MemoryARW buffer;
         protected final int bufferSize;
@@ -6887,7 +7388,7 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
         }
     }
 
-    static class Decimal32FirstValueOverUnboundedPartitionRowsFrameFunction extends BasePartitionedWindowFunction implements WindowDecimal32Function {
+    static class Decimal32FirstValueOverUnboundedPartitionRowsFrameFunction extends BasePartitionedWindowFunction {
 
         protected final int type;
         protected int value;
@@ -6951,7 +7452,7 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
         }
     }
 
-    static class Decimal32FirstValueOverWholeResultSetFunction extends BaseWindowFunction implements WindowDecimal32Function {
+    static class Decimal32FirstValueOverWholeResultSetFunction extends BaseWindowFunction {
 
         protected final int type;
         protected boolean found;
@@ -6982,7 +7483,7 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
 
         @Override
         public int getPassCount() {
-            return WindowFunction.TWO_PASS;
+            return WindowFunction.ZERO_PASS;
         }
 
         @Override
@@ -6996,10 +7497,6 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
                 value = arg.getDecimal32(record);
                 found = true;
             }
-        }
-
-        @Override
-        public void pass2(Record record, long recordOffset, WindowSPI spi) {
             Unsafe.putInt(spi.getAddress(recordOffset, columnIndex), value);
         }
 
@@ -7291,7 +7788,7 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
         }
     }
 
-    public static class Decimal128FirstNotNullOverRangeFrameFunction extends Decimal128FirstValueOverRangeFrameFunction implements Reopenable, WindowDecimal128Function {
+    public static class Decimal128FirstNotNullOverRangeFrameFunction extends Decimal128FirstValueOverRangeFrameFunction implements Reopenable {
 
         public Decimal128FirstNotNullOverRangeFrameFunction(
                 long rangeLo,
@@ -7375,7 +7872,7 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
         }
     }
 
-    public static class Decimal128FirstNotNullOverRowsFrameFunction extends Decimal128FirstValueOverRowsFrameFunction implements Reopenable, WindowDecimal128Function {
+    public static class Decimal128FirstNotNullOverRowsFrameFunction extends Decimal128FirstValueOverRowsFrameFunction implements Reopenable {
         private long firstNotNullIdx = -1;
 
         public Decimal128FirstNotNullOverRowsFrameFunction(Function arg, long rowsLo, long rowsHi, MemoryARW memory, int type) {
@@ -7512,7 +8009,7 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
 
         @Override
         public int getPassCount() {
-            return WindowFunction.TWO_PASS;
+            return WindowFunction.ZERO_PASS;
         }
 
         @Override
@@ -7529,10 +8026,6 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
                     found = true;
                 }
             }
-        }
-
-        @Override
-        public void pass2(Record record, long recordOffset, WindowSPI spi) {
             long addr = spi.getAddress(recordOffset, columnIndex);
             Unsafe.putLong(addr, value.getHigh());
             Unsafe.putLong(addr + Long.BYTES, value.getLow());
@@ -7553,7 +8046,7 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
         }
     }
 
-    static class Decimal128FirstValueOverCurrentRowFunction extends BaseWindowFunction implements WindowDecimal128Function {
+    static class Decimal128FirstValueOverCurrentRowFunction extends BaseWindowFunction {
 
         protected final Decimal128 scratch = new Decimal128();
         protected final Decimal128 value = new Decimal128();
@@ -7605,7 +8098,7 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
         }
     }
 
-    static class Decimal128FirstValueOverPartitionFunction extends BasePartitionedWindowFunction implements WindowDecimal128Function {
+    static class Decimal128FirstValueOverPartitionFunction extends BasePartitionedWindowFunction {
 
         protected final Decimal128 firstValue = new Decimal128();
         protected final Decimal128 scratch = new Decimal128();
@@ -7659,7 +8152,7 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
         }
     }
 
-    public static class Decimal128FirstValueOverPartitionRangeFrameFunction extends BasePartitionedWindowFunction implements WindowDecimal128Function {
+    public static class Decimal128FirstValueOverPartitionRangeFrameFunction extends BasePartitionedWindowFunction {
 
         protected static final int RECORD_SIZE = Long.BYTES + 16;
         protected final Decimal128 firstValue = new Decimal128();
@@ -7878,7 +8371,7 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
         }
     }
 
-    public static class Decimal128FirstValueOverPartitionRowsFrameFunction extends BasePartitionedWindowFunction implements WindowDecimal128Function {
+    public static class Decimal128FirstValueOverPartitionRowsFrameFunction extends BasePartitionedWindowFunction {
 
         protected final int bufferSize;
         protected final Decimal128 firstValue = new Decimal128();
@@ -8035,7 +8528,7 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
         }
     }
 
-    static class Decimal128FirstValueOverRangeFrameFunction extends BaseWindowFunction implements Reopenable, WindowDecimal128Function {
+    static class Decimal128FirstValueOverRangeFrameFunction extends BaseWindowFunction implements Reopenable {
 
         protected static final int RECORD_SIZE = Long.BYTES + 16;
         protected final Decimal128 firstValue = new Decimal128();
@@ -8247,7 +8740,7 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
         }
     }
 
-    static class Decimal128FirstValueOverRowsFrameFunction extends BaseWindowFunction implements Reopenable, WindowDecimal128Function {
+    static class Decimal128FirstValueOverRowsFrameFunction extends BaseWindowFunction implements Reopenable {
 
         protected final MemoryARW buffer;
         protected final int bufferSize;
@@ -8395,7 +8888,7 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
         }
     }
 
-    static class Decimal128FirstValueOverUnboundedPartitionRowsFrameFunction extends BasePartitionedWindowFunction implements WindowDecimal128Function {
+    static class Decimal128FirstValueOverUnboundedPartitionRowsFrameFunction extends BasePartitionedWindowFunction {
 
         protected final Decimal128 scratch = new Decimal128();
         protected final int type;
@@ -8461,7 +8954,7 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
         }
     }
 
-    static class Decimal128FirstValueOverWholeResultSetFunction extends BaseWindowFunction implements WindowDecimal128Function {
+    static class Decimal128FirstValueOverWholeResultSetFunction extends BaseWindowFunction {
 
         protected final Decimal128 scratch = new Decimal128();
         protected final int type;
@@ -8493,7 +8986,7 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
 
         @Override
         public int getPassCount() {
-            return WindowFunction.TWO_PASS;
+            return WindowFunction.ZERO_PASS;
         }
 
         @Override
@@ -8507,10 +9000,6 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
                 arg.getDecimal128(record, value);
                 found = true;
             }
-        }
-
-        @Override
-        public void pass2(Record record, long recordOffset, WindowSPI spi) {
             long addr = spi.getAddress(recordOffset, columnIndex);
             Unsafe.putLong(addr, value.getHigh());
             Unsafe.putLong(addr + Long.BYTES, value.getLow());
@@ -8809,7 +9298,7 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
         }
     }
 
-    public static class Decimal256FirstNotNullOverRangeFrameFunction extends Decimal256FirstValueOverRangeFrameFunction implements Reopenable, WindowDecimal256Function {
+    public static class Decimal256FirstNotNullOverRangeFrameFunction extends Decimal256FirstValueOverRangeFrameFunction implements Reopenable {
 
         public Decimal256FirstNotNullOverRangeFrameFunction(
                 long rangeLo,
@@ -8893,7 +9382,7 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
         }
     }
 
-    public static class Decimal256FirstNotNullOverRowsFrameFunction extends Decimal256FirstValueOverRowsFrameFunction implements Reopenable, WindowDecimal256Function {
+    public static class Decimal256FirstNotNullOverRowsFrameFunction extends Decimal256FirstValueOverRowsFrameFunction implements Reopenable {
         private long firstNotNullIdx = -1;
 
         public Decimal256FirstNotNullOverRowsFrameFunction(Function arg, long rowsLo, long rowsHi, MemoryARW memory, int type) {
@@ -9030,7 +9519,7 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
 
         @Override
         public int getPassCount() {
-            return WindowFunction.TWO_PASS;
+            return WindowFunction.ZERO_PASS;
         }
 
         @Override
@@ -9047,10 +9536,6 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
                     found = true;
                 }
             }
-        }
-
-        @Override
-        public void pass2(Record record, long recordOffset, WindowSPI spi) {
             long addr = spi.getAddress(recordOffset, columnIndex);
             Unsafe.putLong(addr, value.getHh());
             Unsafe.putLong(addr + Long.BYTES, value.getHl());
@@ -9073,7 +9558,7 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
         }
     }
 
-    static class Decimal256FirstValueOverCurrentRowFunction extends BaseWindowFunction implements WindowDecimal256Function {
+    static class Decimal256FirstValueOverCurrentRowFunction extends BaseWindowFunction {
 
         protected final Decimal256 scratch = new Decimal256();
         protected final Decimal256 value = new Decimal256();
@@ -9127,7 +9612,7 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
         }
     }
 
-    static class Decimal256FirstValueOverPartitionFunction extends BasePartitionedWindowFunction implements WindowDecimal256Function {
+    static class Decimal256FirstValueOverPartitionFunction extends BasePartitionedWindowFunction {
 
         protected final Decimal256 firstValue = new Decimal256();
         protected final Decimal256 scratch = new Decimal256();
@@ -9183,7 +9668,7 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
         }
     }
 
-    public static class Decimal256FirstValueOverPartitionRangeFrameFunction extends BasePartitionedWindowFunction implements WindowDecimal256Function {
+    public static class Decimal256FirstValueOverPartitionRangeFrameFunction extends BasePartitionedWindowFunction {
 
         protected static final int RECORD_SIZE = Long.BYTES + 32;
         protected final Decimal256 firstValue = new Decimal256();
@@ -9403,7 +9888,7 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
         }
     }
 
-    public static class Decimal256FirstValueOverPartitionRowsFrameFunction extends BasePartitionedWindowFunction implements WindowDecimal256Function {
+    public static class Decimal256FirstValueOverPartitionRowsFrameFunction extends BasePartitionedWindowFunction {
 
         protected final int bufferSize;
         protected final Decimal256 firstValue = new Decimal256();
@@ -9564,7 +10049,7 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
         }
     }
 
-    static class Decimal256FirstValueOverRangeFrameFunction extends BaseWindowFunction implements Reopenable, WindowDecimal256Function {
+    static class Decimal256FirstValueOverRangeFrameFunction extends BaseWindowFunction implements Reopenable {
 
         protected static final int RECORD_SIZE = Long.BYTES + 32;
         protected final Decimal256 firstValue = new Decimal256();
@@ -9778,7 +10263,7 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
         }
     }
 
-    static class Decimal256FirstValueOverRowsFrameFunction extends BaseWindowFunction implements Reopenable, WindowDecimal256Function {
+    static class Decimal256FirstValueOverRowsFrameFunction extends BaseWindowFunction implements Reopenable {
 
         protected final MemoryARW buffer;
         protected final int bufferSize;
@@ -9930,7 +10415,7 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
         }
     }
 
-    static class Decimal256FirstValueOverUnboundedPartitionRowsFrameFunction extends BasePartitionedWindowFunction implements WindowDecimal256Function {
+    static class Decimal256FirstValueOverUnboundedPartitionRowsFrameFunction extends BasePartitionedWindowFunction {
 
         protected final Decimal256 scratch = new Decimal256();
         protected final int type;
@@ -9998,7 +10483,7 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
         }
     }
 
-    static class Decimal256FirstValueOverWholeResultSetFunction extends BaseWindowFunction implements WindowDecimal256Function {
+    static class Decimal256FirstValueOverWholeResultSetFunction extends BaseWindowFunction {
 
         protected final Decimal256 scratch = new Decimal256();
         protected final int type;
@@ -10030,7 +10515,7 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
 
         @Override
         public int getPassCount() {
-            return WindowFunction.TWO_PASS;
+            return WindowFunction.ZERO_PASS;
         }
 
         @Override
@@ -10044,10 +10529,6 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
                 arg.getDecimal256(record, value);
                 found = true;
             }
-        }
-
-        @Override
-        public void pass2(Record record, long recordOffset, WindowSPI spi) {
             long addr = spi.getAddress(recordOffset, columnIndex);
             Unsafe.putLong(addr, value.getHh());
             Unsafe.putLong(addr + Long.BYTES, value.getHl());

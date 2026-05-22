@@ -69,6 +69,11 @@ public class NthValueDecimalWindowFunctionFactory extends AbstractWindowFunction
     }
 
     @Override
+    protected boolean supportNullsDesc() {
+        return true;
+    }
+
+    @Override
     public Function newInstance(
             int position,
             ObjList<Function> args,
@@ -116,9 +121,6 @@ public class NthValueDecimalWindowFunctionFactory extends AbstractWindowFunction
             }
         }
 
-        if (tag != ColumnType.DECIMAL64 && tag != ColumnType.DECIMAL8 && tag != ColumnType.DECIMAL16 && tag != ColumnType.DECIMAL32 && tag != ColumnType.DECIMAL128 && tag != ColumnType.DECIMAL256) {
-            throw SqlException.$(position, "nth_value is not yet implemented for ").put(ColumnType.nameOf(tag));
-        }
         if (tag == ColumnType.DECIMAL8) {
             return newInstanceDecimal8(position, args, configuration, windowContext, n, argType);
         }
@@ -291,7 +293,7 @@ public class NthValueDecimalWindowFunctionFactory extends AbstractWindowFunction
         throw SqlException.$(position, "function not implemented for given window parameters");
     }
 
-    static class Decimal64NthValueOverCurrentRowFunction extends BaseWindowFunction implements WindowDecimal64Function {
+    static class Decimal64NthValueOverCurrentRowFunction extends BaseWindowFunction {
 
         private final int n;
         private final int type;
@@ -342,7 +344,7 @@ public class NthValueDecimalWindowFunctionFactory extends AbstractWindowFunction
         }
     }
 
-    static class Decimal64NthValueOverPartitionFunction extends BasePartitionedWindowFunction implements WindowDecimal64Function {
+    static class Decimal64NthValueOverPartitionFunction extends BasePartitionedWindowFunction {
 
         private final int n;
         private final int type;
@@ -412,7 +414,7 @@ public class NthValueDecimalWindowFunctionFactory extends AbstractWindowFunction
         }
     }
 
-    public static class Decimal64NthValueOverPartitionRangeFrameFunction extends BasePartitionedWindowFunction implements WindowDecimal64Function {
+    public static class Decimal64NthValueOverPartitionRangeFrameFunction extends BasePartitionedWindowFunction {
 
         protected static final int RECORD_SIZE = 2 * Long.BYTES;
         protected final boolean frameIncludesCurrentValue;
@@ -639,7 +641,7 @@ public class NthValueDecimalWindowFunctionFactory extends AbstractWindowFunction
         }
     }
 
-    public static class Decimal64NthValueOverPartitionRowsFrameFunction extends BasePartitionedWindowFunction implements WindowDecimal64Function {
+    public static class Decimal64NthValueOverPartitionRowsFrameFunction extends BasePartitionedWindowFunction {
 
         protected final int bufferSize;
         protected final int excludeCount;
@@ -804,7 +806,7 @@ public class NthValueDecimalWindowFunctionFactory extends AbstractWindowFunction
         }
     }
 
-    public static class Decimal64NthValueOverPartitionRowsFrameUnboundedFunction extends BasePartitionedWindowFunction implements WindowDecimal64Function {
+    public static class Decimal64NthValueOverPartitionRowsFrameUnboundedFunction extends BasePartitionedWindowFunction {
 
         protected final int bufferSize;
         protected final int n;
@@ -893,7 +895,7 @@ public class NthValueDecimalWindowFunctionFactory extends AbstractWindowFunction
         }
     }
 
-    public static class Decimal64NthValueOverRangeFrameFunction extends BaseWindowFunction implements Reopenable, WindowDecimal64Function {
+    public static class Decimal64NthValueOverRangeFrameFunction extends BaseWindowFunction implements Reopenable {
         protected static final int RECORD_SIZE = 2 * Long.BYTES;
         protected final boolean frameIncludesCurrentValue;
         protected final boolean frameLoBounded;
@@ -1100,7 +1102,7 @@ public class NthValueDecimalWindowFunctionFactory extends AbstractWindowFunction
         }
     }
 
-    public static class Decimal64NthValueOverRowsFrameFunction extends BaseWindowFunction implements Reopenable, WindowDecimal64Function {
+    public static class Decimal64NthValueOverRowsFrameFunction extends BaseWindowFunction implements Reopenable {
         protected final MemoryARW buffer;
         protected final int bufferSize;
         protected final int excludeCount;
@@ -1246,7 +1248,7 @@ public class NthValueDecimalWindowFunctionFactory extends AbstractWindowFunction
         }
     }
 
-    public static class Decimal64NthValueOverRowsFrameUnboundedFunction extends BaseWindowFunction implements Reopenable, WindowDecimal64Function {
+    public static class Decimal64NthValueOverRowsFrameUnboundedFunction extends BaseWindowFunction implements Reopenable {
         protected final int bufferSize;
         protected final int n;
         protected final int type;
@@ -1332,7 +1334,7 @@ public class NthValueDecimalWindowFunctionFactory extends AbstractWindowFunction
         }
     }
 
-    static class Decimal64NthValueOverUnboundedPartitionFrameFunction extends BasePartitionedWindowFunction implements WindowDecimal64Function {
+    static class Decimal64NthValueOverUnboundedPartitionFrameFunction extends BasePartitionedWindowFunction {
 
         protected final boolean isRange;
         protected final int n;
@@ -1419,7 +1421,7 @@ public class NthValueDecimalWindowFunctionFactory extends AbstractWindowFunction
         }
     }
 
-    public static class Decimal64NthValueOverUnboundedRowsFrameFunction extends BaseWindowFunction implements WindowDecimal64Function {
+    public static class Decimal64NthValueOverUnboundedRowsFrameFunction extends BaseWindowFunction {
         protected final int n;
         protected final int type;
         protected long count;
@@ -1493,7 +1495,7 @@ public class NthValueDecimalWindowFunctionFactory extends AbstractWindowFunction
         }
     }
 
-    public static class Decimal64NthValueOverWholeResultSetFunction extends BaseWindowFunction implements WindowDecimal64Function {
+    public static class Decimal64NthValueOverWholeResultSetFunction extends BaseWindowFunction {
         protected final int n;
         protected final int type;
         protected long count;
@@ -1563,7 +1565,7 @@ public class NthValueDecimalWindowFunctionFactory extends AbstractWindowFunction
         }
     }
 
-    public static class Decimal8NthValueOverPartitionRangeFrameFunction extends BasePartitionedWindowFunction implements WindowDecimal8Function {
+    public static class Decimal8NthValueOverPartitionRangeFrameFunction extends BasePartitionedWindowFunction {
 
         protected static final int RECORD_SIZE = Long.BYTES + Byte.BYTES;
         protected final boolean frameIncludesCurrentValue;
@@ -1790,7 +1792,7 @@ public class NthValueDecimalWindowFunctionFactory extends AbstractWindowFunction
         }
     }
 
-    public static class Decimal8NthValueOverPartitionRowsFrameFunction extends BasePartitionedWindowFunction implements WindowDecimal8Function {
+    public static class Decimal8NthValueOverPartitionRowsFrameFunction extends BasePartitionedWindowFunction {
 
         protected final int bufferSize;
         protected final int excludeCount;
@@ -1955,7 +1957,7 @@ public class NthValueDecimalWindowFunctionFactory extends AbstractWindowFunction
         }
     }
 
-    public static class Decimal8NthValueOverPartitionRowsFrameUnboundedFunction extends BasePartitionedWindowFunction implements WindowDecimal8Function {
+    public static class Decimal8NthValueOverPartitionRowsFrameUnboundedFunction extends BasePartitionedWindowFunction {
 
         protected final int bufferSize;
         protected final int n;
@@ -2044,7 +2046,7 @@ public class NthValueDecimalWindowFunctionFactory extends AbstractWindowFunction
         }
     }
 
-    public static class Decimal8NthValueOverRangeFrameFunction extends BaseWindowFunction implements Reopenable, WindowDecimal8Function {
+    public static class Decimal8NthValueOverRangeFrameFunction extends BaseWindowFunction implements Reopenable {
         protected static final int RECORD_SIZE = Long.BYTES + Byte.BYTES;
         protected final boolean frameIncludesCurrentValue;
         protected final boolean frameLoBounded;
@@ -2251,7 +2253,7 @@ public class NthValueDecimalWindowFunctionFactory extends AbstractWindowFunction
         }
     }
 
-    public static class Decimal8NthValueOverRowsFrameFunction extends BaseWindowFunction implements Reopenable, WindowDecimal8Function {
+    public static class Decimal8NthValueOverRowsFrameFunction extends BaseWindowFunction implements Reopenable {
         protected final MemoryARW buffer;
         protected final int bufferSize;
         protected final int excludeCount;
@@ -2397,7 +2399,7 @@ public class NthValueDecimalWindowFunctionFactory extends AbstractWindowFunction
         }
     }
 
-    public static class Decimal8NthValueOverRowsFrameUnboundedFunction extends BaseWindowFunction implements Reopenable, WindowDecimal8Function {
+    public static class Decimal8NthValueOverRowsFrameUnboundedFunction extends BaseWindowFunction implements Reopenable {
         protected final int bufferSize;
         protected final int n;
         protected final int type;
@@ -2483,7 +2485,7 @@ public class NthValueDecimalWindowFunctionFactory extends AbstractWindowFunction
         }
     }
 
-    static class Decimal8NthValueOverCurrentRowFunction extends BaseWindowFunction implements WindowDecimal8Function {
+    static class Decimal8NthValueOverCurrentRowFunction extends BaseWindowFunction {
 
         private final int n;
         private final int type;
@@ -2534,7 +2536,7 @@ public class NthValueDecimalWindowFunctionFactory extends AbstractWindowFunction
         }
     }
 
-    static class Decimal8NthValueOverPartitionFunction extends BasePartitionedWindowFunction implements WindowDecimal8Function {
+    static class Decimal8NthValueOverPartitionFunction extends BasePartitionedWindowFunction {
 
         private final int n;
         private final int type;
@@ -2604,7 +2606,7 @@ public class NthValueDecimalWindowFunctionFactory extends AbstractWindowFunction
         }
     }
 
-    static class Decimal8NthValueOverUnboundedPartitionFrameFunction extends BasePartitionedWindowFunction implements WindowDecimal8Function {
+    static class Decimal8NthValueOverUnboundedPartitionFrameFunction extends BasePartitionedWindowFunction {
 
         protected final boolean isRange;
         protected final int n;
@@ -2691,7 +2693,7 @@ public class NthValueDecimalWindowFunctionFactory extends AbstractWindowFunction
         }
     }
 
-    public static class Decimal8NthValueOverUnboundedRowsFrameFunction extends BaseWindowFunction implements WindowDecimal8Function {
+    public static class Decimal8NthValueOverUnboundedRowsFrameFunction extends BaseWindowFunction {
         protected final int n;
         protected final int type;
         protected long count;
@@ -2765,7 +2767,7 @@ public class NthValueDecimalWindowFunctionFactory extends AbstractWindowFunction
         }
     }
 
-    public static class Decimal8NthValueOverWholeResultSetFunction extends BaseWindowFunction implements WindowDecimal8Function {
+    public static class Decimal8NthValueOverWholeResultSetFunction extends BaseWindowFunction {
         protected final int n;
         protected final int type;
         protected long count;
@@ -3185,7 +3187,7 @@ public class NthValueDecimalWindowFunctionFactory extends AbstractWindowFunction
         throw SqlException.$(position, "function not implemented for given window parameters");
     }
 
-    static class Decimal256NthValueOverCurrentRowFunction extends BaseWindowFunction implements WindowDecimal256Function {
+    static class Decimal256NthValueOverCurrentRowFunction extends BaseWindowFunction {
 
         private final int n;
         private final int type;
@@ -3244,7 +3246,7 @@ public class NthValueDecimalWindowFunctionFactory extends AbstractWindowFunction
         }
     }
 
-    static class Decimal256NthValueOverPartitionFunction extends BasePartitionedWindowFunction implements WindowDecimal256Function {
+    static class Decimal256NthValueOverPartitionFunction extends BasePartitionedWindowFunction {
 
         private final int n;
         private final Decimal256 scratch = new Decimal256();
@@ -3286,10 +3288,10 @@ public class NthValueDecimalWindowFunctionFactory extends AbstractWindowFunction
                     scratch.ofRawNull();
                     value.putDecimal256(0, scratch);
                 }
-                value.putLong(4, 1);
+                value.putLong(1, 1);
             } else {
-                long count = value.getLong(4) + 1;
-                value.putLong(4, count);
+                long count = value.getLong(1) + 1;
+                value.putLong(1, count);
                 if (count == n) {
                     arg.getDecimal256(record, scratch);
                     value.putDecimal256(0, scratch);
@@ -3323,7 +3325,7 @@ public class NthValueDecimalWindowFunctionFactory extends AbstractWindowFunction
         }
     }
 
-    public static class Decimal256NthValueOverPartitionRangeFrameFunction extends BasePartitionedWindowFunction implements WindowDecimal256Function {
+    public static class Decimal256NthValueOverPartitionRangeFrameFunction extends BasePartitionedWindowFunction {
 
         protected static final int RECORD_SIZE = Long.BYTES + 32;
         protected final boolean frameIncludesCurrentValue;
@@ -3559,7 +3561,8 @@ public class NthValueDecimalWindowFunctionFactory extends AbstractWindowFunction
         }
     }
 
-    public static class Decimal256NthValueOverPartitionRowsFrameFunction extends BasePartitionedWindowFunction implements WindowDecimal256Function {
+    public static class Decimal256NthValueOverPartitionRowsFrameFunction extends BasePartitionedWindowFunction {
+        private final Decimal256 nullScratch = new Decimal256();
 
         protected final int bufferSize;
         protected final int excludeCount;
@@ -3617,7 +3620,6 @@ public class NthValueDecimalWindowFunctionFactory extends AbstractWindowFunction
                 count = 0;
                 startOffset = memory.appendAddressFor((long) bufferSize * 32L) - memory.getPageAddress(0);
                 mapValue.putLong(1, startOffset);
-                Decimal256 nullScratch = new Decimal256();
                 nullScratch.ofRawNull();
                 for (int i = 0; i < bufferSize; i++) {
                     memory.putDecimal256(startOffset + (long) i * 32L, nullScratch.getHh(), nullScratch.getHl(), nullScratch.getLh(), nullScratch.getLl());
@@ -3731,7 +3733,7 @@ public class NthValueDecimalWindowFunctionFactory extends AbstractWindowFunction
         }
     }
 
-    public static class Decimal256NthValueOverPartitionRowsFrameUnboundedFunction extends BasePartitionedWindowFunction implements WindowDecimal256Function {
+    public static class Decimal256NthValueOverPartitionRowsFrameUnboundedFunction extends BasePartitionedWindowFunction {
 
         protected final int bufferSize;
         protected final int n;
@@ -3826,7 +3828,7 @@ public class NthValueDecimalWindowFunctionFactory extends AbstractWindowFunction
         }
     }
 
-    public static class Decimal256NthValueOverRangeFrameFunction extends BaseWindowFunction implements Reopenable, WindowDecimal256Function {
+    public static class Decimal256NthValueOverRangeFrameFunction extends BaseWindowFunction implements Reopenable {
         protected static final int RECORD_SIZE = Long.BYTES + 32;
         protected final boolean frameIncludesCurrentValue;
         protected final boolean frameLoBounded;
@@ -4038,7 +4040,8 @@ public class NthValueDecimalWindowFunctionFactory extends AbstractWindowFunction
         }
     }
 
-    public static class Decimal256NthValueOverRowsFrameFunction extends BaseWindowFunction implements Reopenable, WindowDecimal256Function {
+    public static class Decimal256NthValueOverRowsFrameFunction extends BaseWindowFunction implements Reopenable {
+        private final Decimal256 nullScratch = new Decimal256();
         protected final MemoryARW buffer;
         protected final int bufferSize;
         protected final int excludeCount;
@@ -4183,7 +4186,6 @@ public class NthValueDecimalWindowFunctionFactory extends AbstractWindowFunction
         }
 
         private void initBuffer() {
-            Decimal256 nullScratch = new Decimal256();
             nullScratch.ofRawNull();
             for (int i = 0; i < bufferSize; i++) {
                 buffer.putDecimal256((long) i * 32L, nullScratch.getHh(), nullScratch.getHl(), nullScratch.getLh(), nullScratch.getLl());
@@ -4191,7 +4193,7 @@ public class NthValueDecimalWindowFunctionFactory extends AbstractWindowFunction
         }
     }
 
-    public static class Decimal256NthValueOverRowsFrameUnboundedFunction extends BaseWindowFunction implements Reopenable, WindowDecimal256Function {
+    public static class Decimal256NthValueOverRowsFrameUnboundedFunction extends BaseWindowFunction implements Reopenable {
         protected final int bufferSize;
         protected final Decimal256 lockedValue = new Decimal256();
         protected final int n;
@@ -4288,7 +4290,7 @@ public class NthValueDecimalWindowFunctionFactory extends AbstractWindowFunction
         }
     }
 
-    static class Decimal256NthValueOverUnboundedPartitionFrameFunction extends BasePartitionedWindowFunction implements WindowDecimal256Function {
+    static class Decimal256NthValueOverUnboundedPartitionFrameFunction extends BasePartitionedWindowFunction {
 
         protected final boolean isRange;
         protected final int n;
@@ -4320,14 +4322,14 @@ public class NthValueDecimalWindowFunctionFactory extends AbstractWindowFunction
                     mapValue.putDecimal256(0, scratch);
                     value.ofRawNull();
                 }
-                mapValue.putLong(4, 1);
+                mapValue.putLong(1, 1);
             } else {
-                long count = mapValue.getLong(4);
+                long count = mapValue.getLong(1);
                 if (count >= n) {
                     mapValue.getDecimal256(0, value);
                 } else {
                     count++;
-                    mapValue.putLong(4, count);
+                    mapValue.putLong(1, count);
                     if (count == n) {
                         arg.getDecimal256(record, scratch);
                         mapValue.putDecimal256(0, scratch);
@@ -4381,7 +4383,7 @@ public class NthValueDecimalWindowFunctionFactory extends AbstractWindowFunction
         }
     }
 
-    public static class Decimal256NthValueOverUnboundedRowsFrameFunction extends BaseWindowFunction implements WindowDecimal256Function {
+    public static class Decimal256NthValueOverUnboundedRowsFrameFunction extends BaseWindowFunction {
         protected final int n;
         protected final int type;
         protected final Decimal256 value = new Decimal256();
@@ -4460,7 +4462,7 @@ public class NthValueDecimalWindowFunctionFactory extends AbstractWindowFunction
         }
     }
 
-    public static class Decimal256NthValueOverWholeResultSetFunction extends BaseWindowFunction implements WindowDecimal256Function {
+    public static class Decimal256NthValueOverWholeResultSetFunction extends BaseWindowFunction {
         protected final int n;
         protected final int type;
         protected final Decimal256 value = new Decimal256();
@@ -4706,7 +4708,7 @@ public class NthValueDecimalWindowFunctionFactory extends AbstractWindowFunction
         throw SqlException.$(position, "function not implemented for given window parameters");
     }
 
-    static class Decimal128NthValueOverCurrentRowFunction extends BaseWindowFunction implements WindowDecimal128Function {
+    static class Decimal128NthValueOverCurrentRowFunction extends BaseWindowFunction {
 
         private final int n;
         private final Decimal128 scratch = new Decimal128();
@@ -4764,7 +4766,7 @@ public class NthValueDecimalWindowFunctionFactory extends AbstractWindowFunction
         }
     }
 
-    static class Decimal128NthValueOverPartitionFunction extends BasePartitionedWindowFunction implements WindowDecimal128Function {
+    static class Decimal128NthValueOverPartitionFunction extends BasePartitionedWindowFunction {
 
         private final int n;
         private final Decimal128 scratch = new Decimal128();
@@ -4806,10 +4808,10 @@ public class NthValueDecimalWindowFunctionFactory extends AbstractWindowFunction
                     scratch.ofRawNull();
                     value.putDecimal128(0, scratch);
                 }
-                value.putLong(2, 1);
+                value.putLong(1, 1);
             } else {
-                long count = value.getLong(2) + 1;
-                value.putLong(2, count);
+                long count = value.getLong(1) + 1;
+                value.putLong(1, count);
                 if (count == n) {
                     arg.getDecimal128(record, scratch);
                     value.putDecimal128(0, scratch);
@@ -4841,7 +4843,7 @@ public class NthValueDecimalWindowFunctionFactory extends AbstractWindowFunction
         }
     }
 
-    public static class Decimal128NthValueOverPartitionRangeFrameFunction extends BasePartitionedWindowFunction implements WindowDecimal128Function {
+    public static class Decimal128NthValueOverPartitionRangeFrameFunction extends BasePartitionedWindowFunction {
 
         protected static final int RECORD_SIZE = Long.BYTES + 16;
         protected final boolean frameIncludesCurrentValue;
@@ -5075,7 +5077,7 @@ public class NthValueDecimalWindowFunctionFactory extends AbstractWindowFunction
         }
     }
 
-    public static class Decimal128NthValueOverPartitionRowsFrameFunction extends BasePartitionedWindowFunction implements WindowDecimal128Function {
+    public static class Decimal128NthValueOverPartitionRowsFrameFunction extends BasePartitionedWindowFunction {
 
         protected final int bufferSize;
         protected final int excludeCount;
@@ -5244,7 +5246,7 @@ public class NthValueDecimalWindowFunctionFactory extends AbstractWindowFunction
         }
     }
 
-    public static class Decimal128NthValueOverPartitionRowsFrameUnboundedFunction extends BasePartitionedWindowFunction implements WindowDecimal128Function {
+    public static class Decimal128NthValueOverPartitionRowsFrameUnboundedFunction extends BasePartitionedWindowFunction {
 
         protected final int bufferSize;
         protected final int n;
@@ -5337,7 +5339,7 @@ public class NthValueDecimalWindowFunctionFactory extends AbstractWindowFunction
         }
     }
 
-    public static class Decimal128NthValueOverRangeFrameFunction extends BaseWindowFunction implements Reopenable, WindowDecimal128Function {
+    public static class Decimal128NthValueOverRangeFrameFunction extends BaseWindowFunction implements Reopenable {
         protected static final int RECORD_SIZE = Long.BYTES + 16;
         protected final boolean frameIncludesCurrentValue;
         protected final boolean frameLoBounded;
@@ -5547,7 +5549,7 @@ public class NthValueDecimalWindowFunctionFactory extends AbstractWindowFunction
         }
     }
 
-    public static class Decimal128NthValueOverRowsFrameFunction extends BaseWindowFunction implements Reopenable, WindowDecimal128Function {
+    public static class Decimal128NthValueOverRowsFrameFunction extends BaseWindowFunction implements Reopenable {
         protected final MemoryARW buffer;
         protected final int bufferSize;
         protected final int excludeCount;
@@ -5697,7 +5699,7 @@ public class NthValueDecimalWindowFunctionFactory extends AbstractWindowFunction
         }
     }
 
-    public static class Decimal128NthValueOverRowsFrameUnboundedFunction extends BaseWindowFunction implements Reopenable, WindowDecimal128Function {
+    public static class Decimal128NthValueOverRowsFrameUnboundedFunction extends BaseWindowFunction implements Reopenable {
         protected final int bufferSize;
         protected final Decimal128 lockedValue = new Decimal128();
         protected final int n;
@@ -5792,7 +5794,7 @@ public class NthValueDecimalWindowFunctionFactory extends AbstractWindowFunction
         }
     }
 
-    static class Decimal128NthValueOverUnboundedPartitionFrameFunction extends BasePartitionedWindowFunction implements WindowDecimal128Function {
+    static class Decimal128NthValueOverUnboundedPartitionFrameFunction extends BasePartitionedWindowFunction {
 
         protected final boolean isRange;
         protected final int n;
@@ -5824,14 +5826,14 @@ public class NthValueDecimalWindowFunctionFactory extends AbstractWindowFunction
                     mapValue.putDecimal128(0, scratch);
                     value.ofRawNull();
                 }
-                mapValue.putLong(2, 1);
+                mapValue.putLong(1, 1);
             } else {
-                long count = mapValue.getLong(2);
+                long count = mapValue.getLong(1);
                 if (count >= n) {
                     mapValue.getDecimal128(0, value);
                 } else {
                     count++;
-                    mapValue.putLong(2, count);
+                    mapValue.putLong(1, count);
                     if (count == n) {
                         arg.getDecimal128(record, scratch);
                         mapValue.putDecimal128(0, scratch);
@@ -5883,7 +5885,7 @@ public class NthValueDecimalWindowFunctionFactory extends AbstractWindowFunction
         }
     }
 
-    public static class Decimal128NthValueOverUnboundedRowsFrameFunction extends BaseWindowFunction implements WindowDecimal128Function {
+    public static class Decimal128NthValueOverUnboundedRowsFrameFunction extends BaseWindowFunction {
         protected final int n;
         protected final int type;
         protected final Decimal128 value = new Decimal128();
@@ -5960,7 +5962,7 @@ public class NthValueDecimalWindowFunctionFactory extends AbstractWindowFunction
         }
     }
 
-    public static class Decimal128NthValueOverWholeResultSetFunction extends BaseWindowFunction implements WindowDecimal128Function {
+    public static class Decimal128NthValueOverWholeResultSetFunction extends BaseWindowFunction {
         protected final int n;
         protected final int type;
         protected final Decimal128 value = new Decimal128();
@@ -6204,7 +6206,7 @@ public class NthValueDecimalWindowFunctionFactory extends AbstractWindowFunction
         throw SqlException.$(position, "function not implemented for given window parameters");
     }
 
-    static class Decimal32NthValueOverCurrentRowFunction extends BaseWindowFunction implements WindowDecimal32Function {
+    static class Decimal32NthValueOverCurrentRowFunction extends BaseWindowFunction {
 
         private final int n;
         private final int type;
@@ -6255,7 +6257,7 @@ public class NthValueDecimalWindowFunctionFactory extends AbstractWindowFunction
         }
     }
 
-    static class Decimal32NthValueOverPartitionFunction extends BasePartitionedWindowFunction implements WindowDecimal32Function {
+    static class Decimal32NthValueOverPartitionFunction extends BasePartitionedWindowFunction {
 
         private final int n;
         private final int type;
@@ -6325,7 +6327,7 @@ public class NthValueDecimalWindowFunctionFactory extends AbstractWindowFunction
         }
     }
 
-    public static class Decimal32NthValueOverPartitionRangeFrameFunction extends BasePartitionedWindowFunction implements WindowDecimal32Function {
+    public static class Decimal32NthValueOverPartitionRangeFrameFunction extends BasePartitionedWindowFunction {
 
         protected static final int RECORD_SIZE = Long.BYTES + Integer.BYTES;
         protected final boolean frameIncludesCurrentValue;
@@ -6552,7 +6554,7 @@ public class NthValueDecimalWindowFunctionFactory extends AbstractWindowFunction
         }
     }
 
-    public static class Decimal32NthValueOverPartitionRowsFrameFunction extends BasePartitionedWindowFunction implements WindowDecimal32Function {
+    public static class Decimal32NthValueOverPartitionRowsFrameFunction extends BasePartitionedWindowFunction {
 
         protected final int bufferSize;
         protected final int excludeCount;
@@ -6717,7 +6719,7 @@ public class NthValueDecimalWindowFunctionFactory extends AbstractWindowFunction
         }
     }
 
-    public static class Decimal32NthValueOverPartitionRowsFrameUnboundedFunction extends BasePartitionedWindowFunction implements WindowDecimal32Function {
+    public static class Decimal32NthValueOverPartitionRowsFrameUnboundedFunction extends BasePartitionedWindowFunction {
 
         protected final int bufferSize;
         protected final int n;
@@ -6806,7 +6808,7 @@ public class NthValueDecimalWindowFunctionFactory extends AbstractWindowFunction
         }
     }
 
-    public static class Decimal32NthValueOverRangeFrameFunction extends BaseWindowFunction implements Reopenable, WindowDecimal32Function {
+    public static class Decimal32NthValueOverRangeFrameFunction extends BaseWindowFunction implements Reopenable {
         protected static final int RECORD_SIZE = Long.BYTES + Integer.BYTES;
         protected final boolean frameIncludesCurrentValue;
         protected final boolean frameLoBounded;
@@ -7013,7 +7015,7 @@ public class NthValueDecimalWindowFunctionFactory extends AbstractWindowFunction
         }
     }
 
-    public static class Decimal32NthValueOverRowsFrameFunction extends BaseWindowFunction implements Reopenable, WindowDecimal32Function {
+    public static class Decimal32NthValueOverRowsFrameFunction extends BaseWindowFunction implements Reopenable {
         protected final MemoryARW buffer;
         protected final int bufferSize;
         protected final int excludeCount;
@@ -7159,7 +7161,7 @@ public class NthValueDecimalWindowFunctionFactory extends AbstractWindowFunction
         }
     }
 
-    public static class Decimal32NthValueOverRowsFrameUnboundedFunction extends BaseWindowFunction implements Reopenable, WindowDecimal32Function {
+    public static class Decimal32NthValueOverRowsFrameUnboundedFunction extends BaseWindowFunction implements Reopenable {
         protected final int bufferSize;
         protected final int n;
         protected final int type;
@@ -7245,7 +7247,7 @@ public class NthValueDecimalWindowFunctionFactory extends AbstractWindowFunction
         }
     }
 
-    static class Decimal32NthValueOverUnboundedPartitionFrameFunction extends BasePartitionedWindowFunction implements WindowDecimal32Function {
+    static class Decimal32NthValueOverUnboundedPartitionFrameFunction extends BasePartitionedWindowFunction {
 
         protected final boolean isRange;
         protected final int n;
@@ -7332,7 +7334,7 @@ public class NthValueDecimalWindowFunctionFactory extends AbstractWindowFunction
         }
     }
 
-    public static class Decimal32NthValueOverUnboundedRowsFrameFunction extends BaseWindowFunction implements WindowDecimal32Function {
+    public static class Decimal32NthValueOverUnboundedRowsFrameFunction extends BaseWindowFunction {
         protected final int n;
         protected final int type;
         protected long count;
@@ -7406,7 +7408,7 @@ public class NthValueDecimalWindowFunctionFactory extends AbstractWindowFunction
         }
     }
 
-    public static class Decimal32NthValueOverWholeResultSetFunction extends BaseWindowFunction implements WindowDecimal32Function {
+    public static class Decimal32NthValueOverWholeResultSetFunction extends BaseWindowFunction {
         protected final int n;
         protected final int type;
         protected long count;
@@ -7647,7 +7649,7 @@ public class NthValueDecimalWindowFunctionFactory extends AbstractWindowFunction
         throw SqlException.$(position, "function not implemented for given window parameters");
     }
 
-    static class Decimal16NthValueOverCurrentRowFunction extends BaseWindowFunction implements WindowDecimal16Function {
+    static class Decimal16NthValueOverCurrentRowFunction extends BaseWindowFunction {
 
         private final int n;
         private final int type;
@@ -7698,7 +7700,7 @@ public class NthValueDecimalWindowFunctionFactory extends AbstractWindowFunction
         }
     }
 
-    static class Decimal16NthValueOverPartitionFunction extends BasePartitionedWindowFunction implements WindowDecimal16Function {
+    static class Decimal16NthValueOverPartitionFunction extends BasePartitionedWindowFunction {
 
         private final int n;
         private final int type;
@@ -7768,7 +7770,7 @@ public class NthValueDecimalWindowFunctionFactory extends AbstractWindowFunction
         }
     }
 
-    public static class Decimal16NthValueOverPartitionRangeFrameFunction extends BasePartitionedWindowFunction implements WindowDecimal16Function {
+    public static class Decimal16NthValueOverPartitionRangeFrameFunction extends BasePartitionedWindowFunction {
 
         protected static final int RECORD_SIZE = Long.BYTES + Short.BYTES;
         protected final boolean frameIncludesCurrentValue;
@@ -7995,7 +7997,7 @@ public class NthValueDecimalWindowFunctionFactory extends AbstractWindowFunction
         }
     }
 
-    public static class Decimal16NthValueOverPartitionRowsFrameFunction extends BasePartitionedWindowFunction implements WindowDecimal16Function {
+    public static class Decimal16NthValueOverPartitionRowsFrameFunction extends BasePartitionedWindowFunction {
 
         protected final int bufferSize;
         protected final int excludeCount;
@@ -8160,7 +8162,7 @@ public class NthValueDecimalWindowFunctionFactory extends AbstractWindowFunction
         }
     }
 
-    public static class Decimal16NthValueOverPartitionRowsFrameUnboundedFunction extends BasePartitionedWindowFunction implements WindowDecimal16Function {
+    public static class Decimal16NthValueOverPartitionRowsFrameUnboundedFunction extends BasePartitionedWindowFunction {
 
         protected final int bufferSize;
         protected final int n;
@@ -8249,7 +8251,7 @@ public class NthValueDecimalWindowFunctionFactory extends AbstractWindowFunction
         }
     }
 
-    public static class Decimal16NthValueOverRangeFrameFunction extends BaseWindowFunction implements Reopenable, WindowDecimal16Function {
+    public static class Decimal16NthValueOverRangeFrameFunction extends BaseWindowFunction implements Reopenable {
         protected static final int RECORD_SIZE = Long.BYTES + Short.BYTES;
         protected final boolean frameIncludesCurrentValue;
         protected final boolean frameLoBounded;
@@ -8456,7 +8458,7 @@ public class NthValueDecimalWindowFunctionFactory extends AbstractWindowFunction
         }
     }
 
-    public static class Decimal16NthValueOverRowsFrameFunction extends BaseWindowFunction implements Reopenable, WindowDecimal16Function {
+    public static class Decimal16NthValueOverRowsFrameFunction extends BaseWindowFunction implements Reopenable {
         protected final MemoryARW buffer;
         protected final int bufferSize;
         protected final int excludeCount;
@@ -8602,7 +8604,7 @@ public class NthValueDecimalWindowFunctionFactory extends AbstractWindowFunction
         }
     }
 
-    public static class Decimal16NthValueOverRowsFrameUnboundedFunction extends BaseWindowFunction implements Reopenable, WindowDecimal16Function {
+    public static class Decimal16NthValueOverRowsFrameUnboundedFunction extends BaseWindowFunction implements Reopenable {
         protected final int bufferSize;
         protected final int n;
         protected final int type;
@@ -8688,7 +8690,7 @@ public class NthValueDecimalWindowFunctionFactory extends AbstractWindowFunction
         }
     }
 
-    static class Decimal16NthValueOverUnboundedPartitionFrameFunction extends BasePartitionedWindowFunction implements WindowDecimal16Function {
+    static class Decimal16NthValueOverUnboundedPartitionFrameFunction extends BasePartitionedWindowFunction {
 
         protected final boolean isRange;
         protected final int n;
@@ -8775,7 +8777,7 @@ public class NthValueDecimalWindowFunctionFactory extends AbstractWindowFunction
         }
     }
 
-    public static class Decimal16NthValueOverUnboundedRowsFrameFunction extends BaseWindowFunction implements WindowDecimal16Function {
+    public static class Decimal16NthValueOverUnboundedRowsFrameFunction extends BaseWindowFunction {
         protected final int n;
         protected final int type;
         protected long count;
@@ -8849,7 +8851,7 @@ public class NthValueDecimalWindowFunctionFactory extends AbstractWindowFunction
         }
     }
 
-    public static class Decimal16NthValueOverWholeResultSetFunction extends BaseWindowFunction implements WindowDecimal16Function {
+    public static class Decimal16NthValueOverWholeResultSetFunction extends BaseWindowFunction {
         protected final int n;
         protected final int type;
         protected long count;
