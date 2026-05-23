@@ -92,8 +92,6 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         WindowContext windowContext = sqlExecutionContext.getWindowContext();
         windowContext.validate(position, supportNullsDesc());
         int framingMode = windowContext.getFramingMode();
-        RecordSink partitionBySink = windowContext.getPartitionBySink();
-        ColumnTypes partitionByKeyTypes = windowContext.getPartitionByKeyTypes();
         VirtualRecord partitionByRecord = windowContext.getPartitionByRecord();
 
         long rowsLo = windowContext.getRowsLo();
@@ -940,7 +938,6 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         private final int position;
         private final Decimal128 scratch = new Decimal128();
         private final int type;
-        private final Decimal256 value = new Decimal256();
 
         public Decimal128SumOverPartitionFunction(Map map, VirtualRecord partitionByRecord, RecordSink partitionBySink, Function arg, int type, int position) {
             super(map, partitionByRecord, partitionBySink, arg);
@@ -3360,7 +3357,6 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         private final int position;
         private final Decimal256 scratch = new Decimal256();
         private final int type;
-        private final Decimal256 value = new Decimal256();
 
         public Decimal256SumOverPartitionFunction(Map map, VirtualRecord partitionByRecord, RecordSink partitionBySink, Function arg, int type, int position) {
             super(map, partitionByRecord, partitionBySink, arg);
@@ -4732,10 +4728,9 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                 } else {
                     mv.getDecimal128(0, acc);
                     if (!isNull) {
-                        try {
-                            Decimal128.uncheckedAdd(acc, i);
-                        } catch (NumericException e) {
-                            throw CairoException.nonCritical().position(position).put("sum aggregation failed: ").put(e.getFlyweightMessage());
+                        Decimal128.uncheckedAdd(acc, i);
+                        if (acc.hasOverflowed()) {
+                            throw CairoException.nonCritical().position(position).put("sum aggregation failed: an overflow occurred");
                         }
                         mv.putDecimal128(0, acc);
                     }
@@ -4777,10 +4772,9 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                     mv.putBool(1, false);
                 } else {
                     mv.getDecimal128(0, acc);
-                    try {
-                        Decimal128.uncheckedAdd(acc, i);
-                    } catch (NumericException e) {
-                        throw CairoException.nonCritical().position(position).put("sum aggregation failed: ").put(e.getFlyweightMessage());
+                    Decimal128.uncheckedAdd(acc, i);
+                    if (acc.hasOverflowed()) {
+                        throw CairoException.nonCritical().position(position).put("sum aggregation failed: an overflow occurred");
                     }
                     mv.putDecimal128(0, acc);
                 }
@@ -4944,10 +4938,9 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                         long diff = Math.abs(ts - timestamp);
                         if (diff <= maxDiff && diff >= minDiff) {
                             int val = memory.getInt(startOffset + idx * RECORD_SIZE + Long.BYTES);
-                            try {
-                                Decimal128.uncheckedAdd(acc, val);
-                            } catch (NumericException e) {
-                                throw CairoException.nonCritical().position(position).put("sum aggregation failed: ").put(e.getFlyweightMessage());
+                            Decimal128.uncheckedAdd(acc, val);
+                            if (acc.hasOverflowed()) {
+                                throw CairoException.nonCritical().position(position).put("sum aggregation failed: an overflow occurred");
                             }
                             frameSize++;
                         } else {
@@ -4961,10 +4954,9 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                         long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
                         if (Math.abs(timestamp - ts) >= minDiff) {
                             int val = memory.getInt(startOffset + idx * RECORD_SIZE + Long.BYTES);
-                            try {
-                                Decimal128.uncheckedAdd(acc, val);
-                            } catch (NumericException e) {
-                                throw CairoException.nonCritical().position(position).put("sum aggregation failed: ").put(e.getFlyweightMessage());
+                            Decimal128.uncheckedAdd(acc, val);
+                            if (acc.hasOverflowed()) {
+                                throw CairoException.nonCritical().position(position).put("sum aggregation failed: an overflow occurred");
                             }
                             frameSize++;
                             newFirstIdx = (idx + 1) % capacity;
@@ -5141,10 +5133,9 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                 int hiValue = frameIncludesCurrentValue ? d : memory.getInt(startOffset + ((loIdx + frameSize - 1) % bufferSize) * Integer.BYTES);
                 if (hiValue != Decimals.DECIMAL32_NULL) {
                     count++;
-                    try {
-                        Decimal128.uncheckedAdd(acc, hiValue);
-                    } catch (NumericException e) {
-                        throw CairoException.nonCritical().position(position).put("sum aggregation failed: ").put(e.getFlyweightMessage());
+                    Decimal128.uncheckedAdd(acc, hiValue);
+                    if (acc.hasOverflowed()) {
+                        throw CairoException.nonCritical().position(position).put("sum aggregation failed: an overflow occurred");
                     }
                 }
                 if (count != 0) {
@@ -5342,10 +5333,9 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                     long diff = Math.abs(ts - timestamp);
                     if (diff <= maxDiff && diff >= minDiff) {
                         int val = memory.getInt(startOffset + idx * RECORD_SIZE + Long.BYTES);
-                        try {
-                            Decimal128.uncheckedAdd(acc, val);
-                        } catch (NumericException e) {
-                            throw CairoException.nonCritical().position(position).put("sum aggregation failed: ").put(e.getFlyweightMessage());
+                        Decimal128.uncheckedAdd(acc, val);
+                        if (acc.hasOverflowed()) {
+                            throw CairoException.nonCritical().position(position).put("sum aggregation failed: an overflow occurred");
                         }
                         frameSize++;
                     } else {
@@ -5359,10 +5349,9 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                     long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
                     if (Math.abs(timestamp - ts) >= minDiff) {
                         int val = memory.getInt(startOffset + idx * RECORD_SIZE + Long.BYTES);
-                        try {
-                            Decimal128.uncheckedAdd(acc, val);
-                        } catch (NumericException e) {
-                            throw CairoException.nonCritical().position(position).put("sum aggregation failed: ").put(e.getFlyweightMessage());
+                        Decimal128.uncheckedAdd(acc, val);
+                        if (acc.hasOverflowed()) {
+                            throw CairoException.nonCritical().position(position).put("sum aggregation failed: an overflow occurred");
                         }
                         frameSize++;
                         newFirstIdx = (idx + 1) % capacity;
@@ -5513,10 +5502,9 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                 hiValue = buffer.getInt((long) (loIdx % bufferSize) * Integer.BYTES);
             }
             if (hiValue != Decimals.DECIMAL32_NULL) {
-                try {
-                    Decimal128.uncheckedAdd(acc, hiValue);
-                } catch (NumericException e) {
-                    throw CairoException.nonCritical().position(position).put("sum aggregation failed: ").put(e.getFlyweightMessage());
+                Decimal128.uncheckedAdd(acc, hiValue);
+                if (acc.hasOverflowed()) {
+                    throw CairoException.nonCritical().position(position).put("sum aggregation failed: an overflow occurred");
                 }
                 count++;
             }
@@ -5655,10 +5643,9 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                     acc.ofRaw(d);
                     wasNullState = false;
                 } else {
-                    try {
-                        Decimal128.uncheckedAdd(acc, d);
-                    } catch (NumericException e) {
-                        throw CairoException.nonCritical().position(position).put("sum aggregation failed: ").put(e.getFlyweightMessage());
+                    Decimal128.uncheckedAdd(acc, d);
+                    if (acc.hasOverflowed()) {
+                        throw CairoException.nonCritical().position(position).put("sum aggregation failed: an overflow occurred");
                     }
                 }
             }
@@ -5731,10 +5718,9 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                     acc.ofRaw(d);
                     isNullState = false;
                 } else {
-                    try {
-                        Decimal128.uncheckedAdd(acc, d);
-                    } catch (NumericException e) {
-                        throw CairoException.nonCritical().position(position).put("sum aggregation failed: ").put(e.getFlyweightMessage());
+                    Decimal128.uncheckedAdd(acc, d);
+                    if (acc.hasOverflowed()) {
+                        throw CairoException.nonCritical().position(position).put("sum aggregation failed: an overflow occurred");
                     }
                 }
             }
@@ -5835,10 +5821,9 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                     acc.ofRaw(d);
                     isNullState = false;
                 } else {
-                    try {
-                        Decimal128.uncheckedAdd(acc, d);
-                    } catch (NumericException e) {
-                        throw CairoException.nonCritical().position(position).put("sum aggregation failed: ").put(e.getFlyweightMessage());
+                    Decimal128.uncheckedAdd(acc, d);
+                    if (acc.hasOverflowed()) {
+                        throw CairoException.nonCritical().position(position).put("sum aggregation failed: an overflow occurred");
                     }
                 }
             }
@@ -5972,10 +5957,9 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                 } else {
                     mv.getDecimal128(0, acc);
                     if (!dNull) {
-                        try {
-                            Decimal128.uncheckedAdd(acc, d);
-                        } catch (NumericException e) {
-                            throw CairoException.nonCritical().position(position).put("sum aggregation failed: ").put(e.getFlyweightMessage());
+                        Decimal128.uncheckedAdd(acc, d);
+                        if (acc.hasOverflowed()) {
+                            throw CairoException.nonCritical().position(position).put("sum aggregation failed: an overflow occurred");
                         }
                         mv.putDecimal128(0, acc);
                     }
@@ -6017,10 +6001,9 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                     mv.putBool(1, false);
                 } else {
                     mv.getDecimal128(0, acc);
-                    try {
-                        Decimal128.uncheckedAdd(acc, d);
-                    } catch (NumericException e) {
-                        throw CairoException.nonCritical().position(position).put("sum aggregation failed: ").put(e.getFlyweightMessage());
+                    Decimal128.uncheckedAdd(acc, d);
+                    if (acc.hasOverflowed()) {
+                        throw CairoException.nonCritical().position(position).put("sum aggregation failed: an overflow occurred");
                     }
                     mv.putDecimal128(0, acc);
                 }
@@ -6184,10 +6167,9 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                         long diff = Math.abs(ts - timestamp);
                         if (diff <= maxDiff && diff >= minDiff) {
                             long val = memory.getLong(startOffset + idx * RECORD_SIZE + Long.BYTES);
-                            try {
-                                Decimal128.uncheckedAdd(acc, val);
-                            } catch (NumericException e) {
-                                throw CairoException.nonCritical().position(position).put("sum aggregation failed: ").put(e.getFlyweightMessage());
+                            Decimal128.uncheckedAdd(acc, val);
+                            if (acc.hasOverflowed()) {
+                                throw CairoException.nonCritical().position(position).put("sum aggregation failed: an overflow occurred");
                             }
                             frameSize++;
                         } else {
@@ -6201,10 +6183,9 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                         long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
                         if (Math.abs(timestamp - ts) >= minDiff) {
                             long val = memory.getLong(startOffset + idx * RECORD_SIZE + Long.BYTES);
-                            try {
-                                Decimal128.uncheckedAdd(acc, val);
-                            } catch (NumericException e) {
-                                throw CairoException.nonCritical().position(position).put("sum aggregation failed: ").put(e.getFlyweightMessage());
+                            Decimal128.uncheckedAdd(acc, val);
+                            if (acc.hasOverflowed()) {
+                                throw CairoException.nonCritical().position(position).put("sum aggregation failed: an overflow occurred");
                             }
                             frameSize++;
                             newFirstIdx = (idx + 1) % capacity;
@@ -6383,10 +6364,9 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                 long hiValue = frameIncludesCurrentValue ? d : memory.getLong(startOffset + ((loIdx + frameSize - 1) % bufferSize) * Long.BYTES);
                 if (hiValue != Decimals.DECIMAL64_NULL) {
                     count++;
-                    try {
-                        Decimal128.uncheckedAdd(acc, hiValue);
-                    } catch (NumericException e) {
-                        throw CairoException.nonCritical().position(position).put("sum aggregation failed: ").put(e.getFlyweightMessage());
+                    Decimal128.uncheckedAdd(acc, hiValue);
+                    if (acc.hasOverflowed()) {
+                        throw CairoException.nonCritical().position(position).put("sum aggregation failed: an overflow occurred");
                     }
                 }
                 if (count != 0) {
@@ -6587,10 +6567,9 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                     long diff = Math.abs(ts - timestamp);
                     if (diff <= maxDiff && diff >= minDiff) {
                         long val = memory.getLong(startOffset + idx * RECORD_SIZE + Long.BYTES);
-                        try {
-                            Decimal128.uncheckedAdd(acc, val);
-                        } catch (NumericException e) {
-                            throw CairoException.nonCritical().position(position).put("sum aggregation failed: ").put(e.getFlyweightMessage());
+                        Decimal128.uncheckedAdd(acc, val);
+                        if (acc.hasOverflowed()) {
+                            throw CairoException.nonCritical().position(position).put("sum aggregation failed: an overflow occurred");
                         }
                         frameSize++;
                     } else {
@@ -6604,10 +6583,9 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                     long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
                     if (Math.abs(timestamp - ts) >= minDiff) {
                         long val = memory.getLong(startOffset + idx * RECORD_SIZE + Long.BYTES);
-                        try {
-                            Decimal128.uncheckedAdd(acc, val);
-                        } catch (NumericException e) {
-                            throw CairoException.nonCritical().position(position).put("sum aggregation failed: ").put(e.getFlyweightMessage());
+                        Decimal128.uncheckedAdd(acc, val);
+                        if (acc.hasOverflowed()) {
+                            throw CairoException.nonCritical().position(position).put("sum aggregation failed: an overflow occurred");
                         }
                         frameSize++;
                         newFirstIdx = (idx + 1) % capacity;
@@ -6760,10 +6738,9 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                 hiValue = buffer.getLong((long) (loIdx % bufferSize) * Long.BYTES);
             }
             if (hiValue != Decimals.DECIMAL64_NULL) {
-                try {
-                    Decimal128.uncheckedAdd(acc, hiValue);
-                } catch (NumericException e) {
-                    throw CairoException.nonCritical().position(position).put("sum aggregation failed: ").put(e.getFlyweightMessage());
+                Decimal128.uncheckedAdd(acc, hiValue);
+                if (acc.hasOverflowed()) {
+                    throw CairoException.nonCritical().position(position).put("sum aggregation failed: an overflow occurred");
                 }
                 count++;
             }
@@ -6903,10 +6880,9 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                     acc.ofRaw(d);
                     wasNullState = false;
                 } else {
-                    try {
-                        Decimal128.uncheckedAdd(acc, d);
-                    } catch (NumericException e) {
-                        throw CairoException.nonCritical().position(position).put("sum aggregation failed: ").put(e.getFlyweightMessage());
+                    Decimal128.uncheckedAdd(acc, d);
+                    if (acc.hasOverflowed()) {
+                        throw CairoException.nonCritical().position(position).put("sum aggregation failed: an overflow occurred");
                     }
                 }
             }
@@ -6982,10 +6958,9 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                     acc.ofRaw(d);
                     isNullState = false;
                 } else {
-                    try {
-                        Decimal128.uncheckedAdd(acc, d);
-                    } catch (NumericException e) {
-                        throw CairoException.nonCritical().position(position).put("sum aggregation failed: ").put(e.getFlyweightMessage());
+                    Decimal128.uncheckedAdd(acc, d);
+                    if (acc.hasOverflowed()) {
+                        throw CairoException.nonCritical().position(position).put("sum aggregation failed: an overflow occurred");
                     }
                 }
             }
@@ -7087,10 +7062,9 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                     acc.ofRaw(d);
                     isNullState = false;
                 } else {
-                    try {
-                        Decimal128.uncheckedAdd(acc, d);
-                    } catch (NumericException e) {
-                        throw CairoException.nonCritical().position(position).put("sum aggregation failed: ").put(e.getFlyweightMessage());
+                    Decimal128.uncheckedAdd(acc, d);
+                    if (acc.hasOverflowed()) {
+                        throw CairoException.nonCritical().position(position).put("sum aggregation failed: an overflow occurred");
                     }
                 }
             }

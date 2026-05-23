@@ -6681,10 +6681,9 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                     long diff = Math.abs(ts - timestamp);
                     if (diff <= maxDiff && diff >= minDiff) {
                         long value = memory.getLong(startOffset + idx * RECORD_SIZE + Long.BYTES);
-                        try {
-                            Decimal128.uncheckedAdd(acc, value);
-                        } catch (NumericException e) {
-                            throw CairoException.nonCritical().position(position).put("avg aggregation failed: ").put(e.getFlyweightMessage());
+                        Decimal128.uncheckedAdd(acc, value);
+                        if (acc.hasOverflowed()) {
+                            throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
                         }
                         frameSize++;
                     } else {
@@ -6698,10 +6697,9 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                     long ts = memory.getLong(startOffset + idx * RECORD_SIZE);
                     if (Math.abs(timestamp - ts) >= minDiff) {
                         long val = memory.getLong(startOffset + idx * RECORD_SIZE + Long.BYTES);
-                        try {
-                            Decimal128.uncheckedAdd(acc, val);
-                        } catch (NumericException e) {
-                            throw CairoException.nonCritical().position(position).put("avg aggregation failed: ").put(e.getFlyweightMessage());
+                        Decimal128.uncheckedAdd(acc, val);
+                        if (acc.hasOverflowed()) {
+                            throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
                         }
                         frameSize++;
                         newFirstIdx = (idx + 1) % capacity;
@@ -6863,10 +6861,9 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                 hiValue = buffer.getLong((long) (loIdx % bufferSize) * Long.BYTES);
             }
             if (hiValue != Decimals.DECIMAL64_NULL) {
-                try {
-                    Decimal128.uncheckedAdd(acc, hiValue);
-                } catch (NumericException e) {
-                    throw CairoException.nonCritical().position(position).put("avg aggregation failed: ").put(e.getFlyweightMessage());
+                Decimal128.uncheckedAdd(acc, hiValue);
+                if (acc.hasOverflowed()) {
+                    throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
                 }
                 count++;
             }
@@ -7092,10 +7089,9 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         public void computeNext(Record record) {
             long d = arg.getDecimal64(record);
             if (d != Decimals.DECIMAL64_NULL) {
-                try {
-                    Decimal128.uncheckedAdd(acc, d);
-                } catch (NumericException e) {
-                    throw CairoException.nonCritical().position(position).put("avg aggregation failed: ").put(e.getFlyweightMessage());
+                Decimal128.uncheckedAdd(acc, d);
+                if (acc.hasOverflowed()) {
+                    throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
                 }
                 count++;
             }
@@ -7201,10 +7197,9 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             long d = arg.getDecimal64(record);
             if (d != Decimals.DECIMAL64_NULL) {
-                try {
-                    Decimal128.uncheckedAdd(acc, d);
-                } catch (NumericException e) {
-                    throw CairoException.nonCritical().position(position).put("avg aggregation failed: ").put(e.getFlyweightMessage());
+                Decimal128.uncheckedAdd(acc, d);
+                if (acc.hasOverflowed()) {
+                    throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
                 }
                 count++;
             }
