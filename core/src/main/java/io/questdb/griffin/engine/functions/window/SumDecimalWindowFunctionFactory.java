@@ -127,12 +127,18 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         }
 
         return switch (tag) {
-            case ColumnType.DECIMAL8 -> newInstanceDecimal8(position, args, configuration, sqlExecutionContext, outputType);
-            case ColumnType.DECIMAL16 -> newInstanceDecimal16(position, args, configuration, sqlExecutionContext, outputType);
-            case ColumnType.DECIMAL32 -> newInstanceDecimal32(position, args, configuration, sqlExecutionContext, outputType, argPos);
-            case ColumnType.DECIMAL64 -> newInstanceDecimal64(position, args, configuration, sqlExecutionContext, outputType, argPos);
-            case ColumnType.DECIMAL128 -> newInstanceDecimal128(position, args, configuration, sqlExecutionContext, outputType, argPos);
-            case ColumnType.DECIMAL256 -> newInstanceDecimal256(position, args, configuration, sqlExecutionContext, argType, argPos);
+            case ColumnType.DECIMAL8 ->
+                    newInstanceDecimal8(position, args, configuration, sqlExecutionContext, outputType);
+            case ColumnType.DECIMAL16 ->
+                    newInstanceDecimal16(position, args, configuration, sqlExecutionContext, outputType);
+            case ColumnType.DECIMAL32 ->
+                    newInstanceDecimal32(position, args, configuration, sqlExecutionContext, outputType, argPos);
+            case ColumnType.DECIMAL64 ->
+                    newInstanceDecimal64(position, args, configuration, sqlExecutionContext, outputType, argPos);
+            case ColumnType.DECIMAL128 ->
+                    newInstanceDecimal128(position, args, configuration, sqlExecutionContext, outputType, argPos);
+            case ColumnType.DECIMAL256 ->
+                    newInstanceDecimal256(position, args, configuration, sqlExecutionContext, argType, argPos);
             default -> throw SqlException.$(argPos, "sum is not yet implemented for ").put(ColumnType.nameOf(tag));
         };
     }

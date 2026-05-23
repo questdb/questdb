@@ -63,6 +63,11 @@ public class NthValueDecimalWindowFunctionFactory extends AbstractWindowFunction
     private static final ArrayColumnTypes NTH_VALUE_DECIMAL128_TYPES;
     private static final ArrayColumnTypes NTH_VALUE_DECIMAL256_TYPES;
     private static final ArrayColumnTypes NTH_VALUE_DECIMAL64_TYPES;
+    private static final ArrayColumnTypes NTH_VALUE_OVER_PARTITION_RANGE_TYPES;
+    private static final ArrayColumnTypes NTH_VALUE_OVER_PARTITION_ROWS_TYPES;
+    private static final ArrayColumnTypes NTH_VALUE_OVER_PARTITION_ROWS_UNBOUNDED_DECIMAL128_TYPES;
+    private static final ArrayColumnTypes NTH_VALUE_OVER_PARTITION_ROWS_UNBOUNDED_DECIMAL256_TYPES;
+    private static final ArrayColumnTypes NTH_VALUE_OVER_PARTITION_ROWS_UNBOUNDED_NARROW_TYPES;
     private static final String SIGNATURE = NAME + "(ΞL)";
 
     @Override
@@ -179,13 +184,7 @@ public class NthValueDecimalWindowFunctionFactory extends AbstractWindowFunction
                         throw SqlException.$(windowContext.getOrderByPos(), "RANGE is supported only for queries ordered by designated timestamp");
                     }
                     int timestampIndex = windowContext.getTimestampIndex();
-                    ArrayColumnTypes columnTypes = new ArrayColumnTypes();
-                    columnTypes.add(ColumnType.LONG);
-                    columnTypes.add(ColumnType.LONG);
-                    columnTypes.add(ColumnType.LONG);
-                    columnTypes.add(ColumnType.LONG);
-                    columnTypes.add(ColumnType.LONG);
-                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, columnTypes);
+                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, NTH_VALUE_OVER_PARTITION_RANGE_TYPES);
                     final int initialBufferSize = configuration.getSqlWindowInitialRangeBufferSize();
                     MemoryARW mem;
                     try {
@@ -224,10 +223,7 @@ public class NthValueDecimalWindowFunctionFactory extends AbstractWindowFunction
                         throw t;
                     }
                 } else if (rowsLo == Long.MIN_VALUE) {
-                    ArrayColumnTypes columnTypes = new ArrayColumnTypes();
-                    columnTypes.add(ColumnType.LONG);
-                    columnTypes.add(ColumnType.DECIMAL128);
-                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, columnTypes);
+                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, NTH_VALUE_OVER_PARTITION_ROWS_UNBOUNDED_DECIMAL128_TYPES);
                     try {
                         return new Decimal128NthValueOverPartitionRowsFrameUnboundedFunction(map, partitionByRecord, partitionBySink, rowsHi, args.get(0), n, argType);
                     } catch (Throwable t) {
@@ -235,11 +231,7 @@ public class NthValueDecimalWindowFunctionFactory extends AbstractWindowFunction
                         throw t;
                     }
                 } else {
-                    ArrayColumnTypes columnTypes = new ArrayColumnTypes();
-                    columnTypes.add(ColumnType.LONG);
-                    columnTypes.add(ColumnType.LONG);
-                    columnTypes.add(ColumnType.LONG);
-                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, columnTypes);
+                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, NTH_VALUE_OVER_PARTITION_ROWS_TYPES);
                     MemoryARW mem;
                     try {
                         mem = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
@@ -345,13 +337,7 @@ public class NthValueDecimalWindowFunctionFactory extends AbstractWindowFunction
                         throw SqlException.$(windowContext.getOrderByPos(), "RANGE is supported only for queries ordered by designated timestamp");
                     }
                     int timestampIndex = windowContext.getTimestampIndex();
-                    ArrayColumnTypes columnTypes = new ArrayColumnTypes();
-                    columnTypes.add(ColumnType.LONG);
-                    columnTypes.add(ColumnType.LONG);
-                    columnTypes.add(ColumnType.LONG);
-                    columnTypes.add(ColumnType.LONG);
-                    columnTypes.add(ColumnType.LONG);
-                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, columnTypes);
+                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, NTH_VALUE_OVER_PARTITION_RANGE_TYPES);
                     final int initialBufferSize = configuration.getSqlWindowInitialRangeBufferSize();
                     MemoryARW mem;
                     try {
@@ -390,10 +376,7 @@ public class NthValueDecimalWindowFunctionFactory extends AbstractWindowFunction
                         throw t;
                     }
                 } else if (rowsLo == Long.MIN_VALUE) {
-                    ArrayColumnTypes columnTypes = new ArrayColumnTypes();
-                    columnTypes.add(ColumnType.LONG);
-                    columnTypes.add(ColumnType.LONG);
-                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, columnTypes);
+                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, NTH_VALUE_OVER_PARTITION_ROWS_UNBOUNDED_NARROW_TYPES);
                     try {
                         return new Decimal16NthValueOverPartitionRowsFrameUnboundedFunction(map, partitionByRecord, partitionBySink, rowsHi, args.get(0), n, argType);
                     } catch (Throwable t) {
@@ -401,11 +384,7 @@ public class NthValueDecimalWindowFunctionFactory extends AbstractWindowFunction
                         throw t;
                     }
                 } else {
-                    ArrayColumnTypes columnTypes = new ArrayColumnTypes();
-                    columnTypes.add(ColumnType.LONG);
-                    columnTypes.add(ColumnType.LONG);
-                    columnTypes.add(ColumnType.LONG);
-                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, columnTypes);
+                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, NTH_VALUE_OVER_PARTITION_ROWS_TYPES);
                     MemoryARW mem;
                     try {
                         mem = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
@@ -511,13 +490,7 @@ public class NthValueDecimalWindowFunctionFactory extends AbstractWindowFunction
                         throw SqlException.$(windowContext.getOrderByPos(), "RANGE is supported only for queries ordered by designated timestamp");
                     }
                     int timestampIndex = windowContext.getTimestampIndex();
-                    ArrayColumnTypes columnTypes = new ArrayColumnTypes();
-                    columnTypes.add(ColumnType.LONG);
-                    columnTypes.add(ColumnType.LONG);
-                    columnTypes.add(ColumnType.LONG);
-                    columnTypes.add(ColumnType.LONG);
-                    columnTypes.add(ColumnType.LONG);
-                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, columnTypes);
+                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, NTH_VALUE_OVER_PARTITION_RANGE_TYPES);
                     final int initialBufferSize = configuration.getSqlWindowInitialRangeBufferSize();
                     MemoryARW mem;
                     try {
@@ -556,10 +529,7 @@ public class NthValueDecimalWindowFunctionFactory extends AbstractWindowFunction
                         throw t;
                     }
                 } else if (rowsLo == Long.MIN_VALUE) {
-                    ArrayColumnTypes columnTypes = new ArrayColumnTypes();
-                    columnTypes.add(ColumnType.LONG);
-                    columnTypes.add(ColumnType.DECIMAL256);
-                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, columnTypes);
+                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, NTH_VALUE_OVER_PARTITION_ROWS_UNBOUNDED_DECIMAL256_TYPES);
                     try {
                         return new Decimal256NthValueOverPartitionRowsFrameUnboundedFunction(map, partitionByRecord, partitionBySink, rowsHi, args.get(0), n, argType);
                     } catch (Throwable t) {
@@ -567,11 +537,7 @@ public class NthValueDecimalWindowFunctionFactory extends AbstractWindowFunction
                         throw t;
                     }
                 } else {
-                    ArrayColumnTypes columnTypes = new ArrayColumnTypes();
-                    columnTypes.add(ColumnType.LONG);
-                    columnTypes.add(ColumnType.LONG);
-                    columnTypes.add(ColumnType.LONG);
-                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, columnTypes);
+                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, NTH_VALUE_OVER_PARTITION_ROWS_TYPES);
                     MemoryARW mem;
                     try {
                         mem = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
@@ -677,13 +643,7 @@ public class NthValueDecimalWindowFunctionFactory extends AbstractWindowFunction
                         throw SqlException.$(windowContext.getOrderByPos(), "RANGE is supported only for queries ordered by designated timestamp");
                     }
                     int timestampIndex = windowContext.getTimestampIndex();
-                    ArrayColumnTypes columnTypes = new ArrayColumnTypes();
-                    columnTypes.add(ColumnType.LONG);
-                    columnTypes.add(ColumnType.LONG);
-                    columnTypes.add(ColumnType.LONG);
-                    columnTypes.add(ColumnType.LONG);
-                    columnTypes.add(ColumnType.LONG);
-                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, columnTypes);
+                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, NTH_VALUE_OVER_PARTITION_RANGE_TYPES);
                     final int initialBufferSize = configuration.getSqlWindowInitialRangeBufferSize();
                     MemoryARW mem;
                     try {
@@ -722,10 +682,7 @@ public class NthValueDecimalWindowFunctionFactory extends AbstractWindowFunction
                         throw t;
                     }
                 } else if (rowsLo == Long.MIN_VALUE) {
-                    ArrayColumnTypes columnTypes = new ArrayColumnTypes();
-                    columnTypes.add(ColumnType.LONG);
-                    columnTypes.add(ColumnType.LONG);
-                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, columnTypes);
+                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, NTH_VALUE_OVER_PARTITION_ROWS_UNBOUNDED_NARROW_TYPES);
                     try {
                         return new Decimal32NthValueOverPartitionRowsFrameUnboundedFunction(map, partitionByRecord, partitionBySink, rowsHi, args.get(0), n, argType);
                     } catch (Throwable t) {
@@ -733,11 +690,7 @@ public class NthValueDecimalWindowFunctionFactory extends AbstractWindowFunction
                         throw t;
                     }
                 } else {
-                    ArrayColumnTypes columnTypes = new ArrayColumnTypes();
-                    columnTypes.add(ColumnType.LONG);
-                    columnTypes.add(ColumnType.LONG);
-                    columnTypes.add(ColumnType.LONG);
-                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, columnTypes);
+                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, NTH_VALUE_OVER_PARTITION_ROWS_TYPES);
                     MemoryARW mem;
                     try {
                         mem = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
@@ -844,13 +797,7 @@ public class NthValueDecimalWindowFunctionFactory extends AbstractWindowFunction
                         throw SqlException.$(windowContext.getOrderByPos(), "RANGE is supported only for queries ordered by designated timestamp");
                     }
                     int timestampIndex = windowContext.getTimestampIndex();
-                    ArrayColumnTypes columnTypes = new ArrayColumnTypes();
-                    columnTypes.add(ColumnType.LONG);
-                    columnTypes.add(ColumnType.LONG);
-                    columnTypes.add(ColumnType.LONG);
-                    columnTypes.add(ColumnType.LONG);
-                    columnTypes.add(ColumnType.LONG);
-                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, columnTypes);
+                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, NTH_VALUE_OVER_PARTITION_RANGE_TYPES);
                     final int initialBufferSize = configuration.getSqlWindowInitialRangeBufferSize();
                     MemoryARW mem;
                     try {
@@ -889,10 +836,7 @@ public class NthValueDecimalWindowFunctionFactory extends AbstractWindowFunction
                         throw t;
                     }
                 } else if (rowsLo == Long.MIN_VALUE) {
-                    ArrayColumnTypes columnTypes = new ArrayColumnTypes();
-                    columnTypes.add(ColumnType.LONG);
-                    columnTypes.add(ColumnType.LONG);
-                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, columnTypes);
+                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, NTH_VALUE_OVER_PARTITION_ROWS_UNBOUNDED_NARROW_TYPES);
                     try {
                         return new Decimal64NthValueOverPartitionRowsFrameUnboundedFunction(map, partitionByRecord, partitionBySink, rowsHi, args.get(0), n, argType);
                     } catch (Throwable t) {
@@ -900,11 +844,7 @@ public class NthValueDecimalWindowFunctionFactory extends AbstractWindowFunction
                         throw t;
                     }
                 } else {
-                    ArrayColumnTypes columnTypes = new ArrayColumnTypes();
-                    columnTypes.add(ColumnType.LONG);
-                    columnTypes.add(ColumnType.LONG);
-                    columnTypes.add(ColumnType.LONG);
-                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, columnTypes);
+                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, NTH_VALUE_OVER_PARTITION_ROWS_TYPES);
                     MemoryARW mem;
                     try {
                         mem = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
@@ -1010,13 +950,7 @@ public class NthValueDecimalWindowFunctionFactory extends AbstractWindowFunction
                         throw SqlException.$(windowContext.getOrderByPos(), "RANGE is supported only for queries ordered by designated timestamp");
                     }
                     int timestampIndex = windowContext.getTimestampIndex();
-                    ArrayColumnTypes columnTypes = new ArrayColumnTypes();
-                    columnTypes.add(ColumnType.LONG);
-                    columnTypes.add(ColumnType.LONG);
-                    columnTypes.add(ColumnType.LONG);
-                    columnTypes.add(ColumnType.LONG);
-                    columnTypes.add(ColumnType.LONG);
-                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, columnTypes);
+                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, NTH_VALUE_OVER_PARTITION_RANGE_TYPES);
                     final int initialBufferSize = configuration.getSqlWindowInitialRangeBufferSize();
                     MemoryARW mem;
                     try {
@@ -1055,10 +989,7 @@ public class NthValueDecimalWindowFunctionFactory extends AbstractWindowFunction
                         throw t;
                     }
                 } else if (rowsLo == Long.MIN_VALUE) {
-                    ArrayColumnTypes columnTypes = new ArrayColumnTypes();
-                    columnTypes.add(ColumnType.LONG);
-                    columnTypes.add(ColumnType.LONG);
-                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, columnTypes);
+                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, NTH_VALUE_OVER_PARTITION_ROWS_UNBOUNDED_NARROW_TYPES);
                     try {
                         return new Decimal8NthValueOverPartitionRowsFrameUnboundedFunction(map, partitionByRecord, partitionBySink, rowsHi, args.get(0), n, argType);
                     } catch (Throwable t) {
@@ -1066,11 +997,7 @@ public class NthValueDecimalWindowFunctionFactory extends AbstractWindowFunction
                         throw t;
                     }
                 } else {
-                    ArrayColumnTypes columnTypes = new ArrayColumnTypes();
-                    columnTypes.add(ColumnType.LONG);
-                    columnTypes.add(ColumnType.LONG);
-                    columnTypes.add(ColumnType.LONG);
-                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, columnTypes);
+                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, NTH_VALUE_OVER_PARTITION_ROWS_TYPES);
                     MemoryARW mem;
                     try {
                         mem = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
@@ -8906,5 +8833,29 @@ public class NthValueDecimalWindowFunctionFactory extends AbstractWindowFunction
         NTH_VALUE_DECIMAL64_TYPES = new ArrayColumnTypes();
         NTH_VALUE_DECIMAL64_TYPES.add(ColumnType.LONG);
         NTH_VALUE_DECIMAL64_TYPES.add(ColumnType.LONG);
+
+        NTH_VALUE_OVER_PARTITION_RANGE_TYPES = new ArrayColumnTypes();
+        NTH_VALUE_OVER_PARTITION_RANGE_TYPES.add(ColumnType.LONG);
+        NTH_VALUE_OVER_PARTITION_RANGE_TYPES.add(ColumnType.LONG);
+        NTH_VALUE_OVER_PARTITION_RANGE_TYPES.add(ColumnType.LONG);
+        NTH_VALUE_OVER_PARTITION_RANGE_TYPES.add(ColumnType.LONG);
+        NTH_VALUE_OVER_PARTITION_RANGE_TYPES.add(ColumnType.LONG);
+
+        NTH_VALUE_OVER_PARTITION_ROWS_TYPES = new ArrayColumnTypes();
+        NTH_VALUE_OVER_PARTITION_ROWS_TYPES.add(ColumnType.LONG);
+        NTH_VALUE_OVER_PARTITION_ROWS_TYPES.add(ColumnType.LONG);
+        NTH_VALUE_OVER_PARTITION_ROWS_TYPES.add(ColumnType.LONG);
+
+        NTH_VALUE_OVER_PARTITION_ROWS_UNBOUNDED_NARROW_TYPES = new ArrayColumnTypes();
+        NTH_VALUE_OVER_PARTITION_ROWS_UNBOUNDED_NARROW_TYPES.add(ColumnType.LONG);
+        NTH_VALUE_OVER_PARTITION_ROWS_UNBOUNDED_NARROW_TYPES.add(ColumnType.LONG);
+
+        NTH_VALUE_OVER_PARTITION_ROWS_UNBOUNDED_DECIMAL128_TYPES = new ArrayColumnTypes();
+        NTH_VALUE_OVER_PARTITION_ROWS_UNBOUNDED_DECIMAL128_TYPES.add(ColumnType.LONG);
+        NTH_VALUE_OVER_PARTITION_ROWS_UNBOUNDED_DECIMAL128_TYPES.add(ColumnType.DECIMAL128);
+
+        NTH_VALUE_OVER_PARTITION_ROWS_UNBOUNDED_DECIMAL256_TYPES = new ArrayColumnTypes();
+        NTH_VALUE_OVER_PARTITION_ROWS_UNBOUNDED_DECIMAL256_TYPES.add(ColumnType.LONG);
+        NTH_VALUE_OVER_PARTITION_ROWS_UNBOUNDED_DECIMAL256_TYPES.add(ColumnType.DECIMAL256);
     }
 }

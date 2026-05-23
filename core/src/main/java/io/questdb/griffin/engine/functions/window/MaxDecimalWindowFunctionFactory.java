@@ -80,6 +80,23 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
     static final ArrayColumnTypes MAX_DECIMAL64_TYPES;
     private static final String SIGNATURE = NAME + "(Ξ)";
 
+    @Override
+    public String getSignature() {
+        return SIGNATURE;
+    }
+
+    @Override
+    public Function newInstance(
+            int position,
+            ObjList<Function> args,
+            IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) throws SqlException {
+        return newMaxMinInstance(this, position, args, argPositions.getQuick(0), configuration, sqlExecutionContext,
+                GREATER_THAN_64, GREATER_THAN_128, GREATER_THAN_256, NAME);
+    }
+
     private static Function newMaxMinInstanceDecimal128(
             int position,
             ObjList<Function> args,
@@ -987,23 +1004,6 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             default ->
                     throw SqlException.$(argPos, name).put(" is not yet implemented for ").put(ColumnType.nameOf(tag));
         };
-    }
-
-    @Override
-    public String getSignature() {
-        return SIGNATURE;
-    }
-
-    @Override
-    public Function newInstance(
-            int position,
-            ObjList<Function> args,
-            IntList argPositions,
-            CairoConfiguration configuration,
-            SqlExecutionContext sqlExecutionContext
-    ) throws SqlException {
-        return newMaxMinInstance(this, position, args, argPositions.getQuick(0), configuration, sqlExecutionContext,
-                GREATER_THAN_64, GREATER_THAN_128, GREATER_THAN_256, NAME);
     }
 
     @FunctionalInterface

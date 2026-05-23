@@ -952,6 +952,7 @@ public class WindowDecimalFunctionTest extends AbstractCairoTest {
     @Test
     public void testAvgRescaleAllSubTypesRangeTriggersBufferExpansion() throws Exception {
         node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_STORE_PAGE_SIZE, 128);
+        node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_INITIAL_RANGE_BUFFER_SIZE, 2);
         assertMemoryLeak(() -> {
             execute(CREATE_T);
             StringSink insert = new StringSink();
@@ -3211,6 +3212,7 @@ public class WindowDecimalFunctionTest extends AbstractCairoTest {
         // OverRangeFrame initial buffer is configuration.getSqlWindowStorePageSize() / RECORD_SIZE.
         // Shrink the page size so 33 inserted rows exceed initial capacity and force buffer expansion.
         node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_STORE_PAGE_SIZE, 128);
+        node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_INITIAL_RANGE_BUFFER_SIZE, 2);
         assertMemoryLeak(() -> {
             execute(CREATE_T);
             StringSink insert = new StringSink();
@@ -3998,6 +4000,36 @@ public class WindowDecimalFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLargeWindowRingBufferGrowthAllSubTypes() throws Exception {
+        // 10k rows over a ROWS-BETWEEN 5k-PRECEDING frame forces multi-page ring-buffer growth
+        // through appendAddressFor() and exercises the constructor error path for D8..D256.
+        assertMemoryLeak(() -> {
+            execute(CREATE_T);
+            execute("INSERT INTO t SELECT " +
+                    "timestamp_sequence(0, 60_000_000), 'g'||(x % 4)::string, " +
+                    "1.0::decimal(2, 1), 10.0::decimal(4, 1), 10.000::decimal(9, 3), " +
+                    "10.00::decimal(18, 2), 10.000000::decimal(38, 6), 10::decimal(60, 0) " +
+                    "FROM long_sequence(10_000)");
+            assertQueryNoLeakCheck("""
+                            c8\tc16\tc32\tc64\tc128\tc256\ts64\tavg128\tmx256\tmn8
+                            5001\t5001\t5001\t5001\t5001\t5001\t50010.00\t10.000000\t10\t1.0
+                            """,
+                    "SELECT " +
+                            "count(v8) OVER (ORDER BY ts ROWS BETWEEN 5000 PRECEDING AND CURRENT ROW) c8, " +
+                            "count(v16) OVER (ORDER BY ts ROWS BETWEEN 5000 PRECEDING AND CURRENT ROW) c16, " +
+                            "count(v32) OVER (ORDER BY ts ROWS BETWEEN 5000 PRECEDING AND CURRENT ROW) c32, " +
+                            "count(v64) OVER (ORDER BY ts ROWS BETWEEN 5000 PRECEDING AND CURRENT ROW) c64, " +
+                            "count(v128) OVER (ORDER BY ts ROWS BETWEEN 5000 PRECEDING AND CURRENT ROW) c128, " +
+                            "count(v256) OVER (ORDER BY ts ROWS BETWEEN 5000 PRECEDING AND CURRENT ROW) c256, " +
+                            "sum(v64) OVER (ORDER BY ts ROWS BETWEEN 5000 PRECEDING AND CURRENT ROW) s64, " +
+                            "avg(v128) OVER (ORDER BY ts ROWS BETWEEN 5000 PRECEDING AND CURRENT ROW) avg128, " +
+                            "max(v256) OVER (ORDER BY ts ROWS BETWEEN 5000 PRECEDING AND CURRENT ROW) mx256, " +
+                            "min(v8) OVER (ORDER BY ts ROWS BETWEEN 5000 PRECEDING AND CURRENT ROW) mn8 " +
+                            "FROM t ORDER BY ts DESC LIMIT 1", null, null, true, false);
+        });
+    }
+
+    @Test
     public void testLastValueAllSubTypesBoundedRange() throws Exception {
         assertMemoryLeak(() -> {
             execute(CREATE_T);
@@ -4381,6 +4413,7 @@ public class WindowDecimalFunctionTest extends AbstractCairoTest {
     @Test
     public void testLastValueAllSubTypesRangeTriggersBufferExpansion() throws Exception {
         node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_STORE_PAGE_SIZE, 128);
+        node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_INITIAL_RANGE_BUFFER_SIZE, 2);
         assertMemoryLeak(() -> {
             execute(CREATE_T);
             StringSink insert = new StringSink();
@@ -7602,6 +7635,7 @@ public class WindowDecimalFunctionTest extends AbstractCairoTest {
     public void testSumMaxMinRangeTriggersBufferExpansion() throws Exception {
         // 33 rows of 0.5 -> sum=16.5 at row 33; max=0.5, min=0.5 throughout.
         node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_STORE_PAGE_SIZE, 128);
+        node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_INITIAL_RANGE_BUFFER_SIZE, 2);
         assertMemoryLeak(() -> {
             execute(CREATE_T);
             StringSink insert = new StringSink();
@@ -8291,6 +8325,270 @@ public class WindowDecimalFunctionTest extends AbstractCairoTest {
                             2024-01-01T00:04:00.000000Z\t30.00
                             """,
                     "SELECT ts, sum(v64) OVER () s FROM t UNION ALL SELECT ts, sum(v64) OVER () s FROM t", null, null, false, true);
+        });
+    }
+
+    @Test
+    public void testNthValueAllSubTypesPartitionRangeBufferExpansion() throws Exception {
+        // Shrinks the initial range buffer so a single partition with > 2 rows forces
+        // expandRingBuffer in Decimal*NthValueOverPartitionRangeFrameFunction.
+        node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_INITIAL_RANGE_BUFFER_SIZE, 2);
+        node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_STORE_PAGE_SIZE, 128);
+        assertMemoryLeak(() -> {
+            execute(CREATE_T);
+            StringSink insert = new StringSink();
+            insert.put("INSERT INTO t VALUES ");
+            for (int i = 0; i < 40; i++) {
+                if (i > 0) insert.put(", ");
+                insert.put("('2024-01-01T00:");
+                if (i < 10) insert.put('0');
+                insert.put(i).put(":00', 'a', 0.5m, 5.0m, 5.000m, 5.00m, 5.000000m, 5m)");
+            }
+            execute(insert.toString());
+            // 40 rows in partition 'a'. First row frameSize=1 < n=2 -> NULL (empty), rest -> 0.5.
+            assertQueryNoLeakCheck(
+                    "nv\tcnt\n\t1\n0.5\t39\n",
+                    "SELECT nv, count(*) cnt FROM (" +
+                            "SELECT nth_value(v8, 2) OVER (PARTITION BY grp ORDER BY ts RANGE BETWEEN 3600 second PRECEDING AND CURRENT ROW) nv FROM t" +
+                            ") GROUP BY nv ORDER BY nv",
+                    null, true, true);
+        });
+    }
+
+    @Test
+    public void testFirstValuePartitionRangeBufferExpansionAllSubTypes() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_INITIAL_RANGE_BUFFER_SIZE, 2);
+        node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_STORE_PAGE_SIZE, 128);
+        assertMemoryLeak(() -> {
+            execute(CREATE_T);
+            StringSink insert = new StringSink();
+            insert.put("INSERT INTO t VALUES ");
+            for (int i = 0; i < 40; i++) {
+                if (i > 0) insert.put(", ");
+                insert.put("('2024-01-01T00:");
+                if (i < 10) insert.put('0');
+                insert.put(i).put(":00', 'a', 0.5m, 5.0m, 5.000m, 5.00m, 5.000000m, 5m)");
+            }
+            execute(insert.toString());
+            assertQueryNoLeakCheck(
+                    "fv\tcnt\n0.5\t40\n",
+                    "SELECT fv, count(*) cnt FROM (" +
+                            "SELECT first_value(v8) OVER (PARTITION BY grp ORDER BY ts RANGE BETWEEN 3600 second PRECEDING AND CURRENT ROW) fv FROM t" +
+                            ") GROUP BY fv ORDER BY fv",
+                    null, true, true);
+        });
+    }
+
+    @Test
+    public void testLastValuePartitionRangeBufferExpansionAllSubTypes() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_INITIAL_RANGE_BUFFER_SIZE, 2);
+        node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_STORE_PAGE_SIZE, 128);
+        assertMemoryLeak(() -> {
+            execute(CREATE_T);
+            StringSink insert = new StringSink();
+            insert.put("INSERT INTO t VALUES ");
+            for (int i = 0; i < 40; i++) {
+                if (i > 0) insert.put(", ");
+                insert.put("('2024-01-01T00:");
+                if (i < 10) insert.put('0');
+                insert.put(i).put(":00', 'a', 0.5m, 5.0m, 5.000m, 5.00m, 5.000000m, 5m)");
+            }
+            execute(insert.toString());
+            assertQueryNoLeakCheck(
+                    "lv\tcnt\n0.5\t40\n",
+                    "SELECT lv, count(*) cnt FROM (" +
+                            "SELECT last_value(v8) OVER (PARTITION BY grp ORDER BY ts RANGE BETWEEN 3600 second PRECEDING AND CURRENT ROW) lv FROM t" +
+                            ") GROUP BY lv ORDER BY lv",
+                    null, true, true);
+        });
+    }
+
+    @Test
+    public void testSumAvgMaxMinPartitionRangeBufferExpansion() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_INITIAL_RANGE_BUFFER_SIZE, 2);
+        node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_STORE_PAGE_SIZE, 128);
+        assertMemoryLeak(() -> {
+            execute(CREATE_T);
+            StringSink insert = new StringSink();
+            insert.put("INSERT INTO t VALUES ");
+            for (int i = 0; i < 40; i++) {
+                if (i > 0) insert.put(", ");
+                insert.put("('2024-01-01T00:");
+                if (i < 10) insert.put('0');
+                insert.put(i).put(":00', 'a', 0.5m, 5.0m, 5.000m, 5.00m, 5.000000m, 5m)");
+            }
+            execute(insert.toString());
+            assertQueryNoLeakCheck(
+                    "av\tcnt\n0.5\t40\n",
+                    "SELECT av, count(*) cnt FROM (" +
+                            "SELECT avg(v8) OVER (PARTITION BY grp ORDER BY ts RANGE BETWEEN 3600 second PRECEDING AND CURRENT ROW) av FROM t" +
+                            ") GROUP BY av ORDER BY av",
+                    null, true, true);
+            assertQueryNoLeakCheck(
+                    "mx\tcnt\n0.5\t40\n",
+                    "SELECT mx, count(*) cnt FROM (" +
+                            "SELECT max(v8) OVER (PARTITION BY grp ORDER BY ts RANGE BETWEEN 3600 second PRECEDING AND CURRENT ROW) mx FROM t" +
+                            ") GROUP BY mx ORDER BY mx",
+                    null, true, true);
+            assertQueryNoLeakCheck(
+                    "mn\tcnt\n0.5\t40\n",
+                    "SELECT mn, count(*) cnt FROM (" +
+                            "SELECT min(v8) OVER (PARTITION BY grp ORDER BY ts RANGE BETWEEN 3600 second PRECEDING AND CURRENT ROW) mn FROM t" +
+                            ") GROUP BY mn ORDER BY mn",
+                    null, true, true);
+        });
+    }
+
+    @Test
+    public void testAvgRescalePartitionRangeBufferExpansion() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_INITIAL_RANGE_BUFFER_SIZE, 2);
+        node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_STORE_PAGE_SIZE, 128);
+        assertMemoryLeak(() -> {
+            execute(CREATE_T);
+            StringSink insert = new StringSink();
+            insert.put("INSERT INTO t VALUES ");
+            for (int i = 0; i < 40; i++) {
+                if (i > 0) insert.put(", ");
+                insert.put("('2024-01-01T00:");
+                if (i < 10) insert.put('0');
+                insert.put(i).put(":00', 'a', 0.5m, 5.0m, 5.000m, 5.00m, 5.000000m, 5m)");
+            }
+            execute(insert.toString());
+            assertQueryNoLeakCheck(
+                    "av\tcnt\n0.50000\t40\n",
+                    "SELECT av, count(*) cnt FROM (" +
+                            "SELECT avg(v8, 5) OVER (PARTITION BY grp ORDER BY ts RANGE BETWEEN 3600 second PRECEDING AND CURRENT ROW) av FROM t" +
+                            ") GROUP BY av ORDER BY av",
+                    null, true, true);
+        });
+    }
+
+    @Test
+    public void testNthValuePartitionRangeUnboundedLockedValueAllSubTypes() throws Exception {
+        // !frameLoBounded path: locked-value optimization when frameSize >= n.
+        // Single partition, RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW.
+        // nth_value(v8, 1) locks onto first value (0.5) once row 1 is seen.
+        node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_INITIAL_RANGE_BUFFER_SIZE, 2);
+        node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_STORE_PAGE_SIZE, 128);
+        assertMemoryLeak(() -> {
+            execute(CREATE_T);
+            StringSink insert = new StringSink();
+            insert.put("INSERT INTO t VALUES ");
+            for (int i = 0; i < 40; i++) {
+                if (i > 0) insert.put(", ");
+                insert.put("('2024-01-01T00:");
+                if (i < 10) insert.put('0');
+                insert.put(i).put(":00', 'a', 0.5m, 5.0m, 5.000m, 5.00m, 5.000000m, 5m)");
+            }
+            execute(insert.toString());
+            // nth_value(v8, 1) over unbounded preceding: first value = 0.5 for all rows
+            assertQueryNoLeakCheck(
+                    "nv\tcnt\n0.5\t40\n",
+                    "SELECT nv, count(*) cnt FROM (" +
+                            "SELECT nth_value(v8, 1) OVER (PARTITION BY grp ORDER BY ts RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) nv FROM t" +
+                            ") GROUP BY nv ORDER BY nv",
+                    null, true, true);
+        });
+    }
+
+    @Test
+    public void testFirstValueIgnoreNullsAllSubTypes() throws Exception {
+        // first_value IGNORE NULLS routes to FirstNotNull* TWO_PASS classes.
+        // First non-null in each partition: 'a' -> 0.6 (row 1), 'b' -> 0.4 (no nulls).
+        assertMemoryLeak(() -> {
+            execute(CREATE_T);
+            execute(INSERT_5_WITH_NULL);
+            assertQueryNoLeakCheck("""
+                            ts\tf8\tf16\tf32\tf64\tf128\tf256
+                            2024-01-01T00:00:00.000000Z\t0.6\t6.0\t6.000\t6.00\t6.000000\t6
+                            2024-01-01T00:01:00.000000Z\t0.6\t6.0\t6.000\t6.00\t6.000000\t6
+                            2024-01-01T00:02:00.000000Z\t0.6\t6.0\t6.000\t6.00\t6.000000\t6
+                            2024-01-01T00:03:00.000000Z\t0.6\t6.0\t6.000\t6.00\t6.000000\t6
+                            2024-01-01T00:04:00.000000Z\t0.6\t6.0\t6.000\t6.00\t6.000000\t6
+                            """,
+                    "SELECT ts, " +
+                            "first_value(v8) IGNORE NULLS OVER (PARTITION BY grp) f8, " +
+                            "first_value(v16) IGNORE NULLS OVER (PARTITION BY grp) f16, " +
+                            "first_value(v32) IGNORE NULLS OVER (PARTITION BY grp) f32, " +
+                            "first_value(v64) IGNORE NULLS OVER (PARTITION BY grp) f64, " +
+                            "first_value(v128) IGNORE NULLS OVER (PARTITION BY grp) f128, " +
+                            "first_value(v256) IGNORE NULLS OVER (PARTITION BY grp) f256 " +
+                            "FROM t", null, "ts", true, true);
+        });
+    }
+
+    @Test
+    public void testFirstValueIgnoreNullsAllNullPartition() throws Exception {
+        // Partition with only NULL values: FirstNotNull returns NULL.
+        assertMemoryLeak(() -> {
+            execute(CREATE_T);
+            execute(INSERT_5_ALL_NULL);
+            assertQueryNoLeakCheck("""
+                            ts\tf8\tf16\tf32\tf64\tf128\tf256
+                            2024-01-01T00:00:00.000000Z\t\t\t\t\t\t
+                            2024-01-01T00:01:00.000000Z\t\t\t\t\t\t
+                            2024-01-01T00:02:00.000000Z\t\t\t\t\t\t
+                            2024-01-01T00:03:00.000000Z\t\t\t\t\t\t
+                            2024-01-01T00:04:00.000000Z\t\t\t\t\t\t
+                            """,
+                    "SELECT ts, " +
+                            "first_value(v8) IGNORE NULLS OVER (PARTITION BY grp) f8, " +
+                            "first_value(v16) IGNORE NULLS OVER (PARTITION BY grp) f16, " +
+                            "first_value(v32) IGNORE NULLS OVER (PARTITION BY grp) f32, " +
+                            "first_value(v64) IGNORE NULLS OVER (PARTITION BY grp) f64, " +
+                            "first_value(v128) IGNORE NULLS OVER (PARTITION BY grp) f128, " +
+                            "first_value(v256) IGNORE NULLS OVER (PARTITION BY grp) f256 " +
+                            "FROM t", null, "ts", true, true);
+        });
+    }
+
+    @Test
+    public void testLastValueIgnoreNullsAllSubTypes() throws Exception {
+        // last_value IGNORE NULLS over running unbounded ROWS frame: emits the most recent non-null per row.
+        // 'a': null, 0.6, null, 0.8, null -> null, 0.6, 0.6, 0.8, 0.8
+        assertMemoryLeak(() -> {
+            execute(CREATE_T);
+            execute(INSERT_5_WITH_NULL);
+            assertQueryNoLeakCheck("""
+                            ts\tl8\tl16\tl32\tl64\tl128\tl256
+                            2024-01-01T00:00:00.000000Z\t\t\t\t\t\t
+                            2024-01-01T00:01:00.000000Z\t0.6\t6.0\t6.000\t6.00\t6.000000\t6
+                            2024-01-01T00:02:00.000000Z\t0.6\t6.0\t6.000\t6.00\t6.000000\t6
+                            2024-01-01T00:03:00.000000Z\t0.8\t8.0\t8.000\t8.00\t8.000000\t8
+                            2024-01-01T00:04:00.000000Z\t0.8\t8.0\t8.000\t8.00\t8.000000\t8
+                            """,
+                    "SELECT ts, " +
+                            "last_value(v8) IGNORE NULLS OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) l8, " +
+                            "last_value(v16) IGNORE NULLS OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) l16, " +
+                            "last_value(v32) IGNORE NULLS OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) l32, " +
+                            "last_value(v64) IGNORE NULLS OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) l64, " +
+                            "last_value(v128) IGNORE NULLS OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) l128, " +
+                            "last_value(v256) IGNORE NULLS OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) l256 " +
+                            "FROM t", "ts", false, true);
+        });
+    }
+
+    @Test
+    public void testLastValueIgnoreNullsAllNullPartition() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(CREATE_T);
+            execute(INSERT_5_ALL_NULL);
+            assertQueryNoLeakCheck("""
+                            ts\tl8\tl16\tl32\tl64\tl128\tl256
+                            2024-01-01T00:00:00.000000Z\t\t\t\t\t\t
+                            2024-01-01T00:01:00.000000Z\t\t\t\t\t\t
+                            2024-01-01T00:02:00.000000Z\t\t\t\t\t\t
+                            2024-01-01T00:03:00.000000Z\t\t\t\t\t\t
+                            2024-01-01T00:04:00.000000Z\t\t\t\t\t\t
+                            """,
+                    "SELECT ts, " +
+                            "last_value(v8) IGNORE NULLS OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) l8, " +
+                            "last_value(v16) IGNORE NULLS OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) l16, " +
+                            "last_value(v32) IGNORE NULLS OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) l32, " +
+                            "last_value(v64) IGNORE NULLS OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) l64, " +
+                            "last_value(v128) IGNORE NULLS OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) l128, " +
+                            "last_value(v256) IGNORE NULLS OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) l256 " +
+                            "FROM t", "ts", false, true);
         });
     }
 

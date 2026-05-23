@@ -37,6 +37,15 @@ import io.questdb.std.ObjList;
 
 public class CountDecimalWindowFunctionFactory extends AbstractWindowFunctionFactory {
 
+    private static final CountFunctionFactoryHelper.IsRecordNotNull DECIMAL16_NOT_NULL =
+            (arg, record) -> arg.getDecimal16(record) != Decimals.DECIMAL16_NULL;
+    private static final CountFunctionFactoryHelper.IsRecordNotNull DECIMAL32_NOT_NULL =
+            (arg, record) -> arg.getDecimal32(record) != Decimals.DECIMAL32_NULL;
+    private static final CountFunctionFactoryHelper.IsRecordNotNull DECIMAL64_NOT_NULL =
+            (arg, record) -> arg.getDecimal64(record) != Decimals.DECIMAL64_NULL;
+    private static final CountFunctionFactoryHelper.IsRecordNotNull DECIMAL8_NOT_NULL =
+            (arg, record) -> arg.getDecimal8(record) != Decimals.DECIMAL8_NULL;
+
     @Override
     public String getSignature() {
         return "count(Ξ)";
@@ -53,10 +62,10 @@ public class CountDecimalWindowFunctionFactory extends AbstractWindowFunctionFac
         final int argType = args.get(0).getType();
         final int tag = ColumnType.tagOf(argType);
         final CountFunctionFactoryHelper.IsRecordNotNull predicate = switch (tag) {
-            case ColumnType.DECIMAL8 -> (arg, record) -> arg.getDecimal8(record) != Decimals.DECIMAL8_NULL;
-            case ColumnType.DECIMAL16 -> (arg, record) -> arg.getDecimal16(record) != Decimals.DECIMAL16_NULL;
-            case ColumnType.DECIMAL32 -> (arg, record) -> arg.getDecimal32(record) != Decimals.DECIMAL32_NULL;
-            case ColumnType.DECIMAL64 -> (arg, record) -> arg.getDecimal64(record) != Decimals.DECIMAL64_NULL;
+            case ColumnType.DECIMAL8 -> DECIMAL8_NOT_NULL;
+            case ColumnType.DECIMAL16 -> DECIMAL16_NOT_NULL;
+            case ColumnType.DECIMAL32 -> DECIMAL32_NOT_NULL;
+            case ColumnType.DECIMAL64 -> DECIMAL64_NOT_NULL;
             case ColumnType.DECIMAL128 -> {
                 final Decimal128 scratch = new Decimal128();
                 yield (arg, record) -> {

@@ -76,15 +76,6 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
     private static final String NAME = "avg";
     private static final String SIGNATURE = NAME + "(Ξ)";
 
-    private static void readD256(MemoryARW mem, long offset, Decimal256 sink) {
-        sink.ofRaw(
-                mem.getLong(offset),
-                mem.getLong(offset + Long.BYTES),
-                mem.getLong(offset + 2 * Long.BYTES),
-                mem.getLong(offset + 3 * Long.BYTES)
-        );
-    }
-
     @Override
     public String getSignature() {
         return SIGNATURE;
@@ -142,6 +133,15 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                     newInstanceDecimal256(position, args, configuration, sqlExecutionContext, argType, argPos);
             default -> throw SqlException.$(argPos, "avg is not yet implemented for ").put(ColumnType.nameOf(tag));
         };
+    }
+
+    private static void readD256(MemoryARW mem, long offset, Decimal256 sink) {
+        sink.ofRaw(
+                mem.getLong(offset),
+                mem.getLong(offset + Long.BYTES),
+                mem.getLong(offset + 2 * Long.BYTES),
+                mem.getLong(offset + 3 * Long.BYTES)
+        );
     }
 
     private Function newInstanceDecimal128(

@@ -59,11 +59,6 @@ public class LeadDecimalFunctionFactory extends AbstractWindowFunctionFactory {
     }
 
     @Override
-    protected boolean supportNullsDesc() {
-        return true;
-    }
-
-    @Override
     public Function newInstance(
             int position,
             ObjList<Function> args,
@@ -140,8 +135,14 @@ public class LeadDecimalFunctionFactory extends AbstractWindowFunctionFactory {
                     (partitionByRecord, arg, name, ignoreNulls) -> new LagDecimalFunctionFactory.Decimal256LeadLagValueCurrentRow(partitionByRecord, arg, name, ignoreNulls, argType),
                     (map, partitionByRecord, partitionBySink, memory, arg, ignoreNulls, defaultValue, offset) -> new Decimal256LeadOverPartitionFunction(map, partitionByRecord, partitionBySink, memory, arg, ignoreNulls, defaultValue, offset, argType)
             );
-            default -> throw SqlException.$(argPositions.getQuick(0), "lead is not yet implemented for ").put(ColumnType.nameOf(tag));
+            default ->
+                    throw SqlException.$(argPositions.getQuick(0), "lead is not yet implemented for ").put(ColumnType.nameOf(tag));
         };
+    }
+
+    @Override
+    protected boolean supportNullsDesc() {
+        return true;
     }
 
     static class Decimal128LeadFunction extends LeadLagWindowFunctionFactoryHelper.BaseLeadFunction implements Reopenable {
@@ -153,6 +154,7 @@ public class LeadDecimalFunctionFactory extends AbstractWindowFunctionFactory {
         public Decimal128LeadFunction(Function arg, Function defaultValueFunc, long offset, MemoryARW memory, boolean ignoreNulls, int type) {
             super(arg, defaultValueFunc, offset, memory, ignoreNulls);
             this.type = type;
+            leadValue.ofRawNull();
         }
 
         @Override
@@ -331,6 +333,84 @@ public class LeadDecimalFunctionFactory extends AbstractWindowFunctionFactory {
         }
     }
 
+    static class Decimal16LeadFunction extends LeadLagWindowFunctionFactoryHelper.BaseLeadFunction implements Reopenable {
+
+        private final int type;
+
+        public Decimal16LeadFunction(Function arg, Function defaultValueFunc, long offset, MemoryARW memory, boolean ignoreNulls, int type) {
+            super(arg, defaultValueFunc, offset, memory, ignoreNulls);
+            this.type = type;
+        }
+
+        @Override
+        public int getType() {
+            return type;
+        }
+
+        @Override
+        protected boolean doPass1(Record record, long recordOffset, WindowSPI spi) {
+            short leadValue;
+            if (count < offset) {
+                leadValue = defaultValue == null ? Decimals.DECIMAL16_NULL : defaultValue.getDecimal16(record);
+            } else {
+                leadValue = buffer.getShort((long) loIdx * Short.BYTES);
+            }
+            short s = arg.getDecimal16(record);
+            boolean respectNull = !ignoreNulls || s != Decimals.DECIMAL16_NULL;
+            if (respectNull) {
+                buffer.putShort((long) loIdx * Short.BYTES, s);
+            }
+            Unsafe.putShort(spi.getAddress(recordOffset, columnIndex), leadValue);
+            return respectNull;
+        }
+    }
+
+    static class Decimal16LeadOverPartitionFunction extends LeadLagWindowFunctionFactoryHelper.BaseLeadOverPartitionFunction {
+
+        private final int type;
+
+        public Decimal16LeadOverPartitionFunction(Map map,
+                                                  VirtualRecord partitionByRecord,
+                                                  RecordSink partitionBySink,
+                                                  MemoryARW memory,
+                                                  Function arg,
+                                                  boolean ignoreNulls,
+                                                  Function defaultValue,
+                                                  long offset,
+                                                  int type) {
+            super(map, partitionByRecord, partitionBySink, memory, arg, ignoreNulls, defaultValue, offset);
+            this.type = type;
+        }
+
+        @Override
+        public int getType() {
+            return type;
+        }
+
+        @Override
+        protected boolean doPass1(long count,
+                                  long offset,
+                                  long startOffset,
+                                  long firstIdx,
+                                  Record record,
+                                  long recordOffset,
+                                  WindowSPI spi) {
+            short s = arg.getDecimal16(record);
+            short leadValue;
+            if (count < offset) {
+                leadValue = defaultValue == null ? Decimals.DECIMAL16_NULL : defaultValue.getDecimal16(record);
+            } else {
+                leadValue = memory.getShort(startOffset + firstIdx * Short.BYTES);
+            }
+            boolean respectNulls = !ignoreNulls || s != Decimals.DECIMAL16_NULL;
+            if (respectNulls) {
+                memory.putShort(startOffset + firstIdx * Short.BYTES, s);
+            }
+            Unsafe.putShort(spi.getAddress(recordOffset, columnIndex), leadValue);
+            return respectNulls;
+        }
+    }
+
     static class Decimal256LeadFunction extends LeadLagWindowFunctionFactoryHelper.BaseLeadFunction implements Reopenable {
 
         private final Decimal256 leadValue = new Decimal256();
@@ -340,6 +420,7 @@ public class LeadDecimalFunctionFactory extends AbstractWindowFunctionFactory {
         public Decimal256LeadFunction(Function arg, Function defaultValueFunc, long offset, MemoryARW memory, boolean ignoreNulls, int type) {
             super(arg, defaultValueFunc, offset, memory, ignoreNulls);
             this.type = type;
+            leadValue.ofRawNull();
         }
 
         @Override
@@ -522,6 +603,84 @@ public class LeadDecimalFunctionFactory extends AbstractWindowFunctionFactory {
         }
     }
 
+    static class Decimal32LeadFunction extends LeadLagWindowFunctionFactoryHelper.BaseLeadFunction implements Reopenable {
+
+        private final int type;
+
+        public Decimal32LeadFunction(Function arg, Function defaultValueFunc, long offset, MemoryARW memory, boolean ignoreNulls, int type) {
+            super(arg, defaultValueFunc, offset, memory, ignoreNulls);
+            this.type = type;
+        }
+
+        @Override
+        public int getType() {
+            return type;
+        }
+
+        @Override
+        protected boolean doPass1(Record record, long recordOffset, WindowSPI spi) {
+            int leadValue;
+            if (count < offset) {
+                leadValue = defaultValue == null ? Decimals.DECIMAL32_NULL : defaultValue.getDecimal32(record);
+            } else {
+                leadValue = buffer.getInt((long) loIdx * Integer.BYTES);
+            }
+            int i = arg.getDecimal32(record);
+            boolean respectNull = !ignoreNulls || i != Decimals.DECIMAL32_NULL;
+            if (respectNull) {
+                buffer.putInt((long) loIdx * Integer.BYTES, i);
+            }
+            Unsafe.putInt(spi.getAddress(recordOffset, columnIndex), leadValue);
+            return respectNull;
+        }
+    }
+
+    static class Decimal32LeadOverPartitionFunction extends LeadLagWindowFunctionFactoryHelper.BaseLeadOverPartitionFunction {
+
+        private final int type;
+
+        public Decimal32LeadOverPartitionFunction(Map map,
+                                                  VirtualRecord partitionByRecord,
+                                                  RecordSink partitionBySink,
+                                                  MemoryARW memory,
+                                                  Function arg,
+                                                  boolean ignoreNulls,
+                                                  Function defaultValue,
+                                                  long offset,
+                                                  int type) {
+            super(map, partitionByRecord, partitionBySink, memory, arg, ignoreNulls, defaultValue, offset);
+            this.type = type;
+        }
+
+        @Override
+        public int getType() {
+            return type;
+        }
+
+        @Override
+        protected boolean doPass1(long count,
+                                  long offset,
+                                  long startOffset,
+                                  long firstIdx,
+                                  Record record,
+                                  long recordOffset,
+                                  WindowSPI spi) {
+            int i = arg.getDecimal32(record);
+            int leadValue;
+            if (count < offset) {
+                leadValue = defaultValue == null ? Decimals.DECIMAL32_NULL : defaultValue.getDecimal32(record);
+            } else {
+                leadValue = memory.getInt(startOffset + firstIdx * Integer.BYTES);
+            }
+            boolean respectNulls = !ignoreNulls || i != Decimals.DECIMAL32_NULL;
+            if (respectNulls) {
+                memory.putInt(startOffset + firstIdx * Integer.BYTES, i);
+            }
+            Unsafe.putInt(spi.getAddress(recordOffset, columnIndex), leadValue);
+            return respectNulls;
+        }
+    }
+
     static class Decimal64LeadFunction extends LeadLagWindowFunctionFactoryHelper.BaseLeadFunction implements Reopenable {
 
         private final int type;
@@ -674,162 +833,6 @@ public class LeadDecimalFunctionFactory extends AbstractWindowFunctionFactory {
                 memory.putByte(startOffset + firstIdx * Byte.BYTES, b);
             }
             Unsafe.putByte(spi.getAddress(recordOffset, columnIndex), leadValue);
-            return respectNulls;
-        }
-    }
-
-    static class Decimal16LeadFunction extends LeadLagWindowFunctionFactoryHelper.BaseLeadFunction implements Reopenable {
-
-        private final int type;
-
-        public Decimal16LeadFunction(Function arg, Function defaultValueFunc, long offset, MemoryARW memory, boolean ignoreNulls, int type) {
-            super(arg, defaultValueFunc, offset, memory, ignoreNulls);
-            this.type = type;
-        }
-
-        @Override
-        public int getType() {
-            return type;
-        }
-
-        @Override
-        protected boolean doPass1(Record record, long recordOffset, WindowSPI spi) {
-            short leadValue;
-            if (count < offset) {
-                leadValue = defaultValue == null ? Decimals.DECIMAL16_NULL : defaultValue.getDecimal16(record);
-            } else {
-                leadValue = buffer.getShort((long) loIdx * Short.BYTES);
-            }
-            short s = arg.getDecimal16(record);
-            boolean respectNull = !ignoreNulls || s != Decimals.DECIMAL16_NULL;
-            if (respectNull) {
-                buffer.putShort((long) loIdx * Short.BYTES, s);
-            }
-            Unsafe.putShort(spi.getAddress(recordOffset, columnIndex), leadValue);
-            return respectNull;
-        }
-    }
-
-    static class Decimal16LeadOverPartitionFunction extends LeadLagWindowFunctionFactoryHelper.BaseLeadOverPartitionFunction {
-
-        private final int type;
-
-        public Decimal16LeadOverPartitionFunction(Map map,
-                                                  VirtualRecord partitionByRecord,
-                                                  RecordSink partitionBySink,
-                                                  MemoryARW memory,
-                                                  Function arg,
-                                                  boolean ignoreNulls,
-                                                  Function defaultValue,
-                                                  long offset,
-                                                  int type) {
-            super(map, partitionByRecord, partitionBySink, memory, arg, ignoreNulls, defaultValue, offset);
-            this.type = type;
-        }
-
-        @Override
-        public int getType() {
-            return type;
-        }
-
-        @Override
-        protected boolean doPass1(long count,
-                                  long offset,
-                                  long startOffset,
-                                  long firstIdx,
-                                  Record record,
-                                  long recordOffset,
-                                  WindowSPI spi) {
-            short s = arg.getDecimal16(record);
-            short leadValue;
-            if (count < offset) {
-                leadValue = defaultValue == null ? Decimals.DECIMAL16_NULL : defaultValue.getDecimal16(record);
-            } else {
-                leadValue = memory.getShort(startOffset + firstIdx * Short.BYTES);
-            }
-            boolean respectNulls = !ignoreNulls || s != Decimals.DECIMAL16_NULL;
-            if (respectNulls) {
-                memory.putShort(startOffset + firstIdx * Short.BYTES, s);
-            }
-            Unsafe.putShort(spi.getAddress(recordOffset, columnIndex), leadValue);
-            return respectNulls;
-        }
-    }
-
-    static class Decimal32LeadFunction extends LeadLagWindowFunctionFactoryHelper.BaseLeadFunction implements Reopenable {
-
-        private final int type;
-
-        public Decimal32LeadFunction(Function arg, Function defaultValueFunc, long offset, MemoryARW memory, boolean ignoreNulls, int type) {
-            super(arg, defaultValueFunc, offset, memory, ignoreNulls);
-            this.type = type;
-        }
-
-        @Override
-        public int getType() {
-            return type;
-        }
-
-        @Override
-        protected boolean doPass1(Record record, long recordOffset, WindowSPI spi) {
-            int leadValue;
-            if (count < offset) {
-                leadValue = defaultValue == null ? Decimals.DECIMAL32_NULL : defaultValue.getDecimal32(record);
-            } else {
-                leadValue = buffer.getInt((long) loIdx * Integer.BYTES);
-            }
-            int i = arg.getDecimal32(record);
-            boolean respectNull = !ignoreNulls || i != Decimals.DECIMAL32_NULL;
-            if (respectNull) {
-                buffer.putInt((long) loIdx * Integer.BYTES, i);
-            }
-            Unsafe.putInt(spi.getAddress(recordOffset, columnIndex), leadValue);
-            return respectNull;
-        }
-    }
-
-    static class Decimal32LeadOverPartitionFunction extends LeadLagWindowFunctionFactoryHelper.BaseLeadOverPartitionFunction {
-
-        private final int type;
-
-        public Decimal32LeadOverPartitionFunction(Map map,
-                                                  VirtualRecord partitionByRecord,
-                                                  RecordSink partitionBySink,
-                                                  MemoryARW memory,
-                                                  Function arg,
-                                                  boolean ignoreNulls,
-                                                  Function defaultValue,
-                                                  long offset,
-                                                  int type) {
-            super(map, partitionByRecord, partitionBySink, memory, arg, ignoreNulls, defaultValue, offset);
-            this.type = type;
-        }
-
-        @Override
-        public int getType() {
-            return type;
-        }
-
-        @Override
-        protected boolean doPass1(long count,
-                                  long offset,
-                                  long startOffset,
-                                  long firstIdx,
-                                  Record record,
-                                  long recordOffset,
-                                  WindowSPI spi) {
-            int i = arg.getDecimal32(record);
-            int leadValue;
-            if (count < offset) {
-                leadValue = defaultValue == null ? Decimals.DECIMAL32_NULL : defaultValue.getDecimal32(record);
-            } else {
-                leadValue = memory.getInt(startOffset + firstIdx * Integer.BYTES);
-            }
-            boolean respectNulls = !ignoreNulls || i != Decimals.DECIMAL32_NULL;
-            if (respectNulls) {
-                memory.putInt(startOffset + firstIdx * Integer.BYTES, i);
-            }
-            Unsafe.putInt(spi.getAddress(recordOffset, columnIndex), leadValue);
             return respectNulls;
         }
     }

@@ -69,58 +69,6 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
     private static final String NAME = "avg";
     private static final String SIGNATURE = NAME + "(Ξi)";
 
-    static void doDivide(Decimal256 acc, long count, int argScale, int targetScale, int position, Decimal256 outScratch) {
-        outScratch.copyRaw(acc);
-        outScratch.setScale(argScale);
-        try {
-            outScratch.divide(0, 0, 0, count, 0, targetScale, RoundingMode.HALF_EVEN);
-        } catch (NumericException e) {
-            throw CairoException.nonCritical().position(position).put("avg aggregation failed: ").put(e.getFlyweightMessage());
-        }
-    }
-
-    private static void readD256(MemoryARW mem, long offset, Decimal256 sink) {
-        sink.ofRaw(
-                mem.getLong(offset),
-                mem.getLong(offset + Long.BYTES),
-                mem.getLong(offset + 2 * Long.BYTES),
-                mem.getLong(offset + 3 * Long.BYTES)
-        );
-    }
-
-    static void writeSink(WindowSPI spi, long recordOffset, int columnIndex, Decimal256 v, int targetType) {
-        final long addr = spi.getAddress(recordOffset, columnIndex);
-        switch (ColumnType.tagOf(targetType)) {
-            case ColumnType.DECIMAL8:
-                Unsafe.putByte(addr, v.isNull() ? Decimals.DECIMAL8_NULL : (byte) v.getLl());
-                break;
-            case ColumnType.DECIMAL16:
-                Unsafe.putShort(addr, v.isNull() ? Decimals.DECIMAL16_NULL : (short) v.getLl());
-                break;
-            case ColumnType.DECIMAL32:
-                Unsafe.putInt(addr, v.isNull() ? Decimals.DECIMAL32_NULL : (int) v.getLl());
-                break;
-            case ColumnType.DECIMAL64:
-                Unsafe.putLong(addr, v.isNull() ? Decimals.DECIMAL64_NULL : v.getLl());
-                break;
-            case ColumnType.DECIMAL128:
-                if (v.isNull()) {
-                    Unsafe.putLong(addr, Decimals.DECIMAL128_HI_NULL);
-                    Unsafe.putLong(addr + Long.BYTES, Decimals.DECIMAL128_LO_NULL);
-                } else {
-                    Unsafe.putLong(addr, v.getLh());
-                    Unsafe.putLong(addr + Long.BYTES, v.getLl());
-                }
-                break;
-            default:
-                Unsafe.putLong(addr, v.getHh());
-                Unsafe.putLong(addr + Long.BYTES, v.getHl());
-                Unsafe.putLong(addr + 2 * Long.BYTES, v.getLh());
-                Unsafe.putLong(addr + 3 * Long.BYTES, v.getLl());
-                break;
-        }
-    }
-
     @Override
     public String getSignature() {
         return SIGNATURE;
@@ -199,6 +147,15 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
             default ->
                     throw SqlException.$(argPos, "avg(decimal, scale) is not yet implemented for ").put(ColumnType.nameOf(tag));
         };
+    }
+
+    private static void readD256(MemoryARW mem, long offset, Decimal256 sink) {
+        sink.ofRaw(
+                mem.getLong(offset),
+                mem.getLong(offset + Long.BYTES),
+                mem.getLong(offset + 2 * Long.BYTES),
+                mem.getLong(offset + 3 * Long.BYTES)
+        );
     }
 
     private Function newInstanceDecimal128(
@@ -927,6 +884,49 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
         throw SqlException.$(position, "function not implemented for given window parameters");
     }
 
+    static void doDivide(Decimal256 acc, long count, int argScale, int targetScale, int position, Decimal256 outScratch) {
+        outScratch.copyRaw(acc);
+        outScratch.setScale(argScale);
+        try {
+            outScratch.divide(0, 0, 0, count, 0, targetScale, RoundingMode.HALF_EVEN);
+        } catch (NumericException e) {
+            throw CairoException.nonCritical().position(position).put("avg aggregation failed: ").put(e.getFlyweightMessage());
+        }
+    }
+
+    static void writeSink(WindowSPI spi, long recordOffset, int columnIndex, Decimal256 v, int targetType) {
+        final long addr = spi.getAddress(recordOffset, columnIndex);
+        switch (ColumnType.tagOf(targetType)) {
+            case ColumnType.DECIMAL8:
+                Unsafe.putByte(addr, v.isNull() ? Decimals.DECIMAL8_NULL : (byte) v.getLl());
+                break;
+            case ColumnType.DECIMAL16:
+                Unsafe.putShort(addr, v.isNull() ? Decimals.DECIMAL16_NULL : (short) v.getLl());
+                break;
+            case ColumnType.DECIMAL32:
+                Unsafe.putInt(addr, v.isNull() ? Decimals.DECIMAL32_NULL : (int) v.getLl());
+                break;
+            case ColumnType.DECIMAL64:
+                Unsafe.putLong(addr, v.isNull() ? Decimals.DECIMAL64_NULL : v.getLl());
+                break;
+            case ColumnType.DECIMAL128:
+                if (v.isNull()) {
+                    Unsafe.putLong(addr, Decimals.DECIMAL128_HI_NULL);
+                    Unsafe.putLong(addr + Long.BYTES, Decimals.DECIMAL128_LO_NULL);
+                } else {
+                    Unsafe.putLong(addr, v.getLh());
+                    Unsafe.putLong(addr + Long.BYTES, v.getLl());
+                }
+                break;
+            default:
+                Unsafe.putLong(addr, v.getHh());
+                Unsafe.putLong(addr + Long.BYTES, v.getHl());
+                Unsafe.putLong(addr + 2 * Long.BYTES, v.getLh());
+                Unsafe.putLong(addr + 3 * Long.BYTES, v.getLl());
+                break;
+        }
+    }
+
     static class Decimal128Rescale256AvgOverCurrentRowFunction extends BaseWindowFunction {
 
         private final int argScale;
@@ -1080,26 +1080,6 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
             mv.getDecimal256(0, acc);
             doDivide(acc, count, argScale, targetScale, position, divScratch);
             writeSink(spi, recordOffset, columnIndex, divScratch, targetType);
-        }
-
-        private boolean computeAvg(Record rec) {
-            partitionByRecord.of(rec);
-            MapKey key = map.withKey();
-            key.put(partitionByRecord, partitionBySink);
-            MapValue mv = key.findValue();
-            if (mv == null) {
-                return false;
-            }
-            long count = mv.getLong(1);
-            if (count == 0) {
-                return false;
-            }
-            mv.getDecimal256(0, acc);
-            if (!acc.isNull() && acc.hasOverflowed()) {
-                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
-            }
-            doDivide(acc, count, argScale, targetScale, position, divScratch);
-            return true;
         }
 
         private void writeNull(long addr) {
@@ -2551,26 +2531,6 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
             mv.getDecimal256(0, acc);
             doDivide(acc, count, argScale, targetScale, position, divScratch);
             writeSink(spi, recordOffset, columnIndex, divScratch, targetType);
-        }
-
-        private boolean computeAvg(Record rec) {
-            partitionByRecord.of(rec);
-            MapKey key = map.withKey();
-            key.put(partitionByRecord, partitionBySink);
-            MapValue mv = key.findValue();
-            if (mv == null) {
-                return false;
-            }
-            long count = mv.getLong(1);
-            if (count == 0) {
-                return false;
-            }
-            mv.getDecimal256(0, acc);
-            if (!acc.isNull() && acc.hasOverflowed()) {
-                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
-            }
-            doDivide(acc, count, argScale, targetScale, position, divScratch);
-            return true;
         }
 
         private void writeNull(long addr) {
@@ -4132,26 +4092,6 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
             writeSink(spi, recordOffset, columnIndex, divScratch, targetType);
         }
 
-        private boolean computeAvg(Record rec) {
-            partitionByRecord.of(rec);
-            MapKey key = map.withKey();
-            key.put(partitionByRecord, partitionBySink);
-            MapValue mv = key.findValue();
-            if (mv == null) {
-                return false;
-            }
-            long count = mv.getLong(1);
-            if (count == 0) {
-                return false;
-            }
-            mv.getDecimal256(0, acc);
-            if (!acc.isNull() && acc.hasOverflowed()) {
-                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
-            }
-            doDivide(acc, count, argScale, targetScale, position, divScratch);
-            return true;
-        }
-
         private void writeNull(long addr) {
             switch (ColumnType.tagOf(targetType)) {
                 case ColumnType.DECIMAL8:
@@ -5545,26 +5485,6 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
             mv.getDecimal256(0, acc);
             doDivide(acc, count, argScale, targetScale, position, divScratch);
             writeSink(spi, recordOffset, columnIndex, divScratch, targetType);
-        }
-
-        private boolean computeAvg(Record rec) {
-            partitionByRecord.of(rec);
-            MapKey key = map.withKey();
-            key.put(partitionByRecord, partitionBySink);
-            MapValue mv = key.findValue();
-            if (mv == null) {
-                return false;
-            }
-            long count = mv.getLong(1);
-            if (count == 0) {
-                return false;
-            }
-            mv.getDecimal256(0, acc);
-            if (!acc.isNull() && acc.hasOverflowed()) {
-                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
-            }
-            doDivide(acc, count, argScale, targetScale, position, divScratch);
-            return true;
         }
 
         private void writeNull(long addr) {
@@ -7082,26 +7002,6 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
             writeSink(spi, recordOffset, columnIndex, divScratch, targetType);
         }
 
-        private boolean computeAvg(Record rec) {
-            partitionByRecord.of(rec);
-            MapKey key = map.withKey();
-            key.put(partitionByRecord, partitionBySink);
-            MapValue mv = key.findValue();
-            if (mv == null) {
-                return false;
-            }
-            long count = mv.getLong(1);
-            if (count == 0) {
-                return false;
-            }
-            mv.getDecimal256(0, acc);
-            if (!acc.isNull() && acc.hasOverflowed()) {
-                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
-            }
-            doDivide(acc, count, argScale, targetScale, position, divScratch);
-            return true;
-        }
-
         private void writeNull(long addr) {
             switch (ColumnType.tagOf(targetType)) {
                 case ColumnType.DECIMAL8:
@@ -8592,26 +8492,6 @@ public class AvgDecimalRescaleWindowFunctionFactory extends AbstractWindowFuncti
             mv.getDecimal256(0, acc);
             doDivide(acc, count, argScale, targetScale, position, divScratch);
             writeSink(spi, recordOffset, columnIndex, divScratch, targetType);
-        }
-
-        private boolean computeAvg(Record rec) {
-            partitionByRecord.of(rec);
-            MapKey key = map.withKey();
-            key.put(partitionByRecord, partitionBySink);
-            MapValue mv = key.findValue();
-            if (mv == null) {
-                return false;
-            }
-            long count = mv.getLong(1);
-            if (count == 0) {
-                return false;
-            }
-            mv.getDecimal256(0, acc);
-            if (!acc.isNull() && acc.hasOverflowed()) {
-                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
-            }
-            doDivide(acc, count, argScale, targetScale, position, divScratch);
-            return true;
         }
 
         private void writeNull(long addr) {

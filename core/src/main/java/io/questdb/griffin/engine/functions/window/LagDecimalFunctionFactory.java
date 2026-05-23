@@ -134,7 +134,8 @@ public class LagDecimalFunctionFactory extends AbstractWindowFunctionFactory {
                     (partitionByRecord, arg, name, ignoreNulls) -> new Decimal256LeadLagValueCurrentRow(partitionByRecord, arg, name, ignoreNulls, argType),
                     (map, partitionByRecord, partitionBySink, memory, arg, ignoreNulls, defaultValue, offset) -> new Decimal256LagOverPartitionFunction(map, partitionByRecord, partitionBySink, memory, arg, ignoreNulls, defaultValue, offset, argType)
             );
-            default -> throw SqlException.$(argPositions.getQuick(0), "lag is not yet implemented for ").put(ColumnType.nameOf(tag));
+            default ->
+                    throw SqlException.$(argPositions.getQuick(0), "lag is not yet implemented for ").put(ColumnType.nameOf(tag));
         };
     }
 
