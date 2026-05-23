@@ -97,6 +97,13 @@ offending character, not the start of the expression.
   once", no rewording prior commits, no force pushes to clean up. Adding a
   fix-up commit on top is always fine. The squash flow folds the lot at merge
   time anyway.
+- **Do not create worktrees or `pr-*` checkout branches when reviewing or
+  iterating on a PR.** All work belongs on `vi_api`. Even when a PR exists on a
+  separate branch (e.g. `pr-7128`), the canonical state to review and modify is
+  whatever is currently merged into `vi_api` — follow-up fixes routinely land
+  there directly, so `pr-*` branches lag and reviewing them in isolation gives
+  a misleading picture. If a `gh pr` command needs to fetch a PR's diff, fetch
+  the diff only (`gh pr diff`); do not check the branch out.
 
 ## Investigating failures
 

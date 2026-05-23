@@ -27,7 +27,6 @@ package io.questdb.test.cutlass.qwp;
 import io.questdb.client.cutlass.qwp.client.QwpColumnBatch;
 import io.questdb.client.cutlass.qwp.client.QwpColumnBatchHandler;
 import io.questdb.client.cutlass.qwp.client.QwpQueryClient;
-import io.questdb.test.AbstractBootstrapTest;
 import io.questdb.test.TestServerMain;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -54,7 +53,7 @@ import org.junit.Test;
  * reuse flag lives in {@code QwpEgressProcessorStateTest}.
  */
 @Ignore("long-running (~1-2 min); run manually")
-public class QwpEgressSchemaIdExhaustionTest extends AbstractBootstrapTest {
+public class QwpEgressSchemaIdExhaustionTest extends AbstractQwpBootstrapTest {
 
     @Before
     public void setUp() {
@@ -71,7 +70,7 @@ public class QwpEgressSchemaIdExhaustionTest extends AbstractBootstrapTest {
         // so running the *same* SELECT 65_536 times consumes exactly one slot
         // and all queries succeed.
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables()) {
+            try (final TestServerMain serverMain = startFragmented()) {
                 serverMain.execute("CREATE TABLE t(id LONG, ts TIMESTAMP) "
                         + "TIMESTAMP(ts) PARTITION BY DAY WAL");
                 serverMain.execute("INSERT INTO t VALUES (1, 0::TIMESTAMP)");
@@ -117,4 +116,5 @@ public class QwpEgressSchemaIdExhaustionTest extends AbstractBootstrapTest {
             errorMessage = null;
         }
     }
+
 }
