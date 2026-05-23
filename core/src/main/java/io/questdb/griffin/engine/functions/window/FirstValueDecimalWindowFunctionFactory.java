@@ -254,9 +254,15 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
                 } else if (rowsLo == 0 && rowsHi == 0) {
                     return new Decimal128FirstValueOverCurrentRowFunction(args.get(0), true, argType);
                 } else {
-                    MemoryARW mem = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
-                            configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
-                    return new Decimal128FirstNotNullOverRowsFrameFunction(args.get(0), rowsLo, rowsHi, mem, argType);
+                    MemoryARW mem = null;
+                    try {
+                        mem = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
+                                configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
+                        return new Decimal128FirstNotNullOverRowsFrameFunction(args.get(0), rowsLo, rowsHi, mem, argType);
+                    } catch (Throwable th) {
+                        Misc.free(mem);
+                        throw th;
+                    }
                 }
             }
         }
@@ -387,9 +393,15 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
                 } else if (rowsLo == 0 && rowsHi == 0) {
                     return new Decimal128FirstValueOverCurrentRowFunction(args.get(0), false, argType);
                 } else {
-                    MemoryARW mem = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
-                            configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
-                    return new Decimal128FirstValueOverRowsFrameFunction(args.get(0), rowsLo, rowsHi, mem, argType);
+                    MemoryARW mem = null;
+                    try {
+                        mem = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
+                                configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
+                        return new Decimal128FirstValueOverRowsFrameFunction(args.get(0), rowsLo, rowsHi, mem, argType);
+                    } catch (Throwable th) {
+                        Misc.free(mem);
+                        throw th;
+                    }
                 }
             }
         }
@@ -521,9 +533,15 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
                 } else if (rowsLo == 0 && rowsHi == 0) {
                     return new Decimal16FirstValueOverCurrentRowFunction(args.get(0), true, argType);
                 } else {
-                    MemoryARW mem = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
-                            configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
-                    return new Decimal16FirstNotNullOverRowsFrameFunction(args.get(0), rowsLo, rowsHi, mem, argType);
+                    MemoryARW mem = null;
+                    try {
+                        mem = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
+                                configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
+                        return new Decimal16FirstNotNullOverRowsFrameFunction(args.get(0), rowsLo, rowsHi, mem, argType);
+                    } catch (Throwable th) {
+                        Misc.free(mem);
+                        throw th;
+                    }
                 }
             }
         }
@@ -655,9 +673,15 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
                 } else if (rowsLo == 0 && rowsHi == 0) {
                     return new Decimal16FirstValueOverCurrentRowFunction(args.get(0), false, argType);
                 } else {
-                    MemoryARW mem = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
-                            configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
-                    return new Decimal16FirstValueOverRowsFrameFunction(args.get(0), rowsLo, rowsHi, mem, argType);
+                    MemoryARW mem = null;
+                    try {
+                        mem = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
+                                configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
+                        return new Decimal16FirstValueOverRowsFrameFunction(args.get(0), rowsLo, rowsHi, mem, argType);
+                    } catch (Throwable th) {
+                        Misc.free(mem);
+                        throw th;
+                    }
                 }
             }
         }
@@ -790,9 +814,15 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
                 } else if (rowsLo == 0 && rowsHi == 0) {
                     return new Decimal256FirstValueOverCurrentRowFunction(args.get(0), true, argType);
                 } else {
-                    MemoryARW mem = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
-                            configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
-                    return new Decimal256FirstNotNullOverRowsFrameFunction(args.get(0), rowsLo, rowsHi, mem, argType);
+                    MemoryARW mem = null;
+                    try {
+                        mem = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
+                                configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
+                        return new Decimal256FirstNotNullOverRowsFrameFunction(args.get(0), rowsLo, rowsHi, mem, argType);
+                    } catch (Throwable th) {
+                        Misc.free(mem);
+                        throw th;
+                    }
                 }
             }
         }
@@ -923,9 +953,15 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
                 } else if (rowsLo == 0 && rowsHi == 0) {
                     return new Decimal256FirstValueOverCurrentRowFunction(args.get(0), false, argType);
                 } else {
-                    MemoryARW mem = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
-                            configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
-                    return new Decimal256FirstValueOverRowsFrameFunction(args.get(0), rowsLo, rowsHi, mem, argType);
+                    MemoryARW mem = null;
+                    try {
+                        mem = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
+                                configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
+                        return new Decimal256FirstValueOverRowsFrameFunction(args.get(0), rowsLo, rowsHi, mem, argType);
+                    } catch (Throwable th) {
+                        Misc.free(mem);
+                        throw th;
+                    }
                 }
             }
         }
@@ -1057,9 +1093,15 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
                 } else if (rowsLo == 0 && rowsHi == 0) {
                     return new Decimal32FirstValueOverCurrentRowFunction(args.get(0), true, argType);
                 } else {
-                    MemoryARW mem = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
-                            configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
-                    return new Decimal32FirstNotNullOverRowsFrameFunction(args.get(0), rowsLo, rowsHi, mem, argType);
+                    MemoryARW mem = null;
+                    try {
+                        mem = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
+                                configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
+                        return new Decimal32FirstNotNullOverRowsFrameFunction(args.get(0), rowsLo, rowsHi, mem, argType);
+                    } catch (Throwable th) {
+                        Misc.free(mem);
+                        throw th;
+                    }
                 }
             }
         }
@@ -1191,9 +1233,15 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
                 } else if (rowsLo == 0 && rowsHi == 0) {
                     return new Decimal32FirstValueOverCurrentRowFunction(args.get(0), false, argType);
                 } else {
-                    MemoryARW mem = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
-                            configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
-                    return new Decimal32FirstValueOverRowsFrameFunction(args.get(0), rowsLo, rowsHi, mem, argType);
+                    MemoryARW mem = null;
+                    try {
+                        mem = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
+                                configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
+                        return new Decimal32FirstValueOverRowsFrameFunction(args.get(0), rowsLo, rowsHi, mem, argType);
+                    } catch (Throwable th) {
+                        Misc.free(mem);
+                        throw th;
+                    }
                 }
             }
         }
@@ -1326,9 +1374,15 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
                 } else if (rowsLo == 0 && rowsHi == 0) {
                     return new Decimal64FirstValueOverCurrentRowFunction(args.get(0), true, argType);
                 } else {
-                    MemoryARW mem = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
-                            configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
-                    return new Decimal64FirstNotNullOverRowsFrameFunction(args.get(0), rowsLo, rowsHi, mem, argType);
+                    MemoryARW mem = null;
+                    try {
+                        mem = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
+                                configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
+                        return new Decimal64FirstNotNullOverRowsFrameFunction(args.get(0), rowsLo, rowsHi, mem, argType);
+                    } catch (Throwable th) {
+                        Misc.free(mem);
+                        throw th;
+                    }
                 }
             }
         }
@@ -1460,9 +1514,15 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
                 } else if (rowsLo == 0 && rowsHi == 0) {
                     return new Decimal64FirstValueOverCurrentRowFunction(args.get(0), false, argType);
                 } else {
-                    MemoryARW mem = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
-                            configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
-                    return new Decimal64FirstValueOverRowsFrameFunction(args.get(0), rowsLo, rowsHi, mem, argType);
+                    MemoryARW mem = null;
+                    try {
+                        mem = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
+                                configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
+                        return new Decimal64FirstValueOverRowsFrameFunction(args.get(0), rowsLo, rowsHi, mem, argType);
+                    } catch (Throwable th) {
+                        Misc.free(mem);
+                        throw th;
+                    }
                 }
             }
         }
@@ -1595,9 +1655,15 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
                 } else if (rowsLo == 0 && rowsHi == 0) {
                     return new Decimal8FirstValueOverCurrentRowFunction(args.get(0), true, argType);
                 } else {
-                    MemoryARW mem = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
-                            configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
-                    return new Decimal8FirstNotNullOverRowsFrameFunction(args.get(0), rowsLo, rowsHi, mem, argType);
+                    MemoryARW mem = null;
+                    try {
+                        mem = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
+                                configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
+                        return new Decimal8FirstNotNullOverRowsFrameFunction(args.get(0), rowsLo, rowsHi, mem, argType);
+                    } catch (Throwable th) {
+                        Misc.free(mem);
+                        throw th;
+                    }
                 }
             }
         }
@@ -1729,9 +1795,15 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
                 } else if (rowsLo == 0 && rowsHi == 0) {
                     return new Decimal8FirstValueOverCurrentRowFunction(args.get(0), false, argType);
                 } else {
-                    MemoryARW mem = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
-                            configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
-                    return new Decimal8FirstValueOverRowsFrameFunction(args.get(0), rowsLo, rowsHi, mem, argType);
+                    MemoryARW mem = null;
+                    try {
+                        mem = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
+                                configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
+                        return new Decimal8FirstValueOverRowsFrameFunction(args.get(0), rowsLo, rowsHi, mem, argType);
+                    } catch (Throwable th) {
+                        Misc.free(mem);
+                        throw th;
+                    }
                 }
             }
         }

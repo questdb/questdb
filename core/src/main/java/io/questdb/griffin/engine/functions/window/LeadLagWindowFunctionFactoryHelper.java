@@ -630,8 +630,8 @@ public class LeadLagWindowFunctionFactoryHelper {
 
     static {
         LAG_COLUMN_TYPES = new ArrayColumnTypes();
-        LAG_COLUMN_TYPES.add(ColumnType.LONG); // position of current oldest element
         LAG_COLUMN_TYPES.add(ColumnType.LONG); // start offset of native array
+        LAG_COLUMN_TYPES.add(ColumnType.LONG); // position of current oldest element
         LAG_COLUMN_TYPES.add(ColumnType.LONG); // count
     }
 }

@@ -128,7 +128,7 @@ public class NthValueDecimalWindowFunctionFactory extends AbstractWindowFunction
             case ColumnType.DECIMAL256 ->
                     newInstanceDecimal256(position, args, configuration, windowContext, n, argType);
             default ->
-                    throw SqlException.$(position, "nth_value is not yet implemented for ").put(ColumnType.nameOf(tag));
+                    throw SqlException.$(argPositions.getQuick(0), "nth_value is not yet implemented for ").put(ColumnType.nameOf(tag));
         };
     }
 
@@ -2397,11 +2397,6 @@ public class NthValueDecimalWindowFunctionFactory extends AbstractWindowFunction
         }
 
         @Override
-        public void getDecimal128(Record rec, Decimal128 sink) {
-            sink.copyFrom(value);
-        }
-
-        @Override
         public String getName() {
             return NAME;
         }
@@ -3673,11 +3668,6 @@ public class NthValueDecimalWindowFunctionFactory extends AbstractWindowFunction
             super(arg);
             this.n = n;
             this.type = type;
-        }
-
-        @Override
-        public short getDecimal16(Record rec) {
-            return value;
         }
 
         @Override
@@ -5026,11 +5016,6 @@ public class NthValueDecimalWindowFunctionFactory extends AbstractWindowFunction
         }
 
         @Override
-        public void getDecimal256(Record rec, Decimal256 sink) {
-            sink.copyRaw(value);
-        }
-
-        @Override
         public String getName() {
             return NAME;
         }
@@ -6304,11 +6289,6 @@ public class NthValueDecimalWindowFunctionFactory extends AbstractWindowFunction
             super(arg);
             this.n = n;
             this.type = type;
-        }
-
-        @Override
-        public int getDecimal32(Record rec) {
-            return value;
         }
 
         @Override
@@ -8853,11 +8833,6 @@ public class NthValueDecimalWindowFunctionFactory extends AbstractWindowFunction
             super(arg);
             this.n = n;
             this.type = type;
-        }
-
-        @Override
-        public byte getDecimal8(Record rec) {
-            return value;
         }
 
         @Override

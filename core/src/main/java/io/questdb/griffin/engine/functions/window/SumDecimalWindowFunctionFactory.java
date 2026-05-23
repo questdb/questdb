@@ -111,7 +111,7 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                     ColumnType.getDecimalType(Decimals.getDecimalTagPrecision(ColumnType.DECIMAL128), argScale);
             case ColumnType.DECIMAL128, ColumnType.DECIMAL256 ->
                     ColumnType.getDecimalType(Decimals.getDecimalTagPrecision(ColumnType.DECIMAL256), argScale);
-            default -> throw SqlException.$(position, "sum is not yet implemented for ").put(ColumnType.nameOf(tag));
+            default -> throw SqlException.$(argPos, "sum is not yet implemented for ").put(ColumnType.nameOf(tag));
         };
 
         if (rowsHi < rowsLo) {
@@ -126,120 +126,15 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             };
         }
 
-        switch (tag) {
-            case ColumnType.DECIMAL8:
-                return newInstanceDecimal8(position, args, configuration, sqlExecutionContext, outputType);
-            case ColumnType.DECIMAL16:
-                return newInstanceDecimal16(position, args, configuration, sqlExecutionContext, outputType);
-            case ColumnType.DECIMAL32:
-                return newInstanceDecimal32(position, args, configuration, sqlExecutionContext, outputType, argPos);
-            case ColumnType.DECIMAL128:
-                return newInstanceDecimal128(position, args, configuration, sqlExecutionContext, outputType, argPos);
-            case ColumnType.DECIMAL256:
-                return newInstanceDecimal256(position, args, configuration, sqlExecutionContext, argType, argPos);
-        }
-
-        if (partitionByRecord != null) {
-            if (framingMode == WindowExpression.FRAMING_RANGE) {
-                if (windowContext.isDefaultFrame() && (!windowContext.isOrdered() || windowContext.getRowsHi() == Long.MAX_VALUE)) {
-                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, SUM_DECIMAL64_TYPES);
-                    try {
-                        return new Decimal64SumOverPartitionFunction(map, partitionByRecord, partitionBySink, arg, outputType, argPos);
-                    } catch (Throwable th) {
-                        Misc.free(map);
-                        throw th;
-                    }
-                } else if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
-                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, SUM_DECIMAL64_TYPES);
-                    try {
-                        return new Decimal64SumOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, arg, outputType, argPos);
-                    } catch (Throwable th) {
-                        Misc.free(map);
-                        throw th;
-                    }
-                } else {
-                    if (windowContext.isOrdered() && !windowContext.isOrderedByDesignatedTimestamp()) {
-                        throw SqlException.$(windowContext.getOrderByPos(), "RANGE is supported only for queries ordered by designated timestamp");
-                    }
-                    int timestampIndex = windowContext.getTimestampIndex();
-                    Map map = null;
-                    MemoryARW mem = null;
-                    try {
-                        map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, SUM_DECIMAL64_OVER_PARTITION_RANGE_TYPES);
-                        mem = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
-                                configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
-                        return new Decimal64SumOverPartitionRangeFrameFunction(map, partitionByRecord, partitionBySink,
-                                rowsLo, rowsHi, arg, mem, configuration.getSqlWindowInitialRangeBufferSize(), timestampIndex, outputType, argPos);
-                    } catch (Throwable th) {
-                        Misc.free(map);
-                        Misc.free(mem);
-                        throw th;
-                    }
-                }
-            } else if (framingMode == WindowExpression.FRAMING_ROWS) {
-                if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
-                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, SUM_DECIMAL64_TYPES);
-                    try {
-                        return new Decimal64SumOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, arg, outputType, argPos);
-                    } catch (Throwable th) {
-                        Misc.free(map);
-                        throw th;
-                    }
-                } else if (rowsLo == 0 && rowsHi == 0) {
-                    return new Decimal64SumOverCurrentRowFunction(arg, outputType);
-                } else if (rowsLo == Long.MIN_VALUE && rowsHi == Long.MAX_VALUE) {
-                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, SUM_DECIMAL64_TYPES);
-                    try {
-                        return new Decimal64SumOverPartitionFunction(map, partitionByRecord, partitionBySink, arg, outputType, argPos);
-                    } catch (Throwable th) {
-                        Misc.free(map);
-                        throw th;
-                    }
-                } else {
-                    Map map = null;
-                    MemoryARW mem = null;
-                    try {
-                        map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, SUM_DECIMAL64_OVER_PARTITION_ROWS_TYPES);
-                        mem = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
-                                configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
-                        return new Decimal64SumOverPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink,
-                                rowsLo, rowsHi, arg, mem, outputType, argPos);
-                    } catch (Throwable th) {
-                        Misc.free(map);
-                        Misc.free(mem);
-                        throw th;
-                    }
-                }
-            }
-        } else {
-            if (framingMode == WindowExpression.FRAMING_RANGE) {
-                if (!windowContext.isOrdered() && windowContext.isDefaultFrame()) {
-                    return new Decimal64SumOverWholeResultSetFunction(arg, outputType, argPos);
-                } else if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
-                    return new Decimal64SumOverUnboundedRowsFrameFunction(arg, outputType, argPos);
-                } else {
-                    if (windowContext.isOrdered() && !windowContext.isOrderedByDesignatedTimestamp()) {
-                        throw SqlException.$(windowContext.getOrderByPos(), "RANGE is supported only for queries ordered by designated timestamp");
-                    }
-                    int timestampIndex = windowContext.getTimestampIndex();
-                    return new Decimal64SumOverRangeFrameFunction(rowsLo, rowsHi, arg, configuration, timestampIndex, outputType, argPos);
-                }
-            } else if (framingMode == WindowExpression.FRAMING_ROWS) {
-                if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
-                    return new Decimal64SumOverUnboundedRowsFrameFunction(arg, outputType, argPos);
-                } else if (rowsLo == 0 && rowsHi == 0) {
-                    return new Decimal64SumOverCurrentRowFunction(arg, outputType);
-                } else if (rowsLo == Long.MIN_VALUE && rowsHi == Long.MAX_VALUE) {
-                    return new Decimal64SumOverWholeResultSetFunction(arg, outputType, argPos);
-                } else {
-                    MemoryARW mem = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
-                            configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
-                    return new Decimal64SumOverRowsFrameFunction(arg, rowsLo, rowsHi, mem, outputType, argPos);
-                }
-            }
-        }
-
-        throw SqlException.$(position, "function not implemented for given window parameters");
+        return switch (tag) {
+            case ColumnType.DECIMAL8 -> newInstanceDecimal8(position, args, configuration, sqlExecutionContext, outputType);
+            case ColumnType.DECIMAL16 -> newInstanceDecimal16(position, args, configuration, sqlExecutionContext, outputType);
+            case ColumnType.DECIMAL32 -> newInstanceDecimal32(position, args, configuration, sqlExecutionContext, outputType, argPos);
+            case ColumnType.DECIMAL64 -> newInstanceDecimal64(position, args, configuration, sqlExecutionContext, outputType, argPos);
+            case ColumnType.DECIMAL128 -> newInstanceDecimal128(position, args, configuration, sqlExecutionContext, outputType, argPos);
+            case ColumnType.DECIMAL256 -> newInstanceDecimal256(position, args, configuration, sqlExecutionContext, argType, argPos);
+            default -> throw SqlException.$(argPos, "sum is not yet implemented for ").put(ColumnType.nameOf(tag));
+        };
     }
 
     private static void readD256(MemoryARW mem, long offset, Decimal256 sink) {
@@ -737,6 +632,126 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         throw SqlException.$(position, "function not implemented for given window parameters");
     }
 
+    private Function newInstanceDecimal64(
+            int position,
+            ObjList<Function> args,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext,
+            int outputType,
+            int argPos
+    ) throws SqlException {
+        WindowContext windowContext = sqlExecutionContext.getWindowContext();
+        int framingMode = windowContext.getFramingMode();
+        RecordSink partitionBySink = windowContext.getPartitionBySink();
+        ColumnTypes partitionByKeyTypes = windowContext.getPartitionByKeyTypes();
+        VirtualRecord partitionByRecord = windowContext.getPartitionByRecord();
+        long rowsLo = windowContext.getRowsLo();
+        long rowsHi = windowContext.getRowsHi();
+        Function arg = args.get(0);
+
+        if (partitionByRecord != null) {
+            if (framingMode == WindowExpression.FRAMING_RANGE) {
+                if (windowContext.isDefaultFrame() && (!windowContext.isOrdered() || windowContext.getRowsHi() == Long.MAX_VALUE)) {
+                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, SUM_DECIMAL64_TYPES);
+                    try {
+                        return new Decimal64SumOverPartitionFunction(map, partitionByRecord, partitionBySink, arg, outputType, argPos);
+                    } catch (Throwable th) {
+                        Misc.free(map);
+                        throw th;
+                    }
+                } else if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
+                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, SUM_DECIMAL64_TYPES);
+                    try {
+                        return new Decimal64SumOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, arg, outputType, argPos);
+                    } catch (Throwable th) {
+                        Misc.free(map);
+                        throw th;
+                    }
+                } else {
+                    if (windowContext.isOrdered() && !windowContext.isOrderedByDesignatedTimestamp()) {
+                        throw SqlException.$(windowContext.getOrderByPos(), "RANGE is supported only for queries ordered by designated timestamp");
+                    }
+                    int timestampIndex = windowContext.getTimestampIndex();
+                    Map map = null;
+                    MemoryARW mem = null;
+                    try {
+                        map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, SUM_DECIMAL64_OVER_PARTITION_RANGE_TYPES);
+                        mem = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
+                                configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
+                        return new Decimal64SumOverPartitionRangeFrameFunction(map, partitionByRecord, partitionBySink,
+                                rowsLo, rowsHi, arg, mem, configuration.getSqlWindowInitialRangeBufferSize(), timestampIndex, outputType, argPos);
+                    } catch (Throwable th) {
+                        Misc.free(map);
+                        Misc.free(mem);
+                        throw th;
+                    }
+                }
+            } else if (framingMode == WindowExpression.FRAMING_ROWS) {
+                if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
+                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, SUM_DECIMAL64_TYPES);
+                    try {
+                        return new Decimal64SumOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, arg, outputType, argPos);
+                    } catch (Throwable th) {
+                        Misc.free(map);
+                        throw th;
+                    }
+                } else if (rowsLo == 0 && rowsHi == 0) {
+                    return new Decimal64SumOverCurrentRowFunction(arg, outputType);
+                } else if (rowsLo == Long.MIN_VALUE && rowsHi == Long.MAX_VALUE) {
+                    Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, SUM_DECIMAL64_TYPES);
+                    try {
+                        return new Decimal64SumOverPartitionFunction(map, partitionByRecord, partitionBySink, arg, outputType, argPos);
+                    } catch (Throwable th) {
+                        Misc.free(map);
+                        throw th;
+                    }
+                } else {
+                    Map map = null;
+                    MemoryARW mem = null;
+                    try {
+                        map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, SUM_DECIMAL64_OVER_PARTITION_ROWS_TYPES);
+                        mem = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
+                                configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
+                        return new Decimal64SumOverPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink,
+                                rowsLo, rowsHi, arg, mem, outputType, argPos);
+                    } catch (Throwable th) {
+                        Misc.free(map);
+                        Misc.free(mem);
+                        throw th;
+                    }
+                }
+            }
+        } else {
+            if (framingMode == WindowExpression.FRAMING_RANGE) {
+                if (!windowContext.isOrdered() && windowContext.isDefaultFrame()) {
+                    return new Decimal64SumOverWholeResultSetFunction(arg, outputType, argPos);
+                } else if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
+                    return new Decimal64SumOverUnboundedRowsFrameFunction(arg, outputType, argPos);
+                } else {
+                    if (windowContext.isOrdered() && !windowContext.isOrderedByDesignatedTimestamp()) {
+                        throw SqlException.$(windowContext.getOrderByPos(), "RANGE is supported only for queries ordered by designated timestamp");
+                    }
+                    int timestampIndex = windowContext.getTimestampIndex();
+                    return new Decimal64SumOverRangeFrameFunction(rowsLo, rowsHi, arg, configuration, timestampIndex, outputType, argPos);
+                }
+            } else if (framingMode == WindowExpression.FRAMING_ROWS) {
+                if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
+                    return new Decimal64SumOverUnboundedRowsFrameFunction(arg, outputType, argPos);
+                } else if (rowsLo == 0 && rowsHi == 0) {
+                    return new Decimal64SumOverCurrentRowFunction(arg, outputType);
+                } else if (rowsLo == Long.MIN_VALUE && rowsHi == Long.MAX_VALUE) {
+                    return new Decimal64SumOverWholeResultSetFunction(arg, outputType, argPos);
+                } else {
+                    MemoryARW mem = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
+                            configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
+                    return new Decimal64SumOverRowsFrameFunction(arg, rowsLo, rowsHi, mem, outputType, argPos);
+                }
+            }
+        }
+
+        throw SqlException.$(position, "function not implemented for given window parameters");
+    }
+
     private Function newInstanceDecimal8(
             int position,
             ObjList<Function> args,
@@ -925,14 +940,6 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             super(map, partitionByRecord, partitionBySink, arg);
             this.type = type;
             this.position = position;
-        }
-
-        @Override
-        public void getDecimal256(Record rec, Decimal256 sink) {
-            sink.copyRaw(value);
-            if (!sink.isNull() && sink.hasOverflowed()) {
-                throw CairoException.nonCritical().position(position).put("sum aggregation failed: an overflow occurred");
-            }
         }
 
         @Override
@@ -1514,18 +1521,23 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             this.initialCapacity = configuration.getSqlWindowStorePageSize() / RECORD_SIZE;
             this.memory = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
                     configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
-            this.frameLoBounded = rangeLo != Long.MIN_VALUE;
-            this.maxDiff = frameLoBounded ? Math.abs(rangeLo) : Long.MAX_VALUE;
-            this.minDiff = Math.abs(rangeHi);
-            this.timestampIndex = timestampIdx;
-            this.type = type;
-            this.position = position;
-            capacity = initialCapacity;
-            startOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
-            firstIdx = 0;
-            frameSize = 0;
-            acc.ofRaw(0);
-            value.ofRawNull();
+            try {
+                this.frameLoBounded = rangeLo != Long.MIN_VALUE;
+                this.maxDiff = frameLoBounded ? Math.abs(rangeLo) : Long.MAX_VALUE;
+                this.minDiff = Math.abs(rangeHi);
+                this.timestampIndex = timestampIdx;
+                this.type = type;
+                this.position = position;
+                capacity = initialCapacity;
+                startOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
+                firstIdx = 0;
+                frameSize = 0;
+                acc.ofRaw(0);
+                value.ofRawNull();
+            } catch (Throwable th) {
+                memory.close();
+                throw th;
+            }
         }
 
         @Override
@@ -2115,14 +2127,6 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             this.position = position;
             acc.ofRaw(0);
             value.ofRawNull();
-        }
-
-        @Override
-        public void getDecimal256(Record rec, Decimal256 sink) {
-            sink.copyRaw(value);
-            if (!sink.isNull() && sink.hasOverflowed()) {
-                throw CairoException.nonCritical().position(position).put("sum aggregation failed: an overflow occurred");
-            }
         }
 
         @Override
@@ -2734,17 +2738,22 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             this.initialCapacity = configuration.getSqlWindowStorePageSize() / RECORD_SIZE;
             this.memory = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
                     configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
-            this.frameLoBounded = rangeLo != Long.MIN_VALUE;
-            this.maxDiff = frameLoBounded ? Math.abs(rangeLo) : Long.MAX_VALUE;
-            this.minDiff = Math.abs(rangeHi);
-            this.timestampIndex = timestampIdx;
-            this.type = type;
-            capacity = initialCapacity;
-            startOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
-            firstIdx = 0;
-            frameSize = 0;
-            acc = 0L;
-            value = Decimals.DECIMAL64_NULL;
+            try {
+                this.frameLoBounded = rangeLo != Long.MIN_VALUE;
+                this.maxDiff = frameLoBounded ? Math.abs(rangeLo) : Long.MAX_VALUE;
+                this.minDiff = Math.abs(rangeHi);
+                this.timestampIndex = timestampIdx;
+                this.type = type;
+                capacity = initialCapacity;
+                startOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
+                firstIdx = 0;
+                frameSize = 0;
+                acc = 0L;
+                value = Decimals.DECIMAL64_NULL;
+            } catch (Throwable th) {
+                memory.close();
+                throw th;
+            }
         }
 
         @Override
@@ -3228,11 +3237,6 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         }
 
         @Override
-        public long getDecimal64(Record rec) {
-            return value;
-        }
-
-        @Override
         public String getName() {
             return NAME;
         }
@@ -3356,14 +3360,6 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             super(map, partitionByRecord, partitionBySink, arg);
             this.type = type;
             this.position = position;
-        }
-
-        @Override
-        public void getDecimal256(Record rec, Decimal256 sink) {
-            sink.copyRaw(value);
-            if (!sink.isNull() && sink.hasOverflowed()) {
-                throw CairoException.nonCritical().position(position).put("sum aggregation failed: an overflow occurred");
-            }
         }
 
         @Override
@@ -3946,18 +3942,23 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             this.initialCapacity = configuration.getSqlWindowStorePageSize() / RECORD_SIZE;
             this.memory = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
                     configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
-            this.frameLoBounded = rangeLo != Long.MIN_VALUE;
-            this.maxDiff = frameLoBounded ? Math.abs(rangeLo) : Long.MAX_VALUE;
-            this.minDiff = Math.abs(rangeHi);
-            this.timestampIndex = timestampIdx;
-            this.type = type;
-            this.position = position;
-            capacity = initialCapacity;
-            startOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
-            firstIdx = 0;
-            frameSize = 0;
-            acc.ofRaw(0);
-            value.ofRawNull();
+            try {
+                this.frameLoBounded = rangeLo != Long.MIN_VALUE;
+                this.maxDiff = frameLoBounded ? Math.abs(rangeLo) : Long.MAX_VALUE;
+                this.minDiff = Math.abs(rangeHi);
+                this.timestampIndex = timestampIdx;
+                this.type = type;
+                this.position = position;
+                capacity = initialCapacity;
+                startOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
+                firstIdx = 0;
+                frameSize = 0;
+                acc.ofRaw(0);
+                value.ofRawNull();
+            } catch (Throwable th) {
+                memory.close();
+                throw th;
+            }
         }
 
         @Override
@@ -4561,14 +4562,6 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         }
 
         @Override
-        public void getDecimal256(Record rec, Decimal256 sink) {
-            sink.copyRaw(value);
-            if (!sink.isNull() && sink.hasOverflowed()) {
-                throw CairoException.nonCritical().position(position).put("sum aggregation failed: an overflow occurred");
-            }
-        }
-
-        @Override
         public String getName() {
             return NAME;
         }
@@ -4743,11 +4736,6 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                 }
                 value.copyFrom(acc);
             }
-        }
-
-        @Override
-        public void getDecimal128(Record rec, Decimal128 sink) {
-            sink.copyFrom(value);
         }
 
         @Override
@@ -5271,18 +5259,23 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             this.initialCapacity = configuration.getSqlWindowStorePageSize() / RECORD_SIZE;
             this.memory = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
                     configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
-            this.frameLoBounded = rangeLo != Long.MIN_VALUE;
-            this.maxDiff = frameLoBounded ? Math.abs(rangeLo) : Long.MAX_VALUE;
-            this.minDiff = Math.abs(rangeHi);
-            this.timestampIndex = timestampIdx;
-            this.type = type;
-            this.position = position;
-            capacity = initialCapacity;
-            startOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
-            firstIdx = 0;
-            frameSize = 0;
-            acc.ofRaw(0);
-            value.ofRawNull();
+            try {
+                this.frameLoBounded = rangeLo != Long.MIN_VALUE;
+                this.maxDiff = frameLoBounded ? Math.abs(rangeLo) : Long.MAX_VALUE;
+                this.minDiff = Math.abs(rangeHi);
+                this.timestampIndex = timestampIdx;
+                this.type = type;
+                this.position = position;
+                capacity = initialCapacity;
+                startOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
+                firstIdx = 0;
+                frameSize = 0;
+                acc.ofRaw(0);
+                value.ofRawNull();
+            } catch (Throwable th) {
+                memory.close();
+                throw th;
+            }
         }
 
         @Override
@@ -5814,11 +5807,6 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         }
 
         @Override
-        public void getDecimal128(Record rec, Decimal128 sink) {
-            sink.copyFrom(value);
-        }
-
-        @Override
         public String getName() {
             return NAME;
         }
@@ -5988,11 +5976,6 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                 }
                 value.copyFrom(acc);
             }
-        }
-
-        @Override
-        public void getDecimal128(Record rec, Decimal128 sink) {
-            sink.copyFrom(value);
         }
 
         @Override
@@ -6521,18 +6504,23 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             this.initialCapacity = configuration.getSqlWindowStorePageSize() / RECORD_SIZE;
             this.memory = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
                     configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
-            this.frameLoBounded = rangeLo != Long.MIN_VALUE;
-            this.maxDiff = frameLoBounded ? Math.abs(rangeLo) : Long.MAX_VALUE;
-            this.minDiff = Math.abs(rangeHi);
-            this.timestampIndex = timestampIdx;
-            this.type = type;
-            this.position = position;
-            capacity = initialCapacity;
-            startOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
-            firstIdx = 0;
-            frameSize = 0;
-            acc.ofRaw(0);
-            value.ofRawNull();
+            try {
+                this.frameLoBounded = rangeLo != Long.MIN_VALUE;
+                this.maxDiff = frameLoBounded ? Math.abs(rangeLo) : Long.MAX_VALUE;
+                this.minDiff = Math.abs(rangeHi);
+                this.timestampIndex = timestampIdx;
+                this.type = type;
+                this.position = position;
+                capacity = initialCapacity;
+                startOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
+                firstIdx = 0;
+                frameSize = 0;
+                acc.ofRaw(0);
+                value.ofRawNull();
+            } catch (Throwable th) {
+                memory.close();
+                throw th;
+            }
         }
 
         @Override
@@ -7068,11 +7056,6 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             this.position = position;
             acc.ofRaw(0);
             value.ofRawNull();
-        }
-
-        @Override
-        public void getDecimal128(Record rec, Decimal128 sink) {
-            sink.copyFrom(value);
         }
 
         @Override
@@ -7683,17 +7666,22 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             this.initialCapacity = configuration.getSqlWindowStorePageSize() / RECORD_SIZE;
             this.memory = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
                     configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
-            this.frameLoBounded = rangeLo != Long.MIN_VALUE;
-            this.maxDiff = frameLoBounded ? Math.abs(rangeLo) : Long.MAX_VALUE;
-            this.minDiff = Math.abs(rangeHi);
-            this.timestampIndex = timestampIdx;
-            this.type = type;
-            capacity = initialCapacity;
-            startOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
-            firstIdx = 0;
-            frameSize = 0;
-            acc = 0L;
-            value = Decimals.DECIMAL64_NULL;
+            try {
+                this.frameLoBounded = rangeLo != Long.MIN_VALUE;
+                this.maxDiff = frameLoBounded ? Math.abs(rangeLo) : Long.MAX_VALUE;
+                this.minDiff = Math.abs(rangeHi);
+                this.timestampIndex = timestampIdx;
+                this.type = type;
+                capacity = initialCapacity;
+                startOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
+                firstIdx = 0;
+                frameSize = 0;
+                acc = 0L;
+                value = Decimals.DECIMAL64_NULL;
+            } catch (Throwable th) {
+                memory.close();
+                throw th;
+            }
         }
 
         @Override
@@ -8177,11 +8165,6 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             this.type = type;
             acc = 0L;
             value = Decimals.DECIMAL64_NULL;
-        }
-
-        @Override
-        public long getDecimal64(Record rec) {
-            return value;
         }
 
         @Override

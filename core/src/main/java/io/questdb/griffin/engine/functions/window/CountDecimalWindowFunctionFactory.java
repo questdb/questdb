@@ -52,37 +52,26 @@ public class CountDecimalWindowFunctionFactory extends AbstractWindowFunctionFac
     ) throws SqlException {
         final int argType = args.get(0).getType();
         final int tag = ColumnType.tagOf(argType);
-        final CountFunctionFactoryHelper.IsRecordNotNull predicate;
-        switch (tag) {
-            case ColumnType.DECIMAL8:
-                predicate = (arg, record) -> arg.getDecimal8(record) != Decimals.DECIMAL8_NULL;
-                break;
-            case ColumnType.DECIMAL16:
-                predicate = (arg, record) -> arg.getDecimal16(record) != Decimals.DECIMAL16_NULL;
-                break;
-            case ColumnType.DECIMAL32:
-                predicate = (arg, record) -> arg.getDecimal32(record) != Decimals.DECIMAL32_NULL;
-                break;
-            case ColumnType.DECIMAL64:
-                predicate = (arg, record) -> arg.getDecimal64(record) != Decimals.DECIMAL64_NULL;
-                break;
-            case ColumnType.DECIMAL128: {
+        final CountFunctionFactoryHelper.IsRecordNotNull predicate = switch (tag) {
+            case ColumnType.DECIMAL8 -> (arg, record) -> arg.getDecimal8(record) != Decimals.DECIMAL8_NULL;
+            case ColumnType.DECIMAL16 -> (arg, record) -> arg.getDecimal16(record) != Decimals.DECIMAL16_NULL;
+            case ColumnType.DECIMAL32 -> (arg, record) -> arg.getDecimal32(record) != Decimals.DECIMAL32_NULL;
+            case ColumnType.DECIMAL64 -> (arg, record) -> arg.getDecimal64(record) != Decimals.DECIMAL64_NULL;
+            case ColumnType.DECIMAL128 -> {
                 final Decimal128 scratch = new Decimal128();
-                predicate = (arg, record) -> {
+                yield (arg, record) -> {
                     arg.getDecimal128(record, scratch);
                     return !scratch.isNull();
                 };
-                break;
             }
-            default: {
+            default -> {
                 final Decimal256 scratch = new Decimal256();
-                predicate = (arg, record) -> {
+                yield (arg, record) -> {
                     arg.getDecimal256(record, scratch);
                     return !scratch.isNull();
                 };
-                break;
             }
-        }
+        };
         return CountFunctionFactoryHelper.newCountWindowFunction(this, position, args, configuration, sqlExecutionContext, predicate);
     }
 }

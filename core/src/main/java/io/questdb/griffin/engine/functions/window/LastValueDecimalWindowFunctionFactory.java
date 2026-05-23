@@ -129,7 +129,7 @@ public class LastValueDecimalWindowFunctionFactory extends AbstractWindowFunctio
                     ? generateDecimal256IgnoreNulls(position, args, configuration, windowContext, argType)
                     : generateDecimal256RespectNulls(position, args, configuration, windowContext, argType);
             default ->
-                    throw SqlException.$(position, "last_value is not yet implemented for ").put(ColumnType.nameOf(tag));
+                    throw SqlException.$(argPositions.getQuick(0), "last_value is not yet implemented for ").put(ColumnType.nameOf(tag));
         };
     }
 

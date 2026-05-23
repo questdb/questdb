@@ -80,23 +80,6 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
     static final ArrayColumnTypes MAX_DECIMAL64_TYPES;
     private static final String SIGNATURE = NAME + "(Ξ)";
 
-    @Override
-    public String getSignature() {
-        return SIGNATURE;
-    }
-
-    @Override
-    public Function newInstance(
-            int position,
-            ObjList<Function> args,
-            IntList argPositions,
-            CairoConfiguration configuration,
-            SqlExecutionContext sqlExecutionContext
-    ) throws SqlException {
-        return newMaxMinInstance(this, position, args, configuration, sqlExecutionContext,
-                GREATER_THAN_64, GREATER_THAN_128, GREATER_THAN_256, NAME);
-    }
-
     private static Function newMaxMinInstanceDecimal128(
             int position,
             ObjList<Function> args,
@@ -953,6 +936,7 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             AbstractWindowFunctionFactory factory,
             int position,
             ObjList<Function> args,
+            int argPos,
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext,
             Decimal64Comparator comparator,
@@ -1001,8 +985,25 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             case ColumnType.DECIMAL256 ->
                     newMaxMinInstanceDecimal256(position, args, configuration, sqlExecutionContext, comparator256, name);
             default ->
-                    throw SqlException.$(position, name).put(" is not yet implemented for ").put(ColumnType.nameOf(tag));
+                    throw SqlException.$(argPos, name).put(" is not yet implemented for ").put(ColumnType.nameOf(tag));
         };
+    }
+
+    @Override
+    public String getSignature() {
+        return SIGNATURE;
+    }
+
+    @Override
+    public Function newInstance(
+            int position,
+            ObjList<Function> args,
+            IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) throws SqlException {
+        return newMaxMinInstance(this, position, args, argPositions.getQuick(0), configuration, sqlExecutionContext,
+                GREATER_THAN_64, GREATER_THAN_128, GREATER_THAN_256, NAME);
     }
 
     @FunctionalInterface
@@ -2370,11 +2371,6 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         }
 
         @Override
-        public void getDecimal128(Record rec, Decimal128 sink) {
-            sink.copyFrom(value);
-        }
-
-        @Override
         public String getName() {
             return name;
         }
@@ -3652,11 +3648,6 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             this.comparator = comparator;
             this.name = name;
             this.type = type;
-        }
-
-        @Override
-        public short getDecimal16(Record rec) {
-            return value;
         }
 
         @Override
@@ -5069,11 +5060,6 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         }
 
         @Override
-        public void getDecimal256(Record rec, Decimal256 sink) {
-            sink.copyRaw(value);
-        }
-
-        @Override
         public String getName() {
             return name;
         }
@@ -6356,11 +6342,6 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         }
 
         @Override
-        public int getDecimal32(Record rec) {
-            return value;
-        }
-
-        @Override
         public String getName() {
             return name;
         }
@@ -7639,11 +7620,6 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         }
 
         @Override
-        public long getDecimal64(Record rec) {
-            return value;
-        }
-
-        @Override
         public String getName() {
             return name;
         }
@@ -8919,11 +8895,6 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             this.comparator = comparator;
             this.name = name;
             this.type = type;
-        }
-
-        @Override
-        public byte getDecimal8(Record rec) {
-            return value;
         }
 
         @Override

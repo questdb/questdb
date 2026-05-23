@@ -49,7 +49,7 @@ public class MinDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        return MaxDecimalWindowFunctionFactory.newMaxMinInstance(this, position, args, configuration, sqlExecutionContext,
+        return MaxDecimalWindowFunctionFactory.newMaxMinInstance(this, position, args, argPositions.getQuick(0), configuration, sqlExecutionContext,
                 MaxDecimalWindowFunctionFactory.LESS_THAN_64,
                 MaxDecimalWindowFunctionFactory.LESS_THAN_128,
                 MaxDecimalWindowFunctionFactory.LESS_THAN_256,

@@ -73,82 +73,75 @@ public class LeadDecimalFunctionFactory extends AbstractWindowFunctionFactory {
     ) throws SqlException {
         final int argType = args.get(0).getType();
         final int tag = ColumnType.tagOf(argType);
-        switch (tag) {
-            case ColumnType.DECIMAL8:
-                return LeadLagWindowFunctionFactoryHelper.newInstance(
-                        position, args, argPositions, configuration, sqlExecutionContext,
-                        (defaultValue) -> {
-                            if (!ColumnType.isSameOrBuiltInWideningCast(defaultValue.getType(), argType)) {
-                                throw SqlException.$(argPositions.getQuick(2), "default value must be castable to decimal");
-                            }
-                        },
-                        (arg, defaultValueFunc, offset, memory, ignoreNulls) -> new Decimal8LeadFunction(arg, defaultValueFunc, offset, memory, ignoreNulls, argType),
-                        (partitionByRecord, arg, name, ignoreNulls) -> new LagDecimalFunctionFactory.Decimal8LeadLagValueCurrentRow(partitionByRecord, arg, name, ignoreNulls, argType),
-                        (map, partitionByRecord, partitionBySink, memory, arg, ignoreNulls, defaultValue, offset) -> new Decimal8LeadOverPartitionFunction(map, partitionByRecord, partitionBySink, memory, arg, ignoreNulls, defaultValue, offset, argType)
-                );
-            case ColumnType.DECIMAL16:
-                return LeadLagWindowFunctionFactoryHelper.newInstance(
-                        position, args, argPositions, configuration, sqlExecutionContext,
-                        (defaultValue) -> {
-                            if (!ColumnType.isSameOrBuiltInWideningCast(defaultValue.getType(), argType)) {
-                                throw SqlException.$(argPositions.getQuick(2), "default value must be castable to decimal");
-                            }
-                        },
-                        (arg, defaultValueFunc, offset, memory, ignoreNulls) -> new Decimal16LeadFunction(arg, defaultValueFunc, offset, memory, ignoreNulls, argType),
-                        (partitionByRecord, arg, name, ignoreNulls) -> new LagDecimalFunctionFactory.Decimal16LeadLagValueCurrentRow(partitionByRecord, arg, name, ignoreNulls, argType),
-                        (map, partitionByRecord, partitionBySink, memory, arg, ignoreNulls, defaultValue, offset) -> new Decimal16LeadOverPartitionFunction(map, partitionByRecord, partitionBySink, memory, arg, ignoreNulls, defaultValue, offset, argType)
-                );
-            case ColumnType.DECIMAL32:
-                return LeadLagWindowFunctionFactoryHelper.newInstance(
-                        position, args, argPositions, configuration, sqlExecutionContext,
-                        (defaultValue) -> {
-                            if (!ColumnType.isSameOrBuiltInWideningCast(defaultValue.getType(), argType)) {
-                                throw SqlException.$(argPositions.getQuick(2), "default value must be castable to decimal");
-                            }
-                        },
-                        (arg, defaultValueFunc, offset, memory, ignoreNulls) -> new Decimal32LeadFunction(arg, defaultValueFunc, offset, memory, ignoreNulls, argType),
-                        (partitionByRecord, arg, name, ignoreNulls) -> new LagDecimalFunctionFactory.Decimal32LeadLagValueCurrentRow(partitionByRecord, arg, name, ignoreNulls, argType),
-                        (map, partitionByRecord, partitionBySink, memory, arg, ignoreNulls, defaultValue, offset) -> new Decimal32LeadOverPartitionFunction(map, partitionByRecord, partitionBySink, memory, arg, ignoreNulls, defaultValue, offset, argType)
-                );
-            case ColumnType.DECIMAL64:
-                return LeadLagWindowFunctionFactoryHelper.newInstance(
-                        position, args, argPositions, configuration, sqlExecutionContext,
-                        (defaultValue) -> {
-                            if (!ColumnType.isSameOrBuiltInWideningCast(defaultValue.getType(), argType)) {
-                                throw SqlException.$(argPositions.getQuick(2), "default value must be castable to decimal");
-                            }
-                        },
-                        (arg, defaultValueFunc, offset, memory, ignoreNulls) -> new Decimal64LeadFunction(arg, defaultValueFunc, offset, memory, ignoreNulls, argType),
-                        (partitionByRecord, arg, name, ignoreNulls) -> new LagDecimalFunctionFactory.Decimal64LeadLagValueCurrentRow(partitionByRecord, arg, name, ignoreNulls, argType),
-                        (map, partitionByRecord, partitionBySink, memory, arg, ignoreNulls, defaultValue, offset) -> new Decimal64LeadOverPartitionFunction(map, partitionByRecord, partitionBySink, memory, arg, ignoreNulls, defaultValue, offset, argType)
-                );
-            case ColumnType.DECIMAL128:
-                return LeadLagWindowFunctionFactoryHelper.newInstance(
-                        position, args, argPositions, configuration, sqlExecutionContext,
-                        (defaultValue) -> {
-                            if (!ColumnType.isSameOrBuiltInWideningCast(defaultValue.getType(), argType)) {
-                                throw SqlException.$(argPositions.getQuick(2), "default value must be castable to decimal");
-                            }
-                        },
-                        (arg, defaultValueFunc, offset, memory, ignoreNulls) -> new Decimal128LeadFunction(arg, defaultValueFunc, offset, memory, ignoreNulls, argType),
-                        (partitionByRecord, arg, name, ignoreNulls) -> new LagDecimalFunctionFactory.Decimal128LeadLagValueCurrentRow(partitionByRecord, arg, name, ignoreNulls, argType),
-                        (map, partitionByRecord, partitionBySink, memory, arg, ignoreNulls, defaultValue, offset) -> new Decimal128LeadOverPartitionFunction(map, partitionByRecord, partitionBySink, memory, arg, ignoreNulls, defaultValue, offset, argType)
-                );
-            case ColumnType.DECIMAL256:
-                return LeadLagWindowFunctionFactoryHelper.newInstance(
-                        position, args, argPositions, configuration, sqlExecutionContext,
-                        (defaultValue) -> {
-                            if (!ColumnType.isSameOrBuiltInWideningCast(defaultValue.getType(), argType)) {
-                                throw SqlException.$(argPositions.getQuick(2), "default value must be castable to decimal");
-                            }
-                        },
-                        (arg, defaultValueFunc, offset, memory, ignoreNulls) -> new Decimal256LeadFunction(arg, defaultValueFunc, offset, memory, ignoreNulls, argType),
-                        (partitionByRecord, arg, name, ignoreNulls) -> new LagDecimalFunctionFactory.Decimal256LeadLagValueCurrentRow(partitionByRecord, arg, name, ignoreNulls, argType),
-                        (map, partitionByRecord, partitionBySink, memory, arg, ignoreNulls, defaultValue, offset) -> new Decimal256LeadOverPartitionFunction(map, partitionByRecord, partitionBySink, memory, arg, ignoreNulls, defaultValue, offset, argType)
-                );
-            default:
-                throw SqlException.$(position, "lead is not yet implemented for ").put(ColumnType.nameOf(tag));
-        }
+        return switch (tag) {
+            case ColumnType.DECIMAL8 -> LeadLagWindowFunctionFactoryHelper.newInstance(
+                    position, args, argPositions, configuration, sqlExecutionContext,
+                    (defaultValue) -> {
+                        if (!ColumnType.isSameOrBuiltInWideningCast(defaultValue.getType(), argType)) {
+                            throw SqlException.$(argPositions.getQuick(2), "default value must be castable to decimal");
+                        }
+                    },
+                    (arg, defaultValueFunc, offset, memory, ignoreNulls) -> new Decimal8LeadFunction(arg, defaultValueFunc, offset, memory, ignoreNulls, argType),
+                    (partitionByRecord, arg, name, ignoreNulls) -> new LagDecimalFunctionFactory.Decimal8LeadLagValueCurrentRow(partitionByRecord, arg, name, ignoreNulls, argType),
+                    (map, partitionByRecord, partitionBySink, memory, arg, ignoreNulls, defaultValue, offset) -> new Decimal8LeadOverPartitionFunction(map, partitionByRecord, partitionBySink, memory, arg, ignoreNulls, defaultValue, offset, argType)
+            );
+            case ColumnType.DECIMAL16 -> LeadLagWindowFunctionFactoryHelper.newInstance(
+                    position, args, argPositions, configuration, sqlExecutionContext,
+                    (defaultValue) -> {
+                        if (!ColumnType.isSameOrBuiltInWideningCast(defaultValue.getType(), argType)) {
+                            throw SqlException.$(argPositions.getQuick(2), "default value must be castable to decimal");
+                        }
+                    },
+                    (arg, defaultValueFunc, offset, memory, ignoreNulls) -> new Decimal16LeadFunction(arg, defaultValueFunc, offset, memory, ignoreNulls, argType),
+                    (partitionByRecord, arg, name, ignoreNulls) -> new LagDecimalFunctionFactory.Decimal16LeadLagValueCurrentRow(partitionByRecord, arg, name, ignoreNulls, argType),
+                    (map, partitionByRecord, partitionBySink, memory, arg, ignoreNulls, defaultValue, offset) -> new Decimal16LeadOverPartitionFunction(map, partitionByRecord, partitionBySink, memory, arg, ignoreNulls, defaultValue, offset, argType)
+            );
+            case ColumnType.DECIMAL32 -> LeadLagWindowFunctionFactoryHelper.newInstance(
+                    position, args, argPositions, configuration, sqlExecutionContext,
+                    (defaultValue) -> {
+                        if (!ColumnType.isSameOrBuiltInWideningCast(defaultValue.getType(), argType)) {
+                            throw SqlException.$(argPositions.getQuick(2), "default value must be castable to decimal");
+                        }
+                    },
+                    (arg, defaultValueFunc, offset, memory, ignoreNulls) -> new Decimal32LeadFunction(arg, defaultValueFunc, offset, memory, ignoreNulls, argType),
+                    (partitionByRecord, arg, name, ignoreNulls) -> new LagDecimalFunctionFactory.Decimal32LeadLagValueCurrentRow(partitionByRecord, arg, name, ignoreNulls, argType),
+                    (map, partitionByRecord, partitionBySink, memory, arg, ignoreNulls, defaultValue, offset) -> new Decimal32LeadOverPartitionFunction(map, partitionByRecord, partitionBySink, memory, arg, ignoreNulls, defaultValue, offset, argType)
+            );
+            case ColumnType.DECIMAL64 -> LeadLagWindowFunctionFactoryHelper.newInstance(
+                    position, args, argPositions, configuration, sqlExecutionContext,
+                    (defaultValue) -> {
+                        if (!ColumnType.isSameOrBuiltInWideningCast(defaultValue.getType(), argType)) {
+                            throw SqlException.$(argPositions.getQuick(2), "default value must be castable to decimal");
+                        }
+                    },
+                    (arg, defaultValueFunc, offset, memory, ignoreNulls) -> new Decimal64LeadFunction(arg, defaultValueFunc, offset, memory, ignoreNulls, argType),
+                    (partitionByRecord, arg, name, ignoreNulls) -> new LagDecimalFunctionFactory.Decimal64LeadLagValueCurrentRow(partitionByRecord, arg, name, ignoreNulls, argType),
+                    (map, partitionByRecord, partitionBySink, memory, arg, ignoreNulls, defaultValue, offset) -> new Decimal64LeadOverPartitionFunction(map, partitionByRecord, partitionBySink, memory, arg, ignoreNulls, defaultValue, offset, argType)
+            );
+            case ColumnType.DECIMAL128 -> LeadLagWindowFunctionFactoryHelper.newInstance(
+                    position, args, argPositions, configuration, sqlExecutionContext,
+                    (defaultValue) -> {
+                        if (!ColumnType.isSameOrBuiltInWideningCast(defaultValue.getType(), argType)) {
+                            throw SqlException.$(argPositions.getQuick(2), "default value must be castable to decimal");
+                        }
+                    },
+                    (arg, defaultValueFunc, offset, memory, ignoreNulls) -> new Decimal128LeadFunction(arg, defaultValueFunc, offset, memory, ignoreNulls, argType),
+                    (partitionByRecord, arg, name, ignoreNulls) -> new LagDecimalFunctionFactory.Decimal128LeadLagValueCurrentRow(partitionByRecord, arg, name, ignoreNulls, argType),
+                    (map, partitionByRecord, partitionBySink, memory, arg, ignoreNulls, defaultValue, offset) -> new Decimal128LeadOverPartitionFunction(map, partitionByRecord, partitionBySink, memory, arg, ignoreNulls, defaultValue, offset, argType)
+            );
+            case ColumnType.DECIMAL256 -> LeadLagWindowFunctionFactoryHelper.newInstance(
+                    position, args, argPositions, configuration, sqlExecutionContext,
+                    (defaultValue) -> {
+                        if (!ColumnType.isSameOrBuiltInWideningCast(defaultValue.getType(), argType)) {
+                            throw SqlException.$(argPositions.getQuick(2), "default value must be castable to decimal");
+                        }
+                    },
+                    (arg, defaultValueFunc, offset, memory, ignoreNulls) -> new Decimal256LeadFunction(arg, defaultValueFunc, offset, memory, ignoreNulls, argType),
+                    (partitionByRecord, arg, name, ignoreNulls) -> new LagDecimalFunctionFactory.Decimal256LeadLagValueCurrentRow(partitionByRecord, arg, name, ignoreNulls, argType),
+                    (map, partitionByRecord, partitionBySink, memory, arg, ignoreNulls, defaultValue, offset) -> new Decimal256LeadOverPartitionFunction(map, partitionByRecord, partitionBySink, memory, arg, ignoreNulls, defaultValue, offset, argType)
+            );
+            default -> throw SqlException.$(argPositions.getQuick(0), "lead is not yet implemented for ").put(ColumnType.nameOf(tag));
+        };
     }
 
     static class Decimal128LeadFunction extends LeadLagWindowFunctionFactoryHelper.BaseLeadFunction implements Reopenable {

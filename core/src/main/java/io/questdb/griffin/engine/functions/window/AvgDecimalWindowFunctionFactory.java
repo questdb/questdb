@@ -76,6 +76,15 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
     private static final String NAME = "avg";
     private static final String SIGNATURE = NAME + "(Ξ)";
 
+    private static void readD256(MemoryARW mem, long offset, Decimal256 sink) {
+        sink.ofRaw(
+                mem.getLong(offset),
+                mem.getLong(offset + Long.BYTES),
+                mem.getLong(offset + 2 * Long.BYTES),
+                mem.getLong(offset + 3 * Long.BYTES)
+        );
+    }
+
     @Override
     public String getSignature() {
         return SIGNATURE;
@@ -131,17 +140,8 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                     newInstanceDecimal128(position, args, configuration, sqlExecutionContext, argType, argPos);
             case ColumnType.DECIMAL256 ->
                     newInstanceDecimal256(position, args, configuration, sqlExecutionContext, argType, argPos);
-            default -> throw SqlException.$(position, "avg is not yet implemented for ").put(ColumnType.nameOf(tag));
+            default -> throw SqlException.$(argPos, "avg is not yet implemented for ").put(ColumnType.nameOf(tag));
         };
-    }
-
-    private static void readD256(MemoryARW mem, long offset, Decimal256 sink) {
-        sink.ofRaw(
-                mem.getLong(offset),
-                mem.getLong(offset + Long.BYTES),
-                mem.getLong(offset + 2 * Long.BYTES),
-                mem.getLong(offset + 3 * Long.BYTES)
-        );
     }
 
     private Function newInstanceDecimal128(
@@ -1522,19 +1522,24 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             this.initialCapacity = configuration.getSqlWindowStorePageSize() / RECORD_SIZE;
             this.memory = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
                     configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
-            this.frameLoBounded = rangeLo != Long.MIN_VALUE;
-            this.maxDiff = frameLoBounded ? Math.abs(rangeLo) : Long.MAX_VALUE;
-            this.minDiff = Math.abs(rangeHi);
-            this.timestampIndex = timestampIdx;
-            this.type = type;
-            this.scale = ColumnType.getDecimalScale(type);
-            this.position = position;
-            capacity = initialCapacity;
-            startOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
-            firstIdx = 0;
-            frameSize = 0;
-            acc.ofRaw(0);
-            value.ofRawNull();
+            try {
+                this.frameLoBounded = rangeLo != Long.MIN_VALUE;
+                this.maxDiff = frameLoBounded ? Math.abs(rangeLo) : Long.MAX_VALUE;
+                this.minDiff = Math.abs(rangeHi);
+                this.timestampIndex = timestampIdx;
+                this.type = type;
+                this.scale = ColumnType.getDecimalScale(type);
+                this.position = position;
+                capacity = initialCapacity;
+                startOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
+                firstIdx = 0;
+                frameSize = 0;
+                acc.ofRaw(0);
+                value.ofRawNull();
+            } catch (Throwable th) {
+                memory.close();
+                throw th;
+            }
         }
 
         @Override
@@ -2137,11 +2142,6 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             this.position = position;
             acc.ofRaw(0);
             value.ofRawNull();
-        }
-
-        @Override
-        public void getDecimal128(Record rec, Decimal128 sink) {
-            sink.copyFrom(value);
         }
 
         @Override
@@ -2791,18 +2791,23 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             this.initialCapacity = configuration.getSqlWindowStorePageSize() / RECORD_SIZE;
             this.memory = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
                     configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
-            this.frameLoBounded = rangeLo != Long.MIN_VALUE;
-            this.maxDiff = frameLoBounded ? Math.abs(rangeLo) : Long.MAX_VALUE;
-            this.minDiff = Math.abs(rangeHi);
-            this.timestampIndex = timestampIdx;
-            this.type = type;
-            this.scale = ColumnType.getDecimalScale(type);
-            this.position = position;
-            capacity = initialCapacity;
-            startOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
-            firstIdx = 0;
-            frameSize = 0;
-            value = Decimals.DECIMAL16_NULL;
+            try {
+                this.frameLoBounded = rangeLo != Long.MIN_VALUE;
+                this.maxDiff = frameLoBounded ? Math.abs(rangeLo) : Long.MAX_VALUE;
+                this.minDiff = Math.abs(rangeHi);
+                this.timestampIndex = timestampIdx;
+                this.type = type;
+                this.scale = ColumnType.getDecimalScale(type);
+                this.position = position;
+                capacity = initialCapacity;
+                startOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
+                firstIdx = 0;
+                frameSize = 0;
+                value = Decimals.DECIMAL16_NULL;
+            } catch (Throwable th) {
+                memory.close();
+                throw th;
+            }
         }
 
         @Override
@@ -3324,11 +3329,6 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             this.scale = ColumnType.getDecimalScale(type);
             this.position = position;
             value = Decimals.DECIMAL16_NULL;
-        }
-
-        @Override
-        public short getDecimal16(Record rec) {
-            return value;
         }
 
         @Override
@@ -4091,19 +4091,24 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             this.initialCapacity = configuration.getSqlWindowStorePageSize() / RECORD_SIZE;
             this.memory = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
                     configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
-            this.frameLoBounded = rangeLo != Long.MIN_VALUE;
-            this.maxDiff = frameLoBounded ? Math.abs(rangeLo) : Long.MAX_VALUE;
-            this.minDiff = Math.abs(rangeHi);
-            this.timestampIndex = timestampIdx;
-            this.type = type;
-            this.scale = ColumnType.getDecimalScale(type);
-            this.position = position;
-            capacity = initialCapacity;
-            startOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
-            firstIdx = 0;
-            frameSize = 0;
-            acc.ofRaw(0);
-            value.ofRawNull();
+            try {
+                this.frameLoBounded = rangeLo != Long.MIN_VALUE;
+                this.maxDiff = frameLoBounded ? Math.abs(rangeLo) : Long.MAX_VALUE;
+                this.minDiff = Math.abs(rangeHi);
+                this.timestampIndex = timestampIdx;
+                this.type = type;
+                this.scale = ColumnType.getDecimalScale(type);
+                this.position = position;
+                capacity = initialCapacity;
+                startOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
+                firstIdx = 0;
+                frameSize = 0;
+                acc.ofRaw(0);
+                value.ofRawNull();
+            } catch (Throwable th) {
+                memory.close();
+                throw th;
+            }
         }
 
         @Override
@@ -4737,14 +4742,6 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             this.position = position;
             acc.ofRaw(0);
             value.ofRawNull();
-        }
-
-        @Override
-        public void getDecimal256(Record rec, Decimal256 sink) {
-            sink.copyRaw(value);
-            if (!sink.isNull() && sink.hasOverflowed()) {
-                throw CairoException.nonCritical().position(position).put("avg aggregation failed: an overflow occurred");
-            }
         }
 
         @Override
@@ -5396,18 +5393,23 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             this.initialCapacity = configuration.getSqlWindowStorePageSize() / RECORD_SIZE;
             this.memory = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
                     configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
-            this.frameLoBounded = rangeLo != Long.MIN_VALUE;
-            this.maxDiff = frameLoBounded ? Math.abs(rangeLo) : Long.MAX_VALUE;
-            this.minDiff = Math.abs(rangeHi);
-            this.timestampIndex = timestampIdx;
-            this.type = type;
-            this.scale = ColumnType.getDecimalScale(type);
-            this.position = position;
-            capacity = initialCapacity;
-            startOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
-            firstIdx = 0;
-            frameSize = 0;
-            value = Decimals.DECIMAL32_NULL;
+            try {
+                this.frameLoBounded = rangeLo != Long.MIN_VALUE;
+                this.maxDiff = frameLoBounded ? Math.abs(rangeLo) : Long.MAX_VALUE;
+                this.minDiff = Math.abs(rangeHi);
+                this.timestampIndex = timestampIdx;
+                this.type = type;
+                this.scale = ColumnType.getDecimalScale(type);
+                this.position = position;
+                capacity = initialCapacity;
+                startOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
+                firstIdx = 0;
+                frameSize = 0;
+                value = Decimals.DECIMAL32_NULL;
+            } catch (Throwable th) {
+                memory.close();
+                throw th;
+            }
         }
 
         @Override
@@ -5929,11 +5931,6 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             this.scale = ColumnType.getDecimalScale(type);
             this.position = position;
             value = Decimals.DECIMAL32_NULL;
-        }
-
-        @Override
-        public int getDecimal32(Record rec) {
-            return value;
         }
 
         @Override
@@ -6606,18 +6603,23 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             this.initialCapacity = configuration.getSqlWindowStorePageSize() / RECORD_SIZE;
             this.memory = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
                     configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
-            this.frameLoBounded = rangeLo != Long.MIN_VALUE;
-            this.maxDiff = frameLoBounded ? Math.abs(rangeLo) : Long.MAX_VALUE;
-            this.minDiff = Math.abs(rangeHi);
-            this.timestampIndex = timestampIdx;
-            this.type = type;
-            this.scale = ColumnType.getDecimalScale(type);
-            this.position = position;
-            capacity = initialCapacity;
-            startOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
-            firstIdx = 0;
-            frameSize = 0;
-            acc.ofRaw(0);
+            try {
+                this.frameLoBounded = rangeLo != Long.MIN_VALUE;
+                this.maxDiff = frameLoBounded ? Math.abs(rangeLo) : Long.MAX_VALUE;
+                this.minDiff = Math.abs(rangeHi);
+                this.timestampIndex = timestampIdx;
+                this.type = type;
+                this.scale = ColumnType.getDecimalScale(type);
+                this.position = position;
+                capacity = initialCapacity;
+                startOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
+                firstIdx = 0;
+                frameSize = 0;
+                acc.ofRaw(0);
+            } catch (Throwable th) {
+                memory.close();
+                throw th;
+            }
         }
 
         @Override
@@ -7822,18 +7824,23 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             this.initialCapacity = configuration.getSqlWindowStorePageSize() / RECORD_SIZE;
             this.memory = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
                     configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER);
-            this.frameLoBounded = rangeLo != Long.MIN_VALUE;
-            this.maxDiff = frameLoBounded ? Math.abs(rangeLo) : Long.MAX_VALUE;
-            this.minDiff = Math.abs(rangeHi);
-            this.timestampIndex = timestampIdx;
-            this.type = type;
-            this.scale = ColumnType.getDecimalScale(type);
-            this.position = position;
-            capacity = initialCapacity;
-            startOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
-            firstIdx = 0;
-            frameSize = 0;
-            value = Decimals.DECIMAL8_NULL;
+            try {
+                this.frameLoBounded = rangeLo != Long.MIN_VALUE;
+                this.maxDiff = frameLoBounded ? Math.abs(rangeLo) : Long.MAX_VALUE;
+                this.minDiff = Math.abs(rangeHi);
+                this.timestampIndex = timestampIdx;
+                this.type = type;
+                this.scale = ColumnType.getDecimalScale(type);
+                this.position = position;
+                capacity = initialCapacity;
+                startOffset = memory.appendAddressFor(capacity * RECORD_SIZE) - memory.getPageAddress(0);
+                firstIdx = 0;
+                frameSize = 0;
+                value = Decimals.DECIMAL8_NULL;
+            } catch (Throwable th) {
+                memory.close();
+                throw th;
+            }
         }
 
         @Override
@@ -8355,11 +8362,6 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             this.scale = ColumnType.getDecimalScale(type);
             this.position = position;
             value = Decimals.DECIMAL8_NULL;
-        }
-
-        @Override
-        public byte getDecimal8(Record rec) {
-            return value;
         }
 
         @Override
