@@ -108,7 +108,7 @@ you wish to understand how our maintainers work together, you can refer to
 ## Requirements
 
 - Operating system - **x86-64 or ARM64**: Windows, Linux, FreeBSD, and macOS
-- Java 17 64-bit (strict requirement — no earlier, no later)
+- Java 25 64-bit (strict requirement — no earlier, no later)
 - Maven 3 (latest version recommended; from your package manager on Linux/macOS
   ([Homebrew](https://github.com/Homebrew/brew)) or
   [from the jar](https://maven.apache.org/install.html) for any OS)
