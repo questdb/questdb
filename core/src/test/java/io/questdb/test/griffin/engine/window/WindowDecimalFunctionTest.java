@@ -9879,6 +9879,133 @@ public class WindowDecimalFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAvgRescaleD64D128D256ExplainPlan() throws Exception {
+        // D64 source: toPlan uses `avg(col, scale)` (with space). D128/D256: `avg(col,scale)` (no space).
+        assertMemoryLeak(() -> {
+            execute(CREATE_T);
+            for (int[] sourceScales : new int[][]{
+                    {64, 0}, {64, 22}, {64, 58},
+                    {128, 0}, {128, 44},
+                    {256, 0}
+            }) {
+                String col = "v" + sourceScales[0];
+                int scale = sourceScales[1];
+                String sep = sourceScales[0] == 64 ? ", " : ",";
+                assertPlanNoLeakCheck(
+                        "SELECT avg(" + col + ", " + scale + ") OVER (PARTITION BY grp ORDER BY ts RANGE BETWEEN 60 second PRECEDING AND CURRENT ROW) FROM t",
+                        "Window\n  functions: [avg(" + col + sep + scale + ") over (partition by [grp] range between 60000000 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n"
+                );
+                assertPlanNoLeakCheck(
+                        "SELECT avg(" + col + ", " + scale + ") OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) FROM t",
+                        "Window\n  functions: [avg(" + col + sep + scale + ") over (partition by [grp] rows between 2 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n"
+                );
+                assertPlanNoLeakCheck(
+                        "SELECT avg(" + col + ", " + scale + ") OVER (ORDER BY ts RANGE BETWEEN 60 second PRECEDING AND CURRENT ROW) FROM t",
+                        "Window\n  functions: [avg(" + col + sep + scale + ") over (range between 60000000 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n"
+                );
+                assertPlanNoLeakCheck(
+                        "SELECT avg(" + col + ", " + scale + ") OVER (ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) FROM t",
+                        "Window\n  functions: [avg(" + col + sep + scale + ") over ( rows between 2 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n"
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testAvgRescaleD16D32MoreFramesExplainPlan() throws Exception {
+        // D16 and D32 source — non-partition Range/Rows
+        assertMemoryLeak(() -> {
+            execute(CREATE_T);
+            for (int[] sourceScales : new int[][]{
+                    {16, 0}, {16, 6}, {16, 15}, {16, 30}, {16, 60},
+                    {32, 0}, {32, 10}, {32, 30}, {32, 60}
+            }) {
+                String col = "v" + sourceScales[0];
+                int scale = sourceScales[1];
+                // OverPartitionRowsFrame
+                assertPlanNoLeakCheck(
+                        "SELECT avg(" + col + ", " + scale + ") OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) FROM t",
+                        "Window\n  functions: [avg(" + col + "," + scale + ") over (partition by [grp] rows between 2 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n"
+                );
+                // OverRowsFrame
+                assertPlanNoLeakCheck(
+                        "SELECT avg(" + col + ", " + scale + ") OVER (ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) FROM t",
+                        "Window\n  functions: [avg(" + col + "," + scale + ") over ( rows between 2 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n"
+                );
+            }
+        });
+    }
+
+
+    @Test
+    public void testAvgRescaleUnboundedRowsExplainAllSources() throws Exception {
+        // D16/D32/D128/D256 use inherited toPlan (no scale shown). D64 has custom toPlan with scale+space.
+        assertMemoryLeak(() -> {
+            execute(CREATE_T);
+            for (int[] sourceScales : new int[][]{
+                    {16, 0}, {16, 6}, {16, 15}, {16, 30}, {16, 60},
+                    {32, 0}, {32, 10}, {32, 30}, {32, 60},
+                    {128, 0}, {128, 44},
+                    {256, 0}
+            }) {
+                String col = "v" + sourceScales[0];
+                int scale = sourceScales[1];
+                assertPlanNoLeakCheck(
+                        "SELECT avg(" + col + ", " + scale + ") OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) FROM t",
+                        "Window\n  functions: [avg(" + col + ") over (partition by [grp])]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n"
+                );
+                assertPlanNoLeakCheck(
+                        "SELECT avg(" + col + ", " + scale + ") OVER (ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) FROM t",
+                        "Window\n  functions: [avg(" + col + ") over ()]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n"
+                );
+            }
+            // D64 has custom toPlan: includes scale with space
+            for (int scale : new int[]{0, 22, 58}) {
+                assertPlanNoLeakCheck(
+                        "SELECT avg(v64, " + scale + ") OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) FROM t",
+                        "Window\n  functions: [avg(v64, " + scale + ") over (partition by [grp] rows between unbounded preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n"
+                );
+                assertPlanNoLeakCheck(
+                        "SELECT avg(v64, " + scale + ") OVER (ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) FROM t",
+                        "Window\n  functions: [avg(v64, " + scale + ") over (rows between unbounded preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n"
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testAvgRescaleEmptyPartitionRangeFrameAllSubTypes() throws Exception {
+        // RANGE BETWEEN 60 PRECEDING AND 1 PRECEDING with single row per partition — frame empty for each.
+        // Triggers value.isNull() return NULL branches in getDecimalX of Decimal*Rescale256AvgOverPartitionRangeFrameFunction.
+        assertMemoryLeak(() -> {
+            execute(CREATE_T);
+            execute("INSERT INTO t VALUES ('2024-01-01T00:00:00', 'a', 0.6m, 6.0m, 6.000m, 6.00m, 6.000000m, 6m)");
+            for (int scale : new int[]{0, 3, 5, 14, 30, 60}) {
+                assertQueryNoLeakCheck("ts\tav\n2024-01-01T00:00:00.000000Z\t\n",
+                        "SELECT ts, avg(v8, " + scale + ") OVER (PARTITION BY grp ORDER BY ts RANGE BETWEEN 60 second PRECEDING AND 1 second PRECEDING) av FROM t",
+                        "ts", false, true);
+            }
+        });
+    }
+
+    @Test
+    public void testAvgRescaleEmptyPartitionRowsFrameAllScales() throws Exception {
+        // ROWS BETWEEN 4 PRECEDING AND 1 PRECEDING with single row — frame excludes self, empty.
+        assertMemoryLeak(() -> {
+            execute(CREATE_T);
+            execute("INSERT INTO t VALUES ('2024-01-01T00:00:00', 'a', 0.6m, 6.0m, 6.000m, 6.00m, 6.000000m, 6m)");
+            for (int scale : new int[]{0, 3, 5, 14, 30, 60}) {
+                assertQueryNoLeakCheck("ts\tav\n2024-01-01T00:00:00.000000Z\t\n",
+                        "SELECT ts, avg(v8, " + scale + ") OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN 4 PRECEDING AND 1 PRECEDING) av FROM t",
+                        "ts", false, true);
+                assertQueryNoLeakCheck("ts\tav\n2024-01-01T00:00:00.000000Z\t\n",
+                        "SELECT ts, avg(v8, " + scale + ") OVER (ORDER BY ts ROWS BETWEEN 4 PRECEDING AND 1 PRECEDING) av FROM t",
+                        "ts", false, true);
+            }
+        });
+    }
+
+    @Test
     public void testFirstValueUnboundedPartitionRowsFrameAllNulls() throws Exception {
         // FirstValue OVER (PARTITION BY ROWS UNBOUNDED PRECEDING AND CURRENT ROW) with all-NULL partitions.
         assertMemoryLeak(() -> {
