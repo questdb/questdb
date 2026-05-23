@@ -823,6 +823,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
 
         RecordCursorFactory factory = null;
         RecordToRowCopier copier;
+        final long prevRefreshStartTimestamp = viewState.getLastRefreshStartTimestampUs();
         final long refreshStartTimestamp = microsecondClock.getTicks();
         viewState.setLastRefreshStartTimestampUs(refreshStartTimestamp);
         final TableToken viewTableToken = viewDefinition.getMatViewToken();
@@ -830,9 +831,13 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
 
         // If we don't have intervals to query, we may still need to bump base table txn or last period hi.
         if (intervalIterator == null) {
-            if (refreshContext.toBaseTxn != -1 || refreshContext.periodHi != Numbers.LONG_NULL) {
-                final long commitBaseTxn = refreshContext.toBaseTxn != -1 ? refreshContext.toBaseTxn : viewState.getLastRefreshBaseTxn();
-                final long commitPeriodHi = refreshContext.periodHi != Numbers.LONG_NULL ? refreshContext.periodHi : viewState.getLastPeriodHi();
+            final long commitBaseTxn = refreshContext.toBaseTxn != -1 ? refreshContext.toBaseTxn : viewState.getLastRefreshBaseTxn();
+            final long commitPeriodHi = refreshContext.periodHi != Numbers.LONG_NULL ? refreshContext.periodHi : viewState.getLastPeriodHi();
+            // Only commit when the watermark actually advances. Committing an unchanged watermark
+            // writes a no-op replace-range WAL transaction; when the base table apply lags, the
+            // self-re-enqueueing refresh loop can emit millions of these, flooding the view's WAL
+            // and stalling replicas that apply them.
+            if (commitBaseTxn > viewState.getLastRefreshBaseTxn() || commitPeriodHi > viewState.getLastPeriodHi()) {
                 refreshSuccessNoRows(
                         viewState,
                         walWriter,
@@ -843,6 +848,11 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 );
                 return true;
             }
+            // The watermark did not advance, so we skip the no-op WAL commit, leaving the persisted
+            // refresh finish timestamp behind the in-memory start timestamp bumped above. Since
+            // materialized_views reads the start from memory and the finish from the persisted state
+            // file, the view would report the "refreshing" status forever. Restore the start timestamp.
+            viewState.setLastRefreshStartTimestampUs(prevRefreshStartTimestamp);
             return false;
         }
 
@@ -1392,7 +1402,13 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
 
         boolean refreshed = false;
         final SeqTxnTracker baseSeqTracker = engine.getTableSequencerAPI().getTxnTracker(baseTableToken);
+        // Safe floor: every view opens its reader after this sample, so each examines at least this txn.
         final long minRefreshToTxn = baseSeqTracker.getWriterTxn();
+        // The minimum base txn examined across the refreshed views. Acknowledging this instead of the
+        // pre-loop floor lets the clean/dirty handshake converge when the readable base txn advances
+        // between the floor sample and a view opening its reader, while never claiming the base is
+        // refreshed past what any view actually examined.
+        long minExaminedToTxn = Numbers.LONG_NULL;
 
         childViewSink.clear();
         graph.getDependentViews(baseTableToken, childViewSink);
@@ -1417,7 +1433,12 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
 
                 try (WalWriter walWriter = engine.getWalWriter(viewToken)) {
                     try {
-                        refreshed |= refreshIncremental0(baseTableToken, viewDefinition, viewState, walWriter, refreshTriggerTimestamp);
+                        final long result = refreshIncremental0(baseTableToken, viewDefinition, viewState, walWriter, refreshTriggerTimestamp);
+                        refreshed |= (result & 1L) != 0;
+                        final long examinedBaseTxn = result >> 1;
+                        minExaminedToTxn = minExaminedToTxn != Numbers.LONG_NULL
+                                ? Math.min(minExaminedToTxn, examinedBaseTxn)
+                                : examinedBaseTxn;
                     } catch (Throwable th) {
                         refreshFailState(viewDefinition, viewState, walWriter, th);
                     }
@@ -1443,11 +1464,13 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         refreshTask.clear();
         refreshTask.baseTableToken = baseTableToken;
         refreshTask.operation = MatViewRefreshTask.INCREMENTAL_REFRESH;
-        stateStore.notifyBaseRefreshed(refreshTask, minRefreshToTxn);
+        // Fall back to the pre-loop floor when no view was refreshed (e.g. all skipped or timer-only).
+        final long refreshedToTxn = minExaminedToTxn != Numbers.LONG_NULL ? minExaminedToTxn : minRefreshToTxn;
+        stateStore.notifyBaseRefreshed(refreshTask, refreshedToTxn);
 
         if (refreshed) {
             LOG.info().$("refreshed materialized views dependent on [baseTable=").$(baseTableToken)
-                    .$(", lastSeqTxn=").$(minRefreshToTxn).I$();
+                    .$(", lastSeqTxn=").$(refreshedToTxn).I$();
         }
         return refreshed;
     }
@@ -1514,7 +1537,10 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             }
 
             try {
-                return refreshIncremental0(baseTableToken, viewDefinition, viewState, walWriter, refreshTriggerTimestamp);
+                // The examined base txn is only needed when refreshing dependent views; here we just
+                // return the "refreshed" flag from bit 0.
+                final long result = refreshIncremental0(baseTableToken, viewDefinition, viewState, walWriter, refreshTriggerTimestamp);
+                return (result & 1L) != 0;
             } catch (Throwable th) {
                 LOG.error()
                         .$("could not perform incremental refresh [view=").$(viewToken)
@@ -1545,7 +1571,12 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         }
     }
 
-    private boolean refreshIncremental0(
+    // Returns a packed long: the examined base table txn (the reader's seqTxn) in bits 63..1 and the
+    // "refreshed" flag in bit 0. The examined txn lets refreshDependentViewsIncremental() acknowledge
+    // only the base txn that was actually examined. Every non-throwing return opens the reader first,
+    // so the examined txn is always valid; the txn-sanity throw below is handled by the caller without
+    // reading the result.
+    private long refreshIncremental0(
             @NotNull TableToken baseTableToken,
             @NotNull MatViewDefinition viewDefinition,
             @NotNull MatViewState viewState,
@@ -1572,7 +1603,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             }
             if (viewDefinition.getPeriodLength() == 0 && fromBaseTxn > -1 && fromBaseTxn == toBaseTxn) {
                 // Non-period mat view which is already up-to-date.
-                return false;
+                return toBaseTxn << 1;
             }
 
             // Operate SQL on a fixed reader that has known max transaction visible. The reader
@@ -1582,7 +1613,8 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             refreshSqlExecutionContext.of(baseTableReader);
             try {
                 final RefreshContext refreshContext = findRefreshIntervals(baseTableReader, viewDefinition, viewState, walWriter, fromBaseTxn);
-                return insertAsSelect(viewDefinition, viewState, walWriter, refreshContext, refreshTriggerTimestamp);
+                final boolean refreshed = insertAsSelect(viewDefinition, viewState, walWriter, refreshContext, refreshTriggerTimestamp);
+                return (toBaseTxn << 1) | (refreshed ? 1L : 0L);
             } finally {
                 refreshSqlExecutionContext.clearReader();
                 engine.attachReader(baseTableReader);

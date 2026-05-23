@@ -24,6 +24,7 @@
 
 package io.questdb.test.cutlass.qwp;
 
+import io.questdb.PropertyKey;
 import io.questdb.client.cutlass.qwp.client.QwpColumnBatch;
 import io.questdb.client.cutlass.qwp.client.QwpColumnBatchHandler;
 import io.questdb.client.cutlass.qwp.client.QwpQueryClient;
@@ -31,7 +32,6 @@ import io.questdb.cutlass.qwp.server.egress.QwpEgressMetrics;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.std.Os;
 import io.questdb.std.str.DirectUtf8Sink;
-import io.questdb.test.AbstractBootstrapTest;
 import io.questdb.test.TestServerMain;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -44,7 +44,7 @@ import org.junit.Test;
  * format. Tests exercise the egress endpoint with metrics enabled, run
  * representative workloads, and assert the counters advance as expected.
  */
-public class QwpEgressMetricsScrapeTest extends AbstractBootstrapTest {
+public class QwpEgressMetricsScrapeTest extends AbstractQwpBootstrapTest {
 
     @Before
     public void setUp() {
@@ -54,50 +54,9 @@ public class QwpEgressMetricsScrapeTest extends AbstractBootstrapTest {
     }
 
     @Test
-    public void testBytesZstdSavedCounterAdvancesWithCompression() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables(
-                    "QDB_METRICS_ENABLED", "true")) {
-                // Repetitive LONG payload compresses well under zstd, so savings
-                // are positive on every compressed batch.
-                serverMain.execute("CREATE TABLE zstd_metric(x LONG, ts TIMESTAMP) "
-                        + "TIMESTAMP(ts) PARTITION BY DAY WAL");
-                serverMain.execute("INSERT INTO zstd_metric "
-                        + "SELECT 1, x::TIMESTAMP FROM long_sequence(50_000)");
-                serverMain.awaitTable("zstd_metric");
-                QwpEgressMetrics metrics = serverMain.getEngine().getMetrics().qwpEgressMetrics();
-                long savedBefore = metrics.bytesCompressedSavedCounter().getValue();
-
-                try (QwpQueryClient client = QwpQueryClient.fromConfig(
-                        "ws::addr=127.0.0.1:" + HTTP_PORT + ";compression=zstd;")) {
-                    client.connect();
-                    client.execute("SELECT x FROM zstd_metric", new QwpColumnBatchHandler() {
-                        @Override
-                        public void onBatch(QwpColumnBatch batch) {
-                        }
-
-                        @Override
-                        public void onEnd(long totalRows) {
-                        }
-
-                        @Override
-                        public void onError(byte status, String message) {
-                            Assert.fail("must succeed: " + message);
-                        }
-                    });
-                }
-
-                long savedDelta = metrics.bytesCompressedSavedCounter().getValue() - savedBefore;
-                Assert.assertTrue("zstd must save bytes on a repetitive payload; saved=" + savedDelta,
-                        savedDelta > 0);
-            }
-        });
-    }
-
-    @Test
     public void testBatchAndRowCountersAdvanceWithLoad() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables(
+            try (final TestServerMain serverMain = startFragmented(
                     "QDB_METRICS_ENABLED", "true")) {
                 serverMain.execute("CREATE TABLE batch_metric(x LONG, ts TIMESTAMP) "
                         + "TIMESTAMP(ts) PARTITION BY DAY WAL");
@@ -139,9 +98,97 @@ public class QwpEgressMetricsScrapeTest extends AbstractBootstrapTest {
     }
 
     @Test
-    public void testConnectionGaugeTracksOpenClose() throws Exception {
+    public void testBytesZstdSavedCounterAdvancesWithCompression() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startFragmented(
+                    "QDB_METRICS_ENABLED", "true")) {
+                // Repetitive LONG payload compresses well under zstd, so savings
+                // are positive on every compressed batch.
+                serverMain.execute("CREATE TABLE zstd_metric(x LONG, ts TIMESTAMP) "
+                        + "TIMESTAMP(ts) PARTITION BY DAY WAL");
+                serverMain.execute("INSERT INTO zstd_metric "
+                        + "SELECT 1, x::TIMESTAMP FROM long_sequence(50_000)");
+                serverMain.awaitTable("zstd_metric");
+                QwpEgressMetrics metrics = serverMain.getEngine().getMetrics().qwpEgressMetrics();
+                long savedBefore = metrics.bytesCompressedSavedCounter().getValue();
+
+                try (QwpQueryClient client = QwpQueryClient.fromConfig(
+                        "ws::addr=127.0.0.1:" + HTTP_PORT + ";compression=zstd;")) {
+                    client.connect();
+                    client.execute("SELECT x FROM zstd_metric", new QwpColumnBatchHandler() {
+                        @Override
+                        public void onBatch(QwpColumnBatch batch) {
+                        }
+
+                        @Override
+                        public void onEnd(long totalRows) {
+                        }
+
+                        @Override
+                        public void onError(byte status, String message) {
+                            Assert.fail("must succeed: " + message);
+                        }
+                    });
+                }
+
+                long savedDelta = metrics.bytesCompressedSavedCounter().getValue() - savedBefore;
+                Assert.assertTrue("zstd must save bytes on a repetitive payload; saved=" + savedDelta,
+                        savedDelta > 0);
+            }
+        });
+    }
+
+    @Test
+    public void testConnectionGaugeDecrementsOnSendPathDisconnect() throws Exception {
+        // Deterministic regression test for a connection-gauge leak that the
+        // randomised fragmentation in the sibling test only caught on specific
+        // seeds. Sequence:
+        //   1. Client sends WebSocket CLOSE and shuts its socket down.
+        //   2. Server's handleClose writes the 4-byte CLOSE echo through
+        //      sendBuffer. With sendChunk=1, sendBuffer flushes the first byte
+        //      and throws PeerIsSlowToReadException because more is pending --
+        //      the connection parks on write with pendingDisconnectAfterFlush
+        //      set.
+        //   3. The framework calls resumeSend; the drain hits EPIPE because
+        //      the peer is gone, and PeerDisconnectedException escapes before
+        //      gracefulCloseAndDisconnect can run.
+        //   4. handleClientSend used to swallow that into a dispatcher
+        //      disconnect without calling onConnectionClosed on the
+        //      protocol-switched processor, so the gauge stayed at 1.
+        // After the fix, handleClientSend's send-path disconnect calls
+        // onConnectionClosed when the connection is protocol-switched, so the
+        // gauge returns to 0.
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.DEBUG_HTTP_FORCE_SEND_FRAGMENTATION_CHUNK_SIZE.getEnvVarName(), "1",
+                    "QDB_METRICS_ENABLED", "true")) {
+                QwpEgressMetrics metrics = serverMain.getEngine().getMetrics().qwpEgressMetrics();
+                Assert.assertEquals("start at 0 with no connections", 0, metrics.connectionCountGauge().getValue());
+
+                try (QwpQueryClient client = QwpQueryClient.fromConfig(
+                        "ws::addr=127.0.0.1:" + HTTP_PORT + ";")) {
+                    client.connect();
+                    long deadline = System.nanoTime() + 5_000_000_000L;
+                    while (metrics.connectionCountGauge().getValue() == 0 && System.nanoTime() < deadline) {
+                        Os.pause();
+                    }
+                    Assert.assertEquals("one active connection", 1, metrics.connectionCountGauge().getValue());
+                }
+
+                long deadline = System.nanoTime() + 5_000_000_000L;
+                while (metrics.connectionCountGauge().getValue() != 0 && System.nanoTime() < deadline) {
+                    Os.pause();
+                }
+                Assert.assertEquals("gauge returns to 0 after send-path disconnect",
+                        0, metrics.connectionCountGauge().getValue());
+            }
+        });
+    }
+
+    @Test
+    public void testConnectionGaugeTracksOpenClose() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startFragmented(
                     "QDB_METRICS_ENABLED", "true")) {
                 QwpEgressMetrics metrics = serverMain.getEngine().getMetrics().qwpEgressMetrics();
                 Assert.assertEquals("start at 0 with no connections", 0, metrics.connectionCountGauge().getValue());
@@ -171,7 +218,7 @@ public class QwpEgressMetricsScrapeTest extends AbstractBootstrapTest {
     @Test
     public void testDisabledMetricsAreNoOp() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables(
+            try (final TestServerMain serverMain = startFragmented(
                     "QDB_METRICS_ENABLED", "false")) {
                 serverMain.execute("CREATE TABLE nometric(x LONG, ts TIMESTAMP) "
                         + "TIMESTAMP(ts) PARTITION BY DAY WAL");
@@ -208,7 +255,7 @@ public class QwpEgressMetricsScrapeTest extends AbstractBootstrapTest {
     @Test
     public void testErroredCounterAdvancesOnQueryError() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables(
+            try (final TestServerMain serverMain = startFragmented(
                     "QDB_METRICS_ENABLED", "true")) {
                 QwpEgressMetrics metrics = serverMain.getEngine().getMetrics().qwpEgressMetrics();
                 long erroredBefore = metrics.queriesErroredCounter().getValue();
@@ -244,7 +291,7 @@ public class QwpEgressMetricsScrapeTest extends AbstractBootstrapTest {
     @Test
     public void testExecDoneAndStartedCountersAdvance() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables(
+            try (final TestServerMain serverMain = startFragmented(
                     "QDB_METRICS_ENABLED", "true")) {
                 QwpEgressMetrics metrics = serverMain.getEngine().getMetrics().qwpEgressMetrics();
                 long startedBefore = metrics.queriesStartedCount();
@@ -284,7 +331,7 @@ public class QwpEgressMetricsScrapeTest extends AbstractBootstrapTest {
     @Test
     public void testScrapeOutputExposesQwpEgressCounters() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables(
+            try (final TestServerMain serverMain = startFragmented(
                     "QDB_METRICS_ENABLED", "true")) {
                 serverMain.execute("CREATE TABLE scrape_t(x LONG, ts TIMESTAMP) "
                         + "TIMESTAMP(ts) PARTITION BY DAY WAL");
@@ -333,4 +380,5 @@ public class QwpEgressMetricsScrapeTest extends AbstractBootstrapTest {
             }
         });
     }
+
 }

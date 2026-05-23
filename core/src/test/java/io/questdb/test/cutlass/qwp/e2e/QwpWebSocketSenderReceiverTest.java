@@ -1675,61 +1675,72 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
      */
     @Test
     public void testErrorPropagation_asyncMultipleBatchesInFlight() throws Exception {
+        runInContext(this::assertErrorPropagationAsyncMultipleBatchesInFlight);
+    }
 
-        runInContext((port) -> {
-            // Pre-create a table with a LONG column
-            try (QwpWebSocketSender setupSender = connectWs(port)) {
-                setupSender.table("ws_async_multi_err")
-                        .longColumn("value", 0)
-                        .at(1_000_000_000_000L, ChronoUnit.MICROS);
-                setupSender.flush();
+    @Test
+    public void testErrorPropagation_asyncMultipleBatchesInFlight_drainBufferedTailAfterBlockedError() throws Exception {
+        runInContext(this::assertErrorPropagationAsyncMultipleBatchesInFlight, 65_536, 471, 71);
+    }
+
+    private void assertErrorPropagationAsyncMultipleBatchesInFlight(int port) throws Exception {
+        // Pre-create a table with a LONG column
+        try (QwpWebSocketSender setupSender = connectWs(port)) {
+            setupSender.table("ws_async_multi_err")
+                    .longColumn("value", 0)
+                    .at(1_000_000_000_000L, ChronoUnit.MICROS);
+            setupSender.flush();
+        }
+        drainWalQueue();
+
+        // Fresh async sender: autoFlushRows=1 so each row is enqueued
+        // immediately, window=8. The sender doesn't know the server-side
+        // schema of "ws_async_multi_err", so it cannot detect the type mismatch.
+        // Server type-mismatch is SCHEMA_MISMATCH / DROP_AND_CONTINUE so flush()
+        // does not throw — the rejection arrives asynchronously through the
+        // error handler.
+        CompletableFuture<SenderError> errorFut = new CompletableFuture<>();
+        try (QwpWebSocketSender sender = connectWs(port,
+                1,
+                Integer.MAX_VALUE,
+                TimeUnit.HOURS.toNanos(1),
+                errorFut::complete)) {
+            // Good rows to a separate table — auto-flushed, no ACK wait
+            for (int i = 1; i <= 3; i++) {
+                sender.table("ws_async_multi_ok")
+                        .longColumn("v", i)
+                        .at(1_000_000_000_000L + i, ChronoUnit.MICROS);
             }
-            drainWalQueue();
 
-            // Fresh async sender: autoFlushRows=1 so each row is enqueued
-            // immediately, window=8. The sender doesn't know the server-side
-            // schema of "ws_async_multi_err", so it cannot detect the type mismatch.
-            // Server type-mismatch is SCHEMA_MISMATCH / DROP_AND_CONTINUE so flush()
-            // does not throw — the rejection arrives asynchronously through the
-            // error handler.
-            CompletableFuture<SenderError> errorFut = new CompletableFuture<>();
-            try (QwpWebSocketSender sender = connectWs(port,
-                    1,
-                    Integer.MAX_VALUE,
-                    TimeUnit.HOURS.toNanos(1),
-                    errorFut::complete)) {
-                // Good rows to a separate table — auto-flushed, no ACK wait
-                for (int i = 1; i <= 3; i++) {
-                    sender.table("ws_async_multi_ok")
-                            .longColumn("v", i)
-                            .at(1_000_000_000_000L + i, ChronoUnit.MICROS);
-                }
+            // Bad row to the pre-existing table — STRING into LONG.
+            // Client doesn't know the server-side schema, so this passes client-side
+            // validation. The I/O thread sends it; the server rejects it.
+            sender.table("ws_async_multi_err")
+                    .stringColumn("value", "not a number")
+                    .at(1_000_000_000_001L, ChronoUnit.MICROS);
 
-                // Bad row to the pre-existing table — STRING into LONG.
-                // Client doesn't know the server-side schema, so this passes client-side
-                // validation. The I/O thread sends it; the server rejects it.
-                sender.table("ws_async_multi_err")
-                        .stringColumn("value", "not a number")
-                        .at(1_000_000_000_001L, ChronoUnit.MICROS);
-
-                // More good rows — user thread doesn't know about the error yet
-                for (int i = 4; i <= 6; i++) {
-                    sender.table("ws_async_multi_ok")
-                            .longColumn("v", i)
-                            .at(1_000_000_000_000L + i, ChronoUnit.MICROS);
-                }
-
-                sender.flush();
-
-                SenderError err = errorFut.get(10, TimeUnit.SECONDS);
-                Assert.assertEquals(SenderError.Category.SCHEMA_MISMATCH, err.getCategory());
+            // More good rows — user thread doesn't know about the error yet
+            for (int i = 4; i <= 6; i++) {
+                sender.table("ws_async_multi_ok")
+                        .longColumn("v", i)
+                        .at(1_000_000_000_000L + i, ChronoUnit.MICROS);
             }
-            // The initial setup row (value=0) must be present
-            assertSql(
-                    "SELECT value FROM ws_async_multi_err WHERE value = 0",
-                    "value\n0\n"
-            );
-        });
+
+            sender.flush();
+
+            SenderError err = errorFut.get(10, TimeUnit.SECONDS);
+            Assert.assertEquals(SenderError.Category.SCHEMA_MISMATCH, err.getCategory());
+        }
+        drainWalQueue();
+        assertSql(
+                "SELECT v FROM ws_async_multi_ok ORDER BY v",
+                "v\n1\n2\n3\n4\n5\n6\n"
+        );
+        // The initial setup row (value=0) must be present
+        assertSql(
+                "SELECT value FROM ws_async_multi_err WHERE value = 0",
+                "value\n0\n"
+        );
     }
 
     @Test

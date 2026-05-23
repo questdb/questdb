@@ -220,6 +220,51 @@ public class QwpEgressProcessorStateCacheResetTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testMergePendingCacheResetMaskAccumulatesBits() {
+        // Regression: a non-SELECT (or a SELECT that fails between
+        // findOrAllocateSchemaId and emitPendingCacheReset) stages bits via
+        // applyCacheResetForUpcomingQuery that never go out on the wire. A
+        // later query whose own computeCacheResetMask returns different bits
+        // must NOT drop the previously-staged ones -- the OR-merge keeps the
+        // client in sync with the server-side caches that have already been
+        // cleared.
+        try (QwpEgressProcessorState state = new QwpEgressProcessorState(cfg)) {
+            Assert.assertEquals(0, state.getPendingCacheResetMask());
+            state.mergePendingCacheResetMask(QwpEgressMsgKind.RESET_MASK_DICT);
+            Assert.assertEquals(QwpEgressMsgKind.RESET_MASK_DICT, state.getPendingCacheResetMask());
+            state.mergePendingCacheResetMask(QwpEgressMsgKind.RESET_MASK_SCHEMAS);
+            Assert.assertEquals(
+                    (byte) (QwpEgressMsgKind.RESET_MASK_DICT | QwpEgressMsgKind.RESET_MASK_SCHEMAS),
+                    state.getPendingCacheResetMask());
+        }
+    }
+
+    @Test
+    public void testMergePendingCacheResetMaskIsIdempotent() {
+        // Re-staging the same bit must leave the mask unchanged. Covers the
+        // benign case where a non-SELECT trips the dict cap, then a follow-up
+        // non-SELECT recomputes the same DICT bit before the first one's
+        // CACHE_RESET has gone out.
+        try (QwpEgressProcessorState state = new QwpEgressProcessorState(cfg)) {
+            state.mergePendingCacheResetMask(QwpEgressMsgKind.RESET_MASK_DICT);
+            state.mergePendingCacheResetMask(QwpEgressMsgKind.RESET_MASK_DICT);
+            Assert.assertEquals(QwpEgressMsgKind.RESET_MASK_DICT, state.getPendingCacheResetMask());
+        }
+    }
+
+    @Test
+    public void testMergePendingCacheResetMaskZeroIsNoOp() {
+        // The processor guards against zero before calling merge, but the
+        // state method must still be safe to call with zero -- a regression
+        // here would mask a guard-bypass with silent corruption.
+        try (QwpEgressProcessorState state = new QwpEgressProcessorState(cfg)) {
+            state.mergePendingCacheResetMask(QwpEgressMsgKind.RESET_MASK_DICT);
+            state.mergePendingCacheResetMask((byte) 0);
+            Assert.assertEquals(QwpEgressMsgKind.RESET_MASK_DICT, state.getPendingCacheResetMask());
+        }
+    }
+
+    @Test
     public void testOverrideResetViaNegativeOne() {
         try (QwpEgressProcessorState state = new QwpEgressProcessorState(cfg)) {
             state.setCacheResetCapsForTest(1, 1, 1);
