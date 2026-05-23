@@ -2668,6 +2668,21 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     public void publishAsyncWriterCommand(AsyncWriterCommand asyncWriterCommand) {
+        // A WAL table's structural ALTERs route through the sequencer, so only non-structural
+        // commands (e.g. storage policy) may reach its async command queue. Non-WAL tables can
+        // legitimately carry structural ALTERs here (published on writer contention). The WAL
+        // apply job drains this queue via tick() after each batch, so a structural command
+        // slipping in would be applied to the writer's metadata out of band with the sequencer,
+        // diverging the two and corrupting subsequent WAL transactions. Reject at publish time.
+        if (tableToken.isWal() && asyncWriterCommand.isStructural()) {
+            throw CairoException.critical(0)
+                    .put("structural command must not reach a WAL table's async command queue [table=")
+                    .put(tableToken.getTableName())
+                    .put(", cmdType=").put(asyncWriterCommand.getCmdType())
+                    .put(']');
+        }
+        // Mark command as being executed asynchronously, only after the invariant above holds.
+        asyncWriterCommand.startAsync();
         while (true) {
             long seq = commandPubSeq.next();
             if (seq > -1) {
@@ -8178,11 +8193,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     .$(", cursor=").$(cursor)
                     .I$();
             asyncWriterCommand = asyncWriterCommand.deserialize(cmd);
-            // A WAL table's structural ALTERs route through the sequencer, so only non-structural
-            // commands (e.g. storage policy) may reach its async command queue. Non-WAL tables
-            // can legitimately carry structural ALTERs here (published on writer contention),
-            // hence the WAL-only guard. The WAL apply job drains this queue via tick() after each
-            // batch, so a structural command slipping in would otherwise be applied out of band.
+            // publishAsyncWriterCommand() rejects structural commands on a WAL table's async
+            // queue before they ever land here, so deserialized commands are known-safe. This
+            // assert is a redundant consumer-side check that the invariant still holds.
             assert !tableToken.isWal() || !asyncWriterCommand.isStructural()
                     : "structural command must not reach a WAL table's async command queue";
             affectedRowsCount = asyncWriterCommand.apply(this, contextAllowsAnyStructureChanges);

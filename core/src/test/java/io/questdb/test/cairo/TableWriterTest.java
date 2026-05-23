@@ -2002,9 +2002,9 @@ public class TableWriterTest extends AbstractCairoTest {
         // loop) must be applied by that tick, rather than sitting unprocessed until the writer is
         // returned to the pool. This test holds the writer and replicates the apply job's
         // commit-then-tick sequence, so the pool-return tick cannot mask the bug. A WAL table's
-        // structural ALTERs route through the sequencer and never reach its async queue (an
-        // assertion in processAsyncWriterCommand enforces this), so a non-structural SET PARAM
-        // command stands in for the storage policy commands that genuinely land there.
+        // structural ALTERs route through the sequencer and never reach its async queue
+        // (publishAsyncWriterCommand rejects them), so a non-structural SET PARAM command stands
+        // in for the storage policy commands that genuinely land there.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tbl (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("INSERT INTO tbl VALUES ('2022-02-24T00:00:00.000000Z', 1)");
@@ -2103,6 +2103,42 @@ public class TableWriterTest extends AbstractCairoTest {
                 Assert.assertFalse(writer.isDistressed());
                 // ...and no partition was removed (the failed DROP left the table unchanged).
                 Assert.assertEquals(partitionCountBefore + 1, writer.getPartitionCount());
+            }
+        });
+    }
+
+    @Test
+    public void testWalStructuralAsyncCommandRejectedAtPublish() throws Exception {
+        // A WAL table's structural ALTERs route through the sequencer and must never reach its
+        // async command queue: the WAL apply job drains that queue via tick() after each batch,
+        // so a structural command slipping in would mutate the writer's metadata out of band with
+        // the sequencer and corrupt subsequent WAL transactions. publishAsyncWriterCommand()
+        // rejects such a command up front, before it lands on the queue, so the guard holds in
+        // production builds where the consumer-side assertion is disabled.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tbl (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            TableToken token = engine.verifyTableName("tbl");
+            Assert.assertTrue(token.isWal());
+
+            try (TableWriter writer = getWriter(token)) {
+                AlterOperationBuilder builder = new AlterOperationBuilder();
+                builder.ofAddColumn(0, token, token.getTableId())
+                        .ofAddColumn("y", 0, ColumnType.INT, 0, false, IndexType.NONE, 0);
+                AlterOperation alterOp = builder.build();
+                alterOp.withSecurityContext(AllowAllSecurityContext.INSTANCE);
+                Assert.assertTrue(alterOp.isStructural());
+
+                try {
+                    writer.publishAsyncWriterCommand(alterOp);
+                    Assert.fail("expected structural command to be rejected");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(),
+                            "structural command must not reach a WAL table's async command queue [table=tbl");
+                }
+
+                // The command never landed on the queue, so a tick() applies nothing.
+                writer.tick();
+                Assert.assertEquals(2, writer.getMetadata().getColumnCount());
             }
         });
     }
