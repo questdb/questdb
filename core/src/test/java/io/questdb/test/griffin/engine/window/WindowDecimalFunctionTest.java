@@ -10006,6 +10006,143 @@ public class WindowDecimalFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAvgRescaleD64NoSpaceVariantsAllNullsExec() throws Exception {
+        // D64 source — exec tests with all-null partition + multiple scales.
+        // Triggers count==0 path in pass2 + writeNull D64/D128/D256 cases.
+        assertMemoryLeak(() -> {
+            execute(CREATE_T);
+            execute(INSERT_5_ALL_NULL);
+            assertQueryNoLeakCheck("""
+                            ts\ta64\ta128\ta256
+                            2024-01-01T00:00:00.000000Z\t\t\t
+                            2024-01-01T00:01:00.000000Z\t\t\t
+                            2024-01-01T00:02:00.000000Z\t\t\t
+                            2024-01-01T00:03:00.000000Z\t\t\t
+                            2024-01-01T00:04:00.000000Z\t\t\t
+                            """,
+                    "SELECT ts, " +
+                            "avg(v64, 0) OVER (PARTITION BY grp) a64, " +
+                            "avg(v64, 22) OVER (PARTITION BY grp) a128, " +
+                            "avg(v64, 58) OVER (PARTITION BY grp) a256 " +
+                            "FROM t", null, "ts", true, true);
+            // Same with OverPartitionRangeFrame
+            assertQueryNoLeakCheck("""
+                            ts\ta64\ta128\ta256
+                            2024-01-01T00:00:00.000000Z\t\t\t
+                            2024-01-01T00:01:00.000000Z\t\t\t
+                            2024-01-01T00:02:00.000000Z\t\t\t
+                            2024-01-01T00:03:00.000000Z\t\t\t
+                            2024-01-01T00:04:00.000000Z\t\t\t
+                            """,
+                    "SELECT ts, " +
+                            "avg(v64, 0) OVER (PARTITION BY grp ORDER BY ts RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) a64, " +
+                            "avg(v64, 22) OVER (PARTITION BY grp ORDER BY ts RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) a128, " +
+                            "avg(v64, 58) OVER (PARTITION BY grp ORDER BY ts RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) a256 " +
+                            "FROM t", "ts", false, true);
+            // Same with OverPartitionRowsFrame
+            assertQueryNoLeakCheck("""
+                            ts\ta64\ta128\ta256
+                            2024-01-01T00:00:00.000000Z\t\t\t
+                            2024-01-01T00:01:00.000000Z\t\t\t
+                            2024-01-01T00:02:00.000000Z\t\t\t
+                            2024-01-01T00:03:00.000000Z\t\t\t
+                            2024-01-01T00:04:00.000000Z\t\t\t
+                            """,
+                    "SELECT ts, " +
+                            "avg(v64, 0) OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) a64, " +
+                            "avg(v64, 22) OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) a128, " +
+                            "avg(v64, 58) OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) a256 " +
+                            "FROM t", "ts", false, true);
+        });
+    }
+
+    @Test
+    public void testAvgRescaleD128D256AllNullsExec() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(CREATE_T);
+            execute(INSERT_5_ALL_NULL);
+            // D128 source
+            assertQueryNoLeakCheck("""
+                            ts\ta128\ta256
+                            2024-01-01T00:00:00.000000Z\t\t
+                            2024-01-01T00:01:00.000000Z\t\t
+                            2024-01-01T00:02:00.000000Z\t\t
+                            2024-01-01T00:03:00.000000Z\t\t
+                            2024-01-01T00:04:00.000000Z\t\t
+                            """,
+                    "SELECT ts, " +
+                            "avg(v128, 0) OVER (PARTITION BY grp ORDER BY ts RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) a128, " +
+                            "avg(v128, 44) OVER (PARTITION BY grp ORDER BY ts RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) a256 " +
+                            "FROM t", "ts", false, true);
+            // D256 source
+            assertQueryNoLeakCheck("""
+                            ts\ta256
+                            2024-01-01T00:00:00.000000Z\t
+                            2024-01-01T00:01:00.000000Z\t
+                            2024-01-01T00:02:00.000000Z\t
+                            2024-01-01T00:03:00.000000Z\t
+                            2024-01-01T00:04:00.000000Z\t
+                            """,
+                    "SELECT ts, avg(v256, 16) OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) a256 FROM t",
+                    "ts", false, true);
+        });
+    }
+
+    @Test
+    public void testAvgRescalePartitionFirstRowNullAllSubTypes() throws Exception {
+        // First row of partition is NULL — triggers isNew + isNull init branch (size=0,acc.ofRaw(0),frameSize=0).
+        assertMemoryLeak(() -> {
+            execute(CREATE_T);
+            execute("INSERT INTO t VALUES " +
+                    "('2024-01-01T00:00:00', 'a', null, null, null, null, null, null), " +
+                    "('2024-01-01T00:01:00', 'a', 0.6m, 6.0m, 6.000m, 6.00m, 6.000000m, 6m)");
+            for (String col : new String[]{"v8", "v16", "v32", "v64", "v128", "v256"}) {
+                int defaultScale = switch (col) {
+                    case "v8" -> 3;
+                    case "v16" -> 6;
+                    case "v32" -> 10;
+                    case "v64" -> 22;
+                    case "v128" -> 44;
+                    default -> 16;
+                };
+                // OverPartitionRangeFrame
+                assertSql("ts\n2024-01-01T00:00:00.000000Z\n2024-01-01T00:01:00.000000Z\n",
+                        "SELECT ts FROM (SELECT ts, avg(" + col + ", " + defaultScale + ") OVER (PARTITION BY grp ORDER BY ts RANGE BETWEEN 60 second PRECEDING AND CURRENT ROW) av FROM t)");
+                // OverPartitionRowsFrame
+                assertSql("ts\n2024-01-01T00:00:00.000000Z\n2024-01-01T00:01:00.000000Z\n",
+                        "SELECT ts FROM (SELECT ts, avg(" + col + ", " + defaultScale + ") OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) av FROM t)");
+            }
+        });
+    }
+
+    @Test
+    public void testAvgRescaleMixedTwoPassForcesPass1AllSubTypes() throws Exception {
+        // Mix a ZERO_PASS AvgRescale OverPartitionRangeFrame with a TWO_PASS OverPartition function
+        // -> entire query goes cached -> ZERO_PASS function's pass1 path is exercised.
+        assertMemoryLeak(() -> {
+            execute(CREATE_T);
+            execute(INSERT_6_PART);
+            for (String col : new String[]{"v8", "v16", "v32", "v64", "v128", "v256"}) {
+                int scale = switch (col) {
+                    case "v8" -> 3;
+                    case "v16" -> 6;
+                    case "v32" -> 10;
+                    case "v64" -> 22;
+                    case "v128" -> 44;
+                    default -> 16;
+                };
+                // ZERO_PASS sibling (OverPartitionRangeFrame avg) + TWO_PASS sibling (OverPartition sum).
+                // The query becomes cached, pass1 of the ZERO_PASS function is called.
+                assertSql("ts\n2024-01-01T00:00:00.000000Z\n2024-01-01T00:01:00.000000Z\n2024-01-01T00:02:00.000000Z\n2024-01-01T00:03:00.000000Z\n2024-01-01T00:04:00.000000Z\n2024-01-01T00:05:00.000000Z\n",
+                        "SELECT ts FROM (SELECT ts, " +
+                                "avg(" + col + ", " + scale + ") OVER (PARTITION BY grp ORDER BY ts RANGE BETWEEN 60 second PRECEDING AND CURRENT ROW) a, " +
+                                "sum(" + col + ") OVER (PARTITION BY grp) s " +
+                                "FROM t) ORDER BY ts");
+            }
+        });
+    }
+
+    @Test
     public void testFirstValueUnboundedPartitionRowsFrameAllNulls() throws Exception {
         // FirstValue OVER (PARTITION BY ROWS UNBOUNDED PRECEDING AND CURRENT ROW) with all-NULL partitions.
         assertMemoryLeak(() -> {
