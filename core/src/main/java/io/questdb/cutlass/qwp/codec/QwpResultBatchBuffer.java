@@ -230,7 +230,12 @@ public class QwpResultBatchBuffer implements QuietCloseable {
                 case QwpConstants.TYPE_CHAR: {
                     long base = frame.getPageAddress(ci);
                     if (base == 0) {
-                        fillNulls(scratch, rows);
+                        // Wire spec sec 11.5: SHORT / CHAR cannot carry NULL.
+                        // INSERT NULL stores 0 and the wire row keeps the null
+                        // bitmap bit clear, so a column-top frame ships literal
+                        // zero values rather than driving fillNulls (which would
+                        // set bits in the null bitmap that the client rejects).
+                        scratch.appendColumnFixedZero(rows, 2);
                     } else {
                         scratch.appendColumnFixedNoNull(base + lo * 2L, rows, 2);
                     }
@@ -239,7 +244,9 @@ public class QwpResultBatchBuffer implements QuietCloseable {
                 case QwpConstants.TYPE_BYTE: {
                     long base = frame.getPageAddress(ci);
                     if (base == 0) {
-                        fillNulls(scratch, rows);
+                        // Wire spec sec 11.5: BYTE cannot carry NULL. See the
+                        // SHORT / CHAR case above for the column-top rationale.
+                        scratch.appendColumnFixedZero(rows, 1);
                     } else {
                         scratch.appendColumnFixedNoNull(base + lo, rows, 1);
                     }
@@ -248,7 +255,10 @@ public class QwpResultBatchBuffer implements QuietCloseable {
                 case QwpConstants.TYPE_BOOLEAN: {
                     long base = frame.getPageAddress(ci);
                     if (base == 0) {
-                        fillNulls(scratch, rows);
+                        // Wire spec sec 11.5: BOOLEAN cannot carry NULL. The
+                        // column-top fill is n bit-packed false values; the
+                        // null bitmap stays clear.
+                        scratch.appendColumnBooleanZero(rows);
                     } else {
                         scratch.appendColumnBoolean(base + lo, rows);
                     }
@@ -676,6 +686,10 @@ public class QwpResultBatchBuffer implements QuietCloseable {
         // the full bytes in between, instead of n iterations of read-modify-
         // write. Matters when an ALTER TABLE ADD COLUMN leaves many columns as
         // column-tops and every page-frame triggers fillNulls per such column.
+        // Callable only for types that can carry NULL on the wire; BYTE /
+        // SHORT / CHAR / BOOLEAN take appendColumnFixedZero /
+        // appendColumnBooleanZero instead so the wire row's null bitmap bit
+        // stays clear (egress spec sec 11.5).
         scratch.appendNullColumn(n);
     }
 

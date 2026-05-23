@@ -45,7 +45,7 @@ import io.questdb.cutlass.qwp.protocol.QwpParseException;
 import io.questdb.cutlass.qwp.protocol.QwpSchema;
 import io.questdb.cutlass.qwp.protocol.QwpSchemaRegistry;
 import io.questdb.cutlass.qwp.protocol.QwpTableBlockCursor;
-import io.questdb.cutlass.qwp.server.QwpProcessorState;
+import io.questdb.cutlass.qwp.server.QwpIngressProcessorState;
 import io.questdb.cutlass.qwp.server.QwpTudCache;
 import io.questdb.std.CharSequenceLongHashMap;
 import io.questdb.std.LowerCaseUtf8SequenceObjHashMap;
@@ -64,14 +64,14 @@ import java.lang.reflect.Field;
 import java.lang.reflect.Proxy;
 import java.util.HashMap;
 
-public class QwpProcessorStateTest extends AbstractCairoTest {
+public class QwpIngressProcessorStateTest extends AbstractCairoTest {
 
     @Test
     public void testAddDataIgnoresZeroLengthInput() throws Exception {
         assertMemoryLeak(() -> {
             LineHttpProcessorConfiguration lineConfig =
                     new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
-            QwpProcessorState state = new QwpProcessorState(1024, 4096, engine, lineConfig);
+            QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, lineConfig);
             try {
                 state.of(1, AllowAllSecurityContext.INSTANCE);
 
@@ -100,7 +100,7 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
                             return 256;
                         }
                     };
-            QwpProcessorState state = new QwpProcessorState(64, 4096, engine, lineConfig);
+            QwpIngressProcessorState state = new QwpIngressProcessorState(64, 4096, engine, lineConfig);
             try {
                 state.of(1, AllowAllSecurityContext.INSTANCE);
 
@@ -133,7 +133,7 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             LineHttpProcessorConfiguration lineConfig =
                     new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
-            QwpProcessorState state = new QwpProcessorState(1024, 4096, engine, lineConfig);
+            QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, lineConfig);
             try {
                 state.of(1, AllowAllSecurityContext.INSTANCE);
                 state.setDurableAckEnabled(true);
@@ -170,7 +170,7 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             LineHttpProcessorConfiguration lineConfig =
                     new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
-            QwpProcessorState state = new QwpProcessorState(1024, 4096, engine, lineConfig);
+            QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, lineConfig);
             try {
                 state.of(1, AllowAllSecurityContext.INSTANCE);
                 state.setDurableAckEnabled(true);
@@ -212,7 +212,7 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             LineHttpProcessorConfiguration lineConfig =
                     new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
-            QwpProcessorState state = new QwpProcessorState(1024, 4096, engine, lineConfig);
+            QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, lineConfig);
             try {
                 state.of(1, AllowAllSecurityContext.INSTANCE);
                 state.setDurableAckEnabled(true);
@@ -248,7 +248,7 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             LineHttpProcessorConfiguration lineConfig =
                     new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
-            QwpProcessorState state = new QwpProcessorState(1024, 4096, engine, lineConfig);
+            QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, lineConfig);
             try {
                 state.of(1, AllowAllSecurityContext.INSTANCE);
                 state.setDurableAckEnabled(true);
@@ -315,7 +315,7 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             LineHttpProcessorConfiguration lineConfig =
                     new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
-            QwpProcessorState state = new QwpProcessorState(1024, 4096, engine, lineConfig);
+            QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, lineConfig);
             try {
                 state.of(1, AllowAllSecurityContext.INSTANCE);
                 // durableAckEnabled is false by default
@@ -349,7 +349,7 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             LineHttpProcessorConfiguration lineConfig =
                     new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
-            QwpProcessorState state = new QwpProcessorState(1024, 4096, engine, lineConfig);
+            QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, lineConfig);
             try {
                 state.of(1, AllowAllSecurityContext.INSTANCE);
                 state.setDurableAckEnabled(true);
@@ -398,7 +398,7 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             LineHttpProcessorConfiguration lineConfig =
                     new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
-            QwpProcessorState state = new QwpProcessorState(1024, 4096, engine, lineConfig);
+            QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, lineConfig);
             try {
                 state.of(1, AllowAllSecurityContext.INSTANCE);
                 state.setHighestProcessedSequence(5);
@@ -417,7 +417,7 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             LineHttpProcessorConfiguration lineConfig =
                     new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
-            QwpProcessorState state = new QwpProcessorState(1024, 4096, engine, lineConfig);
+            QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, lineConfig);
             try {
                 state.of(1, AllowAllSecurityContext.INSTANCE);
                 state.setDurableAckEnabled(true);
@@ -449,7 +449,7 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             LineHttpProcessorConfiguration lineConfig =
                     new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
-            QwpProcessorState state = new QwpProcessorState(1024, 4096, engine, lineConfig);
+            QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, lineConfig);
             try {
                 state.of(1, AllowAllSecurityContext.INSTANCE);
                 FakeConsumerTudCache fake = installFakeTudCache(state, engine, lineConfig);
@@ -476,7 +476,7 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             LineHttpProcessorConfiguration lineConfig =
                     new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
-            QwpProcessorState state = new QwpProcessorState(1024, 4096, engine, lineConfig);
+            QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, lineConfig);
             try {
                 state.of(1, AllowAllSecurityContext.INSTANCE);
                 FakeConsumerTudCache fake = installFakeTudCache(state, engine, lineConfig);
@@ -498,7 +498,7 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             LineHttpProcessorConfiguration lineConfig =
                     new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
-            QwpProcessorState state = new QwpProcessorState(1024, 4096, engine, lineConfig);
+            QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, lineConfig);
             try {
                 state.of(1, AllowAllSecurityContext.INSTANCE);
                 state.setDurableAckEnabled(true);
@@ -533,12 +533,12 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             LineHttpProcessorConfiguration lineConfig =
                     new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
-            QwpProcessorState state = new QwpProcessorState(1024, 4096, engine, lineConfig);
+            QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, lineConfig);
             try {
                 state.of(1, AllowAllSecurityContext.INSTANCE);
 
                 // Replace tudCache with one that throws a critical CairoException
-                Field tudCacheField = QwpProcessorState.class.getDeclaredField("tudCache");
+                Field tudCacheField = QwpIngressProcessorState.class.getDeclaredField("tudCache");
                 tudCacheField.setAccessible(true);
                 Misc.free((QwpTudCache) tudCacheField.get(state));
                 DefaultColumnTypes defaultColumnTypes = new DefaultColumnTypes(lineConfig);
@@ -560,7 +560,7 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
                         0     // schemaId=0
                 }));
                 state.processMessage();
-                Assert.assertEquals(QwpProcessorState.Status.INTERNAL_ERROR, state.getStatus());
+                Assert.assertEquals(QwpIngressProcessorState.Status.INTERNAL_ERROR, state.getStatus());
                 Assert.assertTrue(state.getErrorText().contains("simulated critical error"));
             } finally {
                 state.onDisconnected();
@@ -641,7 +641,7 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             LineHttpProcessorConfiguration lineConfig =
                     new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
-            QwpProcessorState state = new QwpProcessorState(1024, 4096, engine, lineConfig);
+            QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, lineConfig);
             state.of(1, AllowAllSecurityContext.INSTANCE);
             // Simulate the fixed onConnectionClosed lifecycle:
             // onDisconnected() resets per-connection state (WAL writers, symbol caches),
@@ -988,7 +988,7 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             LineHttpProcessorConfiguration lineConfig =
                     new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
-            QwpProcessorState state = new QwpProcessorState(1024, 4096, engine, lineConfig);
+            QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, lineConfig);
             try {
                 state.of(1, AllowAllSecurityContext.INSTANCE);
                 state.setDurableAckEnabled(true);
@@ -1011,7 +1011,7 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             LineHttpProcessorConfiguration lineConfig =
                     new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
-            QwpProcessorState state = new QwpProcessorState(1024, 4096, engine, lineConfig);
+            QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, lineConfig);
             try {
                 state.of(1, AllowAllSecurityContext.INSTANCE);
                 state.setDurableAckEnabled(true);
@@ -1034,7 +1034,7 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             LineHttpProcessorConfiguration lineConfig =
                     new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
-            QwpProcessorState state = new QwpProcessorState(1024, 4096, engine, lineConfig);
+            QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, lineConfig);
             try {
                 state.of(1, AllowAllSecurityContext.INSTANCE);
                 FakeConsumerTudCache fake = installFakeTudCache(state, engine, lineConfig);
@@ -1057,7 +1057,7 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             LineHttpProcessorConfiguration lineConfig =
                     new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
-            QwpProcessorState state = new QwpProcessorState(1024, 4096, engine, lineConfig);
+            QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, lineConfig);
             try {
                 state.of(1, AllowAllSecurityContext.INSTANCE);
                 FakeConsumerTudCache fake = installFakeTudCache(state, engine, lineConfig);
@@ -1081,7 +1081,7 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             LineHttpProcessorConfiguration lineConfig =
                     new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
-            QwpProcessorState state = new QwpProcessorState(1024, 4096, engine, lineConfig);
+            QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, lineConfig);
             try {
                 state.of(1, AllowAllSecurityContext.INSTANCE);
 
@@ -1106,7 +1106,7 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             LineHttpProcessorConfiguration lineConfig =
                     new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
-            QwpProcessorState state = new QwpProcessorState(1024, 4096, engine, lineConfig);
+            QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, lineConfig);
             state.of(1, AllowAllSecurityContext.INSTANCE);
             state.onDisconnected();
             // close() may be called twice: once explicitly and once via
@@ -1372,7 +1372,7 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             LineHttpProcessorConfiguration lineConfig =
                     new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
-            QwpProcessorState state = new QwpProcessorState(1024, 4096, engine, lineConfig);
+            QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, lineConfig);
             try {
                 state.of(1, AllowAllSecurityContext.INSTANCE);
 
@@ -1399,7 +1399,7 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             LineHttpProcessorConfiguration lineConfig =
                     new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
-            QwpProcessorState state = new QwpProcessorState(1024, 4096, engine, lineConfig);
+            QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, lineConfig);
             try {
                 state.of(1, AllowAllSecurityContext.INSTANCE);
                 state.setDurableAckEnabled(true);
@@ -1452,7 +1452,7 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             LineHttpProcessorConfiguration lineConfig =
                     new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
-            QwpProcessorState state = new QwpProcessorState(1024, 4096, engine, lineConfig);
+            QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, lineConfig);
             try {
                 state.of(1, AllowAllSecurityContext.INSTANCE);
                 state.setDurableAckEnabled(true);
@@ -1480,7 +1480,7 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             LineHttpProcessorConfiguration lineConfig =
                     new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
-            QwpProcessorState state = new QwpProcessorState(1024, 4096, engine, lineConfig);
+            QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, lineConfig);
             try {
                 state.of(1, AllowAllSecurityContext.INSTANCE);
 
@@ -1503,7 +1503,7 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             LineHttpProcessorConfiguration lineConfig =
                     new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
-            QwpProcessorState state = new QwpProcessorState(1024, 4096, engine, lineConfig);
+            QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, lineConfig);
             try {
                 state.of(1, AllowAllSecurityContext.INSTANCE);
 
@@ -1526,12 +1526,12 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             LineHttpProcessorConfiguration lineConfig =
                     new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
-            QwpProcessorState state = new QwpProcessorState(1024, 4096, engine, lineConfig);
+            QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, lineConfig);
             try {
                 state.of(1, AllowAllSecurityContext.INSTANCE);
 
                 // Pre-register schema 0 with 2 columns via reflection
-                Field decoderField = QwpProcessorState.class.getDeclaredField("streamingDecoder");
+                Field decoderField = QwpIngressProcessorState.class.getDeclaredField("streamingDecoder");
                 decoderField.setAccessible(true);
                 Object decoder = decoderField.get(state);
                 Field registryField = decoder.getClass().getDeclaredField("schemaRegistry");
@@ -1551,7 +1551,7 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
                         0                               // schemaId=0
                 }));
                 state.processMessage();
-                Assert.assertEquals(QwpProcessorState.Status.SCHEMA_MISMATCH, state.getStatus());
+                Assert.assertEquals(QwpIngressProcessorState.Status.SCHEMA_MISMATCH, state.getStatus());
             } finally {
                 state.onDisconnected();
                 state.close();
@@ -1564,7 +1564,7 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             LineHttpProcessorConfiguration lineConfig =
                     new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
-            QwpProcessorState state = new QwpProcessorState(1024, 4096, engine, lineConfig);
+            QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, lineConfig);
             try {
                 state.of(1, AllowAllSecurityContext.INSTANCE);
 
@@ -1583,11 +1583,11 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             LineHttpProcessorConfiguration lineConfig =
                     new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
-            QwpProcessorState state = new QwpProcessorState(1024, 4096, engine, lineConfig);
+            QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, lineConfig);
             try {
                 state.of(1, AllowAllSecurityContext.INSTANCE);
 
-                state.reject(QwpProcessorState.Status.PARSE_ERROR, "initial error", 1);
+                state.reject(QwpIngressProcessorState.Status.PARSE_ERROR, "initial error", 1);
                 Assert.assertFalse(state.isOk());
 
                 // Add some data so bufferPosition > 0
@@ -1613,12 +1613,12 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             LineHttpProcessorConfiguration lineConfig =
                     new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
-            QwpProcessorState state = new QwpProcessorState(1024, 250, engine, lineConfig);
+            QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 250, engine, lineConfig);
             try {
                 state.of(1, AllowAllSecurityContext.INSTANCE);
 
                 String shortError = "something went wrong";
-                state.reject(QwpProcessorState.Status.PARSE_ERROR, shortError, 1);
+                state.reject(QwpIngressProcessorState.Status.PARSE_ERROR, shortError, 1);
 
                 Assert.assertEquals(shortError, state.getErrorText());
             } finally {
@@ -1634,13 +1634,13 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
             // maxResponseContentLength=250 → maxResponseErrorMessageLength = (250-100)/1.5 = 100
             LineHttpProcessorConfiguration lineConfig =
                     new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
-            QwpProcessorState state = new QwpProcessorState(1024, 250, engine, lineConfig);
+            QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 250, engine, lineConfig);
             try {
                 state.of(1, AllowAllSecurityContext.INSTANCE);
 
                 // Build a 200-char error message, well above the 100-char limit
                 String longError = "x".repeat(200);
-                state.reject(QwpProcessorState.Status.INTERNAL_ERROR, longError, 1);
+                state.reject(QwpIngressProcessorState.Status.INTERNAL_ERROR, longError, 1);
 
                 String errorText = state.getErrorText();
                 Assert.assertEquals(100, errorText.length());
@@ -1657,11 +1657,11 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             LineHttpProcessorConfiguration lineConfig =
                     new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
-            QwpProcessorState state = new QwpProcessorState(1024, 4096, engine, lineConfig);
+            QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, lineConfig);
             try {
                 state.of(1, AllowAllSecurityContext.INSTANCE);
 
-                state.reject(QwpProcessorState.Status.INTERNAL_ERROR, null, 1);
+                state.reject(QwpIngressProcessorState.Status.INTERNAL_ERROR, null, 1);
                 Assert.assertFalse(state.isOk());
                 Assert.assertEquals("(no error message)", state.getErrorText());
             } finally {
@@ -1676,7 +1676,7 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             LineHttpProcessorConfiguration lineConfig =
                     new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
-            QwpProcessorState state = new QwpProcessorState(1024, 4096, engine, lineConfig);
+            QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, lineConfig);
             try {
                 state.of(1, AllowAllSecurityContext.INSTANCE);
                 FakeConsumerTudCache fake = installFakeTudCache(state, engine, lineConfig);
@@ -1695,7 +1695,7 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
                 try {
                     Unsafe.putByte(ptr, (byte) 0x00); // STATUS_OK
                     Unsafe.putLong(ptr + 1, 0L);      // sequence
-                    int tableBytes = QwpProcessorState.writeTableSeqTxnEntries(ptr + 9, state.getPendingAckSeqTxns());
+                    int tableBytes = QwpIngressProcessorState.writeTableSeqTxnEntries(ptr + 9, state.getPendingAckSeqTxns());
                     Assert.assertEquals(payloadSize, 9 + tableBytes);
                 } finally {
                     Unsafe.free(ptr, payloadSize, MemoryTag.NATIVE_DEFAULT);
@@ -1712,7 +1712,7 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             LineHttpProcessorConfiguration lineConfig =
                     new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
-            QwpProcessorState state = new QwpProcessorState(1024, 4096, engine, lineConfig);
+            QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, lineConfig);
             try {
                 state.of(1, AllowAllSecurityContext.INSTANCE);
                 state.setDurableAckEnabled(true);
@@ -1737,7 +1737,7 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
                 long ptr = Unsafe.malloc(payloadSize, MemoryTag.NATIVE_DEFAULT);
                 try {
                     Unsafe.putByte(ptr, (byte) 0x02); // STATUS_DURABLE_ACK
-                    int tableBytes = QwpProcessorState.writeTableSeqTxnEntries(ptr + 1, progress);
+                    int tableBytes = QwpIngressProcessorState.writeTableSeqTxnEntries(ptr + 1, progress);
                     Assert.assertEquals(payloadSize, 1 + tableBytes);
                 } finally {
                     Unsafe.free(ptr, payloadSize, MemoryTag.NATIVE_DEFAULT);
@@ -1754,7 +1754,7 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             LineHttpProcessorConfiguration lineConfig =
                     new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
-            QwpProcessorState state = new QwpProcessorState(1024, 4096, engine, lineConfig);
+            QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, lineConfig);
             try {
                 state.of(1, AllowAllSecurityContext.INSTANCE);
 
@@ -1778,7 +1778,7 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
             CharSequenceLongHashMap entries = new CharSequenceLongHashMap();
             long ptr = Unsafe.malloc(64, MemoryTag.NATIVE_DEFAULT);
             try {
-                int written = QwpProcessorState.writeTableSeqTxnEntries(ptr, entries);
+                int written = QwpIngressProcessorState.writeTableSeqTxnEntries(ptr, entries);
                 // Empty map: just tableCount(2) = 0
                 Assert.assertEquals(2, written);
                 Assert.assertEquals(0, Unsafe.getShort(ptr) & 0xFFFF);
@@ -1797,7 +1797,7 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
             entries.put("abc", 30L);
             long ptr = Unsafe.malloc(256, MemoryTag.NATIVE_DEFAULT);
             try {
-                int written = QwpProcessorState.writeTableSeqTxnEntries(ptr, entries);
+                int written = QwpIngressProcessorState.writeTableSeqTxnEntries(ptr, entries);
                 // tableCount(2) + 3 * (nameLen(2) + name + seqTxn(8))
                 // "t1"(2), "t2"(2), "abc"(3) -> 2 + (2+2+8) + (2+2+8) + (2+3+8) = 39
                 Assert.assertEquals(39, written);
@@ -1834,7 +1834,7 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
             entries.put("café", 77L);
             long ptr = Unsafe.malloc(128, MemoryTag.NATIVE_DEFAULT);
             try {
-                int written = QwpProcessorState.writeTableSeqTxnEntries(ptr, entries);
+                int written = QwpIngressProcessorState.writeTableSeqTxnEntries(ptr, entries);
                 // tableCount(2) + nameLen(2) + "café" UTF-8 (5 bytes) + seqTxn(8) = 17
                 Assert.assertEquals(17, written);
                 int tableCount = Unsafe.getShort(ptr) & 0xFFFF;
@@ -1861,7 +1861,7 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
             entries.put("trades", 42L);
             long ptr = Unsafe.malloc(128, MemoryTag.NATIVE_DEFAULT);
             try {
-                int written = QwpProcessorState.writeTableSeqTxnEntries(ptr, entries);
+                int written = QwpIngressProcessorState.writeTableSeqTxnEntries(ptr, entries);
                 // tableCount(2) + nameLen(2) + "trades"(6) + seqTxn(8) = 18
                 Assert.assertEquals(18, written);
                 Assert.assertEquals(1, Unsafe.getShort(ptr) & 0xFFFF);
@@ -1879,7 +1879,7 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             LineHttpProcessorConfiguration lineConfig =
                     new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
-            QwpProcessorState state = new QwpProcessorState(1024, 4096, engine, lineConfig);
+            QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, lineConfig);
             try {
                 state.of(1, AllowAllSecurityContext.INSTANCE);
 
@@ -1903,7 +1903,7 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             LineHttpProcessorConfiguration lineConfig =
                     new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
-            QwpProcessorState state = new QwpProcessorState(1024, 4096, engine, lineConfig);
+            QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, lineConfig);
             try {
                 state.of(1, AllowAllSecurityContext.INSTANCE);
                 FakeConsumerTudCache fake = installFakeTudCache(state, engine, lineConfig);
@@ -1937,7 +1937,7 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             LineHttpProcessorConfiguration lineConfig =
                     new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
-            QwpProcessorState state = new QwpProcessorState(1024, 4096, engine, lineConfig);
+            QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, lineConfig);
             try {
                 state.of(1, AllowAllSecurityContext.INSTANCE);
 
@@ -1976,7 +1976,7 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             LineHttpProcessorConfiguration lineConfig =
                     new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
-            QwpProcessorState state = new QwpProcessorState(1024, 4096, engine, lineConfig);
+            QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, lineConfig);
             try {
                 state.of(1, AllowAllSecurityContext.INSTANCE);
 
@@ -1997,8 +1997,8 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
         });
     }
 
-    private static int fieldSize(QwpProcessorState state, String fieldName) throws Exception {
-        Field f = QwpProcessorState.class.getDeclaredField(fieldName);
+    private static int fieldSize(QwpIngressProcessorState state, String fieldName) throws Exception {
+        Field f = QwpIngressProcessorState.class.getDeclaredField(fieldName);
         f.setAccessible(true);
         Object map = f.get(state);
         // Both CharSequenceLongHashMap and CharSequenceObjHashMap expose size().
@@ -2006,9 +2006,9 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
     }
 
     private static FakeConsumerTudCache installFakeTudCache(
-            QwpProcessorState state, io.questdb.cairo.CairoEngine engine, LineHttpProcessorConfiguration lineConfig
+            QwpIngressProcessorState state, io.questdb.cairo.CairoEngine engine, LineHttpProcessorConfiguration lineConfig
     ) throws Exception {
-        Field f = QwpProcessorState.class.getDeclaredField("tudCache");
+        Field f = QwpIngressProcessorState.class.getDeclaredField("tudCache");
         f.setAccessible(true);
         Misc.free((QwpTudCache) f.get(state));
         FakeConsumerTudCache fake = new FakeConsumerTudCache(engine, lineConfig);
@@ -2016,7 +2016,7 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
         return fake;
     }
 
-    private static void addNativeData(QwpProcessorState state, byte[] data) {
+    private static void addNativeData(QwpIngressProcessorState state, byte[] data) {
         long ptr = Unsafe.malloc(data.length, MemoryTag.NATIVE_HTTP_CONN);
         try {
             for (int i = 0; i < data.length; i++) {
