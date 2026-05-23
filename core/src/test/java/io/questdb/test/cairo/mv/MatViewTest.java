@@ -3142,6 +3142,69 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testIncrementalPeriodRefreshCommitsWatermarkWhenBaseTxnAdvances() throws Exception {
+        // A period mat view consuming a new base txn whose rows all fall in an incomplete period
+        // produces no rows, but the no-rows path in insertAsSelect must still commit the advanced
+        // base txn watermark. Pins the "legit advance still commits" direction of the watermark
+        // guard (commitBaseTxn > lastRefreshBaseTxn); without it the view would re-examine the same
+        // txns indefinitely.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table base_price (" +
+                            "sym varchar, price double, ts #TIMESTAMP" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            currentMicros = parseFloorPartialTimestamp("2000-01-01T00:00:00.000000Z");
+            execute(
+                    "create materialized view price_1h refresh immediate period (length 1d) as " +
+                            "select sym, last(price) as price, ts from base_price sample by 1d"
+            );
+            // Complete period (1999-12-31) plus a row in the still-incomplete 2000-01-01 period.
+            execute(
+                    "insert into base_price(sym, price, ts) values ('gbpusd', 1.320, '1999-12-31T09:01')" +
+                            ",('gbpusd', 1.321, '2000-01-01T13:02')"
+            );
+            drainWalQueue();
+            currentMicros = parseFloorPartialTimestamp("2000-01-01T00:00:00.000000Z");
+            drainQueues();
+
+            // First refresh consumed base txn 1 and completed the 1999-12-31 period.
+            assertQueryNoLeakCheck(
+                    "refresh_base_table_txn\n1\n",
+                    "select refresh_base_table_txn from materialized_views where view_name = 'price_1h'",
+                    null
+            );
+
+            // New row, still inside the incomplete 2000-01-01 period: a new base txn, but no newly
+            // complete period and no rows for the view.
+            execute("insert into base_price(sym, price, ts) values ('gbpusd', 1.322, '2000-01-01T14:00')");
+            drainWalQueue();
+            currentMicros = parseFloorPartialTimestamp("2000-01-01T23:59:59.999999Z");
+            execute("refresh materialized view price_1h incremental");
+            drainQueues();
+
+            // No rows were added to the view...
+            assertQueryNoLeakCheck(
+                    replaceExpectedTimestamp(
+                            """
+                                    sym\tprice\tts
+                                    gbpusd\t1.32\t1999-12-31T00:00:00.000000Z
+                                    """),
+                    "price_1h order by sym"
+            );
+            // ...but the base txn watermark advanced to 2, committed via the no-rows path.
+            assertQueryNoLeakCheck(
+                    """
+                            view_status\trefresh_base_table_txn
+                            valid\t2
+                            """,
+                    "select view_status, refresh_base_table_txn from materialized_views where view_name = 'price_1h'",
+                    null
+            );
+        });
+    }
+
+    @Test
     public void testIncrementalRefreshOnExistingTable() throws Exception {
         setProperty(PropertyKey.CAIRO_WAL_SEGMENT_ROLLOVER_ROW_COUNT, 10);
         assertMemoryLeak(() -> {
@@ -4567,6 +4630,148 @@ public class MatViewTest extends AbstractCairoTest {
                             """,
                     "price_1h order by sym, ts"
             );
+        });
+    }
+
+    @Test
+    public void testNoOpIncrementalPeriodRefreshDoesNotCommitWal() throws Exception {
+        // A period mat view bypasses the "non-period view is up-to-date" early-out, so an
+        // incremental refresh that finds no new data and no newly complete period still reaches
+        // the no-rows commit path. It must not write a no-op replace-range WAL transaction when
+        // neither the base txn watermark nor the period hi advances - otherwise a base table apply
+        // backlog can make the refresh loop emit millions of such transactions.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table base_price (" +
+                            "sym varchar, price double, ts #TIMESTAMP" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            currentMicros = parseFloorPartialTimestamp("2000-01-01T00:00:00.000000Z");
+            execute(
+                    "create materialized view price_1h refresh immediate period (length 1d) as " +
+                            "select sym, last(price) as price, ts from base_price sample by 1d"
+            );
+            execute(
+                    "insert into base_price(sym, price, ts) values ('gbpusd', 1.320, '1999-12-31T09:01')" +
+                            ",('gbpusd', 1.321, '2000-01-01T13:02')"
+            );
+            drainWalQueue();
+
+            // First refresh: the 1999-12-31 period is complete, so the view refreshes and its
+            // watermark (base txn + period hi) advances.
+            currentMicros = parseFloorPartialTimestamp("2000-01-01T00:00:00.000000Z");
+            drainQueues();
+            assertQueryNoLeakCheck(
+                    replaceExpectedTimestamp(
+                            """
+                                    sym\tprice\tts
+                                    gbpusd\t1.32\t1999-12-31T00:00:00.000000Z
+                                    """),
+                    "price_1h order by sym"
+            );
+
+            // Snapshot the view's WAL transactions. We only look at sequencerTxn to stay
+            // independent of the randomized base table timestamp type and rows-per-query estimate.
+            final String walTxnsSql = "select sequencerTxn from wal_transactions('price_1h')";
+            printSql(walTxnsSql);
+            final String walTxnsBefore = sink.toString();
+
+            // No new base data and the second period (2000-01-01) hasn't completed yet, so this
+            // incremental refresh advances neither the base txn watermark nor the period hi.
+            currentMicros = parseFloorPartialTimestamp("2000-01-01T23:59:59.999999Z");
+            execute("refresh materialized view price_1h incremental");
+            drainQueues();
+
+            // The view data is unchanged...
+            assertQueryNoLeakCheck(
+                    replaceExpectedTimestamp(
+                            """
+                                    sym\tprice\tts
+                                    gbpusd\t1.32\t1999-12-31T00:00:00.000000Z
+                                    """),
+                    "price_1h order by sym"
+            );
+            assertQueryNoLeakCheck(
+                    """
+                            view_status\trefresh_finished
+                            valid\ttrue
+                            """,
+                    "select view_status, last_refresh_start_timestamp <= last_refresh_finish_timestamp as refresh_finished " +
+                            "from materialized_views where view_name = 'price_1h'",
+                    null
+            );
+            // ...and, crucially, no new (no-op) WAL transaction was committed.
+            assertSql(walTxnsBefore, walTxnsSql);
+        });
+    }
+
+    @Test
+    public void testNoOpIncrementalRefreshDoesNotCommitWal() throws Exception {
+        // A non-period no-op incremental refresh must write no WAL transaction. Today the
+        // refreshIncremental0 early-out (getPeriodLength() == 0 && fromBaseTxn == toBaseTxn)
+        // short-circuits before insertAsSelect, so this pins the observable behavior rather than the
+        // guard itself: a future refactor removing the early-out can't silently reintroduce no-op WAL
+        // commits for non-period views (see testNoOpIncrementalPeriodRefreshDoesNotCommitWal for the
+        // period path that does reach the guard).
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table base_price (" +
+                            "sym varchar, price double, ts #TIMESTAMP" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            currentMicros = parseFloorPartialTimestamp("2000-01-01T00:00:00.000000Z");
+            execute(
+                    "create materialized view price_1h refresh immediate as " +
+                            "select sym, last(price) as price, ts from base_price sample by 1d"
+            );
+            execute(
+                    "insert into base_price(sym, price, ts) values ('gbpusd', 1.320, '1999-12-31T09:01')" +
+                            ",('eurusd', 1.100, '2000-01-01T13:02')"
+            );
+
+            // First refresh: picks up both rows, watermark advances.
+            drainQueues();
+            assertQueryNoLeakCheck(
+                    replaceExpectedTimestamp(
+                            """
+                                    sym\tprice\tts
+                                    eurusd\t1.1\t2000-01-01T00:00:00.000000Z
+                                    gbpusd\t1.32\t1999-12-31T00:00:00.000000Z
+                                    """),
+                    "price_1h order by sym"
+            );
+
+            // Snapshot the view's WAL transactions. Project only sequencerTxn to stay independent of
+            // the randomized base table timestamp type and rows-per-query estimate.
+            final String walTxnsSql = "select sequencerTxn from wal_transactions('price_1h')";
+            printSql(walTxnsSql);
+            final String walTxnsBefore = sink.toString();
+
+            // No new base data, so this incremental refresh is a no-op.
+            execute("refresh materialized view price_1h incremental");
+            drainQueues();
+
+            // The view data is unchanged...
+            assertQueryNoLeakCheck(
+                    replaceExpectedTimestamp(
+                            """
+                                    sym\tprice\tts
+                                    eurusd\t1.1\t2000-01-01T00:00:00.000000Z
+                                    gbpusd\t1.32\t1999-12-31T00:00:00.000000Z
+                                    """),
+                    "price_1h order by sym"
+            );
+            assertQueryNoLeakCheck(
+                    """
+                            view_status\trefresh_finished
+                            valid\ttrue
+                            """,
+                    "select view_status, last_refresh_start_timestamp <= last_refresh_finish_timestamp as refresh_finished " +
+                            "from materialized_views where view_name = 'price_1h'",
+                    null
+            );
+            // ...and no new WAL transaction was committed.
+            assertSql(walTxnsBefore, walTxnsSql);
         });
     }
 
