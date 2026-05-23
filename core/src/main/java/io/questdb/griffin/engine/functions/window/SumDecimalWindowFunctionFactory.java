@@ -4687,56 +4687,11 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         private final Decimal128 acc = new Decimal128();
         private final int position;
         private final int type;
-        private final Decimal128 value = new Decimal128();
 
         public Decimal32SumOverPartitionFunction(Map map, VirtualRecord partitionByRecord, RecordSink partitionBySink, Function arg, int type, int position) {
             super(map, partitionByRecord, partitionBySink, arg);
             this.type = type;
             this.position = position;
-        }
-
-        @Override
-        public void computeNext(Record record) {
-            partitionByRecord.of(record);
-            MapKey key = map.withKey();
-            key.put(partitionByRecord, partitionBySink);
-            MapValue mv = key.createValue();
-            int i = arg.getDecimal32(record);
-            boolean isNull = i == Decimals.DECIMAL32_NULL;
-            if (mv.isNew()) {
-                if (isNull) {
-                    acc.ofRawNull();
-                    value.ofRawNull();
-                    mv.putDecimal128Null(0);
-                    mv.putBool(1, true);
-                } else {
-                    acc.ofRaw(i);
-                    value.copyFrom(acc);
-                    mv.putDecimal128(0, acc);
-                    mv.putBool(1, false);
-                }
-            } else {
-                boolean wasNull = mv.getBool(1);
-                if (wasNull) {
-                    if (isNull) {
-                        acc.ofRawNull();
-                    } else {
-                        acc.ofRaw(i);
-                        mv.putBool(1, false);
-                        mv.putDecimal128(0, acc);
-                    }
-                } else {
-                    mv.getDecimal128(0, acc);
-                    if (!isNull) {
-                        Decimal128.uncheckedAdd(acc, i);
-                        if (acc.hasOverflowed()) {
-                            throw CairoException.nonCritical().position(position).put("sum aggregation failed: an overflow occurred");
-                        }
-                        mv.putDecimal128(0, acc);
-                    }
-                }
-                value.copyFrom(acc);
-            }
         }
 
         @Override
@@ -5916,56 +5871,11 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         private final Decimal128 acc = new Decimal128();
         private final int position;
         private final int type;
-        private final Decimal128 value = new Decimal128();
 
         public Decimal64SumOverPartitionFunction(Map map, VirtualRecord partitionByRecord, RecordSink partitionBySink, Function arg, int type, int position) {
             super(map, partitionByRecord, partitionBySink, arg);
             this.type = type;
             this.position = position;
-        }
-
-        @Override
-        public void computeNext(Record record) {
-            partitionByRecord.of(record);
-            MapKey key = map.withKey();
-            key.put(partitionByRecord, partitionBySink);
-            MapValue mv = key.createValue();
-            long d = arg.getDecimal64(record);
-            boolean dNull = d == Decimals.DECIMAL64_NULL;
-            if (mv.isNew()) {
-                if (dNull) {
-                    acc.ofRawNull();
-                    value.ofRawNull();
-                    mv.putDecimal128Null(0);
-                    mv.putBool(1, true);
-                } else {
-                    acc.ofRaw(d);
-                    value.copyFrom(acc);
-                    mv.putDecimal128(0, acc);
-                    mv.putBool(1, false);
-                }
-            } else {
-                boolean wasNull = mv.getBool(1);
-                if (wasNull) {
-                    if (dNull) {
-                        acc.ofRawNull();
-                    } else {
-                        acc.ofRaw(d);
-                        mv.putBool(1, false);
-                        mv.putDecimal128(0, acc);
-                    }
-                } else {
-                    mv.getDecimal128(0, acc);
-                    if (!dNull) {
-                        Decimal128.uncheckedAdd(acc, d);
-                        if (acc.hasOverflowed()) {
-                            throw CairoException.nonCritical().position(position).put("sum aggregation failed: an overflow occurred");
-                        }
-                        mv.putDecimal128(0, acc);
-                    }
-                }
-                value.copyFrom(acc);
-            }
         }
 
         @Override
