@@ -57,6 +57,14 @@ public abstract class AbstractQwpBootstrapTest extends AbstractBootstrapTest {
         sendChunk = 1 + rnd.nextInt(500);
     }
 
+    protected long firstBatchTimeoutMs(long baseMs) {
+        // HttpResponseSink#sendBuffer parks every sendChunk bytes; a first batch
+        // can be ~131 KB (MAX_ROWS_PER_BATCH=16384 LONGs) plus framing, so at the
+        // worst random sendChunk=1 it needs tens of thousands of park-resume cycles.
+        int effectiveChunk = Math.max(1, Math.min(sendChunk, 64));
+        return baseMs * 64L / effectiveChunk;
+    }
+
     protected TestServerMain startFragmented(String... extra) {
         String[] all = new String[extra.length + 4];
         all[0] = PropertyKey.DEBUG_HTTP_FORCE_RECV_FRAGMENTATION_CHUNK_SIZE.getEnvVarName();

@@ -84,6 +84,14 @@ public class QuestDBFacadeE2ETest extends AbstractBootstrapTest {
                 .$(", sendChunk=").$(sendChunk).$();
     }
 
+    private long firstBatchTimeoutMs(long baseMs) {
+        // HttpResponseSink#sendBuffer parks every sendChunk bytes; a first batch
+        // can be ~131 KB (MAX_ROWS_PER_BATCH=16384 LONGs) plus framing, so at the
+        // worst random sendChunk=1 it needs tens of thousands of park-resume cycles.
+        int effectiveChunk = Math.max(1, Math.min(sendChunk, 64));
+        return baseMs * 64L / effectiveChunk;
+    }
+
     /**
      * Boots {@link TestServerMain} with independent send- and recv-side HTTP
      * fragmentation thresholds. Every server-side socket read is capped at
@@ -171,7 +179,7 @@ public class QuestDBFacadeE2ETest extends AbstractBootstrapTest {
                             errorStatus.set(s);
                         }
                     });
-                    Assert.assertTrue(firstBatch.await(10, TimeUnit.SECONDS));
+                    Assert.assertTrue(firstBatch.await(firstBatchTimeoutMs(10_000), TimeUnit.MILLISECONDS));
                     c.cancel();
                     try {
                         c.await();

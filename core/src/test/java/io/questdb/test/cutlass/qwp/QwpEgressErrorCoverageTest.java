@@ -340,8 +340,8 @@ public class QwpEgressErrorCoverageTest extends AbstractQwpBootstrapTest {
                     workerRef[0] = worker;
                     worker.start();
                     Assert.assertTrue(
-                            "first RESULT_BATCH did not arrive within 30s -- server may be stalled",
-                            firstBatchSeen.await(30, TimeUnit.SECONDS)
+                            "first RESULT_BATCH did not arrive in time -- server may be stalled",
+                            firstBatchSeen.await(firstBatchTimeoutMs(30_000), TimeUnit.MILLISECONDS)
                     );
                     // Leaves try-with-resources here, triggering close() which
                     // interrupts the worker and shuts the I/O thread.
