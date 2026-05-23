@@ -4700,51 +4700,6 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         }
 
         @Override
-        public void computeNext(Record record) {
-            partitionByRecord.of(record);
-            MapKey key = map.withKey();
-            key.put(partitionByRecord, partitionBySink);
-            MapValue mv = key.createValue();
-            int i = arg.getDecimal32(record);
-            boolean isNull = i == Decimals.DECIMAL32_NULL;
-            if (mv.isNew()) {
-                if (isNull) {
-                    acc.ofRawNull();
-                    value.ofRawNull();
-                    mv.putDecimal128Null(0);
-                    mv.putBool(1, true);
-                } else {
-                    acc.ofRaw(i);
-                    value.copyFrom(acc);
-                    mv.putDecimal128(0, acc);
-                    mv.putBool(1, false);
-                }
-            } else {
-                boolean wasNull = mv.getBool(1);
-                if (wasNull) {
-                    if (isNull) {
-                        acc.ofRawNull();
-                    } else {
-                        acc.ofRaw(i);
-                        mv.putBool(1, false);
-                        mv.putDecimal128(0, acc);
-                    }
-                } else {
-                    mv.getDecimal128(0, acc);
-                    if (!isNull) {
-                        try {
-                            Decimal128.uncheckedAdd(acc, i);
-                        } catch (NumericException e) {
-                            throw CairoException.nonCritical().position(position).put("sum aggregation failed: ").put(e.getFlyweightMessage());
-                        }
-                        mv.putDecimal128(0, acc);
-                    }
-                }
-                value.copyFrom(acc);
-            }
-        }
-
-        @Override
         public String getName() {
             return NAME;
         }
@@ -5937,51 +5892,6 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             super(map, partitionByRecord, partitionBySink, arg);
             this.type = type;
             this.position = position;
-        }
-
-        @Override
-        public void computeNext(Record record) {
-            partitionByRecord.of(record);
-            MapKey key = map.withKey();
-            key.put(partitionByRecord, partitionBySink);
-            MapValue mv = key.createValue();
-            long d = arg.getDecimal64(record);
-            boolean dNull = d == Decimals.DECIMAL64_NULL;
-            if (mv.isNew()) {
-                if (dNull) {
-                    acc.ofRawNull();
-                    value.ofRawNull();
-                    mv.putDecimal128Null(0);
-                    mv.putBool(1, true);
-                } else {
-                    acc.ofRaw(d);
-                    value.copyFrom(acc);
-                    mv.putDecimal128(0, acc);
-                    mv.putBool(1, false);
-                }
-            } else {
-                boolean wasNull = mv.getBool(1);
-                if (wasNull) {
-                    if (dNull) {
-                        acc.ofRawNull();
-                    } else {
-                        acc.ofRaw(d);
-                        mv.putBool(1, false);
-                        mv.putDecimal128(0, acc);
-                    }
-                } else {
-                    mv.getDecimal128(0, acc);
-                    if (!dNull) {
-                        try {
-                            Decimal128.uncheckedAdd(acc, d);
-                        } catch (NumericException e) {
-                            throw CairoException.nonCritical().position(position).put("sum aggregation failed: ").put(e.getFlyweightMessage());
-                        }
-                        mv.putDecimal128(0, acc);
-                    }
-                }
-                value.copyFrom(acc);
-            }
         }
 
         @Override

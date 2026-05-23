@@ -231,8 +231,6 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
             if (framingMode == WindowExpression.FRAMING_RANGE) {
                 if (!windowContext.isOrdered() && windowContext.isDefaultFrame()) {
                     return new Decimal128FirstNotNullOverWholeResultSetFunction(args.get(0), argType);
-                } else if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
-                    return new Decimal128FirstNotNullOverWholeResultSetFunction(args.get(0), argType);
                 } else {
                     if (windowContext.isOrdered() && !windowContext.isOrderedByDesignatedTimestamp()) {
                         throw SqlException.$(windowContext.getOrderByPos(), "RANGE is supported only for queries ordered by designated timestamp");
@@ -241,7 +239,7 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
                     return new Decimal128FirstNotNullOverRangeFrameFunction(rowsLo, rowsHi, args.get(0), configuration, timestampIndex, argType);
                 }
             } else if (framingMode == WindowExpression.FRAMING_ROWS) {
-                if (rowsLo == Long.MIN_VALUE && (rowsHi == 0 || rowsHi == Long.MAX_VALUE)) {
+                if (rowsLo == Long.MIN_VALUE && rowsHi == Long.MAX_VALUE) {
                     return new Decimal128FirstNotNullOverWholeResultSetFunction(args.get(0), argType);
                 } else if (rowsLo == 0 && rowsHi == 0) {
                     return new Decimal128FirstValueOverCurrentRowFunction(args.get(0), true, argType);
@@ -489,8 +487,6 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
             if (framingMode == WindowExpression.FRAMING_RANGE) {
                 if (!windowContext.isOrdered() && windowContext.isDefaultFrame()) {
                     return new Decimal16FirstNotNullOverWholeResultSetFunction(args.get(0), argType);
-                } else if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
-                    return new Decimal16FirstNotNullOverWholeResultSetFunction(args.get(0), argType);
                 } else {
                     if (windowContext.isOrdered() && !windowContext.isOrderedByDesignatedTimestamp()) {
                         throw SqlException.$(windowContext.getOrderByPos(), "RANGE is supported only for queries ordered by designated timestamp");
@@ -499,7 +495,7 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
                     return new Decimal16FirstNotNullOverRangeFrameFunction(rowsLo, rowsHi, args.get(0), configuration, timestampIndex, argType);
                 }
             } else if (framingMode == WindowExpression.FRAMING_ROWS) {
-                if (rowsLo == Long.MIN_VALUE && (rowsHi == 0 || rowsHi == Long.MAX_VALUE)) {
+                if (rowsLo == Long.MIN_VALUE && rowsHi == Long.MAX_VALUE) {
                     return new Decimal16FirstNotNullOverWholeResultSetFunction(args.get(0), argType);
                 } else if (rowsLo == 0 && rowsHi == 0) {
                     return new Decimal16FirstValueOverCurrentRowFunction(args.get(0), true, argType);
@@ -749,8 +745,6 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
             if (framingMode == WindowExpression.FRAMING_RANGE) {
                 if (!windowContext.isOrdered() && windowContext.isDefaultFrame()) {
                     return new Decimal256FirstNotNullOverWholeResultSetFunction(args.get(0), argType);
-                } else if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
-                    return new Decimal256FirstNotNullOverWholeResultSetFunction(args.get(0), argType);
                 } else {
                     if (windowContext.isOrdered() && !windowContext.isOrderedByDesignatedTimestamp()) {
                         throw SqlException.$(windowContext.getOrderByPos(), "RANGE is supported only for queries ordered by designated timestamp");
@@ -759,7 +753,7 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
                     return new Decimal256FirstNotNullOverRangeFrameFunction(rowsLo, rowsHi, args.get(0), configuration, timestampIndex, argType);
                 }
             } else if (framingMode == WindowExpression.FRAMING_ROWS) {
-                if (rowsLo == Long.MIN_VALUE && (rowsHi == 0 || rowsHi == Long.MAX_VALUE)) {
+                if (rowsLo == Long.MIN_VALUE && rowsHi == Long.MAX_VALUE) {
                     return new Decimal256FirstNotNullOverWholeResultSetFunction(args.get(0), argType);
                 } else if (rowsLo == 0 && rowsHi == 0) {
                     return new Decimal256FirstValueOverCurrentRowFunction(args.get(0), true, argType);
@@ -1007,8 +1001,6 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
             if (framingMode == WindowExpression.FRAMING_RANGE) {
                 if (!windowContext.isOrdered() && windowContext.isDefaultFrame()) {
                     return new Decimal32FirstNotNullOverWholeResultSetFunction(args.get(0), argType);
-                } else if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
-                    return new Decimal32FirstNotNullOverWholeResultSetFunction(args.get(0), argType);
                 } else {
                     if (windowContext.isOrdered() && !windowContext.isOrderedByDesignatedTimestamp()) {
                         throw SqlException.$(windowContext.getOrderByPos(), "RANGE is supported only for queries ordered by designated timestamp");
@@ -1017,7 +1009,7 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
                     return new Decimal32FirstNotNullOverRangeFrameFunction(rowsLo, rowsHi, args.get(0), configuration, timestampIndex, argType);
                 }
             } else if (framingMode == WindowExpression.FRAMING_ROWS) {
-                if (rowsLo == Long.MIN_VALUE && (rowsHi == 0 || rowsHi == Long.MAX_VALUE)) {
+                if (rowsLo == Long.MIN_VALUE && rowsHi == Long.MAX_VALUE) {
                     return new Decimal32FirstNotNullOverWholeResultSetFunction(args.get(0), argType);
                 } else if (rowsLo == 0 && rowsHi == 0) {
                     return new Decimal32FirstValueOverCurrentRowFunction(args.get(0), true, argType);
@@ -1267,8 +1259,6 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
             if (framingMode == WindowExpression.FRAMING_RANGE) {
                 if (!windowContext.isOrdered() && windowContext.isDefaultFrame()) {
                     return new Decimal64FirstNotNullOverWholeResultSetFunction(args.get(0), argType);
-                } else if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
-                    return new Decimal64FirstNotNullOverWholeResultSetFunction(args.get(0), argType);
                 } else {
                     if (windowContext.isOrdered() && !windowContext.isOrderedByDesignatedTimestamp()) {
                         throw SqlException.$(windowContext.getOrderByPos(), "RANGE is supported only for queries ordered by designated timestamp");
@@ -1277,7 +1267,7 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
                     return new Decimal64FirstNotNullOverRangeFrameFunction(rowsLo, rowsHi, args.get(0), configuration, timestampIndex, argType);
                 }
             } else if (framingMode == WindowExpression.FRAMING_ROWS) {
-                if (rowsLo == Long.MIN_VALUE && (rowsHi == 0 || rowsHi == Long.MAX_VALUE)) {
+                if (rowsLo == Long.MIN_VALUE && rowsHi == Long.MAX_VALUE) {
                     return new Decimal64FirstNotNullOverWholeResultSetFunction(args.get(0), argType);
                 } else if (rowsLo == 0 && rowsHi == 0) {
                     return new Decimal64FirstValueOverCurrentRowFunction(args.get(0), true, argType);
@@ -1527,8 +1517,6 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
             if (framingMode == WindowExpression.FRAMING_RANGE) {
                 if (!windowContext.isOrdered() && windowContext.isDefaultFrame()) {
                     return new Decimal8FirstNotNullOverWholeResultSetFunction(args.get(0), argType);
-                } else if (rowsLo == Long.MIN_VALUE && rowsHi == 0) {
-                    return new Decimal8FirstNotNullOverWholeResultSetFunction(args.get(0), argType);
                 } else {
                     if (windowContext.isOrdered() && !windowContext.isOrderedByDesignatedTimestamp()) {
                         throw SqlException.$(windowContext.getOrderByPos(), "RANGE is supported only for queries ordered by designated timestamp");
@@ -1537,7 +1525,7 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
                     return new Decimal8FirstNotNullOverRangeFrameFunction(rowsLo, rowsHi, args.get(0), configuration, timestampIndex, argType);
                 }
             } else if (framingMode == WindowExpression.FRAMING_ROWS) {
-                if (rowsLo == Long.MIN_VALUE && (rowsHi == 0 || rowsHi == Long.MAX_VALUE)) {
+                if (rowsLo == Long.MIN_VALUE && rowsHi == Long.MAX_VALUE) {
                     return new Decimal8FirstNotNullOverWholeResultSetFunction(args.get(0), argType);
                 } else if (rowsLo == 0 && rowsHi == 0) {
                     return new Decimal8FirstValueOverCurrentRowFunction(args.get(0), true, argType);
@@ -2175,14 +2163,8 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
         }
 
         @Override
-        public void computeNext(Record record) {
-            if (!found) {
-                arg.getDecimal128(record, scratch);
-                if (!scratch.isNull()) {
-                    value.copyFrom(scratch);
-                    found = true;
-                }
-            }
+        public int getPassCount() {
+            return WindowFunction.TWO_PASS;
         }
 
         @Override
@@ -2199,6 +2181,10 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
                     found = true;
                 }
             }
+        }
+
+        @Override
+        public void pass2(Record record, long recordOffset, WindowSPI spi) {
             long addr = spi.getAddress(recordOffset, columnIndex);
             Unsafe.putLong(addr, value.getHigh());
             Unsafe.putLong(addr + Long.BYTES, value.getLow());
@@ -3637,14 +3623,8 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
         }
 
         @Override
-        public void computeNext(Record record) {
-            if (!found) {
-                short d = arg.getDecimal16(record);
-                if (d != Decimals.DECIMAL16_NULL) {
-                    value = d;
-                    found = true;
-                }
-            }
+        public int getPassCount() {
+            return WindowFunction.TWO_PASS;
         }
 
         @Override
@@ -3661,6 +3641,10 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
                     found = true;
                 }
             }
+        }
+
+        @Override
+        public void pass2(Record record, long recordOffset, WindowSPI spi) {
             Unsafe.putShort(spi.getAddress(recordOffset, columnIndex), value);
         }
 
@@ -5117,14 +5101,8 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
         }
 
         @Override
-        public void computeNext(Record record) {
-            if (!found) {
-                arg.getDecimal256(record, scratch);
-                if (!scratch.isNull()) {
-                    value.copyRaw(scratch);
-                    found = true;
-                }
-            }
+        public int getPassCount() {
+            return WindowFunction.TWO_PASS;
         }
 
         @Override
@@ -5141,6 +5119,10 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
                     found = true;
                 }
             }
+        }
+
+        @Override
+        public void pass2(Record record, long recordOffset, WindowSPI spi) {
             long addr = spi.getAddress(recordOffset, columnIndex);
             Unsafe.putLong(addr, value.getHh());
             Unsafe.putLong(addr + Long.BYTES, value.getHl());
@@ -6601,14 +6583,8 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
         }
 
         @Override
-        public void computeNext(Record record) {
-            if (!found) {
-                int d = arg.getDecimal32(record);
-                if (d != Decimals.DECIMAL32_NULL) {
-                    value = d;
-                    found = true;
-                }
-            }
+        public int getPassCount() {
+            return WindowFunction.TWO_PASS;
         }
 
         @Override
@@ -6625,6 +6601,10 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
                     found = true;
                 }
             }
+        }
+
+        @Override
+        public void pass2(Record record, long recordOffset, WindowSPI spi) {
             Unsafe.putInt(spi.getAddress(recordOffset, columnIndex), value);
         }
 
@@ -8037,14 +8017,8 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
         }
 
         @Override
-        public void computeNext(Record record) {
-            if (!found) {
-                long d = arg.getDecimal64(record);
-                if (d != Decimals.DECIMAL64_NULL) {
-                    value = d;
-                    found = true;
-                }
-            }
+        public int getPassCount() {
+            return WindowFunction.TWO_PASS;
         }
 
         @Override
@@ -8061,6 +8035,10 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
                     found = true;
                 }
             }
+        }
+
+        @Override
+        public void pass2(Record record, long recordOffset, WindowSPI spi) {
             Unsafe.putLong(spi.getAddress(recordOffset, columnIndex), value);
         }
 
@@ -9473,14 +9451,8 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
         }
 
         @Override
-        public void computeNext(Record record) {
-            if (!found) {
-                byte d = arg.getDecimal8(record);
-                if (d != Decimals.DECIMAL8_NULL) {
-                    value = d;
-                    found = true;
-                }
-            }
+        public int getPassCount() {
+            return WindowFunction.TWO_PASS;
         }
 
         @Override
@@ -9497,6 +9469,10 @@ public class FirstValueDecimalWindowFunctionFactory extends AbstractWindowFuncti
                     found = true;
                 }
             }
+        }
+
+        @Override
+        public void pass2(Record record, long recordOffset, WindowSPI spi) {
             Unsafe.putByte(spi.getAddress(recordOffset, columnIndex), value);
         }
 

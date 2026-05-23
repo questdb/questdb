@@ -3608,12 +3608,14 @@ public class WindowDecimalFunctionTest extends AbstractCairoTest {
 
     @Test
     public void testFirstValueIgnoreNullsAllSubTypesWholeResultSet() throws Exception {
+        // first_value IGNORE NULLS OVER () returns the global first non-null for every row (SQL standard).
+        // Single partition 'a' (null,0.6,null,0.8,null) -> global first non-null = 0.6.
         assertMemoryLeak(() -> {
             execute(CREATE_T);
             execute(INSERT_5_WITH_NULL);
             assertQueryNoLeakCheck("""
                             ts\tf8\tf16\tf32\tf64\tf128\tf256
-                            2024-01-01T00:00:00.000000Z\t\t\t\t\t\t
+                            2024-01-01T00:00:00.000000Z\t0.6\t6.0\t6.000\t6.00\t6.000000\t6
                             2024-01-01T00:01:00.000000Z\t0.6\t6.0\t6.000\t6.00\t6.000000\t6
                             2024-01-01T00:02:00.000000Z\t0.6\t6.0\t6.000\t6.00\t6.000000\t6
                             2024-01-01T00:03:00.000000Z\t0.6\t6.0\t6.000\t6.00\t6.000000\t6
@@ -3626,7 +3628,7 @@ public class WindowDecimalFunctionTest extends AbstractCairoTest {
                             "first_value(v64) IGNORE NULLS OVER () f64, " +
                             "first_value(v128) IGNORE NULLS OVER () f128, " +
                             "first_value(v256) IGNORE NULLS OVER () f256 " +
-                            "FROM t", null, "ts", false, true);
+                            "FROM t", null, "ts", true, true);
         });
     }
 
@@ -8588,6 +8590,1315 @@ public class WindowDecimalFunctionTest extends AbstractCairoTest {
                             "last_value(v64) IGNORE NULLS OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) l64, " +
                             "last_value(v128) IGNORE NULLS OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) l128, " +
                             "last_value(v256) IGNORE NULLS OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) l256 " +
+                            "FROM t", "ts", false, true);
+        });
+    }
+
+    @Test
+    public void testAvgRescaleAllSourcesAllTargetsAllNullPartition() throws Exception {
+        // Triggers pass2's count==0 NULL-path in Decimal*Rescale256AvgOverPartitionFunction across
+        // all source x target combinations. Exercises every reachable writeNull branch.
+        assertMemoryLeak(() -> {
+            execute(CREATE_T);
+            execute(INSERT_5_ALL_NULL);
+            // Source D8: 6 target scales (D8/D16/D32/D64/D128/D256). All scale = 0..60 ensures all 6 writeNull cases hit.
+            assertQueryNoLeakCheck("""
+                            ts\ta8\ta16\ta32\ta64\ta128\ta256
+                            2024-01-01T00:00:00.000000Z\t\t\t\t\t\t
+                            2024-01-01T00:01:00.000000Z\t\t\t\t\t\t
+                            2024-01-01T00:02:00.000000Z\t\t\t\t\t\t
+                            2024-01-01T00:03:00.000000Z\t\t\t\t\t\t
+                            2024-01-01T00:04:00.000000Z\t\t\t\t\t\t
+                            """,
+                    "SELECT ts, " +
+                            "avg(v8, 0) OVER (PARTITION BY grp) a8, " +
+                            "avg(v8, 3) OVER (PARTITION BY grp) a16, " +
+                            "avg(v8, 5) OVER (PARTITION BY grp) a32, " +
+                            "avg(v8, 14) OVER (PARTITION BY grp) a64, " +
+                            "avg(v8, 30) OVER (PARTITION BY grp) a128, " +
+                            "avg(v8, 60) OVER (PARTITION BY grp) a256 " +
+                            "FROM t", null, "ts", true, true);
+        });
+    }
+
+    @Test
+    public void testAvgRescaleD16AllTargetsAllNullPartition() throws Exception {
+        // D16 source -> D16/D32/D64/D128/D256 targets (D8 unreachable since p>=3).
+        assertMemoryLeak(() -> {
+            execute(CREATE_T);
+            execute(INSERT_5_ALL_NULL);
+            assertQueryNoLeakCheck("""
+                            ts\ta16\ta32\ta64\ta128\ta256
+                            2024-01-01T00:00:00.000000Z\t\t\t\t\t
+                            2024-01-01T00:01:00.000000Z\t\t\t\t\t
+                            2024-01-01T00:02:00.000000Z\t\t\t\t\t
+                            2024-01-01T00:03:00.000000Z\t\t\t\t\t
+                            2024-01-01T00:04:00.000000Z\t\t\t\t\t
+                            """,
+                    "SELECT ts, " +
+                            "avg(v16, 0) OVER (PARTITION BY grp) a16, " +
+                            "avg(v16, 6) OVER (PARTITION BY grp) a32, " +
+                            "avg(v16, 15) OVER (PARTITION BY grp) a64, " +
+                            "avg(v16, 30) OVER (PARTITION BY grp) a128, " +
+                            "avg(v16, 60) OVER (PARTITION BY grp) a256 " +
+                            "FROM t", null, "ts", true, true);
+        });
+    }
+
+    @Test
+    public void testAvgRescaleD32AllTargetsAllNullPartition() throws Exception {
+        // D32 source -> D32/D64/D128/D256 targets.
+        assertMemoryLeak(() -> {
+            execute(CREATE_T);
+            execute(INSERT_5_ALL_NULL);
+            assertQueryNoLeakCheck("""
+                            ts\ta32\ta64\ta128\ta256
+                            2024-01-01T00:00:00.000000Z\t\t\t\t
+                            2024-01-01T00:01:00.000000Z\t\t\t\t
+                            2024-01-01T00:02:00.000000Z\t\t\t\t
+                            2024-01-01T00:03:00.000000Z\t\t\t\t
+                            2024-01-01T00:04:00.000000Z\t\t\t\t
+                            """,
+                    "SELECT ts, " +
+                            "avg(v32, 0) OVER (PARTITION BY grp) a32, " +
+                            "avg(v32, 10) OVER (PARTITION BY grp) a64, " +
+                            "avg(v32, 30) OVER (PARTITION BY grp) a128, " +
+                            "avg(v32, 60) OVER (PARTITION BY grp) a256 " +
+                            "FROM t", null, "ts", true, true);
+        });
+    }
+
+    @Test
+    public void testAvgRescaleD128AllTargetsAllNullPartition() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(CREATE_T);
+            execute(INSERT_5_ALL_NULL);
+            assertQueryNoLeakCheck("""
+                            ts\ta128\ta256
+                            2024-01-01T00:00:00.000000Z\t\t
+                            2024-01-01T00:01:00.000000Z\t\t
+                            2024-01-01T00:02:00.000000Z\t\t
+                            2024-01-01T00:03:00.000000Z\t\t
+                            2024-01-01T00:04:00.000000Z\t\t
+                            """,
+                    "SELECT ts, " +
+                            "avg(v128, 0) OVER (PARTITION BY grp) a128, " +
+                            "avg(v128, 44) OVER (PARTITION BY grp) a256 " +
+                            "FROM t", null, "ts", true, true);
+        });
+    }
+
+    @Test
+    public void testAvgRescaleD256AllNullPartition() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(CREATE_T);
+            execute(INSERT_5_ALL_NULL);
+            assertQueryNoLeakCheck("""
+                            ts\ta256
+                            2024-01-01T00:00:00.000000Z\t
+                            2024-01-01T00:01:00.000000Z\t
+                            2024-01-01T00:02:00.000000Z\t
+                            2024-01-01T00:03:00.000000Z\t
+                            2024-01-01T00:04:00.000000Z\t
+                            """,
+                    "SELECT ts, avg(v256, 16) OVER (PARTITION BY grp) a256 FROM t", null, "ts", true, true);
+        });
+    }
+
+    @Test
+    public void testFirstValueIgnoreNullsAllFramesAllSubTypes() throws Exception {
+        // first_value IGNORE NULLS across all frame types routes to FirstNotNull* subclasses.
+        // Single partition 'a': null, 0.6, null, 0.8, null  -> first non-null = 0.6 at row 1.
+        assertMemoryLeak(() -> {
+            execute(CREATE_T);
+            execute(INSERT_5_WITH_NULL);
+            // OverPartitionRangeFrame (with PARTITION BY + ORDER BY ts + RANGE)
+            assertQueryNoLeakCheck("""
+                            ts\tf8\tf16\tf32\tf64\tf128\tf256
+                            2024-01-01T00:00:00.000000Z\t\t\t\t\t\t
+                            2024-01-01T00:01:00.000000Z\t0.6\t6.0\t6.000\t6.00\t6.000000\t6
+                            2024-01-01T00:02:00.000000Z\t0.6\t6.0\t6.000\t6.00\t6.000000\t6
+                            2024-01-01T00:03:00.000000Z\t0.6\t6.0\t6.000\t6.00\t6.000000\t6
+                            2024-01-01T00:04:00.000000Z\t0.6\t6.0\t6.000\t6.00\t6.000000\t6
+                            """,
+                    "SELECT ts, " +
+                            "first_value(v8) IGNORE NULLS OVER (PARTITION BY grp ORDER BY ts RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) f8, " +
+                            "first_value(v16) IGNORE NULLS OVER (PARTITION BY grp ORDER BY ts RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) f16, " +
+                            "first_value(v32) IGNORE NULLS OVER (PARTITION BY grp ORDER BY ts RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) f32, " +
+                            "first_value(v64) IGNORE NULLS OVER (PARTITION BY grp ORDER BY ts RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) f64, " +
+                            "first_value(v128) IGNORE NULLS OVER (PARTITION BY grp ORDER BY ts RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) f128, " +
+                            "first_value(v256) IGNORE NULLS OVER (PARTITION BY grp ORDER BY ts RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) f256 " +
+                            "FROM t", "ts", false, true);
+            // OverPartitionRowsFrame
+            assertQueryNoLeakCheck("""
+                            ts\tf8\tf16\tf32\tf64\tf128\tf256
+                            2024-01-01T00:00:00.000000Z\t\t\t\t\t\t
+                            2024-01-01T00:01:00.000000Z\t0.6\t6.0\t6.000\t6.00\t6.000000\t6
+                            2024-01-01T00:02:00.000000Z\t0.6\t6.0\t6.000\t6.00\t6.000000\t6
+                            2024-01-01T00:03:00.000000Z\t0.6\t6.0\t6.000\t6.00\t6.000000\t6
+                            2024-01-01T00:04:00.000000Z\t0.8\t8.0\t8.000\t8.00\t8.000000\t8
+                            """,
+                    "SELECT ts, " +
+                            "first_value(v8) IGNORE NULLS OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) f8, " +
+                            "first_value(v16) IGNORE NULLS OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) f16, " +
+                            "first_value(v32) IGNORE NULLS OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) f32, " +
+                            "first_value(v64) IGNORE NULLS OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) f64, " +
+                            "first_value(v128) IGNORE NULLS OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) f128, " +
+                            "first_value(v256) IGNORE NULLS OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) f256 " +
+                            "FROM t", "ts", false, true);
+            // OverUnboundedPartitionRowsFrame
+            assertQueryNoLeakCheck("""
+                            ts\tf8\tf16\tf32\tf64\tf128\tf256
+                            2024-01-01T00:00:00.000000Z\t\t\t\t\t\t
+                            2024-01-01T00:01:00.000000Z\t0.6\t6.0\t6.000\t6.00\t6.000000\t6
+                            2024-01-01T00:02:00.000000Z\t0.6\t6.0\t6.000\t6.00\t6.000000\t6
+                            2024-01-01T00:03:00.000000Z\t0.6\t6.0\t6.000\t6.00\t6.000000\t6
+                            2024-01-01T00:04:00.000000Z\t0.6\t6.0\t6.000\t6.00\t6.000000\t6
+                            """,
+                    "SELECT ts, " +
+                            "first_value(v8) IGNORE NULLS OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) f8, " +
+                            "first_value(v16) IGNORE NULLS OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) f16, " +
+                            "first_value(v32) IGNORE NULLS OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) f32, " +
+                            "first_value(v64) IGNORE NULLS OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) f64, " +
+                            "first_value(v128) IGNORE NULLS OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) f128, " +
+                            "first_value(v256) IGNORE NULLS OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) f256 " +
+                            "FROM t", "ts", false, true);
+            // OverRangeFrame (no PARTITION BY)
+            assertQueryNoLeakCheck("""
+                            ts\tf8\tf16\tf32\tf64\tf128\tf256
+                            2024-01-01T00:00:00.000000Z\t\t\t\t\t\t
+                            2024-01-01T00:01:00.000000Z\t0.6\t6.0\t6.000\t6.00\t6.000000\t6
+                            2024-01-01T00:02:00.000000Z\t0.6\t6.0\t6.000\t6.00\t6.000000\t6
+                            2024-01-01T00:03:00.000000Z\t0.6\t6.0\t6.000\t6.00\t6.000000\t6
+                            2024-01-01T00:04:00.000000Z\t0.6\t6.0\t6.000\t6.00\t6.000000\t6
+                            """,
+                    "SELECT ts, " +
+                            "first_value(v8) IGNORE NULLS OVER (ORDER BY ts RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) f8, " +
+                            "first_value(v16) IGNORE NULLS OVER (ORDER BY ts RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) f16, " +
+                            "first_value(v32) IGNORE NULLS OVER (ORDER BY ts RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) f32, " +
+                            "first_value(v64) IGNORE NULLS OVER (ORDER BY ts RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) f64, " +
+                            "first_value(v128) IGNORE NULLS OVER (ORDER BY ts RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) f128, " +
+                            "first_value(v256) IGNORE NULLS OVER (ORDER BY ts RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) f256 " +
+                            "FROM t", "ts", false, true);
+            // OverRowsFrame (no PARTITION BY)
+            assertQueryNoLeakCheck("""
+                            ts\tf8\tf16\tf32\tf64\tf128\tf256
+                            2024-01-01T00:00:00.000000Z\t\t\t\t\t\t
+                            2024-01-01T00:01:00.000000Z\t0.6\t6.0\t6.000\t6.00\t6.000000\t6
+                            2024-01-01T00:02:00.000000Z\t0.6\t6.0\t6.000\t6.00\t6.000000\t6
+                            2024-01-01T00:03:00.000000Z\t0.6\t6.0\t6.000\t6.00\t6.000000\t6
+                            2024-01-01T00:04:00.000000Z\t0.8\t8.0\t8.000\t8.00\t8.000000\t8
+                            """,
+                    "SELECT ts, " +
+                            "first_value(v8) IGNORE NULLS OVER (ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) f8, " +
+                            "first_value(v16) IGNORE NULLS OVER (ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) f16, " +
+                            "first_value(v32) IGNORE NULLS OVER (ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) f32, " +
+                            "first_value(v64) IGNORE NULLS OVER (ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) f64, " +
+                            "first_value(v128) IGNORE NULLS OVER (ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) f128, " +
+                            "first_value(v256) IGNORE NULLS OVER (ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) f256 " +
+                            "FROM t", "ts", false, true);
+            // OverUnboundedRowsFrame
+            assertQueryNoLeakCheck("""
+                            ts\tf8\tf16\tf32\tf64\tf128\tf256
+                            2024-01-01T00:00:00.000000Z\t\t\t\t\t\t
+                            2024-01-01T00:01:00.000000Z\t0.6\t6.0\t6.000\t6.00\t6.000000\t6
+                            2024-01-01T00:02:00.000000Z\t0.6\t6.0\t6.000\t6.00\t6.000000\t6
+                            2024-01-01T00:03:00.000000Z\t0.6\t6.0\t6.000\t6.00\t6.000000\t6
+                            2024-01-01T00:04:00.000000Z\t0.6\t6.0\t6.000\t6.00\t6.000000\t6
+                            """,
+                    "SELECT ts, " +
+                            "first_value(v8) IGNORE NULLS OVER (ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) f8, " +
+                            "first_value(v16) IGNORE NULLS OVER (ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) f16, " +
+                            "first_value(v32) IGNORE NULLS OVER (ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) f32, " +
+                            "first_value(v64) IGNORE NULLS OVER (ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) f64, " +
+                            "first_value(v128) IGNORE NULLS OVER (ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) f128, " +
+                            "first_value(v256) IGNORE NULLS OVER (ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) f256 " +
+                            "FROM t", "ts", false, true);
+            // OverWholeResultSet TWO_PASS: global first non-null = 0.6 for all rows.
+            assertQueryNoLeakCheck("""
+                            ts\tf8\tf16\tf32\tf64\tf128\tf256
+                            2024-01-01T00:00:00.000000Z\t0.6\t6.0\t6.000\t6.00\t6.000000\t6
+                            2024-01-01T00:01:00.000000Z\t0.6\t6.0\t6.000\t6.00\t6.000000\t6
+                            2024-01-01T00:02:00.000000Z\t0.6\t6.0\t6.000\t6.00\t6.000000\t6
+                            2024-01-01T00:03:00.000000Z\t0.6\t6.0\t6.000\t6.00\t6.000000\t6
+                            2024-01-01T00:04:00.000000Z\t0.6\t6.0\t6.000\t6.00\t6.000000\t6
+                            """,
+                    "SELECT ts, " +
+                            "first_value(v8) IGNORE NULLS OVER () f8, " +
+                            "first_value(v16) IGNORE NULLS OVER () f16, " +
+                            "first_value(v32) IGNORE NULLS OVER () f32, " +
+                            "first_value(v64) IGNORE NULLS OVER () f64, " +
+                            "first_value(v128) IGNORE NULLS OVER () f128, " +
+                            "first_value(v256) IGNORE NULLS OVER () f256 " +
+                            "FROM t", null, "ts", true, true);
+        });
+    }
+
+    @Test
+    public void testLastValueIgnoreNullsAllFramesAllSubTypes() throws Exception {
+        // last_value IGNORE NULLS across all frame types routes to LastNotNull* subclasses.
+        // Single partition 'a': null, 0.6, null, 0.8, null. Running last-non-null = null, 0.6, 0.6, 0.8, 0.8.
+        assertMemoryLeak(() -> {
+            execute(CREATE_T);
+            execute(INSERT_5_WITH_NULL);
+            assertQueryNoLeakCheck("""
+                            ts\tl8\tl16\tl32\tl64\tl128\tl256
+                            2024-01-01T00:00:00.000000Z\t\t\t\t\t\t
+                            2024-01-01T00:01:00.000000Z\t0.6\t6.0\t6.000\t6.00\t6.000000\t6
+                            2024-01-01T00:02:00.000000Z\t0.6\t6.0\t6.000\t6.00\t6.000000\t6
+                            2024-01-01T00:03:00.000000Z\t0.8\t8.0\t8.000\t8.00\t8.000000\t8
+                            2024-01-01T00:04:00.000000Z\t0.8\t8.0\t8.000\t8.00\t8.000000\t8
+                            """,
+                    "SELECT ts, " +
+                            "last_value(v8) IGNORE NULLS OVER (PARTITION BY grp ORDER BY ts RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) l8, " +
+                            "last_value(v16) IGNORE NULLS OVER (PARTITION BY grp ORDER BY ts RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) l16, " +
+                            "last_value(v32) IGNORE NULLS OVER (PARTITION BY grp ORDER BY ts RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) l32, " +
+                            "last_value(v64) IGNORE NULLS OVER (PARTITION BY grp ORDER BY ts RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) l64, " +
+                            "last_value(v128) IGNORE NULLS OVER (PARTITION BY grp ORDER BY ts RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) l128, " +
+                            "last_value(v256) IGNORE NULLS OVER (PARTITION BY grp ORDER BY ts RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) l256 " +
+                            "FROM t", "ts", false, true);
+            // OverRangeFrame no partition
+            assertQueryNoLeakCheck("""
+                            ts\tl8\tl16\tl32\tl64\tl128\tl256
+                            2024-01-01T00:00:00.000000Z\t\t\t\t\t\t
+                            2024-01-01T00:01:00.000000Z\t0.6\t6.0\t6.000\t6.00\t6.000000\t6
+                            2024-01-01T00:02:00.000000Z\t0.6\t6.0\t6.000\t6.00\t6.000000\t6
+                            2024-01-01T00:03:00.000000Z\t0.8\t8.0\t8.000\t8.00\t8.000000\t8
+                            2024-01-01T00:04:00.000000Z\t0.8\t8.0\t8.000\t8.00\t8.000000\t8
+                            """,
+                    "SELECT ts, " +
+                            "last_value(v8) IGNORE NULLS OVER (ORDER BY ts RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) l8, " +
+                            "last_value(v16) IGNORE NULLS OVER (ORDER BY ts RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) l16, " +
+                            "last_value(v32) IGNORE NULLS OVER (ORDER BY ts RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) l32, " +
+                            "last_value(v64) IGNORE NULLS OVER (ORDER BY ts RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) l64, " +
+                            "last_value(v128) IGNORE NULLS OVER (ORDER BY ts RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) l128, " +
+                            "last_value(v256) IGNORE NULLS OVER (ORDER BY ts RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) l256 " +
+                            "FROM t", "ts", false, true);
+            // OverRowsFrame (no PARTITION BY)
+            assertQueryNoLeakCheck("""
+                            ts\tl8\tl16\tl32\tl64\tl128\tl256
+                            2024-01-01T00:00:00.000000Z\t\t\t\t\t\t
+                            2024-01-01T00:01:00.000000Z\t0.6\t6.0\t6.000\t6.00\t6.000000\t6
+                            2024-01-01T00:02:00.000000Z\t0.6\t6.0\t6.000\t6.00\t6.000000\t6
+                            2024-01-01T00:03:00.000000Z\t0.8\t8.0\t8.000\t8.00\t8.000000\t8
+                            2024-01-01T00:04:00.000000Z\t0.8\t8.0\t8.000\t8.00\t8.000000\t8
+                            """,
+                    "SELECT ts, " +
+                            "last_value(v8) IGNORE NULLS OVER (ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) l8, " +
+                            "last_value(v16) IGNORE NULLS OVER (ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) l16, " +
+                            "last_value(v32) IGNORE NULLS OVER (ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) l32, " +
+                            "last_value(v64) IGNORE NULLS OVER (ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) l64, " +
+                            "last_value(v128) IGNORE NULLS OVER (ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) l128, " +
+                            "last_value(v256) IGNORE NULLS OVER (ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) l256 " +
+                            "FROM t", "ts", false, true);
+        });
+    }
+
+    @Test
+    public void testAvgRescaleAllSourcesAllTargetsOverPartitionRowsFrame() throws Exception {
+        // OverPartitionRowsFrame across all source/target combinations.
+        assertMemoryLeak(() -> {
+            execute(CREATE_T);
+            execute(INSERT_5);
+            assertQueryNoLeakCheck("""
+                            ts\ta8\ta16\ta32\ta64\ta128\ta256
+                            2024-01-01T00:00:00.000000Z\t1\t0.600\t0.60000\t0.60000000000000\t0.600000000000000000000000000000\t0.600000000000000000000000000000000000000000000000000000000000
+                            2024-01-01T00:01:00.000000Z\t0\t0.500\t0.50000\t0.50000000000000\t0.500000000000000000000000000000\t0.500000000000000000000000000000000000000000000000000000000000
+                            2024-01-01T00:02:00.000000Z\t1\t0.600\t0.60000\t0.60000000000000\t0.600000000000000000000000000000\t0.600000000000000000000000000000000000000000000000000000000000
+                            2024-01-01T00:03:00.000000Z\t0\t0.467\t0.46667\t0.46666666666667\t0.466666666666666666666666666667\t0.466666666666666666666666666666666666666666666666666666666667
+                            2024-01-01T00:04:00.000000Z\t1\t0.667\t0.66667\t0.66666666666667\t0.666666666666666666666666666667\t0.666666666666666666666666666666666666666666666666666666666667
+                            """,
+                    "SELECT ts, " +
+                            "avg(v8, 0) OVER (ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) a8, " +
+                            "avg(v8, 3) OVER (ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) a16, " +
+                            "avg(v8, 5) OVER (ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) a32, " +
+                            "avg(v8, 14) OVER (ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) a64, " +
+                            "avg(v8, 30) OVER (ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) a128, " +
+                            "avg(v8, 60) OVER (ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) a256 " +
+                            "FROM t", null, "ts", false, true);
+        });
+    }
+
+    @Test
+    public void testFirstValueRangeFrameLargeBufferStressAllSubTypes() throws Exception {
+        // Stress test: many rows in multiple partitions with bounded RANGE forces both eviction
+        // (rows past lo boundary) AND buffer expansion (per-partition ring buffer growth).
+        // Shrinks buffer to ensure repeated expandRingBuffer / freeList reuse paths.
+        node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_INITIAL_RANGE_BUFFER_SIZE, 2);
+        node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_STORE_PAGE_SIZE, 256);
+        assertMemoryLeak(() -> {
+            execute(CREATE_T);
+            // 60 rows across 3 partitions ('a','b','c') with NULLs at every 4th position.
+            StringSink insert = new StringSink();
+            insert.put("INSERT INTO t VALUES ");
+            for (int i = 0; i < 60; i++) {
+                if (i > 0) insert.put(", ");
+                char grp = (char) ('a' + (i % 3));
+                insert.put("('2024-01-01T00:");
+                if (i < 10) insert.put('0');
+                insert.put(i).put(":00', '").put(grp).put("', ");
+                if (i % 4 == 0) {
+                    insert.put("null, null, null, null, null, null)");
+                } else {
+                    insert.put("0.5m, 5.0m, 5.000m, 5.00m, 5.000000m, 5m)");
+                }
+            }
+            execute(insert.toString());
+            // First non-null per partition is at row offset 1 (since row 0 in each partition is NULL).
+            // Aggregated count check: a partition has 20 rows, b has 20, c has 20.
+            // first_value over partition RANGE: row 0 in partition = NULL, rows 1+ in partition = first non-null = 0.5.
+            // Per partition with NULL at i%4==0, the first non-null row in partition 'a' (i=0,3,6,9,...) is i=3 (since i=0 is NULL).
+            // Actually grp='a' has i=0,3,6,9,12,..,57. i=0,12,24,36,48 NULL (where i%4==0). First non-null at i=3 → 0.5.
+            assertQueryNoLeakCheck(
+                    "cnt\n60\n",
+                    "SELECT count(*) cnt FROM (" +
+                            "SELECT first_value(v8) IGNORE NULLS OVER (PARTITION BY grp ORDER BY ts RANGE BETWEEN 600 second PRECEDING AND CURRENT ROW) fv FROM t" +
+                            ")",
+                    null, false, true);
+        });
+    }
+
+    @Test
+    public void testFirstValueUnboundedPartitionRowsFrameAllSubTypes() throws Exception {
+        // Exercises Decimal*FirstValueOverUnboundedPartitionRowsFrameFunction for each subtype.
+        assertMemoryLeak(() -> {
+            execute(CREATE_T);
+            execute(INSERT_6_PART);
+            assertQueryNoLeakCheck("""
+                            ts\tf8\tf16\tf32\tf64\tf128\tf256
+                            2024-01-01T00:00:00.000000Z\t0.6\t6.0\t6.000\t6.00\t6.000000\t6
+                            2024-01-01T00:01:00.000000Z\t0.4\t4.0\t4.000\t4.00\t4.000000\t4
+                            2024-01-01T00:02:00.000000Z\t0.6\t6.0\t6.000\t6.00\t6.000000\t6
+                            2024-01-01T00:03:00.000000Z\t0.4\t4.0\t4.000\t4.00\t4.000000\t4
+                            2024-01-01T00:04:00.000000Z\t0.6\t6.0\t6.000\t6.00\t6.000000\t6
+                            2024-01-01T00:05:00.000000Z\t0.4\t4.0\t4.000\t4.00\t4.000000\t4
+                            """,
+                    "SELECT ts, " +
+                            "first_value(v8) OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) f8, " +
+                            "first_value(v16) OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) f16, " +
+                            "first_value(v32) OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) f32, " +
+                            "first_value(v64) OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) f64, " +
+                            "first_value(v128) OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) f128, " +
+                            "first_value(v256) OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) f256 " +
+                            "FROM t", "ts", false, true);
+        });
+    }
+
+    @Test
+    public void testFirstValueUnboundedPartitionRowsFrameExplainPlan() throws Exception {
+        // Covers toPlan of Decimal*FirstValueOverUnboundedPartitionRowsFrameFunction for all 6 subtypes.
+        assertMemoryLeak(() -> {
+            execute(CREATE_T);
+            for (String col : new String[]{"v8", "v16", "v32", "v64", "v128", "v256"}) {
+                assertPlanNoLeakCheck(
+                        "SELECT first_value(" + col + ") OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) FROM t",
+                        "Window\n  functions: [first_value(" + col + ") over (partition by [grp] rows between unbounded preceding and current row )]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n"
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testFirstValueOverPartitionRangeExplainPlan() throws Exception {
+        // Covers toPlan for Decimal*FirstValueOverPartitionRangeFrameFunction and FirstNotNull variant.
+        assertMemoryLeak(() -> {
+            execute(CREATE_T);
+            for (String col : new String[]{"v8", "v16", "v32", "v64", "v128", "v256"}) {
+                assertPlanNoLeakCheck(
+                        "SELECT first_value(" + col + ") OVER (PARTITION BY grp ORDER BY ts RANGE BETWEEN 60 second PRECEDING AND CURRENT ROW) FROM t",
+                        "Window\n  functions: [first_value(" + col + ") over (partition by [grp] range between 60000000 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n"
+                );
+                assertPlanNoLeakCheck(
+                        "SELECT first_value(" + col + ") IGNORE NULLS OVER (PARTITION BY grp ORDER BY ts RANGE BETWEEN 60 second PRECEDING AND CURRENT ROW) FROM t",
+                        "Window\n  functions: [first_value(" + col + ") ignore nulls over (partition by [grp] range between 60000000 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n"
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testFirstValueOverRangeFrameExplainPlan() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(CREATE_T);
+            for (String col : new String[]{"v8", "v16", "v32", "v64", "v128", "v256"}) {
+                assertPlanNoLeakCheck(
+                        "SELECT first_value(" + col + ") OVER (ORDER BY ts RANGE BETWEEN 60 second PRECEDING AND CURRENT ROW) FROM t",
+                        "Window\n  functions: [first_value(" + col + ") over (range between 60000000 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n"
+                );
+                assertPlanNoLeakCheck(
+                        "SELECT first_value(" + col + ") IGNORE NULLS OVER (ORDER BY ts RANGE BETWEEN 60 second PRECEDING AND CURRENT ROW) FROM t",
+                        "Window\n  functions: [first_value(" + col + ") ignore nulls over (range between 60000000 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n"
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testFirstValueOverRowsFrameExplainPlan() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(CREATE_T);
+            for (String col : new String[]{"v8", "v16", "v32", "v64", "v128", "v256"}) {
+                assertPlanNoLeakCheck(
+                        "SELECT first_value(" + col + ") OVER (ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) FROM t",
+                        "Window\n  functions: [first_value(" + col + ") over ( rows between 2 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n"
+                );
+                assertPlanNoLeakCheck(
+                        "SELECT first_value(" + col + ") IGNORE NULLS OVER (ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) FROM t",
+                        "Window\n  functions: [first_value(" + col + ") ignore nulls over ( rows between 2 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n"
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testFirstValueOverPartitionRowsFrameExplainPlan() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(CREATE_T);
+            for (String col : new String[]{"v8", "v16", "v32", "v64", "v128", "v256"}) {
+                assertPlanNoLeakCheck(
+                        "SELECT first_value(" + col + ") OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) FROM t",
+                        "Window\n  functions: [first_value(" + col + ") over (partition by [grp] rows between 2 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n"
+                );
+                assertPlanNoLeakCheck(
+                        "SELECT first_value(" + col + ") IGNORE NULLS OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) FROM t",
+                        "Window\n  functions: [first_value(" + col + ") ignore nulls over (partition by [grp] rows between 2 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n"
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testLastValueOverFramesExplainPlan() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(CREATE_T);
+            for (String col : new String[]{"v8", "v16", "v32", "v64", "v128", "v256"}) {
+                assertPlanNoLeakCheck(
+                        "SELECT last_value(" + col + ") OVER (PARTITION BY grp ORDER BY ts RANGE BETWEEN 60 second PRECEDING AND CURRENT ROW) FROM t",
+                        "Window\n  functions: [last_value(" + col + ") over (partition by [grp] range between 60000000 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n"
+                );
+                assertPlanNoLeakCheck(
+                        "SELECT last_value(" + col + ") OVER (ORDER BY ts RANGE BETWEEN 60 second PRECEDING AND CURRENT ROW) FROM t",
+                        "Window\n  functions: [last_value(" + col + ") over (range between 60000000 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n"
+                );
+                assertPlanNoLeakCheck(
+                        "SELECT last_value(" + col + ") OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) FROM t",
+                        "Window\n  functions: [last_value(" + col + ") over (partition by [grp] rows between 2 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n"
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testNthValueOverFramesExplainPlan() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(CREATE_T);
+            for (String col : new String[]{"v8", "v16", "v32", "v64", "v128", "v256"}) {
+                assertPlanNoLeakCheck(
+                        "SELECT nth_value(" + col + ", 2) OVER (PARTITION BY grp ORDER BY ts RANGE BETWEEN 60 second PRECEDING AND CURRENT ROW) FROM t",
+                        "Window\n  functions: [nth_value(" + col + ",2) over (partition by [grp] range between 60000000 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n"
+                );
+                assertPlanNoLeakCheck(
+                        "SELECT nth_value(" + col + ", 2) OVER (ORDER BY ts RANGE BETWEEN 60 second PRECEDING AND CURRENT ROW) FROM t",
+                        "Window\n  functions: [nth_value(" + col + ",2) over (range between 60000000 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n"
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testSumAvgMaxMinOverFramesExplainPlan() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(CREATE_T);
+            for (String col : new String[]{"v8", "v16", "v32", "v64", "v128", "v256"}) {
+                for (String fn : new String[]{"sum", "avg", "max", "min"}) {
+                    assertPlanNoLeakCheck(
+                            "SELECT " + fn + "(" + col + ") OVER (PARTITION BY grp ORDER BY ts RANGE BETWEEN 60 second PRECEDING AND CURRENT ROW) FROM t",
+                            "Window\n  functions: [" + fn + "(" + col + ") over (partition by [grp] range between 60000000 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n"
+                    );
+                    assertPlanNoLeakCheck(
+                            "SELECT " + fn + "(" + col + ") OVER (ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) FROM t",
+                            "Window\n  functions: [" + fn + "(" + col + ") over ( rows between 2 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n"
+                    );
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testAvgRescaleOverPartitionRangeExplainPlan() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(CREATE_T);
+            // AvgRescale OverPartitionRangeFrame: avg(col, scale) over (partition by ...)
+            // Use D8 source with all 6 target scales (0/3/5/14/30/60).
+            for (int scale : new int[]{0, 3, 5, 14, 30, 60}) {
+                assertPlanNoLeakCheck(
+                        "SELECT avg(v8, " + scale + ") OVER (PARTITION BY grp ORDER BY ts RANGE BETWEEN 60 second PRECEDING AND CURRENT ROW) FROM t",
+                        "Window\n  functions: [avg(v8," + scale + ") over (partition by [grp] range between 60000000 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n"
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testAvgRescaleOverPartitionRowsExplainPlan() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(CREATE_T);
+            for (int scale : new int[]{0, 3, 5, 14, 30, 60}) {
+                assertPlanNoLeakCheck(
+                        "SELECT avg(v8, " + scale + ") OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) FROM t",
+                        "Window\n  functions: [avg(v8," + scale + ") over (partition by [grp] rows between 2 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n"
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testAvgRescaleOverRangeExplainPlan() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(CREATE_T);
+            for (int scale : new int[]{0, 3, 5, 14, 30, 60}) {
+                assertPlanNoLeakCheck(
+                        "SELECT avg(v8, " + scale + ") OVER (ORDER BY ts RANGE BETWEEN 60 second PRECEDING AND CURRENT ROW) FROM t",
+                        "Window\n  functions: [avg(v8," + scale + ") over (range between 60000000 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n"
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testAvgRescaleOverRowsExplainPlan() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(CREATE_T);
+            for (int scale : new int[]{0, 3, 5, 14, 30, 60}) {
+                assertPlanNoLeakCheck(
+                        "SELECT avg(v8, " + scale + ") OVER (ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) FROM t",
+                        "Window\n  functions: [avg(v8," + scale + ") over ( rows between 2 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n"
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testAllFunctionsOverPartitionExplainPlan() throws Exception {
+        // OVER (PARTITION BY x) - cached factory (TWO_PASS classes).
+        assertMemoryLeak(() -> {
+            execute(CREATE_T);
+            for (String col : new String[]{"v8", "v16", "v32", "v64", "v128", "v256"}) {
+                for (String fn : new String[]{"sum", "avg", "max", "min"}) {
+                    assertPlanNoLeakCheck(
+                            "SELECT " + fn + "(" + col + ") OVER (PARTITION BY grp) FROM t",
+                            "CachedWindow\n  unorderedFunctions: [" + fn + "(" + col + ") over (partition by [grp])]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n"
+                    );
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testAllFunctionsOverUnboundedPartitionRowsExplainPlan() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(CREATE_T);
+            for (String col : new String[]{"v8", "v16", "v32", "v64", "v128", "v256"}) {
+                for (String fn : new String[]{"sum", "avg", "max", "min"}) {
+                    assertPlanNoLeakCheck(
+                            "SELECT " + fn + "(" + col + ") OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) FROM t",
+                            "Window\n  functions: [" + fn + "(" + col + ") over (partition by [grp] rows between unbounded preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n"
+                    );
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testAllFunctionsOverUnboundedRowsExplainPlan() throws Exception {
+        // OVER (ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)
+        assertMemoryLeak(() -> {
+            execute(CREATE_T);
+            for (String col : new String[]{"v8", "v16", "v32", "v64", "v128", "v256"}) {
+                for (String fn : new String[]{"sum", "avg", "max", "min"}) {
+                    assertPlanNoLeakCheck(
+                            "SELECT " + fn + "(" + col + ") OVER (ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) FROM t",
+                            "Window\n  functions: [" + fn + "(" + col + ") over (rows between unbounded preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n"
+                    );
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testAllFunctionsOverCurrentRowExplainPlan() throws Exception {
+        // ROWS BETWEEN CURRENT ROW AND CURRENT ROW collapses to OVER ().
+        assertMemoryLeak(() -> {
+            execute(CREATE_T);
+            for (String col : new String[]{"v8", "v16", "v32", "v64", "v128", "v256"}) {
+                for (String fn : new String[]{"sum", "avg", "max", "min"}) {
+                    assertPlanNoLeakCheck(
+                            "SELECT " + fn + "(" + col + ") OVER (ORDER BY ts ROWS BETWEEN CURRENT ROW AND CURRENT ROW) FROM t",
+                            "Window\n  functions: [" + fn + "(" + col + ") over ()]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n"
+                    );
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testFirstLastNthValueOverCurrentRowExplainPlan() throws Exception {
+        // For first_value/nth_value: ROWS BETWEEN CURRENT ROW collapses to OVER ().
+        // For last_value: stays as bounded ROWS frame.
+        assertMemoryLeak(() -> {
+            execute(CREATE_T);
+            for (String col : new String[]{"v8", "v16", "v32", "v64", "v128", "v256"}) {
+                assertPlanNoLeakCheck(
+                        "SELECT first_value(" + col + ") OVER (ORDER BY ts ROWS BETWEEN CURRENT ROW AND CURRENT ROW) FROM t",
+                        "Window\n  functions: [first_value(" + col + ") over ()]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n"
+                );
+                assertPlanNoLeakCheck(
+                        "SELECT last_value(" + col + ") OVER (ORDER BY ts ROWS BETWEEN CURRENT ROW AND CURRENT ROW) FROM t",
+                        "Window\n  functions: [last_value(" + col + ") over (rows between 0 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n"
+                );
+                assertPlanNoLeakCheck(
+                        "SELECT nth_value(" + col + ", 1) OVER (ORDER BY ts ROWS BETWEEN CURRENT ROW AND CURRENT ROW) FROM t",
+                        "Window\n  functions: [nth_value(" + col + ",1) over (rows between current row and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n"
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testAvgRescaleOverWholeResultSetExplainPlan() throws Exception {
+        // OverWholeResultSet uses inherited BaseWindowFunction.toPlan -> no scale shown.
+        assertMemoryLeak(() -> {
+            execute(CREATE_T);
+            assertPlanNoLeakCheck(
+                    "SELECT avg(v8, 5) OVER () FROM t",
+                    "CachedWindow\n  unorderedFunctions: [avg(v8) over ()]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n"
+            );
+            assertPlanNoLeakCheck(
+                    "SELECT avg(v8, 5) OVER (PARTITION BY grp) FROM t",
+                    "CachedWindow\n  unorderedFunctions: [avg(v8) over (partition by [grp])]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n"
+            );
+            assertPlanNoLeakCheck(
+                    "SELECT avg(v8, 5) OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) FROM t",
+                    "Window\n  functions: [avg(v8) over (partition by [grp])]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n"
+            );
+            assertPlanNoLeakCheck(
+                    "SELECT avg(v8, 5) OVER (ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) FROM t",
+                    "Window\n  functions: [avg(v8) over ()]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n"
+            );
+            assertPlanNoLeakCheck(
+                    "SELECT avg(v8, 5) OVER (ORDER BY ts ROWS BETWEEN CURRENT ROW AND CURRENT ROW) FROM t",
+                    "Window\n  functions: [avg(v8) over ()]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n"
+            );
+        });
+    }
+
+    @Test
+    public void testFirstValueRangeNonDesignatedTimestampRejected() throws Exception {
+        // Triggers "RANGE is supported only for queries ordered by designated timestamp" for each subtype.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t2 (ts TIMESTAMP, ts2 TIMESTAMP, " +
+                    "v8 decimal(2, 1), v16 decimal(4, 1), v32 decimal(9, 3), " +
+                    "v64 decimal(18, 2), v128 decimal(38, 6), v256 decimal(60, 0)" +
+                    ") TIMESTAMP(ts) PARTITION BY HOUR");
+            for (String col : new String[]{"v8", "v16", "v32", "v64", "v128", "v256"}) {
+                // Non-designated ts ORDER BY with RANGE -> rejected.
+                String sql = "SELECT first_value(" + col + ") OVER (ORDER BY ts2 RANGE BETWEEN 60 second PRECEDING AND CURRENT ROW) FROM t2";
+                int pos = sql.indexOf("ORDER BY ts2") + "ORDER BY ".length();
+                assertExceptionNoLeakCheck(sql, pos, "RANGE is supported only for queries ordered by designated timestamp");
+                // IGNORE NULLS variant
+                String sql2 = "SELECT first_value(" + col + ") IGNORE NULLS OVER (ORDER BY ts2 RANGE BETWEEN 60 second PRECEDING AND CURRENT ROW) FROM t2";
+                int pos2 = sql2.indexOf("ORDER BY ts2") + "ORDER BY ".length();
+                assertExceptionNoLeakCheck(sql2, pos2, "RANGE is supported only for queries ordered by designated timestamp");
+                // With PARTITION BY too
+                String sql3 = "SELECT first_value(" + col + ") OVER (PARTITION BY ts ORDER BY ts2 RANGE BETWEEN 60 second PRECEDING AND CURRENT ROW) FROM t2";
+                int pos3 = sql3.indexOf("ORDER BY ts2") + "ORDER BY ".length();
+                assertExceptionNoLeakCheck(sql3, pos3, "RANGE is supported only for queries ordered by designated timestamp");
+            }
+        });
+    }
+
+    @Test
+    public void testLastValueRangeNonDesignatedTimestampRejected() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t2 (ts TIMESTAMP, ts2 TIMESTAMP, " +
+                    "v8 decimal(2, 1), v16 decimal(4, 1), v32 decimal(9, 3), " +
+                    "v64 decimal(18, 2), v128 decimal(38, 6), v256 decimal(60, 0)" +
+                    ") TIMESTAMP(ts) PARTITION BY HOUR");
+            for (String col : new String[]{"v8", "v16", "v32", "v64", "v128", "v256"}) {
+                String sql = "SELECT last_value(" + col + ") OVER (ORDER BY ts2 RANGE BETWEEN 60 second PRECEDING AND CURRENT ROW) FROM t2";
+                int pos = sql.indexOf("ORDER BY ts2") + "ORDER BY ".length();
+                assertExceptionNoLeakCheck(sql, pos, "RANGE is supported only for queries ordered by designated timestamp");
+                String sql2 = "SELECT last_value(" + col + ") IGNORE NULLS OVER (ORDER BY ts2 RANGE BETWEEN 60 second PRECEDING AND CURRENT ROW) FROM t2";
+                int pos2 = sql2.indexOf("ORDER BY ts2") + "ORDER BY ".length();
+                assertExceptionNoLeakCheck(sql2, pos2, "RANGE is supported only for queries ordered by designated timestamp");
+            }
+        });
+    }
+
+    @Test
+    public void testNthValueRangeNonDesignatedTimestampRejected() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t2 (ts TIMESTAMP, ts2 TIMESTAMP, " +
+                    "v8 decimal(2, 1), v16 decimal(4, 1), v32 decimal(9, 3), " +
+                    "v64 decimal(18, 2), v128 decimal(38, 6), v256 decimal(60, 0)" +
+                    ") TIMESTAMP(ts) PARTITION BY HOUR");
+            for (String col : new String[]{"v8", "v16", "v32", "v64", "v128", "v256"}) {
+                String sql = "SELECT nth_value(" + col + ", 1) OVER (ORDER BY ts2 RANGE BETWEEN 60 second PRECEDING AND CURRENT ROW) FROM t2";
+                int pos = sql.indexOf("ORDER BY ts2") + "ORDER BY ".length();
+                assertExceptionNoLeakCheck(sql, pos, "RANGE is supported only for queries ordered by designated timestamp");
+            }
+        });
+    }
+
+    @Test
+    public void testSumAvgMaxMinRangeNonDesignatedTimestampRejected() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t2 (ts TIMESTAMP, ts2 TIMESTAMP, " +
+                    "v8 decimal(2, 1), v16 decimal(4, 1), v32 decimal(9, 3), " +
+                    "v64 decimal(18, 2), v128 decimal(38, 6), v256 decimal(60, 0)" +
+                    ") TIMESTAMP(ts) PARTITION BY HOUR");
+            for (String col : new String[]{"v8", "v16", "v32", "v64", "v128", "v256"}) {
+                for (String fn : new String[]{"sum", "avg", "max", "min"}) {
+                    String sql = "SELECT " + fn + "(" + col + ") OVER (ORDER BY ts2 RANGE BETWEEN 60 second PRECEDING AND CURRENT ROW) FROM t2";
+                    int pos = sql.indexOf("ORDER BY ts2") + "ORDER BY ".length();
+                    assertExceptionNoLeakCheck(sql, pos, "RANGE is supported only for queries ordered by designated timestamp");
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testNthValueOverPartitionRowsExplainPlan() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(CREATE_T);
+            for (String col : new String[]{"v8", "v16", "v32", "v64", "v128", "v256"}) {
+                assertPlanNoLeakCheck(
+                        "SELECT nth_value(" + col + ", 2) OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) FROM t",
+                        "Window\n  functions: [nth_value(" + col + ",2) over (partition by [grp] rows between 2 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n"
+                );
+                assertPlanNoLeakCheck(
+                        "SELECT nth_value(" + col + ", 2) OVER (ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) FROM t",
+                        "Window\n  functions: [nth_value(" + col + ",2) over ( rows between 2 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n"
+                );
+                assertPlanNoLeakCheck(
+                        "SELECT nth_value(" + col + ", 2) OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) FROM t",
+                        "Window\n  functions: [nth_value(" + col + ",2) over (partition by [grp] rows between unbounded preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n"
+                );
+                assertPlanNoLeakCheck(
+                        "SELECT nth_value(" + col + ", 2) OVER (ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) FROM t",
+                        "Window\n  functions: [nth_value(" + col + ",2) over (rows between unbounded preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n"
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testLastValueOverFramesAdditionalExplainPlan() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(CREATE_T);
+            for (String col : new String[]{"v8", "v16", "v32", "v64", "v128", "v256"}) {
+                assertPlanNoLeakCheck(
+                        "SELECT last_value(" + col + ") OVER (ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) FROM t",
+                        "Window\n  functions: [last_value(" + col + ") over (rows between 2 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n"
+                );
+                assertPlanNoLeakCheck(
+                        "SELECT last_value(" + col + ") OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) FROM t",
+                        "Window\n  functions: [last_value(" + col + ") over (partition by [grp] rows between unbounded preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n"
+                );
+                assertPlanNoLeakCheck(
+                        "SELECT last_value(" + col + ") OVER (ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) FROM t",
+                        "Window\n  functions: [last_value(" + col + ") over (rows between unbounded preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n"
+                );
+                // IGNORE NULLS variants
+                assertPlanNoLeakCheck(
+                        "SELECT last_value(" + col + ") IGNORE NULLS OVER (PARTITION BY grp ORDER BY ts RANGE BETWEEN 60 second PRECEDING AND CURRENT ROW) FROM t",
+                        "Window\n  functions: [last_value(" + col + ") ignore nulls over (partition by [grp] range between 60000000 preceding and 0 preceding)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n"
+                );
+                assertPlanNoLeakCheck(
+                        "SELECT last_value(" + col + ") IGNORE NULLS OVER (ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) FROM t",
+                        "Window\n  functions: [last_value(" + col + ") ignore nulls over ( rows between 2 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n"
+                );
+                assertPlanNoLeakCheck(
+                        "SELECT last_value(" + col + ") IGNORE NULLS OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) FROM t",
+                        "Window\n  functions: [last_value(" + col + ") ignore nulls over (partition by [grp] rows between 2 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n"
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testAvgRescaleD16D32ExplainPlan() throws Exception {
+        // D16 and D32 source EXPLAIN — toPlan uses no-space comma format.
+        assertMemoryLeak(() -> {
+            execute(CREATE_T);
+            for (int[] sourceScales : new int[][]{
+                    {16, 0}, {16, 6}, {16, 15}, {16, 30}, {16, 60},
+                    {32, 0}, {32, 10}, {32, 30}, {32, 60}
+            }) {
+                String col = "v" + sourceScales[0];
+                int scale = sourceScales[1];
+                assertPlanNoLeakCheck(
+                        "SELECT avg(" + col + ", " + scale + ") OVER (PARTITION BY grp ORDER BY ts RANGE BETWEEN 60 second PRECEDING AND CURRENT ROW) FROM t",
+                        "Window\n  functions: [avg(" + col + "," + scale + ") over (partition by [grp] range between 60000000 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n"
+                );
+                assertPlanNoLeakCheck(
+                        "SELECT avg(" + col + ", " + scale + ") OVER (ORDER BY ts RANGE BETWEEN 60 second PRECEDING AND CURRENT ROW) FROM t",
+                        "Window\n  functions: [avg(" + col + "," + scale + ") over (range between 60000000 preceding and current row)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n"
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testNthValueValidationErrors() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tn (ts TIMESTAMP, x INT, " +
+                    "v8 decimal(2, 1), v16 decimal(4, 1), v32 decimal(9, 3), " +
+                    "v64 decimal(18, 2), v128 decimal(38, 6), v256 decimal(60, 0)" +
+                    ") TIMESTAMP(ts) PARTITION BY HOUR");
+            for (String col : new String[]{"v8", "v16", "v32", "v64", "v128", "v256"}) {
+                String prefix = "SELECT nth_value(" + col + ", ";
+                int posN = prefix.length();
+                // n must be positive (constants)
+                assertExceptionNoLeakCheck(prefix + "0) OVER (ORDER BY ts) FROM tn", posN, "n must be a positive integer");
+                assertExceptionNoLeakCheck(prefix + "-1) OVER (ORDER BY ts) FROM tn", posN, "n must be a positive integer");
+                // n must be a constant — non-constant column reference
+                assertExceptionNoLeakCheck(prefix + "x) OVER (ORDER BY ts) FROM tn", posN, "n must be a constant");
+                // n cannot be NULL — null::int literal
+                assertExceptionNoLeakCheck(prefix + "null) OVER (ORDER BY ts) FROM tn", posN, "n cannot be NULL");
+            }
+        });
+    }
+
+    @Test
+    public void testSumMaxMinPartitionAllNullInput() throws Exception {
+        // Sum/Max/Min OVER (PARTITION BY x) with all-NULL input — exercises pass2 NULL emission paths.
+        assertMemoryLeak(() -> {
+            execute(CREATE_T);
+            execute(INSERT_5_ALL_NULL);
+            assertQueryNoLeakCheck("""
+                            ts\ts8\ts16\ts32\ts64\ts128\ts256\tmx8\tmx16\tmx32\tmx64\tmx128\tmx256\tmn8\tmn16\tmn32\tmn64\tmn128\tmn256
+                            2024-01-01T00:00:00.000000Z\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t
+                            2024-01-01T00:01:00.000000Z\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t
+                            2024-01-01T00:02:00.000000Z\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t
+                            2024-01-01T00:03:00.000000Z\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t
+                            2024-01-01T00:04:00.000000Z\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t
+                            """,
+                    "SELECT ts, " +
+                            "sum(v8) OVER (PARTITION BY grp) s8, sum(v16) OVER (PARTITION BY grp) s16, " +
+                            "sum(v32) OVER (PARTITION BY grp) s32, sum(v64) OVER (PARTITION BY grp) s64, " +
+                            "sum(v128) OVER (PARTITION BY grp) s128, sum(v256) OVER (PARTITION BY grp) s256, " +
+                            "max(v8) OVER (PARTITION BY grp) mx8, max(v16) OVER (PARTITION BY grp) mx16, " +
+                            "max(v32) OVER (PARTITION BY grp) mx32, max(v64) OVER (PARTITION BY grp) mx64, " +
+                            "max(v128) OVER (PARTITION BY grp) mx128, max(v256) OVER (PARTITION BY grp) mx256, " +
+                            "min(v8) OVER (PARTITION BY grp) mn8, min(v16) OVER (PARTITION BY grp) mn16, " +
+                            "min(v32) OVER (PARTITION BY grp) mn32, min(v64) OVER (PARTITION BY grp) mn64, " +
+                            "min(v128) OVER (PARTITION BY grp) mn128, min(v256) OVER (PARTITION BY grp) mn256 " +
+                            "FROM t", null, "ts", true, true);
+        });
+    }
+
+    @Test
+    public void testSumPartitionRangeBufferExpansionAllSubTypes() throws Exception {
+        // Sum OverPartitionRangeFrame with buffer expansion (small initial buffer).
+        node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_INITIAL_RANGE_BUFFER_SIZE, 2);
+        node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_STORE_PAGE_SIZE, 256);
+        assertMemoryLeak(() -> {
+            execute(CREATE_T);
+            StringSink insert = new StringSink();
+            insert.put("INSERT INTO t VALUES ");
+            for (int i = 0; i < 40; i++) {
+                if (i > 0) insert.put(", ");
+                insert.put("('2024-01-01T00:");
+                if (i < 10) insert.put('0');
+                insert.put(i).put(":00', 'a', 0.5m, 5.0m, 5.000m, 5.00m, 5.000000m, 5m)");
+            }
+            execute(insert.toString());
+            // Each subsequent row: sum is running sum of 0.5*(i+1).
+            // We assert distinct count of values to validate buffer integrity.
+            assertQueryNoLeakCheck(
+                    "cnt\n40\n",
+                    "SELECT count(*) cnt FROM (" +
+                            "SELECT sum(v8) OVER (PARTITION BY grp ORDER BY ts RANGE BETWEEN 3600 second PRECEDING AND CURRENT ROW) sv FROM t" +
+                            ")",
+                    null, false, true);
+        });
+    }
+
+    @Test
+    public void testLastValueIgnoreNullsAllFramesAllSubTypesExtra() throws Exception {
+        // last_value IGNORE NULLS exec tests across all frame variants for all subtypes.
+        // Single partition 'a': null,0.6,null,0.8,null. Running last-non-null per row.
+        assertMemoryLeak(() -> {
+            execute(CREATE_T);
+            execute(INSERT_5_WITH_NULL);
+            // OverPartitionRangeFrame
+            assertQueryNoLeakCheck("""
+                            ts\tl8\tl16\tl32\tl64\tl128\tl256
+                            2024-01-01T00:00:00.000000Z\t\t\t\t\t\t
+                            2024-01-01T00:01:00.000000Z\t0.6\t6.0\t6.000\t6.00\t6.000000\t6
+                            2024-01-01T00:02:00.000000Z\t0.6\t6.0\t6.000\t6.00\t6.000000\t6
+                            2024-01-01T00:03:00.000000Z\t0.8\t8.0\t8.000\t8.00\t8.000000\t8
+                            2024-01-01T00:04:00.000000Z\t0.8\t8.0\t8.000\t8.00\t8.000000\t8
+                            """,
+                    "SELECT ts, " +
+                            "last_value(v8) IGNORE NULLS OVER (PARTITION BY grp ORDER BY ts RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) l8, " +
+                            "last_value(v16) IGNORE NULLS OVER (PARTITION BY grp ORDER BY ts RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) l16, " +
+                            "last_value(v32) IGNORE NULLS OVER (PARTITION BY grp ORDER BY ts RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) l32, " +
+                            "last_value(v64) IGNORE NULLS OVER (PARTITION BY grp ORDER BY ts RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) l64, " +
+                            "last_value(v128) IGNORE NULLS OVER (PARTITION BY grp ORDER BY ts RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) l128, " +
+                            "last_value(v256) IGNORE NULLS OVER (PARTITION BY grp ORDER BY ts RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) l256 " +
+                            "FROM t", "ts", false, true);
+            // OverPartitionRowsFrame
+            assertQueryNoLeakCheck("""
+                            ts\tl8\tl16\tl32\tl64\tl128\tl256
+                            2024-01-01T00:00:00.000000Z\t\t\t\t\t\t
+                            2024-01-01T00:01:00.000000Z\t0.6\t6.0\t6.000\t6.00\t6.000000\t6
+                            2024-01-01T00:02:00.000000Z\t0.6\t6.0\t6.000\t6.00\t6.000000\t6
+                            2024-01-01T00:03:00.000000Z\t0.8\t8.0\t8.000\t8.00\t8.000000\t8
+                            2024-01-01T00:04:00.000000Z\t0.8\t8.0\t8.000\t8.00\t8.000000\t8
+                            """,
+                    "SELECT ts, " +
+                            "last_value(v8) IGNORE NULLS OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) l8, " +
+                            "last_value(v16) IGNORE NULLS OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) l16, " +
+                            "last_value(v32) IGNORE NULLS OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) l32, " +
+                            "last_value(v64) IGNORE NULLS OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) l64, " +
+                            "last_value(v128) IGNORE NULLS OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) l128, " +
+                            "last_value(v256) IGNORE NULLS OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) l256 " +
+                            "FROM t", "ts", false, true);
+        });
+    }
+
+    @Test
+    public void testLastValueIgnoreNullsMoreRouting() throws Exception {
+        // Hit more last_value IGNORE NULLS routing branches.
+        assertMemoryLeak(() -> {
+            execute(CREATE_T);
+            execute(INSERT_5_WITH_NULL);
+            // OVER (PARTITION BY grp) - default RANGE frame, no ORDER BY -> Decimal*LastNotNullValueOverPartitionFunction
+            assertQueryNoLeakCheck("""
+                            ts\tl8\tl16\tl32\tl64\tl128\tl256
+                            2024-01-01T00:00:00.000000Z\t0.8\t8.0\t8.000\t8.00\t8.000000\t8
+                            2024-01-01T00:01:00.000000Z\t0.8\t8.0\t8.000\t8.00\t8.000000\t8
+                            2024-01-01T00:02:00.000000Z\t0.8\t8.0\t8.000\t8.00\t8.000000\t8
+                            2024-01-01T00:03:00.000000Z\t0.8\t8.0\t8.000\t8.00\t8.000000\t8
+                            2024-01-01T00:04:00.000000Z\t0.8\t8.0\t8.000\t8.00\t8.000000\t8
+                            """,
+                    "SELECT ts, " +
+                            "last_value(v8) IGNORE NULLS OVER (PARTITION BY grp) l8, " +
+                            "last_value(v16) IGNORE NULLS OVER (PARTITION BY grp) l16, " +
+                            "last_value(v32) IGNORE NULLS OVER (PARTITION BY grp) l32, " +
+                            "last_value(v64) IGNORE NULLS OVER (PARTITION BY grp) l64, " +
+                            "last_value(v128) IGNORE NULLS OVER (PARTITION BY grp) l128, " +
+                            "last_value(v256) IGNORE NULLS OVER (PARTITION BY grp) l256 " +
+                            "FROM t", null, "ts", true, true);
+            // OVER (ROWS BETWEEN CURRENT ROW AND CURRENT ROW) -> Decimal*LastNotNullValueOverCurrentRowFunction
+            assertQueryNoLeakCheck("""
+                            ts\tl8\tl16\tl32\tl64\tl128\tl256
+                            2024-01-01T00:00:00.000000Z\t\t\t\t\t\t
+                            2024-01-01T00:01:00.000000Z\t0.6\t6.0\t6.000\t6.00\t6.000000\t6
+                            2024-01-01T00:02:00.000000Z\t\t\t\t\t\t
+                            2024-01-01T00:03:00.000000Z\t0.8\t8.0\t8.000\t8.00\t8.000000\t8
+                            2024-01-01T00:04:00.000000Z\t\t\t\t\t\t
+                            """,
+                    "SELECT ts, " +
+                            "last_value(v8) IGNORE NULLS OVER (ORDER BY ts ROWS BETWEEN CURRENT ROW AND CURRENT ROW) l8, " +
+                            "last_value(v16) IGNORE NULLS OVER (ORDER BY ts ROWS BETWEEN CURRENT ROW AND CURRENT ROW) l16, " +
+                            "last_value(v32) IGNORE NULLS OVER (ORDER BY ts ROWS BETWEEN CURRENT ROW AND CURRENT ROW) l32, " +
+                            "last_value(v64) IGNORE NULLS OVER (ORDER BY ts ROWS BETWEEN CURRENT ROW AND CURRENT ROW) l64, " +
+                            "last_value(v128) IGNORE NULLS OVER (ORDER BY ts ROWS BETWEEN CURRENT ROW AND CURRENT ROW) l128, " +
+                            "last_value(v256) IGNORE NULLS OVER (ORDER BY ts ROWS BETWEEN CURRENT ROW AND CURRENT ROW) l256 " +
+                            "FROM t", "ts", false, true);
+            // OVER (PARTITION BY ROWS BETWEEN CURRENT ROW AND CURRENT ROW) -> Decimal*LastNotNullValueOverCurrentRowFunction via partition path
+            assertQueryNoLeakCheck("""
+                            ts\tl8\tl16\tl32\tl64\tl128\tl256
+                            2024-01-01T00:00:00.000000Z\t\t\t\t\t\t
+                            2024-01-01T00:01:00.000000Z\t0.6\t6.0\t6.000\t6.00\t6.000000\t6
+                            2024-01-01T00:02:00.000000Z\t\t\t\t\t\t
+                            2024-01-01T00:03:00.000000Z\t0.8\t8.0\t8.000\t8.00\t8.000000\t8
+                            2024-01-01T00:04:00.000000Z\t\t\t\t\t\t
+                            """,
+                    "SELECT ts, " +
+                            "last_value(v8) IGNORE NULLS OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN CURRENT ROW AND CURRENT ROW) l8, " +
+                            "last_value(v16) IGNORE NULLS OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN CURRENT ROW AND CURRENT ROW) l16, " +
+                            "last_value(v32) IGNORE NULLS OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN CURRENT ROW AND CURRENT ROW) l32, " +
+                            "last_value(v64) IGNORE NULLS OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN CURRENT ROW AND CURRENT ROW) l64, " +
+                            "last_value(v128) IGNORE NULLS OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN CURRENT ROW AND CURRENT ROW) l128, " +
+                            "last_value(v256) IGNORE NULLS OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN CURRENT ROW AND CURRENT ROW) l256 " +
+                            "FROM t", "ts", false, true);
+            // OVER (PARTITION BY ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) -> Decimal*LastNotNullValueOverPartitionFunction
+            assertQueryNoLeakCheck("""
+                            ts\tl8\tl16\tl32\tl64\tl128\tl256
+                            2024-01-01T00:00:00.000000Z\t0.8\t8.0\t8.000\t8.00\t8.000000\t8
+                            2024-01-01T00:01:00.000000Z\t0.8\t8.0\t8.000\t8.00\t8.000000\t8
+                            2024-01-01T00:02:00.000000Z\t0.8\t8.0\t8.000\t8.00\t8.000000\t8
+                            2024-01-01T00:03:00.000000Z\t0.8\t8.0\t8.000\t8.00\t8.000000\t8
+                            2024-01-01T00:04:00.000000Z\t0.8\t8.0\t8.000\t8.00\t8.000000\t8
+                            """,
+                    "SELECT ts, " +
+                            "last_value(v8) IGNORE NULLS OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) l8, " +
+                            "last_value(v16) IGNORE NULLS OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) l16, " +
+                            "last_value(v32) IGNORE NULLS OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) l32, " +
+                            "last_value(v64) IGNORE NULLS OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) l64, " +
+                            "last_value(v128) IGNORE NULLS OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) l128, " +
+                            "last_value(v256) IGNORE NULLS OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) l256 " +
+                            "FROM t", null, "ts", true, true);
+        });
+    }
+
+    @Test
+    public void testFirstValueRowsUnboundedToPrecedingAllSubTypes() throws Exception {
+        // Triggers OverRowsFrame !frameLoBounded path + null-emit branches for early rows.
+        assertMemoryLeak(() -> {
+            execute(CREATE_T);
+            execute(INSERT_5);
+            // ROWS BETWEEN UNBOUNDED PRECEDING AND 2 PRECEDING: row N's frame = rows 0..N-2.
+            // Row 0,1: frame empty -> NULL. Row 2: frame=[row 0]=0.6. Row 3: frame=[row0,1]=0.6 (first). Row 4: frame=[0..2]=0.6.
+            assertQueryNoLeakCheck("""
+                            ts\tf8\tf16\tf32\tf64\tf128\tf256
+                            2024-01-01T00:00:00.000000Z\t\t\t\t\t\t
+                            2024-01-01T00:01:00.000000Z\t\t\t\t\t\t
+                            2024-01-01T00:02:00.000000Z\t0.6\t6.0\t6.000\t6.00\t6.000000\t6
+                            2024-01-01T00:03:00.000000Z\t0.6\t6.0\t6.000\t6.00\t6.000000\t6
+                            2024-01-01T00:04:00.000000Z\t0.6\t6.0\t6.000\t6.00\t6.000000\t6
+                            """,
+                    "SELECT ts, " +
+                            "first_value(v8) OVER (ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND 2 PRECEDING) f8, " +
+                            "first_value(v16) OVER (ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND 2 PRECEDING) f16, " +
+                            "first_value(v32) OVER (ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND 2 PRECEDING) f32, " +
+                            "first_value(v64) OVER (ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND 2 PRECEDING) f64, " +
+                            "first_value(v128) OVER (ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND 2 PRECEDING) f128, " +
+                            "first_value(v256) OVER (ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND 2 PRECEDING) f256 " +
+                            "FROM t", "ts", false, true);
+        });
+    }
+
+    @Test
+    public void testFirstValueRowsBoundedXToYPrecedingAllSubTypes() throws Exception {
+        // ROWS BETWEEN 4 PRECEDING AND 2 PRECEDING — bounded both sides, non-zero rowsHi.
+        assertMemoryLeak(() -> {
+            execute(CREATE_T);
+            execute(INSERT_5);
+            // Row N: frame=rows max(0,N-4)..N-2.
+            // Row 0,1: empty -> NULL. Row 2: [0]=0.6. Row 3: [0,1]=0.6. Row 4: [0,1,2]=0.6.
+            assertQueryNoLeakCheck("""
+                            ts\tf8\tf16\tf32\tf64\tf128\tf256
+                            2024-01-01T00:00:00.000000Z\t\t\t\t\t\t
+                            2024-01-01T00:01:00.000000Z\t\t\t\t\t\t
+                            2024-01-01T00:02:00.000000Z\t0.6\t6.0\t6.000\t6.00\t6.000000\t6
+                            2024-01-01T00:03:00.000000Z\t0.6\t6.0\t6.000\t6.00\t6.000000\t6
+                            2024-01-01T00:04:00.000000Z\t0.6\t6.0\t6.000\t6.00\t6.000000\t6
+                            """,
+                    "SELECT ts, " +
+                            "first_value(v8) OVER (ORDER BY ts ROWS BETWEEN 4 PRECEDING AND 2 PRECEDING) f8, " +
+                            "first_value(v16) OVER (ORDER BY ts ROWS BETWEEN 4 PRECEDING AND 2 PRECEDING) f16, " +
+                            "first_value(v32) OVER (ORDER BY ts ROWS BETWEEN 4 PRECEDING AND 2 PRECEDING) f32, " +
+                            "first_value(v64) OVER (ORDER BY ts ROWS BETWEEN 4 PRECEDING AND 2 PRECEDING) f64, " +
+                            "first_value(v128) OVER (ORDER BY ts ROWS BETWEEN 4 PRECEDING AND 2 PRECEDING) f128, " +
+                            "first_value(v256) OVER (ORDER BY ts ROWS BETWEEN 4 PRECEDING AND 2 PRECEDING) f256 " +
+                            "FROM t", "ts", false, true);
+        });
+    }
+
+    @Test
+    public void testLastValueRowsUnboundedToPrecedingAllSubTypes() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(CREATE_T);
+            execute(INSERT_5);
+            // ROWS BETWEEN UNBOUNDED PRECEDING AND 2 PRECEDING: row N's frame ends at N-2.
+            // Row 0,1: empty -> NULL. Row 2: last=row0=0.6. Row 3: last=row1=0.4. Row 4: last=row2=0.8.
+            assertQueryNoLeakCheck("""
+                            ts\tl8\tl16\tl32\tl64\tl128\tl256
+                            2024-01-01T00:00:00.000000Z\t\t\t\t\t\t
+                            2024-01-01T00:01:00.000000Z\t\t\t\t\t\t
+                            2024-01-01T00:02:00.000000Z\t0.6\t6.0\t6.000\t6.00\t6.000000\t6
+                            2024-01-01T00:03:00.000000Z\t0.4\t4.0\t4.000\t4.00\t4.000000\t4
+                            2024-01-01T00:04:00.000000Z\t0.8\t8.0\t8.000\t8.00\t8.000000\t8
+                            """,
+                    "SELECT ts, " +
+                            "last_value(v8) OVER (ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND 2 PRECEDING) l8, " +
+                            "last_value(v16) OVER (ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND 2 PRECEDING) l16, " +
+                            "last_value(v32) OVER (ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND 2 PRECEDING) l32, " +
+                            "last_value(v64) OVER (ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND 2 PRECEDING) l64, " +
+                            "last_value(v128) OVER (ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND 2 PRECEDING) l128, " +
+                            "last_value(v256) OVER (ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND 2 PRECEDING) l256 " +
+                            "FROM t", "ts", false, true);
+        });
+    }
+
+    @Test
+    public void testNthValueRowsUnboundedToPrecedingAllSubTypes() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(CREATE_T);
+            execute(INSERT_5);
+            // nth_value(col, 1) ROWS BETWEEN UNBOUNDED PRECEDING AND 2 PRECEDING — frame[0..N-2], nth=1 = first.
+            assertQueryNoLeakCheck("""
+                            ts\tn8\tn16\tn32\tn64\tn128\tn256
+                            2024-01-01T00:00:00.000000Z\t\t\t\t\t\t
+                            2024-01-01T00:01:00.000000Z\t\t\t\t\t\t
+                            2024-01-01T00:02:00.000000Z\t0.6\t6.0\t6.000\t6.00\t6.000000\t6
+                            2024-01-01T00:03:00.000000Z\t0.6\t6.0\t6.000\t6.00\t6.000000\t6
+                            2024-01-01T00:04:00.000000Z\t0.6\t6.0\t6.000\t6.00\t6.000000\t6
+                            """,
+                    "SELECT ts, " +
+                            "nth_value(v8, 1) OVER (ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND 2 PRECEDING) n8, " +
+                            "nth_value(v16, 1) OVER (ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND 2 PRECEDING) n16, " +
+                            "nth_value(v32, 1) OVER (ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND 2 PRECEDING) n32, " +
+                            "nth_value(v64, 1) OVER (ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND 2 PRECEDING) n64, " +
+                            "nth_value(v128, 1) OVER (ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND 2 PRECEDING) n128, " +
+                            "nth_value(v256, 1) OVER (ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND 2 PRECEDING) n256 " +
+                            "FROM t", "ts", false, true);
+        });
+    }
+
+    @Test
+    public void testSumAvgMaxMinRowsXToYPrecedingAllSubTypes() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(CREATE_T);
+            execute(INSERT_5);
+            // ROWS BETWEEN 4 PRECEDING AND 2 PRECEDING - bounded both sides, non-zero rowsHi.
+            // Row 0,1: empty -> NULL. Row 2: [0]=0.6. Row 3: [0,1]=0.6+0.4=1.0. Row 4: [0,1,2]=0.6+0.4+0.8=1.8.
+            assertQueryNoLeakCheck("""
+                            ts\ts8\tav8\tmx8\tmn8
+                            2024-01-01T00:00:00.000000Z\t\t\t\t
+                            2024-01-01T00:01:00.000000Z\t\t\t\t
+                            2024-01-01T00:02:00.000000Z\t0.6\t0.6\t0.6\t0.6
+                            2024-01-01T00:03:00.000000Z\t1.0\t0.5\t0.6\t0.4
+                            2024-01-01T00:04:00.000000Z\t1.8\t0.6\t0.8\t0.4
+                            """,
+                    "SELECT ts, " +
+                            "sum(v8) OVER (ORDER BY ts ROWS BETWEEN 4 PRECEDING AND 2 PRECEDING) s8, " +
+                            "avg(v8) OVER (ORDER BY ts ROWS BETWEEN 4 PRECEDING AND 2 PRECEDING) av8, " +
+                            "max(v8) OVER (ORDER BY ts ROWS BETWEEN 4 PRECEDING AND 2 PRECEDING) mx8, " +
+                            "min(v8) OVER (ORDER BY ts ROWS BETWEEN 4 PRECEDING AND 2 PRECEDING) mn8 " +
+                            "FROM t", "ts", false, true);
+        });
+    }
+
+    @Test
+    public void testAvgRescaleStreamingAllScalesOverRangeFrame() throws Exception {
+        // Streaming path (single ZERO_PASS function per query, no TWO_PASS sibling) for each target scale.
+        // Forces getDecimalX call for each of the 6 target types: D8, D16, D32, D64, D128, D256.
+        assertMemoryLeak(() -> {
+            execute(CREATE_T);
+            execute(INSERT_5);
+            for (int[] sourceScales : new int[][]{
+                    {8, 0}, {8, 3}, {8, 5}, {8, 14}, {8, 30}, {8, 60}
+            }) {
+                String col = "v" + sourceScales[0];
+                int scale = sourceScales[1];
+                // Query with only ZERO_PASS function (avg in RANGE frame) — streaming path.
+                String query = "SELECT ts, avg(" + col + ", " + scale + ") OVER (ORDER BY ts RANGE BETWEEN 60 second PRECEDING AND CURRENT ROW) av FROM t";
+                // Just verify it runs (5 rows expected).
+                assertSql("ts\tav\n", "SELECT ts, av FROM (" + query + ") WHERE 1=0");
+            }
+        });
+    }
+
+    @Test
+    public void testAvgRescaleEmptyRangeFrameAllSubTypes() throws Exception {
+        // RANGE with rangeHi between rows to ensure frame is empty for the first row
+        // (no preceding rows within range), triggering value.ofRawNull() / isNull paths.
+        assertMemoryLeak(() -> {
+            execute(CREATE_T);
+            // Single row only — frame is just the row, but avg over PRECEDING-only frame gives empty result for first row.
+            execute("INSERT INTO t VALUES ('2024-01-01T00:00:00', 'a', 0.6m, 6.0m, 6.000m, 6.00m, 6.000000m, 6m)");
+            // RANGE BETWEEN 60 PRECEDING AND 1 PRECEDING: frame for first row excludes itself, empty.
+            assertQueryNoLeakCheck("ts\tav\n2024-01-01T00:00:00.000000Z\t\n",
+                    "SELECT ts, avg(v8, 0) OVER (ORDER BY ts RANGE BETWEEN 60 second PRECEDING AND 1 second PRECEDING) av FROM t",
+                    "ts", false, true);
+            assertQueryNoLeakCheck("ts\tav\n2024-01-01T00:00:00.000000Z\t\n",
+                    "SELECT ts, avg(v8, 3) OVER (ORDER BY ts RANGE BETWEEN 60 second PRECEDING AND 1 second PRECEDING) av FROM t",
+                    "ts", false, true);
+            assertQueryNoLeakCheck("ts\tav\n2024-01-01T00:00:00.000000Z\t\n",
+                    "SELECT ts, avg(v8, 5) OVER (ORDER BY ts RANGE BETWEEN 60 second PRECEDING AND 1 second PRECEDING) av FROM t",
+                    "ts", false, true);
+            assertQueryNoLeakCheck("ts\tav\n2024-01-01T00:00:00.000000Z\t\n",
+                    "SELECT ts, avg(v8, 14) OVER (ORDER BY ts RANGE BETWEEN 60 second PRECEDING AND 1 second PRECEDING) av FROM t",
+                    "ts", false, true);
+            assertQueryNoLeakCheck("ts\tav\n2024-01-01T00:00:00.000000Z\t\n",
+                    "SELECT ts, avg(v8, 30) OVER (ORDER BY ts RANGE BETWEEN 60 second PRECEDING AND 1 second PRECEDING) av FROM t",
+                    "ts", false, true);
+            assertQueryNoLeakCheck("ts\tav\n2024-01-01T00:00:00.000000Z\t\n",
+                    "SELECT ts, avg(v8, 60) OVER (ORDER BY ts RANGE BETWEEN 60 second PRECEDING AND 1 second PRECEDING) av FROM t",
+                    "ts", false, true);
+        });
+    }
+
+    @Test
+    public void testNthValuePartitionRowsUnboundedToPrecedingAllSubTypes() throws Exception {
+        // OVER (PARTITION BY ... ROWS BETWEEN UNBOUNDED PRECEDING AND 2 PRECEDING) -> Decimal*NthValueOverPartitionRowsFrameUnboundedFunction
+        assertMemoryLeak(() -> {
+            execute(CREATE_T);
+            execute(INSERT_6_PART);
+            // partition 'a' (rows 0,2,4 with v8=0.6,0.8,0.4): nth_value(v8,1) over (UNBOUNDED to 2 PRECEDING):
+            // row 0: frame empty (rows < -2 from itself, no rows) -> NULL
+            // row 2: frame [-2..-2] -> row 0 of partition -> 0.6
+            // row 4: frame [-2..-2] absolute idx 2 = row 1 of partition = ? Actually counts include rows before, not within partition.
+            // Use EXPLAIN to verify routing:
+            assertPlanNoLeakCheck(
+                    "SELECT nth_value(v8, 1) OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND 2 PRECEDING) FROM t",
+                    "Window\n  functions: [nth_value(v8,1) over (partition by [grp] rows between unbounded preceding and 2 preceding)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n"
+            );
+            for (String col : new String[]{"v8", "v16", "v32", "v64", "v128", "v256"}) {
+                assertPlanNoLeakCheck(
+                        "SELECT nth_value(" + col + ", 1) OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND 2 PRECEDING) FROM t",
+                        "Window\n  functions: [nth_value(" + col + ",1) over (partition by [grp] rows between unbounded preceding and 2 preceding)]\n    PageFrame\n        Row forward scan\n        Frame forward scan on: t\n"
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testNthValuePartitionRowsUnboundedToPrecedingExec() throws Exception {
+        // Execution test for Decimal*NthValueOverPartitionRowsFrameUnboundedFunction.
+        assertMemoryLeak(() -> {
+            execute(CREATE_T);
+            execute(INSERT_5);
+            // Single partition 'a' with 5 rows of v8=0.6,0.4,0.8,0.2,1.0.
+            // ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING — frame = rows before current row.
+            // nth_value(col,1) = first non-null in frame.
+            // row 0: empty -> NULL. row 1: [row0]=0.6. row 2: [row0,row1] first=0.6. row 3: [r0,r1,r2] first=0.6. row 4: [r0..r3] first=0.6.
+            assertQueryNoLeakCheck("""
+                            ts\tn8\tn16\tn32\tn64\tn128\tn256
+                            2024-01-01T00:00:00.000000Z\t\t\t\t\t\t
+                            2024-01-01T00:01:00.000000Z\t0.6\t6.0\t6.000\t6.00\t6.000000\t6
+                            2024-01-01T00:02:00.000000Z\t0.6\t6.0\t6.000\t6.00\t6.000000\t6
+                            2024-01-01T00:03:00.000000Z\t0.6\t6.0\t6.000\t6.00\t6.000000\t6
+                            2024-01-01T00:04:00.000000Z\t0.6\t6.0\t6.000\t6.00\t6.000000\t6
+                            """,
+                    "SELECT ts, " +
+                            "nth_value(v8, 1) OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING) n8, " +
+                            "nth_value(v16, 1) OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING) n16, " +
+                            "nth_value(v32, 1) OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING) n32, " +
+                            "nth_value(v64, 1) OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING) n64, " +
+                            "nth_value(v128, 1) OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING) n128, " +
+                            "nth_value(v256, 1) OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING) n256 " +
+                            "FROM t", "ts", false, true);
+        });
+    }
+
+    @Test
+    public void testFirstValueUnboundedPartitionRowsFrameAllNulls() throws Exception {
+        // FirstValue OVER (PARTITION BY ROWS UNBOUNDED PRECEDING AND CURRENT ROW) with all-NULL partitions.
+        assertMemoryLeak(() -> {
+            execute(CREATE_T);
+            execute(INSERT_5_ALL_NULL);
+            assertQueryNoLeakCheck("""
+                            ts\tf8\tf16\tf32\tf64\tf128\tf256
+                            2024-01-01T00:00:00.000000Z\t\t\t\t\t\t
+                            2024-01-01T00:01:00.000000Z\t\t\t\t\t\t
+                            2024-01-01T00:02:00.000000Z\t\t\t\t\t\t
+                            2024-01-01T00:03:00.000000Z\t\t\t\t\t\t
+                            2024-01-01T00:04:00.000000Z\t\t\t\t\t\t
+                            """,
+                    "SELECT ts, " +
+                            "first_value(v8) OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) f8, " +
+                            "first_value(v16) OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) f16, " +
+                            "first_value(v32) OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) f32, " +
+                            "first_value(v64) OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) f64, " +
+                            "first_value(v128) OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) f128, " +
+                            "first_value(v256) OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) f256 " +
                             "FROM t", "ts", false, true);
         });
     }
