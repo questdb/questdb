@@ -3011,7 +3011,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 // when we rolled transaction back, hasO3() has to be false
                 o3MasterRef = -1;
                 LOG.info().$("tx rollback complete [table=").$(tableToken).I$();
-                processCommandQueue(false);
+                processCommandQueue(false, Long.MAX_VALUE);
                 metrics.tableWriterMetrics().incrementRollbacks();
             } catch (Throwable e) {
                 LOG.critical().$("could not perform rollback [table=").$(tableToken).$(", msg=").$(e).I$();
@@ -3320,9 +3320,23 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      *                                         structure changes like a column drop, rename
      */
     public void tick(boolean contextAllowsAnyStructureChanges) {
+        tick(contextAllowsAnyStructureChanges, Long.MAX_VALUE);
+    }
+
+    /**
+     * Processes writer command queue to execute writer async commands such as replication and table alters.
+     * Some tick calls can result into transaction commit.
+     *
+     * @param contextAllowsAnyStructureChanges If true accepts any Alter table command, if false does not accept significant table
+     *                                         structure changes like a column drop, rename
+     * @param deadlineMicros                   wall-clock deadline (microsecond clock) after which the drain stops and
+     *                                         leaves the remaining commands queued for the next tick. Use
+     *                                         {@link Long#MAX_VALUE} to drain the whole queue without a time bound.
+     */
+    public void tick(boolean contextAllowsAnyStructureChanges, long deadlineMicros) {
         // Some alter table trigger commit() which trigger tick()
         // If already inside the tick(), do not re-enter it.
-        processCommandQueue(contextAllowsAnyStructureChanges);
+        processCommandQueue(contextAllowsAnyStructureChanges, deadlineMicros);
     }
 
     @Override
@@ -8233,7 +8247,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         publishTableWriterEvent(cmdType, tableId, correlationId, errorCode, errorMsg, affectedRowsCount, TSK_COMPLETE);
     }
 
-    private void processCommandQueue(boolean contextAllowsAnyStructureChanges) {
+    private void processCommandQueue(boolean contextAllowsAnyStructureChanges, long deadlineMicros) {
         // In case processing of a queue calls rollback() on the writer
         // do not recursively start processing the queue again.
         if (!processingQueue) {
@@ -8244,6 +8258,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     if (cursor > -1) {
                         TableWriterTask cmd = commandQueue.get(cursor);
                         processCommandQueue(cmd, commandSubSeq, cursor, contextAllowsAnyStructureChanges);
+                        // Bound the drain so a backlog of expensive commands (partition squash,
+                        // parquet conversion, drop-local) cannot monopolize a shared apply worker.
+                        // The deadline is checked after processing one command, so the drain always
+                        // makes forward progress; whatever is left stays queued for the next tick.
+                        if (deadlineMicros != Long.MAX_VALUE && configuration.getMicrosecondClock().getTicks() >= deadlineMicros) {
+                            break;
+                        }
                     } else {
                         Os.pause();
                     }

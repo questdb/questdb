@@ -1994,6 +1994,43 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTickStopsAtDeadlineAndLeavesRemainingCommandsQueued() throws Exception {
+        // tick(deadline) must bound the drain so a backlog of commands cannot monopolize the apply
+        // worker: it processes at least one command (forward progress), then stops once the deadline
+        // has passed, leaving the rest queued for the next tick. Two ADD COLUMN commands are queued
+        // and a deadline already in the past is supplied, so the first tick applies exactly one and
+        // the second tick drains the other.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tbl (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY");
+            TableToken token = engine.verifyTableName("tbl");
+            Assert.assertFalse(token.isWal());
+
+            try (TableWriter writer = getWriter(token)) {
+                for (String col : new String[]{"y", "z"}) {
+                    AlterOperationBuilder builder = new AlterOperationBuilder();
+                    builder.ofAddColumn(0, token, token.getTableId())
+                            .ofAddColumn(col, 0, ColumnType.INT, 0, false, IndexType.NONE, 0);
+                    AlterOperation alterOp = builder.build();
+                    alterOp.withSecurityContext(AllowAllSecurityContext.INSTANCE);
+                    writer.publishAsyncWriterCommand(alterOp);
+                }
+                Assert.assertEquals(2, writer.getMetadata().getColumnCount());
+
+                // Deadline already in the past: the drain stops after the first command.
+                final long pastDeadline = configuration.getMicrosecondClock().getTicks() - 1;
+                writer.tick(false, pastDeadline);
+                Assert.assertEquals(3, writer.getMetadata().getColumnCount());
+
+                // The next unbounded tick drains the command left queued.
+                writer.tick();
+                Assert.assertEquals(4, writer.getMetadata().getColumnCount());
+                Assert.assertTrue(writer.getColumnIndex("y") >= 0);
+                Assert.assertTrue(writer.getColumnIndex("z") >= 0);
+            }
+        });
+    }
+
+    @Test
     public void testWalApplyTickDrainsAsyncCommandQueue() throws Exception {
         // Regression test for the async command-queue drain on the WAL apply path. The WAL apply
         // loop holds the writer across a batch of transactions and never ticks the command queue
