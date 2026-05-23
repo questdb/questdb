@@ -37,10 +37,11 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.VarcharFunction;
+import io.questdb.griffin.engine.groupby.SortedRunsMerge;
 import io.questdb.griffin.engine.groupby.GroupByAllocator;
+import io.questdb.std.LongList;
 import io.questdb.std.Misc;
 import io.questdb.std.Unsafe;
-import io.questdb.std.Vect;
 import io.questdb.std.str.DirectUtf8String;
 import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.Nullable;
@@ -52,14 +53,15 @@ import org.jetbrains.annotations.Nullable;
  * parallel GROUP BY path.
  * <p>
  * <b>Parallelism strategy.</b> Same pattern as {@link TwapGroupByFunction}.
- * Each worker accumulates its observations into a native buffer via its own
- * {@link GroupByAllocator}. Within a single worker page frames arrive in
- * rowId order, so per-worker buffers are sorted runs. During the merge phase
- * two sorted runs are combined with a merge-sort merge step into a fresh
- * buffer in the destination's allocator - the owner's allocator on the
- * non-sharded merge path, or a per-worker allocator on the sharded merge
- * path. Either way, the destination buffer lives in an allocator that
- * outlives the merge until cursor close.
+ * Each per-slot function instance accumulates observations into a native
+ * buffer through its own {@link GroupByAllocator}. A single {@code computeNext}
+ * loop processes one page frame in rowId order, producing one sorted run.
+ * Under parallel GROUP BY a slot can accumulate frames in non-monotonic order
+ * (frames are mapped to slots by lock acquisition, not worker identity), so
+ * the buffer is modelled as a concatenation of disjoint sorted runs keyed on
+ * rowId: different frames cover disjoint, contiguous rowId ranges by
+ * construction. See {@link SortedRunsMerge} for the run-permutation
+ * compaction applied at merge and render time.
  * <p>
  * <b>MapValue layout</b> (3 slots):
  * <pre>
@@ -84,6 +86,9 @@ public class SparklineGroupByFunction extends VarcharFunction implements UnaryFu
     private final int maxValues;
     private final @Nullable Function minFunc;
     private final String name;
+    // Scratch list for run descriptors used by SortedRunsMerge. Not
+    // thread-safe; each per-slot function instance owns its own.
+    private final LongList runScratch = new LongList(16);
     // A and B need independent flyweights because sort's comparator
     // fetches both sides from this same Function and expects neither to
     // clobber the other.
@@ -311,17 +316,16 @@ public class SparklineGroupByFunction extends VarcharFunction implements UnaryFu
     }
 
     /**
-     * Merges the source worker's observation buffer into the destination
-     * buffer. Both are sorted by rowId within their respective workers.
-     * The merge produces a single sorted buffer via a merge-sort merge
-     * step, allocated in the destination's allocator - either the owner's
-     * allocator on the non-sharded merge path or a per-worker allocator
-     * on the sharded merge path.
+     * Combines the source slot's observation buffer with the destination's
+     * into a single sorted buffer allocated in the destination's allocator
+     * (the owner's on the non-sharded merge path, a per-worker on the
+     * sharded one). Both inputs are concatenations of disjoint sorted
+     * runs (one per page frame); the combined run set still satisfies the
+     * disjointness invariant because different frames cover disjoint
+     * rowId ranges. See {@link SortedRunsMerge}.
      * <p>
-     * When dest is empty, the source buffer is copied into a fresh
-     * allocation in the destination's allocator rather than aliasing the
-     * raw pointer, because the source buffer lives in a separate allocator
-     * that will be reclaimed independently.
+     * The old destination buffer is abandoned; the allocator reclaims it
+     * when the cursor closes.
      */
     @Override
     public void merge(MapValue destValue, MapValue srcValue) {
@@ -331,44 +335,17 @@ public class SparklineGroupByFunction extends VarcharFunction implements UnaryFu
         }
         long srcPtr = srcValue.getLong(valueIndex);
         long destCount = destValue.getLong(valueIndex + 1);
-        if (destCount <= 0) {
-            long newCapacity = Math.max(INITIAL_CAPACITY, srcCount);
-            long newPtr = allocator.malloc(newCapacity * ENTRY_SIZE);
-            Vect.memcpy(newPtr, srcPtr, srcCount * ENTRY_SIZE);
-            destValue.putLong(valueIndex, newPtr);
-            destValue.putLong(valueIndex + 1, srcCount);
-            destValue.putLong(valueIndex + 2, newCapacity);
-            return;
-        }
-        long destPtr = destValue.getLong(valueIndex);
+        long destPtr = destCount > 0 ? destValue.getLong(valueIndex) : 0;
         long mergedCount = destCount + srcCount;
         long mergedPtr = allocator.malloc(mergedCount * ENTRY_SIZE);
-        long di = 0, si = 0, mi = 0;
-        while (di < destCount && si < srcCount) {
-            long destAddr = destPtr + di * ENTRY_SIZE;
-            long srcAddr = srcPtr + si * ENTRY_SIZE;
-            long destRowId = Unsafe.getLong(destAddr);
-            long srcRowId = Unsafe.getLong(srcAddr);
-            long mergedAddr = mergedPtr + mi * ENTRY_SIZE;
-            // Inline the 16-byte copy as two longs - a JNI Vect.memcpy
-            // call dominates over the payload cost for entries this small.
-            if (destRowId <= srcRowId) {
-                Unsafe.putLong(mergedAddr, destRowId);
-                Unsafe.putLong(mergedAddr + 8, Unsafe.getLong(destAddr + 8));
-                di++;
-            } else {
-                Unsafe.putLong(mergedAddr, srcRowId);
-                Unsafe.putLong(mergedAddr + 8, Unsafe.getLong(srcAddr + 8));
-                si++;
-            }
-            mi++;
-        }
-        if (di < destCount) {
-            Vect.memcpy(mergedPtr + mi * ENTRY_SIZE, destPtr + di * ENTRY_SIZE, (destCount - di) * ENTRY_SIZE);
-        }
-        if (si < srcCount) {
-            Vect.memcpy(mergedPtr + mi * ENTRY_SIZE, srcPtr + si * ENTRY_SIZE, (srcCount - si) * ENTRY_SIZE);
-        }
+        SortedRunsMerge.compactInto(
+                allocator,
+                runScratch,
+                mergedPtr,
+                destPtr, destCount,
+                srcPtr, srcCount,
+                ENTRY_SIZE
+        );
         destValue.putLong(valueIndex, mergedPtr);
         destValue.putLong(valueIndex + 1, mergedCount);
         destValue.putLong(valueIndex + 2, mergedCount);
@@ -388,7 +365,10 @@ public class SparklineGroupByFunction extends VarcharFunction implements UnaryFu
 
     @Override
     public boolean supportsParallelism() {
-        return true;
+        return arg.supportsParallelism()
+                && (minFunc == null || minFunc.supportsParallelism())
+                && (maxFunc == null || maxFunc.supportsParallelism())
+                && (widthFunc == null || widthFunc.supportsParallelism());
     }
 
     @Override
@@ -444,6 +424,13 @@ public class SparklineGroupByFunction extends VarcharFunction implements UnaryFu
     // output buffer. Writes the output pointer into {@link #lastRenderPtr}
     // and returns the byte length.
     private long renderForPtr(long ptr, int size) {
+        // Under parallel GROUP BY the buffer may be a concatenation of
+        // disjoint sorted runs in non-monotonic order. Compact it in place
+        // to a single sorted run so the value sequence walked below
+        // reflects rowId order, not slot-acquisition order. The pointer is
+        // preserved across compaction, so the caller's cache key stays
+        // valid.
+        SortedRunsMerge.compactInPlace(allocator, runScratch, ptr, size, ENTRY_SIZE);
         // Single-pass min+max when either is auto. Halves the pre-render
         // scan cost vs two separate full walks.
         double userMin = minFunc != null ? minFunc.getDouble(null) : Double.NaN;

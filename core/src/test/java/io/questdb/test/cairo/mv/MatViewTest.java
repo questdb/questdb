@@ -4235,6 +4235,63 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testValidateRefreshDoesNotRefresh() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table base_price (" +
+                            "sym varchar, price double, ts #TIMESTAMP" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            currentMicros = parseFloorPartialTimestamp("2001-01-01T01:01:01.000000Z");
+            execute(
+                    "create materialized view price_1h refresh manual as " +
+                            "select sym, last(price) as price, ts from base_price sample by 1h;"
+            );
+            execute(
+                    "insert into base_price(sym, price, ts) values('gbpusd', 1.320, '2024-09-10T12:01')" +
+                            ",('gbpusd', 1.323, '2024-09-10T12:02')"
+            );
+
+            currentMicros = parseFloorPartialTimestamp("2099-01-01T01:01:01.000000Z");
+            final MatViewTimerJob timerJob = new MatViewTimerJob(engine);
+            drainMatViewTimerQueue(timerJob);
+            drainQueues();
+
+            // The view reflects the rows present at its initial refresh.
+            final String initial = """
+                    sym\tprice\tts
+                    gbpusd\t1.323\t2024-09-10T12:00:00.000000Z
+                    """;
+            assertQueryNoLeakCheck(replaceExpectedTimestamp(initial), "price_1h order by sym");
+
+            // A later insert is not reflected until an explicit refresh.
+            execute("insert into base_price(sym, price, ts) values('gbpusd', 1.321, '2024-09-10T13:02')");
+            drainMatViewTimerQueue(timerJob);
+            drainQueues();
+            assertQueryNoLeakCheck(replaceExpectedTimestamp(initial), "price_1h order by sym");
+
+            // Validating REFRESH must not enqueue a refresh, so the new row stays invisible.
+            validateOnly("refresh materialized view price_1h incremental;");
+            drainMatViewTimerQueue(timerJob);
+            drainQueues();
+            assertQueryNoLeakCheck(replaceExpectedTimestamp(initial), "price_1h order by sym");
+
+            // A real refresh picks up the new row.
+            execute("refresh materialized view price_1h incremental;");
+            drainMatViewTimerQueue(timerJob);
+            drainQueues();
+            assertQueryNoLeakCheck(
+                    replaceExpectedTimestamp("""
+                            sym\tprice\tts
+                            gbpusd\t1.323\t2024-09-10T12:00:00.000000Z
+                            gbpusd\t1.321\t2024-09-10T13:00:00.000000Z
+                            """),
+                    "price_1h order by sym"
+            );
+        });
+    }
+
+    @Test
     public void testManualPeriodMatView() throws Exception {
         // Verifies that manual period mat views don't refresh automatically when a period ends.
         assertMemoryLeak(() -> {
@@ -8000,6 +8057,16 @@ public class MatViewTest extends AbstractCairoTest {
 
     private void dropMatView() throws SqlException {
         execute("drop materialized view price_1h;");
+    }
+
+    private void validateOnly(String sql) throws SqlException {
+        final SqlExecutionContextImpl ctx = (SqlExecutionContextImpl) sqlExecutionContext;
+        ctx.setValidationOnly(true);
+        try (SqlCompiler compiler = engine.getSqlCompiler()) {
+            compiler.compile(sql, ctx);
+        } finally {
+            ctx.setValidationOnly(false);
+        }
     }
 
     private void executeWithRewriteTimestamp(CharSequence sqlText) throws SqlException {

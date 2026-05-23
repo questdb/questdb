@@ -36,13 +36,36 @@ import io.questdb.std.Unsafe;
  */
 public final class QwpEgressSchemaWriter {
 
-    private QwpEgressSchemaWriter() {
-    }
-
     /**
      * Schema mode byte for schema reference.
      */
     public static final byte SCHEMA_MODE_REFERENCE = 0x01;
+
+    private QwpEgressSchemaWriter() {
+    }
+
+    /**
+     * Exact byte count {@link #writeFull} would produce for the given schema.
+     * Mirrors writeFull's layout step-by-step using {@link QwpVarint#encodedLength}
+     * so dry-run sizing matches the real emit byte-for-byte.
+     */
+    public static int exactFullSize(long schemaId, ObjList<QwpEgressColumnDef> columns) {
+        int total = 1 /* mode */ + QwpVarint.encodedLength(schemaId);
+        for (int i = 0, n = columns.size(); i < n; i++) {
+            QwpEgressColumnDef col = columns.getQuick(i);
+            int nameLen = col.getNameUtf8().length;
+            total += QwpVarint.encodedLength(nameLen) + nameLen + 1 /* wire type */;
+        }
+        return total;
+    }
+
+    /**
+     * Exact byte count {@link #writeReference} would produce for the given
+     * schema id: one mode byte + the schemaId varint.
+     */
+    public static int exactReferenceSize(long schemaId) {
+        return 1 + QwpVarint.encodedLength(schemaId);
+    }
 
     /**
      * Writes a full-mode schema (mode 0x00 + schema_id + per-column definitions).
@@ -74,19 +97,5 @@ public final class QwpEgressSchemaWriter {
     public static long writeReference(long bufAddr, long schemaId) {
         Unsafe.putByte(bufAddr, SCHEMA_MODE_REFERENCE);
         return QwpVarint.encode(bufAddr + 1, schemaId);
-    }
-
-    /**
-     * Worst-case serialized size of a full-mode schema. Used to ensure the wire buffer
-     * has space before encoding. Reads the pre-cached UTF-8 byte length so it does
-     * not allocate.
-     */
-    public static int worstCaseFullSize(ObjList<QwpEgressColumnDef> columns) {
-        int total = 1 /* mode */ + QwpVarint.MAX_VARINT_BYTES /* schema id */;
-        for (int i = 0, n = columns.size(); i < n; i++) {
-            QwpEgressColumnDef col = columns.getQuick(i);
-            total += QwpVarint.MAX_VARINT_BYTES + col.getNameUtf8().length + 1 /* type */;
-        }
-        return total;
     }
 }

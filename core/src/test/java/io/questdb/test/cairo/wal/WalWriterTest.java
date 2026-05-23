@@ -111,6 +111,7 @@ import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
+import org.junit.Assume;
 import org.junit.Test;
 
 import java.io.File;
@@ -337,6 +338,9 @@ public class WalWriterTest extends AbstractCairoTest {
 
     @Test
     public void testAddColumnsRollLargeSegment() throws Exception {
+        // The bug this guards is a Java int overflow (platform-independent); writing >2GB is
+        // very slow on the hosted Mac and Windows runners, so run on Linux only.
+        Assume.assumeTrue(Os.isLinux());
         assertMemoryLeak(() -> {
             // This test reproduces a bug where rolling a large segment file sized over 2GB
             // resulted in int overflow and commit exception.
@@ -1858,9 +1862,11 @@ public class WalWriterTest extends AbstractCairoTest {
             public long getPageSize() {
                 RuntimeException e = new RuntimeException("Test failure");
                 e.fillInStackTrace();
-                final StackTraceElement[] stackTrace = e.getStackTrace();
-                if (stackTrace[4].getClassName().endsWith("TableSequencerImpl")) {
-                    throw e;
+                for (StackTraceElement frame : e.getStackTrace()) {
+                    if ("io.questdb.cairo.wal.seq.SequencerMetadata".equals(frame.getClassName())
+                            && "openTableSequencerMetadata".equals(frame.getMethodName())) {
+                        throw e;
+                    }
                 }
                 return Files.PAGE_SIZE;
             }
@@ -2428,7 +2434,7 @@ public class WalWriterTest extends AbstractCairoTest {
                             assertExceptionNoLeakCheck("Exception expected");
                         } catch (Exception e) {
                             // this exception will be handled in ILP/PG/HTTP
-                            assertEquals("[0] expected to read table structure changes but there is no saved in the sequencer [structureVersionLo=0]", e.getMessage());
+                            assertEquals("[0] expected to read table structure changes but there is none saved in the sequencer [structureVersionLo=0]", e.getMessage());
                         }
                     }
                 }
