@@ -28,7 +28,6 @@ import io.questdb.client.cutlass.qwp.client.QwpColumnBatch;
 import io.questdb.client.cutlass.qwp.client.QwpColumnBatchHandler;
 import io.questdb.client.cutlass.qwp.client.QwpQueryClient;
 import io.questdb.std.Unsafe;
-import io.questdb.test.AbstractBootstrapTest;
 import io.questdb.test.TestServerMain;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -57,7 +56,7 @@ import org.junit.Test;
  *       the stream.</li>
  * </ul>
  */
-public class QwpEgressCreditFlowTest extends AbstractBootstrapTest {
+public class QwpEgressCreditFlowTest extends AbstractQwpBootstrapTest {
 
     @Before
     public void setUp() {
@@ -72,7 +71,7 @@ public class QwpEgressCreditFlowTest extends AbstractBootstrapTest {
         // (several MB). The client's auto-replenish per batch must keep the
         // pipe moving to completion.
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables()) {
+            try (final TestServerMain serverMain = startFragmented()) {
                 serverMain.execute(
                         "CREATE TABLE big AS (SELECT x AS id, CAST(x * 1.5 AS DOUBLE) AS v, " +
                                 "x::TIMESTAMP AS ts " +
@@ -122,7 +121,7 @@ public class QwpEgressCreditFlowTest extends AbstractBootstrapTest {
         // suspend after every batch and wait for the client to replenish.
         // This exercises the CREDIT -> wake -> emit -> suspend cycle hardest.
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables()) {
+            try (final TestServerMain serverMain = startFragmented()) {
                 serverMain.execute(
                         "CREATE TABLE tiny AS (SELECT x AS id, x::TIMESTAMP AS ts FROM long_sequence(50000))"
                                 + " TIMESTAMP(ts) PARTITION BY DAY WAL");
@@ -160,7 +159,7 @@ public class QwpEgressCreditFlowTest extends AbstractBootstrapTest {
         // Sanity: default initial_credit (0) is the unbounded back-compat path.
         // Query runs without client-side CREDIT emission; server never checks.
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables()) {
+            try (final TestServerMain serverMain = startFragmented()) {
                 serverMain.execute(
                         "CREATE TABLE un AS (SELECT x AS id, x::TIMESTAMP AS ts FROM long_sequence(10000))"
                                 + " TIMESTAMP(ts) PARTITION BY DAY WAL");
@@ -197,7 +196,7 @@ public class QwpEgressCreditFlowTest extends AbstractBootstrapTest {
         // configs -- this exercises state reset in beginStreaming/endStreaming
         // for the credit fields.
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables()) {
+            try (final TestServerMain serverMain = startFragmented()) {
                 serverMain.execute("CREATE TABLE a(id LONG, ts TIMESTAMP) "
                         + "TIMESTAMP(ts) PARTITION BY DAY WAL");
                 serverMain.execute("INSERT INTO a SELECT x, x::TIMESTAMP FROM long_sequence(3000)");
@@ -231,4 +230,5 @@ public class QwpEgressCreditFlowTest extends AbstractBootstrapTest {
             }
         });
     }
+
 }

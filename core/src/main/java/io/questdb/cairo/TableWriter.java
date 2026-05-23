@@ -5924,6 +5924,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private void enforceTtl(long wallClockMicros) {
+        final int ttl = metadata.getTtlHoursOrMonths();
+        if (ttl == 0) {
+            return;
+        }
+
         if (metadata.getPartitionBy() == PartitionBy.NONE) {
             LOG.error().$("TTL set on a non-partitioned table. Ignoring").$();
             return;
@@ -5931,11 +5936,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         if (getPartitionCount() < 2) {
             // there is only a single partition, which is the active one
-            return;
-        }
-
-        final int ttl = metadata.getTtlHoursOrMonths();
-        if (ttl == 0) {
             return;
         }
 
@@ -6490,6 +6490,24 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     private void indexLastPartition(SymbolColumnIndexer indexer, CharSequence columnName, long columnNameTxn, int columnIndex, int indexValueBlockSize, byte indexType) {
         final int plen = path.size();
+
+        // A Parquet last partition must be indexed the same way historic Parquet
+        // partitions are (see indexHistoricPartitions): indexParquetPartition()
+        // reads column data through the Parquet decoder and wires up the covering
+        // sidecars. The native path below assumes native column files; for a
+        // Parquet partition the covering seal would dereference a null FilesFacade.
+        // Non-WAL tables cannot have a Parquet active partition (see
+        // convertPartitionNativeToParquet), so this only fires for WAL tables.
+        final int lastPartitionIndex = txWriter.getPartitionCount() - 1;
+        if (lastPartitionIndex >= 0 && txWriter.isPartitionParquet(lastPartitionIndex)) {
+            try {
+                indexParquetPartition(indexer, columnName, lastPartitionIndex, columnIndex,
+                        columnNameTxn, indexValueBlockSize, indexType, plen, txWriter.getLastPartitionTimestamp());
+            } finally {
+                indexer.releaseIndexWriter();
+            }
+            return;
+        }
 
         // ALTER TABLE ALTER COLUMN ADD INDEX: building a fresh index, no live indexer holds the .pk.
         createIndexFiles(columnName, columnNameTxn, indexValueBlockSize, indexType, plen, true, true);
