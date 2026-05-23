@@ -55,7 +55,7 @@ import io.questdb.std.str.Utf8s;
 /**
  * State management for QWP v1 processing.
  */
-public class QwpProcessorState implements QuietCloseable, ConnectionAware {
+public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware {
     static final int SEND_STATE_READY = 0;
     static final int SEND_STATE_RESUME_ACK = 1;
     static final int SEND_STATE_RESUME_ACK_THEN_CLOSE = 7;
@@ -65,7 +65,8 @@ public class QwpProcessorState implements QuietCloseable, ConnectionAware {
     static final int SEND_STATE_RESUME_DURABLE_ACK_THEN_CLOSE = 8;
     static final int SEND_STATE_RESUME_DURABLE_ACK_THEN_ERROR = 5;
     static final int SEND_STATE_RESUME_ERROR = 2;
-    private static final Log LOG = LogFactory.getLog(QwpProcessorState.class);
+    static final int SEND_STATE_RESUME_PONG = 9;
+    private static final Log LOG = LogFactory.getLog(QwpIngressProcessorState.class);
     private final QwpTudCache.CommittedTxnConsumer committedTxnConsumer = this::recordCommittedTable;
     private final LineHttpProcessorConfiguration configuration;
     // Delta symbol dictionary for this connection
@@ -93,10 +94,22 @@ public class QwpProcessorState implements QuietCloseable, ConnectionAware {
     private byte deferredErrorStatus;
     private boolean durableAckEnabled;
     private long fd = -1;
+    // Whether onHeadersReady wrote the 101 bytes into the send buffer but
+    // deferred the actual rawSocket.send to onRequestComplete. Set true in
+    // onHeadersReady, cleared in finalizeHandshake() after the send (and any
+    // resumeSend re-flush) completes. The contract that onHeadersReady cannot
+    // throw PeerIsSlowToReadException means a small send-fragmentation cap
+    // (DEBUG_HTTP_FORCE_SEND_FRAGMENTATION_CHUNK_SIZE) could otherwise drop
+    // the second-fragment send without ever surfacing to the park/resume path.
+    private boolean handshakeFlushPending;
     private long highestProcessedSequence = -1;
     private long lastAckedSequence = -1;
     private long messageSequence;
     private byte negotiatedVersion = QwpConstants.VERSION_1;
+    // Bytes that onHeadersReady staged in the raw response buffer waiting to
+    // be flushed by onRequestComplete. Carried across the two calls so
+    // resumeSend can finalise after a parked write.
+    private int pendingHandshakeBytes;
     private int recvBufferLen;
     private long resumeAckSequence = -1;
     private SecurityContext securityContext;
@@ -106,7 +119,7 @@ public class QwpProcessorState implements QuietCloseable, ConnectionAware {
     private QwpWalAppender walAppender;
     private boolean wsHandshakeSent;
 
-    public QwpProcessorState(
+    public QwpIngressProcessorState(
             int initBufferSize,
             int maxResponseContentLength,
             CairoEngine engine,
@@ -169,6 +182,8 @@ public class QwpProcessorState implements QuietCloseable, ConnectionAware {
         currentStatus = Status.OK;
         bufferPosition = 0;
         streamingDecoder.reset();
+        handshakeFlushPending = false;
+        pendingHandshakeBytes = 0;
     }
 
     @Override
@@ -275,6 +290,10 @@ public class QwpProcessorState implements QuietCloseable, ConnectionAware {
         return pendingAckSeqTxns;
     }
 
+    public int getPendingHandshakeBytes() {
+        return pendingHandshakeBytes;
+    }
+
     public int getRecvBufferLen() {
         return recvBufferLen;
     }
@@ -297,6 +316,10 @@ public class QwpProcessorState implements QuietCloseable, ConnectionAware {
 
     public boolean isDurableAckEnabled() {
         return durableAckEnabled;
+    }
+
+    public boolean isHandshakeFlushPending() {
+        return handshakeFlushPending;
     }
 
     public boolean isOk() {
@@ -508,6 +531,15 @@ public class QwpProcessorState implements QuietCloseable, ConnectionAware {
     }
 
     /**
+     * Records that a PONG send was blocked by a full OS buffer.
+     * Transitions from READY to RESUME_PONG; the framework parks the
+     * connection for write so resumeSend can drain the parked bytes.
+     */
+    public void onPongBlocked() {
+        sendState = SEND_STATE_RESUME_PONG;
+    }
+
+    /**
      * Completes a resumed ACK send that was previously blocked.
      */
     public void onResumeAckComplete() {
@@ -527,6 +559,15 @@ public class QwpProcessorState implements QuietCloseable, ConnectionAware {
 
     public void onResumeErrorComplete() {
         clearDeferredError();
+        sendState = SEND_STATE_READY;
+    }
+
+    /**
+     * Completes a resumed PONG send that was previously blocked. No further
+     * follow-up work is required -- the pong frame is the entire response,
+     * so the connection just returns to READY for the next recv cycle.
+     */
+    public void onResumePongComplete() {
         sendState = SEND_STATE_READY;
     }
 
@@ -614,12 +655,20 @@ public class QwpProcessorState implements QuietCloseable, ConnectionAware {
         this.durableAckEnabled = durableAckEnabled;
     }
 
+    public void setHandshakeFlushPending(boolean pending) {
+        this.handshakeFlushPending = pending;
+    }
+
     public void setHighestProcessedSequence(long highestProcessedSequence) {
         this.highestProcessedSequence = highestProcessedSequence;
     }
 
     public void setNegotiatedVersion(byte negotiatedVersion) {
         this.negotiatedVersion = negotiatedVersion;
+    }
+
+    public void setPendingHandshakeBytes(int bytes) {
+        this.pendingHandshakeBytes = bytes;
     }
 
     public void setRecvBufferLen(int recvBufferLen) {

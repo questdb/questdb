@@ -390,7 +390,7 @@ public class TwapGroupByFunction extends DoubleFunction implements GroupByFuncti
 
     @Override
     public boolean supportsParallelism() {
-        return true;
+        return BinaryFunction.super.supportsParallelism();
     }
 
     /**

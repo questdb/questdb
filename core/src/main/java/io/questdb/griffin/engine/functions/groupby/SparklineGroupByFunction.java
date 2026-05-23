@@ -413,7 +413,10 @@ public class SparklineGroupByFunction extends VarcharFunction implements UnaryFu
 
     @Override
     public boolean supportsParallelism() {
-        return true;
+        return arg.supportsParallelism()
+                && (minFunc == null || minFunc.supportsParallelism())
+                && (maxFunc == null || maxFunc.supportsParallelism())
+                && (widthFunc == null || widthFunc.supportsParallelism());
     }
 
     @Override

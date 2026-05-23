@@ -46,12 +46,12 @@ public class EmptyTableRecordCursorFactory extends AbstractRecordCursorFactory {
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) {
-        return EmptyTableRecordCursor.INSTANCE;
+        return EmptyTableRandomRecordCursor.INSTANCE;
     }
 
     @Override
     public boolean recordCursorSupportsRandomAccess() {
-        return false;
+        return true;
     }
 
     @Override

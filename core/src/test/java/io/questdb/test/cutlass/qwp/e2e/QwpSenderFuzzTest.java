@@ -158,6 +158,7 @@ public class QwpSenderFuzzTest extends AbstractQwpWebSocketTest {
     private volatile String errorMsg = null;
     private boolean exerciseSymbols = true;
     private int forceRecvFragmentationChunkSize = Integer.MAX_VALUE;
+    private int forceSendFragmentationChunkSize = Integer.MAX_VALUE;
     private int newColumnFactor = -1;
     private int nonAsciiValueFactor = -1;
     private int numOfIterations;
@@ -180,9 +181,15 @@ public class QwpSenderFuzzTest extends AbstractQwpWebSocketTest {
     public void setUp() {
         super.setUp();
         random = TestUtils.generateRandom(LOG);
-        forceRecvFragmentationChunkSize = 10 + random.nextInt(Math.min(512, recvBufferSize) - 10);
+        forceRecvFragmentationChunkSize = 1 + random.nextInt(recvBufferSize);
+        // Matches DefaultIODispatcherConfiguration.getSendBufferSize(), the server
+        // default used here because runInContext does not override it.
+        int sendBufferSize = 131_072;
+        forceSendFragmentationChunkSize = 1 + random.nextInt(sendBufferSize);
         LOG.info().$("fragmentation params [recvBufferSize=").$(recvBufferSize)
+                .$(", sendBufferSize=").$(sendBufferSize)
                 .$(", forceRecvFragmentationChunkSize=").$(forceRecvFragmentationChunkSize)
+                .$(", forceSendFragmentationChunkSize=").$(forceSendFragmentationChunkSize)
                 .I$();
     }
 
@@ -808,7 +815,7 @@ public class QwpSenderFuzzTest extends AbstractQwpWebSocketTest {
                     assertTable(table, tableName);
                 }
             }
-        }, recvBufferSize, forceRecvFragmentationChunkSize);
+        }, recvBufferSize, forceRecvFragmentationChunkSize, forceSendFragmentationChunkSize);
 
         if (errorMsg != null) {
             Assert.fail(errorMsg);
