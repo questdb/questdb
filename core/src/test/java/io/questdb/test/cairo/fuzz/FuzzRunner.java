@@ -91,6 +91,7 @@ public class FuzzRunner {
     private final TableSequencerAPI.TableSequencerCallback checkNoSuspendedTablesRef;
     protected int initialRowCount;
     protected int partitionCount;
+    private double addCoveringIndexProb;
     private double cancelRowsProb;
     private double colAddProb;
     private double colRemoveProb;
@@ -503,7 +504,8 @@ public class FuzzRunner {
                 strLen,
                 generateSymbols(rnd, rnd.nextInt(Math.max(1, symbolCountMax - 5)) + 5, symbolStrLenMax, tableName),
                 (int) sequencerMetadata.getMetadataVersion(),
-                setParquetEncodingProb
+                setParquetEncodingProb,
+                addCoveringIndexProb
         );
     }
 
@@ -704,6 +706,40 @@ public class FuzzRunner {
             double queryProb,
             double setParquetEncodingProb
     ) {
+        setFuzzProbabilities(
+                cancelRowsProb, notSetProb, nullSetProb, rollbackProb,
+                colAddProb, colRemoveProb, colRenameProb, colTypeChangeProb,
+                dataAddProb, equalTsRowsProb, partitionDropProb,
+                partitionToParquetProb, partitionToNativeProb,
+                truncateProb, tableDropProb, setTtlProb,
+                replaceInsertProb, symbolAccessValidationProb, queryProb,
+                setParquetEncodingProb, 0.0
+        );
+    }
+
+    public void setFuzzProbabilities(
+            double cancelRowsProb,
+            double notSetProb,
+            double nullSetProb,
+            double rollbackProb,
+            double colAddProb,
+            double colRemoveProb,
+            double colRenameProb,
+            double colTypeChangeProb,
+            double dataAddProb,
+            double equalTsRowsProb,
+            double partitionDropProb,
+            double partitionToParquetProb,
+            double partitionToNativeProb,
+            double truncateProb,
+            double tableDropProb,
+            double setTtlProb,
+            double replaceInsertProb,
+            double symbolAccessValidationProb,
+            double queryProb,
+            double setParquetEncodingProb,
+            double addCoveringIndexProb
+    ) {
         this.cancelRowsProb = cancelRowsProb;
         this.notSetProb = notSetProb;
         this.nullSetProb = nullSetProb;
@@ -724,6 +760,7 @@ public class FuzzRunner {
         this.symbolAccessValidationProb = symbolAccessValidationProb;
         this.queryProb = queryProb;
         this.setParquetEncodingProb = setParquetEncodingProb;
+        this.addCoveringIndexProb = addCoveringIndexProb;
     }
 
     public void withDb(CairoEngine engine, SqlExecutionContext sqlExecutionContext) {
