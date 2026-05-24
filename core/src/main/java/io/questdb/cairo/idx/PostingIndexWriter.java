@@ -56,6 +56,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
+import io.questdb.std.Vect;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
@@ -75,8 +76,25 @@ import static io.questdb.cairo.idx.PostingIndexUtils.*;
  * No symbol table needed — encoding is purely arithmetic.
  */
 public class PostingIndexWriter implements IndexWriter {
+    // Safety ceiling for the batch output buffer when fsst_compress reports
+    // produced=0 (a single value didn't fit, grow and retry). 64 MiB is
+    // ~four orders of magnitude over the typical batch peak.
+    private static final long FSST_BATCH_OUT_CAP_MAX = 64L * 1024L * 1024L;
+    // Initial capacity for the streaming batch output buffer.
+    private static final long FSST_BATCH_OUT_CAP_MIN = 1L << 20; // 1 MiB
+    // Number of strings encoded per fsst_compress call when streaming. Keeps
+    // anonymous-heap scratch (batch lens/ptrs in/out, batch output buffer)
+    // bounded regardless of total input size.
+    private static final int FSST_BATCH_SIZE = 1024;
     // Minimum raw data size to attempt FSST compression (below this, overhead > savings)
     private static final int FSST_MIN_RAW_SIZE = 4096;
+    // Cap on the bytes drawn from the input for symbol-table training. cwida
+    // recommends "at least 16 KiB"; 64 KiB is comfortably over that and
+    // bounds the sample arrays in anonymous heap.
+    private static final long FSST_SAMPLE_TARGET_BYTES = 64L * 1024L;
+    // Cap on the number of values drawn for training; with stride sampling
+    // this lands the sample around 1024 values regardless of stride size.
+    private static final int FSST_SAMPLE_TARGET_COUNT = 1024;
     private static final int INITIAL_KEY_CAPACITY = 64;
     private static final Log LOG = LogFactory.getLog(PostingIndexWriter.class);
     private static final int MAX_GEN_COUNT = PostingIndexUtils.MAX_GEN_COUNT;
@@ -1581,6 +1599,12 @@ public class PostingIndexWriter implements IndexWriter {
         }
     }
 
+    private static long readSidecarOffsetWidened(MemoryMARW mem, long offsetsStart, long idx, boolean longOffsets) {
+        return longOffsets
+                ? Unsafe.getLong(mem.addressOf(offsetsStart + idx * Long.BYTES))
+                : Unsafe.getInt(mem.addressOf(offsetsStart + idx * Integer.BYTES)) & 0xFFFFFFFFL;
+    }
+
     private static void writeNullSentinel(MemoryMARW mem, int valueSize, int colType) {
         switch (ColumnType.tagOf(colType)) {
             case ColumnType.DOUBLE -> mem.putLong(Double.doubleToLongBits(Double.NaN));
@@ -2333,6 +2357,35 @@ public class PostingIndexWriter implements IndexWriter {
                     coveredAuxReadSizes[c] = 0;
                 }
             }
+        }
+    }
+
+    /**
+     * Ensure the streaming FSST scratch buffers are sized to
+     * {@link #FSST_BATCH_SIZE}. All four are anonymous-heap and small
+     * (a few tens of KiB combined); they get reused across strides and
+     * are freed by {@link #freeFsstScratch} on close. fsstCmpAddr starts
+     * at {@link #FSST_BATCH_OUT_CAP_MIN} and grows on demand inside
+     * {@link #tryFsstStreamingCompress} if a batch reports produced=0.
+     */
+    private void ensureFsstStreamingScratch() {
+        final long offsArrayBytes = (long) (FSST_BATCH_SIZE + 1) * Long.BYTES;
+        final long batchScratchBytes = (long) FSST_BATCH_SIZE * FSSTNative.BATCH_SCRATCH_BYTES_PER_VALUE;
+        if (fsstSrcOffsCap < offsArrayBytes) {
+            fsstSrcOffsAddr = Unsafe.realloc(fsstSrcOffsAddr, fsstSrcOffsCap, offsArrayBytes, MemoryTag.NATIVE_INDEX_READER);
+            fsstSrcOffsCap = offsArrayBytes;
+        }
+        if (fsstCmpOffsCap < offsArrayBytes) {
+            fsstCmpOffsAddr = Unsafe.realloc(fsstCmpOffsAddr, fsstCmpOffsCap, offsArrayBytes, MemoryTag.NATIVE_INDEX_READER);
+            fsstCmpOffsCap = offsArrayBytes;
+        }
+        if (fsstBatchScratchCap < batchScratchBytes) {
+            fsstBatchScratchAddr = Unsafe.realloc(fsstBatchScratchAddr, fsstBatchScratchCap, batchScratchBytes, MemoryTag.NATIVE_INDEX_READER);
+            fsstBatchScratchCap = batchScratchBytes;
+        }
+        if (fsstCmpCap < FSST_BATCH_OUT_CAP_MIN) {
+            fsstCmpAddr = Unsafe.realloc(fsstCmpAddr, fsstCmpCap, FSST_BATCH_OUT_CAP_MIN, MemoryTag.NATIVE_INDEX_READER);
+            fsstCmpCap = FSST_BATCH_OUT_CAP_MIN;
         }
     }
 
@@ -5278,6 +5331,198 @@ public class PostingIndexWriter implements IndexWriter {
      * files, so no reader can have pinned them; unlink errors are logged
      * and ignored rather than masking the original throw.
      */
+    /**
+     * Streaming FSST compression of an already-written uncompressed
+     * sidecar stride block. Trains a symbol table from a sample, then
+     * encodes in {@link #FSST_BATCH_SIZE}-sized batches into a staging
+     * area past the uncompressed block. If the compressed total beats
+     * the uncompressed block size, the sidecar is rewritten in
+     * FSST-compressed format starting at {@code blockStart}; otherwise
+     * the uncompressed block is left in place.
+     * <p>
+     * No anonymous-heap allocation scales with totalCount or rawDataLen --
+     * the encoder lives inside JNI (~900 KiB), the sample and batch
+     * scratch buffers are sized to constants. The sidecar mmap grows
+     * to hold the staging area; that growth is paged by the OS and
+     * truncated on close.
+     */
+    private void tryFsstStreamingCompress(
+            MemoryMARW mem, int totalCount, boolean rawLongOffsets,
+            long blockStart, long offsetsStart, long dataStart, long rawDataLen
+    ) {
+        final long uncompressedEnd = mem.getAppendOffset();
+        final long uncompressedBlockSize = uncompressedEnd - blockStart;
+
+        // Stride-sample the input. Pick every Nth value (stable) so the
+        // sample reflects the stride's value-length distribution. Stop
+        // when we cover SAMPLE_TARGET_BYTES or SAMPLE_TARGET_COUNT values.
+        final int sampleStride = Math.max(1, totalCount / FSST_SAMPLE_TARGET_COUNT);
+        final int sampleCap = Math.min(FSST_SAMPLE_TARGET_COUNT, (totalCount + sampleStride - 1) / sampleStride);
+        final long sampleLensSize = (long) sampleCap * Long.BYTES;
+        long sampleLensAddr = Unsafe.malloc(sampleLensSize, MemoryTag.NATIVE_INDEX_READER);
+        long samplePtrsAddr = 0L;
+        long encoder = 0L;
+        try {
+            samplePtrsAddr = Unsafe.malloc(sampleLensSize, MemoryTag.NATIVE_INDEX_READER);
+
+            // Address validity contract: writeVarStrideDataAttempt extended
+            // the sidecar to hold uncompressed bytes; the staging area below
+            // also extends it. Capture the raw data address AFTER the extend
+            // so addressOf is stable for the lifetime of this call.
+            final long stagingOffsetsSize = (long) (totalCount + 1) * Long.BYTES;
+            // Worst-case FSST expansion is ~2x. Cap so an absurd staging
+            // doesn't pre-allocate a 32 GB file before we know if FSST
+            // even helps.
+            final long stagingCmpCap = 2L * rawDataLen + 16L;
+            final long stagingSize = stagingOffsetsSize + stagingCmpCap;
+            mem.extend(uncompressedEnd + stagingSize);
+            final long rawDataAddr = mem.addressOf(dataStart);
+            final long stagingOffsetsAddr = mem.addressOf(uncompressedEnd);
+            final long stagingDataAddr = stagingOffsetsAddr + stagingOffsetsSize;
+
+            // Build sample arrays from the just-written uncompressed block.
+            int sampleCount = 0;
+            long sampleBytes = 0L;
+            for (int idx = 0; idx < totalCount && sampleCount < sampleCap && sampleBytes < FSST_SAMPLE_TARGET_BYTES; idx += sampleStride) {
+                final long lo = readSidecarOffsetWidened(mem, offsetsStart, idx, rawLongOffsets);
+                final long hi = readSidecarOffsetWidened(mem, offsetsStart, idx + 1, rawLongOffsets);
+                final long len = hi - lo;
+                if (len > 0) {
+                    Unsafe.putLong(sampleLensAddr + (long) sampleCount * Long.BYTES, len);
+                    Unsafe.putLong(samplePtrsAddr + (long) sampleCount * Long.BYTES, rawDataAddr + lo);
+                    sampleCount++;
+                    sampleBytes += len;
+                }
+            }
+            if (sampleCount == 0) {
+                return; // every value empty; nothing to FSST
+            }
+
+            encoder = FSSTNative.createEncoder(sampleCount, sampleLensAddr, samplePtrsAddr);
+            if (encoder == 0L) {
+                LOG.info().$("posting seal FSST createEncoder failed [sampleCount=").$(sampleCount)
+                        .$(", sampleBytes=").$(sampleBytes).I$();
+                return;
+            }
+
+            ensureFsstStreamingScratch();
+
+            // Stream-compress in batches. Each batch fills fsstSrcOffsAddr
+            // with widened (8B) src offsets for the batch's slice, calls
+            // compressBatch0, then copies the produced compressed bytes to
+            // the staging area and writes per-value offsets (relative to
+            // the start of the compressed-bytes blob).
+            long compressedTotal = 0L;
+            int processed = 0;
+            while (processed < totalCount) {
+                int batchCount = Math.min(FSST_BATCH_SIZE, totalCount - processed);
+                // 8B widened src offsets for the batch. Compress wants the
+                // first entry as the start-of-first-value offset; the
+                // last as past-the-end-of-last-value.
+                for (int i = 0; i <= batchCount; i++) {
+                    long off = readSidecarOffsetWidened(mem, offsetsStart, processed + i, rawLongOffsets);
+                    Unsafe.putLong(fsstSrcOffsAddr + (long) i * Long.BYTES, off);
+                }
+                long produced;
+                while (true) {
+                    produced = FSSTNative.compressBatch(
+                            encoder, batchCount,
+                            rawDataAddr, fsstSrcOffsAddr,
+                            fsstCmpCap, fsstCmpAddr,
+                            fsstCmpOffsAddr,
+                            fsstBatchScratchAddr);
+                    if (produced < 0) {
+                        LOG.info().$("posting seal FSST compressBatch failed [processed=").$(processed)
+                                .$(", batchCount=").$(batchCount)
+                                .I$();
+                        return; // keep uncompressed
+                    }
+                    if (produced > 0) {
+                        break;
+                    }
+                    // produced == 0 means the batch output buffer was
+                    // too small for even the first value; grow and retry.
+                    long newCap = Math.max(fsstCmpCap * 2L, (long) batchCount * 32L);
+                    if (newCap > FSST_BATCH_OUT_CAP_MAX) {
+                        LOG.info().$("posting seal FSST compressBatch out cap exceeded [")
+                                .$("processed=").$(processed)
+                                .$(", batchCount=").$(batchCount)
+                                .$(", fsstCmpCap=").$(fsstCmpCap)
+                                .I$();
+                        return; // keep uncompressed
+                    }
+                    fsstCmpAddr = Unsafe.realloc(fsstCmpAddr, fsstCmpCap, newCap, MemoryTag.NATIVE_INDEX_READER);
+                    fsstCmpCap = newCap;
+                }
+                // compressBatch0 wrote (produced + 1) offsets into
+                // fsstCmpOffsAddr (byte positions within fsstCmpAddr).
+                // Reposition the bytes into the staging compressed region
+                // and write per-value offsets (relative to staging-data
+                // base, i.e. accumulating compressedTotal).
+                final long firstByteOff = Unsafe.getLong(fsstCmpOffsAddr);
+                final long endByteOff = Unsafe.getLong(fsstCmpOffsAddr + produced * Long.BYTES);
+                final long batchBytesLen = endByteOff - firstByteOff;
+                if (batchBytesLen > 0) {
+                    Vect.memcpy(stagingDataAddr + compressedTotal, fsstCmpAddr + firstByteOff, batchBytesLen);
+                }
+                for (long i = 0; i < produced; i++) {
+                    long batchOff = Unsafe.getLong(fsstCmpOffsAddr + i * Long.BYTES);
+                    Unsafe.putLong(stagingOffsetsAddr + (long) (processed + i) * Long.BYTES,
+                            compressedTotal + (batchOff - firstByteOff));
+                }
+                compressedTotal += batchBytesLen;
+                processed += (int) produced;
+            }
+            // Sentinel "past-the-end" offset.
+            Unsafe.putLong(stagingOffsetsAddr + (long) totalCount * Long.BYTES, compressedTotal);
+
+            // Export the trained table.
+            if (fsstTableAddr == 0) {
+                fsstTableAddr = Unsafe.malloc(FSSTNative.MAX_HEADER_SIZE, MemoryTag.NATIVE_INDEX_READER);
+            }
+            int tableLen = FSSTNative.exportEncoder(encoder, fsstTableAddr);
+            if (tableLen <= 0) {
+                return; // export failed; keep uncompressed
+            }
+
+            // Decide. Compressed block layout uses 8B offsets (matches
+            // staging) so its on-disk size is fixed by tableLen and
+            // compressedTotal.
+            final long compressedBlockSize = 4L + 2L + tableLen
+                    + (long) (totalCount + 1) * Long.BYTES + compressedTotal;
+            if (compressedBlockSize >= uncompressedBlockSize) {
+                // Compression didn't help. Truncate back to end of
+                // uncompressed; the staging area becomes garbage that
+                // the next stride or close-time truncate cleans up.
+                mem.jumpTo(uncompressedEnd);
+                return;
+            }
+
+            // Commit the compressed block in place of the uncompressed
+            // one. The staging area sits past uncompressedEnd and the
+            // final destination starts at blockStart, so the memcpy
+            // ranges don't overlap (dest < src, dest + size < src).
+            mem.jumpTo(blockStart);
+            int flags = FSSTNative.FSST_BLOCK_FLAG | PostingIndexUtils.LONG_OFFSETS_FLAG;
+            mem.putInt(totalCount | flags);
+            mem.putShort((short) tableLen);
+            mem.putBlockOfBytes(fsstTableAddr, tableLen);
+            mem.putBlockOfBytes(stagingOffsetsAddr, stagingOffsetsSize);
+            if (compressedTotal > 0) {
+                mem.putBlockOfBytes(stagingDataAddr, compressedTotal);
+            }
+            assert mem.getAppendOffset() == blockStart + compressedBlockSize;
+        } finally {
+            if (encoder != 0L) {
+                FSSTNative.destroyEncoder(encoder);
+            }
+            if (samplePtrsAddr != 0L) {
+                Unsafe.free(samplePtrsAddr, sampleLensSize, MemoryTag.NATIVE_INDEX_READER);
+            }
+            Unsafe.free(sampleLensAddr, sampleLensSize, MemoryTag.NATIVE_INDEX_READER);
+        }
+    }
+
     private void unlinkOrphanSealFiles(long newSealTxn) {
         if (partitionPath.size() == 0) {
             return;
@@ -6033,8 +6278,24 @@ public class PostingIndexWriter implements IndexWriter {
      * [totalCount|FSST_BLOCK_FLAG|LONG_OFFSETS_FLAG?:4B][tableLen:2B][FSST table]
      * [offsets:(count+1)×W][compressed bytes]
      * <p>
-     * Offset width W is 4 bytes by default; 8 bytes when the block sets LONG_OFFSETS_FLAG
-     * (either uncompressed data span or compressed data span exceeds 2 GB).
+     * Offset width W is 4 bytes by default for uncompressed blocks; the
+     * FSST-compressed branch always emits 8-byte offsets and sets
+     * LONG_OFFSETS_FLAG. Always-8B costs ~4 bytes per value on the
+     * compressed side but lets the streaming compressor avoid a
+     * rewind-and-narrow pass when total compressed bytes fit in 32 bits;
+     * the saving on per-stride scratch is far bigger than the wasted
+     * offset bytes.
+     * <p>
+     * Compression strategy: write the uncompressed block first (so the
+     * sidecar is always valid even if FSST training fails), then attempt
+     * streaming FSST. Streaming trains a symbol table from a stride sample
+     * (~64 KiB of input bytes) and encodes the full input in fixed-size
+     * batches into a staging area past the uncompressed block. Total
+     * anonymous-heap scratch is bounded by {@link #FSST_BATCH_SIZE} -- a
+     * few MiB regardless of stride bytes. If the compressed result is
+     * smaller, the staging bytes are copied to {@code blockStart} and
+     * the uncompressed block is overwritten; otherwise the staging is
+     * discarded and the uncompressed block stays.
      */
     private void writeSidecarVarStrideData(
             MemoryMARW mem, int covIdx, long colTop, int colType,
@@ -6045,7 +6306,7 @@ public class PostingIndexWriter implements IndexWriter {
             totalCount += keyCounts[j];
         }
 
-        long blockStart = mem.getAppendOffset();
+        final long blockStart = mem.getAppendOffset();
         boolean longOffsets = false;
         if (!writeVarStrideDataAttempt(mem, covIdx, colTop, colType, ks, keyCounts, keyOffsets, mergedValuesAddr, totalCount, false)) {
             mem.jumpTo(blockStart);
@@ -6053,86 +6314,15 @@ public class PostingIndexWriter implements IndexWriter {
             boolean ok = writeVarStrideDataAttempt(mem, covIdx, colTop, colType, ks, keyCounts, keyOffsets, mergedValuesAddr, totalCount, true);
             assert ok : "long offsets must not overflow";
         }
-        int offsetWidth = longOffsets ? Long.BYTES : Integer.BYTES;
-        long offsetsStart = blockStart + Integer.BYTES;
-        long dataStart = offsetsStart + (long) (totalCount + 1) * offsetWidth;
+        final int offsetWidth = longOffsets ? Long.BYTES : Integer.BYTES;
+        final long offsetsStart = blockStart + Integer.BYTES;
+        final long dataStart = offsetsStart + (long) (totalCount + 1) * offsetWidth;
 
-        long rawDataLen = mem.getAppendOffset() - dataStart;
+        final long rawDataLen = mem.getAppendOffset() - dataStart;
         if (rawDataLen < FSST_MIN_RAW_SIZE || totalCount == 0) {
             return;
         }
-
-        long rawDataAddr = mem.addressOf(dataStart);
-        long offsetsArrayBytes = (long) (totalCount + 1) * Long.BYTES;
-        long cmpCap = rawDataLen * 2 + 16;
-        long batchScratchBytes = (long) totalCount * FSSTNative.BATCH_SCRATCH_BYTES_PER_VALUE;
-        if (fsstSrcOffsCap < offsetsArrayBytes) {
-            fsstSrcOffsAddr = Unsafe.realloc(fsstSrcOffsAddr, fsstSrcOffsCap, offsetsArrayBytes, MemoryTag.NATIVE_INDEX_READER);
-            fsstSrcOffsCap = offsetsArrayBytes;
-        }
-        if (fsstCmpCap < cmpCap) {
-            fsstCmpAddr = Unsafe.realloc(fsstCmpAddr, fsstCmpCap, cmpCap, MemoryTag.NATIVE_INDEX_READER);
-            fsstCmpCap = cmpCap;
-        }
-        if (fsstCmpOffsCap < offsetsArrayBytes) {
-            fsstCmpOffsAddr = Unsafe.realloc(fsstCmpOffsAddr, fsstCmpOffsCap, offsetsArrayBytes, MemoryTag.NATIVE_INDEX_READER);
-            fsstCmpOffsCap = offsetsArrayBytes;
-        }
-        if (fsstBatchScratchCap < batchScratchBytes) {
-            fsstBatchScratchAddr = Unsafe.realloc(fsstBatchScratchAddr, fsstBatchScratchCap, batchScratchBytes, MemoryTag.NATIVE_INDEX_READER);
-            fsstBatchScratchCap = batchScratchBytes;
-        }
-        if (fsstTableAddr == 0) {
-            fsstTableAddr = Unsafe.malloc(FSSTNative.MAX_HEADER_SIZE, MemoryTag.NATIVE_INDEX_READER);
-        }
-
-        for (int i = 0; i <= totalCount; i++) {
-            long off = longOffsets
-                    ? Unsafe.getLong(mem.addressOf(offsetsStart + (long) i * Long.BYTES))
-                    : Unsafe.getInt(mem.addressOf(offsetsStart + (long) i * Integer.BYTES)) & 0xFFFFFFFFL;
-            Unsafe.putLong(fsstSrcOffsAddr + (long) i * Long.BYTES, off);
-        }
-
-        long packed = FSSTNative.trainAndCompressBlock(
-                rawDataAddr, fsstSrcOffsAddr, totalCount,
-                fsstCmpAddr, fsstCmpCap, fsstCmpOffsAddr,
-                fsstTableAddr, fsstBatchScratchAddr
-        );
-        if (packed < 0) {
-            LOG.info().$("FSST compression skipped [covIdx=").$(covIdx)
-                    .$(", totalCount=").$(totalCount)
-                    .$(", rawDataLen=").$(rawDataLen)
-                    .$(']').$();
-            return;
-        }
-        long cmpPos = FSSTNative.unpackCompressed(packed);
-        int tableLen = FSSTNative.unpackTableLen(packed);
-
-        boolean fsstLongOffsets = cmpPos > Integer.MAX_VALUE;
-        int fsstOffsetWidth = fsstLongOffsets ? Long.BYTES : Integer.BYTES;
-        long compressedBlockSize = 4 + 2 + tableLen + (long) (totalCount + 1) * fsstOffsetWidth + cmpPos;
-        long uncompressedBlockSize = mem.getAppendOffset() - blockStart;
-        if (compressedBlockSize >= uncompressedBlockSize) {
-            return;
-        }
-
-        mem.jumpTo(blockStart);
-        int flags = FSSTNative.FSST_BLOCK_FLAG | (fsstLongOffsets ? PostingIndexUtils.LONG_OFFSETS_FLAG : 0);
-        mem.putInt(totalCount | flags);
-        mem.putShort((short) tableLen);
-        for (int i = 0; i < tableLen; i++) {
-            mem.putByte(Unsafe.getByte(fsstTableAddr + i));
-        }
-        if (fsstLongOffsets) {
-            for (int i = 0; i <= totalCount; i++) {
-                mem.putLong(Unsafe.getLong(fsstCmpOffsAddr + (long) i * Long.BYTES));
-            }
-        } else {
-            for (int i = 0; i <= totalCount; i++) {
-                mem.putInt((int) Unsafe.getLong(fsstCmpOffsAddr + (long) i * Long.BYTES));
-            }
-        }
-        mem.putBlockOfBytes(fsstCmpAddr, cmpPos);
+        tryFsstStreamingCompress(mem, totalCount, longOffsets, blockStart, offsetsStart, dataStart, rawDataLen);
     }
 
     private void writeSidecarsPerColumn(long totalCountsAddr, long strideValsAddr) {

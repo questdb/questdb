@@ -61,6 +61,15 @@ import org.jetbrains.annotations.TestOnly;
 import java.util.Arrays;
 
 public abstract class AbstractPostingIndexReader implements IndexReader {
+    // Number of consecutive values decoded per FSST decompressBlock0 call.
+    // The block as a whole is symbol-table-trained once (imported on first
+    // access), then chunks are decoded on demand as the cursor walks the
+    // block's ordinals. Bounds the anonymous-heap decode scratch to
+    // FSST_DECODE_CHUNK_SIZE * worstCaseValueSize regardless of total block
+    // size -- the previous "decompress whole block" path sized dstCap to
+    // 4 * totalCompressed, which on a multi-GiB sealed block ran the
+    // process out of RSS budget before a single value could be served.
+    private static final int FSST_DECODE_CHUNK_SIZE = 256;
     private static final String INDEX_CORRUPT = "posting index is corrupt";
     private static final Log LOG = LogFactory.getLog(AbstractPostingIndexReader.class);
     protected final PostingIndexChainEntry.Snapshot entryScratch = new PostingIndexChainEntry.Snapshot();
@@ -1140,6 +1149,10 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
         protected int decodeWorkspaceCapacity;
         protected int denseVarKeyStartCount;
         protected long[] fsstCachedBlockBases;
+        // First ordinal of the currently-decoded chunk for each cover column,
+        // or -1 if no chunk is decoded for this block. Used together with
+        // fsstCachedBlockBases to address the chunk cache.
+        protected long[] fsstCachedChunkStarts;
         protected long[] fsstDecoderAddrs;
         protected long[] fsstDstAddrs;
         protected long[] fsstDstCapacities;
@@ -1417,12 +1430,13 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
         }
 
         private CharSequence decompressFsstStr(MemoryMR mem, long blockBase, int count, int ordinal, int includeIdx, DirectString view, boolean longOffsets) {
-            if (isFsstBlockUnavailable(mem, blockBase, count, includeIdx, longOffsets)) {
+            if (isFsstChunkUnavailable(mem, blockBase, count, ordinal, includeIdx, longOffsets)) {
                 return null;
             }
+            int chunkOrdinal = (int) (ordinal - fsstCachedChunkStarts[includeIdx]);
             long offsBase = fsstOffsetsAddrs[includeIdx];
-            long lo = Unsafe.getLong(offsBase + (long) ordinal * Long.BYTES);
-            long hi = Unsafe.getLong(offsBase + (long) (ordinal + 1) * Long.BYTES);
+            long lo = Unsafe.getLong(offsBase + (long) chunkOrdinal * Long.BYTES);
+            long hi = Unsafe.getLong(offsBase + (long) (chunkOrdinal + 1) * Long.BYTES);
             if (lo == hi) {
                 return null;
             }
@@ -1435,12 +1449,13 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
         }
 
         private Utf8Sequence decompressFsstUtf8(MemoryMR mem, long blockBase, int count, int ordinal, int includeIdx, DirectUtf8String view, boolean longOffsets) {
-            if (isFsstBlockUnavailable(mem, blockBase, count, includeIdx, longOffsets)) {
+            if (isFsstChunkUnavailable(mem, blockBase, count, ordinal, includeIdx, longOffsets)) {
                 return null;
             }
+            int chunkOrdinal = (int) (ordinal - fsstCachedChunkStarts[includeIdx]);
             long offsBase = fsstOffsetsAddrs[includeIdx];
-            long lo = Unsafe.getLong(offsBase + (long) ordinal * Long.BYTES);
-            long hi = Unsafe.getLong(offsBase + (long) (ordinal + 1) * Long.BYTES);
+            long lo = Unsafe.getLong(offsBase + (long) chunkOrdinal * Long.BYTES);
+            long hi = Unsafe.getLong(offsBase + (long) (chunkOrdinal + 1) * Long.BYTES);
             if (lo == hi) {
                 return null;
             }
@@ -1455,6 +1470,8 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
             if (fsstCachedBlockBases == null) {
                 fsstCachedBlockBases = new long[coverCount];
                 Arrays.fill(fsstCachedBlockBases, -1L);
+                fsstCachedChunkStarts = new long[coverCount];
+                Arrays.fill(fsstCachedChunkStarts, -1L);
                 fsstDecoderAddrs = new long[coverCount];
                 fsstDstAddrs = new long[coverCount];
                 fsstDstCapacities = new long[coverCount];
@@ -1512,6 +1529,7 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
                     fsstOffsetsCapacities[i] = 0;
                 }
                 fsstCachedBlockBases[i] = -1;
+                fsstCachedChunkStarts[i] = -1;
             }
         }
 
@@ -1655,12 +1673,13 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
             long dataAddr;
             int dataLen;
             if (fsst) {
-                if (isFsstBlockUnavailable(mem, blockBase, count, includeIdx, longOffsets)) {
+                if (isFsstChunkUnavailable(mem, blockBase, count, ordinal, includeIdx, longOffsets)) {
                     return null;
                 }
+                int chunkOrdinal = (int) (ordinal - fsstCachedChunkStarts[includeIdx]);
                 long offsBase = fsstOffsetsAddrs[includeIdx];
-                long lo = Unsafe.getLong(offsBase + (long) ordinal * Long.BYTES);
-                long hi = Unsafe.getLong(offsBase + (long) (ordinal + 1) * Long.BYTES);
+                long lo = Unsafe.getLong(offsBase + (long) chunkOrdinal * Long.BYTES);
+                long hi = Unsafe.getLong(offsBase + (long) (chunkOrdinal + 1) * Long.BYTES);
                 if (lo == hi) {
                     arrayView.ofNull();
                     return arrayView;
@@ -1715,12 +1734,13 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
             }
 
             if (fsst) {
-                if (isFsstBlockUnavailable(mem, blockBase, count, includeIdx, longOffsets)) {
+                if (isFsstChunkUnavailable(mem, blockBase, count, ordinal, includeIdx, longOffsets)) {
                     return null;
                 }
+                int chunkOrdinal = (int) (ordinal - fsstCachedChunkStarts[includeIdx]);
                 long offsBase = fsstOffsetsAddrs[includeIdx];
-                long lo = Unsafe.getLong(offsBase + (long) ordinal * Long.BYTES);
-                long hi = Unsafe.getLong(offsBase + (long) (ordinal + 1) * Long.BYTES);
+                long lo = Unsafe.getLong(offsBase + (long) chunkOrdinal * Long.BYTES);
+                long hi = Unsafe.getLong(offsBase + (long) (chunkOrdinal + 1) * Long.BYTES);
                 if (lo == hi) {
                     return null;
                 }
@@ -1770,12 +1790,13 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
             }
 
             if (fsst) {
-                if (isFsstBlockUnavailable(mem, blockBase, count, includeIdx, longOffsets)) {
+                if (isFsstChunkUnavailable(mem, blockBase, count, ordinal, includeIdx, longOffsets)) {
                     return -1;
                 }
+                int chunkOrdinal = (int) (ordinal - fsstCachedChunkStarts[includeIdx]);
                 long offsBase = fsstOffsetsAddrs[includeIdx];
-                long lo = Unsafe.getLong(offsBase + (long) ordinal * Long.BYTES);
-                long hi = Unsafe.getLong(offsBase + (long) (ordinal + 1) * Long.BYTES);
+                long lo = Unsafe.getLong(offsBase + (long) chunkOrdinal * Long.BYTES);
+                long hi = Unsafe.getLong(offsBase + (long) (chunkOrdinal + 1) * Long.BYTES);
                 if (lo == hi) {
                     return -1;
                 }
@@ -1874,33 +1895,70 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
             return view.of(dataAddr, dataAddr + (hi - lo - 1));
         }
 
-        private boolean isFsstBlockUnavailable(MemoryMR mem, long blockBase, int count, int includeIdx, boolean longOffsets) {
+        /**
+         * Returns true if the FSST chunk covering {@code ordinal} cannot
+         * be decoded -- the block's table won't import, the chunk's
+         * decompression failed, or the decoder is in a corrupted state.
+         * Otherwise leaves the chunk's bytes in {@code fsstDstAddrs[includeIdx]}
+         * and chunk-relative offsets in {@code fsstOffsetsAddrs[includeIdx]}.
+         * Callers index using {@code (ordinal - fsstCachedChunkStarts[includeIdx])}.
+         * <p>
+         * Decoding is chunked at {@link #FSST_DECODE_CHUNK_SIZE} values. The
+         * symbol-table import happens once per block (cached via
+         * {@code fsstCachedBlockBases}); chunk decode happens per FSST chunk
+         * (cached via {@code fsstCachedChunkStarts}). Anonymous-heap scratch
+         * is bounded to a chunk's worth of decoded bytes plus
+         * {@code (chunkSize + 1) * 8} for the offset table -- a few tens of
+         * KiB in typical workloads, never the multi-GiB the whole-block
+         * decode required.
+         */
+        private boolean isFsstChunkUnavailable(MemoryMR mem, long blockBase, int count, int ordinal, int includeIdx, boolean longOffsets) {
             ensureFsstCacheCapacity();
-            if (fsstCachedBlockBases[includeIdx] == blockBase) {
+            // Compute the chunk that owns this ordinal. CHUNK_SIZE is a
+            // power of two so the divide and modulo both compile to shifts.
+            final int chunkStart = (ordinal / FSST_DECODE_CHUNK_SIZE) * FSST_DECODE_CHUNK_SIZE;
+
+            // Fast path: same block and same chunk as last access.
+            if (fsstCachedBlockBases[includeIdx] == blockBase
+                    && fsstCachedChunkStarts[includeIdx] == chunkStart) {
                 return false;
             }
 
             long pos = blockBase + 4;
             int tableLen = Unsafe.getShort(mem.addressOf(pos)) & 0xFFFF;
             long tableAddr = mem.addressOf(pos + 2);
-            long offsetsAddr = mem.addressOf(pos + 2 + tableLen);
+            long blockOffsetsAddr = mem.addressOf(pos + 2 + tableLen);
             long offsetsTableSize = varBlockOffsetsSize(count, longOffsets);
             long dataBase = pos + 2 + tableLen + offsetsTableSize;
+            int srcOffsetsWidth = longOffsets ? Long.BYTES : Integer.BYTES;
 
-            long decoderAddr = fsstDecoderAddrs[includeIdx];
-            if (decoderAddr == 0) {
-                decoderAddr = Unsafe.malloc(FSSTNative.DECODER_STRUCT_SIZE, MemoryTag.NATIVE_INDEX_READER);
-                fsstDecoderAddrs[includeIdx] = decoderAddr;
-            }
-            if (FSSTNative.importTable(decoderAddr, tableAddr) < 0) {
-                fsstCachedBlockBases[includeIdx] = -1;
-                return true;
+            // Re-import the symbol table only when the block changed. The
+            // table is small (<= FSST_MAXHEADER, ~2 KiB) and reusable across
+            // every chunk inside this block.
+            if (fsstCachedBlockBases[includeIdx] != blockBase) {
+                long decoderAddr = fsstDecoderAddrs[includeIdx];
+                if (decoderAddr == 0) {
+                    decoderAddr = Unsafe.malloc(FSSTNative.DECODER_STRUCT_SIZE, MemoryTag.NATIVE_INDEX_READER);
+                    fsstDecoderAddrs[includeIdx] = decoderAddr;
+                }
+                if (FSSTNative.importTable(decoderAddr, tableAddr) < 0) {
+                    fsstCachedBlockBases[includeIdx] = -1;
+                    fsstCachedChunkStarts[includeIdx] = -1;
+                    return true;
+                }
+                fsstCachedBlockBases[includeIdx] = blockBase;
+                // Force chunk decode below; the new block invalidates any
+                // chunk position cached from the previous block.
+                fsstCachedChunkStarts[includeIdx] = -1;
             }
 
-            // Use realloc so an OOM throw leaves the previous (addr, capacity)
-            // intact. The buffers are overwritten end-to-end on each miss, so
-            // realloc's potential stale-copy is harmless.
-            long offsetsBytes = (long) (count + 1) * Long.BYTES;
+            // chunkCount is the number of values in this chunk. The last
+            // chunk is short when count is not a multiple of CHUNK_SIZE.
+            final int chunkCount = Math.min(FSST_DECODE_CHUNK_SIZE, count - chunkStart);
+
+            // Offsets buffer for this chunk: (chunkCount + 1) longs.
+            // Bounded to (CHUNK_SIZE + 1) * 8 = ~2 KiB.
+            long offsetsBytes = (long) (chunkCount + 1) * Long.BYTES;
             if (fsstOffsetsCapacities[includeIdx] < offsetsBytes) {
                 fsstOffsetsAddrs[includeIdx] = Unsafe.realloc(
                         fsstOffsetsAddrs[includeIdx], fsstOffsetsCapacities[includeIdx],
@@ -1908,8 +1966,19 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
                 fsstOffsetsCapacities[includeIdx] = offsetsBytes;
             }
 
-            long totalCompressed = readVarBlockOffset(offsetsAddr, count, longOffsets);
-            long initialDstCap = Math.max(totalCompressed * 4L, 256L);
+            // Estimate the chunk's decoded size from this chunk's compressed
+            // span (chunk-local, not block-wide). Pointer-shift the source
+            // offsets so the JNI sees the chunk's slice as a self-contained
+            // block; src*Addr stays at the absolute compressed-bytes base so
+            // fsst_decompress reads from the right file position.
+            long chunkOffsetsAddr = blockOffsetsAddr + (long) chunkStart * srcOffsetsWidth;
+            long compressedChunkStart = readVarBlockOffset(blockOffsetsAddr, chunkStart, longOffsets);
+            long compressedChunkEnd = readVarBlockOffset(blockOffsetsAddr, chunkStart + chunkCount, longOffsets);
+            long compressedChunkLen = compressedChunkEnd - compressedChunkStart;
+            // FSST worst-case expansion is 8x; pad up so the first attempt
+            // usually succeeds without a realloc-retry round-trip. Floor at
+            // 256 bytes for very short chunks.
+            long initialDstCap = Math.max(compressedChunkLen * 8L, 256L);
             if (fsstDstCapacities[includeIdx] < initialDstCap) {
                 fsstDstAddrs[includeIdx] = Unsafe.realloc(
                         fsstDstAddrs[includeIdx], fsstDstCapacities[includeIdx],
@@ -1917,11 +1986,10 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
                 fsstDstCapacities[includeIdx] = initialDstCap;
             }
 
-            int srcOffsetsWidth = longOffsets ? Long.BYTES : Integer.BYTES;
             while (true) {
                 long decoded = FSSTNative.decompressBlock(
-                        decoderAddr,
-                        mem.addressOf(dataBase), offsetsAddr, srcOffsetsWidth, count,
+                        fsstDecoderAddrs[includeIdx],
+                        mem.addressOf(dataBase), chunkOffsetsAddr, srcOffsetsWidth, chunkCount,
                         fsstDstAddrs[includeIdx], fsstDstCapacities[includeIdx],
                         fsstOffsetsAddrs[includeIdx]
                 );
@@ -1935,7 +2003,7 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
                 fsstDstCapacities[includeIdx] = newCap;
             }
 
-            fsstCachedBlockBases[includeIdx] = blockBase;
+            fsstCachedChunkStarts[includeIdx] = chunkStart;
             return false;
         }
 

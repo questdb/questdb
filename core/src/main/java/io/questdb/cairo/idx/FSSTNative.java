@@ -44,6 +44,50 @@ public final class FSSTNative {
     public static final int MAX_HEADER_SIZE = 2066;
 
     /**
+     * Encode one batch of strings with the given encoder. Returns the
+     * number of strings encoded (&lt;= {@code count}), or -1 on bad
+     * arguments. When the return is less than {@code count}, the output
+     * buffer ran out; the caller resumes at index {@code produced} for
+     * the next batch.
+     * <p>
+     * The encoder's symbol table is reused across calls -- one train
+     * (via {@link #createEncoder}) then many compressBatch calls with
+     * bounded per-batch scratch (anonymous heap stays tiny regardless
+     * of total input size).
+     *
+     * @param batchScratchAddr four count-sized slots [lensIn, ptrsIn, lensOut, ptrsOut].
+     *                         JNI fills lensIn/ptrsIn from srcAddr+srcOffsets, calls
+     *                         fsst_compress, then reads lensOut/ptrsOut to populate
+     *                         cmpOffsetsAddr.
+     */
+    public static long compressBatch(
+            long encoderHandle, int count,
+            long srcAddr, long srcOffsetsAddr,
+            long outCap, long outAddr,
+            long cmpOffsetsAddr,
+            long batchScratchAddr
+    ) {
+        return compressBatch0(encoderHandle, count, srcAddr, srcOffsetsAddr,
+                outCap, outAddr, cmpOffsetsAddr, batchScratchAddr);
+    }
+
+    /**
+     * Train an FSST encoder from a sample of strings. Returns 0 on
+     * failure, else an opaque handle. cwida documents "at least 16 KB
+     * of data" as the recommended sample size; smaller samples still
+     * work, just produce a less efficient symbol table.
+     * <p>
+     * The caller passes whatever sample they like (a contiguous prefix,
+     * stride-sampled rows, etc.). The returned encoder can then be
+     * reused to compress the full input in batches via {@link #compressBatch},
+     * and the symbol table extracted with {@link #exportEncoder}. Free
+     * with {@link #destroyEncoder}.
+     */
+    public static long createEncoder(int sampleCount, long sampleLensAddr, long samplePtrsAddr) {
+        return createEncoder0(sampleCount, sampleLensAddr, samplePtrsAddr);
+    }
+
+    /**
      * @param srcOffsetsWidth 4 for uint32 offsets, 8 for int64 offsets
      * @return total decompressed bytes, or -1 on truncation / failure
      */
@@ -54,6 +98,19 @@ public final class FSSTNative {
             long dstOffsetsAddr
     ) {
         return decompressBlock0(decoderAddr, srcAddr, srcOffsetsAddr, srcOffsetsWidth, count, dstAddr, dstCap, dstOffsetsAddr);
+    }
+
+    public static void destroyEncoder(long encoderHandle) {
+        destroyEncoder0(encoderHandle);
+    }
+
+    /**
+     * Export the encoder's symbol table to the caller-provided buffer.
+     * {@code tableAddr} must be at least {@link #MAX_HEADER_SIZE} bytes.
+     * Returns the actual table length (0 on failure).
+     */
+    public static int exportEncoder(long encoderHandle, long tableAddr) {
+        return exportEncoder0(encoderHandle, tableAddr);
     }
 
     public static int importTable(long decoderAddr, long srcAddr) {
@@ -85,6 +142,16 @@ public final class FSSTNative {
         return (int) ((packed >>> 48) & 0xFFFF);
     }
 
+    private static native long compressBatch0(
+            long encoderHandle, int count,
+            long srcAddr, long srcOffsetsAddr,
+            long outCap, long outAddr,
+            long cmpOffsetsAddr,
+            long batchScratchAddr
+    );
+
+    private static native long createEncoder0(int sampleCount, long sampleLensAddr, long samplePtrsAddr);
+
     private static native int decoderStructSize0();
 
     private static native long decompressBlock0(
@@ -93,6 +160,10 @@ public final class FSSTNative {
             long dstAddr, long dstCap,
             long dstOffsetsAddr
     );
+
+    private static native void destroyEncoder0(long encoderHandle);
+
+    private static native int exportEncoder0(long encoderHandle, long tableAddr);
 
     private static native int importTable0(long decoderAddr, long srcAddr);
 
