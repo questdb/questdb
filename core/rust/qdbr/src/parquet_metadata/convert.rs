@@ -69,6 +69,12 @@ pub type TsStatsBackfill<'a> = dyn Fn(usize, usize, usize) -> ParquetResult<i64>
 ///   timestamp column lacks inline min/max stats. When provided, the converter
 ///   invokes it with `(rg_idx, 0, 1)` for min and `(rg_idx, num_values - 1,
 ///   num_values)` for max, then writes the results as inline stats.
+/// - `parquet_file_data` - Optional view of the parquet file's bytes (mmap or
+///   buffer). When provided, any column chunk whose parquet footer carries a
+///   `bloom_filter_offset` has its bitset read from this slice and inlined
+///   into the `_pm` out-of-line region. When `None`, bloom filters are not
+///   inlined and readers fall back to reading the bitset from the parquet
+///   file at query time.
 ///
 /// # Errors
 /// - If any column chunk references an external `file_path` (not supported).
@@ -80,6 +86,7 @@ pub fn convert_from_parquet(
     parquet_footer_offset: u64,
     parquet_footer_length: u32,
     ts_stats_backfill: Option<&TsStatsBackfill<'_>>,
+    parquet_file_data: Option<&[u8]>,
 ) -> ParquetResult<(Vec<u8>, u64)> {
     let columns = file_metadata.schema_descr.columns();
     let col_count = columns.len();
@@ -252,6 +259,29 @@ pub fn convert_from_parquet(
             }
             if let Some(ref max_bytes) = chunk.ool_max {
                 rg_builder.add_out_of_line_stat(col_idx, false, max_bytes)?;
+            }
+
+            // Inline the bloom-filter bitset into `_pm` when the caller gave
+            // us a view of the parquet file. The migration and snapshot
+            // restore paths must pass `parquet_file_data` so that the
+            // resulting `_pm` matches what the write path produces; without
+            // this, readers fall back to reading the bitset from the parquet
+            // file on every query.
+            if let (Some((offset, _len)), Some(file_data)) =
+                (chunk.bloom_filter_parquet, parquet_file_data)
+            {
+                let bitset = parquet2::bloom_filter::read_from_slice_at_offset(offset, file_data)
+                    .map_err(|err| {
+                        parquet_meta_err!(
+                            ParquetMetaErrorKind::Conversion,
+                            "could not read parquet bloom filter at offset {}: {}",
+                            offset,
+                            err
+                        )
+                    })?;
+                if !bitset.is_empty() {
+                    rg_builder.add_bloom_filter(col_idx, bitset)?;
+                }
             }
         }
 
@@ -881,7 +911,7 @@ mod tests {
         let qdb_meta = extract_qdb_meta_from(&metadata);
 
         let (parquet_meta_bytes, parquet_meta_file_size) =
-            convert_from_parquet(&metadata, qdb_meta.as_ref(), 0, 0, None).unwrap();
+            convert_from_parquet(&metadata, qdb_meta.as_ref(), 0, 0, None, None).unwrap();
 
         let reader =
             ParquetMetaReader::from_file_size(&parquet_meta_bytes, parquet_meta_file_size).unwrap();
@@ -906,7 +936,7 @@ mod tests {
         let metadata = read_metadata_with_size(&mut cursor, parquet_data.len() as u64).unwrap();
 
         let (parquet_meta_bytes, parquet_meta_file_size) =
-            convert_from_parquet(&metadata, None, 0, 0, None).unwrap();
+            convert_from_parquet(&metadata, None, 0, 0, None, None).unwrap();
 
         let reader =
             ParquetMetaReader::from_file_size(&parquet_meta_bytes, parquet_meta_file_size).unwrap();
@@ -921,7 +951,7 @@ mod tests {
         let metadata = read_metadata_with_size(&mut cursor, parquet_data.len() as u64).unwrap();
 
         let (parquet_meta_bytes, parquet_meta_file_size) =
-            convert_from_parquet(&metadata, None, 0, 0, None).unwrap();
+            convert_from_parquet(&metadata, None, 0, 0, None, None).unwrap();
 
         let reader =
             ParquetMetaReader::from_file_size(&parquet_meta_bytes, parquet_meta_file_size).unwrap();
@@ -943,7 +973,7 @@ mod tests {
         qdb_meta.squash_tracker = 42;
 
         let (parquet_meta_bytes, parquet_meta_file_size) =
-            convert_from_parquet(&metadata, Some(&qdb_meta), 0, 0, None).unwrap();
+            convert_from_parquet(&metadata, Some(&qdb_meta), 0, 0, None, None).unwrap();
         let reader =
             ParquetMetaReader::from_file_size(&parquet_meta_bytes, parquet_meta_file_size).unwrap();
         assert!(reader.feature_flags().has_squash_tracker());
@@ -960,7 +990,7 @@ mod tests {
         qdb_meta.squash_tracker = -1;
 
         let (parquet_meta_bytes, parquet_meta_file_size) =
-            convert_from_parquet(&metadata, Some(&qdb_meta), 0, 0, None).unwrap();
+            convert_from_parquet(&metadata, Some(&qdb_meta), 0, 0, None, None).unwrap();
         let reader =
             ParquetMetaReader::from_file_size(&parquet_meta_bytes, parquet_meta_file_size).unwrap();
         assert!(!reader.feature_flags().has_squash_tracker());
@@ -974,7 +1004,7 @@ mod tests {
         let metadata = read_metadata_with_size(&mut cursor, parquet_data.len() as u64).unwrap();
 
         let (parquet_meta_bytes, parquet_meta_file_size) =
-            convert_from_parquet(&metadata, None, 0, 0, None).unwrap();
+            convert_from_parquet(&metadata, None, 0, 0, None, None).unwrap();
         let reader =
             ParquetMetaReader::from_file_size(&parquet_meta_bytes, parquet_meta_file_size).unwrap();
         assert!(!reader.feature_flags().has_squash_tracker());
@@ -1005,7 +1035,7 @@ mod tests {
                 ascii: None,
             });
 
-        let result = convert_from_parquet(&metadata, Some(&bad_meta), 0, 0, None);
+        let result = convert_from_parquet(&metadata, Some(&bad_meta), 0, 0, None, None);
         assert!(result.is_err());
     }
 
@@ -1116,7 +1146,7 @@ mod tests {
         let qdb_meta = extract_qdb_meta_from(&metadata);
 
         let (parquet_meta_bytes, parquet_meta_file_size) =
-            convert_from_parquet(&metadata, qdb_meta.as_ref(), 1024, 200, None).unwrap();
+            convert_from_parquet(&metadata, qdb_meta.as_ref(), 1024, 200, None, None).unwrap();
 
         let reader =
             ParquetMetaReader::from_file_size(&parquet_meta_bytes, parquet_meta_file_size).unwrap();
@@ -1226,7 +1256,7 @@ mod tests {
         let qdb_meta = extract_qdb_meta_from(&metadata);
 
         let (parquet_meta_bytes, parquet_meta_file_size) =
-            convert_from_parquet(&metadata, qdb_meta.as_ref(), 0, 0, None).unwrap();
+            convert_from_parquet(&metadata, qdb_meta.as_ref(), 0, 0, None, None).unwrap();
 
         let reader =
             ParquetMetaReader::from_file_size(&parquet_meta_bytes, parquet_meta_file_size).unwrap();
@@ -1359,7 +1389,7 @@ mod tests {
         });
 
         let (parquet_meta_bytes, parquet_meta_file_size) =
-            convert_from_parquet(&metadata, Some(&meta), 0, 0, None).unwrap();
+            convert_from_parquet(&metadata, Some(&meta), 0, 0, None, None).unwrap();
 
         let reader =
             ParquetMetaReader::from_file_size(&parquet_meta_bytes, parquet_meta_file_size).unwrap();
@@ -1387,7 +1417,7 @@ mod tests {
 
         let qdb_meta = extract_qdb_meta_from(&metadata);
         let (parquet_meta_bytes, parquet_meta_file_size) =
-            convert_from_parquet(&metadata, qdb_meta.as_ref(), 0, 0, None).unwrap();
+            convert_from_parquet(&metadata, qdb_meta.as_ref(), 0, 0, None, None).unwrap();
 
         let reader =
             ParquetMetaReader::from_file_size(&parquet_meta_bytes, parquet_meta_file_size).unwrap();
@@ -1447,7 +1477,7 @@ mod tests {
 
         let qdb_meta = extract_qdb_meta_from(&metadata);
         let (parquet_meta_bytes, parquet_meta_file_size) =
-            convert_from_parquet(&metadata, qdb_meta.as_ref(), 0, 0, None).unwrap();
+            convert_from_parquet(&metadata, qdb_meta.as_ref(), 0, 0, None, None).unwrap();
 
         let reader =
             ParquetMetaReader::from_file_size(&parquet_meta_bytes, parquet_meta_file_size).unwrap();
@@ -1505,7 +1535,7 @@ mod tests {
         let qdb_meta = extract_qdb_meta_from(&metadata);
 
         let (parquet_meta_bytes, parquet_meta_file_size) =
-            convert_from_parquet(&metadata, qdb_meta.as_ref(), 0, 0, None).unwrap();
+            convert_from_parquet(&metadata, qdb_meta.as_ref(), 0, 0, None, None).unwrap();
 
         let reader =
             ParquetMetaReader::from_file_size(&parquet_meta_bytes, parquet_meta_file_size).unwrap();
@@ -1528,7 +1558,7 @@ mod tests {
         let qdb_meta = extract_qdb_meta_from(&metadata);
 
         let (parquet_meta_bytes, parquet_meta_file_size) =
-            convert_from_parquet(&metadata, qdb_meta.as_ref(), 0, 0, None).unwrap();
+            convert_from_parquet(&metadata, qdb_meta.as_ref(), 0, 0, None, None).unwrap();
 
         let reader =
             ParquetMetaReader::from_file_size(&parquet_meta_bytes, parquet_meta_file_size).unwrap();
@@ -1568,7 +1598,7 @@ mod tests {
 
         // Path 1: convert_from_parquet
         let (parquet_meta_bytes_from_meta, parquet_meta_file_size) =
-            convert_from_parquet(&metadata, qdb_meta.as_ref(), 0, 0, None).unwrap();
+            convert_from_parquet(&metadata, qdb_meta.as_ref(), 0, 0, None, None).unwrap();
         let reader1 = ParquetMetaReader::from_file_size(
             &parquet_meta_bytes_from_meta,
             parquet_meta_file_size,
@@ -2490,7 +2520,7 @@ mod tests {
 
         let backfill = |_rg: usize, _lo: usize, _hi: usize| -> ParquetResult<i64> { Ok(42) };
         let (parquet_meta_bytes, parquet_meta_file_size) =
-            convert_from_parquet(&metadata, Some(&qdb_meta), 0, 0, Some(&backfill)).unwrap();
+            convert_from_parquet(&metadata, Some(&qdb_meta), 0, 0, Some(&backfill), None).unwrap();
         let reader =
             ParquetMetaReader::from_file_size(&parquet_meta_bytes, parquet_meta_file_size).unwrap();
         let chunk = reader.row_group(0).unwrap().column_chunk(0).unwrap();
@@ -2522,6 +2552,6 @@ mod tests {
             panic!("backfill must not be called when inline stats exist");
         };
         let (_parquet_meta_bytes, _parquet_meta_file_size) =
-            convert_from_parquet(&metadata, qdb_meta.as_ref(), 0, 0, Some(&backfill)).unwrap();
+            convert_from_parquet(&metadata, qdb_meta.as_ref(), 0, 0, Some(&backfill), None).unwrap();
     }
 }

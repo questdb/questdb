@@ -68,6 +68,21 @@ public final class Mig940 {
     private static final int PARTITION_PARQUET_FILE_SIZE_IDX = 3;
 
     public static void migrate(MigrationContext migrationContext) {
+        migrate(migrationContext, false);
+    }
+
+    /**
+     * Entry point registered at migration version 429. Bypasses the staleness
+     * check so any {@code _pm} produced by the original 428 release (which
+     * omitted parquet bloom-filter bitsets) is rewritten. Fresh installs hit
+     * this slot too; for them the flag is a no-op because no {@code _pm}
+     * exists yet and the staleness check would already report stale.
+     */
+    public static void migrateForceRegenerate(MigrationContext migrationContext) {
+        migrate(migrationContext, true);
+    }
+
+    private static void migrate(MigrationContext migrationContext, boolean forceRegenerate) {
         final FilesFacade ff = migrationContext.getFf();
         final Path path = migrationContext.getTablePath();
         final int plen = path.size();
@@ -161,7 +176,7 @@ public final class Mig940 {
                 long nameTxn = txMem.getLong(entryOffset + PARTITION_NAME_TX_IDX * Long.BYTES);
                 long parquetFileSizeFromTxn = txMem.getLong(entryOffset + PARTITION_PARQUET_FILE_SIZE_IDX * Long.BYTES);
 
-                if (!isParquetMetadataStale(reader, ff, path, plen, timestampType, partitionBy, partitionTs, nameTxn, parquetFileSizeFromTxn)) {
+                if (!forceRegenerate && !isParquetMetadataStale(reader, ff, path, plen, timestampType, partitionBy, partitionTs, nameTxn, parquetFileSizeFromTxn)) {
                     continue;
                 }
                 generateParquetMetaForPartition(ff, path, plen, timestampType, partitionBy, partitionTs, nameTxn, parquetFileSizeFromTxn);

@@ -402,6 +402,91 @@ public class Mig940Test extends AbstractCairoTest {
     }
 
     @Test
+    public void testMigrateInlinesBloomFiltersInPm() throws Exception {
+        // Regression cover: an earlier version of Mig940 recorded each chunk's
+        // bloom_filter_offset in the regenerated _pm but never read the bitset,
+        // leaving the BLOOM_FILTERS feature-flag bit clear in the header.
+        // Readers then had to fall back to reading the bitset from data.parquet
+        // on every query touching the bloom-indexed column. The migration must
+        // produce a _pm equivalent to the one the write path produces, with
+        // the BLOOM_FILTERS bit set.
+        assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
+            execute("CREATE TABLE t (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("ALTER TABLE t ALTER COLUMN id SET PARQUET(bloom_filter)");
+            execute("INSERT INTO t VALUES(1, '2024-06-10T00:00:00.000000Z')," +
+                    "(2, '2024-06-10T01:00:00.000000Z')," +
+                    "(3, '2024-06-10T02:00:00.000000Z')");
+            execute("INSERT INTO t VALUES(4, '2024-06-11T00:00:00.000000Z')");
+            execute("ALTER TABLE t CONVERT PARTITION TO PARQUET WHERE ts < '2024-06-11'");
+
+            final FilesFacade ff = configuration.getFilesFacade();
+            final TableToken token = engine.verifyTableName("t");
+
+            long partitionTs;
+            long partitionNameTxn;
+            try (TableReader reader = engine.getReader(token)) {
+                partitionTs = reader.getTxFile().getPartitionTimestampByIndex(0);
+                partitionNameTxn = reader.getTxFile().getPartitionNameTxn(0);
+            }
+
+            // The header feature-flags word is at offset 8 (HEADER_FEATURE_FLAGS_OFF
+            // in ParquetMetaFileReader); BLOOM_FILTERS is bit 0.
+            final int headerFeatureFlagsOff = 8;
+            final long bloomFiltersBit = 1L;
+
+            // Sanity: the write-path _pm produced by CONVERT PARTITION already
+            // carries the BLOOM_FILTERS bit. If not, the rest of the test is
+            // meaningless because the parquet file has no bloom filter to inline.
+            try (Path path = new Path()) {
+                path.of(configuration.getDbRoot()).concat(token);
+                TableUtils.setPathForParquetPartitionMetadata(path, ColumnType.TIMESTAMP, PartitionBy.DAY, partitionTs, partitionNameTxn);
+                long writePmSize = ParquetMetaFileReader.readParquetMetaFileSize(ff, path.$());
+                long writePmAddr = TableUtils.mapRO(ff, path.$(), LOG, writePmSize, MemoryTag.MMAP_DEFAULT);
+                try {
+                    long writeFlags = Unsafe.getUnsafe().getLong(writePmAddr + headerFeatureFlagsOff);
+                    Assert.assertTrue(
+                            "write-path _pm should already declare BLOOM_FILTERS; flags=0x"
+                                    + Long.toHexString(writeFlags),
+                            (writeFlags & bloomFiltersBit) != 0
+                    );
+                } finally {
+                    ff.munmap(writePmAddr, writePmSize, MemoryTag.MMAP_DEFAULT);
+                }
+            }
+
+            // Delete the write-path _pm so the migration path has to regenerate it.
+            try (Path path = new Path()) {
+                path.of(configuration.getDbRoot()).concat(token);
+                TableUtils.setPathForParquetPartitionMetadata(path, ColumnType.TIMESTAMP, PartitionBy.DAY, partitionTs, partitionNameTxn);
+                ff.remove(path.$());
+                Assert.assertFalse("_pm should be deleted", ff.exists(path.$()));
+            }
+
+            runMig940(token);
+            try (Path path = new Path()) {
+                path.of(configuration.getDbRoot()).concat(token);
+                TableUtils.setPathForParquetPartitionMetadata(path, ColumnType.TIMESTAMP, PartitionBy.DAY, partitionTs, partitionNameTxn);
+                Assert.assertTrue("_pm should exist after migration", ff.exists(path.$()));
+
+                long parquetMetaSize = ParquetMetaFileReader.readParquetMetaFileSize(ff, path.$());
+                Assert.assertTrue("_pm should have positive size", parquetMetaSize > 0);
+
+                long parquetMetaAddr = TableUtils.mapRO(ff, path.$(), LOG, parquetMetaSize, MemoryTag.MMAP_DEFAULT);
+                try {
+                    long featureFlags = Unsafe.getUnsafe().getLong(parquetMetaAddr + headerFeatureFlagsOff);
+                    Assert.assertTrue(
+                            "_pm header should declare BLOOM_FILTERS after migration; flags=0x"
+                                    + Long.toHexString(featureFlags),
+                            (featureFlags & bloomFiltersBit) != 0
+                    );
+                } finally {
+                    ff.munmap(parquetMetaAddr, parquetMetaSize, MemoryTag.MMAP_DEFAULT);
+                }
+            }
+        });
+    }
+
+    @Test
     public void testMigrateMixedNativeAndParquetPartitions() throws Exception {
         assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
             // Three day partitions; WHERE ts > 0 converts every inactive
