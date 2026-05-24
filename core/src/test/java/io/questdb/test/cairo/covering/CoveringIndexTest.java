@@ -85,6 +85,103 @@ public class CoveringIndexTest extends AbstractCairoTest {
     private static final ColumnVersionReader EMPTY_CVR = new ColumnVersionReader();
 
     @Test
+    public void testAddPostingCoveringIndexOnParquetPartitionFixedSize() throws Exception {
+        // Reproducer: native partitions -> convert to parquet -> add covering
+        // index -> covering values are all NULL.
+        //
+        // indexParquetPartition() must decode covered columns from the Parquet
+        // file rather than trying to mmap native .d files (which do not exist).
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_cover_pq_fixed (
+                        ts TIMESTAMP,
+                        sym SYMBOL,
+                        price DOUBLE,
+                        qty INT,
+                        event_time TIMESTAMP
+                    ) TIMESTAMP(ts) PARTITION BY DAY WAL
+                    """);
+            execute("""
+                    INSERT INTO t_cover_pq_fixed VALUES
+                    ('2024-01-01T00:00:00Z', 'A', 1.0, 10, '2024-01-01T00:00:01Z'),
+                    ('2024-01-01T01:00:00Z', 'B', 2.0, 20, '2024-01-01T01:00:01Z'),
+                    ('2024-01-01T02:00:00Z', 'A', 3.0, 30, '2024-01-01T02:00:01Z'),
+                    ('2024-01-02T00:00:00Z', 'A', 4.0, 40, '2024-01-02T00:00:01Z'),
+                    ('2024-01-02T01:00:00Z', 'B', 5.0, 50, '2024-01-02T01:00:01Z')
+                    """);
+            drainWalQueue();
+
+            execute("ALTER TABLE t_cover_pq_fixed CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            drainWalQueue();
+
+            execute("ALTER TABLE t_cover_pq_fixed ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (price, qty, event_time)");
+            drainWalQueue();
+
+            assertSql(
+                    "suspended\nfalse\n",
+                    "SELECT suspended FROM wal_tables() WHERE name = 't_cover_pq_fixed'"
+            );
+
+            // Verify DOUBLE, INT, and TIMESTAMP covered values from the parquet partition.
+            assertSql(
+                    "sym\tprice\tqty\tevent_time\n" +
+                            "A\t1.0\t10\t2024-01-01T00:00:01.000000Z\n" +
+                            "A\t3.0\t30\t2024-01-01T02:00:01.000000Z\n",
+                    "SELECT sym, price, qty, event_time FROM t_cover_pq_fixed WHERE sym = 'A' AND ts IN '2024-01-01' ORDER BY ts"
+            );
+
+            // Also verify the native partition still works.
+            assertSql(
+                    "sym\tprice\tqty\tevent_time\n" +
+                            "B\t5.0\t50\t2024-01-02T01:00:01.000000Z\n",
+                    "SELECT sym, price, qty, event_time FROM t_cover_pq_fixed WHERE sym = 'B' AND ts IN '2024-01-02'"
+            );
+        });
+    }
+
+    @Test
+    public void testAddPostingCoveringIndexOnParquetPartitionVarSize() throws Exception {
+        // Var-size (VARCHAR) covered columns require stitching row group buffers
+        // with aux offset adjustment.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_cover_pq_var (
+                        ts TIMESTAMP,
+                        sym SYMBOL,
+                        label VARCHAR,
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY WAL
+                    """);
+            execute("""
+                    INSERT INTO t_cover_pq_var VALUES
+                    ('2024-01-01T00:00:00Z', 'A', 'alpha', 1.0),
+                    ('2024-01-01T01:00:00Z', 'B', 'beta', 2.0),
+                    ('2024-01-01T02:00:00Z', 'A', 'gamma', 3.0),
+                    ('2024-01-02T00:00:00Z', 'A', 'delta', 4.0)
+                    """);
+            drainWalQueue();
+
+            execute("ALTER TABLE t_cover_pq_var CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            drainWalQueue();
+
+            execute("ALTER TABLE t_cover_pq_var ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (label, price)");
+            drainWalQueue();
+
+            assertSql(
+                    "suspended\nfalse\n",
+                    "SELECT suspended FROM wal_tables() WHERE name = 't_cover_pq_var'"
+            );
+
+            assertSql(
+                    "sym\tlabel\tprice\n" +
+                            "A\talpha\t1.0\n" +
+                            "A\tgamma\t3.0\n",
+                    "SELECT sym, label, price FROM t_cover_pq_var WHERE sym = 'A' AND ts IN '2024-01-01' ORDER BY ts"
+            );
+        });
+    }
+
+    @Test
     public void testAddPostingCoveringIndexNonWalActivePartitionCannotBeParquet() throws Exception {
         // Non-WAL counterpart to the WAL bug below. That bug needs a Parquet
         // LAST partition -- but a non-WAL table can never have one: CONVERT

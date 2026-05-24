@@ -6625,13 +6625,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             if (columnTop > -1 && partitionSize > columnTop) {
                 indexer.getWriter().setCurrentTableTxn(txWriter.getTxn());
                 indexer.configureWriter(path.trimTo(plen), columnName, columnNameTxn, columnTop, timestamp, txWriter.getPartitionNameTxnByPartitionTimestamp(timestamp));
-                // Mirror the native partition path: posting-index covering
-                // sidecars must be wired up before seal, otherwise .pci /
-                // .pc<N> files are not produced for parquet partitions on
-                // ALTER TABLE ADD INDEX TYPE POSTING INCLUDE (...). Queries
-                // against those partitions then silently use the slower
-                // fallback even though metadata advertises COVERING.
-                configureCoveringIfNeeded(indexer, columnIndex, timestamp);
                 // Tag this seal's chain entry with the txn the upcoming
                 // clearTodoAndCommitMeta will assign. Must come AFTER
                 // configureWriter (of() inside it resets pendingTxnAtSeal).
@@ -6641,35 +6634,199 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 parquetColumnIdsAndTypes.add(parquetColumnIndex);
                 parquetColumnIdsAndTypes.add(ColumnType.SYMBOL);
 
-                long rowCount = 0;
-                final int rowGroupCount = parquetMetadata.getRowGroupCount();
-                final IndexWriter indexWriter = indexer.getWriter();
-                for (int rowGroupIndex = 0; rowGroupIndex < rowGroupCount; rowGroupIndex++) {
-                    final long rowGroupSize = parquetMetadata.getRowGroupSize(rowGroupIndex);
-                    if (rowCount + rowGroupSize <= columnTop) {
-                        rowCount += rowGroupSize;
-                        continue;
+                // Identify covered columns and their parquet indices so we can
+                // decode them from the Parquet file. The name-based
+                // configureCoveringIfNeeded path tries to mmap native .d files
+                // which do not exist in Parquet partitions — use the address-based
+                // overload instead.
+                final TableColumnMetadata colMeta = metadata.getColumnMetadata(columnIndex);
+                final IntList coveringCols = colMeta.getCoveringColumnIndices();
+                final int coverCount = coveringCols != null ? coveringCols.size() : 0;
+                int decodedCoverCount = 0;
+                // Track which slot in parquetColumnIdsAndTypes each cover column occupies.
+                // Slot 0 is the symbol column; cover columns start at slot 1.
+                final int[] coverDecodeSlot = new int[coverCount];
+                if (coverCount > 0) {
+                    for (int c = 0; c < coverCount; c++) {
+                        int covCol = coveringCols.getQuick(c);
+                        if (covCol < 0) {
+                            coverDecodeSlot[c] = -1;
+                            continue;
+                        }
+                        int pqIdx = findParquetColumnIndex(parquetMetadata, covCol);
+                        if (pqIdx < 0) {
+                            coverDecodeSlot[c] = -1;
+                            continue;
+                        }
+                        coverDecodeSlot[c] = (int) (parquetColumnIdsAndTypes.size() / 2);
+                        parquetColumnIdsAndTypes.add(pqIdx);
+                        parquetColumnIdsAndTypes.add(metadata.getColumnType(covCol));
+                        decodedCoverCount++;
                     }
-
-                    parquetDecoder.decodeRowGroup(
-                            rowGroupBuffers,
-                            parquetColumnIdsAndTypes,
-                            rowGroupIndex,
-                            (int) Math.max(0, columnTop - rowCount),
-                            (int) rowGroupSize
-                    );
-
-                    long rowId = Math.max(rowCount, columnTop);
-                    final long addr = rowGroupBuffers.getChunkDataPtr(0);
-                    final long size = rowGroupBuffers.getChunkDataSize(0);
-                    for (long p = addr, lim = addr + size; p < lim; p += 4, rowId++) {
-                        indexWriter.add(TableUtils.toIndexKey(Unsafe.getInt(p)), rowId);
-                    }
-
-                    rowCount += rowGroupSize;
                 }
-                indexWriter.setMaxValue(partitionSize - 1);
-                indexer.seal();
+
+                final long dataRowCount = partitionSize - Math.max(columnTop, 0);
+                // Allocate per-cover-column buffers to accumulate decoded data.
+                final long[] coverBufs = new long[coverCount];
+                final long[] coverBufSizes = new long[coverCount];
+                final long[] coverAuxBufs = new long[coverCount];
+                final long[] coverAuxBufSizes = new long[coverCount];
+                // Track accumulated data bytes for var-size columns (aux offset adjustment).
+                final long[] coverDataBytesWritten = new long[coverCount];
+                // Track accumulated aux bytes for var-size columns.
+                final long[] coverAuxBytesWritten = new long[coverCount];
+                try {
+                    if (decodedCoverCount > 0) {
+                        for (int c = 0; c < coverCount; c++) {
+                            int covCol = coveringCols.getQuick(c);
+                            if (covCol < 0 || coverDecodeSlot[c] < 0) {
+                                continue;
+                            }
+                            int covType = metadata.getColumnType(covCol);
+                            if (ColumnType.isVarSize(covType)) {
+                                ColumnTypeDriver driver = ColumnType.getDriver(covType);
+                                long auxSz = driver.getAuxVectorSize(dataRowCount);
+                                coverAuxBufs[c] = Unsafe.malloc(auxSz, MemoryTag.NATIVE_TABLE_WRITER);
+                                coverAuxBufSizes[c] = auxSz;
+                            } else {
+                                long sz = dataRowCount << ColumnType.pow2SizeOf(covType);
+                                coverBufs[c] = Unsafe.malloc(sz, MemoryTag.NATIVE_TABLE_WRITER);
+                                coverBufSizes[c] = sz;
+                            }
+                        }
+                    }
+
+                    long rowCount = 0;
+                    long decodedRows = 0;
+                    final int rowGroupCount = parquetMetadata.getRowGroupCount();
+                    final IndexWriter indexWriter = indexer.getWriter();
+                    for (int rowGroupIndex = 0; rowGroupIndex < rowGroupCount; rowGroupIndex++) {
+                        final long rowGroupSize = parquetMetadata.getRowGroupSize(rowGroupIndex);
+                        if (rowCount + rowGroupSize <= columnTop) {
+                            rowCount += rowGroupSize;
+                            continue;
+                        }
+
+                        final int rowGroupLo = (int) Math.max(0, columnTop - rowCount);
+                        parquetDecoder.decodeRowGroup(
+                                rowGroupBuffers,
+                                parquetColumnIdsAndTypes,
+                                rowGroupIndex,
+                                rowGroupLo,
+                                (int) rowGroupSize
+                        );
+
+                        long rowId = Math.max(rowCount, columnTop);
+                        final long addr = rowGroupBuffers.getChunkDataPtr(0);
+                        final long size = rowGroupBuffers.getChunkDataSize(0);
+                        for (long p = addr, lim = addr + size; p < lim; p += 4, rowId++) {
+                            indexWriter.add(TableUtils.toIndexKey(Unsafe.getInt(p)), rowId);
+                        }
+
+                        // Copy decoded covered column data into contiguous buffers.
+                        long rowsInGroup = size / Integer.BYTES;
+                        if (decodedCoverCount > 0) {
+                            for (int c = 0; c < coverCount; c++) {
+                                if (coverDecodeSlot[c] < 0) {
+                                    continue;
+                                }
+                                int slot = coverDecodeSlot[c];
+                                int covCol = coveringCols.getQuick(c);
+                                int covType = metadata.getColumnType(covCol);
+
+                                long chunkDataPtr = rowGroupBuffers.getChunkDataPtr(slot);
+                                long chunkDataSize = rowGroupBuffers.getChunkDataSize(slot);
+
+                                if (ColumnType.isVarSize(covType)) {
+                                    long chunkAuxPtr = rowGroupBuffers.getChunkAuxPtr(slot);
+                                    long chunkAuxSize = rowGroupBuffers.getChunkAuxSize(slot);
+                                    ColumnTypeDriver driver = ColumnType.getDriver(covType);
+
+                                    if (chunkDataPtr == 0 && chunkAuxPtr == 0) {
+                                        continue;
+                                    }
+
+                                    if (decodedRows > 0) {
+                                        driver.shiftCopyAuxVector(
+                                                -coverDataBytesWritten[c],
+                                                chunkAuxPtr, 0, rowsInGroup - 1,
+                                                chunkAuxPtr, chunkAuxSize
+                                        );
+                                        long adjust = driver.getMinAuxVectorSize();
+                                        chunkAuxPtr += adjust;
+                                        chunkAuxSize -= adjust;
+                                    }
+
+                                    // Grow data buffer if needed.
+                                    long newDataSize = coverDataBytesWritten[c] + chunkDataSize;
+                                    if (newDataSize > coverBufSizes[c]) {
+                                        long newCap = Math.max(newDataSize, coverBufSizes[c] * 2);
+                                        coverBufs[c] = Unsafe.realloc(coverBufs[c], coverBufSizes[c], newCap, MemoryTag.NATIVE_TABLE_WRITER);
+                                        coverBufSizes[c] = newCap;
+                                    }
+                                    Unsafe.copyMemory(chunkDataPtr, coverBufs[c] + coverDataBytesWritten[c], chunkDataSize);
+                                    coverDataBytesWritten[c] += chunkDataSize;
+
+                                    Unsafe.copyMemory(chunkAuxPtr, coverAuxBufs[c] + coverAuxBytesWritten[c], chunkAuxSize);
+                                    coverAuxBytesWritten[c] += chunkAuxSize;
+                                } else {
+                                    int shift = ColumnType.pow2SizeOf(covType);
+                                    long destOffset = decodedRows << shift;
+                                    Unsafe.copyMemory(chunkDataPtr, coverBufs[c] + destOffset, chunkDataSize);
+                                }
+                            }
+                        }
+
+                        decodedRows += rowsInGroup;
+                        rowCount += rowGroupSize;
+                    }
+                    indexWriter.setMaxValue(partitionSize - 1);
+
+                    // Configure covering with decoded Parquet data addresses.
+                    if (coverCount > 0) {
+                        o3SealAddrs.setPos(coverCount);
+                        o3SealAuxAddrs.setPos(coverCount);
+                        o3SealTops.setPos(coverCount);
+                        o3SealShifts.setPos(coverCount);
+                        o3SealTypes.setPos(coverCount);
+                        o3SealNameTxns.setPos(coverCount);
+                        coveringIndices.clear();
+                        for (int c = 0; c < coverCount; c++) {
+                            int covCol = coveringCols.getQuick(c);
+                            if (covCol < 0) {
+                                o3SealAddrs.setQuick(c, 0);
+                                o3SealAuxAddrs.setQuick(c, 0);
+                                o3SealTops.setQuick(c, 0);
+                                o3SealShifts.setQuick(c, 0);
+                                o3SealTypes.setQuick(c, -1);
+                                o3SealNameTxns.setQuick(c, TableUtils.COLUMN_NAME_TXN_NONE);
+                                coveringIndices.add(-1);
+                                continue;
+                            }
+                            o3SealAddrs.setQuick(c, coverBufs[c]);
+                            o3SealAuxAddrs.setQuick(c, coverAuxBufs[c]);
+                            o3SealTops.setQuick(c, 0);
+                            o3SealShifts.setQuick(c, ColumnType.pow2SizeOf(metadata.getColumnType(covCol)));
+                            o3SealTypes.setQuick(c, metadata.getColumnType(covCol));
+                            o3SealNameTxns.setQuick(c, columnVersionWriter.getColumnNameTxn(timestamp, covCol));
+                            coveringIndices.add(covCol);
+                        }
+                        indexer.configureCovering(o3SealAddrs, o3SealAuxAddrs, o3SealTops, o3SealShifts,
+                                coveringIndices, o3SealTypes, coverCount, metadata.getTimestampIndex());
+                        indexer.setCoveredColumnNameTxns(o3SealNameTxns);
+                    }
+
+                    indexer.seal();
+                } finally {
+                    for (int c = 0; c < coverCount; c++) {
+                        if (coverBufs[c] != 0) {
+                            Unsafe.free(coverBufs[c], coverBufSizes[c], MemoryTag.NATIVE_TABLE_WRITER);
+                        }
+                        if (coverAuxBufs[c] != 0) {
+                            Unsafe.free(coverAuxBufs[c], coverAuxBufSizes[c], MemoryTag.NATIVE_TABLE_WRITER);
+                        }
+                    }
+                }
             }
         } finally {
             // Release the decoder's native state before tearing down the mmaps it
