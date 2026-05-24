@@ -27,6 +27,7 @@ package io.questdb.cairo;
 import io.questdb.MessageBus;
 import io.questdb.cairo.idx.IndexWriter;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.vm.api.MemoryCR;
 import io.questdb.cairo.vm.api.MemoryMA;
@@ -3368,8 +3369,23 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                 long rowId = Math.max(rowCount, columnTop);
                                 final long addr = rowGroupBuffers.getChunkDataPtr(0);
                                 final long size = rowGroupBuffers.getChunkDataSize(0);
-                                for (long p = addr, lim = addr + size; p < lim; p += 4, rowId++) {
-                                    indexWriter.add(TableUtils.toIndexKey(Unsafe.getInt(p)), rowId);
+                                if (size == 0) {
+                                    // _pm-backed decode fast path: when the chunk's stats report
+                                    // null_count == num_values the Rust decoder skips
+                                    // materialising the buffer and returns size=0 (see
+                                    // RowGroupBuffers javadoc). The caller must emit null index
+                                    // entries for every row in the row group, otherwise indexed
+                                    // WHERE x = null on a rewritten parquet partition silently
+                                    // returns no rows.
+                                    final int nullKey = TableUtils.toIndexKey(SymbolTable.VALUE_IS_NULL);
+                                    final long rgEnd = rowCount + rowGroupSize;
+                                    for (; rowId < rgEnd; rowId++) {
+                                        indexWriter.add(nullKey, rowId);
+                                    }
+                                } else {
+                                    for (long p = addr, lim = addr + size; p < lim; p += 4, rowId++) {
+                                        indexWriter.add(TableUtils.toIndexKey(Unsafe.getInt(p)), rowId);
+                                    }
                                 }
 
                                 rowCount += rowGroupSize;
