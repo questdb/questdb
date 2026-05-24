@@ -1286,7 +1286,7 @@ public class CheckpointTest extends AbstractCairoTest {
             TableToken tableToken = engine.verifyTableName("t");
             String dbRoot = engine.getConfiguration().getDbRoot();
             File tableDir = new File(dbRoot, tableToken.getDirName());
-            File[] partDirs = tableDir.listFiles((dir, name) -> name.startsWith("2024-01-01"));
+            File[] partDirs = tableDir.listFiles((_, name) -> name.startsWith("2024-01-01"));
             Assert.assertNotNull(partDirs);
             Assert.assertTrue("partition directory not found", partDirs.length > 0);
             File partDir = partDirs[0];
@@ -1298,13 +1298,13 @@ public class CheckpointTest extends AbstractCairoTest {
 
             // Delete any existing bitmap index files for the parquet partition
             // so we can verify the rebuild actually creates them.
-            File[] oldKeyFiles = partDir.listFiles((dir, name) -> name.startsWith("sym.k"));
+            File[] oldKeyFiles = partDir.listFiles((_, name) -> name.startsWith("sym.k"));
             if (oldKeyFiles != null) {
                 for (File f : oldKeyFiles) {
                     Assert.assertTrue("failed to delete " + f, f.delete());
                 }
             }
-            File[] oldValFiles = partDir.listFiles((dir, name) -> name.startsWith("sym.v"));
+            File[] oldValFiles = partDir.listFiles((_, name) -> name.startsWith("sym.v"));
             if (oldValFiles != null) {
                 for (File f : oldValFiles) {
                     Assert.assertTrue("failed to delete " + f, f.delete());
@@ -1321,10 +1321,10 @@ public class CheckpointTest extends AbstractCairoTest {
             // Verify the bitmap index files were actually created by the rebuild.
             // Without both fixes, the rebuild is silently skipped (path doubling
             // makes ff.exists() return false) and these files would not exist.
-            File[] keyFiles = partDir.listFiles((dir, name) -> name.startsWith("sym.k"));
+            File[] keyFiles = partDir.listFiles((_, name) -> name.startsWith("sym.k"));
             Assert.assertNotNull("bitmap index .k file not created for sym column", keyFiles);
             Assert.assertTrue("bitmap index .k file not created for sym column", keyFiles.length > 0);
-            File[] valFiles = partDir.listFiles((dir, name) -> name.startsWith("sym.v"));
+            File[] valFiles = partDir.listFiles((_, name) -> name.startsWith("sym.v"));
             Assert.assertNotNull("bitmap index .v file not created for sym column", valFiles);
             Assert.assertTrue("bitmap index .v file not created for sym column", valFiles.length > 0);
 
@@ -1559,12 +1559,12 @@ public class CheckpointTest extends AbstractCairoTest {
             String dbRoot = engine.getConfiguration().getDbRoot();
             File tableDir = new File(dbRoot, tableToken.getDirName());
             for (String partitionPrefix : new String[]{"2024-01-01", "2024-01-02"}) {
-                File[] partDirs = tableDir.listFiles((d, n) -> n.startsWith(partitionPrefix));
+                File[] partDirs = tableDir.listFiles((_, n) -> n.startsWith(partitionPrefix));
                 Assert.assertNotNull("partition dir missing: " + partitionPrefix, partDirs);
                 Assert.assertTrue("partition dir missing: " + partitionPrefix, partDirs.length > 0);
                 File partDir = partDirs[0];
 
-                File[] sealedPv = partDir.listFiles((d, n) -> {
+                File[] sealedPv = partDir.listFiles((_, n) -> {
                     if (!n.startsWith("sym.pv")) return false;
                     int lastDot = n.lastIndexOf('.');
                     if (lastDot < 0) return false;
@@ -1579,7 +1579,7 @@ public class CheckpointTest extends AbstractCairoTest {
                 Assert.assertTrue(partitionPrefix + ": sealed .pv file missing (only unsealed sym.pv.0 exists)",
                         sealedPv.length > 0);
 
-                File[] pci = partDir.listFiles((d, n) -> n.startsWith("sym.pci"));
+                File[] pci = partDir.listFiles((_, n) -> n.startsWith("sym.pci"));
                 Assert.assertNotNull(partitionPrefix + ": sym.pci sidecar missing", pci);
                 Assert.assertTrue(partitionPrefix + ": sym.pci sidecar missing", pci.length > 0);
             }
@@ -1652,12 +1652,12 @@ public class CheckpointTest extends AbstractCairoTest {
 
             String dbRoot = engine.getConfiguration().getDbRoot();
             File tableDir = new File(dbRoot, tableToken.getDirName());
-            File[] partDirs = tableDir.listFiles((d, n) -> n.startsWith("2024-01-01"));
+            File[] partDirs = tableDir.listFiles((_, n) -> n.startsWith("2024-01-01"));
             Assert.assertNotNull("partition dir missing", partDirs);
             Assert.assertTrue("partition dir missing", partDirs.length > 0);
             File partDir = partDirs[0];
 
-            File[] pci = partDir.listFiles((d, n) -> n.startsWith("sym.pci"));
+            File[] pci = partDir.listFiles((_, n) -> n.startsWith("sym.pci"));
             Assert.assertNotNull("sym.pci sidecar missing", pci);
             Assert.assertTrue("sym.pci sidecar missing", pci.length > 0);
 
@@ -1722,12 +1722,12 @@ public class CheckpointTest extends AbstractCairoTest {
             TableToken tableToken = engine.verifyTableName("t_pi_parquet");
             String dbRoot = engine.getConfiguration().getDbRoot();
             File tableDir = new File(dbRoot, tableToken.getDirName());
-            File[] partDirs = tableDir.listFiles((d, n) -> n.startsWith("2024-01-01"));
+            File[] partDirs = tableDir.listFiles((_, n) -> n.startsWith("2024-01-01"));
             Assert.assertNotNull("parquet partition dir missing", partDirs);
             Assert.assertTrue("parquet partition dir missing", partDirs.length > 0);
             File partDir = partDirs[0];
 
-            File[] pciBefore = partDir.listFiles((d, n) -> n.startsWith("sym.pci"));
+            File[] pciBefore = partDir.listFiles((_, n) -> n.startsWith("sym.pci"));
             Assert.assertNotNull("setup: sym.pci must exist after parquet conversion", pciBefore);
             Assert.assertTrue("setup: sym.pci must exist after parquet conversion",
                     pciBefore.length > 0);
@@ -1748,14 +1748,14 @@ public class CheckpointTest extends AbstractCairoTest {
             // .pci must still exist after the rebuild. Without the fix,
             // removeIndexFiles wipes it and the parquet rebuild path never
             // recreates it.
-            File[] pciAfter = partDir.listFiles((d, n) -> n.startsWith("sym.pci"));
+            File[] pciAfter = partDir.listFiles((_, n) -> n.startsWith("sym.pci"));
             Assert.assertNotNull("sym.pci must exist after parquet partition rebuild", pciAfter);
             Assert.assertTrue("sym.pci must exist after parquet partition rebuild "
                             + "(parquet rebuild path is missing seal()/configureCovering)",
                     pciAfter.length > 0);
 
             // .pc0 must also exist (the actual covered column data file).
-            File[] pc0After = partDir.listFiles((d, n) -> n.startsWith("sym.pc0"));
+            File[] pc0After = partDir.listFiles((_, n) -> n.startsWith("sym.pc0"));
             Assert.assertNotNull("sym.pc0 must exist after parquet partition rebuild", pc0After);
             Assert.assertTrue("sym.pc0 must exist after parquet partition rebuild",
                     pc0After.length > 0);
@@ -1816,13 +1816,13 @@ public class CheckpointTest extends AbstractCairoTest {
 
             String dbRoot = engine.getConfiguration().getDbRoot();
             File tableDir = new File(dbRoot, tableToken.getDirName());
-            File[] partDirs = tableDir.listFiles((d, n) -> n.startsWith("2024-01-01"));
+            File[] partDirs = tableDir.listFiles((_, n) -> n.startsWith("2024-01-01"));
             Assert.assertNotNull("partition dir missing", partDirs);
             Assert.assertTrue("partition dir missing", partDirs.length > 0);
             File partDir = partDirs[0];
 
-            File[] sym1Pci = partDir.listFiles((d, n) -> n.startsWith("sym1.pci"));
-            File[] sym2Pci = partDir.listFiles((d, n) -> n.startsWith("sym2.pci"));
+            File[] sym1Pci = partDir.listFiles((_, n) -> n.startsWith("sym1.pci"));
+            File[] sym2Pci = partDir.listFiles((_, n) -> n.startsWith("sym2.pci"));
             Assert.assertNotNull("sym1.pci missing", sym1Pci);
             Assert.assertTrue("sym1.pci missing", sym1Pci.length > 0);
             Assert.assertNotNull("sym2.pci missing", sym2Pci);
@@ -3496,7 +3496,7 @@ public class CheckpointTest extends AbstractCairoTest {
     private static void corruptIndexKeyEntry(String dbRoot, String tableDirName) {
         File tableDir = new File(dbRoot, "db/" + tableDirName);
         File partDir = new File(tableDir, "1970");
-        File[] keyFiles = partDir.listFiles((dir, name) -> name.startsWith("sym" + ".k"));
+        File[] keyFiles = partDir.listFiles((_, name) -> name.startsWith("sym" + ".k"));
         if (keyFiles == null || keyFiles.length == 0) {
             throw new IllegalStateException("No key file found for column: " + "sym");
         }
@@ -3528,7 +3528,7 @@ public class CheckpointTest extends AbstractCairoTest {
     }
 
     private static File findParquetPartitionDir(File tableDir, String partitionPrefix) {
-        File[] dirs = tableDir.listFiles((dir, name) -> name.startsWith(partitionPrefix));
+        File[] dirs = tableDir.listFiles((_, name) -> name.startsWith(partitionPrefix));
         Assert.assertNotNull("no directories matching " + partitionPrefix, dirs);
         for (File dir : dirs) {
             if (new File(dir, "data.parquet").exists()) {
@@ -4214,7 +4214,7 @@ public class CheckpointTest extends AbstractCairoTest {
             File partDir = new File(tableDir, "1970");
 
             // Find .k file (may have txn suffix)
-            File[] keyFiles = partDir.listFiles((dir, name) -> name.startsWith("sym" + ".k"));
+            File[] keyFiles = partDir.listFiles((_, name) -> name.startsWith("sym" + ".k"));
             if (keyFiles == null || keyFiles.length == 0) {
                 throw new IllegalStateException("No key file found for column: " + "sym" + " in " + partDir);
             }

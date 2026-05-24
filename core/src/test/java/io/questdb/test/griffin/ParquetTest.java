@@ -996,11 +996,13 @@ public class ParquetTest extends AbstractCairoTest {
             // SYMBOL column (toIndexKey(SymbolTable.VALUE_IS_NULL) == 0).
             // The bug manifests when this index path returns no rows.
             assertSql(
-                    "QUERY PLAN\n" +
-                            "DeferredSingleSymbolFilterPageFrame\n" +
-                            "    Index forward scan on: id\n" +
-                            "      filter: id=0\n" +
-                            "    Frame forward scan on: x\n",
+                    """
+                            QUERY PLAN
+                            DeferredSingleSymbolFilterPageFrame
+                                Index forward scan on: id
+                                  filter: id=0
+                                Frame forward scan on: x
+                            """,
                     "explain select * from x where id = null"
             );
 
@@ -1058,11 +1060,13 @@ public class ParquetTest extends AbstractCairoTest {
             // reason. The "id=0" filter is the NULL key for an indexed
             // SYMBOL column (toIndexKey(SymbolTable.VALUE_IS_NULL) == 0).
             assertSql(
-                    "QUERY PLAN\n" +
-                            "DeferredSingleSymbolFilterPageFrame\n" +
-                            "    Index forward scan on: id\n" +
-                            "      filter: id=0\n" +
-                            "    Frame forward scan on: x\n",
+                    """
+                            QUERY PLAN
+                            DeferredSingleSymbolFilterPageFrame
+                                Index forward scan on: id
+                                  filter: id=0
+                                Frame forward scan on: x
+                            """,
                     "explain select * from x where id = null"
             );
 
@@ -2109,10 +2113,12 @@ public class ParquetTest extends AbstractCairoTest {
             drainWalQueue();
 
             assertSql(
-                    "s\tts\n" +
-                            "hello\t2020-01-01T00:00:00.000000Z\n" +
-                            "héllo\t2020-01-01T06:00:00.000000Z\n" +
-                            "world\t2020-01-01T12:00:00.000000Z\n",
+                    """
+                            s\tts
+                            hello\t2020-01-01T00:00:00.000000Z
+                            héllo\t2020-01-01T06:00:00.000000Z
+                            world\t2020-01-01T12:00:00.000000Z
+                            """,
                     "x order by ts"
             );
         });
@@ -2145,9 +2151,11 @@ public class ParquetTest extends AbstractCairoTest {
             drainWalQueue();
 
             assertSql(
-                    "s\tts\ts2\n" +
-                            "hello\t2020-01-01T00:00:00.000000Z\t\n" +
-                            "aa\t2020-01-01T06:00:00.000000Z\théllo\n",
+                    """
+                            s\tts\ts2
+                            hello\t2020-01-01T00:00:00.000000Z\t
+                            aa\t2020-01-01T06:00:00.000000Z\théllo
+                            """,
                     "x order by ts"
             );
         });
@@ -2310,8 +2318,8 @@ public class ParquetTest extends AbstractCairoTest {
         final String singleNullArrayExpected = "[".repeat(dims) + "null" + "]".repeat(dims);
 
         final String arrExpr = arr
-                .replaceAll(" ", "")
-                .replaceAll("\n", "")
+                .replace(" ", "")
+                .replace("\n", "")
                 .replace("ARRAY", "");
 
         assertMemoryLeak(() -> {
