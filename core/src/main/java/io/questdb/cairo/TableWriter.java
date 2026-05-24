@@ -6662,8 +6662,23 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     long rowId = Math.max(rowCount, columnTop);
                     final long addr = rowGroupBuffers.getChunkDataPtr(0);
                     final long size = rowGroupBuffers.getChunkDataSize(0);
-                    for (long p = addr, lim = addr + size; p < lim; p += 4, rowId++) {
-                        indexWriter.add(TableUtils.toIndexKey(Unsafe.getInt(p)), rowId);
+                    if (size == 0) {
+                        // _pm-backed decode fast path: when the chunk's stats report
+                        // null_count == num_values the Rust decoder skips
+                        // materialising the buffer and returns size=0 (see
+                        // RowGroupBuffers javadoc). The caller must emit null index
+                        // entries for every row in the row group, otherwise indexed
+                        // WHERE x = null on a parquet partition (e.g. after ALTER
+                        // TABLE ADD INDEX) silently returns no rows.
+                        final int nullKey = TableUtils.toIndexKey(SymbolTable.VALUE_IS_NULL);
+                        final long rgEnd = rowCount + rowGroupSize;
+                        for (; rowId < rgEnd; rowId++) {
+                            indexWriter.add(nullKey, rowId);
+                        }
+                    } else {
+                        for (long p = addr, lim = addr + size; p < lim; p += 4, rowId++) {
+                            indexWriter.add(TableUtils.toIndexKey(Unsafe.getInt(p)), rowId);
+                        }
                     }
 
                     rowCount += rowGroupSize;

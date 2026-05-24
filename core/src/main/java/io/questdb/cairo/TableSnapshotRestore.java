@@ -30,6 +30,7 @@ import io.questdb.cairo.idx.PostingIndexUtils;
 import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.mv.MatViewState;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.view.ViewDefinition;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMARW;
@@ -1250,8 +1251,25 @@ public class TableSnapshotRestore implements QuietCloseable {
 
                     final long addr = rowGroupBuffers.getChunkDataPtr(i);
                     final long size = rowGroupBuffers.getChunkDataSize(i);
-                    for (long p = addr + startOffset * 4, lim = addr + size; p < lim; p += 4, rowId++) {
-                        indexWriter.add(TableUtils.toIndexKey(Unsafe.getInt(p)), rowId);
+                    if (size == 0) {
+                        // _pm-backed decode fast path: when the chunk's stats
+                        // report null_count == num_values the Rust decoder
+                        // skips materialising the buffer and returns size=0
+                        // (see RowGroupBuffers javadoc). The caller must
+                        // emit null index entries for every row covered by
+                        // the row group, otherwise the rebuilt index drops
+                        // every NULL and indexed WHERE col = null on a
+                        // restored parquet partition silently returns no
+                        // rows.
+                        final int nullKey = TableUtils.toIndexKey(SymbolTable.VALUE_IS_NULL);
+                        final long rgEnd = rowCount + rowGroupSize;
+                        for (; rowId < rgEnd; rowId++) {
+                            indexWriter.add(nullKey, rowId);
+                        }
+                    } else {
+                        for (long p = addr + startOffset * 4, lim = addr + size; p < lim; p += 4, rowId++) {
+                            indexWriter.add(TableUtils.toIndexKey(Unsafe.getInt(p)), rowId);
+                        }
                     }
                 }
 

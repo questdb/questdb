@@ -1335,6 +1335,56 @@ public class CheckpointTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCheckpointRestoreRebuildsBitmapIndexesOnParquetAllNullChunk() throws Exception {
+        // Red regression for the all-null chunk bug in TableSnapshotRestore.
+        // When the _pm decoder fast-paths an all-null SYMBOL chunk to
+        // size == 0 (per RowGroupBuffers javadoc), the bitmap rebuild loop
+        // walks zero bytes and emits no entries for the NULL key. Indexed
+        // WHERE sym = null on the restored parquet partition then silently
+        // returns no rows, even though the pre-rebuild index served the
+        // same query correctly.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t (
+                        sym SYMBOL INDEX,
+                        ts TIMESTAMP
+                    ) TIMESTAMP(ts) PARTITION BY DAY
+                    """);
+            // Entire '2024-01-01' partition has NULL symbols: the parquet
+            // row group stats report null_count == num_values, triggering
+            // the _pm decoder's size == 0 fast path.
+            execute("""
+                    INSERT INTO t VALUES
+                    (null, '2024-01-01T00:00:00.000000Z'),
+                    (null, '2024-01-01T06:00:00.000000Z'),
+                    (null, '2024-01-01T12:00:00.000000Z'),
+                    ('k1', '2024-01-05T00:00:00.000000Z')
+                    """);
+            execute("ALTER TABLE t CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+
+            TableToken tableToken = engine.verifyTableName("t");
+            String dbRoot = engine.getConfiguration().getDbRoot();
+
+            // Release all readers and writers before rebuilding files on
+            // disk; rebuildTableFiles is designed for checkpoint recovery
+            // where the engine restarts, so cached readers must be released.
+            engine.clear();
+
+            try (
+                    Path tablePath = new Path().of(dbRoot).concat(tableToken).slash();
+                    TableSnapshotRestore restoreAgent = new TableSnapshotRestore(configuration)
+            ) {
+                restoreAgent.rebuildTableFiles(tablePath, new AtomicInteger(), true);
+            }
+
+            assertSql(
+                    "count\n3\n",
+                    "SELECT count() FROM t WHERE sym = null"
+            );
+        });
+    }
+
+    @Test
     public void testCheckpointRestoreRebuildsBitmapIndexesOnParquetMultiColumn() throws Exception {
         // Reproduces the enterprise backup test setup: 9 columns with an
         // indexed SYMBOL, convert a partition to parquet, then rebuild.
