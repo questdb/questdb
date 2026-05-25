@@ -33,6 +33,7 @@ import io.questdb.std.Rnd;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
+import org.junit.Assume;
 import org.junit.Before;
 import org.junit.Test;
 
@@ -91,6 +92,36 @@ public class ParallelHorizonJoinFuzzTest extends AbstractCairoTest {
                 "RANGE FROM 0 TO 1s STEP 1s AS h",
                 new long[]{0, 1_000_000}
         );
+    }
+
+    @Test
+    public void testParallelHorizonJoinConstArrayKeyDoesNotLeak() throws Exception {
+        // A thread-safe constant ARRAY group key alongside a non-thread-safe aggregate
+        // (count_distinct) over a HORIZON JOIN makes the async horizon join create per-worker
+        // copies. Each worker's copy of the thread-safe ArrayConstant key must be extracted and
+        // freed; otherwise it leaks NATIVE_ND_ARRAY native memory, scaling with worker count.
+        Assume.assumeTrue(enableParallelHorizonJoin);
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new WorkerPool(() -> 4);
+            TestUtils.execute(
+                    pool,
+                    (engine, compiler, sqlExecutionContext) -> {
+                        engine.execute("CREATE TABLE trades (ts TIMESTAMP, sym SYMBOL, qty LONG) TIMESTAMP(ts) PARTITION BY DAY", sqlExecutionContext);
+                        engine.execute("CREATE TABLE prices (ts TIMESTAMP, price DOUBLE) TIMESTAMP(ts) PARTITION BY DAY", sqlExecutionContext);
+                        engine.execute("INSERT INTO trades SELECT (x * 3_600_000_000)::timestamp, ('s' || (x % 5))::symbol, x % 7 FROM long_sequence(" + ROW_COUNT + ")", sqlExecutionContext);
+                        engine.execute("INSERT INTO prices SELECT (x * 3_600_000_000)::timestamp, x * 1.5 FROM long_sequence(" + ROW_COUNT + ")", sqlExecutionContext);
+                        TestUtils.assertSql(
+                                engine,
+                                sqlExecutionContext,
+                                "SELECT ARRAY[0.5] k, count_distinct(t.qty) c FROM trades t HORIZON JOIN prices p RANGE FROM 0s TO 0s STEP 1s AS h",
+                                sink,
+                                "k\tc\n[0.5]\t7\n"
+                        );
+                    },
+                    configuration,
+                    LOG
+            );
+        });
     }
 
     @Test

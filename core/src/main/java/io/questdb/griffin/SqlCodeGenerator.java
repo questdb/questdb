@@ -1195,26 +1195,31 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             ObjList<ObjList<Function>> perThreadFunctions,
             int flag
     ) {
-        ObjList<ObjList<T>> perThreadKeyFunctions = null;
-        boolean keysThreadSafe = true;
+        // No per-worker copies were made: workers share the owner functions.
+        if (perThreadFunctions == null) {
+            return null;
+        }
+        // Copies exist and each must reach exactly one owner, so extract every slot matching the
+        // flag regardless of its own thread-safety; skip when no slot matches.
+        boolean anyMatch = false;
         for (int i = 0, n = projectionFunctions.size(); i < n; i++) {
-            if ((flag == GroupByUtils.PROJECTION_FUNCTION_FLAG_ANY || projectionFunctionFlags.get(i) == flag) && !projectionFunctions.getQuick(i).isThreadSafe()) {
-                keysThreadSafe = false;
+            if (flag == GroupByUtils.PROJECTION_FUNCTION_FLAG_ANY || projectionFunctionFlags.get(i) == flag) {
+                anyMatch = true;
                 break;
             }
         }
+        if (!anyMatch) {
+            return null;
+        }
 
-        if (!keysThreadSafe) {
-            assert perThreadFunctions != null;
-            perThreadKeyFunctions = new ObjList<>();
-            for (int i = 0, n = perThreadFunctions.size(); i < n; i++) {
-                ObjList<T> threadFunctions = new ObjList<>();
-                perThreadKeyFunctions.add(threadFunctions);
-                ObjList<Function> funcs = perThreadFunctions.getQuick(i);
-                for (int j = 0, m = funcs.size(); j < m; j++) {
-                    if (flag == GroupByUtils.PROJECTION_FUNCTION_FLAG_ANY || projectionFunctionFlags.get(j) == flag) {
-                        threadFunctions.add((T) funcs.getQuick(j));
-                    }
+        ObjList<ObjList<T>> perThreadKeyFunctions = new ObjList<>();
+        for (int i = 0, n = perThreadFunctions.size(); i < n; i++) {
+            ObjList<T> threadFunctions = new ObjList<>();
+            perThreadKeyFunctions.add(threadFunctions);
+            ObjList<Function> funcs = perThreadFunctions.getQuick(i);
+            for (int j = 0, m = funcs.size(); j < m; j++) {
+                if (flag == GroupByUtils.PROJECTION_FUNCTION_FLAG_ANY || projectionFunctionFlags.get(j) == flag) {
+                    threadFunctions.add((T) funcs.getQuick(j));
                 }
             }
         }
@@ -1701,14 +1706,19 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             ObjList<QueryColumn> queryColumns,
             ObjList<Function> innerProjectionFunctions,
             int workerCount,
-            RecordMetadata metadata
+            RecordMetadata metadata,
+            IntList projectionFunctionFlags
     ) throws SqlException {
         boolean threadSafe = true;
 
         assert innerProjectionFunctions.size() == queryColumns.size();
 
         for (int i = 0, n = innerProjectionFunctions.size(); i < n; i++) {
-            if (!innerProjectionFunctions.getQuick(i).isThreadSafe()) {
+            // Column keys are read natively by the per-worker RecordSink, so skip them here: a
+            // non-thread-safe one must not force copies of the (maybe thread-safe) function keys,
+            // which the flag-based extraction would then leave unclaimed and leak.
+            if (projectionFunctionFlags.get(i) != GroupByUtils.PROJECTION_FUNCTION_FLAG_COLUMN
+                    && !innerProjectionFunctions.getQuick(i).isThreadSafe()) {
                 threadSafe = false;
                 break;
             }
@@ -1720,6 +1730,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 ObjList<Function> workerKeyFunctions = new ObjList<>(columnCount);
                 allWorkerKeyFunctions.add(workerKeyFunctions);
                 for (int j = 0; j < columnCount; j++) {
+                    if (projectionFunctionFlags.get(j) == GroupByUtils.PROJECTION_FUNCTION_FLAG_COLUMN) {
+                        // Native column key needs no copy; keep a null slot to stay flag-aligned.
+                        workerKeyFunctions.add(null);
+                        continue;
+                    }
                     final Function func = functionParser.parseFunction(
                             queryColumns.getQuick(j).getAst(),
                             metadata,
@@ -4467,7 +4482,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         parentModel.getColumns(),
                         tempInnerProjectionFunctions,
                         workerCount,
-                        innerMetadata
+                        innerMetadata,
+                        projectionFunctionFlags
                 );
 
                 // Extract per-worker key functions (for expression keys)
@@ -7155,7 +7171,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     parentModel.getColumns(),
                     tempInnerProjectionFunctions,
                     workerCount,
-                    innerMetadata
+                    innerMetadata,
+                    projectionFunctionFlags
             );
             final ObjList<ObjList<Function>> perWorkerKeyFunctions = extractWorkerFunctionsConditionally(
                     tempInnerProjectionFunctions,
@@ -8877,7 +8894,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             model.getColumns(),
                             tempInnerProjectionFunctions,
                             executionContext.getSharedQueryWorkerCount(),
-                            baseMetadata
+                            baseMetadata,
+                            projectionFunctionFlags
                     );
 
                     return generateFill(

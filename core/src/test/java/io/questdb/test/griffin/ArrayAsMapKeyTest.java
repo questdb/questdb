@@ -33,25 +33,33 @@ public class ArrayAsMapKeyTest extends AbstractCairoTest {
     public void testArrayAsGroupByKey() throws Exception {
         execute("create table array_test(k symbol, ob_buy double[][], ob_sell double[][], ts timestamp) timestamp(ts) partition by day ;");
         execute(
-                "insert into array_test values \n" +
-                        "   ('vod', ARRAY[[9., 1000], [10., 10000]], ARRAY[[12., 1000], [11., 10000]], 123),\n" +
-                        "   ('vod2', ARRAY[[4., 1000], [10., 10000]], ARRAY[[12., 1000], [11., 10000]], 123),   \n" +
-                        "   ('vod3', ARRAY[[3., 1000], [10., 10000]], ARRAY[[12., 1000], [11., 10000]], 123)\n" +
-                        "   ;\n"
+                """
+                        insert into array_test values
+                           ('vod', ARRAY[[9., 1000], [10., 10000]], ARRAY[[12., 1000], [11., 10000]], 123),
+                           ('vod2', ARRAY[[4., 1000], [10., 10000]], ARRAY[[12., 1000], [11., 10000]], 123),
+                           ('vod3', ARRAY[[3., 1000], [10., 10000]], ARRAY[[12., 1000], [11., 10000]], 123)
+                           ;
+                        """
         );
-        assertQuery("[]\tk\tcount\n" +
-                        "[[9.0,1000.0],[10.0,10000.0]]\tvod\t1\n" +
-                        "[[4.0,1000.0],[10.0,10000.0]]\tvod2\t1\n" +
-                        "[[3.0,1000.0],[10.0,10000.0]]\tvod3\t1\n",
+        assertQuery(
+                """
+                        []\tk\tcount
+                        [[9.0,1000.0],[10.0,10000.0]]\tvod\t1
+                        [[4.0,1000.0],[10.0,10000.0]]\tvod2\t1
+                        [[3.0,1000.0],[10.0,10000.0]]\tvod3\t1
+                        """,
                 "select ob_buy[1:], k, count() from array_test;",
                 true,
                 true
         );
 
-        assertQuery("ob_buy\tk\tcount\n" +
-                        "[[9.0,1000.0],[10.0,10000.0]]\tvod\t1\n" +
-                        "[[4.0,1000.0],[10.0,10000.0]]\tvod2\t1\n" +
-                        "[[3.0,1000.0],[10.0,10000.0]]\tvod3\t1\n",
+        assertQuery(
+                """
+                        ob_buy\tk\tcount
+                        [[9.0,1000.0],[10.0,10000.0]]\tvod\t1
+                        [[4.0,1000.0],[10.0,10000.0]]\tvod2\t1
+                        [[3.0,1000.0],[10.0,10000.0]]\tvod3\t1
+                        """,
                 "select ob_buy, k, count() from array_test;",
                 true,
                 true
@@ -62,11 +70,13 @@ public class ArrayAsMapKeyTest extends AbstractCairoTest {
     public void testArrayAsOrderByColumn() throws Exception {
         execute("create table array_test(k symbol, ob_buy double[][], ob_sell double[][], ts timestamp) timestamp(ts) partition by day ;");
         execute(
-                "insert into array_test values \n" +
-                        "   ('vod', ARRAY[[9., 1000], [10., 10000]], ARRAY[[12., 1000], [11., 10000]], 123),\n" +
-                        "   ('vod2', ARRAY[[4., 1000], [10., 10000]], ARRAY[[12., 1000], [11., 10000]], 123),   \n" +
-                        "   ('vod3', ARRAY[[3., 1000], [10., 10000]], ARRAY[[12., 1000], [11., 10000]], 123)\n" +
-                        "   ;\n"
+                """
+                        insert into array_test values
+                           ('vod', ARRAY[[9., 1000], [10., 10000]], ARRAY[[12., 1000], [11., 10000]], 123),
+                           ('vod2', ARRAY[[4., 1000], [10., 10000]], ARRAY[[12., 1000], [11., 10000]], 123),
+                           ('vod3', ARRAY[[3., 1000], [10., 10000]], ARRAY[[12., 1000], [11., 10000]], 123)
+                           ;
+                        """
         );
 
         assertException(
@@ -86,5 +96,77 @@ public class ArrayAsMapKeyTest extends AbstractCairoTest {
                 42,
                 "DOUBLE[][] is not a supported type in ORDER BY clause"
         );
+    }
+
+    @Test
+    public void testDistinct2dArrayPlusColumnKeyDoesNotLeak() throws Exception {
+        // A non-thread-safe 2D ARRAY key (ArrayCreateFunctionFactory output, which owns a
+        // DirectArray) together with a non-thread-safe SYMBOL column key exercises the
+        // per-worker copy path: the per-worker copy of the 2D array key must be extracted and
+        // freed, and the column key must not be copied at all.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (sym SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO tab SELECT rnd_symbol('a','b','c'), (x*1_000_000)::timestamp FROM long_sequence(100)");
+            assertQueryNoLeakCheck(
+                    """
+                            k\tsym
+                            [[0.1,0.2],[0.3,0.4]]\ta
+                            [[0.1,0.2],[0.3,0.4]]\tb
+                            [[0.1,0.2],[0.3,0.4]]\tc
+                            """,
+                    "SELECT DISTINCT ARRAY[ARRAY[0.1,0.2],ARRAY[0.3,0.4]] k, sym FROM tab ORDER BY sym",
+                    null,
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testDistinctConstArrayPlusColumnKeyDoesNotLeak() throws Exception {
+        // DISTINCT over a thread-safe constant ARRAY key together with a non-thread-safe
+        // SYMBOL column key drives the parallel/async GROUP BY per-worker key-function path.
+        // The constant array folds to a thread-safe ArrayConstant; its per-worker DirectArray
+        // copy must still be owned and freed (regression for a NATIVE_ND_ARRAY leak).
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (sym SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO tab SELECT rnd_symbol('a','b','c'), (x*1_000_000)::timestamp FROM long_sequence(100)");
+            assertQueryNoLeakCheck(
+                    """
+                            arr\tsym
+                            [0.5]\ta
+                            [0.5]\tb
+                            [0.5]\tc
+                            """,
+                    "SELECT DISTINCT ARRAY[0.5] arr, sym FROM tab ORDER BY sym",
+                    null,
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testGroupByConstArrayKeyWithNonThreadSafeAggDoesNotLeak() throws Exception {
+        // A thread-safe constant ARRAY key alongside a non-thread-safe aggregate
+        // (count_distinct) makes the async GROUP BY create per-worker copies (the aggregate
+        // forces it), while the array key itself stays thread-safe. The per-worker
+        // ArrayConstant copy must still be extracted and freed: the extraction must not skip
+        // it just because the key functions are thread-safe (regression for a NATIVE_ND_ARRAY
+        // leak distinct from the DISTINCT-plus-column case above).
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (sym SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO tab SELECT rnd_symbol('a','b','c'), (x*1_000_000)::timestamp FROM long_sequence(100)");
+            assertQueryNoLeakCheck(
+                    """
+                            k\tc
+                            [0.5]\t3
+                            """,
+                    "SELECT ARRAY[0.5] k, count_distinct(sym) c FROM tab",
+                    null,
+                    true,
+                    true
+            );
+        });
     }
 }
