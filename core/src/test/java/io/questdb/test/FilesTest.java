@@ -1176,61 +1176,56 @@ public class FilesTest {
 
                 long mem = Unsafe.malloc(8, MemoryTag.NATIVE_DEFAULT);
 
-                long testValue = 0x1234567890ABCDEFL;
-                Unsafe.putLong(mem, testValue);
-                long fileSize = (2L << 30) + 2 * 4096;
+                long sentinel = 0x1234567890ABCDEFL;
+                Unsafe.putLong(mem, sentinel);
+
+                // A copy whose offsets reach past 2 GiB exercises the 64-bit offset/length
+                // arithmetic in copyData/copyDataToOffset (offsets at or beyond 2 GiB exceed a
+                // signed 32-bit int). We only need to *cross* the boundary, not move 2 GiB: the
+                // source is truncated to just past 2 GiB but left unwritten, so the region beyond
+                // the 8-byte sentinel is a hole that reads as zeros with no physical fill. The
+                // copies below move a small window that straddles the boundary, so the test stays
+                // fast on every platform (writing 2 GiB on the hosted Windows runner took minutes).
+                // The returned byte count is what catches truncation: if any offset wrapped through
+                // a signed 32-bit int, the count would be short or negative. Each copy also reads
+                // back zeros, proving the read came from the >2 GiB hole and not from the offset-0
+                // sentinel that a truncated offset would alias back to.
+                final long chunk = 64 * 1024;            // matches the native copy buffer size
+                final long boundary = 2L << 30;          // first offset past signed 32-bit range
+                final long fileSize = boundary + chunk;
+                final long belowBoundary = boundary - chunk;
 
                 try {
                     Files.truncate(fd1, fileSize);
-
                     Files.write(fd1, mem, 8, 0);
-                    Files.write(fd1, mem, 8, fileSize - 8);
 
-                    // Check copy call works
-                    int offset = 2058;
-                    long copiedLen = Files.copyData(fd1, fd2, offset, -1);
+                    // (1) copy to EOF (length == -1): the loop offset advances past 2 GiB up to EOF
+                    long copiedLen = Files.copyData(fd1, fd2, belowBoundary, -1);
+                    Assert.assertEquals("errno: " + Os.errno(), fileSize - belowBoundary, copiedLen);
+                    Assert.assertEquals(0L, Files.readNonNegativeLong(fd2, 0));
 
-                    Assert.assertEquals("errno: " + Os.errno(), fileSize - offset, copiedLen);
-
-                    long long1 = Files.readNonNegativeLong(fd2, fileSize - offset - 8);
-                    Assert.assertEquals(testValue, long1);
-
-                    // Copy with set length
+                    // (2) copy with explicit length: hi = srcOffset + length crosses 2 GiB
                     Files.close(fd2);
                     TestUtils.remove(path2.$());
                     fd2 = Files.openRW(path2.$());
+                    long length = fileSize - belowBoundary;
+                    copiedLen = Files.copyData(fd1, fd2, belowBoundary, length);
+                    Assert.assertEquals("errno: " + Os.errno(), length, copiedLen);
+                    Assert.assertEquals(0L, Files.readNonNegativeLong(fd2, 0));
 
-                    // Check copy call works
-                    offset = 3051;
-                    copiedLen = Files.copyData(fd1, fd2, offset, fileSize - offset);
-                    Assert.assertEquals("errno: " + Os.errno(), fileSize - offset, copiedLen);
-
-                    long1 = Files.readNonNegativeLong(fd2, fileSize - offset - 8);
-                    Assert.assertEquals(testValue, long1);
-
-                    // Copy with destination offset
+                    // (3) source offset itself is past 2 GiB, plus a non-zero destination offset
                     Files.close(fd2);
                     TestUtils.remove(path2.$());
                     fd2 = Files.openRW(path2.$());
-
-                    // Check copy with offset call works
                     long destOffset = 1057;
-                    copiedLen = Files.copyDataToOffset(fd1, fd2, offset, destOffset, fileSize - offset);
-                    Assert.assertEquals(fileSize - offset, copiedLen);
+                    copiedLen = Files.copyDataToOffset(fd1, fd2, boundary, destOffset, chunk);
+                    Assert.assertEquals("errno: " + Os.errno(), chunk, copiedLen);
+                    Assert.assertEquals(0L, Files.readNonNegativeLong(fd2, destOffset));
 
-                    long1 = Files.readNonNegativeLong(fd2, destOffset + fileSize - offset - 8);
-                    Assert.assertEquals(testValue, long1);
-
-                    // Check subsequent copy call with zero offset works
-                    long anotherTestValue = 0x0987654321FEDCBAL;
-                    Unsafe.putLong(mem, anotherTestValue);
-                    Files.write(fd1, mem, 8, 0);
-
+                    // (4) a subsequent small copy from offset 0 still moves real data
                     copiedLen = Files.copyDataToOffset(fd1, fd2, 0, 0, 8);
                     Assert.assertEquals(8, copiedLen);
-
-                    long1 = Files.readNonNegativeLong(fd2, 0);
-                    Assert.assertEquals(anotherTestValue, long1);
+                    Assert.assertEquals(sentinel, Files.readNonNegativeLong(fd2, 0));
                 } finally {
                     // Release mem, fd
                     Files.close(fd1);

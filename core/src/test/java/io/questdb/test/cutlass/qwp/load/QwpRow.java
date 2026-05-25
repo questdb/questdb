@@ -25,14 +25,17 @@
 package io.questdb.test.cutlass.qwp.load;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.client.Sender;
+import io.questdb.client.cutlass.qwp.client.QwpWebSocketSender;
 import io.questdb.client.std.Decimal128;
 import io.questdb.client.std.Decimal256;
 import io.questdb.client.std.Decimal64;
 import io.questdb.std.Decimals;
+import io.questdb.std.Long256;
 import io.questdb.std.LowerCaseCharSequenceObjHashMap;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
@@ -110,61 +113,138 @@ public class QwpRow {
      * with {@code at(tsMicros, MICROS)}.
      */
     public void publishTo(Sender sender, String tableName, String idColumnName) {
-        sender.table(tableName);
+        // QWP WebSocket connection ("ws::") always returns a QwpWebSocketSender, which
+        // exposes per-wire-type setters (byte/short/int/float/char/uuid/long256) that
+        // the public Sender interface does not. We need the cast to fuzz those wire
+        // types end-to-end.
+        QwpWebSocketSender qwp = (QwpWebSocketSender) sender;
+        qwp.table(tableName);
         for (int i = 0, n = orderedNames.size(); i < n; i++) {
             CharSequence name = orderedNames.getQuick(i);
             TypedValue v = values.get(name);
             if (v.type == ValueType.SYMBOL) {
-                sender.symbol(name, v.s);
+                qwp.symbol(name, v.s);
             }
         }
-        sender.longColumn(idColumnName, id);
+        qwp.longColumn(idColumnName, id);
         for (int i = 0, n = orderedNames.size(); i < n; i++) {
             CharSequence name = orderedNames.getQuick(i);
             TypedValue v = values.get(name);
             switch (v.type) {
                 case BOOLEAN:
-                    sender.boolColumn(name, v.b);
+                    qwp.boolColumn(name, v.b);
+                    break;
+                case BYTE:
+                    qwp.byteColumn(name, v.b8);
+                    break;
+                case SHORT:
+                    qwp.shortColumn(name, v.s16);
+                    break;
+                case INT:
+                    qwp.intColumn(name, v.i32);
                     break;
                 case LONG:
-                    sender.longColumn(name, v.l);
+                    qwp.longColumn(name, v.l);
+                    break;
+                case FLOAT:
+                    qwp.floatColumn(name, v.f);
                     break;
                 case DOUBLE:
-                    sender.doubleColumn(name, v.d);
+                    qwp.doubleColumn(name, v.d);
+                    break;
+                case CHAR:
+                    qwp.charColumn(name, v.c);
                     break;
                 case STRING:
-                    sender.stringColumn(name, v.s);
+                    qwp.stringColumn(name, v.s);
+                    break;
+                case UUID:
+                    // QwpWebSocketSender.uuidColumn signature is (name, lo, hi).
+                    qwp.uuidColumn(name, v.uuidLo, v.uuidHi);
+                    break;
+                case LONG256:
+                    qwp.long256Column(name, v.l256_0, v.l256_1, v.l256_2, v.l256_3);
+                    break;
+                case TIMESTAMP_NANO:
+                    qwp.timestampColumn(name, v.tsNanos, ChronoUnit.NANOS);
                     break;
                 case DOUBLE_ARRAY_1D:
-                    sender.doubleArray(name, v.da1);
+                    qwp.doubleArray(name, v.da1);
                     break;
                 case DOUBLE_ARRAY_2D:
-                    sender.doubleArray(name, v.da2);
+                    qwp.doubleArray(name, v.da2);
                     break;
                 case DOUBLE_ARRAY_3D:
-                    sender.doubleArray(name, v.da3);
+                    qwp.doubleArray(name, v.da3);
                     break;
                 case DECIMAL64:
-                    sender.decimalColumn(name, Decimal64.fromLong(v.dec64Value, v.decScale));
+                    qwp.decimalColumn(name, Decimal64.fromLong(v.dec64Value, v.decScale));
                     break;
                 case DECIMAL128:
-                    sender.decimalColumn(name, new Decimal128(v.dec128Hi, v.dec128Lo, v.decScale));
+                    qwp.decimalColumn(name, new Decimal128(v.dec128Hi, v.dec128Lo, v.decScale));
                     break;
                 case DECIMAL256:
-                    sender.decimalColumn(name, new Decimal256(v.dec256Hh, v.dec256Hl, v.dec256Lh, v.dec256Ll, v.decScale));
+                    qwp.decimalColumn(name, new Decimal256(v.dec256Hh, v.dec256Hl, v.dec256Lh, v.dec256Ll, v.decScale));
+                    break;
+                case IPV4:
+                    sender.ipv4Column(name, v.ipv4);
+                    break;
+                case GEOHASH:
+                    // QWP wire form carries the bits + precision pair; the server
+                    // auto-creates GEOHASH(Nb) sized to fit the declared precision.
+                    qwp.geoHashColumn(name, v.geoHash, v.geoHashBits);
+                    break;
+                case BINARY:
+                    sender.binaryColumn(name, v.bin);
                     break;
                 case SYMBOL:
                     // already emitted
                     break;
             }
         }
-        sender.at(tsMicros, ChronoUnit.MICROS);
+        qwp.at(tsMicros, ChronoUnit.MICROS);
+    }
+
+    /**
+     * Records a BINARY value as a byte slice. The array must be non-null
+     * and non-empty: QuestDB's BINARY storage layer
+     * ({@code MemoryPARWImpl.putBin}) writes the {@code NULL_LEN} sentinel
+     * when {@code len == 0}, so an empty {@code byte[]} round-trips as SQL
+     * NULL on read and would diverge from this oracle's
+     * "expected-non-null, length 0" read assertion. To model an explicit
+     * NULL omit the column from the row entirely; the WAL writer marks it
+     * via the null bitmap.
+     *
+     * @throws IllegalArgumentException if {@code value} is null or empty
+     */
+    public QwpRow setBinary(String name, byte[] value) {
+        if (value == null || value.length == 0) {
+            throw new IllegalArgumentException(
+                    "setBinary requires a non-null, non-empty array (storage treats len=0 as NULL);"
+                            + " omit the column to model SQL NULL");
+        }
+        TypedValue v = put(name);
+        v.type = ValueType.BINARY;
+        v.bin = value;
+        return this;
     }
 
     public void setBool(String name, boolean value) {
         TypedValue v = put(name);
         v.type = ValueType.BOOLEAN;
         v.b = value;
+    }
+
+    public void setByte(String name, byte value) {
+        TypedValue v = put(name);
+        v.type = ValueType.BYTE;
+        v.b8 = value;
+    }
+
+    public void setChar(String name, char value) {
+        TypedValue v = put(name);
+        v.type = ValueType.CHAR;
+        v.c = value;
     }
 
     public void setDecimal128(String name, long hi, long lo, int scale) {
@@ -192,6 +272,18 @@ public class QwpRow {
         v.decScale = scale;
     }
 
+    /**
+     * Records a packed IPv4 address. The bit pattern 0 is reserved as QuestDB's
+     * IPv4 NULL sentinel; pass a non-zero address (or skip the column to model
+     * an explicit NULL) to keep the oracle's expectations unambiguous.
+     */
+    public QwpRow setIPv4(String name, int address) {
+        TypedValue v = put(name);
+        v.type = ValueType.IPV4;
+        v.ipv4 = address;
+        return this;
+    }
+
     public QwpRow setDouble(String name, double value) {
         TypedValue v = put(name);
         v.type = ValueType.DOUBLE;
@@ -217,11 +309,71 @@ public class QwpRow {
         v.da3 = value;
     }
 
+    public void setFloat(String name, float value) {
+        TypedValue v = put(name);
+        v.type = ValueType.FLOAT;
+        v.f = value;
+    }
+
+    /**
+     * Records a GEOHASH value with explicit bit precision. {@code precisionBits}
+     * must be in {@code [1, 60]} and is locked at the column on the first row
+     * (the server auto-creates {@code GEOHASH(Nb)} sized to fit).
+     */
+    public QwpRow setGeoHash(String name, long bits, int precisionBits) {
+        TypedValue v = put(name);
+        v.type = ValueType.GEOHASH;
+        // Mask high bits so the stored expectation matches what the wire encoder
+        // and server-side null bitmap interpret (low precisionBits significant).
+        v.geoHash = precisionBits >= 64 ? bits : bits & ((1L << precisionBits) - 1L);
+        v.geoHashBits = precisionBits;
+        return this;
+    }
+
+    /**
+     * Records a GEOHASH from a base32 string (one char = 5 bits). Convenience
+     * for tests that want to read back exactly the string they wrote: the
+     * server stores the bits and renders them back as the same base32 string.
+     */
+    public QwpRow setGeoHash(String name, String base32) {
+        long bits = 0;
+        int len = base32.length();
+        for (int i = 0; i < len; i++) {
+            byte b = GeoHashes.encodeChar(base32.charAt(i));
+            if (b < 0) {
+                throw new IllegalArgumentException("invalid GEOHASH character '" + base32.charAt(i) + "' in: " + base32);
+            }
+            bits = (bits << 5) | b;
+        }
+        return setGeoHash(name, bits, len * 5);
+    }
+
+    public void setInt(String name, int value) {
+        TypedValue v = put(name);
+        v.type = ValueType.INT;
+        v.i32 = value;
+    }
+
     public QwpRow setLong(String name, long value) {
         TypedValue v = put(name);
         v.type = ValueType.LONG;
         v.l = value;
         return this;
+    }
+
+    public void setLong256(String name, long l0, long l1, long l2, long l3) {
+        TypedValue v = put(name);
+        v.type = ValueType.LONG256;
+        v.l256_0 = l0;
+        v.l256_1 = l1;
+        v.l256_2 = l2;
+        v.l256_3 = l3;
+    }
+
+    public void setShort(String name, short value) {
+        TypedValue v = put(name);
+        v.type = ValueType.SHORT;
+        v.s16 = value;
     }
 
     public QwpRow setString(String name, String value) {
@@ -235,6 +387,19 @@ public class QwpRow {
         TypedValue v = put(name);
         v.type = ValueType.SYMBOL;
         v.s = value;
+    }
+
+    public void setTimestampNano(String name, long valueNanos) {
+        TypedValue v = put(name);
+        v.type = ValueType.TIMESTAMP_NANO;
+        v.tsNanos = valueNanos;
+    }
+
+    public void setUuid(String name, long hi, long lo) {
+        TypedValue v = put(name);
+        v.type = ValueType.UUID;
+        v.uuidHi = hi;
+        v.uuidLo = lo;
     }
 
     private static void assertArray1dDoubleEquals(String name, double[] expected, ArrayView actual, long rowOrdinal) {
@@ -301,6 +466,17 @@ public class QwpRow {
     }
 
     private static void assertCell(String name, int colType, TypedValue tv, Record record, int columnIndex, long rowOrdinal) {
+        // TIMESTAMP_NANO and TIMESTAMP share the same tag (TIMESTAMP); the high bit
+        // discriminates them. Handle TIMESTAMP_NANO before falling into the tag switch.
+        if (ColumnType.isTimestampNano(colType)) {
+            long actual = record.getTimestamp(columnIndex);
+            if (tv == null) {
+                Assert.assertEquals(name + " expected NULL row=" + rowOrdinal, Numbers.LONG_NULL, actual);
+            } else {
+                Assert.assertEquals(name + " row=" + rowOrdinal, tv.tsNanos, actual);
+            }
+            return;
+        }
         short tag = ColumnType.tagOf(colType);
         switch (tag) {
             case ColumnType.BOOLEAN: {
@@ -308,6 +484,27 @@ public class QwpRow {
                 // for the oracle MUST always set BOOLEAN columns.
                 boolean expected = tv != null && tv.b;
                 Assert.assertEquals(name + " row=" + rowOrdinal, expected, record.getBool(columnIndex));
+                break;
+            }
+            case ColumnType.BYTE: {
+                // BYTE has no NULL; absent column reads as 0. Producers must always set it.
+                byte expected = tv == null ? 0 : tv.b8;
+                Assert.assertEquals(name + " row=" + rowOrdinal, expected, record.getByte(columnIndex));
+                break;
+            }
+            case ColumnType.SHORT: {
+                // SHORT has no NULL; absent column reads as 0. Producers must always set it.
+                short expected = tv == null ? 0 : tv.s16;
+                Assert.assertEquals(name + " row=" + rowOrdinal, expected, record.getShort(columnIndex));
+                break;
+            }
+            case ColumnType.INT: {
+                int actual = record.getInt(columnIndex);
+                if (tv == null) {
+                    Assert.assertEquals(name + " expected NULL row=" + rowOrdinal, Numbers.INT_NULL, actual);
+                } else {
+                    Assert.assertEquals(name + " row=" + rowOrdinal, tv.i32, actual);
+                }
                 break;
             }
             case ColumnType.LONG: {
@@ -319,12 +516,101 @@ public class QwpRow {
                 }
                 break;
             }
+            case ColumnType.IPv4: {
+                int actual = record.getIPv4(columnIndex);
+                if (tv == null) {
+                    Assert.assertEquals(name + " expected NULL row=" + rowOrdinal, Numbers.IPv4_NULL, actual);
+                } else {
+                    Assert.assertEquals(name + " row=" + rowOrdinal, tv.ipv4, actual);
+                }
+                break;
+            }
+            case ColumnType.GEOBYTE: {
+                // Server auto-creates GEOHASH(<=8b) as GEOBYTE storage; tv.geoHash
+                // already holds the low precisionBits, sign-narrow to byte to match.
+                byte actual = record.getGeoByte(columnIndex);
+                if (tv == null) {
+                    Assert.assertEquals(name + " expected NULL row=" + rowOrdinal, GeoHashes.BYTE_NULL, actual);
+                } else {
+                    Assert.assertEquals(name + " row=" + rowOrdinal, (byte) tv.geoHash, actual);
+                }
+                break;
+            }
+            case ColumnType.GEOSHORT: {
+                short actual = record.getGeoShort(columnIndex);
+                if (tv == null) {
+                    Assert.assertEquals(name + " expected NULL row=" + rowOrdinal, GeoHashes.SHORT_NULL, actual);
+                } else {
+                    Assert.assertEquals(name + " row=" + rowOrdinal, (short) tv.geoHash, actual);
+                }
+                break;
+            }
+            case ColumnType.GEOINT: {
+                int actual = record.getGeoInt(columnIndex);
+                if (tv == null) {
+                    Assert.assertEquals(name + " expected NULL row=" + rowOrdinal, GeoHashes.INT_NULL, actual);
+                } else {
+                    Assert.assertEquals(name + " row=" + rowOrdinal, (int) tv.geoHash, actual);
+                }
+                break;
+            }
+            case ColumnType.GEOLONG: {
+                long actual = record.getGeoLong(columnIndex);
+                if (tv == null) {
+                    Assert.assertEquals(name + " expected NULL row=" + rowOrdinal, GeoHashes.NULL, actual);
+                } else {
+                    Assert.assertEquals(name + " row=" + rowOrdinal, tv.geoHash, actual);
+                }
+                break;
+            }
+            case ColumnType.FLOAT: {
+                float actual = record.getFloat(columnIndex);
+                if (tv == null) {
+                    Assert.assertTrue(name + " expected NULL row=" + rowOrdinal, Float.isNaN(actual));
+                } else {
+                    Assert.assertEquals(name + " row=" + rowOrdinal, tv.f, actual, 0.0f);
+                }
+                break;
+            }
             case ColumnType.DOUBLE: {
                 double actual = record.getDouble(columnIndex);
                 if (tv == null) {
                     Assert.assertFalse(name + " expected NULL row=" + rowOrdinal, Numbers.isFinite(actual));
                 } else {
                     Assert.assertEquals(name + " row=" + rowOrdinal, tv.d, actual, 0.0);
+                }
+                break;
+            }
+            case ColumnType.CHAR: {
+                // CHAR NULL is '\0'; absent column reads as '\0'. Producers must always set it.
+                char expected = tv == null ? Numbers.CHAR_NULL : tv.c;
+                Assert.assertEquals(name + " row=" + rowOrdinal, expected, record.getChar(columnIndex));
+                break;
+            }
+            case ColumnType.UUID: {
+                long actualHi = record.getLong128Hi(columnIndex);
+                long actualLo = record.getLong128Lo(columnIndex);
+                if (tv == null) {
+                    Assert.assertEquals(name + ".hi expected NULL row=" + rowOrdinal, Numbers.LONG_NULL, actualHi);
+                    Assert.assertEquals(name + ".lo expected NULL row=" + rowOrdinal, Numbers.LONG_NULL, actualLo);
+                } else {
+                    Assert.assertEquals(name + ".hi row=" + rowOrdinal, tv.uuidHi, actualHi);
+                    Assert.assertEquals(name + ".lo row=" + rowOrdinal, tv.uuidLo, actualLo);
+                }
+                break;
+            }
+            case ColumnType.LONG256: {
+                Long256 actual = record.getLong256A(columnIndex);
+                if (tv == null) {
+                    Assert.assertEquals(name + ".l0 expected NULL row=" + rowOrdinal, Numbers.LONG_NULL, actual.getLong0());
+                    Assert.assertEquals(name + ".l1 expected NULL row=" + rowOrdinal, Numbers.LONG_NULL, actual.getLong1());
+                    Assert.assertEquals(name + ".l2 expected NULL row=" + rowOrdinal, Numbers.LONG_NULL, actual.getLong2());
+                    Assert.assertEquals(name + ".l3 expected NULL row=" + rowOrdinal, Numbers.LONG_NULL, actual.getLong3());
+                } else {
+                    Assert.assertEquals(name + ".l0 row=" + rowOrdinal, tv.l256_0, actual.getLong0());
+                    Assert.assertEquals(name + ".l1 row=" + rowOrdinal, tv.l256_1, actual.getLong1());
+                    Assert.assertEquals(name + ".l2 row=" + rowOrdinal, tv.l256_2, actual.getLong2());
+                    Assert.assertEquals(name + ".l3 row=" + rowOrdinal, tv.l256_3, actual.getLong3());
                 }
                 break;
             }
@@ -347,6 +633,23 @@ public class QwpRow {
                 } else {
                     Assert.assertNotNull(name + " unexpectedly NULL row=" + rowOrdinal, actual);
                     Assert.assertEquals(name + " row=" + rowOrdinal, tv.s, actual.toString());
+                }
+                break;
+            }
+            case ColumnType.BINARY: {
+                io.questdb.std.BinarySequence actual = record.getBin(columnIndex);
+                if (tv == null) {
+                    Assert.assertNull(name + " expected NULL row=" + rowOrdinal, actual);
+                } else {
+                    Assert.assertNotNull(name + " unexpectedly NULL row=" + rowOrdinal, actual);
+                    Assert.assertEquals(name + " length row=" + rowOrdinal, tv.bin.length, actual.length());
+                    for (int i = 0; i < tv.bin.length; i++) {
+                        Assert.assertEquals(
+                                name + " byte[" + i + "] row=" + rowOrdinal,
+                                tv.bin[i],
+                                actual.byteAt(i)
+                        );
+                    }
                 }
                 break;
             }
@@ -431,13 +734,17 @@ public class QwpRow {
     }
 
     public enum ValueType {
-        BOOLEAN, LONG, DOUBLE, STRING, SYMBOL,
+        BOOLEAN, BYTE, SHORT, INT, LONG, FLOAT, DOUBLE, CHAR, STRING, SYMBOL,
+        UUID, LONG256, TIMESTAMP_NANO, IPV4, GEOHASH, BINARY,
         DOUBLE_ARRAY_1D, DOUBLE_ARRAY_2D, DOUBLE_ARRAY_3D,
         DECIMAL64, DECIMAL128, DECIMAL256
     }
 
     public static final class TypedValue {
         public boolean b;
+        public byte b8;
+        public byte[] bin;
+        public char c;
         public double d;
         public double[] da1;
         public double[][] da2;
@@ -450,8 +757,21 @@ public class QwpRow {
         public long dec256Ll;
         public long dec64Value;
         public int decScale;
+        public float f;
+        public long geoHash;
+        public int geoHashBits;
+        public int i32;
+        public int ipv4;
         public long l;
+        public long l256_0;
+        public long l256_1;
+        public long l256_2;
+        public long l256_3;
         public String s;
+        public short s16;
+        public long tsNanos;
         public ValueType type;
+        public long uuidHi;
+        public long uuidLo;
     }
 }

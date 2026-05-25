@@ -561,6 +561,10 @@ namespace questdb::avx2 {
                 //            __m256i prod    = _mm256_add_epdata_type_t::i64(prodll,prodlh3);    // a0Lb0L+(a0Lb0H+a0Hb0L)<<32, a1Lb1L+(a1Lb1H+a1Hb1L)<<32
                 //            return  prod;
             {
+                // Must not mutate lhs/rhs: the outer mul() passes both into
+                // blend_with_nulls() to detect LONG_NULL inputs and force the
+                // result to LONG_NULL. Clobbering lhs hides nulls and the
+                // result is an arithmetic value instead of LONG_NULL.
                 Vec t = c.new_ymm();
                 c.vpshufd(t, rhs, 0xB1);
                 c.vpmulld(t, t, lhs);
@@ -568,8 +572,9 @@ namespace questdb::avx2 {
                 c.vpxor(z, z, z);
                 c.vphaddd(t, t, z);
                 c.vpshufd(t, t, 0x73);
-                c.vpmuludq(lhs, lhs, rhs);
-                c.vpaddq(dst, t, lhs);
+                Vec ll = c.new_ymm();
+                c.vpmuludq(ll, lhs, rhs);
+                c.vpaddq(dst, t, ll);
             }
                 break;
             case data_type_t::f32:

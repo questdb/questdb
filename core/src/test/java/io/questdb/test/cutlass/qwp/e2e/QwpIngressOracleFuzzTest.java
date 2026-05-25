@@ -41,6 +41,7 @@ import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cutlass.qwp.load.QwpRow;
 import io.questdb.test.cutlass.qwp.load.QwpTable;
 import io.questdb.test.tools.TestUtils;
+import org.junit.Before;
 import org.junit.Test;
 
 import java.io.File;
@@ -53,12 +54,13 @@ import java.util.concurrent.atomic.AtomicReferenceArray;
 /**
  * QWP ingress fuzz tests that compare the actual table contents against an
  * in-memory oracle built up front. Every row that the test intends to publish
- * is materialized as a {@link QwpRow} (with all data types — booleans, longs,
- * doubles, strings, symbols, 1D/2D double and long arrays) and added to the
- * {@link QwpTable} oracle. Producer threads then call {@link QwpRow#publishTo}
- * to send the row through QWP. After ingestion completes, every cell of every
- * row in the table is asserted against the oracle's typed values via
- * {@link QwpTable#assertCursor}.
+ * is materialized as a {@link QwpRow} (covering booleans, all integer widths
+ * (byte/short/int/long), floats, doubles, chars, strings, symbols, UUIDs,
+ * LONG256, nanosecond timestamps, decimals, and 1D/2D/3D double arrays) and
+ * added to the {@link QwpTable} oracle. Producer threads then call
+ * {@link QwpRow#publishTo} to send the row through QWP. After ingestion
+ * completes, every cell of every row in the table is asserted against the
+ * oracle's typed values via {@link QwpTable#assertCursor}.
  *
  * <p>Two scenarios:
  * <ul>
@@ -107,8 +109,29 @@ public class QwpIngressOracleFuzzTest extends AbstractCairoTest {
             "한",    // U+D55C (3-byte)
             "🎉",   // U+1F389 (4-byte, surrogate pair in Java)
     };
+    // Server defaults from DefaultIODispatcherConfiguration. RestartableQwpServer
+    // does not override these, so the actual buffers are this size.
+    private static final int RECV_BUFFER_SIZE = 131_072;
+    private static final int SEND_BUFFER_SIZE = 131_072;
     private static final String TABLE_NAME = "qwp_oracle_fuzz";
     private static final String TS_COLUMN = "ts";
+    private int recvChunk;
+    private int sendChunk;
+
+    @Before
+    public void setUp() {
+        super.setUp();
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        // Independent recv / send fragmentation chunks (asymmetric, min=1).
+        // chunk=1 makes every wire byte its own socket event, exposing
+        // park-resume bugs in the WS parser and the SF replay path.
+        // Upper bound is the corresponding buffer size: a chunk larger than
+        // the buffer is effectively no fragmentation.
+        recvChunk = 1 + rnd.nextInt(RECV_BUFFER_SIZE);
+        sendChunk = 1 + rnd.nextInt(SEND_BUFFER_SIZE);
+        LOG.info().$("QwpIngressOracleFuzzTest fragmentation recvChunk=").$(recvChunk)
+                .$(", sendChunk=").$(sendChunk).$();
+    }
 
     @Test
     public void testOracleAsyncConnectQueuesBeforeServerStarts() throws Exception {
@@ -158,7 +181,7 @@ public class QwpIngressOracleFuzzTest extends AbstractCairoTest {
 
             // Server stays unbuilt for now. We bind the port only once
             // the producers have queued their rows.
-            try (RestartableQwpServer server = new RestartableQwpServer(engine, configuration, port)) {
+            try (RestartableQwpServer server = new RestartableQwpServer(engine, configuration, port, recvChunk, sendChunk)) {
                 AtomicReferenceArray<Throwable> producerErrors = new AtomicReferenceArray<>(producerCount);
                 CountDownLatch producersDone = new CountDownLatch(producerCount);
                 CountDownLatch allEnqueued = new CountDownLatch(producerCount);
@@ -312,7 +335,7 @@ public class QwpIngressOracleFuzzTest extends AbstractCairoTest {
                 sfDirs[p] = freshSfDir("oracle-multi-p" + p);
             }
 
-            try (RestartableQwpServer server = new RestartableQwpServer(engine, configuration, port)) {
+            try (RestartableQwpServer server = new RestartableQwpServer(engine, configuration, port, recvChunk, sendChunk)) {
                 server.start();
 
                 AtomicReferenceArray<Throwable> producerErrors = new AtomicReferenceArray<>(producerCount);
@@ -475,7 +498,7 @@ public class QwpIngressOracleFuzzTest extends AbstractCairoTest {
                 sfDirs[p] = freshSfDir("oracle-poison-p" + p);
             }
 
-            try (RestartableQwpServer server = new RestartableQwpServer(engine, configuration, port)) {
+            try (RestartableQwpServer server = new RestartableQwpServer(engine, configuration, port, recvChunk, sendChunk)) {
                 server.start();
 
                 AtomicReferenceArray<Throwable> producerErrors = new AtomicReferenceArray<>(producerCount);
@@ -606,7 +629,7 @@ public class QwpIngressOracleFuzzTest extends AbstractCairoTest {
                 sfDirs[p] = freshSfDir("oracle-restart-p" + p);
             }
 
-            try (RestartableQwpServer server = new RestartableQwpServer(engine, configuration, port)) {
+            try (RestartableQwpServer server = new RestartableQwpServer(engine, configuration, port, recvChunk, sendChunk)) {
                 server.start();
 
                 AtomicReferenceArray<Throwable> producerErrors = new AtomicReferenceArray<>(producerCount);
@@ -650,13 +673,16 @@ public class QwpIngressOracleFuzzTest extends AbstractCairoTest {
                                 }
                                 written = end;
                             }
-                            // Final drain pass: open one more sender with
-                            // default close_flush_timeout so any residual
+                            // Final drain pass: open one more sender with a
+                            // generous close_flush_timeout so any residual
                             // unacked frames replay and then ACK before we
-                            // assert the oracle.
+                            // assert the oracle. The default 5 s is not
+                            // enough on slow CI (e.g. Windows) when several
+                            // bounces leave a queue of frames to replay.
                             String drainConnect = "ws::addr=localhost:" + port + ";sf_dir=" + mySfDir
                                     + ";initial_connect_retry=async"
                                     + ";reconnect_max_duration_millis=120000"
+                                    + ";close_flush_timeout_millis=60000"
                                     + ";sf_max_bytes=" + sfMaxBytes + ";";
                             try (Sender sender = Sender.fromConfig(drainConnect)) {
                                 sender.flush();
@@ -717,6 +743,180 @@ public class QwpIngressOracleFuzzTest extends AbstractCairoTest {
     }
 
     /**
+     * Regression for the QWP ingress handshake send-fragmentation bug fixed in
+     * {@code QwpWebSocketUpgradeProcessor.onHeadersReady} / {@code onRequestComplete}.
+     * <p>
+     * Before the fix, {@code onHeadersReady} called {@code rawSocket.send(bytesWritten)}
+     * directly and converted a partial-send {@code PeerIsSlowToReadException} into a
+     * fatal {@code HttpException("WebSocket 101 handshake blocked")}. The
+     * {@code HttpRequestProcessor} contract forbids PISR from {@code onHeadersReady},
+     * so when the send buffer was capped at a small size (here {@code sendChunk=125})
+     * the ~220-byte 101 response had to be split and the second-fragment send killed
+     * the connection. The client then waited forever for a handshake that never
+     * completed -- its drain at {@code close()} timed out with
+     * {@code publishedFsn=N, ackedFsn=-1}.
+     * <p>
+     * The fix defers the {@code rawSocket.send} from {@code onHeadersReady} to
+     * {@code onRequestComplete} (which is allowed to throw PISR), and finalises the
+     * protocol switch in {@code resumeSend} after the framework's park-on-write
+     * resumes the residual flush.
+     * <p>
+     * Both the master {@link Rnd} seed AND the fragmentation chunks are pinned so
+     * this regression case is bit-for-bit reproducible -- changing the chunks back
+     * to wide (or symmetric) values would mask the bug. The asymmetry
+     * ({@code recvChunk=460}, {@code sendChunk=125}) is the load-bearing detail:
+     * symmetric fragmentation at the same chunk doesn't always hit the second-send
+     * branch.
+     */
+    @Test
+    public void testOracleSenderRestartReplaysAcrossBouncesAsymmetricFragmentationRegression() throws Exception {
+        // Frozen chunks: shadows the per-instance recvChunk/sendChunk from
+        // setUp() so the random pick can't mask the regression.
+        final int regressionRecvChunk = 460;
+        final int regressionSendChunk = 125;
+        assertMemoryLeak(() -> {
+            Rnd master = TestUtils.generateRandom(LOG, 1951343273690333L, 1779330804963L);
+            createTargetTable();
+            int port = RestartableQwpServer.pickFreePort();
+
+            int producerCount = 2 + master.nextInt(2);              // 2..3
+            int rowsPerProducer = 600 + master.nextInt(900);        // 600..1499
+            int bounces = 1 + master.nextInt(2);                    // 1..2
+            long sfMaxBytes = pickSfMaxBytes(master);
+            LOG.info().$("restart-replay regression sf_max_bytes=").$(sfMaxBytes)
+                    .$(", recvChunk=").$(regressionRecvChunk)
+                    .$(", sendChunk=").$(regressionSendChunk).$();
+
+            long baseTsMicros = 1_700_000_000_000_000L;
+            QwpTable oracle = new QwpTable(TABLE_NAME);
+            QwpRow[][] perProducerRows = new QwpRow[producerCount][rowsPerProducer];
+            Rnd[] lifetimeRnds = new Rnd[producerCount];
+            for (int p = 0; p < producerCount; p++) {
+                lifetimeRnds[p] = new Rnd(master.nextLong(), master.nextLong());
+            }
+            Rnd bouncerRnd = new Rnd(master.nextLong(), master.nextLong());
+            long globalIdx = 0;
+            for (int p = 0; p < producerCount; p++) {
+                Rnd genRnd = new Rnd(master.nextLong(), master.nextLong());
+                for (int r = 0; r < rowsPerProducer; r++) {
+                    long id = globalIdx;
+                    long ts = baseTsMicros + globalIdx;
+                    QwpRow row = generateRow(genRnd, id, ts);
+                    perProducerRows[p][r] = row;
+                    oracle.addRow(row);
+                    globalIdx++;
+                }
+            }
+
+            String[] sfDirs = new String[producerCount];
+            for (int p = 0; p < producerCount; p++) {
+                sfDirs[p] = freshSfDir("oracle-restart-regression-p" + p);
+            }
+
+            try (RestartableQwpServer server = new RestartableQwpServer(
+                    engine, configuration, port, regressionRecvChunk, regressionSendChunk)) {
+                server.start();
+
+                AtomicReferenceArray<Throwable> producerErrors = new AtomicReferenceArray<>(producerCount);
+                CountDownLatch producersDone = new CountDownLatch(producerCount);
+                AtomicReference<Throwable> bouncerError = new AtomicReference<>();
+                CountDownLatch bouncerDone = new CountDownLatch(1);
+
+                Thread[] producers = new Thread[producerCount];
+                for (int p = 0; p < producerCount; p++) {
+                    final int pp = p;
+                    final QwpRow[] myRows = perProducerRows[pp];
+                    final String mySfDir = sfDirs[pp];
+                    final Rnd rnd = lifetimeRnds[pp];
+                    producers[p] = new Thread(() -> {
+                        try {
+                            int written = 0;
+                            while (written < myRows.length) {
+                                int chunk = 30 + rnd.nextInt(200);
+                                int end = Math.min(written + chunk, myRows.length);
+                                String connect = "ws::addr=localhost:" + port + ";sf_dir=" + mySfDir
+                                        + ";initial_connect_retry=async"
+                                        + ";reconnect_max_duration_millis=120000"
+                                        + ";sf_max_bytes=" + sfMaxBytes
+                                        + ";close_flush_timeout_millis=0;";
+                                try (Sender sender = Sender.fromConfig(connect)) {
+                                    for (int i = written; i < end; i++) {
+                                        myRows[i].publishTo(sender, TABLE_NAME, ID_COLUMN);
+                                    }
+                                    if (rnd.nextBoolean()) {
+                                        sender.flush();
+                                    }
+                                }
+                                written = end;
+                            }
+                            // Final drain pass with default close_flush_timeout: this is
+                            // the close() that historically threw the
+                            // "drain timed out [publishedFsn=N, ackedFsn=-1]" exception
+                            // because the server-side handshake never completed under
+                            // sendChunk=125.
+                            String drainConnect = "ws::addr=localhost:" + port + ";sf_dir=" + mySfDir
+                                    + ";initial_connect_retry=async"
+                                    + ";reconnect_max_duration_millis=120000"
+                                    + ";sf_max_bytes=" + sfMaxBytes + ";";
+                            try (Sender sender = Sender.fromConfig(drainConnect)) {
+                                sender.flush();
+                            }
+                        } catch (Throwable t) {
+                            producerErrors.set(pp, t);
+                        } finally {
+                            producersDone.countDown();
+                            Path.clearThreadLocals();
+                        }
+                    }, "qwp-oracle-restart-regression-p" + pp);
+                }
+
+                Thread bouncer = new Thread(() -> {
+                    try {
+                        Os.sleep(200);
+                        for (int i = 0; i < bounces; i++) {
+                            LOG.info().$("restart-regression bounce ").$(i + 1).$('/').$(bounces).$();
+                            server.stop();
+                            Os.sleep(80 + bouncerRnd.nextInt(120));
+                            server.start();
+                            Os.sleep(300 + bouncerRnd.nextInt(400));
+                        }
+                    } catch (Throwable t) {
+                        bouncerError.set(t);
+                    } finally {
+                        bouncerDone.countDown();
+                    }
+                }, "qwp-oracle-restart-regression-bouncer");
+
+                for (Thread t : producers) t.start();
+                bouncer.start();
+
+                if (!bouncerDone.await(120, TimeUnit.SECONDS)) {
+                    throw new AssertionError("bouncer timed out");
+                }
+                if (bouncerError.get() != null) {
+                    throw new AssertionError("bouncer failed", bouncerError.get());
+                }
+
+                if (!producersDone.await(300, TimeUnit.SECONDS)) {
+                    throw new AssertionError("producers timed out");
+                }
+                for (int p = 0; p < producerCount; p++) {
+                    Throwable t = producerErrors.get(p);
+                    if (t != null) {
+                        throw new AssertionError("producer " + p + " failed", t);
+                    }
+                }
+
+                drainWalQueue();
+                engine.awaitTable(TABLE_NAME, 60, TimeUnit.SECONDS);
+
+                assertOracle(oracle);
+                assertSlotsPurged(sfDirs, slotCapFor(sfMaxBytes));
+            }
+        });
+    }
+
+    /**
      * Assert each sender's SF slot directory has been purged of sealed
      * segments. After a clean close (with a non-zero
      * {@code close_flush_timeout_millis}) every published frame is ACKed
@@ -746,6 +946,50 @@ public class QwpIngressOracleFuzzTest extends AbstractCairoTest {
         }
     }
 
+    /**
+     * Map an id (or any long seed) to a GEOHASH bit pattern in the low
+     * {@code precisionBits} bits. Top bits are masked off so the value fits
+     * the declared precision; the server-side GEOHASH NULL sentinel (-1
+     * truncated to storage width) is unreachable for {@code precisionBits < 60}
+     * because the high bit of the storage word is never set.
+     */
+    private static String base32GeoHashFromId(long id, int chars) {
+        // QuestDB's base32 alphabet (matches io.questdb.cairo.GeoHashes#base32):
+        // skips 'a', 'i', 'l', 'o' versus straight 0-9a-z.
+        final char[] alphabet = {
+                '0', '1', '2', '3', '4', '5', '6', '7',
+                '8', '9', 'b', 'c', 'd', 'e', 'f', 'g',
+                'h', 'j', 'k', 'm', 'n', 'p', 'q', 'r',
+                's', 't', 'u', 'v', 'w', 'x', 'y', 'z'
+        };
+        long mixed = id * 0x9E37_79B9_7F4A_7C15L + 0x0123_4567_89AB_CDEFL;
+        char[] out = new char[chars];
+        for (int i = chars - 1; i >= 0; i--) {
+            out[i] = alphabet[(int) (mixed & 0x1F)];
+            mixed >>>= 5;
+        }
+        return new String(out);
+    }
+
+    /**
+     * Map an id (or any long seed) to a deterministic byte array. The bytes are
+     * derived from a splitmix-style mixer of {@code seed} so identical seeds
+     * yield identical payloads, which is what the oracle's deferred assertion
+     * compares against on read.
+     */
+    private static byte[] deriveBinary(long seed, int len) {
+        byte[] out = new byte[len];
+        long state = seed * 0xBF58_476D_1CE4_E5B9L + 0x94D0_49BB_1331_11EBL;
+        for (int i = 0; i < len; i++) {
+            // splitmix64 step: keeps successive bytes well-mixed without ever
+            // hitting the cold-pattern degenerate case len==0 .. len==1 hit.
+            state = (state ^ (state >>> 30)) * 0xBF58_476D_1CE4_E5B9L;
+            state = (state ^ (state >>> 27)) * 0x94D0_49BB_1331_11EBL;
+            out[i] = (byte) (state ^ (state >>> 31));
+        }
+        return out;
+    }
+
     private static double[] deriveDoubleArr1d(long id, double sign) {
         return new double[]{id * sign, id * 2.0 * sign, id * 3.0 * sign};
     }
@@ -771,6 +1015,21 @@ public class QwpIngressOracleFuzzTest extends AbstractCairoTest {
         };
     }
 
+    private static long deriveGeoHash(long seed, int precisionBits) {
+        long mixed = seed * 0x9E37_79B9_7F4A_7C15L + 0x0123_4567_89AB_CDEFL;
+        return precisionBits >= 64 ? mixed : mixed & ((1L << precisionBits) - 1L);
+    }
+
+    /**
+     * Map an id (or any long seed) to a packed IPv4 address that is guaranteed
+     * non-zero. QuestDB reserves the bit pattern 0 as the IPv4 NULL sentinel,
+     * so we OR a high bit into the derived address; this keeps the oracle's
+     * non-null assertions unambiguous while still spanning the full 32-bit space.
+     */
+    private static int deriveIPv4(long seed) {
+        return (int) (seed * 2_654_435_761L) | 0x01_00_00_01;
+    }
+
     private static long directorySizeBytes(File dir) {
         if (!dir.exists()) {
             return 0;
@@ -788,17 +1047,58 @@ public class QwpIngressOracleFuzzTest extends AbstractCairoTest {
 
     private static QwpRow generateRow(Rnd rnd, long id, long tsMicros) {
         QwpRow row = new QwpRow(id, tsMicros);
-        // BOOLEAN is mandatory: it has no NULL representation, so an absent
-        // BOOLEAN cell would be indistinguishable from a stored 'false'.
+        // BOOLEAN, BYTE, SHORT and CHAR are mandatory: none of them have a NULL
+        // representation, so an absent cell would be indistinguishable from a
+        // stored 0/false/'\0'.
         row.setBool("b", (id & 1L) == 0L);
+        row.setByte("b8", (byte) ((id & 0x7FL) - (rnd.nextBoolean() ? 0 : 0x40)));
+        row.setShort("s16", (short) maybeNegate(rnd, (id * 31L) & 0x7FFFL));
+        row.setChar("c", (char) ('A' + (int) (id & 0x1FL)));
         // Sign flips are independent per column to maximize coverage of
         // sign-bit handling in the SF wire encoder. id stays positive
         // because it's the dedup key and sorting alongside ts gives a
         // single deterministic interpretation.
+        if (!shouldFuzz(rnd, COLUMN_SKIP_FACTOR)) row.setInt("i", (int) maybeNegate(rnd, (id * 65537L) & 0x7FFF_FFFFL));
         if (!shouldFuzz(rnd, COLUMN_SKIP_FACTOR)) row.setLong("l", maybeNegate(rnd, id * 1_000_003L));
+        if (!shouldFuzz(rnd, COLUMN_SKIP_FACTOR)) row.setFloat("f", (float) maybeNegate(rnd, id * 0.125));
         if (!shouldFuzz(rnd, COLUMN_SKIP_FACTOR)) row.setDouble("d", maybeNegate(rnd, id * 1.5));
         if (!shouldFuzz(rnd, COLUMN_SKIP_FACTOR)) row.setString("s", "s_" + id + maybeNonAscii(rnd));
         if (!shouldFuzz(rnd, COLUMN_SKIP_FACTOR)) row.setSymbol("sym", "sym_" + (id & 0xFL) + maybeNonAscii(rnd));
+        if (!shouldFuzz(rnd, COLUMN_SKIP_FACTOR)) {
+            // UUID limbs use distinct mixing so hi != lo, exercising both halves
+            // of the 128-bit wire payload independently.
+            row.setUuid("u", id * 0xCAFEBABEL + 17L, id * 0xDEADBEEFL - 13L);
+        }
+        if (!shouldFuzz(rnd, COLUMN_SKIP_FACTOR)) {
+            row.setLong256("l256",
+                    id * 0x11111111L + 1L,
+                    id * 0x22222222L + 2L,
+                    id * 0x33333333L + 3L,
+                    id * 0x44444444L + 4L);
+        }
+        if (!shouldFuzz(rnd, COLUMN_SKIP_FACTOR)) {
+            // TIMESTAMP_NANO: pick a value distinct from the designated ts to make
+            // sure assertions hit the nanos path, not the row's micros payload.
+            row.setTimestampNano("tn", tsMicros * 1_000L + (id & 0x3FFL));
+        }
+        // IPv4: derive a 4-byte address from id; bit pattern 0 is the QuestDB IPv4
+        // NULL sentinel, so we OR in a constant high bit to guarantee a non-null
+        // value across the full id range. Skippable like the other base columns to
+        // exercise the explicit-NULL bitmap path through SF replay.
+        if (!shouldFuzz(rnd, COLUMN_SKIP_FACTOR)) row.setIPv4("ip", deriveIPv4(id));
+        // GEOHASH at four precisions, one per storage class (GEOBYTE/SHORT/INT/LONG)
+        // plus a non-multiple-of-5 precision (g7) so the server's bit-precise
+        // encoding path is exercised alongside the base32-aligned ones.
+        if (!shouldFuzz(rnd, COLUMN_SKIP_FACTOR)) row.setGeoHash("g5", deriveGeoHash(id, 5), 5);
+        if (!shouldFuzz(rnd, COLUMN_SKIP_FACTOR)) row.setGeoHash("g7", deriveGeoHash(id, 7), 7);
+        if (!shouldFuzz(rnd, COLUMN_SKIP_FACTOR)) row.setGeoHash("g15", deriveGeoHash(id, 15), 15);
+        if (!shouldFuzz(rnd, COLUMN_SKIP_FACTOR)) row.setGeoHash("g20", deriveGeoHash(id, 20), 20);
+        if (!shouldFuzz(rnd, COLUMN_SKIP_FACTOR)) row.setGeoHash("g35", deriveGeoHash(id, 35), 35);
+        // BINARY: derive a small byte slice from id; capped at 32 bytes to keep
+        // batch sizes manageable and to ensure variable-length offset arithmetic
+        // is exercised. Skippable like the other base columns, so the explicit-
+        // NULL bitmap path goes through SF replay too.
+        if (!shouldFuzz(rnd, COLUMN_SKIP_FACTOR)) row.setBinary("bin", deriveBinary(id, 1 + (int) (id & 0x1FL)));
         if (!shouldFuzz(rnd, COLUMN_SKIP_FACTOR))
             row.setDoubleArray1d("da", deriveDoubleArr1d(id, rnd.nextBoolean() ? -1.0 : 1.0));
         if (!shouldFuzz(rnd, COLUMN_SKIP_FACTOR))
@@ -851,7 +1151,7 @@ public class QwpIngressOracleFuzzTest extends AbstractCairoTest {
         // write the extra expect type-default NULL at assertion time.
         // Numeric extras get the same independent sign-flip treatment as
         // base columns.
-        switch (rnd.nextInt(14)) {
+        switch (rnd.nextInt(25)) {
             case 0:
                 row.setLong("ex_l_0", maybeNegate(rnd, id * 7L));
                 break;
@@ -922,6 +1222,63 @@ public class QwpIngressOracleFuzzTest extends AbstractCairoTest {
                         rnd.nextBoolean());
                 break;
             }
+            case 14:
+                row.setInt("ex_i_0", (int) maybeNegate(rnd, (id * 65537L) & 0x7FFF_FFFFL));
+                break;
+            case 15:
+                row.setFloat("ex_f_0", (float) maybeNegate(rnd, id * 0.0625));
+                break;
+            case 16:
+                row.setUuid("ex_u_0",
+                        id * 0xABCD_1234L + 5L,
+                        id * 0x5678_FEDCL + 11L);
+                break;
+            case 17:
+                row.setLong256("ex_l256_0",
+                        id * 0x0F0F_0F0FL + 1L,
+                        id * 0x1E1E_1E1EL + 2L,
+                        id * 0x2D2D_2D2DL + 3L,
+                        id * 0x3C3C_3C3CL + 4L);
+                break;
+            case 18:
+                row.setTimestampNano("ex_tn_0", row.getTimestampMicros() * 1_000L + (id & 0x1FFL));
+                break;
+            case 19:
+                // Auto-created IPv4 extra. Two distinct columns spread the per-id values
+                // out so neither column degenerates into a single repeated address.
+                row.setIPv4("ex_ip_" + (id & 1L), deriveIPv4(id + 0x9E37_79B9L));
+                break;
+            case 20:
+                // Auto-created GEOHASH(5b) extra -> GEOBYTE storage.
+                row.setGeoHash("ex_g5", deriveGeoHash(id + 0x1111_1111L, 5), 5);
+                break;
+            case 21:
+                // Auto-created GEOHASH(15b) extra -> GEOSHORT storage.
+                row.setGeoHash("ex_g15", deriveGeoHash(id + 0x2222_2222L, 15), 15);
+                break;
+            case 22: {
+                // Auto-created GEOHASH extra via the base32-string overload, so
+                // the client-side base32 decoder gets coverage on the
+                // auto-create path too. Length is randomized in [1, 11] so all
+                // four storage classes (GEOBYTE/SHORT/INT/LONG) get exercised
+                // across runs. Each length gets its own column name --
+                // GEOHASH precision is schema-locked on first write, so a
+                // shared name would conflict across rows of different lengths.
+                int chars = rnd.nextInt(11) + 1;
+                row.setGeoHash("ex_g_b32_" + chars + "c", base32GeoHashFromId(id, chars));
+                break;
+            }
+            case 23:
+                // Auto-created GEOHASH(35b) extra -> GEOLONG storage.
+                row.setGeoHash("ex_g35", deriveGeoHash(id + 0x4444_4444L, 35), 35);
+                break;
+            case 24:
+                // Auto-created BINARY extra. Two distinct columns (ex_bin_0 /
+                // ex_bin_1) spread the per-id values out so neither column
+                // degenerates into a single repeated payload.
+                row.setBinary("ex_bin_" + (id & 1L),
+                        deriveBinary(id + 0x5555_5555L, 1 + (int) (id & 0x0FL)));
+                break;
         }
     }
 
@@ -947,7 +1304,14 @@ public class QwpIngressOracleFuzzTest extends AbstractCairoTest {
      * {@link #slotCapFor} so the post-close assertion scales accordingly.
      */
     private static long pickSfMaxBytes(Rnd rnd) {
-        long[] pool = {64L * 1024, 256L * 1024, 1024L * 1024, 4L * 1024 * 1024};
+        // Smallest segment must comfortably fit one max-chunk frame. With all
+        // the row's typed columns set (LONG256, UUID, three array dims,
+        // three decimal widths, etc.) a wide row's wire payload runs around
+        // 500 bytes, and testOracleSenderRestartReplaysAcrossBounces flushes
+        // up to ~230 rows in one shot. 64 KiB used to be enough back when
+        // rows were ~6 columns; with the current schema it overflows with
+        // MmapSegmentException("payload too large for segment").
+        long[] pool = {256L * 1024, 1024L * 1024, 4L * 1024 * 1024};
         return pool[rnd.nextInt(pool.length)];
     }
 
@@ -1024,10 +1388,25 @@ public class QwpIngressOracleFuzzTest extends AbstractCairoTest {
                     "CREATE TABLE " + TABLE_NAME + " ("
                             + "id LONG, "
                             + "b BOOLEAN, "
+                            + "b8 BYTE, "
+                            + "s16 SHORT, "
+                            + "c CHAR, "
+                            + "i INT, "
                             + "l LONG, "
+                            + "f FLOAT, "
                             + "d DOUBLE, "
                             + "s STRING, "
                             + "sym SYMBOL, "
+                            + "u UUID, "
+                            + "l256 LONG256, "
+                            + "tn TIMESTAMP_NS, "
+                            + "ip IPv4, "
+                            + "g5 GEOHASH(5b), "
+                            + "g7 GEOHASH(7b), "
+                            + "g15 GEOHASH(15b), "
+                            + "g20 GEOHASH(20b), "
+                            + "g35 GEOHASH(35b), "
+                            + "bin BINARY, "
                             + "da DOUBLE[], "
                             + "da2 DOUBLE[][], "
                             + "da3 DOUBLE[][][], "

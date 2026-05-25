@@ -30,6 +30,43 @@ import org.junit.Test;
 public class EqStrCharFunctionTest extends AbstractCairoTest {
 
     @Test
+    public void testCharNulConstantMatchesCharNulRow() throws Exception {
+        // Regression: query fuzzer caught literal vs bind divergence on
+        //   (0.645116::FLOAT)::CHAR != ((0.713754::FLOAT)::INT)::CHAR
+        // Both sides evaluate to CHAR(0). The literal form folds the whole
+        // comparison to FALSE; the bind form folded to TRUE. The dispatcher
+        // ranked the swapped =(SA) overload as an exact match (the constant
+        // CHAR side matches STRING via supportImplicitCastCharToStr) and
+        // EqStrCharFunctionFactory's constant-CHAR-as-STRING branch read
+        // CHAR(0) as a NULL string and short-circuited to a "false" constant,
+        // ignoring that the runtime path treats NULL string as equal to
+        // CHAR(0). Mirror the runtime semantics by probing the non-constant
+        // CHAR side against (char) 0 instead.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (k INT)");
+            execute("INSERT INTO t VALUES (1), (2)");
+            assertSql(
+                    "k\n",
+                    "SELECT k FROM t WHERE (0.645116::FLOAT)::CHAR != ((0.713754::FLOAT)::INT)::CHAR"
+            );
+            bindVariableService.clear();
+            bindVariableService.setStr("b0", "0.645116");
+            assertSql(
+                    "k\n",
+                    "SELECT k FROM t WHERE (:b0::FLOAT)::CHAR != ((0.713754::FLOAT)::INT)::CHAR"
+            );
+            assertSql(
+                    "k\n1\n2\n",
+                    "SELECT k FROM t WHERE (0.645116::FLOAT)::CHAR = ((0.713754::FLOAT)::INT)::CHAR"
+            );
+            assertSql(
+                    "k\n1\n2\n",
+                    "SELECT k FROM t WHERE (:b0::FLOAT)::CHAR = ((0.713754::FLOAT)::INT)::CHAR"
+            );
+        });
+    }
+
+    @Test
     public void testSymEqChar() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table tanc2(ts timestamp, timestamp long, instrument symbol, price long, qty long, side symbol)");

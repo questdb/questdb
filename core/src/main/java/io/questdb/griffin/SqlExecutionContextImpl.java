@@ -107,6 +107,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     private long requestFd = -1;
     private boolean useSimpleCircuitBreaker;
     private boolean validationOnly = false;
+    private SecurityContext validationSecurityContext;
 
     public SqlExecutionContextImpl(CairoEngine cairoEngine, int sharedQueryWorkerCount) {
         assert sharedQueryWorkerCount >= 0;
@@ -309,7 +310,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
 
     @Override
     public @NotNull SecurityContext getSecurityContext() {
-        return securityContext;
+        return validationOnly ? validationSecurityContext : securityContext;
     }
 
     @Override
@@ -434,6 +435,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         this.cacheHit = false;
         this.allowNonDeterministicFunction = true;
         this.validationOnly = false;
+        this.validationSecurityContext = null;
         this.timestampRequiredStack.clear();
         this.hasIntervalStack.clear();
         this.intervalModelObjStack.clear();
@@ -537,6 +539,18 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
 
     public void setValidationOnly(boolean validationOnly) {
         this.validationOnly = validationOnly;
+        if (validationOnly) {
+            // During validation the compiler must check syntax only, not authorization.
+            // Route all authorization through a no-op view of the security context.
+            validationSecurityContext = securityContext.asValidationContext();
+        }
+    }
+
+    @Override
+    public boolean shouldLogSql() {
+        // Validation only compiles the SQL to check it; suppress query progress logging
+        // so the validation endpoint does not pollute the log with every validated statement.
+        return !validationOnly;
     }
 
     @Override

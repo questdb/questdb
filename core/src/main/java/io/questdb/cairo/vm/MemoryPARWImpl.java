@@ -499,7 +499,12 @@ public class MemoryPARWImpl implements MemoryARW {
 
     @Override
     public final long putBin(long from, long len) {
-        putLong(len > 0 ? len : TableUtils.NULL_LEN);
+        // len == 0 is a real, empty BINARY value distinct from null (callers
+        // signal null with a negative len, or with putNullBin directly).
+        // Mirrors the MemoryCARW default to keep the two implementations in
+        // sync and to preserve empty BINARY round-trips through the QWP-WS
+        // WAL ingest path.
+        putLong(len >= 0 ? len : TableUtils.NULL_LEN);
         if (len < 1) {
             return getAppendOffset();
         }

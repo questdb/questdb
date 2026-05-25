@@ -108,10 +108,12 @@ mismatches with a parse error and closes the WebSocket.
 - `raw` (or `identity`) - no compression.
 - `zstd` - whole-`RESULT_BATCH`-body zstd compression. Optional parameter
   `level=N` is a client-side hint; the server clamps to `[1, 9]` because
-  levels 10+ drop to `<20 MB/s` compress throughput. The default level is 3.
+  levels 10+ drop to `<20 MB/s` compress throughput. The default level is 1
+  -- the cheapest server-side CPU; raise it only when you measure a real
+  ratio improvement on your payload and have the headroom.
 
 The server echoes its choice in `X-QWP-Content-Encoding` (e.g.
-`zstd;level=3`). When `zstd` is negotiated, individual `RESULT_BATCH` frames
+`zstd;level=1`). When `zstd` is negotiated, individual `RESULT_BATCH` frames
 set `FLAG_ZSTD` (§7) on a per-batch basis; a batch whose compressed form is
 larger than its raw form ships raw. The region before the payload (msg_kind +
 request_id + batch_seq) is never compressed so the client dispatcher can
