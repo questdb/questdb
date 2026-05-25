@@ -272,13 +272,13 @@ pub fn convert_from_parquet(
             {
                 let bitset = parquet2::bloom_filter::read_from_slice_at_offset(offset, file_data)
                     .map_err(|err| {
-                        parquet_meta_err!(
-                            ParquetMetaErrorKind::Conversion,
-                            "could not read parquet bloom filter at offset {}: {}",
-                            offset,
-                            err
-                        )
-                    })?;
+                    parquet_meta_err!(
+                        ParquetMetaErrorKind::Conversion,
+                        "could not read parquet bloom filter at offset {}: {}",
+                        offset,
+                        err
+                    )
+                })?;
                 if !bitset.is_empty() {
                     rg_builder.add_bloom_filter(col_idx, bitset)?;
                 }
@@ -2552,6 +2552,7 @@ mod tests {
             panic!("backfill must not be called when inline stats exist");
         };
         let (_parquet_meta_bytes, _parquet_meta_file_size) =
-            convert_from_parquet(&metadata, qdb_meta.as_ref(), 0, 0, Some(&backfill), None).unwrap();
+            convert_from_parquet(&metadata, qdb_meta.as_ref(), 0, 0, Some(&backfill), None)
+                .unwrap();
     }
 }
