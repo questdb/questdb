@@ -810,20 +810,28 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
         byte responseStatus = STATUS_OK;
         String errorMessage = null;
 
+        boolean deferCommit = false;
         try {
             // Add the binary data to the state buffer
             state.addData(payload, payload + length);
 
+            deferCommit = state.isDeferCommit();
+
             // Process the QWP v1 message
             state.processMessage();
 
-            if (state.isOk()) {
+            if (state.isOk() && !deferCommit) {
                 state.commit();
             }
             // commit() swallows exceptions internally
             if (state.isOk()) {
-                LOG.debug().$("WebSocket message committed [fd=").$(context.getFd())
-                        .$(", seq=").$(seq).I$();
+                if (deferCommit) {
+                    LOG.debug().$("WebSocket deferred commit [fd=").$(context.getFd())
+                            .$(", seq=").$(seq).I$();
+                } else {
+                    LOG.debug().$("WebSocket message committed [fd=").$(context.getFd())
+                            .$(", seq=").$(seq).I$();
+                }
             } else {
                 errorMessage = state.getErrorText();
                 LOG.error().$("WebSocket message processing failed [fd=").$(context.getFd())
@@ -844,8 +852,13 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
             responseStatus = STATUS_INTERNAL_ERROR;
             errorMessage = e.getMessage();
         } finally {
-            // Reset state for next message (but preserve connectionSymbolDict for delta encoding)
-            state.clear();
+            if (deferCommit && state.isOk()) {
+                // Preserve WAL state for the next message in the deferred batch
+                state.clearMessageState();
+            } else {
+                // Reset state for next message (but preserve connectionSymbolDict for delta encoding)
+                state.clear();
+            }
         }
 
         // Send response using cumulative ACK strategy
