@@ -507,8 +507,10 @@ public final class QueryRunner {
      * Markers come from the {@code sink.type(...)} calls in QuestDB's
      * cursor factories: "Index forward scan" / "Index backward scan",
      * "Async index backward scan", "AsOf Join Indexed Scan",
-     * "SortedSymbolIndex", "LatestByAllIndexed". These are the operators
-     * that probe a bitmap index instead of scanning every page frame
+     * "SortedSymbolIndex", "LatestByAllIndexed" for the bitmap index, plus
+     * "PostingIndex" (distinct-key enumeration) and "CoveringIndex"
+     * (covering reads) for the posting index. These are the operators
+     * that probe an index instead of scanning every page frame
      * row, so a per-row cast or numeric error on an out-of-range value
      * may legitimately not surface here even though the equivalent
      * full-scan path on a sibling table throws.
@@ -518,7 +520,9 @@ public final class QueryRunner {
         return Chars.indexOf(plan, 0, n, "Index ") >= 0
                 || Chars.indexOf(plan, 0, n, "Indexed") >= 0
                 || Chars.indexOf(plan, 0, n, "SortedSymbolIndex") >= 0
-                || Chars.indexOf(plan, 0, n, "Async index") >= 0;
+                || Chars.indexOf(plan, 0, n, "Async index") >= 0
+                || Chars.indexOf(plan, 0, n, "PostingIndex") >= 0
+                || Chars.indexOf(plan, 0, n, "CoveringIndex") >= 0;
     }
 
     private static String renderOutcome(Outcome outcome, CharSequence rows) {
