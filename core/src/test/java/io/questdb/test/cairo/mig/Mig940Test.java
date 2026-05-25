@@ -443,7 +443,7 @@ public class Mig940Test extends AbstractCairoTest {
                 long writePmSize = ParquetMetaFileReader.readParquetMetaFileSize(ff, path.$());
                 long writePmAddr = TableUtils.mapRO(ff, path.$(), LOG, writePmSize, MemoryTag.MMAP_DEFAULT);
                 try {
-                    long writeFlags = Unsafe.getUnsafe().getLong(writePmAddr + headerFeatureFlagsOff);
+                    long writeFlags = Unsafe.getLong(writePmAddr + headerFeatureFlagsOff);
                     Assert.assertTrue(
                             "write-path _pm should already declare BLOOM_FILTERS; flags=0x"
                                     + Long.toHexString(writeFlags),
@@ -473,7 +473,7 @@ public class Mig940Test extends AbstractCairoTest {
 
                 long parquetMetaAddr = TableUtils.mapRO(ff, path.$(), LOG, parquetMetaSize, MemoryTag.MMAP_DEFAULT);
                 try {
-                    long featureFlags = Unsafe.getUnsafe().getLong(parquetMetaAddr + headerFeatureFlagsOff);
+                    long featureFlags = Unsafe.getLong(parquetMetaAddr + headerFeatureFlagsOff);
                     Assert.assertTrue(
                             "_pm header should declare BLOOM_FILTERS after migration; flags=0x"
                                     + Long.toHexString(featureFlags),
