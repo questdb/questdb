@@ -8433,6 +8433,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     && !SqlHints.hasNoCoveringHint(model)
                     && executionContext.isCoveringIndexEnabled()) {
                 CharSequence colName = columns.getQuick(0).getAst().token;
+                // colName (the AST token) keys the base-table lookup below; the output
+                // column must carry the projection name (alias when present, e.g. `sym AS k`).
+                CharSequence outColName = columns.getQuick(0).getName();
                 IQueryModel tableModel = model.getNestedModel();
                 if (tableModel != null && tableModel.getTableName() != null
                         && tableModel.getLatestBy().size() == 0) {
@@ -8481,7 +8484,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     TableColumnMetadata srcCol = tableMeta.getColumnMetadata(colIdx);
                                     GenericRecordMetadata distinctMeta = new GenericRecordMetadata();
                                     distinctMeta.add(new TableColumnMetadata(
-                                            Chars.toString(colName),
+                                            Chars.toString(outColName),
                                             tableMeta.getColumnType(colIdx),
                                             tableMeta.getColumnIndexType(colIdx),
                                             tableMeta.getIndexValueBlockCapacity(colIdx),

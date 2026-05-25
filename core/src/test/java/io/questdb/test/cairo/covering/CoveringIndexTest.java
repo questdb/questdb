@@ -7647,6 +7647,65 @@ public class CoveringIndexTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDistinctSymKeyAliasPropagatesToMetadata() throws Exception {
+        // Regression: when the DISTINCT->GROUP BY rewrite projects an aliased
+        // symbol key (e.g. `sym AS k`), PostingIndexDistinctRecordCursorFactory
+        // must name its output column after the alias, not the source column.
+        // Naming it `sym` made the enclosing model fail to resolve `k`,
+        // surfacing as "Invalid column: k" or an "wtf? k" assert depending on
+        // the outer query shape.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_dist_alias (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING,
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_dist_alias VALUES
+                    ('2024-01-01T00:00:00', 'A', 1.0),
+                    ('2024-01-01T01:00:00', 'B', 2.0),
+                    ('2024-01-01T02:00:00', 'A', 3.0)
+                    """);
+            engine.releaseAllWriters();
+
+            // Bare alias reference through a subquery.
+            assertQueryNoLeakCheck(
+                    """
+                            k
+                            A
+                            B
+                            """,
+                    "SELECT k FROM (SELECT sym AS k, count() AS cnt FROM t_dist_alias) ORDER BY k",
+                    null, null, true, true
+            );
+
+            // Qualified alias reference alongside a constant (select-virtual outer model).
+            assertQueryNoLeakCheck(
+                    """
+                            k\tcolumn
+                            A\t-45
+                            B\t-45
+                            """,
+                    "SELECT t0.k, -45 FROM (SELECT sym AS k, count() AS cnt FROM t_dist_alias) t0 ORDER BY t0.k",
+                    null, null, true, true
+            );
+
+            // Alias consumed by an outer expression.
+            assertQueryNoLeakCheck(
+                    """
+                            length
+                            1
+                            1
+                            """,
+                    "SELECT length(k) FROM (SELECT sym AS k, count() AS cnt FROM t_dist_alias) ORDER BY length(k)",
+                    null, null, true, true
+            );
+        });
+    }
+
+    @Test
     public void testDistinctSymKeyRangeScansAllPaths() throws Exception {
         assertMemoryLeak(() -> {
             execute("""
