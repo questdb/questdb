@@ -141,7 +141,6 @@ public class QwpEquitiesL1Benchmark {
         try (Sender sender = Sender.fromConfig("ws::addr=localhost:9000;transaction=on;")) {
             for (long i = 1; i <= ROW_COUNT; i++) {
                 int symIdx = (int) (i % SYMBOL_COUNT);
-                double basePrice = basePrices[symIdx];
                 // Random walk: small perturbation per tick
                 basePrices[symIdx] += (rng.nextDouble() - 0.5) * 0.02;
                 double bid = basePrices[symIdx];
