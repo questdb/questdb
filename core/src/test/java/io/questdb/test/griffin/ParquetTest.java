@@ -965,6 +965,123 @@ public class ParquetTest extends AbstractCairoTest {
         });
     }
 
+    // Red regression for the indexParquetPartition all-null-chunk bug.
+    // When a SYMBOL row group has null_count == num_values, the _pm decoder
+    // skips materialising the chunk buffer and reports size == 0 (see
+    // RowGroupBuffers javadoc). TableWriter.indexParquetPartition walks the
+    // returned buffer to add index entries but has no size == 0 branch, so
+    // no entries are emitted for the NULL key and "WHERE id = null" silently
+    // returns zero rows against an indexed historic Parquet partition.
+    @Test
+    public void testIndexAllNullSymbolChunkOnParquetPartition() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x (id symbol, ts timestamp) timestamp(ts) partition by day;");
+            // All rows in the '2024-06-10' partition have NULL symbol: the
+            // parquet row group stats report null_count == num_values, which
+            // is the trigger for the _pm decoder size == 0 fast path.
+            execute("insert into x values(null, '2024-06-10T00:00:00.000000Z');");
+            execute("insert into x values(null, '2024-06-10T01:00:00.000000Z');");
+            execute("insert into x values(null, '2024-06-10T02:00:00.000000Z');");
+            // Trailing partition keeps '2024-06-10' as a historic (non-last)
+            // partition so ADD INDEX routes it through indexParquetPartition
+            // via indexHistoricPartitions.
+            execute("insert into x values('k1', '2024-06-15T00:00:00.000000Z');");
+
+            execute("alter table x convert partition to parquet where ts in '2024-06-10';");
+            execute("alter table x alter column id add index;");
+
+            // Pin the plan so a silently-degraded full scan cannot mask a
+            // broken index by returning the right answer for the wrong
+            // reason. The "id=0" filter is the NULL key for an indexed
+            // SYMBOL column (toIndexKey(SymbolTable.VALUE_IS_NULL) == 0).
+            // The bug manifests when this index path returns no rows.
+            assertSql(
+                    """
+                            QUERY PLAN
+                            DeferredSingleSymbolFilterPageFrame
+                                Index forward scan on: id
+                                  filter: id=0
+                                Frame forward scan on: x
+                            """,
+                    "explain select * from x where id = null"
+            );
+
+            assertSql(
+                    """
+                            id\tts
+                            \t2024-06-10T00:00:00.000000Z
+                            \t2024-06-10T01:00:00.000000Z
+                            \t2024-06-10T02:00:00.000000Z
+                            """,
+                    "x where id = null"
+            );
+        });
+    }
+
+    // Red regression for the O3PartitionJob.updateParquetIndexes all-null
+    // chunk bug fixed in commit f93a7c4395. The _pm decoder fast-paths a
+    // SYMBOL row group whose chunk stats report null_count == num_values
+    // and returns size == 0 (see RowGroupBuffers javadoc). The O3-rewrite
+    // path walked the empty chunk buffer and emitted no entries for the
+    // NULL key, so an indexed WHERE id = null against the rewritten
+    // partition silently returned zero rows.
+    //
+    // The existing fuzz seed in WalWriterFuzzTest depends on the shared
+    // worker pool schedule (to land an all-null SYMBOL chunk in a rewritten
+    // row group) and on FuzzRunner.checkIndexRandomValueScan picking a
+    // NULL row from that partition. This test removes both layers of luck
+    // by constructing the all-null chunk explicitly and asserting on the
+    // NULL filter directly.
+    @Test
+    public void testIndexAllNullSymbolChunkOnParquetPartitionAfterO3Rewrite() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x (id symbol index, ts timestamp) timestamp(ts) partition by day;");
+            // Two NULL-id rows in '2024-06-10' produce a single all-NULL
+            // parquet row group after conversion.
+            execute("insert into x values(null, '2024-06-10T01:00:00.000000Z');");
+            execute("insert into x values(null, '2024-06-10T02:00:00.000000Z');");
+            // Trailing partition keeps '2024-06-10' a historic (non-last)
+            // partition so the O3 insert below routes through O3PartitionJob.
+            execute("insert into x values('k1', '2024-06-15T00:00:00.000000Z');");
+
+            execute("alter table x convert partition to parquet where ts in '2024-06-10';");
+
+            // O3-insert another NULL-id row into the parquet partition. The
+            // partition is rewritten through O3PartitionJob, which calls
+            // updateParquetIndexes against the new row group. That chunk is
+            // still all-NULL for id, so the _pm decoder returns size == 0
+            // and only the size == 0 branch produces index entries for the
+            // NULL key. The new row's earlier timestamp guarantees an O3
+            // (rather than append) path.
+            execute("insert into x values(null, '2024-06-10T00:30:00.000000Z');");
+
+            // Pin the plan so a silently-degraded full scan cannot mask a
+            // broken index by returning the right answer for the wrong
+            // reason. The "id=0" filter is the NULL key for an indexed
+            // SYMBOL column (toIndexKey(SymbolTable.VALUE_IS_NULL) == 0).
+            assertSql(
+                    """
+                            QUERY PLAN
+                            DeferredSingleSymbolFilterPageFrame
+                                Index forward scan on: id
+                                  filter: id=0
+                                Frame forward scan on: x
+                            """,
+                    "explain select * from x where id = null"
+            );
+
+            assertSql(
+                    """
+                            id\tts
+                            \t2024-06-10T00:30:00.000000Z
+                            \t2024-06-10T01:00:00.000000Z
+                            \t2024-06-10T02:00:00.000000Z
+                            """,
+                    "x where id = null"
+            );
+        });
+    }
+
     // TODO(puzpuzpuz): enable when we support DDLs for parquet partitions
     @Ignore
     @Test
@@ -1996,10 +2113,12 @@ public class ParquetTest extends AbstractCairoTest {
             drainWalQueue();
 
             assertSql(
-                    "s\tts\n" +
-                            "hello\t2020-01-01T00:00:00.000000Z\n" +
-                            "héllo\t2020-01-01T06:00:00.000000Z\n" +
-                            "world\t2020-01-01T12:00:00.000000Z\n",
+                    """
+                            s\tts
+                            hello\t2020-01-01T00:00:00.000000Z
+                            héllo\t2020-01-01T06:00:00.000000Z
+                            world\t2020-01-01T12:00:00.000000Z
+                            """,
                     "x order by ts"
             );
         });
@@ -2032,9 +2151,11 @@ public class ParquetTest extends AbstractCairoTest {
             drainWalQueue();
 
             assertSql(
-                    "s\tts\ts2\n" +
-                            "hello\t2020-01-01T00:00:00.000000Z\t\n" +
-                            "aa\t2020-01-01T06:00:00.000000Z\théllo\n",
+                    """
+                            s\tts\ts2
+                            hello\t2020-01-01T00:00:00.000000Z\t
+                            aa\t2020-01-01T06:00:00.000000Z\théllo
+                            """,
                     "x order by ts"
             );
         });
@@ -2197,8 +2318,8 @@ public class ParquetTest extends AbstractCairoTest {
         final String singleNullArrayExpected = "[".repeat(dims) + "null" + "]".repeat(dims);
 
         final String arrExpr = arr
-                .replaceAll(" ", "")
-                .replaceAll("\n", "")
+                .replace(" ", "")
+                .replace("\n", "")
                 .replace("ARRAY", "");
 
         assertMemoryLeak(() -> {
