@@ -1333,7 +1333,8 @@ public class FuzzRunner {
             }
 
             long startMicro = System.nanoTime() / 1000;
-            applyNonWal(transactions, tableNameNoWal, rnd);
+            Rnd nonWalRnd = new Rnd(rnd.getSeed0(), rnd.getSeed1());
+            applyNonWal(transactions, tableNameNoWal, nonWalRnd);
             long endNonWalMicro = System.nanoTime() / 1000;
             long nonWalTotal = endNonWalMicro - startMicro;
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
