@@ -267,12 +267,6 @@ public class EngineMigration {
         MIGRATIONS.put(424, Mig609::migrate);
         MIGRATIONS.put(425, Mig614::migrate);
         MIGRATIONS.put(426, Mig620::migrate);
-        // Mig940 generates a `_pm` sidecar for every parquet partition. Its
-        // earlier slot at 428 (released in 9.4.0) omitted the parquet
-        // bloom-filter bitset, so we run it at 429 with the force-regenerate
-        // entry to overwrite any stale, bloom-less `_pm` files produced by
-        // the 428 release. Fresh installs hit this slot only — there is no
-        // 428 slot anymore, so they pay a single Mig940 walk.
         MIGRATIONS.put(429, Mig940::migrateForceRegenerate);
     }
 }
