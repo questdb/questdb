@@ -25,6 +25,8 @@
 package io.questdb.cairo.idx;
 
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
@@ -49,6 +51,24 @@ public final class BitmapIndexUtils {
     public static final int KEY_RESERVED_OFFSET_VALUE_MEM_SIZE = 9;
     public static final byte SIGNATURE = (byte) 0xfa;
     public static final int VALUE_BLOCK_FILE_RESERVED = 16;
+
+    /**
+     * Emits NULL-key index entries for rows {@code [startRowId, endRowIdExclusive)}
+     * into {@code writer}. Use this on the {@code size == 0} branch when rebuilding
+     * a covering index from a decoded parquet row group: the _pm-backed Rust decoder
+     * fast-paths a SYMBOL chunk whose stats report {@code null_count == num_values}
+     * by returning {@code size = 0} without materialising the chunk buffer (see
+     * {@code RowGroupBuffers} javadoc). Walking the empty buffer would emit no
+     * entries for the NULL key, so callers that rebuild a covering index over a
+     * parquet partition must instead invoke this helper to record one NULL entry
+     * per row covered by the row group.
+     */
+    public static void addNullEntries(IndexWriter writer, long startRowId, long endRowIdExclusive) {
+        final int nullKey = TableUtils.toIndexKey(SymbolTable.VALUE_IS_NULL);
+        for (long rowId = startRowId; rowId < endRowIdExclusive; rowId++) {
+            writer.add(nullKey, rowId);
+        }
+    }
 
     public static long getKeyEntryOffset(int key) {
         return key * KEY_ENTRY_SIZE + KEY_FILE_RESERVED;
