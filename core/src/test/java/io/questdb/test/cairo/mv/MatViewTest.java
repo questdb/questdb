@@ -6906,7 +6906,7 @@ public class MatViewTest extends AbstractCairoTest {
 
     @Test
     public void testMatViewBackfillCopyAcceptedWithRefreshLimit() throws Exception {
-        // With REFRESH LIMIT set, the COPY entry-point gate (canBackfillMatView via
+        // With REFRESH LIMIT set, the COPY entry-point gate (isBackfillableMatView via
         // checkMatViewInsertOrCopyModification + CairoTextWriter) accepts COPY into
         // the mat view -- the door that was always closed before is now open.
         assertMemoryLeak(() -> {
@@ -7016,7 +7016,7 @@ public class MatViewTest extends AbstractCairoTest {
     @Test
     public void testMatViewBackfillInsertRejectedWithoutRefreshLimit() throws Exception {
         // Without REFRESH LIMIT set, INSERT must still be rejected -- the gate
-        // returns canBackfillMatView=false so the existing "cannot modify materialized
+        // returns isBackfillableMatView=false so the existing "cannot modify materialized
         // view" error fires.
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp(
