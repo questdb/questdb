@@ -400,6 +400,10 @@ public class FuzzRunner {
     }
 
     public void assertRandomIndexes(String tableNameNoWal, String tableNameWal, Rnd rnd) throws SqlException {
+        if (Boolean.getBoolean("questdb.debug.posting.repro.exhaustive.index.scan")) {
+            assertExhaustiveIndexes(tableNameNoWal, tableNameWal);
+            return;
+        }
         try (TableReader reader = getReader(tableNameNoWal)) {
             if (reader.size() > 0) {
                 TableReaderMetadata metadata = reader.getMetadata();
@@ -790,6 +794,59 @@ public class FuzzRunner {
         }
     }
 
+    private void assertExhaustiveIndexes(String tableNameNoWal, String tableNameWal) throws SqlException {
+        try (
+                TableReader expectedReader = getReader(tableNameNoWal);
+                TableReader actualReader = getReader(tableNameWal);
+                SqlCompiler compiler = engine.getSqlCompiler()
+        ) {
+            TableReaderMetadata expectedMetadata = expectedReader.getMetadata();
+            TableReaderMetadata actualMetadata = actualReader.getMetadata();
+            ObjHashSet<String> checkedValues = new ObjHashSet<>();
+            for (int columnIndex = 0; columnIndex < expectedMetadata.getColumnCount(); columnIndex++) {
+                if (!ColumnType.isSymbol(expectedMetadata.getColumnType(columnIndex)) || !expectedMetadata.isColumnIndexed(columnIndex)) {
+                    continue;
+                }
+
+                final String columnName = expectedMetadata.getColumnName(columnIndex);
+                final int actualColumnIndex = actualMetadata.getColumnIndex(columnName);
+                checkedValues.clear();
+                checkIndexValueScan(
+                        compiler,
+                        tableNameNoWal,
+                        tableNameWal,
+                        columnName,
+                        expectedMetadata.getColumnName(expectedMetadata.getTimestampIndex()),
+                        null
+                );
+
+                SymbolMapReader expectedSymbols = expectedReader.getSymbolMapReader(columnIndex);
+                for (int key = 0, n = expectedSymbols.getSymbolCount(); key < n; key++) {
+                    CharSequence value = expectedSymbols.valueOf(key);
+                    if (value != null) {
+                        String valueString = Chars.toString(value);
+                        if (checkedValues.add(valueString)) {
+                            checkIndexValueScan(compiler, tableNameNoWal, tableNameWal, columnName,
+                                    expectedMetadata.getColumnName(expectedMetadata.getTimestampIndex()), valueString);
+                        }
+                    }
+                }
+
+                SymbolMapReader actualSymbols = actualReader.getSymbolMapReader(actualColumnIndex);
+                for (int key = 0, n = actualSymbols.getSymbolCount(); key < n; key++) {
+                    CharSequence value = actualSymbols.valueOf(key);
+                    if (value != null) {
+                        String valueString = Chars.toString(value);
+                        if (checkedValues.add(valueString)) {
+                            checkIndexValueScan(compiler, tableNameNoWal, tableNameWal, columnName,
+                                    expectedMetadata.getColumnName(expectedMetadata.getTimestampIndex()), valueString);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     private LongList calculateReplaceRanges(ObjList<FuzzTransaction> transactions) {
         // If transactions have the replace ranges set
         // then we do not commit in between the ranges that are replaced
@@ -811,6 +868,24 @@ public class FuzzRunner {
             }
         }
         return excludedIntervals;
+    }
+
+    private void checkIndexValueScan(
+            SqlCompiler compiler,
+            String expectedTableName,
+            String actualTableName,
+            String symbolColumnName,
+            String tsColumnName,
+            @Nullable String symbolValue
+    ) throws SqlException {
+        String indexedWhereClause = buildSymbolWhereClause(symbolColumnName, symbolValue);
+        LOG.info().$("checking exhaustive index with filter: ").$(indexedWhereClause).I$();
+        TestUtils.assertSqlCursors(compiler, sqlExecutionContext, expectedTableName + indexedWhereClause, actualTableName + indexedWhereClause, LOG);
+        String orderBy = " order by " + tsColumnName + " desc";
+        int descRepeatCount = Math.max(1, Integer.getInteger("questdb.debug.posting.repro.repeat.desc.scan.count", 1));
+        for (int i = 0; i < descRepeatCount; i++) {
+            TestUtils.assertSqlCursors(compiler, sqlExecutionContext, expectedTableName + indexedWhereClause + orderBy, actualTableName + indexedWhereClause + orderBy, LOG);
+        }
     }
 
     private void checkIndexRandomValueScan(
@@ -835,6 +910,26 @@ public class FuzzRunner {
             String orderBy = " order by " + tsColumnName + " desc";
             TestUtils.assertSqlCursors(compiler, sqlExecutionContext, expectedTableName + indexedWhereClause + orderBy + limit, actualTableName + indexedWhereClause + orderBy + limit, LOG);
         }
+    }
+
+    private String buildSymbolWhereClause(String symbolColumnName, @Nullable String symbolValue) {
+        sink.clear();
+        sink.put(" where \"").put(symbolColumnName).put("\" = ");
+        if (symbolValue == null) {
+            sink.put("null");
+        } else {
+            sink.put('\'');
+            for (int i = 0, n = symbolValue.length(); i < n; i++) {
+                char c = symbolValue.charAt(i);
+                if (c == '\'') {
+                    sink.put("''");
+                } else {
+                    sink.put(c);
+                }
+            }
+            sink.put('\'');
+        }
+        return sink.toString();
     }
 
     private void checkNoSuspendedTables(int tableId, TableToken tableName, long lastTxn) {

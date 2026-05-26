@@ -26,6 +26,9 @@ package io.questdb.test.cairo;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.idx.IndexReader;
 import io.questdb.cairo.idx.PostingIndexBwdReader;
 import io.questdb.cairo.idx.PostingIndexFwdReader;
 import io.questdb.cairo.idx.PostingIndexUtils;
@@ -2007,6 +2010,160 @@ public class PostingIndexStressTest extends AbstractCairoTest {
                             Misc.free(cursor);
                         }
                     }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testSparseCacheBuildSkippedWhenReaderReloadsBeforeCursorEof() throws Exception {
+        assertMemoryLeak(() -> {
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final int plen = path.size();
+                final String name = "sparse_cache_reload";
+
+                try (PostingIndexWriter writer = new PostingIndexWriter(configuration, path, name, COLUMN_NAME_TXN_NONE)) {
+                    // Old head: key 357 is present at sparse slot 357 with multiple rows.
+                    for (int k = 0; k <= 500; k++) {
+                        writer.add(k, k);
+                    }
+                    writer.add(357, 1000);
+                    writer.add(357, 2000);
+                    writer.setMaxValue(2000);
+                    writer.commit();
+
+                    try (PostingIndexBwdReader reader = new PostingIndexBwdReader(
+                            configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0, null, null, 0)) {
+                        try (RowCursor staleCursor = reader.getCursor(357, 0, Long.MAX_VALUE)) {
+                            Assert.assertTrue(staleCursor.hasNext());
+                            Assert.assertEquals(2000, staleCursor.next());
+
+                            // New head: key 357 is absent, but keyCount still covers it.
+                            // The stale cursor must stop before returning remaining old rows
+                            // or publishing its old sparse slot into the new reader cache.
+                            writer.discardForRebuild();
+                            for (int k = 0; k < 146; k++) {
+                                writer.add(k, k);
+                            }
+                            writer.add(714, 714);
+                            writer.setMaxValue(714);
+                            writer.commit();
+                            reader.reloadConditionally();
+
+                            Assert.assertFalse(staleCursor.hasNext());
+                        }
+
+                        try (RowCursor cursor = reader.getCursor(357, 0, Long.MAX_VALUE)) {
+                            Assert.assertFalse(cursor.hasNext());
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testSparseFwdCacheBuildSkippedWhenReaderReloadsBeforeCursorEof() throws Exception {
+        assertMemoryLeak(() -> {
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final int plen = path.size();
+                final String name = "sparse_cache_reload_fwd";
+
+                try (PostingIndexWriter writer = new PostingIndexWriter(configuration, path, name, COLUMN_NAME_TXN_NONE)) {
+                    for (int k = 0; k <= 500; k++) {
+                        writer.add(k, k);
+                    }
+                    writer.add(357, 1000);
+                    writer.add(357, 2000);
+                    writer.setMaxValue(2000);
+                    writer.commit();
+
+                    try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
+                            configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0, null, null, 0)) {
+                        try (RowCursor staleCursor = reader.getCursor(357, 0, Long.MAX_VALUE)) {
+                            Assert.assertTrue(staleCursor.hasNext());
+                            Assert.assertEquals(357, staleCursor.next());
+
+                            writer.discardForRebuild();
+                            for (int k = 0; k < 146; k++) {
+                                writer.add(k, k);
+                            }
+                            writer.add(714, 714);
+                            writer.setMaxValue(714);
+                            writer.commit();
+                            reader.reloadConditionally();
+
+                            Assert.assertFalse(staleCursor.hasNext());
+                        }
+
+                        try (RowCursor cursor = reader.getCursor(357, 0, Long.MAX_VALUE)) {
+                            Assert.assertFalse(cursor.hasNext());
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testTableReaderSparseCacheBuildSkippedWhenReaderReloadsBeforeCursorEof() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (sym SYMBOL CAPACITY 1024 INDEX TYPE POSTING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("INSERT INTO x SELECT cast(concat('s', x - 1) as symbol), timestamp_sequence('2020-01-01', 1000000) FROM long_sequence(715)");
+            execute("INSERT INTO x VALUES ('s357', '2020-01-01T00:12:00.000000Z')");
+            execute("INSERT INTO x VALUES ('s357', '2020-01-01T00:12:01.000000Z')");
+
+            try (TableReader reader = getReader("x")) {
+                final int symIndex = reader.getMetadata().getColumnIndex("sym");
+                final int staleKey = TableUtils.toIndexKey(reader.getSymbolMapReader(symIndex).keyOf("s357"));
+
+                try (RowCursor staleCursor = reader.getIndexReader(0, symIndex, IndexReader.DIR_BACKWARD).getCursor(staleKey, 0, Long.MAX_VALUE)) {
+                    Assert.assertTrue(staleCursor.hasNext());
+                    staleCursor.next();
+
+                    execute("ALTER TABLE x DROP PARTITION LIST '2020-01-01'");
+                    execute("INSERT INTO x SELECT cast(concat('s', x - 1) as symbol), timestamp_sequence('2020-01-01', 1000000) FROM long_sequence(146)");
+                    execute("INSERT INTO x VALUES ('s714', '2020-01-01T00:02:26.000000Z')");
+                    reader.reload();
+
+                    reader.getIndexReader(0, symIndex, IndexReader.DIR_BACKWARD);
+                    Assert.assertFalse(staleCursor.hasNext());
+                }
+
+                try (RowCursor cursor = reader.getIndexReader(0, symIndex, IndexReader.DIR_BACKWARD).getCursor(staleKey, 0, Long.MAX_VALUE)) {
+                    Assert.assertFalse(cursor.hasNext());
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testTableReaderSparseFwdCacheBuildSkippedWhenReaderReloadsBeforeCursorEof() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (sym SYMBOL CAPACITY 1024 INDEX TYPE POSTING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("INSERT INTO x SELECT cast(concat('s', x - 1) as symbol), timestamp_sequence('2020-01-01', 1000000) FROM long_sequence(715)");
+            execute("INSERT INTO x VALUES ('s357', '2020-01-01T00:12:00.000000Z')");
+            execute("INSERT INTO x VALUES ('s357', '2020-01-01T00:12:01.000000Z')");
+
+            try (TableReader reader = getReader("x")) {
+                final int symIndex = reader.getMetadata().getColumnIndex("sym");
+                final int staleKey = TableUtils.toIndexKey(reader.getSymbolMapReader(symIndex).keyOf("s357"));
+
+                try (RowCursor staleCursor = reader.getIndexReader(0, symIndex, IndexReader.DIR_FORWARD).getCursor(staleKey, 0, Long.MAX_VALUE)) {
+                    Assert.assertTrue(staleCursor.hasNext());
+                    staleCursor.next();
+
+                    execute("ALTER TABLE x DROP PARTITION LIST '2020-01-01'");
+                    execute("INSERT INTO x SELECT cast(concat('s', x - 1) as symbol), timestamp_sequence('2020-01-01', 1000000) FROM long_sequence(146)");
+                    execute("INSERT INTO x VALUES ('s714', '2020-01-01T00:02:26.000000Z')");
+                    reader.reload();
+
+                    reader.getIndexReader(0, symIndex, IndexReader.DIR_FORWARD);
+                    Assert.assertFalse(staleCursor.hasNext());
+                }
+
+                try (RowCursor cursor = reader.getIndexReader(0, symIndex, IndexReader.DIR_FORWARD).getCursor(staleKey, 0, Long.MAX_VALUE)) {
+                    Assert.assertFalse(cursor.hasNext());
                 }
             }
         });

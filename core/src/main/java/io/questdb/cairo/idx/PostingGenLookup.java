@@ -42,9 +42,10 @@ import java.io.Closeable;
  * {@link #CACHE_NOT_PRESENT} (-1L) is the unmapped-key sentinel; 0L means "key
  * cached but matches no gen" and is a valid hit.
  * <p>
- * {@link #invalidateCache} bumps {@link #getCacheVersion()}; cursors snapshot
- * the version at {@code of()} time and bail if it changes mid-iteration to
- * avoid reading into recycled cache memory.
+ * Cache mutation bumps {@link #getCacheVersion()}; gen snapshot mutation bumps
+ * {@link #getSnapshotVersion()}. Cursors copy cache hits at {@code of()} time
+ * and publish newly built cache entries only when the cache version still
+ * matches, avoiding shared-cache reads on the replay hot path.
  */
 public class PostingGenLookup implements Closeable {
     static final long CACHE_NOT_PRESENT = -1L;
@@ -55,7 +56,7 @@ public class PostingGenLookup implements Closeable {
     // Column keys are always >= 0, so Integer.MIN_VALUE is a safe sentinel.
     private static final int NO_ENTRY_KEY = Integer.MIN_VALUE;
     // Double-buffered snapshot. {@code snapshotMetadata} fills the staging
-    // copy in-place; {@code commitSnapshot} swaps the active/staging
+    // copy in-place; commitSnapshotAndInvalidateCache swaps the active/staging
     // pointers only after the seqlock reader has verified the source bytes
     // were consistent. Until then the active copy still reflects the
     // previous successful snapshot, so a torn read can never corrupt
@@ -70,10 +71,11 @@ public class PostingGenLookup implements Closeable {
             CACHE_NOT_PRESENT,
             MemoryTag.NATIVE_INDEX_READER
     );
-    private Snapshot active = bufA;
+    private volatile Snapshot active = bufA;
     private long cacheBudget = DEFAULT_CACHE_BUDGET;
     private long cacheUsedBytes;
-    private long cacheVersion;
+    private volatile long cacheVersion;
+    private volatile long snapshotVersion;
     private Snapshot staging = bufB;
 
     public static long packCacheEntry(int gen, int posInGen) {
@@ -96,16 +98,29 @@ public class PostingGenLookup implements Closeable {
         return (int) (packedSlot >>> 32);
     }
 
-    public long cacheEntryAt(int idx) {
-        return cacheEntries.get(idx);
-    }
-
-    public long cacheLookup(int key) {
+    public synchronized int copyCacheEntriesIfVersion(int key, long expectedCacheVersion, LongList target) {
+        target.clear();
         assert key != NO_ENTRY_KEY : "column key must not equal hash map sentinel";
-        if (!active.anySparseGen) {
-            return CACHE_NOT_PRESENT;
+        if (cacheVersion != expectedCacheVersion) {
+            return -1;
         }
-        return keyToCacheSlot.get(key);
+        if (!active.anySparseGen) {
+            return -1;
+        }
+        long packedSlot = keyToCacheSlot.get(key);
+        if (packedSlot == CACHE_NOT_PRESENT) {
+            return -1;
+        }
+        int start = unpackEntryStart(packedSlot);
+        int count = unpackEntryCount(packedSlot);
+        if (start < 0 || count < 0 || start > cacheEntries.size() - count) {
+            return -1;
+        }
+        target.setPos(count);
+        for (int i = 0; i < count; i++) {
+            target.setQuick(i, cacheEntries.get(start + i));
+        }
+        return count;
     }
 
     @Override
@@ -123,14 +138,27 @@ public class PostingGenLookup implements Closeable {
      * only be called after the seqlock reader has verified the source bytes
      * were consistent during the fill.
      */
-    public void commitSnapshot() {
+    public synchronized void commitSnapshotAndInvalidateCache() {
+        keyToCacheSlot.clear();
+        cacheEntries.clear();
+        cacheUsedBytes = 0;
+        cacheVersion++;
         Snapshot tmp = active;
         active = staging;
         staging = tmp;
+        snapshotVersion++;
     }
 
     public long getCacheVersion() {
         return cacheVersion;
+    }
+
+    public long getSnapshotVersion() {
+        return snapshotVersion;
+    }
+
+    public boolean hasAnySparseGen() {
+        return active.anySparseGen;
     }
 
     public long getGenDataSize(int gen) {
@@ -176,7 +204,7 @@ public class PostingGenLookup implements Closeable {
         return active.genTxnAtSeals.getQuick(gen);
     }
 
-    public void invalidateCache() {
+    public synchronized void invalidateCache() {
         keyToCacheSlot.clear();
         cacheEntries.clear();
         cacheUsedBytes = 0;
@@ -207,15 +235,15 @@ public class PostingGenLookup implements Closeable {
      * when adding {@code builderEntries} would exceed the cache budget; correctness
      * is preserved because uncached keys keep using the SBBF-only path.
      */
-    public void putCacheEntries(int key, LongList builderEntries) {
+    public synchronized boolean putCacheEntriesIfVersion(int key, LongList builderEntries, long expectedCacheVersion) {
         assert key != NO_ENTRY_KEY : "column key must not equal hash map sentinel";
-        if (cacheBudget <= 0 || !active.anySparseGen || keyToCacheSlot.get(key) != CACHE_NOT_PRESENT) {
-            return;
+        if (cacheVersion != expectedCacheVersion || cacheBudget <= 0 || !active.anySparseGen || keyToCacheSlot.get(key) != CACHE_NOT_PRESENT) {
+            return false;
         }
         int count = builderEntries.size();
         long bytesNeeded = (long) count * Long.BYTES;
         if (cacheUsedBytes + bytesNeeded > cacheBudget) {
-            return;
+            return false;
         }
         long newSize = cacheEntries.size() + count;
         assert newSize <= Integer.MAX_VALUE : "cache pool overflow: " + newSize;
@@ -226,16 +254,18 @@ public class PostingGenLookup implements Closeable {
         }
         cacheUsedBytes += bytesNeeded;
         keyToCacheSlot.put(key, ((long) startIdx << 32) | (count & 0xFFFFFFFFL));
+        return true;
     }
 
-    public void reopen() {
+    public synchronized void reopen() {
         keyToCacheSlot.reopen();
         cacheEntries.reopen();
         cacheUsedBytes = 0;
         cacheVersion++;
+        snapshotVersion++;
     }
 
-    public void setCacheMemoryBudget(long budget) {
+    public synchronized void setCacheMemoryBudget(long budget) {
         this.cacheBudget = budget;
         // budget == 0 disables caching; clear residual empty-hit slots too so the
         // disabled state is fully clean.
@@ -246,9 +276,10 @@ public class PostingGenLookup implements Closeable {
 
     /**
      * Fill the staging snapshot from a v2 chain entry's gen-dir region.
-     * Caller must validate the seqlock and then call {@link #commitSnapshot}
-     * to make the snapshot observable. Until the swap, the previous active
-     * snapshot is unchanged — torn reads here cannot corrupt anything.
+     * Caller must validate the seqlock and then call
+     * {@link #commitSnapshotAndInvalidateCache} to make the snapshot
+     * observable. Until the swap, the previous active snapshot is unchanged,
+     * so torn reads here cannot corrupt anything.
      *
      * @param entryOffset byte offset of the chain entry in {@code keyMem};
      *                    the gen-dir starts at
@@ -294,8 +325,8 @@ public class PostingGenLookup implements Closeable {
     /**
      * One side of the active/staging double buffer used for torn-read
      * safety. The reader fills the staging side, validates the seqlock,
-     * then swaps via {@link #commitSnapshot}. The previous active side
-     * becomes the next staging buffer — its existing storage is reused so
+     * then swaps via {@link #commitSnapshotAndInvalidateCache}. The previous active side
+     * becomes the next staging buffer; its existing storage is reused so
      * the swap is allocation-free.
      */
     private static final class Snapshot {

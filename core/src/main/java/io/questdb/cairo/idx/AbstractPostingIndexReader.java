@@ -916,8 +916,7 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
                     Os.pause();
                     continue;
                 }
-                genLookup.commitSnapshot();
-                genLookup.invalidateCache();
+                genLookup.commitSnapshotAndInvalidateCache();
 
                 this.headEntryOffset = entryScratch.offset;
                 this.chainSequence = headerScratch.sequence;
@@ -960,8 +959,7 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
             }
             // Reset gen lookup to an empty staging snapshot and promote it.
             genLookup.snapshotMetadata(keyMem, 0, 0L);
-            genLookup.commitSnapshot();
-            genLookup.invalidateCache();
+            genLookup.commitSnapshotAndInvalidateCache();
             this.lastPickedPinnedTxn = this.pinnedTableTxn;
             return;
         }

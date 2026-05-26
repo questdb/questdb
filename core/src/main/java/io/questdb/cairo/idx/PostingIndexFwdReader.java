@@ -160,6 +160,8 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
         private int cacheReplayEnd;
         private int cacheReplayPos;
         private long cacheVersionAtOf;
+        private long snapshotVersionAtOf;
+        private boolean cursorStale;
         private int constantDeltaRemaining;
         private long constantDeltaStep;
         private long constantDeltaValue;
@@ -205,6 +207,10 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
 
         @Override
         public boolean hasNext() {
+            if (cursorStale || snapshotVersionAtOf != genLookup.getSnapshotVersion()) {
+                cursorStale = true;
+                return false;
+            }
             while (true) {
                 // Serve from constant-delta stream (bitWidth=0 block)
                 if (constantDeltaRemaining > 0) {
@@ -291,8 +297,7 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
         }
 
         private boolean advanceToNextRelevantGen() {
-            // Bail if cache was invalidated mid-iteration — replay pos would be stale.
-            if (isCacheReplayMode && cacheVersionAtOf != genLookup.getCacheVersion()) {
+            if (snapshotVersionAtOf != genLookup.getSnapshotVersion()) {
                 return false;
             }
             currentGen++;
@@ -307,7 +312,7 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
                         currentGen++;
                         continue;
                     }
-                    long entry = genLookup.cacheEntryAt(cacheReplayPos);
+                    long entry = builderEntries.getQuick(cacheReplayPos);
                     int hitGen = PostingGenLookup.unpackCacheGen(entry);
                     if (currentGen < hitGen) {
                         currentGen++;
@@ -335,7 +340,7 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
             }
             // Reached the end naturally. Commit accumulated entries iff we built them ourselves.
             if (!isCacheReplayMode && requestedKey >= 0) {
-                genLookup.putCacheEntries(requestedKey, builderEntries);
+                genLookup.putCacheEntriesIfVersion(requestedKey, builderEntries, cacheVersionAtOf);
             }
             return false;
         }
@@ -842,6 +847,7 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
             resetCoveringState();
             builderEntries.clear();
             isCacheReplayMode = false;
+            cursorStale = false;
             cacheReplayPos = 0;
             cacheReplayEnd = 0;
             this.minValue = minValue;
@@ -854,6 +860,8 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
             }
 
             this.requestedKey = key;
+            cacheVersionAtOf = genLookup.getCacheVersion();
+            snapshotVersionAtOf = genLookup.getSnapshotVersion();
 
             // Fast path: sealed single-generation dense index. No advance machinery
             // needed; cache offers no win because there is no SBBF skip to amortize
@@ -866,12 +874,13 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
 
             this.currentGen = -1;
 
-            long packedSlot = genLookup.cacheLookup(key);
-            if (packedSlot != PostingGenLookup.CACHE_NOT_PRESENT) {
-                isCacheReplayMode = true;
-                cacheReplayPos = PostingGenLookup.unpackEntryStart(packedSlot);
-                cacheReplayEnd = cacheReplayPos + PostingGenLookup.unpackEntryCount(packedSlot);
-                cacheVersionAtOf = genLookup.getCacheVersion();
+            if (genLookup.hasAnySparseGen()) {
+                int cacheEntryCount = genLookup.copyCacheEntriesIfVersion(key, cacheVersionAtOf, builderEntries);
+                if (cacheEntryCount >= 0) {
+                    isCacheReplayMode = true;
+                    cacheReplayPos = 0;
+                    cacheReplayEnd = cacheEntryCount;
+                }
             }
 
             advanceToNextRelevantGen();

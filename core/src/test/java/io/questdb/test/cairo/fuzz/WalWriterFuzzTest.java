@@ -125,6 +125,55 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
     }
 
     @Test
+    public void testAddDropColumnDropPartitionPostingIndexCrashRepro() throws Exception {
+        final String exhaustiveProp = "questdb.debug.posting.repro.exhaustive.index.scan";
+        final String repeatProp = "questdb.debug.posting.repro.repeat.desc.scan.count";
+        final String prevExhaustive = System.getProperty(exhaustiveProp);
+        final String prevRepeat = System.getProperty(repeatProp);
+        System.setProperty(exhaustiveProp, "true");
+        System.setProperty(repeatProp, "20");
+        try {
+            Rnd rnd = generateRandom(LOG, 1_223_277_192_246_718L, 1_779_734_440_901L);
+            setTestParams(rnd);
+
+            setFuzzProbabilities(
+                    0.01,
+                    0.0,
+                    0.01,
+                    0.1,
+                    0.05,
+                    0.05,
+                    0.1,
+                    0.1,
+                    1.0,
+                    0.01,
+                    0.01,
+                    0.0,
+                    0.0,
+                    0.1,
+                    0.0,
+                    0.8,
+                    0.01,
+                    0,
+                    0.01
+            );
+            setFuzzCounts(rnd.nextBoolean(), 10_000, 300, 20, 10, 1000, 100, 3);
+            runFuzz(rnd);
+        } finally {
+            if (prevExhaustive == null) {
+                System.clearProperty(exhaustiveProp);
+            } else {
+                System.setProperty(exhaustiveProp, prevExhaustive);
+            }
+            if (prevRepeat == null) {
+                System.clearProperty(repeatProp);
+            } else {
+                System.setProperty(repeatProp, prevRepeat);
+            }
+        }
+    }
+
+    @Test
     public void testChunkedSequencerWalTransactionQueries() throws Exception {
         assertMemoryLeak(() -> {
             int chunkSize = TestUtils.generateRandom(LOG).nextInt(100) + 1;
