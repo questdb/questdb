@@ -122,7 +122,7 @@ fn generate_parquet_meta(
     //
     // Safety: we hold an exclusive ManuallyDrop borrow on `parquet_file` for
     // the duration of the mmap, and the file is not truncated or written to
-    // concurrently because Mig940 and TableSnapshotRestore open it read-only.
+    // concurrently because Mig941 and TableSnapshotRestore open it read-only.
     let file_data = unsafe { Mmap::map(&*parquet_file) }.map_err(|e| {
         parquet_meta_err!(
             ParquetMetaErrorKind::InvalidValue,
@@ -186,7 +186,7 @@ fn generate_parquet_meta(
 
 /// Decode a single i64 timestamp value from a parquet column chunk using
 /// `FileMetaData`. Mirrors `decode_single_ts_from_pm` but reads from parquet
-/// metadata directly, so it is callable from Mig940 before any `_pm` exists.
+/// metadata directly, so it is callable from Mig941 before any `_pm` exists.
 pub(crate) fn decode_single_ts_value_from_parquet(
     allocator: *const QdbAllocator,
     file_data: &[u8],

@@ -2937,7 +2937,7 @@ public class TableWriterTest extends AbstractCairoTest {
                 long partitionNameTxn = tx.getPartitionNameTxn(partitionIndex);
 
                 // Stamp data.parquet but NOT _pm in the source partition dir to
-                // simulate a partition predating Mig940 or one whose _pm was
+                // simulate a partition predating Mig941 or one whose _pm was
                 // manually removed. The switch must abort and leave nothing on
                 // disk for the destination version.
                 try (Path p = new Path()) {

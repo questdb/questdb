@@ -270,6 +270,10 @@ pub fn convert_from_parquet(
             if let (Some((offset, _len)), Some(file_data)) =
                 (chunk.bloom_filter_parquet, parquet_file_data)
             {
+                // A bloom filter the footer claims must be readable. If the bitset cannot be
+                // read (corruption, or a bloom-filter header parquet2 does not support), abort
+                // the conversion rather than silently producing a _pm without it -- the caller
+                // (Mig941, snapshot restore, attach) surfaces the failure with the table path.
                 let bitset = parquet2::bloom_filter::read_from_slice_at_offset(offset, file_data)
                     .map_err(|err| {
                     parquet_meta_err!(
@@ -2407,8 +2411,9 @@ mod tests {
     /// parquet file that does not extend to the bloom_filter_offset recorded
     /// in the footer. `parquet2::bloom_filter::read_from_slice_at_offset`
     /// rejects this, the converter wraps the error with a Conversion kind,
-    /// and the failure surfaces to the caller. Covers the `map_err` branch
-    /// in the bloom-inline block.
+    /// and the failure surfaces to the caller rather than silently producing
+    /// a `_pm` without the bloom filter the footer claims. Covers the
+    /// `map_err` branch in the bloom-inline block.
     #[test]
     fn convert_from_parquet_propagates_bloom_read_error_on_truncated_slice() {
         let parquet_data = write_parquet_with_bloom_filter();
@@ -2434,6 +2439,155 @@ mod tests {
             msg.contains("could not read parquet bloom filter at offset"),
             "error message should mention bloom filter read failure, got: {msg}"
         );
+    }
+
+    /// Migration path: a parquet with two bloom-filtered columns split across
+    /// two row groups must inline a distinct bitset for every (row group,
+    /// column) pair. Guards against a regression that copies one bitset to all
+    /// row groups, drops all but the last, or overlaps per-column bitsets in
+    /// the `_pm` out-of-line region.
+    #[test]
+    fn convert_from_parquet_inlines_bloom_filters_across_row_groups_and_columns() {
+        let parquet_data = write_parquet_with_two_bloom_columns_two_row_groups();
+
+        let mut cursor = Cursor::new(&parquet_data);
+        let metadata = read_metadata_with_size(&mut cursor, parquet_data.len() as u64).unwrap();
+        let qdb_meta = extract_qdb_meta_from(&metadata);
+        assert_eq!(
+            metadata.row_groups.len(),
+            2,
+            "test parquet should have two row groups"
+        );
+
+        let (pm_bytes, pm_file_size) = convert_from_parquet(
+            &metadata,
+            qdb_meta.as_ref(),
+            0,
+            0,
+            None,
+            Some(&parquet_data),
+        )
+        .unwrap();
+
+        let reader = ParquetMetaReader::from_file_size(&pm_bytes, pm_file_size).unwrap();
+        assert!(reader.has_bloom_filters());
+        assert_eq!(
+            reader.bloom_filter_position(0),
+            None,
+            "ts column carries no bloom filter"
+        );
+        let pos_a = reader
+            .bloom_filter_position(1)
+            .expect("column 1 should have a bloom filter");
+        let pos_b = reader
+            .bloom_filter_position(2)
+            .expect("column 2 should have a bloom filter");
+
+        let mut offsets = Vec::with_capacity(4);
+        for rg in 0..2usize {
+            for pos in [pos_a, pos_b] {
+                let off = reader.bloom_filter_offset_in_pm(rg, pos).unwrap() as usize;
+                assert_ne!(off, 0, "each (row group, column) pair must inline a bitset");
+                let len = i32::from_le_bytes(pm_bytes[off..off + 4].try_into().unwrap()) as usize;
+                assert!(len >= 32, "inlined bitset must be at least 32 bytes");
+                let bitset = &pm_bytes[off + 4..off + 4 + len];
+                assert!(
+                    bitset.iter().any(|&b| b != 0),
+                    "inlined bloom bitset should have at least one bit set"
+                );
+                offsets.push(off);
+            }
+        }
+        let mut distinct = offsets.clone();
+        distinct.sort_unstable();
+        distinct.dedup();
+        assert_eq!(
+            distinct.len(),
+            offsets.len(),
+            "every (row group, column) bloom bitset must occupy a distinct _pm offset"
+        );
+    }
+
+    fn write_parquet_with_two_bloom_columns_two_row_groups() -> Vec<u8> {
+        let row_count = 100usize;
+        let ts_data: Vec<i64> = (0..row_count as i64).collect();
+        let ts_bytes: &'static [u8] = Box::leak(
+            unsafe { std::slice::from_raw_parts(ts_data.as_ptr() as *const u8, ts_data.len() * 8) }
+                .to_vec()
+                .into_boxed_slice(),
+        );
+        let a_data: Vec<i32> = (0..row_count as i32).collect();
+        let a_bytes: &'static [u8] = Box::leak(
+            unsafe { std::slice::from_raw_parts(a_data.as_ptr() as *const u8, a_data.len() * 4) }
+                .to_vec()
+                .into_boxed_slice(),
+        );
+        let b_data: Vec<i32> = (0..row_count as i32)
+            .map(|x| x.wrapping_mul(7) + 3)
+            .collect();
+        let b_bytes: &'static [u8] = Box::leak(
+            unsafe { std::slice::from_raw_parts(b_data.as_ptr() as *const u8, b_data.len() * 4) }
+                .to_vec()
+                .into_boxed_slice(),
+        );
+
+        let cols = vec![
+            Column {
+                name: "ts",
+                data_type: ColumnTypeTag::Timestamp.into_type(),
+                id: 0,
+                row_count,
+                primary_data: ts_bytes,
+                secondary_data: &[],
+                symbol_offsets: &[],
+                column_top: 0,
+                designated_timestamp: true,
+                not_null_hint: true,
+                designated_timestamp_ascending: true,
+                parquet_encoding_config: ParquetEncodingConfig::from_raw(0),
+            },
+            Column {
+                name: "a",
+                data_type: ColumnTypeTag::Int.into_type(),
+                id: 1,
+                row_count,
+                primary_data: a_bytes,
+                secondary_data: &[],
+                symbol_offsets: &[],
+                column_top: 0,
+                designated_timestamp: false,
+                not_null_hint: true,
+                designated_timestamp_ascending: false,
+                parquet_encoding_config: ParquetEncodingConfig::from_raw(0),
+            },
+            Column {
+                name: "b",
+                data_type: ColumnTypeTag::Int.into_type(),
+                id: 2,
+                row_count,
+                primary_data: b_bytes,
+                secondary_data: &[],
+                symbol_offsets: &[],
+                column_top: 0,
+                designated_timestamp: false,
+                not_null_hint: true,
+                designated_timestamp_ascending: false,
+                parquet_encoding_config: ParquetEncodingConfig::from_raw(0),
+            },
+        ];
+        let partition = Partition { table: "bloom".to_string(), columns: cols };
+
+        let mut buf = Vec::new();
+        ParquetWriter::new(&mut buf)
+            .with_statistics(true)
+            .with_version(Version::V1)
+            // Half the rows per group yields two row groups.
+            .with_row_group_size(Some(row_count / 2))
+            .with_bloom_filter_columns([1, 2].into_iter().collect())
+            .with_bloom_filter_fpp(0.01)
+            .finish(partition)
+            .unwrap();
+        buf
     }
 
     #[test]
@@ -2667,7 +2821,7 @@ mod tests {
     }
 
     /// Regenerates the committed test fixture consumed by
-    /// `Mig940Test#testMigrateBackfillsMissingTsStats`. Run with
+    /// `Mig941Test#testMigrateBackfillsMissingTsStats`. Run with
     /// `cargo test emit_mig940_ts_no_stats_fixture -- --ignored` after
     /// changing the parquet write path in a way that affects the fixture.
     #[test]

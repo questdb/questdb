@@ -78,12 +78,11 @@ public class ParquetMetaCrcCorruptionTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCrcRefusedLetsMig940RegenerateAfterFlip() throws Exception {
-        // After a CRC flip, Mig940 must treat the _pm as stale (its
-        // isParquetMetadataStale helper swallows CairoException as "stale")
-        // and regenerate it from data.parquet. This proves the migration is
-        // the documented recovery path for CRC-detected corruption rather
-        // than a hard failure.
+    public void testCrcRefusedLetsMig941RegenerateAfterFlip() throws Exception {
+        // After a CRC flip, Mig941 regenerates the _pm from data.parquet -- it
+        // rewrites every parquet partition's _pm unconditionally, so a corrupt
+        // _pm is simply overwritten. This proves the migration is the documented
+        // recovery path for CRC-detected corruption rather than a hard failure.
         assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
             execute("CREATE TABLE t (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("INSERT INTO t VALUES(1, '2024-06-10T00:00:00.000000Z')");
@@ -111,7 +110,7 @@ public class ParquetMetaCrcCorruptionTest extends AbstractCairoTest {
 
             runMig941(token);
 
-            // After Mig940, the regenerated _pm must open cleanly.
+            // After Mig941, the regenerated _pm must open cleanly.
             try (Path path = new Path()) {
                 path.of(configuration.getDbRoot()).concat(token);
                 TableUtils.setPathForParquetPartitionMetadata(path, ColumnType.TIMESTAMP, PartitionBy.DAY, partitionTs, partitionNameTxn);
