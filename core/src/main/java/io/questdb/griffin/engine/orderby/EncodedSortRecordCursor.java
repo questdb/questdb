@@ -97,13 +97,6 @@ class EncodedSortRecordCursor implements DelegatingRecordCursor {
         }
     }
 
-    private void forceClose() {
-        Misc.free(entryMem);
-        Misc.free(encoder);
-        Misc.free(recordChain);
-        baseCursor = Misc.free(baseCursor);
-    }
-
     @Override
     public Record getRecord() {
         return recordChain.getRecord();
@@ -232,5 +225,12 @@ class EncodedSortRecordCursor implements DelegatingRecordCursor {
         circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
         startAddr = entryMem.getAddress() + rowIdOffset;
         toTop();
+    }
+
+    private void forceClose() {
+        Misc.free(entryMem);
+        Misc.free(encoder);
+        Misc.free(recordChain);
+        baseCursor = Misc.free(baseCursor);
     }
 }

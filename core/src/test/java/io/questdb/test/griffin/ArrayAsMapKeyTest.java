@@ -24,7 +24,12 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.mp.WorkerPool;
+import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 
 public class ArrayAsMapKeyTest extends AbstractCairoTest {
@@ -143,6 +148,45 @@ public class ArrayAsMapKeyTest extends AbstractCairoTest {
                     true,
                     true
             );
+        });
+    }
+
+    @Test
+    public void testDistinctOverTwoArrayKeysWithNullValue() throws Exception {
+        // A null value in the first array key column lays out as just an 8-byte
+        // NULL_LEN marker, so addressOfKeyColumn must advance by 8 before reading
+        // the next var-size key. A prior off-by-one in getPlainValueSize(long)
+        // returned 8 + NULL_LEN = 7, corrupting the offset of the following array
+        // column and tripping the "typeTag of encodedType is not ARRAY" assert.
+        assertMemoryLeak(() -> {
+            final int workerCount = 4;
+            final WorkerPool pool = new WorkerPool(() -> workerCount);
+            TestUtils.setupWorkerPool(pool, engine);
+            pool.start(LOG);
+            try (
+                    SqlExecutionContext parallelCtx = new SqlExecutionContextImpl(engine, workerCount)
+                            .with(securityContext, bindVariableService, null, -1, circuitBreaker)
+            ) {
+                parallelCtx.initNow();
+                execute("CREATE TABLE t (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+                // The null v's become a null DOUBLE[] when cast; that's the slot that triggers the off-by-one.
+                execute(
+                        "INSERT INTO t SELECT rnd_long(-1_000_000, 1_000_000, 4) v, " +
+                                "timestamp_sequence(to_timestamp('2024-01-01','yyyy-MM-dd'), 1_800_000_000L) ts " +
+                                "FROM long_sequence(200)"
+                );
+                final StringSink sink = new StringSink();
+                // The print path is what trips the assert — it iterates the cursor and reads each
+                // array column from the ordered-map record, exercising addressOfKeyColumn.
+                TestUtils.printSql(
+                        engine,
+                        parallelCtx,
+                        "SELECT DISTINCT v::DOUBLE[] a0, ARRAY[0.1, 0.2] a1 FROM t",
+                        sink
+                );
+            } finally {
+                pool.halt();
+            }
         });
     }
 
