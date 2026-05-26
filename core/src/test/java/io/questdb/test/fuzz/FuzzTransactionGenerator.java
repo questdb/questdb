@@ -33,6 +33,7 @@ import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.griffin.engine.table.parquet.ParquetCompression;
 import io.questdb.griffin.engine.table.parquet.ParquetEncoding;
+import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 import org.junit.Assert;
@@ -74,7 +75,8 @@ public class FuzzTransactionGenerator {
             int maxStrLenForStrColumns,
             String[] symbols,
             int metaVersion,
-            double probabilityOfSetParquetEncoding
+            double probabilityOfSetParquetEncoding,
+            double probabilityOfAddCoveringIndex
     ) {
         ObjList<FuzzTransaction> transactionList = new ObjList<>();
         int waitBarrierVersion = 0;
@@ -90,6 +92,7 @@ public class FuzzTransactionGenerator {
                 + probabilityOfDropPartition
                 + probabilityOfConvertPartitionToParquet
                 + probabilityOfConvertPartitionToNative
+                + probabilityOfAddCoveringIndex
                 + probabilityOfDataInsert
                 + probabilityOfSymbolAccessValidation
                 + probabilityOfQuery;
@@ -101,6 +104,7 @@ public class FuzzTransactionGenerator {
         probabilityOfDropPartition = probabilityOfDropPartition / sumOfProbabilities;
         probabilityOfConvertPartitionToParquet = probabilityOfConvertPartitionToParquet / sumOfProbabilities;
         probabilityOfConvertPartitionToNative = probabilityOfConvertPartitionToNative / sumOfProbabilities;
+        probabilityOfAddCoveringIndex = probabilityOfAddCoveringIndex / sumOfProbabilities;
         probabilityOfSymbolAccessValidation = probabilityOfSymbolAccessValidation / sumOfProbabilities;
         probabilityOfQuery = probabilityOfQuery / sumOfProbabilities;
         // effectively, probabilityOfDataInsert is as follows, but we don't need this value:
@@ -145,6 +149,9 @@ public class FuzzTransactionGenerator {
                 generateSetTtl(transactionList, metaVersion, waitBarrierVersion++, rnd);
                 continue;
             }
+
+            Assert.assertNotNull(meta);
+
             if (i == setParquetEncodingIteration) {
                 if (generateSetParquetEncoding(transactionList, metaVersion, waitBarrierVersion, rnd, meta)) {
                     waitBarrierVersion++;
@@ -193,8 +200,10 @@ public class FuzzTransactionGenerator {
 
             aggregateProbability += probabilityOfConvertPartitionToNative;
             boolean wantToConvertPartitionToNative = !wantSomething && rndDouble < aggregateProbability;
+            wantSomething |= wantToConvertPartitionToNative;
 
-            Assert.assertNotNull(meta);
+            aggregateProbability += probabilityOfAddCoveringIndex;
+            boolean wantToAddCoveringIndex = !wantSomething && rndDouble < aggregateProbability;
 
             if (wantToRemoveColumn) {
                 RecordMetadata newTableMetadata = generateDropColumn(transactionList, metaVersion, waitBarrierVersion, rnd, meta);
@@ -220,6 +229,8 @@ public class FuzzTransactionGenerator {
                 generateConvertPartitionToParquet(transactionList, metaVersion, waitBarrierVersion++, lastTimestamp, rnd);
             } else if (wantToConvertPartitionToNative) {
                 generateConvertPartitionToNative(transactionList, metaVersion, waitBarrierVersion++, lastTimestamp, rnd);
+            } else if (wantToAddCoveringIndex) {
+                generateAddCoveringIndex(transactionList, metaVersion, waitBarrierVersion, rnd, meta);
             } else if (wantToAddNewColumn && getNonDeletedColumnCount(meta) < MAX_COLUMNS) {
                 meta = generateAddColumn(transactionList, metaVersion++, waitBarrierVersion++, rnd, meta);
             } else if (wantToChangeColumnType && FuzzChangeColumnTypeOperation.canChangeColumnType(meta)) {
@@ -348,6 +359,49 @@ public class FuzzTransactionGenerator {
             return metadata;
         }
         return null;
+    }
+
+    private static void generateAddCoveringIndex(
+            ObjList<FuzzTransaction> transactionList, int metadataVersion, int waitBarrierVersion,
+            Rnd rnd, RecordMetadata meta
+    ) {
+        IntList symbolCols = new IntList();
+        for (int i = 0, n = meta.getColumnCount(); i < n; i++) {
+            int colType = meta.getColumnType(i);
+            if (colType > 0 && ColumnType.isSymbol(colType) && !IndexType.isIndexed(meta.getColumnIndexType(i))) {
+                symbolCols.add(i);
+            }
+        }
+        if (symbolCols.size() == 0) {
+            return;
+        }
+        int symCol = symbolCols.getQuick(rnd.nextInt(symbolCols.size()));
+
+        IntList candidates = new IntList();
+        int tsIdx = meta.getTimestampIndex();
+        for (int i = 0, n = meta.getColumnCount(); i < n; i++) {
+            int colType = meta.getColumnType(i);
+            if (colType > 0 && i != symCol && i != tsIdx && ColumnType.tagOf(colType) != ColumnType.LONG128) {
+                candidates.add(i);
+            }
+        }
+        if (candidates.size() == 0) {
+            return;
+        }
+        int includeCount = Math.min(1 + rnd.nextInt(3), candidates.size());
+        IntList includeIndices = new IntList();
+        for (int i = 0; i < includeCount; i++) {
+            int pick = rnd.nextInt(candidates.size());
+            includeIndices.add(candidates.getQuick(pick));
+            candidates.removeIndex(pick);
+        }
+
+        FuzzTransaction transaction = new FuzzTransaction();
+        transaction.operationList.add(new FuzzAddCoveringIndexOperation(symCol, includeIndices));
+        transaction.structureVersion = metadataVersion;
+        transaction.waitBarrierVersion = waitBarrierVersion;
+        transaction.rollback = true;
+        transactionList.add(transaction);
     }
 
     private static void generateConvertPartitionToNative(
