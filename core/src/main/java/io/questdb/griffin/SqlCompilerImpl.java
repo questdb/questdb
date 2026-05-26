@@ -3528,7 +3528,11 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             throw SqlException.$(lexer.lastTokenPosition(), "unexpected token [").put(tok).put("] while trying to refresh materialized view");
         }
 
-        executionContext.getSecurityContext().authorizeMatViewRefresh(matViewToken);
+        if (fullForceRefresh) {
+            executionContext.getSecurityContext().authorizeMatViewRefreshFullForce(matViewToken);
+        } else {
+            executionContext.getSecurityContext().authorizeMatViewRefresh(matViewToken);
+        }
         if (!executionContext.isValidationOnly()) {
             final MatViewStateStore matViewStateStore = engine.getMatViewStateStore();
             if (isStatsReset) {
