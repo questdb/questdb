@@ -148,6 +148,36 @@ public class StreamingLeadIntegrationTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testMixedLagAndLeadFallsBackToCached() throws Exception {
+        // Regression: with the streaming-lead flag on, a query mixing LAG (lookahead=0) and LEAD
+        // (lookahead>0) must NOT route to DeferredEmitWindow — that cursor requires every window
+        // function to be positive-lookahead and would throw at construction otherwise. The planner
+        // detects the mix and falls through to CachedWindow.
+        assertMemoryLeak(() -> {
+            execute("create table t (x long, ts timestamp) timestamp(ts) partition by day");
+            execute("insert into t values (1, 0), (2, 1000), (3, 2000)");
+
+            assertPlanNoLeakCheck(
+                    "select x, lag(x, 1) over () as l, lead(x, 1) over () as ld from t",
+                    "CachedWindow\n" +
+                            "  unorderedFunctions: [lag(x, 1, NULL) over (),lead(x, 1, NULL) over ()]\n" +
+                            "    PageFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: t\n"
+            );
+
+            // Verify output is also correct (planner falls back, query still works).
+            assertSql(
+                    "x\tl\tld\n" +
+                            "1\tnull\t2\n" +
+                            "2\t1\t3\n" +
+                            "3\t2\tnull\n",
+                    "select x, lag(x, 1) over () as l, lead(x, 1) over () as ld from t"
+            );
+        });
+    }
+
+    @Test
     public void testNonConstantDefaultFallsBackToCached() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table t (x long, y long, ts timestamp) timestamp(ts) partition by day");

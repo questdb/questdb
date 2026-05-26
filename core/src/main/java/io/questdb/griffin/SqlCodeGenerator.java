@@ -9495,11 +9495,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             if (isFastPath) {
                 int maxLookahead = 0;
                 int lookaheadFunctionCount = 0;
+                int windowFunctionCount = 0;
                 int lookaheadColumnIndex = -1;
                 for (int i = 0, size = functions.size(); i < size; i++) {
                     Function func = functions.getQuick(i);
                     if (func instanceof WindowFunction) {
                         WindowFunction wf = (WindowFunction) func;
+                        windowFunctionCount++;
                         int la = wf.getLookahead();
                         if (la > maxLookahead) {
                             maxLookahead = la;
@@ -9521,11 +9523,14 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     return new WindowRecordCursorFactory(base, factoryMetadata, functions);
                 }
 
-                // Phase 3 deferred-emit dispatch: exactly one positive-lookahead function, base must
-                // support random access (the cursor stores base rowids and uses recordAt at emit
-                // time). If any other constraint blocks streaming, fall through to CachedWindow which
-                // will call pass1 on the streaming-LEAD's inherited cached fallback.
-                if (lookaheadFunctionCount == 1 && base.recordCursorSupportsRandomAccess()) {
+                // Phase 3+5 deferred-emit dispatch: the cursor requires exactly one window function,
+                // positive-lookahead, and base random access. If the query mixes a deferred-emit LEAD
+                // with another (immediate-emit) window function — typically a LAG — the cursor would
+                // throw at construction time. Detect that here and fall through to cached so the
+                // streaming-LEAD's inherited pass1 still produces correct results.
+                if (lookaheadFunctionCount == 1
+                        && windowFunctionCount == 1
+                        && base.recordCursorSupportsRandomAccess()) {
                     // Phase 5: rebuild PARTITION BY info for the LEAD column (the per-column locals
                     // computed inside the loop above were reused/cleared). Re-parse the window
                     // expression's PARTITION BY here to make the cursor-owned partition map.
