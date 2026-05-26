@@ -816,6 +816,14 @@ public interface CairoConfiguration {
 
     int getSqlWindowStorePageSize();
 
+    default boolean getSqlWindowStreamingLeadEnabled() {
+        return false;
+    }
+
+    default int getSqlWindowStreamingMaxPartitions() {
+        return 1_048_576;
+    }
+
     int getSqlWindowTreeKeyMaxPages();
 
     int getSqlWindowTreeKeyPageSize();
