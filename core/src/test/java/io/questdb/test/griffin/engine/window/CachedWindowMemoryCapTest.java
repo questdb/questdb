@@ -31,7 +31,7 @@ import org.junit.Test;
 public class CachedWindowMemoryCapTest extends AbstractCairoTest {
 
     @Test
-    public void testCacheCapFiresAndCleansUp() throws Exception {
+    public void testCacheCapFires() throws Exception {
         node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_STORE_PAGE_SIZE, 4096);
         node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_CACHE_MAX_BYTES, 8192);
 
@@ -51,10 +51,10 @@ public class CachedWindowMemoryCapTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testConcurrentCursorsHaveIndependentCaps() throws Exception {
-        // Each cached-window cursor allocates its own LongTreeChain/RecordArray. The cap is
-        // per-cursor; two sequential runs each under the cap must both succeed even though
-        // their combined heap would exceed it.
+    public void testRepeatedCursorsStayUnderCap() throws Exception {
+        // The cap is enforced per cursor execution. Running the same query twice in a row,
+        // with each run staying under the cap, must succeed both times - the second run
+        // must not see leftover state from the first.
         final long perCursorBytes = 16L * 1024 * 1024;
         node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_TREE_MAX_BYTES, perCursorBytes);
         node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_ROWID_MAX_BYTES, perCursorBytes);
@@ -112,7 +112,7 @@ public class CachedWindowMemoryCapTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testRowIdCapFiresAndCleansUp() throws Exception {
+    public void testRowIdCapFires() throws Exception {
         node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_ROWID_PAGE_SIZE, 4096);
         node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_ROWID_MAX_BYTES, 8192);
 
@@ -132,7 +132,7 @@ public class CachedWindowMemoryCapTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testTreeKeyCapFiresAndCleansUp() throws Exception {
+    public void testTreeKeyCapFires() throws Exception {
         node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_TREE_PAGE_SIZE, 4096);
         node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_TREE_MAX_BYTES, 8192);
 

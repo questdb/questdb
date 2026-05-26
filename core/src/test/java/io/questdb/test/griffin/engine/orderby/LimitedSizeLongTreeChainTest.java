@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin.engine.orderby;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.griffin.engine.RecordComparator;
@@ -60,8 +61,8 @@ public class LimitedSizeLongTreeChainTest extends AbstractCairoTest {
                 configuration.getSqlSortKeyMaxBytes(),
                 configuration.getSqlSortLightValuePageSize(),
                 configuration.getSqlSortLightValueMaxBytes(),
-                "cairo.sql.sort.key.max.bytes",
-                "cairo.sql.sort.light.value.max.bytes"
+                PropertyKey.CAIRO_SQL_SORT_KEY_MAX_BYTES.getPropertyPath(),
+                PropertyKey.CAIRO_SQL_SORT_LIGHT_VALUE_MAX_BYTES.getPropertyPath()
         );
         chain.updateLimits(true, 20);
     }

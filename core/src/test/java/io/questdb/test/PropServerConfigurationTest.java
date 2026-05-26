@@ -773,18 +773,18 @@ public class PropServerConfigurationTest {
     @Test
     public void testDeprecatedMaxPagesDerivesMaxBytes() throws Exception {
         Properties properties = new Properties();
-        properties.setProperty("cairo.sql.window.tree.page.size", "512k");
-        properties.setProperty("cairo.sql.window.tree.max.pages", "200");
         properties.setProperty("cairo.sql.sort.key.page.size", "128k");
         properties.setProperty("cairo.sql.sort.key.max.pages", "10");
-        // The deprecated analytic alias still works too.
+        // The older analytic.* aliases still derive the new max.bytes defaults too.
+        properties.setProperty("cairo.sql.window.tree.page.size", "512k");
+        properties.setProperty("cairo.sql.analytic.tree.max.pages", "200");
         properties.setProperty("cairo.sql.window.rowid.page.size", "256k");
         properties.setProperty("cairo.sql.analytic.rowid.max.pages", "50");
 
         CairoConfiguration cairo = newPropServerConfiguration(properties).getCairoConfiguration();
 
-        Assert.assertEquals(200L * 512 * 1024, cairo.getSqlWindowTreeKeyMaxBytes());
         Assert.assertEquals(10L * 128 * 1024, cairo.getSqlSortKeyMaxBytes());
+        Assert.assertEquals(200L * 512 * 1024, cairo.getSqlWindowTreeKeyMaxBytes());
         Assert.assertEquals(50L * 256 * 1024, cairo.getSqlWindowRowIdMaxBytes());
         // Keys whose deprecated max.pages remained unset fall back to the new 4 GiB default.
         Assert.assertEquals(4L * Numbers.SIZE_1GB, cairo.getSqlSortValueMaxBytes());
@@ -803,19 +803,6 @@ public class PropServerConfigurationTest {
         CairoConfiguration cairo = newPropServerConfiguration(properties).getCairoConfiguration();
 
         Assert.assertEquals(128L * 1024 * Integer.MAX_VALUE, cairo.getSqlSortKeyMaxBytes());
-    }
-
-    @Test
-    public void testNewMaxBytesWinsOverDeprecatedMaxPages() throws Exception {
-        Properties properties = new Properties();
-        properties.setProperty("cairo.sql.window.tree.page.size", "512k");
-        properties.setProperty("cairo.sql.window.tree.max.pages", "200");
-        properties.setProperty("cairo.sql.window.tree.max.bytes", "1g");
-
-        CairoConfiguration cairo = newPropServerConfiguration(properties).getCairoConfiguration();
-
-        // The new key takes precedence over the deprecated alias.
-        Assert.assertEquals(Numbers.SIZE_1GB, cairo.getSqlWindowTreeKeyMaxBytes());
     }
 
     @Test
@@ -1318,6 +1305,19 @@ public class PropServerConfigurationTest {
 
         Assert.assertEquals("shared-write", configuration.getSharedWorkerPoolWriteConfiguration().getPoolName());
         Assert.assertTrue("must be minimum of 2 shared workers", configuration.getSharedWorkerPoolWriteConfiguration().getWorkerCount() >= 2);
+    }
+
+    @Test
+    public void testNewMaxBytesWinsOverDeprecatedMaxPages() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty("cairo.sql.window.tree.page.size", "512k");
+        properties.setProperty("cairo.sql.window.tree.max.pages", "200");
+        properties.setProperty("cairo.sql.window.tree.max.bytes", "1g");
+
+        CairoConfiguration cairo = newPropServerConfiguration(properties).getCairoConfiguration();
+
+        // The new key takes precedence over the deprecated alias.
+        Assert.assertEquals(Numbers.SIZE_1GB, cairo.getSqlWindowTreeKeyMaxBytes());
     }
 
     @Test
