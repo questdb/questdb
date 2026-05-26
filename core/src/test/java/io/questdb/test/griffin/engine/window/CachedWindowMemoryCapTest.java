@@ -100,7 +100,7 @@ public class CachedWindowMemoryCapTest extends AbstractCairoTest {
 
     @Test
     public void testHappyPathUnchanged() throws Exception {
-        // The default 4 GiB cap must not regress small queries.
+        // The default uncapped configuration must not regress small queries.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tab AS (" +
                     "SELECT" +

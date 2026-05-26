@@ -1209,7 +1209,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public long getSqlSortKeyMaxBytes() {
-        return 4L * Numbers.SIZE_1GB;
+        return Long.MAX_VALUE;
     }
 
     @Override
@@ -1219,7 +1219,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public long getSqlSortLightValueMaxBytes() {
-        return 4L * Numbers.SIZE_1GB;
+        return Long.MAX_VALUE;
     }
 
     @Override
@@ -1229,7 +1229,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public long getSqlSortValueMaxBytes() {
-        return 4L * Numbers.SIZE_1GB;
+        return Long.MAX_VALUE;
     }
 
     @Override
@@ -1244,7 +1244,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public long getSqlWindowCacheMaxBytes() {
-        return 4L * Numbers.SIZE_1GB;
+        return Long.MAX_VALUE;
     }
 
     @Override
@@ -1270,7 +1270,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public long getSqlWindowRowIdMaxBytes() {
-        return 4L * Numbers.SIZE_1GB;
+        return Long.MAX_VALUE;
     }
 
     @Override
@@ -1290,7 +1290,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public long getSqlWindowTreeKeyMaxBytes() {
-        return 4L * Numbers.SIZE_1GB;
+        return Long.MAX_VALUE;
     }
 
     @Override

@@ -1746,7 +1746,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.sqlWindowStorePageSize = Numbers.ceilPow2(getIntSize(properties, env, PropertyKey.CAIRO_SQL_WINDOW_STORE_PAGE_SIZE, sqlWindowStorePageSize));
             int sqlWindowStoreMaxPages = getInt(properties, env, PropertyKey.CAIRO_SQL_ANALYTIC_STORE_MAX_PAGES, Integer.MAX_VALUE);
             this.sqlWindowStoreMaxPages = getInt(properties, env, PropertyKey.CAIRO_SQL_WINDOW_STORE_MAX_PAGES, sqlWindowStoreMaxPages);
-            this.sqlWindowCacheMaxBytes = getLongSize(properties, env, PropertyKey.CAIRO_SQL_WINDOW_CACHE_MAX_BYTES, 4L * Numbers.SIZE_1GB);
+            this.sqlWindowCacheMaxBytes = getLongSize(properties, env, PropertyKey.CAIRO_SQL_WINDOW_CACHE_MAX_BYTES, Long.MAX_VALUE);
             // Resolve the CachedWindow record-store cap. Two legacy keys can cap the same RecordArray:
             // the new byte-denominated cairo.sql.window.cache.max.bytes, and the older page-denominated
             // cairo.sql.window.store.max.pages (whose own alias is cairo.sql.analytic.store.max.pages
@@ -2431,17 +2431,16 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
         final int mainMaxPages = getInt(properties, env, deprecatedMaxPagesKey, Integer.MAX_VALUE);
 
-        // Detect explicit presence rather than comparing to a sentinel. The previously-documented
-        // default for *.max.pages was Integer.MAX_VALUE; a user who pinned the deprecated key to
-        // that exact value intended "unbounded" and must not be silently downgraded to the new
-        // 4 GiB default. Main key wins over alias, matching the previous behavior.
+        // Detect explicit presence rather than comparing to a sentinel: an unset deprecated key
+        // means "uncapped" (the new default), while an explicit value carries over as a byte cap.
+        // Main key wins over alias, matching the previous behavior.
         if (isPropertyExplicitlySet(properties, env, deprecatedMaxPagesKey)) {
             return pageSize * (long) mainMaxPages;
         }
         if (deprecatedAliasMaxPagesKey != null && isPropertyExplicitlySet(properties, env, deprecatedAliasMaxPagesKey)) {
             return pageSize * (long) aliasMaxPages;
         }
-        return 4L * Numbers.SIZE_1GB;
+        return Long.MAX_VALUE;
     }
 
     private int getCommitMode(Properties properties, @Nullable Map<String, String> env, ConfigPropertyKey key) {
