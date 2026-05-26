@@ -64,38 +64,71 @@ import java.util.concurrent.TimeUnit;
 /**
  * End-to-end window-function LEAD/LAG benchmark comparing the deferred-emit streaming path
  * ({@link DeferredEmitWindowRecordCursorFactory}) against the existing cached path
- * ({@link CachedWindowRecordCursorFactory}). Path selection is gated by the session flag
+ * ({@link CachedWindowRecordCursorFactory}) and (for some shapes) the immediate-emit streaming
+ * path ({@link WindowRecordCursorFactory}). Path selection is gated by the session flag
  * {@code cairo.sql.window.streaming.lead.enabled}.
+ * <p>
+ * <h3>Single-function shapes (validate Phases 3, 4, 5)</h3>
+ * <ul>
+ *   <li>{@code S1_LEAD_NO_PARTITION} — {@code LEAD(x,1) OVER ()}. Phase 3.</li>
+ *   <li>{@code S2_LAG_DESC_NO_PARTITION} — {@code LAG(x,1) OVER (ORDER BY ts DESC)}.
+ *       Phase 4 normalises to LEAD-ASC and streams.</li>
+ *   <li>{@code S3_LEAD_PARTITIONED} — {@code LEAD(x,1) OVER (PARTITION BY sym)}. Phase 5.</li>
+ *   <li>{@code S4_LAG_DESC_PARTITIONED} —
+ *       {@code LAG(x,1) OVER (PARTITION BY sym ORDER BY ts DESC)}. Phase 4 + 5. The original
+ *       triggering query shape.</li>
+ * </ul>
+ * <p>
+ * <h3>Mixed-function shapes (Phase 6 candidates)</h3>
+ * Each Q-prefixed shape corresponds to a row of the mixed-LAG-LEAD plan probe table. All currently
+ * route through {@link CachedWindowRecordCursorFactory} under both {@code STREAMING} and
+ * {@code CACHED} paths because the cursor doesn't yet support mixed functions; the benchmark
+ * establishes a baseline that Phase 6 would improve.
+ * <ul>
+ *   <li>{@code Q1_MIXED_NO_ORDER} — {@code LAG(x,1) OVER () + LEAD(x,1) OVER ()}.
+ *       Cached, no sort trees.</li>
+ *   <li>{@code Q2_MIXED_ASC} — both functions {@code OVER (ORDER BY ts ASC)}. Cached, orders
+ *       dismissed (natural).</li>
+ *   <li>{@code Q3_MIXED_DESC} — both {@code OVER (ORDER BY ts DESC)}. Cached, two sort trees
+ *       (LEAD and LAG disagree on scan direction internally).</li>
+ *   <li>{@code Q4_MIXED_PARTITION_NO_ORDER} — both {@code OVER (PARTITION BY sym)}. Cached,
+ *       partitioned, no sort trees.</li>
+ *   <li>{@code Q5_MIXED_PARTITION_ASC} — both
+ *       {@code OVER (PARTITION BY sym ORDER BY ts ASC)}. Cached, partitioned, orders
+ *       dismissed.</li>
+ *   <li>{@code Q6_MIXED_PARTITION_DESC} — both
+ *       {@code OVER (PARTITION BY sym ORDER BY ts DESC)}. Cached, partitioned, two sort trees.
+ *       Worst-case current cost.</li>
+ *   <li>{@code Q7_MIXED_INVERSE_NO_PARTITION} —
+ *       {@code LAG(x,1) OVER (ORDER BY ts DESC) + LEAD(x,1) OVER (ORDER BY ts ASC)}. LAG and
+ *       LEAD compute the same row value but the planner doesn't unify them; LAG gets a sort
+ *       tree, LEAD is unordered.</li>
+ *   <li>{@code Q8_MIXED_INVERSE_PARTITION} — same as Q7 but partitioned.</li>
+ *   <li>{@code Q9_DUAL_LEAD} — {@code LEAD(x,1) OVER (ORDER BY ts ASC) + LEAD(x,3)
+ *       OVER (ORDER BY ts ASC)}. Two LEADs with different offsets, both cached today.</li>
+ *   <li>{@code Q10_DUAL_LAG} — {@code LAG(x,1) OVER (ORDER BY ts ASC) + LAG(x,3) OVER (ORDER BY
+ *       ts ASC)}. Two LAGs, both ZERO_PASS + lookahead=0 — already streams via the existing
+ *       {@link WindowRecordCursorFactory}. Baseline: this is the floor that Phase 6 would aim
+ *       to bring mixed-LAG-LEAD shapes down to.</li>
+ *   <li>{@code Q11_MIXED_DESC_OUTER_DESC} —
+ *       {@code LAG(x,1) OVER (ORDER BY ts DESC) + LEAD(x,1) OVER (ORDER BY ts DESC)
+ *       ORDER BY ts DESC}. Outer DESC triggers backward scan; both OVER orders dismiss.
+ *       Cached, no sort trees, backward base scan.</li>
+ * </ul>
  * <p>
  * Params:
  * <ul>
- *   <li>{@code path}: {@code STREAMING} (flag on, runs through DeferredEmitWindow where the
- *       planner can dispatch to it) or {@code CACHED} (flag off, baseline — every LEAD-bearing
- *       query routes through CachedWindow).</li>
- *   <li>{@code shape}: which query shape to benchmark. Six shapes:
- *       <ul>
- *         <li>{@code LEAD_NO_PARTITION} — `LEAD(x,1) OVER ()`. Phase 3.</li>
- *         <li>{@code LAG_DESC_NO_PARTITION} — `LAG(x,1) OVER (ORDER BY ts DESC)`.
- *             Phase 4 normalises to LEAD-ASC and streams.</li>
- *         <li>{@code LEAD_PARTITIONED} — `LEAD(x,1) OVER (PARTITION BY sym)`. Phase 5.</li>
- *         <li>{@code LAG_DESC_PARTITIONED} — `LAG(x,1) OVER (PARTITION BY sym ORDER BY ts DESC)`.
- *             Phase 4+5 — the original triggering query shape.</li>
- *         <li>{@code LAG_PLUS_LEAD_NO_PARTITION} — `LAG(x,1) OVER () + LEAD(x,1) OVER ()`.
- *             Currently CachedWindow under both paths (Phase 6 would stream).</li>
- *         <li>{@code LAG_PLUS_LEAD_PARTITIONED} — `LAG(x,1) OVER (PARTITION BY sym) + LEAD(x,1)
- *             OVER (PARTITION BY sym)`. Currently CachedWindow under both paths (Phase 6 would
- *             stream).</li>
- *       </ul></li>
- *   <li>{@code rowCount}: total row count in the seed table.</li>
- *   <li>{@code partitionCardinality}: number of distinct symbol values (drives PARTITION BY load).
- *       For shapes without PARTITION BY this is still applied to the data shape but doesn't
- *       affect the plan.</li>
+ *   <li>{@code path}: {@code STREAMING} (flag on, dispatches to DeferredEmitWindow where the
+ *       planner can) or {@code CACHED} (flag off, baseline).</li>
+ *   <li>{@code shape}: one of the 15 query shapes above.</li>
+ *   <li>{@code rowCount}: total row count in the seed table. Defaults to 1M; pass
+ *       {@code -p rowCount=100000,1000000,10000000} for a full sweep.</li>
+ *   <li>{@code partitionCardinality}: number of distinct symbol values.</li>
  * </ul>
  * <p>
  * A {@code @Setup(Level.Trial)} routing guard walks the compiled factory chain to confirm each
  * {@code shape}+{@code path} pair hits the expected factory class. Silent routing drift would
- * corrupt the numbers — e.g. if a planner change quietly stopped dispatching LAG_DESC_PARTITIONED
- * to DeferredEmit, STREAMING and CACHED would converge and the numbers would be meaningless.
+ * corrupt the numbers; the assertion catches it at setup rather than mid-run.
  */
 @State(Scope.Benchmark)
 @BenchmarkMode(Mode.AverageTime)
@@ -113,16 +146,27 @@ public class WindowLeadLagBenchmark {
     @Param({"1000", "100000"})
     public int partitionCardinality;
 
-    @Param({"100000", "1000000", "10000000"})
+    @Param({"1000000"})
     public int rowCount;
 
     @Param({
-            "LEAD_NO_PARTITION",
-            "LAG_DESC_NO_PARTITION",
-            "LEAD_PARTITIONED",
-            "LAG_DESC_PARTITIONED",
-            "LAG_PLUS_LEAD_NO_PARTITION",
-            "LAG_PLUS_LEAD_PARTITIONED"
+            // Single-function shapes (Phases 3-5 streaming).
+            "S1_LEAD_NO_PARTITION",
+            "S2_LAG_DESC_NO_PARTITION",
+            "S3_LEAD_PARTITIONED",
+            "S4_LAG_DESC_PARTITIONED",
+            // Mixed and multi-function shapes (Phase 6 candidates).
+            "Q1_MIXED_NO_ORDER",
+            "Q2_MIXED_ASC",
+            "Q3_MIXED_DESC",
+            "Q4_MIXED_PARTITION_NO_ORDER",
+            "Q5_MIXED_PARTITION_ASC",
+            "Q6_MIXED_PARTITION_DESC",
+            "Q7_MIXED_INVERSE_NO_PARTITION",
+            "Q8_MIXED_INVERSE_PARTITION",
+            "Q9_DUAL_LEAD",
+            "Q10_DUAL_LAG",
+            "Q11_MIXED_DESC_OUTER_DESC"
     })
     public String shape;
 
@@ -143,20 +187,18 @@ public class WindowLeadLagBenchmark {
     public void run(Blackhole bh) throws SqlException {
         try (RecordCursor cursor = factory.getCursor(ctx)) {
             final Record record = cursor.getRecord();
-            // Consume every output row; column count varies per shape, but the first long column
-            // is always present. Iterating drives the full window evaluation including any
-            // end-of-cursor flush for the deferred-emit path.
+            final int columnCount = factory.getMetadata().getColumnCount();
             while (cursor.hasNext()) {
-                bh.consume(record.getLong(0));
-                // Consume the window column (1) too so the deferred-emit slot read is exercised.
-                bh.consume(record.getLong(1));
-                // For partitioned shapes there's a third column (the LAG/LEAD output); consume if
-                // metadata says we have it.
-                if (factory.getMetadata().getColumnCount() > 2) {
-                    bh.consume(record.getLong(2));
+                // Drain every output column. For the partitioned shapes the first column is sym
+                // (SYMBOL) so cannot be read as long; everything else is x/ts/window-result which
+                // are long. Probe column 0 by type to avoid the cast issue, drain the rest as long.
+                if (factory.getMetadata().getColumnType(0) == io.questdb.cairo.ColumnType.SYMBOL) {
+                    bh.consume(record.getSymA(0));
+                } else {
+                    bh.consume(record.getLong(0));
                 }
-                if (factory.getMetadata().getColumnCount() > 3) {
-                    bh.consume(record.getLong(3));
+                for (int c = 1; c < columnCount; c++) {
+                    bh.consume(record.getLong(c));
                 }
             }
         }
@@ -231,37 +273,63 @@ public class WindowLeadLagBenchmark {
 
     private String buildSql() {
         return switch (shape) {
-            case "LEAD_NO_PARTITION" ->
+            // -- Single-function shapes -----------------------------------------------------
+            case "S1_LEAD_NO_PARTITION" ->
                     "SELECT x, ts, lead(x, 1) OVER () FROM t";
-            case "LAG_DESC_NO_PARTITION" ->
+            case "S2_LAG_DESC_NO_PARTITION" ->
                     "SELECT x, ts, lag(x, 1) OVER (ORDER BY ts DESC) FROM t";
-            case "LEAD_PARTITIONED" ->
+            case "S3_LEAD_PARTITIONED" ->
                     "SELECT x, ts, lead(x, 1) OVER (PARTITION BY sym) FROM t";
-            case "LAG_DESC_PARTITIONED" ->
+            case "S4_LAG_DESC_PARTITIONED" ->
                     "SELECT x, ts, lag(x, 1) OVER (PARTITION BY sym ORDER BY ts DESC) FROM t";
-            case "LAG_PLUS_LEAD_NO_PARTITION" ->
+            // -- Mixed-function shapes (Phase 6 candidates) ---------------------------------
+            case "Q1_MIXED_NO_ORDER" ->
                     "SELECT x, ts, lag(x, 1) OVER (), lead(x, 1) OVER () FROM t";
-            case "LAG_PLUS_LEAD_PARTITIONED" ->
+            case "Q2_MIXED_ASC" ->
+                    "SELECT x, ts, lag(x, 1) OVER (ORDER BY ts ASC), lead(x, 1) OVER (ORDER BY ts ASC) FROM t";
+            case "Q3_MIXED_DESC" ->
+                    "SELECT x, ts, lag(x, 1) OVER (ORDER BY ts DESC), lead(x, 1) OVER (ORDER BY ts DESC) FROM t";
+            case "Q4_MIXED_PARTITION_NO_ORDER" ->
                     "SELECT x, ts, lag(x, 1) OVER (PARTITION BY sym), lead(x, 1) OVER (PARTITION BY sym) FROM t";
+            case "Q5_MIXED_PARTITION_ASC" ->
+                    "SELECT x, ts, lag(x, 1) OVER (PARTITION BY sym ORDER BY ts ASC), lead(x, 1) OVER (PARTITION BY sym ORDER BY ts ASC) FROM t";
+            case "Q6_MIXED_PARTITION_DESC" ->
+                    "SELECT x, ts, lag(x, 1) OVER (PARTITION BY sym ORDER BY ts DESC), lead(x, 1) OVER (PARTITION BY sym ORDER BY ts DESC) FROM t";
+            case "Q7_MIXED_INVERSE_NO_PARTITION" ->
+                    "SELECT x, ts, lag(x, 1) OVER (ORDER BY ts DESC), lead(x, 1) OVER (ORDER BY ts ASC) FROM t";
+            case "Q8_MIXED_INVERSE_PARTITION" ->
+                    "SELECT x, ts, lag(x, 1) OVER (PARTITION BY sym ORDER BY ts DESC), lead(x, 1) OVER (PARTITION BY sym ORDER BY ts ASC) FROM t";
+            case "Q9_DUAL_LEAD" ->
+                    "SELECT x, ts, lead(x, 1) OVER (ORDER BY ts ASC), lead(x, 3) OVER (ORDER BY ts ASC) FROM t";
+            case "Q10_DUAL_LAG" ->
+                    "SELECT x, ts, lag(x, 1) OVER (ORDER BY ts ASC), lag(x, 3) OVER (ORDER BY ts ASC) FROM t";
+            case "Q11_MIXED_DESC_OUTER_DESC" ->
+                    "SELECT x, ts, lag(x, 1) OVER (ORDER BY ts DESC), lead(x, 1) OVER (ORDER BY ts DESC) FROM t ORDER BY ts DESC";
             default -> throw new IllegalArgumentException("unknown shape: " + shape);
         };
     }
 
     private Class<?> expectedFactory() {
+        // Q10 (dual LAG ASC) always streams via the existing immediate-emit Window factory because
+        // LAG is ZERO_PASS + lookahead=0; the streaming flag doesn't change anything for it.
+        if ("Q10_DUAL_LAG".equals(shape)) {
+            return WindowRecordCursorFactory.class;
+        }
         if ("CACHED".equals(path)) {
             // Flag off: every LEAD-bearing query routes through CachedWindow.
             return CachedWindowRecordCursorFactory.class;
         }
         // STREAMING. Path depends on the shape.
         return switch (shape) {
-            // Single-LEAD shapes (with or without PARTITION BY) stream via DeferredEmit.
-            case "LEAD_NO_PARTITION", "LEAD_PARTITIONED" -> DeferredEmitWindowRecordCursorFactory.class;
-            // LAG-DESC normalises to LEAD-ASC then streams via DeferredEmit (Phase 4 + Phase 5).
-            case "LAG_DESC_NO_PARTITION", "LAG_DESC_PARTITIONED" -> DeferredEmitWindowRecordCursorFactory.class;
-            // Mixed LAG+LEAD: cursor doesn't yet support mixed, planner falls back to CachedWindow.
-            // Phase 6 would change this expectation.
-            case "LAG_PLUS_LEAD_NO_PARTITION", "LAG_PLUS_LEAD_PARTITIONED" -> CachedWindowRecordCursorFactory.class;
-            default -> throw new IllegalArgumentException("unknown shape: " + shape);
+            // Single-function streamable shapes.
+            case "S1_LEAD_NO_PARTITION",
+                 "S2_LAG_DESC_NO_PARTITION",
+                 "S3_LEAD_PARTITIONED",
+                 "S4_LAG_DESC_PARTITIONED" -> DeferredEmitWindowRecordCursorFactory.class;
+            // All Q-prefixed mixed/multi-LEAD shapes currently fall through to CachedWindow because
+            // the deferred-emit cursor requires exactly one window function. Phase 6 would change
+            // these expectations.
+            default -> CachedWindowRecordCursorFactory.class;
         };
     }
 
@@ -274,8 +342,6 @@ public class WindowLeadLagBenchmark {
                         + ") TIMESTAMP(ts) PARTITION BY DAY",
                 ctx
         );
-        // Uniformly distributed symbols, monotonic timestamps. Step is chosen so partition cardinality
-        // stays bounded by the param even when rowCount grows.
         engine.execute(
                 "INSERT INTO t "
                         + "SELECT "
@@ -285,12 +351,5 @@ public class WindowLeadLagBenchmark {
                         + "FROM long_sequence(" + rowCount + ")",
                 ctx
         );
-    }
-
-    static {
-        // Suppress JMH warnings about referenced-but-otherwise-unused classes that we touch only for
-        // routing assertions.
-        @SuppressWarnings("unused")
-        Class<?>[] referencedForRouting = {WindowRecordCursorFactory.class};
     }
 }
