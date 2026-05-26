@@ -619,7 +619,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             // cast both types to string.
             return isStringyType(typeA) ? typeB
                     : isStringyType(typeB) ? typeA
-                      : STRING;
+                    : STRING;
         }
         if (isGeoHashA) {
             // Both types are geohash, resolve to the one with fewer geohash bits.
@@ -644,7 +644,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             // We also support casting between decimal and stringy types.
             return isStringyType(typeA) ? typeB :
                     isStringyType(typeB) ? typeA :
-                    ColumnType.STRING; // Fallback should be supported by any type
+                            ColumnType.STRING; // Fallback should be supported by any type
         }
 
         if (tagA == INTERVAL || tagB == INTERVAL) {
@@ -1254,6 +1254,39 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return viewExpr != null ? viewExpr.position : 0;
     }
 
+    private static boolean hasNonLagLeadSiblingInSortGroup(
+            ObjList<QueryColumn> columns,
+            int columnCount,
+            int excludeIndex,
+            CharSequence orderByCol,
+            int direction
+    ) {
+        for (int j = 0; j < columnCount; j++) {
+            if (j == excludeIndex) {
+                continue;
+            }
+            QueryColumn qc = columns.getQuick(j);
+            if (!qc.isWindowExpression()) {
+                continue;
+            }
+            WindowExpression ac = (WindowExpression) qc;
+            if (ac.getOrderBy().size() != 1) {
+                continue;
+            }
+            if (!Chars.equalsIgnoreCase(ac.getOrderBy().getQuick(0).token, orderByCol)
+                    || ac.getOrderByDirection().getQuick(0) != direction) {
+                continue;
+            }
+            ExpressionNode siblingAst = qc.getAst();
+            if (siblingAst == null || siblingAst.token == null
+                    || (!Chars.equalsIgnoreCase(siblingAst.token, "lag")
+                    && !Chars.equalsIgnoreCase(siblingAst.token, "lead"))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     // Fixed-size scalars and wide types that MapValue can put/get directly.
     // SYMBOL is cached as the int symbol id. UUID, INTERVAL, and variable-width
     // types fall back to the recordAt path -- MapValue lacks symmetric put APIs
@@ -1289,6 +1322,72 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return joinColumns.getColumnCount() == 1 &&
                 symbolShortCircuit != NoopSymbolShortCircuit.INSTANCE &&
                 !(symbolShortCircuit instanceof ChainedSymbolShortCircuit);
+    }
+
+    private static void rewriteLagLeadForBaseScan(
+            RecordCursorFactory base,
+            RecordMetadata baseMetadata,
+            ObjList<QueryColumn> columns,
+            int columnCount
+    ) {
+        final int timestampIdx = baseMetadata.getTimestampIndex();
+        if (timestampIdx == -1) {
+            return;
+        }
+        final int scanDir = base.getScanDirection();
+        if (scanDir != RecordCursorFactory.SCAN_DIRECTION_FORWARD
+                && scanDir != RecordCursorFactory.SCAN_DIRECTION_BACKWARD) {
+            return;
+        }
+        for (int i = 0; i < columnCount; i++) {
+            QueryColumn qc = columns.getQuick(i);
+            if (!qc.isWindowExpression()) {
+                continue;
+            }
+            WindowExpression ac = (WindowExpression) qc;
+            if (ac.getOrderBy().size() != 1) {
+                continue;
+            }
+            ExpressionNode orderByNode = ac.getOrderBy().getQuick(0);
+            if (baseMetadata.getColumnIndexQuiet(orderByNode.token) != timestampIdx) {
+                continue;
+            }
+            int direction = ac.getOrderByDirection().getQuick(0);
+            if (direction != ORDER_ASC && direction != ORDER_DESC) {
+                continue;
+            }
+            if ((direction == ORDER_ASC && scanDir == RecordCursorFactory.SCAN_DIRECTION_FORWARD)
+                    || (direction == ORDER_DESC && scanDir == RecordCursorFactory.SCAN_DIRECTION_BACKWARD)) {
+                continue;
+            }
+            ExpressionNode ast = qc.getAst();
+            if (ast == null || ast.token == null) {
+                continue;
+            }
+            if (!Chars.equalsIgnoreCase(ast.token, "lag") && !Chars.equalsIgnoreCase(ast.token, "lead")) {
+                continue;
+            }
+            if (hasNonLagLeadSiblingInSortGroup(columns, columnCount, i, orderByNode.token, direction)) {
+                continue;
+            }
+            swapLagLeadToken(ast);
+            ac.getOrderByDirection().setQuick(0, 1 - direction);
+        }
+    }
+
+    private static boolean swapLagLeadToken(ExpressionNode ast) {
+        if (ast == null || ast.token == null) {
+            return false;
+        }
+        if (Chars.equalsIgnoreCase(ast.token, "lag")) {
+            ast.token = "lead";
+            return true;
+        }
+        if (Chars.equalsIgnoreCase(ast.token, "lead")) {
+            ast.token = "lag";
+            return true;
+        }
+        return false;
     }
 
     private static long tolerance(IQueryModel slaveModel, int leftTimestamp, int rightTimestampType) throws SqlException {
@@ -9286,6 +9385,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         final RecordMetadata baseMetadata = base.getMetadata();
         final ObjList<QueryColumn> columns = model.getColumns();
         final int columnCount = columns.size();
+        rewriteLagLeadForBaseScan(base, baseMetadata, columns, columnCount);
         groupedWindow.clear();
 
         valueTypes.clear();
@@ -9710,7 +9810,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             final ObjList<ObjList<WindowFunction>> functionGroups = new ObjList<>(groupedWindow.size());
             final ObjList<IntList> keys = new ObjList<>();
             for (ObjObjHashMap.Entry<IntList, ObjList<WindowFunction>> e : groupedWindow) {
-                windowComparators.add(recordComparatorCompiler.newInstance(chainMetadata, e.key));
+                final RecordComparator comparator = configuration.isSqlOrderBySortEnabled() && SortKeyEncoder.isSupported(chainMetadata, e.key)
+                        ? null
+                        : recordComparatorCompiler.newInstance(chainMetadata, e.key);
+                windowComparators.add(comparator);
                 functionGroups.add(e.value);
                 keys.add(e.key);
             }
@@ -10804,7 +10907,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 isStandalone
                                         ? totalUnnestColumns
                                         : masterColumnCount
-                                          + totalUnnestColumns
+                                        + totalUnnestColumns
                         );
                 if (!isStandalone) {
                     outputMetadata.copyColumnMetadataFrom(
