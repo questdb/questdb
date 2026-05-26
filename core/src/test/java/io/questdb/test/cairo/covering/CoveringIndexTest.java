@@ -10328,6 +10328,70 @@ public class CoveringIndexTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testMaterialiseFromParquetCleansUpTempFilesOnOpenAppendFailure() throws Exception {
+        final AtomicBoolean failArmed = new AtomicBoolean(false);
+        ff = new TestFilesFacadeImpl() {
+            @Override
+            public long openAppend(LPSZ name) {
+                if (failArmed.get() && name != null
+                        && Utf8s.endsWithAscii(name, "price.d")) {
+                    failArmed.set(false);
+                    return -1;
+                }
+                return super.openAppend(name);
+            }
+        };
+        assertMemoryLeak(ff, () -> {
+            execute("""
+                    CREATE TABLE t_mat_fail (
+                        ts TIMESTAMP,
+                        sym SYMBOL,
+                        price DOUBLE,
+                        tag VARCHAR
+                    ) TIMESTAMP(ts) PARTITION BY DAY WAL
+                    """);
+            execute("""
+                    INSERT INTO t_mat_fail
+                    SELECT
+                        dateadd('m', x::INT, '2024-01-01T00:00:00Z'::TIMESTAMP),
+                        'A' || (x % 4),
+                        x::DOUBLE,
+                        'V' || (x % 4)
+                    FROM long_sequence(100)
+                    """);
+            drainWalQueue();
+
+            execute("ALTER TABLE t_mat_fail CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            drainWalQueue();
+
+            failArmed.set(true);
+            execute("ALTER TABLE t_mat_fail ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (price, tag)");
+            drainWalQueue();
+
+            assertSql(
+                    "suspended\ntrue\n",
+                    "SELECT suspended FROM wal_tables() WHERE name = 't_mat_fail'"
+            );
+
+            execute("ALTER TABLE t_mat_fail RESUME WAL");
+            drainWalQueue();
+
+            assertSql(
+                    "suspended\nfalse\n",
+                    "SELECT suspended FROM wal_tables() WHERE name = 't_mat_fail'"
+            );
+            assertSql(
+                    "indexed\ntrue\n",
+                    "SELECT indexed FROM table_columns('t_mat_fail') WHERE \"column\" = 'sym'"
+            );
+            assertSql(
+                    "sum_price\tfirst_tag\n1300.0\tV0\n",
+                    "SELECT sum(price) sum_price, first(tag) first_tag FROM t_mat_fail WHERE sym = 'A0'"
+            );
+        });
+    }
+
+    @Test
     public void testMetadataPersistenceAcrossReopen() throws Exception {
         assertMemoryLeak(() -> {
             execute("""
@@ -14263,6 +14327,46 @@ public class CoveringIndexTest extends AbstractCairoTest {
                 assertSql(
                         "c\n200\n",
                         "SELECT count_distinct(payload::string) c FROM t_mk_resume WHERE sym IN ('K0','K1')"
+                );
+            });
+        } finally {
+            CoveringIndexRecordCursorFactory.setMaxRowsPerFrameForTesting(-1);
+        }
+    }
+
+    @Test
+    public void testSingleKeyResumeProducesAllRowsAcrossFrameCap() throws Exception {
+        final int capForTest = 50;
+        CoveringIndexRecordCursorFactory.setMaxRowsPerFrameForTesting(capForTest);
+        try {
+            assertMemoryLeak(() -> {
+                execute("""
+                        CREATE TABLE t_sk_resume (
+                            ts TIMESTAMP,
+                            sym SYMBOL,
+                            payload VARCHAR
+                        ) TIMESTAMP(ts) PARTITION BY DAY WAL
+                        """);
+                execute("""
+                        INSERT INTO t_sk_resume
+                        SELECT
+                            dateadd('s', x::INT, '2024-01-01T00:00:00Z'::TIMESTAMP),
+                            'K0',
+                            'payload-' || x
+                        FROM long_sequence(200)
+                        """);
+                drainWalQueue();
+                execute("ALTER TABLE t_sk_resume ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (payload)");
+                drainWalQueue();
+
+                assertSql(
+                        "count\n200\n",
+                        "SELECT count() FROM t_sk_resume WHERE sym = 'K0'"
+                );
+
+                assertSql(
+                        "c\n200\n",
+                        "SELECT count_distinct(payload::string) c FROM t_sk_resume WHERE sym = 'K0'"
                 );
             });
         } finally {
