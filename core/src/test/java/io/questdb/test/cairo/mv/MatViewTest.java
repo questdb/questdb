@@ -6908,6 +6908,54 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testMatViewBackfillBucketWholeManagedZoneRejected() throws Exception {
+        // Validator at WAL commit rejects backfill that lands in or straddles a
+        // bucket extending past the REFRESH LIMIT boundary's bucket floor.
+        // With wall clock at 12:30 and limit=1h, boundary=11:30 -> boundary bucket
+        // floor=11:00. A row at 11:30 sits in bucket [11:00, 12:00) which ends at
+        // 12:00 > 11:00 -- the whole-txn rejection fires.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table base_price (" +
+                            "  sym symbol, price double, ts #TIMESTAMP" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            execute("insert into base_price values('a', 9.0, '2024-09-10T12:00')");
+            drainWalQueue();
+            execute(
+                    "create materialized view price_1h refresh manual deferred as " +
+                            "select sym, last(price) as price, ts from base_price sample by 1h;"
+            );
+            execute("alter materialized view price_1h set refresh limit 1 hour;");
+            drainQueues();
+
+            currentMicros = parseFloorPartialTimestamp("2024-09-10T12:30:00.000000Z");
+            try {
+                execute("insert into price_1h values('a', 7.0, '2024-09-10T11:30')");
+                Assert.fail("expected bucket-whole rejection");
+            } catch (CairoException e) {
+                assertContains(e.getFlyweightMessage(), "backfill row falls in or past the managed zone");
+            }
+
+            // Frozen-zone backfill at 09:00 stays accepted -- bucket [09:00, 10:00)
+            // ends at 10:00 <= boundary bucket floor 11:00.
+            execute("insert into price_1h values('a', 1.0, '2024-09-10T09:00')");
+            drainQueues();
+
+            assertQueryNoLeakCheck(
+                    replaceExpectedTimestamp("""
+                            sym\tprice\tts
+                            a\t1.0\t2024-09-10T09:00:00.000000Z
+                            """),
+                    "price_1h order by ts",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
     public void testMatViewBackfillInsertAcceptedWithRefreshLimit() throws Exception {
         // With REFRESH LIMIT set, the SQL INSERT entry-point gate accepts the statement.
         // Per-row bucket-whole validation is deferred to write/apply time (step 5);

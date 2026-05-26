@@ -156,6 +156,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
     private long lastReplaceRangeLowTs = 0;
     private long lastTxnMaxTimestamp = -1;
     private byte lastTxnType = WalTxnType.DATA;
+    private @Nullable WalCommitPreValidator preCommitValidator;
     private long segmentRowCount = -1;
     private long totalSegmentsRowCount;
     private long totalSegmentsSize;
@@ -528,6 +529,19 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
         rollback0();
     }
 
+    /**
+     * Install an optional pre-commit validator that is consulted before every
+     * commit on this writer. A {@code null} value clears the validator. Setting
+     * a validator a second time replaces the previous one. The validator runs
+     * before the txn is sealed, so a rejection (CairoException) leaves the
+     * writer in a clean post-rollback state.
+     * <p>
+     * The WAL pool wires this up once per tenant when the table is a mat view.
+     */
+    public void setPreCommitValidator(@Nullable WalCommitPreValidator validator) {
+        this.preCommitValidator = validator;
+    }
+
     protected final void cleanupBeforeClose() {
         // If distressed, no need to rollback, WalWriter will not be used any more.
         if (isDistressed()) {
@@ -898,6 +912,19 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
     ) {
         checkDistressed();
         throwIfInColumnarWrite("commit");
+        // Pre-commit validator runs before the txn is sealed so a CairoException
+        // rejection lands the writer in the same state it would be in after a
+        // user-initiated rollback. Mat-view writers carry one to enforce the
+        // bucket-whole rule on user backfill; everyone else has preCommitValidator
+        // == null and pays no cost.
+        if (preCommitValidator != null) {
+            try {
+                preCommitValidator.validate(txnType, dedupMode, txnMinTimestamp, txnMaxTimestamp);
+            } catch (CairoException ex) {
+                rollback0();
+                throw ex;
+            }
+        }
         try {
             if (inTransaction() || dedupMode == WAL_DEDUP_MODE_REPLACE_RANGE) {
                 final long txnRowCount = getUncommittedRowCount();
