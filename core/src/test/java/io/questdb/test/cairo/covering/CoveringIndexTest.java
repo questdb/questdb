@@ -55,6 +55,7 @@ import io.questdb.cairo.vm.api.MemoryMR;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.griffin.engine.table.CoveringIndexRecordCursorFactory;
 import io.questdb.std.DirectBitSet;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.IntList;
@@ -14214,7 +14215,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
     @Test
     public void testMultiKeyResumeAdvancesKeyIndexAfterCursorExhausts() throws Exception {
         final int capForTest = 50;
-        io.questdb.griffin.engine.table.CoveringIndexRecordCursorFactory.setMaxRowsPerFrameForTesting(capForTest);
+        CoveringIndexRecordCursorFactory.setMaxRowsPerFrameForTesting(capForTest);
         try {
             assertMemoryLeak(() -> {
                 execute("""
@@ -14265,7 +14266,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
                 );
             });
         } finally {
-            io.questdb.griffin.engine.table.CoveringIndexRecordCursorFactory.setMaxRowsPerFrameForTesting(1_000_000);
+            CoveringIndexRecordCursorFactory.setMaxRowsPerFrameForTesting(-1);
         }
     }
 

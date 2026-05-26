@@ -4384,6 +4384,33 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
+    /**
+     * Deletes the temp .d (and .i for var-size) files that
+     * {@link #materialiseCoveredColumnsFromParquet} created at the standard
+     * paths inside the partition. Iterates the {@code materialisedSlots} list
+     * populated by the materialise step so we touch only the slots we actually
+     * wrote.
+     */
+    private void cleanupMaterialisedCoveredColumnTempFiles(
+            IntList coveringColumnIndices,
+            long partitionTimestamp,
+            int plen,
+            IntList materialisedSlots
+    ) {
+        for (int i = 0, n = materialisedSlots.size(); i < n; i++) {
+            final int slot = materialisedSlots.getQuick(i);
+            final int tableColIdx = coveringColumnIndices.getQuick(slot);
+            final int columnType = metadata.getColumnType(tableColIdx);
+            final CharSequence columnName = metadata.getColumnName(tableColIdx);
+            final long columnNameTxn = columnVersionWriter.getColumnNameTxn(partitionTimestamp, tableColIdx);
+            ff.removeQuiet(dFile(path.trimTo(plen), columnName, columnNameTxn));
+            if (ColumnType.isVarSize(columnType)) {
+                ff.removeQuiet(iFile(path.trimTo(plen), columnName, columnNameTxn));
+            }
+        }
+        path.trimTo(plen);
+    }
+
     private void clearMemColumnShifts() {
         clearMemColumnShifts(o3MemColumns1);
         clearMemColumnShifts(o3MemColumns2);
@@ -7045,6 +7072,183 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     ff.close(auxFd);
                 }
             }
+        }
+    }
+
+    /**
+     * Decodes ALL covered columns from this Parquet partition into native
+     * {@code .d} (and, for var-size types, {@code .i}) files at the standard
+     * paths inside the partition. Mirrors
+     * {@link #produceNativeFromParquet(Path, Path, long, int, long)} -- one
+     * row-group iteration produces data for every covered column at once, so
+     * the cost is {@code rowGroupCount} decodes rather than
+     * {@code coverCount * rowGroupCount}. Posting-index seal then finds these
+     * files via its existing names-based {@code mapColumnFile} path; the
+     * caller deletes them in a finally via
+     * {@link #cleanupMaterialisedCoveredColumnTempFiles}.
+     *
+     * <p>A column that does not exist in this Parquet partition's schema
+     * (covered column added AFTER convert) is silently skipped -- the
+     * sidecar for that slot stays at its zero-filled maxCompressedSize
+     * allocation and the reader honours column_top.
+     *
+     * <p>Populates {@code materialisedSlots} with the slot indices for which
+     * a temp file was written, so the cleanup pass touches only those.
+     */
+    private void materialiseCoveredColumnsFromParquet(
+            IntList coveringColumnIndices,
+            long partitionTimestamp,
+            int plen,
+            RowGroupBuffers rowGroupBuffers,
+            ParquetMetaFileReader parquetMetadata,
+            IntList materialisedSlots
+    ) {
+        final int coverCount = coveringColumnIndices.size();
+        // [auxFd, dataFd, dataVecBytesWritten] per slot; auxFd == -1 means
+        // fixed-width, dataFd == -1 means the slot was skipped.
+        final DirectLongList slotFds = getTempDirectLongList(3L * coverCount);
+        boolean ok = false;
+        try {
+            parquetColumnIdsAndTypes.clear();
+            int includedCount = 0;
+            for (int slot = 0; slot < coverCount; slot++) {
+                final int tableColIdx = coveringColumnIndices.getQuick(slot);
+                if (tableColIdx < 0 || metadata.getColumnType(tableColIdx) <= 0) {
+                    slotFds.add(-1L);
+                    slotFds.add(-1L);
+                    slotFds.add(0L);
+                    continue;
+                }
+                final int parquetColIdx = findParquetColumnIndex(parquetMetadata, tableColIdx);
+                if (parquetColIdx < 0) {
+                    // Covered column not in this Parquet partition; column_top
+                    // makes the read synthesise null on the read side.
+                    slotFds.add(-1L);
+                    slotFds.add(-1L);
+                    slotFds.add(0L);
+                    continue;
+                }
+
+                final int columnType = metadata.getColumnType(tableColIdx);
+                final CharSequence columnName = metadata.getColumnName(tableColIdx);
+                final long columnNameTxn = columnVersionWriter.getColumnNameTxn(partitionTimestamp, tableColIdx);
+
+                // Track this slot for cleanup BEFORE any I/O. If openAppend
+                // throws after creating a file, the finally sweep finds and
+                // removes it. Without this, an openAppend partial would leak
+                // until the next ADD INDEX retry pre-deletes it.
+                materialisedSlots.add(slot);
+
+                // Pre-fill slotFds with sentinels. Each open below sets the
+                // corresponding slot. If an open throws after a previous one
+                // succeeded, the outer finally still sees the captured fd
+                // in slotFds and closes it -- otherwise the in-progress fd
+                // would leak. Matches produceNativeFromParquet's pattern.
+                final long slotBase = slotFds.size();
+                slotFds.add(-1L);
+                slotFds.add(-1L);
+                slotFds.add(0L);
+
+                // Pre-delete any leftover temp files from a prior crashed
+                // attempt -- openAppend would otherwise add new bytes after
+                // stale partial content on WAL-apply retry.
+                ff.removeQuiet(dFile(path.trimTo(plen), columnName, columnNameTxn));
+                if (ColumnType.isVarSize(columnType)) {
+                    ff.removeQuiet(iFile(path.trimTo(plen), columnName, columnNameTxn));
+                    slotFds.set(slotBase, openAppend(ff,
+                            iFile(path.trimTo(plen), columnName, columnNameTxn), LOG));
+                }
+                slotFds.set(slotBase + 1, openAppend(ff,
+                        dFile(path.trimTo(plen), columnName, columnNameTxn), LOG));
+
+                parquetColumnIdsAndTypes.add(parquetColIdx);
+                parquetColumnIdsAndTypes.add(columnType);
+                includedCount++;
+            }
+            path.trimTo(plen);
+
+            if (includedCount == 0) {
+                ok = true;
+                return;
+            }
+
+            // Single row-group loop fills every included column.
+            final int rowGroupCount = parquetMetadata.getRowGroupCount();
+            for (int rgi = 0; rgi < rowGroupCount; rgi++) {
+                assert parquetMetadata.getRowGroupSize(rgi) <= Integer.MAX_VALUE;
+                final long rgRowCount = parquetDecoder.decodeRowGroup(
+                        rowGroupBuffers,
+                        parquetColumnIdsAndTypes,
+                        rgi,
+                        0,
+                        (int) parquetMetadata.getRowGroupSize(rgi)
+                );
+                // Map slot -> position in the parquetColumnIdsAndTypes
+                // included list (skipped slots are not in the list).
+                int decodedColIdx = 0;
+                for (int slot = 0; slot < coverCount; slot++) {
+                    final long dataFd = slotFds.get(3L * slot + 1);
+                    if (dataFd < 0) {
+                        continue;
+                    }
+                    final int tableColIdx = coveringColumnIndices.getQuick(slot);
+                    final int columnType = metadata.getColumnType(tableColIdx);
+                    final long srcDataPtr = rowGroupBuffers.getChunkDataPtr(decodedColIdx);
+                    final long srcDataSize = rowGroupBuffers.getChunkDataSize(decodedColIdx);
+                    long srcAuxPtr = rowGroupBuffers.getChunkAuxPtr(decodedColIdx);
+                    long srcAuxSize = rowGroupBuffers.getChunkAuxSize(decodedColIdx);
+
+                    if (ColumnType.isVarSize(columnType)) {
+                        final long auxFd = slotFds.get(3L * slot);
+                        final ColumnTypeDriver driver = ColumnType.getDriver(columnType);
+                        final long dataVecBytesWritten = slotFds.get(3L * slot + 2);
+                        if (srcDataPtr == 0 && srcAuxPtr == 0) {
+                            final long newDvbw = appendAllNullVarSizeChunk(
+                                    driver, auxFd, dataFd, rgi, rgRowCount, dataVecBytesWritten);
+                            slotFds.set(3L * slot + 2, newDvbw);
+                            decodedColIdx++;
+                            continue;
+                        }
+                        if (rgi > 0) {
+                            driver.shiftCopyAuxVector(-dataVecBytesWritten, srcAuxPtr, 0, rgRowCount - 1, srcAuxPtr, srcAuxSize);
+                            final long adjust = driver.getMinAuxVectorSize();
+                            srcAuxPtr += adjust;
+                            srcAuxSize -= adjust;
+                        }
+                        appendBuffer(dataFd, srcDataPtr, srcDataSize);
+                        appendBuffer(auxFd, srcAuxPtr, srcAuxSize);
+                        slotFds.set(3L * slot + 2, dataVecBytesWritten + srcDataSize);
+                    } else {
+                        if (srcDataPtr == 0) {
+                            appendAllNullFixedChunk(dataFd, columnType, rgRowCount);
+                        } else {
+                            appendBuffer(dataFd, srcDataPtr, srcDataSize);
+                        }
+                    }
+                    decodedColIdx++;
+                }
+            }
+            ok = true;
+        } finally {
+            // Close all open fds.
+            for (long i = 0, n = slotFds.size() / 3; i < n; i++) {
+                final long auxFd = slotFds.get(3L * i);
+                if (auxFd >= 0) ff.close(auxFd);
+                final long dataFd = slotFds.get(3L * i + 1);
+                if (dataFd >= 0) ff.close(dataFd);
+            }
+            slotFds.resetCapacity();
+            // If we threw mid-decode, sweep up any temp files we may have
+            // produced so a retry pre-delete finds a clean state. The caller's
+            // finally runs only when materialise completes and the try block
+            // is entered; a throw here escapes before that, so this is the
+            // only cleanup path for mid-decode failures.
+            if (!ok) {
+                cleanupMaterialisedCoveredColumnTempFiles(
+                        coveringColumnIndices, partitionTimestamp, plen, materialisedSlots);
+                materialisedSlots.clear();
+            }
+            path.trimTo(plen);
         }
     }
 
@@ -9904,205 +10108,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
         txWriter.setLagOrdered(true);
         txWriter.setLagRowCount((int) walLagRowCount);
-    }
-
-    /**
-     * Deletes the temp .d (and .i for var-size) files that
-     * {@link #materialiseCoveredColumnsFromParquet} created at the standard
-     * paths inside the partition. Iterates the {@code materialisedSlots} list
-     * populated by the materialise step so we touch only the slots we actually
-     * wrote.
-     */
-    private void cleanupMaterialisedCoveredColumnTempFiles(
-            IntList coveringColumnIndices,
-            long partitionTimestamp,
-            int plen,
-            IntList materialisedSlots
-    ) {
-        for (int i = 0, n = materialisedSlots.size(); i < n; i++) {
-            final int slot = materialisedSlots.getQuick(i);
-            final int tableColIdx = coveringColumnIndices.getQuick(slot);
-            final int columnType = metadata.getColumnType(tableColIdx);
-            final CharSequence columnName = metadata.getColumnName(tableColIdx);
-            final long columnNameTxn = columnVersionWriter.getColumnNameTxn(partitionTimestamp, tableColIdx);
-            ff.removeQuiet(dFile(path.trimTo(plen), columnName, columnNameTxn));
-            if (ColumnType.isVarSize(columnType)) {
-                ff.removeQuiet(iFile(path.trimTo(plen), columnName, columnNameTxn));
-            }
-        }
-        path.trimTo(plen);
-    }
-
-    /**
-     * Decodes ALL covered columns from this Parquet partition into native
-     * {@code .d} (and, for var-size types, {@code .i}) files at the standard
-     * paths inside the partition. Mirrors
-     * {@link #produceNativeFromParquet(Path, Path, long, int, long)} -- one
-     * row-group iteration produces data for every covered column at once, so
-     * the cost is {@code rowGroupCount} decodes rather than
-     * {@code coverCount * rowGroupCount}. Posting-index seal then finds these
-     * files via its existing names-based {@code mapColumnFile} path; the
-     * caller deletes them in a finally via
-     * {@link #cleanupMaterialisedCoveredColumnTempFiles}.
-     *
-     * <p>A column that does not exist in this Parquet partition's schema
-     * (covered column added AFTER convert) is silently skipped -- the
-     * sidecar for that slot stays at its zero-filled maxCompressedSize
-     * allocation and the reader honours column_top.
-     *
-     * <p>Populates {@code materialisedSlots} with the slot indices for which
-     * a temp file was written, so the cleanup pass touches only those.
-     */
-    private void materialiseCoveredColumnsFromParquet(
-            IntList coveringColumnIndices,
-            long partitionTimestamp,
-            int plen,
-            RowGroupBuffers rowGroupBuffers,
-            ParquetMetaFileReader parquetMetadata,
-            IntList materialisedSlots
-    ) {
-        final int coverCount = coveringColumnIndices.size();
-        // [auxFd, dataFd, dataVecBytesWritten] per slot; auxFd == -1 means
-        // fixed-width, dataFd == -1 means the slot was skipped.
-        final DirectLongList slotFds = getTempDirectLongList(3L * coverCount);
-        boolean ok = false;
-        try {
-            parquetColumnIdsAndTypes.clear();
-            int includedCount = 0;
-            for (int slot = 0; slot < coverCount; slot++) {
-                final int tableColIdx = coveringColumnIndices.getQuick(slot);
-                if (tableColIdx < 0 || metadata.getColumnType(tableColIdx) <= 0) {
-                    slotFds.add(-1L); slotFds.add(-1L); slotFds.add(0L);
-                    continue;
-                }
-                final int parquetColIdx = findParquetColumnIndex(parquetMetadata, tableColIdx);
-                if (parquetColIdx < 0) {
-                    // Covered column not in this Parquet partition; column_top
-                    // makes the read synthesise null on the read side.
-                    slotFds.add(-1L); slotFds.add(-1L); slotFds.add(0L);
-                    continue;
-                }
-
-                final int columnType = metadata.getColumnType(tableColIdx);
-                final CharSequence columnName = metadata.getColumnName(tableColIdx);
-                final long columnNameTxn = columnVersionWriter.getColumnNameTxn(partitionTimestamp, tableColIdx);
-
-                // Track this slot for cleanup BEFORE any I/O. If openAppend
-                // throws after creating a file, the finally sweep finds and
-                // removes it. Without this, an openAppend partial would leak
-                // until the next ADD INDEX retry pre-deletes it.
-                materialisedSlots.add(slot);
-
-                // Pre-fill slotFds with sentinels. Each open below sets the
-                // corresponding slot. If an open throws after a previous one
-                // succeeded, the outer finally still sees the captured fd
-                // in slotFds and closes it -- otherwise the in-progress fd
-                // would leak. Matches produceNativeFromParquet's pattern.
-                final long slotBase = slotFds.size();
-                slotFds.add(-1L); slotFds.add(-1L); slotFds.add(0L);
-
-                // Pre-delete any leftover temp files from a prior crashed
-                // attempt -- openAppend would otherwise add new bytes after
-                // stale partial content on WAL-apply retry.
-                ff.removeQuiet(dFile(path.trimTo(plen), columnName, columnNameTxn));
-                if (ColumnType.isVarSize(columnType)) {
-                    ff.removeQuiet(iFile(path.trimTo(plen), columnName, columnNameTxn));
-                    slotFds.set(slotBase, openAppend(ff,
-                            iFile(path.trimTo(plen), columnName, columnNameTxn), LOG));
-                }
-                slotFds.set(slotBase + 1, openAppend(ff,
-                        dFile(path.trimTo(plen), columnName, columnNameTxn), LOG));
-
-                parquetColumnIdsAndTypes.add(parquetColIdx);
-                parquetColumnIdsAndTypes.add(columnType);
-                includedCount++;
-            }
-            path.trimTo(plen);
-
-            if (includedCount == 0) {
-                ok = true;
-                return;
-            }
-
-            // Single row-group loop fills every included column.
-            final int rowGroupCount = parquetMetadata.getRowGroupCount();
-            for (int rgi = 0; rgi < rowGroupCount; rgi++) {
-                assert parquetMetadata.getRowGroupSize(rgi) <= Integer.MAX_VALUE;
-                final long rgRowCount = parquetDecoder.decodeRowGroup(
-                        rowGroupBuffers,
-                        parquetColumnIdsAndTypes,
-                        rgi,
-                        0,
-                        (int) parquetMetadata.getRowGroupSize(rgi)
-                );
-                // Map slot -> position in the parquetColumnIdsAndTypes
-                // included list (skipped slots are not in the list).
-                int decodedColIdx = 0;
-                for (int slot = 0; slot < coverCount; slot++) {
-                    final long dataFd = slotFds.get(3L * slot + 1);
-                    if (dataFd < 0) {
-                        continue;
-                    }
-                    final int tableColIdx = coveringColumnIndices.getQuick(slot);
-                    final int columnType = metadata.getColumnType(tableColIdx);
-                    final long srcDataPtr = rowGroupBuffers.getChunkDataPtr(decodedColIdx);
-                    final long srcDataSize = rowGroupBuffers.getChunkDataSize(decodedColIdx);
-                    long srcAuxPtr = rowGroupBuffers.getChunkAuxPtr(decodedColIdx);
-                    long srcAuxSize = rowGroupBuffers.getChunkAuxSize(decodedColIdx);
-
-                    if (ColumnType.isVarSize(columnType)) {
-                        final long auxFd = slotFds.get(3L * slot);
-                        final ColumnTypeDriver driver = ColumnType.getDriver(columnType);
-                        final long dataVecBytesWritten = slotFds.get(3L * slot + 2);
-                        if (srcDataPtr == 0 && srcAuxPtr == 0) {
-                            final long newDvbw = appendAllNullVarSizeChunk(
-                                    driver, auxFd, dataFd, rgi, rgRowCount, dataVecBytesWritten);
-                            slotFds.set(3L * slot + 2, newDvbw);
-                            decodedColIdx++;
-                            continue;
-                        }
-                        if (rgi > 0) {
-                            driver.shiftCopyAuxVector(-dataVecBytesWritten, srcAuxPtr, 0, rgRowCount - 1, srcAuxPtr, srcAuxSize);
-                            final long adjust = driver.getMinAuxVectorSize();
-                            srcAuxPtr += adjust;
-                            srcAuxSize -= adjust;
-                        }
-                        appendBuffer(dataFd, srcDataPtr, srcDataSize);
-                        appendBuffer(auxFd, srcAuxPtr, srcAuxSize);
-                        slotFds.set(3L * slot + 2, dataVecBytesWritten + srcDataSize);
-                    } else {
-                        if (srcDataPtr == 0) {
-                            appendAllNullFixedChunk(dataFd, columnType, rgRowCount);
-                        } else {
-                            appendBuffer(dataFd, srcDataPtr, srcDataSize);
-                        }
-                    }
-                    decodedColIdx++;
-                }
-            }
-            ok = true;
-        } finally {
-            // Close all open fds.
-            for (long i = 0, n = slotFds.size() / 3; i < n; i++) {
-                final long auxFd = slotFds.get(3L * i);
-                if (auxFd >= 0) ff.close(auxFd);
-                final long dataFd = slotFds.get(3L * i + 1);
-                if (dataFd >= 0) ff.close(dataFd);
-            }
-            slotFds.resetCapacity();
-            // If we threw mid-decode, sweep up any temp files we may have
-            // produced so a retry pre-delete finds a clean state. The caller's
-            // finally would do this anyway via cleanupMaterialisedCoveredColumnTempFiles,
-            // but doing it here too means the file is gone before the throw
-            // escapes -- helpful for any code that inspects the partition dir
-            // mid-recovery.
-            if (!ok) {
-                cleanupMaterialisedCoveredColumnTempFiles(
-                        coveringColumnIndices, partitionTimestamp, plen, materialisedSlots);
-                materialisedSlots.clear();
-            }
-            path.trimTo(plen);
-        }
     }
 
     private long produceNativeFromParquet(Path path, Path other, long partitionTimestamp, int partitionIndex, long partitionNameTxn) {
@@ -13224,8 +13229,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private static final class DetachedPostingFileRemover implements PostingIndexUtils.SealedFileVisitor {
         private CharSequence columnName;
         private long columnNameTxn;
-        private Path detachedPath;
         private int detachedPartitionRoot;
+        private Path detachedPath;
         private FilesFacade ff;
 
         public void of(FilesFacade ff, Path detachedPath, int detachedPartitionRoot, CharSequence columnName, long columnNameTxn) {

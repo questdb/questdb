@@ -561,7 +561,7 @@ public class PostingIndexOomFallbackTest extends AbstractCairoTest {
         });
     }
 
-    private LongList buildAndCollect(String name, int keys, int rowsPerKey, boolean forceStreamingAtSeal) throws Exception {
+    private LongList buildAndCollect(String name, int keys, int rowsPerKey, boolean forceStreamingAtSeal) {
         try (Path path = new Path().of(configuration.getDbRoot())) {
             final int plen = path.size();
             long savedRssLimit = Unsafe.getRssMemLimit();
@@ -784,7 +784,7 @@ public class PostingIndexOomFallbackTest extends AbstractCairoTest {
 
     private double[] collectCoveredDoubles(
             String name, int keys, int rowsPerKey, long covAddr,
-            boolean forceStreamingAtSeal, ColumnVersionReader emptyCvr) throws Exception {
+            boolean forceStreamingAtSeal, ColumnVersionReader emptyCvr) {
         try (Path path = new Path().of(configuration.getDbRoot())) {
             final int plen = path.size();
             long savedRssLimit = Unsafe.getRssMemLimit();
@@ -1162,7 +1162,7 @@ public class PostingIndexOomFallbackTest extends AbstractCairoTest {
      * decompressor sized its dst buffer to {@code 4 * totalCompressed}
      * for the whole block, so a sealed block whose compressed payload
      * exceeds the RSS budget could not be read at all. The chunked
-     * decompressor sizes scratch to one {@link AbstractPostingIndexReader#FSST_DECODE_CHUNK_SIZE}-wide
+     * decompressor sizes scratch to one FSST_DECODE_CHUNK_SIZE-wide
      * window, so the same read fits in a fraction of the headroom.
      * <p>
      * We assert (a) every value reads back byte-identical; (b) the

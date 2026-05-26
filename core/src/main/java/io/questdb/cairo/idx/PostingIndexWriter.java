@@ -2462,7 +2462,7 @@ public class PostingIndexWriter implements IndexWriter {
      * The valueMem and sealValueMem mappings do not count: their RSS
      * footprint is paged in/out by the OS, bounded by working set rather
      * than file size. Same for keyMem and the sidecar mmaps. Anonymous-
-     * heap mallocs do count -- those are what {@link Unsafe#checkAllocLimit}
+     * heap mallocs do count -- those are what Unsafe#checkAllocLimit
      * gates.
      */
     private long estimateFastPathPeakBytes(int maxStrideTotal, int maxKeyCount, long maxStrideTrialSize, long maxColValueSize) {
@@ -5324,14 +5324,6 @@ public class PostingIndexWriter implements IndexWriter {
     }
 
     /**
-     * Best-effort removal of the {@code .pv.{newSealTxn}} and any matching
-     * {@code .pc{c}.{...}.{newSealTxn}} sidecar files when a
-     * {@link #rebuildSidecarsByCopy} attempt aborted before
-     * {@link #switchToSealedValueFile}. The chain never advertised these
-     * files, so no reader can have pinned them; unlink errors are logged
-     * and ignored rather than masking the original throw.
-     */
-    /**
      * Streaming FSST compression of an already-written uncompressed
      * sidecar stride block. Trains a symbol table from a sample, then
      * encodes in {@link #FSST_BATCH_SIZE}-sized batches into a staging
@@ -5370,12 +5362,21 @@ public class PostingIndexWriter implements IndexWriter {
             // also extends it. Capture the raw data address AFTER the extend
             // so addressOf is stable for the lifetime of this call.
             final long stagingOffsetsSize = (long) (totalCount + 1) * Long.BYTES;
-            // Worst-case FSST expansion is ~2x. Cap so an absurd staging
-            // doesn't pre-allocate a 32 GB file before we know if FSST
-            // even helps.
+            // Worst-case FSST expansion is ~2x; mmap is sparse, truncated
+            // at close — no eager prealloc.
             final long stagingCmpCap = 2L * rawDataLen + 16L;
             final long stagingSize = stagingOffsetsSize + stagingCmpCap;
-            mem.extend(uncompressedEnd + stagingSize);
+            try {
+                mem.extend(uncompressedEnd + stagingSize);
+            } catch (CairoException e) {
+                // allocateDiskSpace (ENOSPC) leaves the mapping intact;
+                // mremap failure closes it. Reset append position when
+                // possible so the uncompressed block stays valid on disk.
+                if (mem.isOpen()) {
+                    mem.jumpTo(uncompressedEnd);
+                }
+                throw e;
+            }
             final long rawDataAddr = mem.addressOf(dataStart);
             final long stagingOffsetsAddr = mem.addressOf(uncompressedEnd);
             final long stagingDataAddr = stagingOffsetsAddr + stagingOffsetsSize;
@@ -5467,7 +5468,7 @@ public class PostingIndexWriter implements IndexWriter {
                 }
                 for (long i = 0; i < produced; i++) {
                     long batchOff = Unsafe.getLong(fsstCmpOffsAddr + i * Long.BYTES);
-                    Unsafe.putLong(stagingOffsetsAddr + (long) (processed + i) * Long.BYTES,
+                    Unsafe.putLong(stagingOffsetsAddr + (processed + i) * Long.BYTES,
                             compressedTotal + (batchOff - firstByteOff));
                 }
                 compressedTotal += batchBytesLen;
@@ -5523,6 +5524,14 @@ public class PostingIndexWriter implements IndexWriter {
         }
     }
 
+    /**
+     * Best-effort removal of the {@code .pv.{newSealTxn}} and any matching
+     * {@code .pc{c}.{...}.{newSealTxn}} sidecar files when a
+     * {@link #rebuildSidecarsByCopy} attempt aborted before
+     * {@link #switchToSealedValueFile}. The chain never advertised these
+     * files, so no reader can have pinned them; unlink errors are logged
+     * and ignored rather than masking the original throw.
+     */
     private void unlinkOrphanSealFiles(long newSealTxn) {
         if (partitionPath.size() == 0) {
             return;

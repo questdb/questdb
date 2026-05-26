@@ -604,16 +604,15 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
      * {@code deltaKeyHasValueInRange} consumes.
      */
     private static long peekDeltaKeyMaxValueUpperBound(long baseAddr, long encodedOffset) {
-        int firstWord = Unsafe.getInt(baseAddr + encodedOffset);
-        if (firstWord == PostingIndexUtils.EF_FORMAT_SENTINEL) {
+        int blockCount = Unsafe.getInt(baseAddr + encodedOffset);
+        if (blockCount == PostingIndexUtils.EF_FORMAT_SENTINEL) {
             // EF: writer stores universe == lastValue + 1, so max == universe - 1 exactly.
             long universe = Unsafe.getLong(baseAddr + encodedOffset + 9);
             return universe - 1;
         }
-        if (firstWord <= 0) {
+        if (blockCount <= 0) {
             return -1L;
         }
-        int blockCount = firstWord;
         long valueCountsOff = encodedOffset + 4;
         long firstValuesOff = valueCountsOff + blockCount;
         long minDeltasOff = firstValuesOff + (long) blockCount * Long.BYTES;
@@ -2286,7 +2285,7 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
             }
             int rawCount = Unsafe.getInt(blockAddr);
             int count = rawCount & ~CoveringCompressor.RAW_BLOCK_FLAG;
-            if (count <= 0) {
+            if (count == 0) {
                 colCacheBlockAddrs[includeIdx] = blockAddr;
                 return true;
             }

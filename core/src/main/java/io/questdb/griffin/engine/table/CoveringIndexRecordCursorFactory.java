@@ -160,16 +160,14 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
     }
 
     /**
-     * Test-only hook that lowers the per-frame row cap so multi-frame /
+     * Test-only hook that overrides the per-frame row cap so multi-frame /
      * resume code paths in {@link CoveringPageFrameCursor} can be exercised
-     * with small inputs. Restore the original value (default 1_000_000)
-     * after each test to avoid leaking state. The setter is static because
-     * the cap is shared across all cursor instances; tests that use it
-     * SHOULD be sequential, not parallel.
+     * with small inputs. Pass {@code -1} to clear the override and revert
+     * to the engine configuration value.
      */
     @TestOnly
     public static void setMaxRowsPerFrameForTesting(int newCap) {
-        CoveringPageFrameCursor.maxRowsPerFrame = newCap;
+        CoveringPageFrameCursor.maxRowsPerFrameOverride = newCap;
     }
 
     @Override
@@ -253,6 +251,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         if (multiKeyPageFrameCursor == null && singleKeyPageFrameCursor == null) {
             return null;
         }
+        int configMaxRows = executionContext.getPageFrameMaxRows();
         PartitionFrameCursor frameCursor = dfcFactory.getCursor(
                 executionContext,
                 columnIndexes,
@@ -278,7 +277,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                 }
                 // Always wire the frame cursor; callers may probe getSymbolTable()
                 // before iteration. Empty multiKeys list yields no frames.
-                multiKeyPageFrameCursor.of(frameCursor);
+                multiKeyPageFrameCursor.of(frameCursor, configMaxRows);
                 return multiKeyPageFrameCursor;
             }
             // Single-key path: see the matching block in getCursor().
@@ -292,7 +291,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                 resolvedKey = symValue != null ? smr.keyOf(symValue) : SymbolTable.VALUE_NOT_FOUND;
             }
             singleKeyPageFrameCursor.resolvedKey = resolvedKey;
-            singleKeyPageFrameCursor.of(frameCursor);
+            singleKeyPageFrameCursor.of(frameCursor, configMaxRows);
             return singleKeyPageFrameCursor;
         } catch (Throwable th) {
             Misc.free(frameCursor);
@@ -691,20 +690,8 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
 
     private static abstract class CoveringPageFrameCursor implements PageFrameCursor {
         private static final int INITIAL_CAPACITY = 4096;
-        // Hard cap on rows per page frame. Matches the engine's default
-        // sqlPageFrameMaxRows (DefaultCairoConfiguration:1136) so we don't
-        // produce frames larger than the planner expects. A single key
-        // with millions of rows is split across multiple frames; each
-        // call to fillFrameForKey resumes the open cursor from where the
-        // previous frame ended. Without this cap, a key with 27.9 M rows
-        // produced one ~1.4 GiB var-data frame whose growth allocations
-        // tripped RSS_MEM_LIMIT.
-        // <p>
-        // Lowerable via {@link #setMaxRowsPerFrameForTesting} so tests can
-        // exercise the multi-frame-per-key resume path (and its bug-prone
-        // currentKeyIdx advancement in multi-key cursors) without
-        // generating a million rows of data.
-        private static int maxRowsPerFrame = 1_000_000;
+        private static int maxRowsPerFrameOverride = -1;
+        private int maxRowsPerFrame;
         // Tracks all native allocations as (addr, size) pairs for bulk cleanup.
         // Each fillFrameForKey() call allocates fresh buffers so that
         // PageFrameAddressCache can hold addresses from multiple frames
@@ -1040,17 +1027,14 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                     case ColumnType.LONG, ColumnType.TIMESTAMP, ColumnType.DATE, ColumnType.GEOLONG,
                          ColumnType.DECIMAL64 ->
                             Unsafe.putLong(addr + (long) count * Long.BYTES, crc.getCoveredLong(includeIdx));
-                    case ColumnType.INT, ColumnType.IPv4, ColumnType.GEOINT, ColumnType.SYMBOL ->
+                    case ColumnType.INT, ColumnType.IPv4, ColumnType.GEOINT, ColumnType.SYMBOL, ColumnType.DECIMAL32 ->
                             Unsafe.putInt(addr + (long) count * Integer.BYTES, crc.getCoveredInt(includeIdx));
                     case ColumnType.SHORT, ColumnType.CHAR, ColumnType.GEOSHORT ->
                             Unsafe.putShort(addr + (long) count * Short.BYTES, crc.getCoveredShort(includeIdx));
-                    case ColumnType.BYTE, ColumnType.BOOLEAN, ColumnType.GEOBYTE ->
+                    case ColumnType.BYTE, ColumnType.BOOLEAN, ColumnType.GEOBYTE, ColumnType.DECIMAL8 ->
                             Unsafe.putByte(addr + count, crc.getCoveredByte(includeIdx));
-                    case ColumnType.DECIMAL32 ->
-                            Unsafe.putInt(addr + (long) count * Integer.BYTES, crc.getCoveredInt(includeIdx));
                     case ColumnType.DECIMAL16 ->
                             Unsafe.putShort(addr + (long) count * Short.BYTES, crc.getCoveredShort(includeIdx));
-                    case ColumnType.DECIMAL8 -> Unsafe.putByte(addr + count, crc.getCoveredByte(includeIdx));
                     case ColumnType.UUID, ColumnType.DECIMAL128 -> {
                         long off128 = (long) count * 16;
                         Unsafe.putLong(addr + off128, crc.getCoveredLong128Lo(includeIdx));
@@ -1347,10 +1331,11 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             }
         }
 
-        void of(PartitionFrameCursor frameCursor) {
+        void of(PartitionFrameCursor frameCursor, int configMaxRows) {
             closePendingCursor();
             this.frameCursor = frameCursor;
             this.tableReader = frameCursor.getTableReader();
+            this.maxRowsPerFrame = maxRowsPerFrameOverride >= 0 ? maxRowsPerFrameOverride : configMaxRows;
             this.isExhausted = false;
             resetIterationState();
             columnMapping.clear();

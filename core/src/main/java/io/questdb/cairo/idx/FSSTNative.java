@@ -120,7 +120,7 @@ public final class FSSTNative {
     /**
      * Train + compress + export in a single call. Returns -1 on failure, else
      * a packed long: bits 0..47 = total compressed bytes, bits 48..63 = tableLen.
-     * Use {@link #unpackCompressed} / {@link #unpackTableLen} to decode.
+     * Use {@link #unpackCompressed} to decode.
      *
      * @param batchScratchAddr native buffer of at least count*32 bytes, used by the
      *                         JNI layer to build cwida's per-string len/ptr arrays
@@ -136,10 +136,6 @@ public final class FSSTNative {
 
     public static long unpackCompressed(long packed) {
         return packed & ((1L << 48) - 1);
-    }
-
-    public static int unpackTableLen(long packed) {
-        return (int) ((packed >>> 48) & 0xFFFF);
     }
 
     private static native long compressBatch0(
