@@ -1714,29 +1714,22 @@ public class SampleByFillTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testSortedRecordCursorFactoryConstructorThrow() throws Exception {
-        // Pin the SortedRecordCursorFactory constructor-throw ownership
-        // contract. sqlSortKeyMaxPages = -1 makes MemoryPages fire a
-        // LimitOverflowException inside `new RecordTreeChain(...)`, which
-        // propagates out of the constructor.
-        //
-        // The constructor must assign this.base only after RecordTreeChain
-        // succeeds, and the catch block must null this.base before cascading
-        // close(). That way Misc.free(base) becomes a no-op on a
-        // constructor-throw path and the caller retains ownership of base.
-        //
-        // Most QuestDB factory classes make close() idempotent at the
-        // native-memory level, so a latent double-free rarely produces
-        // observable imbalance. This test locks in the clean
-        // exception-propagation path; assertMemoryLeak guards against any
-        // future factory whose close() is not idempotent.
+    public void testSortedRecordCursorFactoryHandlesKeyHeapOverflow() throws Exception {
+        // Pin the SortedRecordCursorFactory cleanup contract for the keyed
+        // SAMPLE BY FILL(PREV) full_recordchain path. With a tiny page size
+        // and a 1-page sort.key budget, MemoryPages fires a
+        // LimitOverflowException once the RecordTreeChain accumulates more
+        // than one page of tree nodes. The factory's catch block must free
+        // chain + rankMaps before the exception propagates; assertMemoryLeak
+        // would surface any unbalanced native allocations.
         //
         // AbstractCairoTest.tearDown() restores property overrides via
         // Overrides.reset(), so no try/finally restore is needed here.
         // Force the codegen to pick SortedRecordCursorFactory; the default
-        // light_encoded path does not exercise this construct-throw contract.
+        // light_encoded path does not exercise this cleanup contract.
         setProperty(PropertyKey.CAIRO_SQL_SAMPLEBY_FILL_SORT_STRATEGY, "full_recordchain");
-        setProperty(PropertyKey.CAIRO_SQL_SORT_KEY_MAX_PAGES, -1);
+        setProperty(PropertyKey.CAIRO_SQL_SORT_KEY_PAGE_SIZE, 64);
+        setProperty(PropertyKey.CAIRO_SQL_SORT_KEY_MAX_BYTES, 64);
 
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (" +
@@ -1744,26 +1737,38 @@ public class SampleByFillTest extends AbstractCairoTest {
                     "k SYMBOL, " +
                     "x DOUBLE" +
                     ") TIMESTAMP(ts) PARTITION BY DAY");
-            execute("INSERT INTO t VALUES " +
-                    "('2024-01-01T00:00:00.000000Z', 'A', 1.0), " +
-                    "('2024-01-01T02:00:00.000000Z', 'B', 2.0)");
+            // Generate enough distinct (bucket, key) groups to overflow the
+            // 64-byte sort.key budget. Each RecordTreeChain node is roughly
+            // 41 bytes, so a few hundred rows guarantees the cap fires.
+            execute("INSERT INTO t SELECT " +
+                    "timestamp_sequence('2024-01-01T00:00:00.000000Z', 3_600_000_000L) ts, " +
+                    "rnd_symbol(64, 4, 4, 0) k, " +
+                    "rnd_double() x " +
+                    "FROM long_sequence(512)");
 
             try {
                 // A keyed SAMPLE BY FILL(PREV) routes through the keyed fast
-                // path whose codegen constructs SortedRecordCursorFactory. The
-                // sqlSortKeyMaxPages = -1 override causes RecordTreeChain to
-                // throw during SortedRecordCursorFactory construction.
-                assertQueryNoLeakCheck("", "SELECT ts, k, sum(x) FROM t SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR");
-                fail("expected LimitOverflowException from pathological sqlSortKeyMaxPages");
+                // path whose codegen wraps the group-by factory in
+                // SortedRecordCursorFactory. As the cursor populates the
+                // RecordTreeChain, MemoryPages exhausts its 1-page budget
+                // and throws LimitOverflowException. The outer
+                // SampleByFillRecordCursorFactory cursor is not random-access,
+                // so use the supportsRandomAccess=false overload here.
+                assertQueryNoLeakCheck(
+                        "",
+                        "SELECT ts, k, sum(x) FROM t SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR",
+                        "ts",
+                        false
+                );
+                fail("expected LimitOverflowException from constrained sort.key budget");
             } catch (CairoException ex) {
                 // Catching the LimitOverflowException superclass (CairoException)
                 // directly lets JVM-level Error subclasses propagate instead of
                 // being swallowed, and the assertion locks on a single canonical
-                // substring. Both MemoryPARWImpl and MemoryCARWImpl produce the
-                // same page-limit text for sqlSortKeyMaxPages=-1. If the
-                // exception is ever re-wrapped to SqlException on the construct
-                // path, the typed catch fails loudly instead of hiding the
-                // signal under a substring disjunction.
+                // substring shared by MemoryPages overflow paths. If the
+                // exception is ever re-wrapped to SqlException, the typed catch
+                // fails loudly instead of hiding the signal under a substring
+                // disjunction.
                 TestUtils.assertContains(ex.getFlyweightMessage(), "Maximum number of pages");
             }
         });
