@@ -6885,7 +6885,9 @@ public class MatViewTest extends AbstractCairoTest {
     public void testRefreshLimitWallClockEscapeHatchRejectsBackfill() throws Exception {
         // With the escape-hatch on, isBackfillableMatView returns false even
         // when REFRESH LIMIT is set -- the entry-point gate must reject INSERT
-        // with the legacy "cannot modify materialized view" error.
+        // with the legacy "cannot modify materialized view" error. The
+        // materialized_views().backfill_max_ts column must surface NULL too,
+        // so the gate and the metadata stay consistent.
         setProperty(PropertyKey.CAIRO_MAT_VIEW_REFRESH_LIMIT_WALL_CLOCK_ENABLED, "true");
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp(
@@ -6901,14 +6903,28 @@ public class MatViewTest extends AbstractCairoTest {
             drainQueues();
 
             assertCannotModifyMatView("insert into price_1h values('a', 1.0, '2024-09-10T09:00')");
+
+            currentMicros = parseFloorPartialTimestamp("2024-09-10T12:30:00.000000Z");
+            assertQueryNoLeakCheck(
+                    "view_name\tbackfill_max_ts\n" +
+                            "price_1h\t\n",
+                    "select view_name, backfill_max_ts from materialized_views()",
+                    null
+            );
         });
     }
 
     @Test
     public void testMatViewBackfillCopyAcceptedWithRefreshLimit() throws Exception {
-        // With REFRESH LIMIT set, the COPY entry-point gate (isBackfillableMatView via
-        // checkMatViewInsertOrCopyModification + CairoTextWriter) accepts COPY into
-        // the mat view -- the door that was always closed before is now open.
+        // With REFRESH LIMIT set, both the SQL-compile entry-point gate
+        // (checkMatViewInsertOrCopyModification) and the storage-side gate
+        // (CairoTextWriter) accept COPY into the mat view. Verified by attempting
+        // COPY from a CSV whose schema does not match the view: the gate must
+        // not fire, so the failure (if any) must come from a downstream column
+        // mismatch -- never from "cannot modify materialized view".
+        //
+        // The companion strict-gate test below shares this setup and confirms
+        // ALTER/RENAME/UPDATE/TRUNCATE remain rejected even with REFRESH LIMIT set.
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp(
                     "create table base_price (" +
@@ -6921,8 +6937,21 @@ public class MatViewTest extends AbstractCairoTest {
             );
             execute("alter materialized view price_1h set refresh limit 1 hour;");
             drainQueues();
-            // ALTER/RENAME/UPDATE etc. must still reject (the strict gate stays closed
-            // for non-INSERT/COPY paths); these calls demonstrate that.
+
+            try {
+                execute("copy price_1h from 'test-numeric-headers.csv' with header true");
+                // If COPY succeeds outright (schema happens to match), that also
+                // means the gate let it through -- acceptable for this test.
+            } catch (Throwable t) {
+                final String msg = t.getMessage();
+                Assert.assertNotNull(msg);
+                Assert.assertFalse(
+                        "COPY entry-point gate must not fire when REFRESH LIMIT is set; got: " + msg,
+                        msg.contains("cannot modify materialized view")
+                );
+            }
+
+            // Strict gate remains closed for non-INSERT/COPY mutations.
             assertCannotModifyMatView("alter table price_1h add column x int");
             assertCannotModifyMatView("rename table price_1h to price_1h_bak");
             assertCannotModifyMatView("update price_1h set price = 1.1");

@@ -29,6 +29,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TimestampDriver;
+import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cairo.wal.WalCommitPreValidator;
 import io.questdb.cairo.wal.WalTxnType;
 import io.questdb.cairo.wal.WalUtils;
@@ -73,16 +74,19 @@ public final class MatViewBackfillValidator implements WalCommitPreValidator {
     /**
      * Compute the current frozen-zone cutoff for {@code def} as the boundary's
      * bucket floor (in the base table's timestamp driver units). Returns
-     * {@link Numbers#LONG_NULL} when the view has no {@code REFRESH LIMIT} set
-     * (no frozen zone exists) or when the sampler cannot be reconstructed.
+     * {@link Numbers#LONG_NULL} when no cutoff is meaningful: the view has no
+     * {@code REFRESH LIMIT} set (no frozen zone exists), the wall-clock
+     * escape-hatch config is on (the whole frozen-zone feature is off so the
+     * entry-point gate would reject backfill anyway), or the sampler cannot be
+     * reconstructed.
      * <p>
-     * The boundary is the same one {@link MatViewRefreshJob} computes:
-     * {@code min(max(base_ts), wallClock) - LIMIT}, or {@code wallClock - LIMIT}
-     * when the escape-hatch config is on. A freshly-configured sampler is used
-     * so we never race with the definition's shared sampler that the refresh
-     * job mutates on every iteration. Opening the base reader is bounded by
-     * the configured pool TTL; callers querying this from
-     * {@code materialized_views()} pay one sampler allocation per view per row.
+     * When a cutoff is returned, it matches the boundary {@link MatViewRefreshJob}
+     * computes: {@code min(max(base_ts), wallClock) - LIMIT}, snapped to the
+     * sampler's bucket floor. A freshly-configured sampler is used so we never
+     * race with the definition's shared sampler that the refresh job mutates
+     * on every iteration. Opening the base reader is bounded by the configured
+     * pool TTL; callers querying this from {@code materialized_views()} pay one
+     * sampler allocation per view per row.
      */
     public static long computeFrozenBoundaryBucketFloor(CairoEngine engine, MatViewDefinition def) {
         if (def.getRefreshLimitHoursOrMonths() == 0) {
@@ -184,29 +188,36 @@ public final class MatViewBackfillValidator implements WalCommitPreValidator {
      * Internal: compute the boundary's bucket floor using the provided pre-configured
      * sampler. Used by both the cached-sampler validator path and the
      * fresh-sampler static helper used from {@code materialized_views()}.
+     * <p>
+     * Returns {@link Numbers#LONG_NULL} when the wall-clock escape-hatch is on,
+     * matching the entry-point gate's rejection of backfill in that mode -- the
+     * surfaced cutoff would otherwise mislead users into thinking backfill is
+     * possible.
      */
     private static long computeBoundaryBucketFloor(CairoEngine engine, MatViewDefinition def, TimestampSampler sampler) {
         final int limitHoursOrMonths = def.getRefreshLimitHoursOrMonths();
         if (limitHoursOrMonths == 0) {
             return Numbers.LONG_NULL;
         }
+        if (engine.getConfiguration().isMatViewRefreshLimitWallClockEnabled()) {
+            // Escape-hatch on: entire frozen-zone feature is meant to be off.
+            // Surface no cutoff so the gate and the metadata stay consistent.
+            return Numbers.LONG_NULL;
+        }
         final TimestampDriver driver = def.getBaseTableTimestampDriver();
         final long now = driver.getTicks();
-        final long boundaryAnchor;
-        if (engine.getConfiguration().isMatViewRefreshLimitWallClockEnabled()) {
-            boundaryAnchor = now;
-        } else {
-            final TableToken baseTableToken = engine.getTableTokenIfExists(def.getBaseTableName());
-            long maxBaseTs = Long.MIN_VALUE;
-            if (baseTableToken != null) {
-                try (TableReader reader = engine.getReader(baseTableToken)) {
-                    maxBaseTs = reader.getMaxTimestamp();
-                } catch (CairoException ignored) {
-                    // base reader is unavailable -- fall back to wall clock.
-                }
+        final TableToken baseTableToken = engine.getTableTokenIfExists(def.getBaseTableName());
+        long maxBaseTs = Long.MIN_VALUE;
+        if (baseTableToken != null) {
+            try (TableReader reader = engine.getReader(baseTableToken)) {
+                maxBaseTs = reader.getMaxTimestamp();
+            } catch (CairoException | TableReferenceOutOfDateException ignored) {
+                // base reader is unavailable (dropped/renamed concurrently, pool
+                // busy, etc.) -- fall back to wall clock. One stale view must not
+                // poison the whole materialized_views() query.
             }
-            boundaryAnchor = maxBaseTs == Long.MIN_VALUE ? now : Math.min(maxBaseTs, now);
         }
+        final long boundaryAnchor = maxBaseTs == Long.MIN_VALUE ? now : Math.min(maxBaseTs, now);
         final long rawBoundary = limitHoursOrMonths > 0
                 ? boundaryAnchor - driver.fromHours(limitHoursOrMonths)
                 : driver.addMonths(boundaryAnchor, limitHoursOrMonths);
