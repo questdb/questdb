@@ -352,6 +352,43 @@ public interface WindowFunction extends Function {
      */
     void setColumnIndex(int columnIndex);
 
+    /**
+     * Back-fills a deferred window slot with this function's value, computed from the supplied source row.
+     * <p>
+     * Called by the streaming deferred-emit executor when a previously-buffered pending slot's lookahead
+     * position has been reached by the current base row. The function reads its argument from {@code source}
+     * and writes the result into {@code pendingSlot}'s output column (the column previously set via
+     * {@link #setColumnIndex(int)}).
+     * <p>
+     * Only invoked on functions that returned a positive {@link #getLookahead()} value. Default throws
+     * to keep immediate-emit ({@link #ZERO_PASS} with {@code lookahead == 0}) and cached functions from
+     * accidentally landing here.
+     *
+     * @param source      the base row that supplies the value for back-filling
+     * @param pendingSlot the address in the pending-row chain that owns the slot to write
+     * @param spi         provides column slot addresses within {@code pendingSlot}
+     */
+    default void streamingBackfill(Record source, long pendingSlot, WindowSPI spi) {
+        throw new UnsupportedOperationException();
+    }
+
+    /**
+     * Fills a pending slot's output column with this function's default value (typically NULL) when the
+     * base cursor exhausts before the slot's lookahead position is reached.
+     * <p>
+     * Called by the streaming deferred-emit executor during end-of-cursor flush, exactly once per
+     * pending slot that still has an outstanding bit for this function. The function writes its
+     * {@code defaultValue} (or NULL if absent) into {@code pendingSlot}'s output column.
+     * <p>
+     * Only invoked on functions that returned a positive {@link #getLookahead()} value. Default throws.
+     *
+     * @param pendingSlot the address in the pending-row chain to write
+     * @param spi         provides column slot addresses within {@code pendingSlot}
+     */
+    default void streamingFlushDefault(long pendingSlot, WindowSPI spi) {
+        throw new UnsupportedOperationException();
+    }
+
     enum Pass1ScanDirection {
         FORWARD, BACKWARD
     }
