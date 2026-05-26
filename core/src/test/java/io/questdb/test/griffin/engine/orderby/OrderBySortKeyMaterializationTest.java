@@ -1796,4 +1796,59 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
                     """, query);
         });
     }
+
+    @Test
+    public void testMaterializationCapHonoredForSingleColumn() throws Exception {
+        // The 64 KiB sort.key.max.bytes budget is owned in full by the one materialized buffer
+        // (eight 8 KiB pages = 64 KiB = 8192 DOUBLEs), so 5000 deterministic rows fit. Together
+        // with testMaterializationCapSplitAcrossColumns this demonstrates the cap behaves as an
+        // operator-wide ceiling, not a per-buffer one.
+        node1.setProperty(PropertyKey.CAIRO_SQL_SORT_KEY_MAX_BYTES, 64L * 1024);
+
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (a DOUBLE, b DOUBLE, c DOUBLE, d DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("INSERT INTO t SELECT x::DOUBLE, (x+1)::DOUBLE, (x+2)::DOUBLE, (x+3)::DOUBLE," +
+                    " (x * 1_000_000)::TIMESTAMP FROM long_sequence(5000)");
+
+            final String query = "SELECT (a + b) * (c + d) AS x FROM t ORDER BY x";
+
+            // Plan check confirms the materializing factory is exercised (drops out if LIMIT is
+            // added, since that routes through LimitedSizeSortedLightRecordCursorFactory instead).
+            assertPlanNoLeakCheck(query, """
+                    Sort light
+                      keys: [x]
+                        Materialize sort keys
+                            VirtualRecord
+                              functions: [a+b*c+d]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: t
+                    """);
+
+            // Drain the cursor to actually exercise materialization. The test fails if the cap
+            // fires here.
+            printSql(query);
+        });
+    }
+
+    @Test
+    public void testMaterializationCapSplitAcrossColumns() throws Exception {
+        // Two materialized sort columns over the same 64 KiB budget: each buffer owns half
+        // (4 pages = 32 KiB = 4096 DOUBLEs). 5000 rows per buffer exceeds that and the cap
+        // fires. Under the previous per-buffer interpretation the same query would have
+        // succeeded because each buffer would have had the full 64 KiB to itself.
+        node1.setProperty(PropertyKey.CAIRO_SQL_SORT_KEY_MAX_BYTES, 64L * 1024);
+
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (a DOUBLE, b DOUBLE, c DOUBLE, d DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("INSERT INTO t SELECT x::DOUBLE, (x+1)::DOUBLE, (x+2)::DOUBLE, (x+3)::DOUBLE," +
+                    " (x * 1_000_000)::TIMESTAMP FROM long_sequence(5000)");
+
+            assertExceptionNoLeakCheck(
+                    "SELECT (a + b) * (c + d) AS x, (a + c) * (b + d) AS y FROM t ORDER BY x, y",
+                    0,
+                    "breached in VirtualMemory (raise cairo.sql.sort.key.max.bytes)"
+            );
+        });
+    }
 }

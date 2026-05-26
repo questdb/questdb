@@ -63,11 +63,13 @@ class SortKeyMaterializingRecordCursor implements DelegatingRecordCursor {
             IntList materializedColTypes,
             long maxBytes
     ) {
-        // The cap applies per buffer. One buffer is allocated per materialized column, so the
-        // total memory ceiling for this cursor is bufferCount * maxBytes.
-        final long maxPagesFromBytes = Math.max(1L, maxBytes / PAGE_SIZE);
-        final int maxPages = (int) Math.min(maxPagesFromBytes, Integer.MAX_VALUE);
+        // Split the operator-wide budget evenly across per-column buffers so the user-facing
+        // ceiling matches the cairo.sql.sort.key.max.bytes contract. Floor at PAGE_SIZE so each
+        // buffer can always allocate its initial page even with tiny budgets or many columns.
         final int bufferCount = materializedColIndices.size();
+        final long perBufferBytes = Math.max(PAGE_SIZE, maxBytes / Math.max(1, bufferCount));
+        final long maxPagesFromBytes = Math.max(1L, perBufferBytes / PAGE_SIZE);
+        final int maxPages = (int) Math.min(maxPagesFromBytes, Integer.MAX_VALUE);
         this.buffers = new MemoryCARW[bufferCount];
         this.colToBufferIndex = new int[columnCount];
         this.bufferToColIndex = new int[bufferCount];
