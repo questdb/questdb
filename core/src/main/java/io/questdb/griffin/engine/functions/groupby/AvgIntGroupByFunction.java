@@ -31,8 +31,8 @@ import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrameMemoryRecord;
 import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.engine.functions.DoubleFunction;
 import io.questdb.griffin.engine.functions.GroupByFunction;
-import io.questdb.griffin.engine.functions.LongFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.groupby.FlyweightPackedMapValue;
 import io.questdb.griffin.engine.groupby.GroupByUtils;
@@ -41,33 +41,48 @@ import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 import org.jetbrains.annotations.NotNull;
 
-public class SumShortGroupByFunction extends LongFunction implements GroupByFunction, UnaryFunction {
+public class AvgIntGroupByFunction extends DoubleFunction implements GroupByFunction, UnaryFunction {
     private final Function arg;
     private final int argColumnIndex;
     private int valueIndex;
 
-    public SumShortGroupByFunction(@NotNull Function arg) {
+    public AvgIntGroupByFunction(@NotNull Function arg) {
         this.arg = arg;
-        this.argColumnIndex = GroupByUtils.directArgColumnIndex(arg, ColumnType.SHORT);
+        this.argColumnIndex = GroupByUtils.directArgColumnIndex(arg, ColumnType.INT);
     }
 
     @Override
     public void computeBatch(MapValue mapValue, long dataAddr, int rowCount, long startRowId) {
         if (rowCount > 0) {
-            final long batchSum = Vect.sumShort(dataAddr, rowCount);
-            final long existing = mapValue.getLong(valueIndex);
-            if (existing != Numbers.LONG_NULL) {
-                mapValue.putLong(valueIndex, existing + batchSum);
+            final long countPtr = mapValue.getAddress(valueIndex + 1);
+            final long prevCount = mapValue.getLong(valueIndex + 1);
+            final double batchSum = Vect.sumIntAcc(dataAddr, rowCount, countPtr);
+            // sumIntAcc overwrites *countPtr with the batch count
+            final long batchCount = mapValue.getLong(valueIndex + 1);
+            if (batchCount > 0) {
+                final double prevSum = mapValue.getDouble(valueIndex);
+                if (prevCount > 0) {
+                    mapValue.putDouble(valueIndex, prevSum + batchSum);
+                } else {
+                    mapValue.putDouble(valueIndex, batchSum);
+                }
+                mapValue.putLong(valueIndex + 1, prevCount + batchCount);
             } else {
-                mapValue.putLong(valueIndex, batchSum);
+                mapValue.putLong(valueIndex + 1, prevCount);
             }
         }
     }
 
     @Override
     public void computeFirst(MapValue mapValue, Record record, long rowId) {
-        final short value = arg.getShort(record);
-        mapValue.putLong(valueIndex, value);
+        final int value = arg.getInt(record);
+        if (value != Numbers.INT_NULL) {
+            mapValue.putDouble(valueIndex, value);
+            mapValue.putLong(valueIndex + 1, 1);
+        } else {
+            mapValue.putDouble(valueIndex, 0);
+            mapValue.putLong(valueIndex + 1, 0);
+        }
     }
 
     @Override
@@ -79,35 +94,41 @@ public class SumShortGroupByFunction extends LongFunction implements GroupByFunc
             long rowCount,
             long baseRowId
     ) {
-        final long valueColumnOffset = mapValue.getOffset(valueIndex);
-        // Fast path: arg is a direct short column with data on the current frame.
+        // Two-slot layout: [sum:double][count:long]. setEmpty seeds (NaN, 0), so the
+        // etalon copied into new entries is (NaN, 0). A new entry with a non-null value
+        // must take the computeFirst path (value, 1) rather than (NaN+value, 1); once
+        // past the first row the sum is either real or 0 and we can add unconditionally.
+        final long sumOffset = mapValue.getOffset(valueIndex);
+        final long countOffset = mapValue.getOffset(valueIndex + 1);
+        // Fast path: arg is a direct int column with data on the current frame.
         // Zero page address means a column top; fall through to the record-based path.
         final long argAddr = argColumnIndex >= 0 ? record.getPageAddress(argColumnIndex) : 0;
         if (argAddr != 0) {
             for (long i = 0; i < rowCount; i++) {
                 final long encoded = Unsafe.getLong(batchAddr + (i << 3));
                 final long rowIndex = Map.decodeBatchRowIndex(encoded);
-                final short value = Unsafe.getShort(argAddr + (rowIndex << 1));
-                final long addr = baseValueAddr + Map.decodeBatchOffset(encoded) + valueColumnOffset;
-                final long current = Unsafe.getLong(addr);
-                Unsafe.putLong(addr, current != Numbers.LONG_NULL ? current + value : value);
+                final int value = Unsafe.getInt(argAddr + (rowIndex << 2));
+                final long valueBase = baseValueAddr + Map.decodeBatchOffset(encoded);
+                applyAvg(valueBase + sumOffset, valueBase + countOffset, value, Map.isNewBatchEntry(encoded));
             }
         } else {
             for (long i = 0; i < rowCount; i++) {
                 final long encoded = Unsafe.getLong(batchAddr + (i << 3));
                 record.setRowIndex(Map.decodeBatchRowIndex(encoded));
-                final short value = arg.getShort(record);
-                final long addr = baseValueAddr + Map.decodeBatchOffset(encoded) + valueColumnOffset;
-                final long current = Unsafe.getLong(addr);
-                Unsafe.putLong(addr, current != Numbers.LONG_NULL ? current + value : value);
+                final int value = arg.getInt(record);
+                final long valueBase = baseValueAddr + Map.decodeBatchOffset(encoded);
+                applyAvg(valueBase + sumOffset, valueBase + countOffset, value, Map.isNewBatchEntry(encoded));
             }
         }
     }
 
     @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
-        final short value = arg.getShort(record);
-        mapValue.addLong(valueIndex, value);
+        final int value = arg.getInt(record);
+        if (value != Numbers.INT_NULL) {
+            mapValue.addDouble(valueIndex, value);
+            mapValue.addLong(valueIndex + 1, 1);
+        }
     }
 
     @Override
@@ -117,17 +138,18 @@ public class SumShortGroupByFunction extends LongFunction implements GroupByFunc
 
     @Override
     public int getComputeBatchArgType() {
-        return ColumnType.SHORT;
+        return ColumnType.INT;
     }
 
     @Override
-    public long getLong(Record rec) {
-        return rec.getLong(valueIndex);
+    public double getDouble(Record rec) {
+        final long count = rec.getLong(valueIndex + 1);
+        return count > 0 ? rec.getDouble(valueIndex) / count : Double.NaN;
     }
 
     @Override
     public String getName() {
-        return "sum";
+        return "avg";
     }
 
     @Override
@@ -148,6 +170,7 @@ public class SumShortGroupByFunction extends LongFunction implements GroupByFunc
     @Override
     public void initValueTypes(ArrayColumnTypes columnTypes) {
         this.valueIndex = columnTypes.getColumnCount();
+        columnTypes.add(ColumnType.DOUBLE);
         columnTypes.add(ColumnType.LONG);
     }
 
@@ -163,25 +186,31 @@ public class SumShortGroupByFunction extends LongFunction implements GroupByFunc
 
     @Override
     public void merge(MapValue destValue, MapValue srcValue) {
-        final long srcSum = srcValue.getLong(valueIndex);
-        if (srcSum != Numbers.LONG_NULL) {
-            final long destSum = destValue.getLong(valueIndex);
-            if (destSum != Numbers.LONG_NULL) {
-                destValue.putLong(valueIndex, destSum + srcSum);
+        final double srcSum = srcValue.getDouble(valueIndex);
+        final long srcCount = srcValue.getLong(valueIndex + 1);
+        if (srcCount > 0) {
+            final double destSum = destValue.getDouble(valueIndex);
+            final long destCount = destValue.getLong(valueIndex + 1);
+            if (destCount > 0) {
+                destValue.putDouble(valueIndex, destSum + srcSum);
+                destValue.putLong(valueIndex + 1, destCount + srcCount);
             } else {
-                destValue.putLong(valueIndex, srcSum);
+                destValue.putDouble(valueIndex, srcSum);
+                destValue.putLong(valueIndex + 1, srcCount);
             }
         }
     }
 
     @Override
-    public void setLong(MapValue mapValue, long value) {
-        mapValue.putLong(valueIndex, value);
+    public void setDouble(MapValue mapValue, double value) {
+        mapValue.putDouble(valueIndex, value);
+        mapValue.putLong(valueIndex + 1, 1);
     }
 
     @Override
     public void setNull(MapValue mapValue) {
-        mapValue.putLong(valueIndex, Numbers.LONG_NULL);
+        mapValue.putDouble(valueIndex, Double.NaN);
+        mapValue.putLong(valueIndex + 1, 0);
     }
 
     @Override
@@ -192,5 +221,20 @@ public class SumShortGroupByFunction extends LongFunction implements GroupByFunc
     @Override
     public boolean supportsParallelism() {
         return UnaryFunction.super.supportsParallelism();
+    }
+
+    private static void applyAvg(long sumAddr, long countAddr, int value, boolean isNew) {
+        if (isNew) {
+            if (value != Numbers.INT_NULL) {
+                Unsafe.putDouble(sumAddr, value);
+                Unsafe.putLong(countAddr, 1);
+            } else {
+                Unsafe.putDouble(sumAddr, 0);
+                Unsafe.putLong(countAddr, 0);
+            }
+        } else if (value != Numbers.INT_NULL) {
+            Unsafe.putDouble(sumAddr, Unsafe.getDouble(sumAddr) + value);
+            Unsafe.putLong(countAddr, Unsafe.getLong(countAddr) + 1);
+        }
     }
 }
