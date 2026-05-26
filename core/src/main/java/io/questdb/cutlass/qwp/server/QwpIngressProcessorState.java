@@ -147,7 +147,9 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
                     configuration.autoCreateNewColumns(),
                     configuration.autoCreateNewTables(),
                     defaultColumnTypes,
-                    configuration.getDefaultPartitionBy()
+                    configuration.getDefaultPartitionBy(),
+                    -1,
+                    configuration.getQwpMaxUncommittedRows()
             );
 
             this.bufferSize = initBufferSize;
@@ -244,6 +246,16 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
         } catch (Throwable th) {
             tudCache.setDistressed();
             LOG.error().$('[').$(fd).$("] commit error: ").$(th).$();
+            rejectCommitError(th);
+        }
+    }
+
+    public void commitIfMaxUncommittedRowsReached() {
+        try {
+            tudCache.commitIfMaxUncommittedRowsReached(committedTxnConsumer);
+        } catch (Throwable th) {
+            tudCache.setDistressed();
+            LOG.error().$('[').$(fd).$("] deferred commit error: ").$(th).$();
             rejectCommitError(th);
         }
     }

@@ -823,6 +823,9 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
             if (state.isOk() && !deferCommit) {
                 state.commit();
             }
+            if (state.isOk() && deferCommit) {
+                state.commitIfMaxUncommittedRowsReached();
+            }
             // commit() swallows exceptions internally
             if (state.isOk()) {
                 if (deferCommit) {

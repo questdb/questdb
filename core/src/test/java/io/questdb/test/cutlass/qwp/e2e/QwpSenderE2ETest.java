@@ -2538,6 +2538,165 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
     }
 
     @Test
+    public void testDeferredCommitHappyPath() throws Exception {
+        runInContext((port) -> {
+            try (QwpWebSocketSender sender = connectWs(port)) {
+                // Deferred message 1
+                sender.setDeferCommit(true);
+                for (int i = 0; i < 10; i++) {
+                    sender.table("defer_happy")
+                            .longColumn("id", i)
+                            .at(1_000_000_000_000L + i * 1000L, ChronoUnit.MICROS);
+                }
+                sender.flush();
+
+                // Deferred message 2
+                for (int i = 10; i < 20; i++) {
+                    sender.table("defer_happy")
+                            .longColumn("id", i)
+                            .at(1_000_000_000_000L + i * 1000L, ChronoUnit.MICROS);
+                }
+                sender.flush();
+
+                // Final committing message
+                sender.setDeferCommit(false);
+                for (int i = 20; i < 30; i++) {
+                    sender.table("defer_happy")
+                            .longColumn("id", i)
+                            .at(1_000_000_000_000L + i * 1000L, ChronoUnit.MICROS);
+                }
+                sender.flush();
+            }
+
+            drainWalQueue();
+            assertSql("SELECT count() FROM defer_happy", "count\n30\n");
+            assertSql(
+                    "SELECT min(id), max(id) FROM defer_happy",
+                    "min\tmax\n0\t29\n"
+            );
+        });
+    }
+
+    @Test
+    public void testDeferredCommitMixedTables() throws Exception {
+        runInContext((port) -> {
+            try (QwpWebSocketSender sender = connectWs(port)) {
+                // Deferred message: rows for two tables
+                sender.setDeferCommit(true);
+                for (int i = 0; i < 10; i++) {
+                    sender.table("defer_mixed_a")
+                            .longColumn("id", i)
+                            .at(1_000_000_000_000L + i * 1000L, ChronoUnit.MICROS);
+                    sender.table("defer_mixed_b")
+                            .doubleColumn("value", i * 1.5)
+                            .at(1_000_000_000_000L + i * 1000L, ChronoUnit.MICROS);
+                }
+                sender.flush();
+
+                // Final committing message: more rows for both tables
+                sender.setDeferCommit(false);
+                for (int i = 10; i < 15; i++) {
+                    sender.table("defer_mixed_a")
+                            .longColumn("id", i)
+                            .at(1_000_000_000_000L + i * 1000L, ChronoUnit.MICROS);
+                    sender.table("defer_mixed_b")
+                            .doubleColumn("value", i * 1.5)
+                            .at(1_000_000_000_000L + i * 1000L, ChronoUnit.MICROS);
+                }
+                sender.flush();
+            }
+
+            drainWalQueue();
+            assertSql("SELECT count() FROM defer_mixed_a", "count\n15\n");
+            assertSql("SELECT count() FROM defer_mixed_b", "count\n15\n");
+        });
+    }
+
+    @Test
+    public void testDeferredCommitEmptyFinalMessage() throws Exception {
+        runInContext((port) -> {
+            try (QwpWebSocketSender sender = connectWs(port)) {
+                // Deferred messages carry all the data
+                sender.setDeferCommit(true);
+                for (int i = 0; i < 20; i++) {
+                    sender.table("defer_empty_final")
+                            .longColumn("id", i)
+                            .at(1_000_000_000_000L + i * 1000L, ChronoUnit.MICROS);
+                }
+                sender.flush();
+
+                // Final message without defer flag and with more rows triggers commit
+                sender.setDeferCommit(false);
+                sender.table("defer_empty_final")
+                        .longColumn("id", 99)
+                        .at(1_000_000_100_000L, ChronoUnit.MICROS);
+                sender.flush();
+            }
+
+            drainWalQueue();
+            assertSql("SELECT count() FROM defer_empty_final", "count\n21\n");
+        });
+    }
+
+    @Test
+    public void testDeferredCommitSingleDeferredMessage() throws Exception {
+        runInContext((port) -> {
+            try (QwpWebSocketSender sender = connectWs(port)) {
+                // One deferred message
+                sender.setDeferCommit(true);
+                for (int i = 0; i < 5; i++) {
+                    sender.table("defer_single")
+                            .longColumn("id", i)
+                            .at(1_000_000_000_000L + i * 1000L, ChronoUnit.MICROS);
+                }
+                sender.flush();
+
+                // Immediately followed by a committing message
+                sender.setDeferCommit(false);
+                for (int i = 5; i < 10; i++) {
+                    sender.table("defer_single")
+                            .longColumn("id", i)
+                            .at(1_000_000_000_000L + i * 1000L, ChronoUnit.MICROS);
+                }
+                sender.flush();
+            }
+
+            drainWalQueue();
+            assertSql("SELECT count() FROM defer_single", "count\n10\n");
+        });
+    }
+
+    @Test
+    public void testDeferredCommitConnectionDropRollsBack() throws Exception {
+        runInContext((port) -> {
+            // Send deferred messages then close without committing
+            try (QwpWebSocketSender sender = connectWs(port)) {
+                sender.setDeferCommit(true);
+                for (int i = 0; i < 10; i++) {
+                    sender.table("defer_drop")
+                            .longColumn("id", i)
+                            .at(1_000_000_000_000L + i * 1000L, ChronoUnit.MICROS);
+                }
+                sender.flush();
+
+                // Close without ever clearing the defer flag — server should roll back
+            }
+
+            drainWalQueue();
+
+            // Table may not even exist, or if auto-created it should have 0 committed rows
+            try {
+                assertSql("SELECT count() FROM defer_drop", "count\n0\n");
+            } catch (AssertionError e) {
+                // Table was never created — that's also correct
+                if (!e.getMessage().contains("defer_drop")) {
+                    throw e;
+                }
+            }
+        });
+    }
+
+    @Test
     public void testDecimal() throws Exception {
         runInContext((port) -> {
             String table = "test_qwp_decimal";

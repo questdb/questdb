@@ -420,6 +420,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int qwpMaxRowsPerTable;
     private final int qwpMaxSchemasPerConnection;
     private final int qwpMaxTablesPerConnection;
+    private final long qwpMaxUncommittedRows;
     private final long qwpUdpCommitInterval;
     private final boolean qwpUdpEnabled;
     private final int qwpUdpGroupIPv4Address;
@@ -1850,6 +1851,13 @@ public class PropServerConfiguration implements ServerConfiguration {
             if (qwpMaxTablesPerConnection < 1) {
                 throw new ServerConfigurationException(
                         PropertyKey.QWP_MAX_TABLES_PER_CONNECTION.getPropertyPath()
+                                + " must be at least 1"
+                );
+            }
+            this.qwpMaxUncommittedRows = getLong(properties, env, PropertyKey.QWP_MAX_UNCOMMITTED_ROWS, QwpConstants.DEFAULT_MAX_UNCOMMITTED_ROWS);
+            if (qwpMaxUncommittedRows < 1) {
+                throw new ServerConfigurationException(
+                        PropertyKey.QWP_MAX_UNCOMMITTED_ROWS.getPropertyPath()
                                 + " must be at least 1"
                 );
             }
@@ -5780,6 +5788,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getQwpMaxTablesPerConnection() {
             return qwpMaxTablesPerConnection;
+        }
+
+        @Override
+        public long getQwpMaxUncommittedRows() {
+            return qwpMaxUncommittedRows;
         }
 
         @Override
