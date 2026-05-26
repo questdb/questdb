@@ -27,7 +27,6 @@ package io.questdb.cairo.mig;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.ParquetMetaFileReader;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.vm.Vm;
@@ -52,7 +51,7 @@ import static io.questdb.cairo.TableUtils.TXN_FILE_NAME;
  * The migration only reads {@code _txn} to locate partitions and generates
  * {@code _pm} files; it does not modify {@code _txn}.
  */
-public final class Mig940 {
+public final class Mig941 {
     private static final Log LOG = LogFactory.getLog(EngineMigration.class);
 
     // Local copies of constants to avoid depending on values that may change.

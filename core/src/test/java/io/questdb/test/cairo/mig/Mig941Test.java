@@ -34,7 +34,7 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TxWriter;
 import io.questdb.cairo.mig.EngineMigration;
-import io.questdb.cairo.mig.Mig940;
+import io.questdb.cairo.mig.Mig941;
 import io.questdb.cairo.mig.MigrationContext;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryARW;
@@ -54,7 +54,7 @@ import org.junit.Test;
 import java.io.InputStream;
 import java.nio.file.Files;
 
-public class Mig940Test extends AbstractCairoTest {
+public class Mig941Test extends AbstractCairoTest {
 
     /// Committed parquet fixture: single designated-ts column, two row
     /// groups of 10 rows each, row values 0..19, no min/max stats on the ts
@@ -223,7 +223,7 @@ public class Mig940Test extends AbstractCairoTest {
             try (Path path = new Path()) {
                 path.of(configuration.getDbRoot()).concat(token);
                 TableUtils.setPathForParquetPartition(path, ColumnType.TIMESTAMP, PartitionBy.DAY, partitionTs, partitionNameTxn);
-                try (InputStream is = Mig940Test.class.getResourceAsStream(TS_NO_STATS_FIXTURE)) {
+                try (InputStream is = Mig941Test.class.getResourceAsStream(TS_NO_STATS_FIXTURE)) {
                     Assert.assertNotNull("fixture missing: " + TS_NO_STATS_FIXTURE, is);
                     byte[] fixtureBytes = is.readAllBytes();
                     Files.write(java.nio.file.Path.of(path.toString()), fixtureBytes);
@@ -1250,7 +1250,7 @@ public class Mig940Test extends AbstractCairoTest {
         ) {
             MigrationContext ctx = new MigrationContext(engine, tempMem, 1024, tempVirtualMem, rwMem);
             ctx.of(tablePath, tablePath2, -1);
-            Mig940.migrate(ctx);
+            Mig941.migrate(ctx);
         } finally {
             Unsafe.free(tempMem, 1024, MemoryTag.NATIVE_MIG_MMAP);
         }

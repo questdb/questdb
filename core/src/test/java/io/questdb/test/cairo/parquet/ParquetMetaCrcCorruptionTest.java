@@ -31,7 +31,7 @@ import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
-import io.questdb.cairo.mig.Mig940;
+import io.questdb.cairo.mig.Mig941;
 import io.questdb.cairo.mig.MigrationContext;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryARW;
@@ -109,7 +109,7 @@ public class ParquetMetaCrcCorruptionTest extends AbstractCairoTest {
             // the CRC mismatch BEFORE the migration runs.
             assertReadFails(ff, token, partitionTs, partitionNameTxn);
 
-            runMig940(token);
+            runMig941(token);
 
             // After Mig940, the regenerated _pm must open cleanly.
             try (Path path = new Path()) {
@@ -198,7 +198,7 @@ public class ParquetMetaCrcCorruptionTest extends AbstractCairoTest {
         }
     }
 
-    private void runMig940(TableToken token) {
+    private void runMig941(TableToken token) {
         engine.releaseAllWriters();
         engine.releaseAllReaders();
         engine.releaseInactive();
@@ -211,7 +211,7 @@ public class ParquetMetaCrcCorruptionTest extends AbstractCairoTest {
         ) {
             MigrationContext ctx = new MigrationContext(engine, tempMem, 1024, tempVirtualMem, rwMem);
             ctx.of(tablePath, tablePath2, -1);
-            Mig940.migrate(ctx);
+            Mig941.migrate(ctx);
         } finally {
             Unsafe.free(tempMem, 1024, MemoryTag.NATIVE_MIG_MMAP);
         }
