@@ -131,4 +131,16 @@ public interface PageFrame {
      * Return low row index within the frame's partition, inclusive.
      */
     long getPartitionLo();
+
+    /**
+     * For partitions in the {@link PartitionFormat#INDEXED_SORTED_RUNS} format,
+     * returns the native address into the partition's mmapped
+     * {@code _sortedruns.idx} file, already offset to this frame's first
+     * logical row. Reading the i-th frame-local physRowId is then
+     * {@code Unsafe.getLong(getSortedRunsIndexAddr() + i * 8)}.
+     * Returns 0 for other formats.
+     */
+    default long getSortedRunsIndexAddr() {
+        return 0;
+    }
 }

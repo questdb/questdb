@@ -87,6 +87,13 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
     protected long rowIndex;
     protected boolean stableStrings;
     protected SymbolTableSource symbolTableSource;
+    // indexed-sorted-runs partitions: when frameFormat == INDEXED_SORTED_RUNS,
+    // setRowIndex(logicalIdx) dereferences the partition's mmapped
+    // _sortedruns.idx file at sortedRunsIndexAddr + logicalIdx * 8 to obtain
+    // the physical row id used by the column accessors. The address is
+    // already offset to the frame's first logical row by the cursor; consumers
+    // pass frame-local indices [0, partitionHi - partitionLo).
+    protected long sortedRunsIndexAddr;
 
     public PageFrameMemoryRecord() {
     }
@@ -120,6 +127,7 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
         auxPageAddresses = null;
         pageSizes = null;
         auxPageSizes = null;
+        sortedRunsIndexAddr = 0;
     }
 
     @Override
@@ -439,7 +447,13 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
 
     @Override
     public long getRowId() {
-        return Rows.toRowID(frameIndex, rowIndex);
+        // For INDEXED_SORTED_RUNS frames, this.rowIndex is the partition-physical
+        // row id (setRowIndex resolved it through _sortedruns.idx). Tag the
+        // row id with the physical flag so a later recordAt round-trip can
+        // skip the scratch translation and avoid re-dereferencing the index.
+        return frameFormat == PartitionFormat.INDEXED_SORTED_RUNS
+                ? Rows.toRowIDPhysical(frameIndex, rowIndex)
+                : Rows.toRowID(frameIndex, rowIndex);
     }
 
     @Override
@@ -551,6 +565,7 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
         this.pageSizes = frameMemory.getPageSizes();
         this.auxPageSizes = frameMemory.getAuxPageSizes();
         this.columnOffset = frameMemory.getColumnOffset();
+        this.sortedRunsIndexAddr = frameMemory.getSortedRunsIndexAddr();
     }
 
     @Override
@@ -578,7 +593,35 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
     }
 
     public void setRowIndex(long rowIndex) {
-        this.rowIndex = rowIndex;
+        if (frameFormat == PartitionFormat.INDEXED_SORTED_RUNS && sortedRunsIndexAddr != 0) {
+            this.rowIndex = Unsafe.getUnsafe().getLong(sortedRunsIndexAddr + (rowIndex << 3));
+        } else {
+            this.rowIndex = rowIndex;
+        }
+    }
+
+    /**
+     * Sets the record's row index directly to a partition-physical row id,
+     * bypassing the {@code _sortedruns.idx} translation. Used by callers that
+     * receive a row id already tagged
+     * {@link io.questdb.std.Rows#isPhysical(long) physical} (e.g., a row id
+     * round-tripped through {@link #getRowId()} on an
+     * {@code INDEXED_SORTED_RUNS} frame, or a row id produced by an index
+     * reader).
+     */
+    public void setRowIndexPhysical(long physRowIndex) {
+        this.rowIndex = physRowIndex;
+    }
+
+    /**
+     * Installs the per-frame native address into the partition's mmapped
+     * {@code _sortedruns.idx} file for partitions in the indexed-sorted-runs
+     * format. Address is already offset to the frame's first logical row.
+     * {@link #setRowIndex(long)} reads the corresponding physical row id with
+     * a single {@link Unsafe} load.
+     */
+    public void setSortedRunsIndexAddr(long addr) {
+        this.sortedRunsIndexAddr = addr;
     }
 
     private @NotNull DirectString csViewA(int columnIndex) {

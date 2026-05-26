@@ -66,6 +66,10 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
     private final IntList parquetRowGroups = new IntList();
     // Makes it possible to determine real row id, not the one relative to the page.
     private final LongList rowIdOffsets = new LongList();
+    // For partitions in INDEXED_SORTED_RUNS format: per-frame native address
+    // into the partition's mmapped _sortedruns.idx, already offset to the
+    // frame's first logical row.
+    private final LongList sortedRunsIndexAddrs = new LongList();
     private int columnCount;
     // True in case of external parquet files, false in case of table partition files.
     private boolean external;
@@ -82,7 +86,8 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
             return; // The page frame is already cached
         }
 
-        if (frame.getFormat() == PartitionFormat.NATIVE) {
+        final byte fmt = frame.getFormat();
+        if (fmt == PartitionFormat.NATIVE || fmt == PartitionFormat.INDEXED_SORTED_RUNS) {
             for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
                 pageAddresses.add(frame.getPageAddress(columnIndex));
                 pageSizes.add(frame.getPageSize(columnIndex));
@@ -114,6 +119,7 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
         parquetRowGroupLos.add(frame.getParquetRowGroupLo());
         parquetRowGroupHis.add(frame.getParquetRowGroupHi());
         rowIdOffsets.add(Rows.toRowID(frame.getPartitionIndex(), frame.getPartitionLo()));
+        sortedRunsIndexAddrs.add(frame.getSortedRunsIndexAddr());
     }
 
     @Override
@@ -129,6 +135,7 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
         pageSizes.clear();
         auxPageSizes.clear();
         rowIdOffsets.clear();
+        sortedRunsIndexAddrs.clear();
         external = false;
     }
 
@@ -210,6 +217,16 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
 
     public long getRowIdOffset(int frameIndex) {
         return rowIdOffsets.getQuick(frameIndex);
+    }
+
+    /**
+     * For frames in {@link PartitionFormat#INDEXED_SORTED_RUNS} format,
+     * returns the per-frame native address into the partition's mmapped
+     * {@code _sortedruns.idx} file, already offset to the frame's first
+     * logical row. Returns 0 for other formats.
+     */
+    public long getSortedRunsIndexAddr(int frameIndex) {
+        return sortedRunsIndexAddrs.getQuick(frameIndex);
     }
 
     public boolean isExternal() {

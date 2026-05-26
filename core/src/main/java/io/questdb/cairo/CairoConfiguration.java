@@ -1021,6 +1021,16 @@ public interface CairoConfiguration {
 
     boolean isWalSupported();
 
+    /**
+     * When true, WAL apply produces partitions in the experimental
+     * indexed-sorted-runs storage format (see
+     * {@code docs/wal-ts-storage-plan-v2.md}). When false (default),
+     * WAL apply uses the classic sort-merge path.
+     */
+    default boolean isWalSortedRunsEnabled() {
+        return false;
+    }
+
     boolean isWriterMixedIOEnabled();
 
     /**

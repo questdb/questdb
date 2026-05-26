@@ -188,6 +188,7 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
                     } else {
                         frame.parquetMetaDecoder = null;
                     }
+                    populateSortedRunsScratch(frame);
 
                     return frame;
                 }
@@ -267,6 +268,8 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
 
     private TableReaderPageFrame computeNativeFrame(long partitionLo, long partitionHi) {
         final int base = reader.getColumnBase(reenterPartitionIndex);
+        final boolean isSortedRuns =
+                reader.getPartitionFormat(reenterPartitionIndex) == PartitionFormat.INDEXED_SORTED_RUNS;
 
         // we may need to split this partition frame either along "top" lines, or along
         // max page frame sizes; to do this, we calculate min top value from given position
@@ -295,7 +298,11 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
                     // non-negative sh means fixed length column
                     final long address = colMem.getPageAddress(0);
                     final long addressSize = partitionHiAdjusted << sh;
-                    final long offset = partitionLoAdjusted << sh;
+                    // For INDEXED_SORTED_RUNS frames, the per-frame physRowId scratch
+                    // produces absolute partition-relative row ids. Column reads must
+                    // use the column base (no partitionLo offset baked in), otherwise
+                    // physRowId * elementSize would double-count the offset.
+                    final long offset = isSortedRuns ? 0L : (partitionLoAdjusted << sh);
                     columnPageAddresses.setQuick(2 * i, address + offset);
                     pageSizes.setQuick(2 * i, addressSize - offset);
                 } else {
@@ -342,11 +349,14 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
 
         frame.partitionLo = partitionLo;
         frame.partitionHi = adjustedHi;
-        frame.format = PartitionFormat.NATIVE;
+        frame.format = reader.getPartitionFormat(reenterPartitionIndex) == PartitionFormat.INDEXED_SORTED_RUNS
+                ? PartitionFormat.INDEXED_SORTED_RUNS
+                : PartitionFormat.NATIVE;
         frame.rowGroupIndex = -1;
         frame.rowGroupLo = -1;
         frame.rowGroupHi = -1;
         frame.partitionIndex = reenterPartitionIndex;
+        populateSortedRunsScratch(frame);
         return frame;
     }
 
@@ -416,6 +426,24 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
         return null;
     }
 
+    /**
+     * Sets the frame's mmapped {@code _sortedruns.idx} address for partitions
+     * in {@link PartitionFormat#INDEXED_SORTED_RUNS} format. The address is
+     * offset to the frame's first logical row so the row cursor's frame-local
+     * indices (0..count-1) translate to physRowIds via a single Unsafe load.
+     * No allocation, no K-way merge - the file contents are produced at write
+     * time and faulted in lazily by the OS.
+     */
+    private void populateSortedRunsScratch(TableReaderPageFrame frame) {
+        if (frame.format != PartitionFormat.INDEXED_SORTED_RUNS) {
+            frame.sortedRunsIndexAddr = 0;
+            return;
+        }
+        final io.questdb.cairo.wal.sortedruns.SortedRunsIndex index =
+                reader.getAndInitSortedRunsIndex(frame.partitionIndex);
+        frame.sortedRunsIndexAddr = index.getAddress() + frame.partitionLo * Long.BYTES;
+    }
+
     private @Nullable TableReaderPageFrame nextSlow(PartitionFrame partitionFrame, long lo, long hi) {
         final byte format = partitionFrame.getPartitionFormat();
         if (format == PartitionFormat.PARQUET) {
@@ -437,7 +465,7 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
             return computeParquetFrame(lo, hi);
         }
 
-        assert format == PartitionFormat.NATIVE;
+        assert format == PartitionFormat.NATIVE || format == PartitionFormat.INDEXED_SORTED_RUNS;
         reenterParquetDecoder = null;
         reenterPageFrameRowLimit = calculatePageFrameRowLimit(lo, hi, pageFrameMinRows, pageFrameMaxRows, sharedQueryWorkerCount);
         return computeNativeFrame(lo, hi);
@@ -512,6 +540,7 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
         private int rowGroupHi;
         private int rowGroupIndex;
         private int rowGroupLo;
+        private long sortedRunsIndexAddr;
 
         @Override
         public long getAuxPageAddress(int columnIndex) {
@@ -582,6 +611,11 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
         @Override
         public long getPartitionLo() {
             return partitionLo;
+        }
+
+        @Override
+        public long getSortedRunsIndexAddr() {
+            return sortedRunsIndexAddr;
         }
     }
 }

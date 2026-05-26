@@ -110,7 +110,14 @@ class AsyncTopKRecordCursor implements RecordCursor {
     public void recordAt(Record record, long atRowId) {
         final PageFrameMemoryRecord frameMemoryRecord = (PageFrameMemoryRecord) record;
         frameMemoryPool.navigateTo(Rows.toPartitionIndex(atRowId), frameMemoryRecord);
-        frameMemoryRecord.setRowIndex(Rows.toLocalRowID(atRowId));
+        final long localRowId = Rows.toLocalRowID(atRowId);
+        if (Rows.isPhysical(atRowId)) {
+            // Row id is already partition-physical; skip _sortedruns.idx
+            // translation. See PageFrameMemoryRecord.setRowIndexPhysical.
+            frameMemoryRecord.setRowIndexPhysical(localRowId);
+        } else {
+            frameMemoryRecord.setRowIndex(localRowId);
+        }
     }
 
     @Override

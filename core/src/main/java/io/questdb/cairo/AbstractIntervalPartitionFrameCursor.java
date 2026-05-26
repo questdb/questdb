@@ -45,6 +45,7 @@ public abstract class AbstractIntervalPartitionFrameCursor implements PartitionF
     protected final int timestampIndex;
     private final NativeTimestampFinder nativeTimestampFinder = new NativeTimestampFinder();
     private final ParquetTimestampFinder parquetTimestampFinder;
+    private final io.questdb.cairo.wal.sortedruns.SortedRunsTimestampFinder sortedRunsTimestampFinder = new io.questdb.cairo.wal.sortedruns.SortedRunsTimestampFinder();
     protected LongList intervals;
     protected int intervalsHi;
     protected int intervalsLo;
@@ -207,8 +208,12 @@ public abstract class AbstractIntervalPartitionFrameCursor implements PartitionF
     }
 
     protected TimestampFinder initTimestampFinder(int partitionIndex, long rowCount) {
-        if (reader.getPartitionFormatFromMetadata(partitionIndex) == PartitionFormat.PARQUET) {
+        final byte format = reader.getPartitionFormatFromMetadata(partitionIndex);
+        if (format == PartitionFormat.PARQUET) {
             return parquetTimestampFinder.of(reader, partitionIndex, timestampIndex);
+        }
+        if (format == PartitionFormat.INDEXED_SORTED_RUNS) {
+            return sortedRunsTimestampFinder.of(reader, partitionIndex, timestampIndex);
         }
         return nativeTimestampFinder.of(reader, partitionIndex, timestampIndex, rowCount);
     }

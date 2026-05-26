@@ -87,8 +87,8 @@ public class FullFwdPartitionFrameCursor extends AbstractFullPartitionFrameCurso
             return frame;
         }
 
-        assert format == PartitionFormat.NATIVE;
-        frame.format = PartitionFormat.NATIVE;
+        assert format == PartitionFormat.NATIVE || format == PartitionFormat.INDEXED_SORTED_RUNS;
+        frame.format = format;
         frame.parquetMetaDecoder = null;
         return frame;
     }

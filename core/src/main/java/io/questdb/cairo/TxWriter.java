@@ -378,6 +378,19 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         setPartitionParquetFormat(timestamp, -1, false);
     }
 
+    /**
+     * Clears the sorted-runs sidecar marker for a partition by setting slot [3]
+     * back to -1. The partition's data layout in column files is unaffected;
+     * this just clears the metadata flag derived from the slot value.
+     */
+    public void resetPartitionSortedRuns(int partitionIndex) {
+        final int indexRaw = partitionIndex * LONGS_PER_TX_ATTACHED_PARTITION;
+        if (indexRaw < 0) {
+            throw CairoException.nonCritical().put("bad partition index -1");
+        }
+        attachedPartitions.setQuick(indexRaw + PARTITION_PARQUET_FILE_SIZE_OFFSET, -1L);
+    }
+
     public void resetStructureVersionUnsafe() {
         txMemBase.putLong(readBaseOffset + TX_OFFSET_STRUCT_VERSION_64, 0);
     }
@@ -492,6 +505,26 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
 
     public void setPartitionReadOnlyByTimestamp(long timestamp, boolean isReadOnly) {
         setPartitionReadOnlyByRawIndex(findAttachedPartitionRawIndex(timestamp), isReadOnly);
+    }
+
+    /**
+     * Records the valid size in bytes of the partition's <code>_sortedruns</code>
+     * sidecar file. Stored in slot [3] (the parquet-file-size slot, reused).
+     * The partition must not already be in parquet format; this method asserts
+     * that the parquet-format flag is clear.
+     */
+    public void setPartitionSortedRunsFileSize(long timestamp, long fileSize) {
+        if (fileSize < 0) {
+            throw CairoException.nonCritical().put("sorted-runs file size must be non-negative, was ").put(fileSize);
+        }
+        final int indexRaw = findAttachedPartitionRawIndex(timestamp);
+        if (indexRaw < 0) {
+            throw CairoException.nonCritical().put("bad partition index -1");
+        }
+        if (checkPartitionOptionBit(indexRaw, PARTITION_MASK_PARQUET_FORMAT_BIT_OFFSET)) {
+            throw CairoException.nonCritical().put("cannot set sorted-runs size on parquet partition");
+        }
+        attachedPartitions.setQuick(indexRaw + PARTITION_PARQUET_FILE_SIZE_OFFSET, fileSize);
     }
 
     public void setSeqTxn(long seqTxn) {

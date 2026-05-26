@@ -232,8 +232,8 @@ public class IntervalBwdPartitionFrameCursor extends AbstractIntervalPartitionFr
                         frame.parquetMetaDecoder = reader.getAndInitParquetPartitionDecoder(currentPartition);
                         assert frame.parquetMetaDecoder.getFileAddr() != 0 : "parquet decoder is not initialized";
                     } else {
-                        assert format == PartitionFormat.NATIVE;
-                        frame.format = PartitionFormat.NATIVE;
+                        assert format == PartitionFormat.NATIVE || format == PartitionFormat.INDEXED_SORTED_RUNS;
+                        frame.format = format;
                         frame.parquetMetaDecoder = null;
                     }
 

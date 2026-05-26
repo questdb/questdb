@@ -110,6 +110,8 @@ public class TableReader implements Closeable, SymbolTableSource {
     private boolean streamingMode = false;
     private TableToken tableToken;
     private long tempMem8b = Unsafe.malloc(8, MemoryTag.NATIVE_TABLE_READER);
+    private ObjList<io.questdb.cairo.wal.sortedruns.SortedRunsIndex> sortedRunsIndexes;
+    private ObjList<io.questdb.cairo.wal.sortedruns.SortedRunsReader> sortedRunsReaders;
     private long txColumnVersion;
     private long txPartitionVersion;
     private long txTruncateVersion;
@@ -258,6 +260,7 @@ public class TableReader implements Closeable, SymbolTableSource {
             Misc.free(txFile);
             freeColumns();
             freeParquetPartitions();
+            freeSortedRunsReaders();
             parquetMetaReader.clear();
             freeTempMem();
             Misc.free(txnScoreboard);
@@ -337,6 +340,60 @@ public class TableReader implements Closeable, SymbolTableSource {
             decoder.of(parquetMetaAddr, parquetMetaSize, parquetAddr, parquetSize, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
         }
         return decoder;
+    }
+
+    /**
+     * Returns the {@link io.questdb.cairo.wal.sortedruns.SortedRunsReader} for a
+     * partition stored in the indexed-sorted-runs format, lazily opening it on first
+     * access. Mirrors {@link #getAndInitParquetPartitionDecoder(int)} for the
+     * parquet path. Throws if the partition is not in indexed-sorted-runs format.
+     */
+    public io.questdb.cairo.wal.sortedruns.SortedRunsReader getAndInitSortedRunsReader(int partitionIndex) {
+        io.questdb.cairo.wal.sortedruns.SortedRunsReader reader = sortedRunsReaders.getQuick(partitionIndex);
+        if (!txFile.isPartitionSortedRuns(partitionIndex)) {
+            throw CairoException.critical(0).put("partition is not in indexed-sorted-runs format [index=").put(partitionIndex).put(']');
+        }
+        if (reader == null) {
+            reader = new io.questdb.cairo.wal.sortedruns.SortedRunsReader();
+            sortedRunsReaders.setQuick(partitionIndex, reader);
+        }
+        if (reader.recordCount() == 0) {
+            final long partitionNameTxn = txFile.getPartitionNameTxn(partitionIndex);
+            final long validSize = txFile.getPartitionSortedRunsFileSize(partitionIndex);
+            path.trimTo(rootLen);
+            final Path partitionPath = pathGenNativePartition(partitionIndex, partitionNameTxn);
+            partitionPath.concat(io.questdb.cairo.wal.sortedruns.SortedRunsFormat.FILE_NAME);
+            reader.of(ff, partitionPath.$(), validSize);
+        }
+        return reader;
+    }
+
+    /**
+     * Returns the {@link io.questdb.cairo.wal.sortedruns.SortedRunsIndex} for
+     * a partition in indexed-sorted-runs format, lazily mmapping the
+     * partition's {@code _sortedruns.idx} on first access. The mapping is
+     * lazy at the OS level: pages are not pre-faulted, so the index lands in
+     * RSS on demand as the cursor dereferences it. Throws if the partition is
+     * not in indexed-sorted-runs format.
+     */
+    public io.questdb.cairo.wal.sortedruns.SortedRunsIndex getAndInitSortedRunsIndex(int partitionIndex) {
+        if (!txFile.isPartitionSortedRuns(partitionIndex)) {
+            throw CairoException.critical(0).put("partition is not in indexed-sorted-runs format [index=").put(partitionIndex).put(']');
+        }
+        io.questdb.cairo.wal.sortedruns.SortedRunsIndex index = sortedRunsIndexes.getQuick(partitionIndex);
+        if (index == null) {
+            index = new io.questdb.cairo.wal.sortedruns.SortedRunsIndex();
+            sortedRunsIndexes.setQuick(partitionIndex, index);
+        }
+        if (index.getRowCount() == 0) {
+            final long partitionNameTxn = txFile.getPartitionNameTxn(partitionIndex);
+            final long rowCount = txFile.getPartitionSize(partitionIndex);
+            path.trimTo(rootLen);
+            final Path partitionPath = pathGenNativePartition(partitionIndex, partitionNameTxn);
+            partitionPath.concat(io.questdb.cairo.wal.sortedruns.SortedRunsIndex.FILE_NAME);
+            index.of(ff, partitionPath.$(), rowCount);
+        }
+        return index;
     }
 
     public MemoryCR getColumn(int absoluteIndex) {
@@ -470,6 +527,9 @@ public class TableReader implements Closeable, SymbolTableSource {
     public byte getPartitionFormatFromMetadata(int partitionIndex) {
         if (txFile.isPartitionParquet(partitionIndex)) {
             return PartitionFormat.PARQUET;
+        }
+        if (txFile.isPartitionSortedRuns(partitionIndex)) {
+            return PartitionFormat.INDEXED_SORTED_RUNS;
         }
         return PartitionFormat.NATIVE;
     }
@@ -613,6 +673,7 @@ public class TableReader implements Closeable, SymbolTableSource {
             freeIndexCache();
             freeColumns();
             freeParquetPartitions();
+            freeSortedRunsReaders();
             // Remember to copy source metadata upfront - we don't need to deal with metadata transition index.
             metadata.loadFrom(srcReader.metadata);
         }
@@ -1173,6 +1234,11 @@ public class TableReader implements Closeable, SymbolTableSource {
         Misc.freeObjList(parquetPartitions);
     }
 
+    private void freeSortedRunsReaders() {
+        Misc.freeObjList(sortedRunsReaders);
+        Misc.freeObjList(sortedRunsIndexes);
+    }
+
     private void freeSymbolMapReaders() {
         for (int i = 0, n = symbolMapReaders.size(); i < n; i++) {
             Misc.freeIfCloseable(symbolMapReaders.getQuick(i));
@@ -1203,6 +1269,10 @@ public class TableReader implements Closeable, SymbolTableSource {
         parquetPartitions.setAll(partitionCount, NullMemoryCMR.INSTANCE);
         parquetMetaDecoders = new ObjList<>(partitionCount);
         parquetMetaDecoders.setAll(partitionCount, null);
+        sortedRunsReaders = new ObjList<>(partitionCount);
+        sortedRunsReaders.setAll(partitionCount, null);
+        sortedRunsIndexes = new ObjList<>(partitionCount);
+        sortedRunsIndexes.setAll(partitionCount, null);
         columns = new ObjList<>(capacity + 2);
         columns.setPos(capacity + 2);
         columns.setQuick(0, NullMemoryCMR.INSTANCE);
@@ -1466,7 +1536,10 @@ public class TableReader implements Closeable, SymbolTableSource {
                         final long partitionTimestamp = openPartitionInfo.getQuick(partitionIndex * PARTITIONS_SLOT_SIZE);
                         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_NAME_TXN, partitionNameTxn);
                         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_COLUMN_VERSION, columnVersionReader.getMaxPartitionVersion(partitionTimestamp));
-                        openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_FORMAT, PartitionFormat.NATIVE);
+                        final byte nativeFormat = txFile.isPartitionSortedRuns(partitionIndex)
+                                ? PartitionFormat.INDEXED_SORTED_RUNS
+                                : PartitionFormat.NATIVE;
+                        openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_FORMAT, nativeFormat);
                         openPartitionColumns(partitionIndex, path, getColumnBase(partitionIndex), partitionSize);
                         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_SIZE, partitionSize);
                         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_ACTIVE_COLUMNS_OPEN, 1);
@@ -1604,7 +1677,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                             // This is ok for fixed size columns but var length columns have to be re-mapped to the bigger / smaller sizes
                             final byte format = getPartitionFormat(partitionIndex);
                             assert format != -1;
-                            if (format == PartitionFormat.NATIVE) {
+                            if (format == PartitionFormat.NATIVE || format == PartitionFormat.INDEXED_SORTED_RUNS) {
                                 if (reloadColumnFiles(partitionIndex, txPartitionSize)) {
                                     openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_SIZE, txPartitionSize);
                                     LOG.debug().$("updated partition size [partition=").$(openPartitionInfo.getQuick(offset)).I$();
@@ -1668,7 +1741,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                         if (openPartitionSize > -1) {
                             final byte format = getPartitionFormat(partitionIndex);
                             assert format != -1;
-                            if (format == PartitionFormat.NATIVE) {
+                            if (format == PartitionFormat.NATIVE || format == PartitionFormat.INDEXED_SORTED_RUNS) {
                                 if (reloadColumnFiles(partitionIndex, txPartitionSize)) {
                                     openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_SIZE, txPartitionSize);
                                     LOG.debug().$("updated partition size [partition=").$(openPartitionTimestamp).I$();
@@ -1796,7 +1869,7 @@ public class TableReader implements Closeable, SymbolTableSource {
             final long colTopPartTs = columnVersionReader.getColumnTopPartitionTimestamp(writerIndex);
             final boolean isColTopPartTsOk = colTopPartTs <= partitionTimestamp;
             if (columnRowCount > 0 && (hasVersionRecord || isColTopPartTsOk)) {
-                if (partitionFormat == PartitionFormat.NATIVE) {
+                if (partitionFormat == PartitionFormat.NATIVE || partitionFormat == PartitionFormat.INDEXED_SORTED_RUNS) {
                     final int columnType = metadata.getColumnType(columnIndex);
 
                     final MemoryCMR dataMem = columns.getQuick(primaryIndex);

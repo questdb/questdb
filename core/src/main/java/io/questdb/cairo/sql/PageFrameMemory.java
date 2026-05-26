@@ -103,6 +103,17 @@ public interface PageFrameMemory {
     long getRowIdOffset();
 
     /**
+     * For frames in {@link PartitionFormat#INDEXED_SORTED_RUNS} format, returns
+     * the native address into the partition's mmapped {@code _sortedruns.idx}
+     * file, offset to this frame's first logical row. Read row i as
+     * {@code Unsafe.getLong(getSortedRunsIndexAddr() + i * 8)}.
+     * Returns 0 for other formats.
+     */
+    default long getSortedRunsIndexAddr() {
+        return 0;
+    }
+
+    /**
      * Returns true if any column has a column top (zero address).
      */
     boolean hasColumnTops();

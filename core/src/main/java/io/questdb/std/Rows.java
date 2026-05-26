@@ -24,21 +24,63 @@
 
 package io.questdb.std;
 
+/**
+ * Row id packing utilities.
+ * <p>
+ * Bit layout of a packed row id:
+ * <pre>
+ *   [63..44]  partitionIndex (20 bits)
+ *   [43]      physical flag (1 = physical, 0 = logical)
+ *   [42..0]   localRowId (43 bits, ~8.8 T rows per partition)
+ * </pre>
+ * The physical flag distinguishes row ids that already refer to a partition's
+ * physical (on-disk) row position from row ids that need
+ * logical-to-physical translation via the partition's
+ * {@code _sortedruns.idx} mapping (see
+ * {@link io.questdb.cairo.sql.PartitionFormat#INDEXED_SORTED_RUNS}).
+ * <p>
+ * For {@code NATIVE} and {@code PARQUET} partitions physical equals logical, so
+ * the flag is informational; for {@code INDEXED_SORTED_RUNS} consumers must
+ * inspect it before doing a setRowIndex round-trip.
+ */
 public final class Rows {
     public static final int MAX_SAFE_PARTITION_INDEX = (1 << 19) - 1;
+    private static final long LOCAL_ROW_ID_MASK = 0x7FFFFFFFFFFL;
+    private static final long PHYSICAL_FLAG = 0x80000000000L;
 
     private Rows() {
     }
 
+    public static boolean isPhysical(long rowID) {
+        return (rowID & PHYSICAL_FLAG) != 0;
+    }
+
     public static long toLocalRowID(long rowID) {
-        return rowID & 0xFFFFFFFFFFFL;
+        return rowID & LOCAL_ROW_ID_MASK;
     }
 
     public static int toPartitionIndex(long rowID) {
         return (int) (rowID >>> 44);
     }
 
+    /**
+     * Packs a row id with the physical flag UNSET. Use for row ids that refer
+     * to a partition's logical (timestamp-ascending) position. For
+     * {@code NATIVE}/{@code PARQUET} partitions logical equals physical.
+     */
     public static long toRowID(int partitionIndex, long localRowID) {
-        return (((long) partitionIndex) << 44) + localRowID;
+        return (((long) partitionIndex) << 44) + (localRowID & LOCAL_ROW_ID_MASK);
+    }
+
+    /**
+     * Packs a row id with the physical flag SET. Use when the localRowID is
+     * already the partition-physical row offset (e.g., from the cursor of an
+     * {@code INDEXED_SORTED_RUNS} partition, an index reader, or any source
+     * that produces raw column offsets). Consumers that round-trip the row id
+     * through {@code recordAt} can then skip the
+     * {@code _sortedruns.idx} translation.
+     */
+    public static long toRowIDPhysical(int partitionIndex, long physRowID) {
+        return ((((long) partitionIndex) << 44) | PHYSICAL_FLAG) + (physRowID & LOCAL_ROW_ID_MASK);
     }
 }

@@ -110,6 +110,7 @@ open module io.questdb {
     exports io.questdb.griffin.engine.functions.long128;
     exports io.questdb.cairo.wal;
     exports io.questdb.cairo.wal.seq;
+    exports io.questdb.cairo.wal.sortedruns;
     exports io.questdb.cutlass.auth;
     exports io.questdb.cutlass.line.tcp.auth;
     exports io.questdb.cairo.frm;

@@ -127,7 +127,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
 
         final byte format = addressCache.getFrameFormat(frameIndex);
         final int columnOffset = addressCache.toColumnOffset(frameIndex);
-        if (format == PartitionFormat.NATIVE) {
+        if (format == PartitionFormat.NATIVE || format == PartitionFormat.INDEXED_SORTED_RUNS) {
             record.init(
                     frameIndex,
                     format,
@@ -138,6 +138,9 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
                     addressCache.getAuxPageSizes(),
                     columnOffset
             );
+            if (format == PartitionFormat.INDEXED_SORTED_RUNS) {
+                record.setSortedRunsIndexAddr(addressCache.getSortedRunsIndexAddr(frameIndex));
+            }
         } else if (format == PartitionFormat.PARQUET) {
             openParquet(frameIndex);
             final byte usageBit = record.getLetter() == PageFrameMemoryRecord.RECORD_A_LETTER ? RECORD_A_MASK : RECORD_B_MASK;
@@ -178,13 +181,16 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
 
         final byte format = addressCache.getFrameFormat(frameIndex);
         final int columnOffset = addressCache.toColumnOffset(frameIndex);
-        if (format == PartitionFormat.NATIVE) {
+        if (format == PartitionFormat.NATIVE || format == PartitionFormat.INDEXED_SORTED_RUNS) {
             frameMemory.pageAddresses = addressCache.getPageAddresses();
             frameMemory.auxPageAddresses = addressCache.getAuxPageAddresses();
             frameMemory.pageSizes = addressCache.getPageSizes();
             frameMemory.auxPageSizes = addressCache.getAuxPageSizes();
             frameMemory.columnOffset = columnOffset;
             frameMemory.currentRowGroupBuffer = null;
+            frameMemory.sortedRunsIndexAddr = format == PartitionFormat.INDEXED_SORTED_RUNS
+                    ? addressCache.getSortedRunsIndexAddr(frameIndex)
+                    : 0;
         } else if (format == PartitionFormat.PARQUET) {
             openParquet(frameIndex);
             final ParquetBuffers parquetBuffers = nextFreeBuffers(frameIndex, FRAME_MEMORY_MASK);
@@ -201,6 +207,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             frameMemory.pageSizes = parquetBuffers.pageSizes;
             frameMemory.auxPageSizes = parquetBuffers.auxPageSizes;
             frameMemory.columnOffset = 0; // parquet buffers use 0 offset
+            frameMemory.sortedRunsIndexAddr = 0;
         }
 
         frameMemory.frameIndex = frameIndex;
@@ -215,13 +222,16 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
 
         final byte format = addressCache.getFrameFormat(frameIndex);
         final int columnOffset = addressCache.toColumnOffset(frameIndex);
-        if (format == PartitionFormat.NATIVE) {
+        if (format == PartitionFormat.NATIVE || format == PartitionFormat.INDEXED_SORTED_RUNS) {
             frameMemory.pageAddresses = addressCache.getPageAddresses();
             frameMemory.auxPageAddresses = addressCache.getAuxPageAddresses();
             frameMemory.pageSizes = addressCache.getPageSizes();
             frameMemory.auxPageSizes = addressCache.getAuxPageSizes();
             frameMemory.columnOffset = columnOffset;
             frameMemory.currentRowGroupBuffer = null;
+            frameMemory.sortedRunsIndexAddr = format == PartitionFormat.INDEXED_SORTED_RUNS
+                    ? addressCache.getSortedRunsIndexAddr(frameIndex)
+                    : 0;
         } else if (format == PartitionFormat.PARQUET) {
             openParquet(frameIndex, columnIndexes, true);
             final ParquetBuffers parquetBuffers = nextFreeBuffers(frameIndex, FRAME_MEMORY_MASK);
@@ -238,6 +248,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             frameMemory.pageSizes = parquetBuffers.pageSizes;
             frameMemory.auxPageSizes = parquetBuffers.auxPageSizes;
             frameMemory.columnOffset = 0; // parquet buffers use 0 offset
+            frameMemory.sortedRunsIndexAddr = 0;
         }
 
         frameMemory.frameIndex = frameIndex;
@@ -257,7 +268,16 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
     public void recordAt(Record record, long atRowId) {
         final PageFrameMemoryRecord frameMemoryRecord = (PageFrameMemoryRecord) record;
         navigateTo(Rows.toPartitionIndex(atRowId), frameMemoryRecord);
-        frameMemoryRecord.setRowIndex(Rows.toLocalRowID(atRowId));
+        final long localRowId = Rows.toLocalRowID(atRowId);
+        if (Rows.isPhysical(atRowId)) {
+            // Row id was tagged as already-physical (e.g., produced by
+            // getRowId() on an INDEXED_SORTED_RUNS frame, or by an index
+            // reader). Skip the _sortedruns.idx translation that
+            // setRowIndex would apply.
+            frameMemoryRecord.setRowIndexPhysical(localRowId);
+        } else {
+            frameMemoryRecord.setRowIndex(localRowId);
+        }
     }
 
     public void releaseParquetBuffers() {
@@ -415,6 +435,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         private int frameIndex = -1;
         private DirectLongList pageAddresses;
         private DirectLongList pageSizes;
+        private long sortedRunsIndexAddr;
 
         @Override
         public void clear() {
@@ -426,6 +447,12 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             pageSizes = null;
             auxPageSizes = null;
             currentRowGroupBuffer = null;
+            sortedRunsIndexAddr = 0;
+        }
+
+        @Override
+        public long getSortedRunsIndexAddr() {
+            return sortedRunsIndexAddr;
         }
 
         @Override

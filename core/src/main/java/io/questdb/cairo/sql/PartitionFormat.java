@@ -26,6 +26,12 @@ package io.questdb.cairo.sql;
 
 public interface PartitionFormat {
     /**
+     * Native QuestDB format storing data as per-WAL-commit sorted runs in
+     * column files, with a per-partition {@code _sortedruns} sidecar
+     * describing each run. See {@code docs/wal-ts-storage-plan-v2.md}.
+     */
+    byte INDEXED_SORTED_RUNS = 2;
+    /**
      * Native QuestDB format.
      */
     byte NATIVE = 0;

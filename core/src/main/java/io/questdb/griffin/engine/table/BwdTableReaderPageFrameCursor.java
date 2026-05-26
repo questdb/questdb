@@ -187,6 +187,7 @@ public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor {
                     } else {
                         reenterParquetDecoder = null;
                     }
+                    populateSortedRunsScratch(frame);
                     return frame;
                 }
                 final TableReaderPageFrame result = nextSlow(partitionFrame, lo, hi);
@@ -260,6 +261,8 @@ public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor {
 
     private TableReaderPageFrame computeNativeFrame(long partitionLo, long partitionHi) {
         final int base = reader.getColumnBase(reenterPartitionIndex);
+        final boolean isSortedRuns =
+                reader.getPartitionFormat(reenterPartitionIndex) == PartitionFormat.INDEXED_SORTED_RUNS;
 
         // we may need to split this partition frame either along "top" lines, or along
         // max page frame sizes; to do this, we calculate min top value from given position
@@ -288,7 +291,10 @@ public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor {
                     // non-negative sh means fixed length column
                     final long address = colMem.getPageAddress(0);
                     final long addressSize = partitionHiAdjusted << sh;
-                    final long offset = partitionLoAdjusted << sh;
+                    // For INDEXED_SORTED_RUNS frames, the per-frame physRowId scratch
+                    // produces absolute partition-relative row ids. See the parallel
+                    // comment in the Fwd cursor.
+                    final long offset = isSortedRuns ? 0L : (partitionLoAdjusted << sh);
                     columnPageAddresses.setQuick(2 * i, address + offset);
                     pageSizes.setQuick(2 * i, addressSize - offset);
                 } else {
@@ -335,11 +341,14 @@ public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor {
 
         frame.partitionLo = adjustedLo;
         frame.partitionHi = partitionHi;
-        frame.format = PartitionFormat.NATIVE;
+        frame.format = reader.getPartitionFormat(reenterPartitionIndex) == PartitionFormat.INDEXED_SORTED_RUNS
+                ? PartitionFormat.INDEXED_SORTED_RUNS
+                : PartitionFormat.NATIVE;
         frame.rowGroupIndex = -1;
         frame.rowGroupLo = -1;
         frame.rowGroupHi = -1;
         frame.partitionIndex = reenterPartitionIndex;
+        populateSortedRunsScratch(frame);
         return frame;
     }
 
@@ -475,10 +484,28 @@ public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor {
             return computeParquetFrame(lo, hi);
         }
 
-        assert format == PartitionFormat.NATIVE;
+        assert format == PartitionFormat.NATIVE || format == PartitionFormat.INDEXED_SORTED_RUNS;
         reenterParquetDecoder = null;
         reenterPageFrameRowLimit = calculatePageFrameRowLimit(lo, hi, pageFrameMinRows, pageFrameMaxRows, sharedQueryWorkerCount);
         return computeNativeFrame(lo, hi);
+    }
+
+    /**
+     * Sets the frame's mmapped {@code _sortedruns.idx} address for partitions
+     * in {@link PartitionFormat#INDEXED_SORTED_RUNS} format. The Bwd cursor
+     * uses the same forward-ts-order index as Fwd: the cursor visits frames
+     * in reverse order but within a frame consumers iterate [0, count)
+     * forward; the index maps those forward indices to ts-ascending
+     * physRowIds.
+     */
+    private void populateSortedRunsScratch(TableReaderPageFrame frame) {
+        if (frame.format != PartitionFormat.INDEXED_SORTED_RUNS) {
+            frame.sortedRunsIndexAddr = 0;
+            return;
+        }
+        final io.questdb.cairo.wal.sortedruns.SortedRunsIndex index =
+                reader.getAndInitSortedRunsIndex(frame.partitionIndex);
+        frame.sortedRunsIndexAddr = index.getAddress() + frame.partitionLo * Long.BYTES;
     }
 
     private class TableReaderPageFrame implements PageFrame {
@@ -486,6 +513,7 @@ public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor {
         private long partitionHi;
         private int partitionIndex;
         private long partitionLo;
+        private long sortedRunsIndexAddr;
         private int rowGroupHi;
         private int rowGroupIndex;
         private int rowGroupLo;
@@ -559,6 +587,11 @@ public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor {
         @Override
         public long getPartitionLo() {
             return partitionLo;
+        }
+
+        @Override
+        public long getSortedRunsIndexAddr() {
+            return sortedRunsIndexAddr;
         }
     }
 }

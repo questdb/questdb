@@ -356,6 +356,17 @@ public class TxReader implements Closeable, Mutable {
         return fileSize;
     }
 
+    /**
+     * Returns the valid size in bytes of the partition's <code>_sortedruns</code>
+     * sidecar file. Slot [3] is reused: it holds the parquet file size on
+     * parquet partitions and the sorted-runs valid size on indexed-sorted-runs
+     * partitions. The caller should check {@link #isPartitionSortedRuns(int)}
+     * first.
+     */
+    public long getPartitionSortedRunsFileSize(int partitionIndex) {
+        return getPartitionParquetFileSizeByRawIndex(partitionIndex * LONGS_PER_TX_ATTACHED_PARTITION);
+    }
+
     public long getPartitionRowCountByTimestamp(long ts) {
         final int indexRaw = findAttachedPartitionRawIndexByLoTimestamp(ts);
         if (indexRaw > -1) {
@@ -476,6 +487,28 @@ public class TxReader implements Closeable, Mutable {
 
     public boolean isPartitionReadOnly(int i) {
         return isPartitionReadOnlyByRawIndex(i * LONGS_PER_TX_ATTACHED_PARTITION);
+    }
+
+    /**
+     * Returns true if this partition is in indexed-sorted-runs format
+     * (column files in append order with a per-partition <code>_sortedruns</code>
+     * sidecar).
+     * <p>
+     * Format derivation rule: slot [3] (the parquet file size slot) is reused.
+     * For a parquet partition the parquet-format bit is set and slot [3] is
+     * the parquet file size. For an indexed-sorted-runs partition the
+     * parquet-format bit is clear and slot [3] is the sorted-runs sidecar
+     * valid size (>= 0). For a plain native partition slot [3] is -1.
+     */
+    public boolean isPartitionSortedRuns(int i) {
+        return isPartitionSortedRunsByRawIndex(i * LONGS_PER_TX_ATTACHED_PARTITION);
+    }
+
+    public boolean isPartitionSortedRunsByRawIndex(int indexRaw) {
+        if (checkPartitionOptionBit(indexRaw, PARTITION_MASK_PARQUET_FORMAT_BIT_OFFSET)) {
+            return false;
+        }
+        return attachedPartitions.getQuick(indexRaw + PARTITION_PARQUET_FILE_SIZE_OFFSET) >= 0;
     }
 
     public boolean isPartitionParquetByPartitionTimestamp(long ts) {
@@ -715,7 +748,7 @@ public class TxReader implements Closeable, Mutable {
         return roTxMemBase.getLong(TX_BASE_OFFSET_VERSION_64);
     }
 
-    private boolean checkPartitionOptionBit(int indexRaw, int bitOffset) {
+    protected boolean checkPartitionOptionBit(int indexRaw, int bitOffset) {
         long maskedSize = attachedPartitions.getQuick(indexRaw + PARTITION_MASKED_SIZE_OFFSET);
         return ((maskedSize >>> bitOffset) & 1) == 1;
     }

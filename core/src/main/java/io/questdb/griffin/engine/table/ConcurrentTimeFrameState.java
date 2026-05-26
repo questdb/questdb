@@ -221,7 +221,7 @@ public class ConcurrentTimeFrameState implements QuietCloseable {
                     addOpenPartitionFrames(partitionIndex);
                 } else {
                     final byte format = tableReader.getPartitionFormatFromMetadata(partitionIndex);
-                    if (format == PartitionFormat.NATIVE) {
+                    if (format == PartitionFormat.NATIVE || format == PartitionFormat.INDEXED_SORTED_RUNS) {
                         addNativePartitionFrames(
                                 tableReader,
                                 columnVersionReader,

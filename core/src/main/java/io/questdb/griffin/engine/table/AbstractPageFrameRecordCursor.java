@@ -95,7 +95,15 @@ public abstract class AbstractPageFrameRecordCursor implements PageFrameRecordCu
     public void recordAt(Record record, long rowId) {
         final PageFrameMemoryRecord frameMemoryRecord = (PageFrameMemoryRecord) record;
         frameMemoryPool.navigateTo(Rows.toPartitionIndex(rowId), frameMemoryRecord);
-        frameMemoryRecord.setRowIndex(Rows.toLocalRowID(rowId));
+        final long localRowId = Rows.toLocalRowID(rowId);
+        if (Rows.isPhysical(rowId)) {
+            // Row id is already a partition-physical row offset (e.g.,
+            // produced by getRowId() on an INDEXED_SORTED_RUNS frame, or by
+            // an index reader). Skip the _sortedruns.idx translation.
+            frameMemoryRecord.setRowIndexPhysical(localRowId);
+        } else {
+            frameMemoryRecord.setRowIndex(localRowId);
+        }
     }
 
     @Override
