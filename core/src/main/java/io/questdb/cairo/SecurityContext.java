@@ -113,14 +113,6 @@ public interface SecurityContext extends Mutable {
 
     void authorizeMatViewRefresh(TableToken tableToken);
 
-    /**
-     * Authorizes a {@code REFRESH MATERIALIZED VIEW ... FULL FORCE}, the
-     * destructive variant that wipes the frozen zone as well as the managed
-     * zone. The implementation must require strictly more privilege than
-     * {@link #authorizeMatViewRefresh(TableToken)}.
-     */
-    void authorizeMatViewRefreshFullForce(TableToken tableToken);
-
     void authorizePGWire();
 
     void authorizeResumeWal(TableToken tableToken);

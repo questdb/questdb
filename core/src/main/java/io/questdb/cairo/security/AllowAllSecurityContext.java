@@ -167,10 +167,6 @@ public class AllowAllSecurityContext implements SecurityContext {
     }
 
     @Override
-    public void authorizeMatViewRefreshFullForce(TableToken tableToken) {
-    }
-
-    @Override
     public void authorizePGWire() {
     }
 

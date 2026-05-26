@@ -967,10 +967,10 @@ public interface CairoConfiguration {
      * push managed-zone rows into the frozen zone.
      * <p>
      * When true, the boundary reverts to the pre-frozen-zone formula
-     * {@code wallClock - LIMIT}. The entire frozen-zone feature (backfill,
-     * FULL vs FULL FORCE distinction) then reverts to pre-feature behaviour as
-     * well; the flag is a "revert to pre-feature behaviour" escape hatch, not
-     * a "use a different formula" switch.
+     * {@code wallClock - LIMIT}. The frozen-zone feature (FULL preserving
+     * older rows, backfill via direct INSERT/COPY/ILP) then reverts to
+     * pre-feature behaviour as well; the flag is a "revert to pre-feature
+     * behaviour" escape hatch, not a "use a different formula" switch.
      *
      * @return true if the boundary should use wall-clock only (pre-feature
      * behaviour), false otherwise (default)

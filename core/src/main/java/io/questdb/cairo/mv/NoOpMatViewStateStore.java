@@ -50,10 +50,6 @@ public class NoOpMatViewStateStore implements MatViewStateStore {
     }
 
     @Override
-    public void enqueueFullForceRefresh(TableToken matViewToken) {
-    }
-
-    @Override
     public void enqueueFullRefresh(TableToken matViewToken) {
     }
 

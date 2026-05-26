@@ -51,8 +51,6 @@ public interface MatViewStateStore extends QuietCloseable, Mutable {
     // Creates the view state and logs telemetry event.
     void createViewState(MatViewDefinition viewDefinition);
 
-    void enqueueFullForceRefresh(TableToken matViewToken);
-
     void enqueueFullRefresh(TableToken matViewToken);
 
     void enqueueIncrementalRefresh(TableToken matViewToken);

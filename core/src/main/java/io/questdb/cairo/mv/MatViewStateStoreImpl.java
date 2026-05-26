@@ -139,20 +139,6 @@ public class MatViewStateStoreImpl implements MatViewStateStore {
     }
 
     @Override
-    public void enqueueFullForceRefresh(TableToken matViewToken) {
-        final MatViewState state = stateByTableDirName.get(matViewToken.getDirName());
-        if (state != null && !state.isDropped()) {
-            final MatViewRefreshTask task = taskHolder.get();
-            task.clear();
-            task.matViewToken = matViewToken;
-            task.operation = MatViewRefreshTask.FULL_REFRESH;
-            task.forceFull = true;
-            task.refreshTriggerTimestamp = microsecondClock.getTicks();
-            taskQueue.enqueue(task);
-        }
-    }
-
-    @Override
     public void enqueueFullRefresh(TableToken matViewToken) {
         enqueueTaskIfStateExists(matViewToken, MatViewRefreshTask.FULL_REFRESH, null);
     }

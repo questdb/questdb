@@ -36,15 +36,6 @@ public class MatViewRefreshTask implements ValueHolder<MatViewRefreshTask> {
     public static final int UNDEFINED = -1;
     public static final int UPDATE_REFRESH_INTERVALS = 4;
     public TableToken baseTableToken;
-    /**
-     * When {@code true} on a {@link #FULL_REFRESH} task, the refresh wipes the
-     * entire mat view (including the frozen zone) before reinserting. When
-     * {@code false}, the frozen zone is preserved -- only managed-zone buckets
-     * get re-computed.
-     * <p>
-     * Driven by the SQL {@code REFRESH MATERIALIZED VIEW ... FULL FORCE} variant.
-     */
-    public boolean forceFull;
     public String invalidationReason;
     public TableToken matViewToken;
     public int operation = UNDEFINED;
@@ -80,7 +71,6 @@ public class MatViewRefreshTask implements ValueHolder<MatViewRefreshTask> {
         refreshTriggerTimestamp = Numbers.LONG_NULL;
         rangeFrom = Numbers.LONG_NULL;
         rangeTo = Numbers.LONG_NULL;
-        forceFull = false;
     }
 
     @Override
@@ -92,7 +82,6 @@ public class MatViewRefreshTask implements ValueHolder<MatViewRefreshTask> {
         anotherHolder.refreshTriggerTimestamp = refreshTriggerTimestamp;
         anotherHolder.rangeFrom = rangeFrom;
         anotherHolder.rangeTo = rangeTo;
-        anotherHolder.forceFull = forceFull;
     }
 
     public boolean isBaseTableTask() {
