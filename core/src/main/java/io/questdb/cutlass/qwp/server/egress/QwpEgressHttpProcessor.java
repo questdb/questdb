@@ -29,13 +29,14 @@ import io.questdb.cutlass.http.HttpFullFatServerConfiguration;
 import io.questdb.cutlass.http.HttpRequestHandler;
 import io.questdb.cutlass.http.HttpRequestHeader;
 import io.questdb.cutlass.http.HttpRequestProcessor;
+import io.questdb.cutlass.qwp.server.QwpIngressHttpProcessor;
 import io.questdb.std.Misc;
 import io.questdb.std.QuietCloseable;
 
 /**
  * HTTP request handler for QWP egress (query results) WebSocket connections at /read/v1.
  * <p>
- * Mirrors {@link io.questdb.cutlass.qwp.server.QwpWebSocketHttpProcessor} for the
+ * Mirrors {@link QwpIngressHttpProcessor} for the
  * server-to-client direction. The handshake validation and 101 response writing
  * are reused via static helpers; only the post-upgrade behavior differs.
  */

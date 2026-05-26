@@ -28,7 +28,6 @@ import io.questdb.client.cutlass.qwp.client.QwpColumnBatch;
 import io.questdb.client.cutlass.qwp.client.QwpColumnBatchHandler;
 import io.questdb.client.cutlass.qwp.client.QwpQueryClient;
 import io.questdb.griffin.CompiledQuery;
-import io.questdb.test.AbstractBootstrapTest;
 import io.questdb.test.TestServerMain;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -52,7 +51,7 @@ import org.junit.Test;
  *       client on a subsequent connection.</li>
  * </ul>
  */
-public class QwpEgressDdlExecTest extends AbstractBootstrapTest {
+public class QwpEgressDdlExecTest extends AbstractQwpBootstrapTest {
 
     @Before
     public void setUp() {
@@ -64,7 +63,7 @@ public class QwpEgressDdlExecTest extends AbstractBootstrapTest {
     @Test
     public void testAlterColumnAdd() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables()) {
+            try (final TestServerMain serverMain = startFragmented()) {
                 serverMain.execute("CREATE TABLE alt(x LONG, ts TIMESTAMP) "
                         + "TIMESTAMP(ts) PARTITION BY DAY WAL");
                 try (QwpQueryClient client = QwpQueryClient.fromConfig(
@@ -99,7 +98,7 @@ public class QwpEgressDdlExecTest extends AbstractBootstrapTest {
     @Test
     public void testCreateAndDropTable() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain ignored = startWithEnvVariables()) {
+            try (final TestServerMain ignored = startFragmented()) {
                 try (QwpQueryClient client = QwpQueryClient.fromConfig(
                         "ws::addr=127.0.0.1:" + HTTP_PORT + ";")) {
                     client.connect();
@@ -127,7 +126,7 @@ public class QwpEgressDdlExecTest extends AbstractBootstrapTest {
         // Connection-isolated only in terms of dict state; TABLE-level changes
         // are globally visible. Verify a CREATE done on c1 shows up on c2.
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables()) {
+            try (final TestServerMain serverMain = startFragmented()) {
                 try (QwpQueryClient c1 = QwpQueryClient.fromConfig(
                         "ws::addr=127.0.0.1:" + HTTP_PORT + ";")) {
                     c1.connect();
@@ -167,7 +166,7 @@ public class QwpEgressDdlExecTest extends AbstractBootstrapTest {
     @Test
     public void testInsertReportsRowsAffected() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables()) {
+            try (final TestServerMain serverMain = startFragmented()) {
                 serverMain.execute("CREATE TABLE ins(x LONG, s VARCHAR, ts TIMESTAMP) "
                         + "TIMESTAMP(ts) PARTITION BY DAY WAL");
                 try (QwpQueryClient client = QwpQueryClient.fromConfig(
@@ -196,7 +195,7 @@ public class QwpEgressDdlExecTest extends AbstractBootstrapTest {
         // A SQL error during compile should come back as QUERY_ERROR, not
         // EXEC_DONE. Verifies the error path still works after the DDL split.
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain ignored = startWithEnvVariables()) {
+            try (final TestServerMain ignored = startFragmented()) {
                 try (QwpQueryClient client = QwpQueryClient.fromConfig(
                         "ws::addr=127.0.0.1:" + HTTP_PORT + ";")) {
                     client.connect();
@@ -238,7 +237,7 @@ public class QwpEgressDdlExecTest extends AbstractBootstrapTest {
         // COMMIT / ROLLBACK / TRUNCATE / VACUUM) still come back as
         // EXEC_DONE with op_type set and rowsAffected usually 0.
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables()) {
+            try (final TestServerMain serverMain = startFragmented()) {
                 serverMain.execute("CREATE TABLE pt(x LONG, ts TIMESTAMP) "
                         + "TIMESTAMP(ts) PARTITION BY DAY WAL");
                 serverMain.execute("INSERT INTO pt VALUES (1, 1::TIMESTAMP), (2, 2::TIMESTAMP), (3, 3::TIMESTAMP)");
@@ -280,7 +279,7 @@ public class QwpEgressDdlExecTest extends AbstractBootstrapTest {
     @Test
     public void testRenameTable() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables()) {
+            try (final TestServerMain serverMain = startFragmented()) {
                 serverMain.execute("CREATE TABLE r_old(x LONG, ts TIMESTAMP) "
                         + "TIMESTAMP(ts) PARTITION BY DAY WAL");
                 serverMain.execute("INSERT INTO r_old VALUES (42, 1::TIMESTAMP)");
@@ -320,7 +319,7 @@ public class QwpEgressDdlExecTest extends AbstractBootstrapTest {
     @Test
     public void testUpdateReportsRowsAffected() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables()) {
+            try (final TestServerMain serverMain = startFragmented()) {
                 // Non-WAL: UPDATE's rowsAffected is the synchronous matched-row count
                 // we assert on below. On a WAL table the number instead reflects the
                 // count of WAL segments touched, not logical rows, and the real row

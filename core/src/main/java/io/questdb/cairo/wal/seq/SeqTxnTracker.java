@@ -33,7 +33,6 @@ import io.questdb.mp.ValueHolder;
 import io.questdb.mp.continuation.TxnWaiter;
 import io.questdb.std.CarrierLocal;
 import io.questdb.std.Unsafe;
-import org.jetbrains.annotations.TestOnly;
 
 public class SeqTxnTracker {
     public static final long UNINITIALIZED_TXN = -1;
@@ -81,17 +80,10 @@ public class SeqTxnTracker {
         return pressureControl;
     }
 
-    @TestOnly
     public long getSeqTxn() {
         return seqTxn;
     }
 
-    /**
-     * Monotonic count of {@link #registerWaiter(TxnWaiter)} invocations on this tracker.
-     * Tests poll this to confirm that a parked {@code wait_wal_table} body has reached
-     * the registration point, replacing fixed-duration {@code Os.sleep()} synchronization
-     * that flakes on slow CI machines.
-     */
     @TestOnly
     public long getWaiterRegistrationCount() {
         return waiterRegistrationCount;

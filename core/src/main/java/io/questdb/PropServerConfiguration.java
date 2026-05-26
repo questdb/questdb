@@ -334,6 +334,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final long matViewMaxRefreshStepUs;
     private final boolean matViewParallelExecutionEnabled;
     private final long matViewRefreshIntervalsUpdatePeriod;
+    private final int matViewRefreshMaxClusters;
     private final boolean matViewRefreshMissingWalFilesFatal;
     private final long matViewRefreshOomRetryTimeout;
     private final WorkerPoolConfiguration matViewRefreshPoolConfiguration = new PropMatViewsRefreshPoolConfiguration();
@@ -416,6 +417,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int queryCacheEventQueueCapacity;
     private final long queryContinuationWakeIntervalMillis;
     private final boolean queryWithinLatestByOptimisationEnabled;
+    private final int qwpEgressForcedZstdLevel;
     private final int qwpMaxRowsPerTable;
     private final int qwpMaxSchemasPerConnection;
     private final int qwpMaxTablesPerConnection;
@@ -767,7 +769,7 @@ public class PropServerConfiguration implements ServerConfiguration {
                 buildInformation,
                 FilesFacadeImpl.INSTANCE,
                 MicrosecondClockImpl.INSTANCE,
-                (configuration, engine, freeOnExitList) -> DefaultFactoryProvider.INSTANCE,
+                (_, _, _) -> DefaultFactoryProvider.INSTANCE,
                 true
         );
     }
@@ -1591,6 +1593,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.matViewInsertAsSelectBatchSize = getLong(properties, env, PropertyKey.CAIRO_MAT_VIEW_INSERT_AS_SELECT_BATCH_SIZE, sqlInsertModelBatchSize);
             this.matViewRowsPerQueryEstimate = getLong(properties, env, PropertyKey.CAIRO_MAT_VIEW_ROWS_PER_QUERY_ESTIMATE, 1_000_000L);
             this.matViewMaxRefreshIntervals = getInt(properties, env, PropertyKey.CAIRO_MAT_VIEW_MAX_REFRESH_INTERVALS, 100);
+            this.matViewRefreshMaxClusters = getInt(properties, env, PropertyKey.CAIRO_MAT_VIEW_REFRESH_MAX_CLUSTERS, 32);
             this.sqlCompileViewModelPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_COMPILE_VIEW_MODEL_POOL_CAPACITY, 8);
             this.sqlCopyBufferSize = getIntSize(properties, env, PropertyKey.CAIRO_SQL_COPY_BUFFER_SIZE, 2 * Numbers.SIZE_1MB);
             this.columnPurgeQueueCapacity = getQueueCapacity(properties, env, PropertyKey.CAIRO_SQL_COLUMN_PURGE_QUEUE_CAPACITY, 128);
@@ -1821,6 +1824,22 @@ public class PropServerConfiguration implements ServerConfiguration {
                 throw new ServerConfigurationException(
                         PropertyKey.QWP_MAX_SCHEMAS_PER_CONNECTION.getPropertyPath()
                                 + " must be at least 1"
+                );
+            }
+            this.qwpEgressForcedZstdLevel = getInt(
+                    properties,
+                    env,
+                    PropertyKey.QWP_EGRESS_COMPRESSION_FORCE_LEVEL,
+                    0
+            );
+            if (qwpEgressForcedZstdLevel != 0
+                    && (qwpEgressForcedZstdLevel < QwpConstants.COMPRESSION_ZSTD_MIN_LEVEL
+                    || qwpEgressForcedZstdLevel > QwpConstants.COMPRESSION_ZSTD_MAX_LEVEL)) {
+                throw new ServerConfigurationException(
+                        PropertyKey.QWP_EGRESS_COMPRESSION_FORCE_LEVEL.getPropertyPath()
+                                + " must be 0 (off) or in ["
+                                + QwpConstants.COMPRESSION_ZSTD_MIN_LEVEL + ", "
+                                + QwpConstants.COMPRESSION_ZSTD_MAX_LEVEL + "]"
                 );
             }
             this.qwpMaxRowsPerTable = getInt(properties, env, PropertyKey.QWP_MAX_ROWS_PER_TABLE, QwpConstants.DEFAULT_MAX_ROWS_PER_TABLE);
@@ -3920,6 +3939,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public int getMatViewRefreshMaxClusters() {
+            return matViewRefreshMaxClusters;
+        }
+
+        @Override
         public long getMatViewRefreshOomRetryTimeout() {
             return matViewRefreshOomRetryTimeout;
         }
@@ -4222,6 +4246,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getQueryRegistryPoolSize() {
             return sqlQueryRegistryPoolSize;
+        }
+
+        @Override
+        public int getQwpEgressForcedZstdLevel() {
+            return qwpEgressForcedZstdLevel;
         }
 
         @Override

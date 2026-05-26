@@ -125,4 +125,16 @@ public interface IndexReader extends Closeable {
     );
 
     void reloadConditionally();
+
+    /**
+     * Pin the reader at the given table {@code _txn} for snapshot isolation.
+     * The posting reader's picker selects the chain entry with the highest
+     * {@code txnAtSeal <= pinnedTableTxn} and trims in-flight tail gens
+     * within that entry. Bitmap and null readers ignore the pin.
+     * <p>
+     * The pin takes effect on the next {@link #reloadConditionally} or
+     * {@link #of}; the setter itself does not re-pick.
+     */
+    default void setPinnedTableTxn(long pinnedTableTxn) {
+    }
 }

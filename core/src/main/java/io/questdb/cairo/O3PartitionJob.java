@@ -25,6 +25,7 @@
 package io.questdb.cairo;
 
 import io.questdb.MessageBus;
+import io.questdb.cairo.idx.BitmapIndexUtils;
 import io.questdb.cairo.idx.IndexWriter;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.TableRecordMetadata;
@@ -3369,8 +3370,12 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                 long rowId = Math.max(rowCount, columnTop);
                                 final long addr = rowGroupBuffers.getChunkDataPtr(0);
                                 final long size = rowGroupBuffers.getChunkDataSize(0);
-                                for (long p = addr, lim = addr + size; p < lim; p += 4, rowId++) {
-                                    indexWriter.add(TableUtils.toIndexKey(Unsafe.getInt(p)), rowId);
+                                if (size == 0) {
+                                    BitmapIndexUtils.addNullEntries(indexWriter, rowId, rowCount + rowGroupSize);
+                                } else {
+                                    for (long p = addr, lim = addr + size; p < lim; p += 4, rowId++) {
+                                        indexWriter.add(TableUtils.toIndexKey(Unsafe.getInt(p)), rowId);
+                                    }
                                 }
 
                                 rowCount += rowGroupSize;
@@ -3378,6 +3383,14 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                             indexWriter.setMaxValue(newPartitionSize - 1);
                         }
 
+                        // Tag the chain entry with the upcoming txn so that if
+                        // the surrounding O3 / parquet-rewrite path crashes
+                        // before txWriter.commit lands, recoveryDropAbandoned
+                        // on the next writer-open drops this entry. Without
+                        // the tag, slot[0].TXN_AT_SEAL defaults to 0 and the
+                        // entry would be undroppable, surfacing stale rows.
+                        // No-op on BitmapIndexWriter.
+                        indexWriter.setNextTxnAtSeal(tableWriter.getTxn() + 1L);
                         if (IndexType.isPosting(indexType)) {
                             indexWriter.commitDense();
                         } else {

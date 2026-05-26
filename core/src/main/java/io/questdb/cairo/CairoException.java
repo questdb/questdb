@@ -57,6 +57,9 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
     public static final int VIEW_DOES_NOT_EXIST = TABLE_DOES_NOT_EXIST - 1;
     public static final int MAT_VIEW_DOES_NOT_EXIST = VIEW_DOES_NOT_EXIST - 1;
     public static final int TXN_BLOCK_APPLY_FAILED = MAT_VIEW_DOES_NOT_EXIST - 1;
+    public static final int METADATA_VERSION_MISMATCH = TXN_BLOCK_APPLY_FAILED - 1;
+    public static final int FILE_TOO_SMALL = METADATA_VERSION_MISMATCH - 1;
+    public static final int SEQUENCER_METADATA_OPEN_FAILED = FILE_TOO_SMALL - 1;
     public static final int NON_CRITICAL = -1;
     private static final StackTraceElement[] EMPTY_STACK_TRACE = {};
     private static final CarrierLocal<CairoException> tlException = new CarrierLocal<>(CairoException::new);
@@ -119,6 +122,10 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
         return instance(Os.errno());
     }
 
+    public static CairoException fileTooSmall(long size, long required) {
+        return critical(FILE_TOO_SMALL).put("File is too small, size=").put(size).put(", required=").put(required);
+    }
+
     public static CairoException invalidMetadataRecoverable(@NotNull CharSequence msg, @NotNull CharSequence columnName) {
         return critical(METADATA_VALIDATION_RECOVERABLE).put(msg).put(" [column=").put(columnName).put(']');
     }
@@ -129,6 +136,14 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
 
     public static CairoException matViewDoesNotExist(CharSequence matViewName) {
         return critical(MAT_VIEW_DOES_NOT_EXIST).put("materialized view does not exist [view=").put(matViewName).put(']');
+    }
+
+    public static CairoException metadataVersionMismatch(Utf8Sequence metaPath, int expectedVersion, int actualVersion) {
+        return critical(METADATA_VERSION_MISMATCH)
+                .put("metadata version does not match runtime version [path=").put(metaPath)
+                .put(", expectedVersion=").put(expectedVersion)
+                .put(", actualVersion=").put(actualVersion)
+                .put(']');
     }
 
     public static CairoException nonCritical() {
@@ -170,6 +185,14 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
 
     public static CairoException queryTimedOut() {
         return nonCritical().put("timeout, query aborted").setInterruption(true);
+    }
+
+    public static CairoException sequencerMetadataOpenFailed(TableToken tableToken, int causeErrno, CharSequence causeMessage) {
+        return critical(SEQUENCER_METADATA_OPEN_FAILED)
+                .put("could not open sequencer metadata [table=").put(tableToken)
+                .put(", errno=").put(causeErrno)
+                .put(", error=").put(causeMessage)
+                .put(']');
     }
 
     public static CairoException tableDoesNotExist(CharSequence tableName) {
@@ -260,6 +283,10 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
         return Files.isErrnoFileCannotRead(errno);
     }
 
+    public boolean isFileTooSmall() {
+        return errno == FILE_TOO_SMALL;
+    }
+
     public boolean isHousekeeping() {
         return housekeeping;
     }
@@ -269,7 +296,13 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
     }
 
     public boolean isMetadataValidation() {
-        return errno == METADATA_VALIDATION || errno == METADATA_VALIDATION_RECOVERABLE;
+        return errno == METADATA_VALIDATION
+                || errno == METADATA_VALIDATION_RECOVERABLE
+                || errno == METADATA_VERSION_MISMATCH;
+    }
+
+    public boolean isMetadataVersionMismatch() {
+        return errno == METADATA_VERSION_MISMATCH;
     }
 
     public boolean isOutOfMemory() {
@@ -278,6 +311,10 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
 
     public boolean isPreferencesOutOfDateError() {
         return preferencesOutOfDateError;
+    }
+
+    public boolean isSequencerMetadataOpenFailed() {
+        return errno == SEQUENCER_METADATA_OPEN_FAILED;
     }
 
     public boolean isTableDoesNotExist() {

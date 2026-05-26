@@ -226,7 +226,6 @@ public class CairoEngine implements Closeable, WriterSource {
     private volatile @NotNull DurableAckRegistry durableAckRegistry = DefaultDurableAckRegistry.INSTANCE;
     private FrameFactory frameFactory;
     private @NotNull MatViewStateStore matViewStateStore = NoOpMatViewStateStore.INSTANCE;
-    private volatile QwpServerInfoProvider qwpServerInfoProvider;
     private volatile Runnable recentWriteTrackerHydrationCallback;
     private @NotNull ViewStateStore viewStateStore = NoOpViewStateStore.INSTANCE;
     private @NotNull WalDirectoryPolicy walDirectoryPolicy = DefaultWalDirectoryPolicy.INSTANCE;
@@ -934,8 +933,7 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     public @NotNull QwpServerInfoProvider getQwpServerInfoProvider() {
-        QwpServerInfoProvider provider = qwpServerInfoProvider;
-        return provider != null ? provider : configuration.getQwpServerInfoProvider();
+        return configuration.getQwpServerInfoProvider();
     }
 
     public TableReader getReader(CharSequence tableName) {
@@ -1817,10 +1815,6 @@ public class CairoEngine implements Closeable, WriterSource {
         this.readerPool.setPoolListener(poolListener);
         this.walWriterPool.setPoolListener(poolListener);
         this.viewWalWriterPool.setPoolListener(poolListener);
-    }
-
-    public void setQwpServerInfoProvider(@NotNull QwpServerInfoProvider provider) {
-        this.qwpServerInfoProvider = provider;
     }
 
     @TestOnly

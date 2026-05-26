@@ -1,16 +1,21 @@
 [Unit]
 Description=QuestDB
 Documentation=https://www.questdb.io/docs/introduction
-After=network.target
+Wants=network-online.target
+After=network-online.target
 RequiresMountsFor=/var/lib/questdb
 
 [Service]
-Type=simple
+Type=exec
 Restart=always
 RestartSec=2
-LimitNOFILE=134217728
 User=questdb
 Group=questdb
+
+# Resource limits
+LimitNOFILE=infinity
+TasksMax=infinity
+
 Environment=QDB_PACKAGE=ami-market
 ExecStart=/usr/bin/java \
     -XX:+UnlockExperimentalVMOptions \
@@ -24,10 +29,11 @@ ExecStart=/usr/bin/java \
     -m io.questdb/io.questdb.ServerMain \
     -d /var/lib/questdb
 ExecReload=/bin/kill -s HUP $MAINPID
+
 # Prevent writes to /usr, /boot, and /etc
 ProtectSystem=full
-StandardOutput=syslog
-StandardError=syslog
+StandardOutput=journal
+StandardError=journal
 SyslogIdentifier=questdb
 
 [Install]

@@ -441,7 +441,7 @@ public class LikeSymbolFunctionFactoryTest extends AbstractCairoTest {
             assertQuery(
                     "name\n",
                     "select * from x where name like null",
-                    false,
+                    true,
                     true
             );
         });
