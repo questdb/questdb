@@ -110,9 +110,9 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
             // '9999-12-31T23:59:59.999Z' = 253_402_300_799_999 ms; multiplied by
             // 1_000_000 for TIMESTAMP_NS this overflows i64. Both paths must wrap
             // identically (native uses unchecked C++ multiply in convert_ms_to_ns,
-            // parquet uses wrapping_mul in scale_i64_in_place); see fuzz failure
-            // where the parquet decoder previously returned LONG NULL on overflow
-            // while the native ALTER produced a wrapped value.
+            // parquet uses wrapping_mul in scale_i64_in_place). The parquet decoder
+            // must produce the wrapped i64, not LONG NULL, to match the value the
+            // native ALTER materializes.
             String values = """
                     ('2020-06-15T12:00:00.000Z', '2024-01-01T00:00:01.000000Z'),
                     ('1970-01-01T00:00:00.000Z', '2024-01-01T00:00:02.000000Z'),
@@ -789,27 +789,28 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
     }
 
     /**
-     * Reproduces a corruption in {@code TableWriter.produceNativeFromParquet} on the
-     * fixed-to-var arm when the source parquet has more than one row group. Two
-     * compounded defects:
+     * Pins the multi-row-group contract of {@code TableWriter.produceNativeFromParquet}
+     * on the fixed-to-var arm. Two invariants must hold simultaneously:
      * <ol>
-     *     <li>{@code appendBuffer(dstDataFd, dataBuf, dataSize)} writes the full
-     *         {@code estimateStringDataSize / estimateVarcharDataSize} estimate to
-     *         disk. {@code convertFixedColumnToString / convertFixedColumnToVarchar}
-     *         only populates the actual prefix of that buffer, so the trailing
-     *         {@code dataSize - actualBytes} bytes are uninitialized memory from
-     *         {@code Unsafe.malloc} leaking into the column data file.</li>
-     *     <li>The fixed-to-var arm does not track {@code dataVecBytesWritten} across
-     *         row groups, unlike the var-to-var arm at the same call site. Aux
-     *         entries produced for row groups beyond the first carry offsets that
-     *         are relative to the start of their own local data buffer (i.e. zero
-     *         for the first entry of each row group), so subsequent row groups
-     *         read back the bytes of row group 0.</li>
+     *     <li>{@code appendBuffer(dstDataFd, dataBuf, dataSize)} must write only
+     *         the bytes {@code convertFixedColumnToString /
+     *         convertFixedColumnToVarchar} actually populated, not the full
+     *         {@code estimateStringDataSize / estimateVarcharDataSize} buffer.
+     *         Writing the trailing {@code dataSize - actualBytes} bytes would
+     *         leak uninitialized memory from {@code Unsafe.malloc} into the
+     *         column data file.</li>
+     *     <li>The fixed-to-var arm must track {@code dataVecBytesWritten} across
+     *         row groups, matching the var-to-var arm at the same call site.
+     *         Without that running offset, aux entries produced for row groups
+     *         beyond the first carry offsets that are relative to the start of
+     *         their own local data buffer (i.e. zero for the first entry of
+     *         each row group), and subsequent row groups read back the bytes
+     *         of row group 0.</li>
      * </ol>
      * <p>
      * The default test row group size is 1_000 rows; the existing fixed-to-var
      * coverage uses fewer rows so the entire partition fits in one row group and
-     * neither defect is exercised. This test forces a tiny row group size and
+     * neither invariant is exercised. This test forces a tiny row group size and
      * uses 12 rows with distinct integer values, so the partition spans three row
      * groups. After {@code ALTER COLUMN ... TYPE STRING/VARCHAR} and
      * {@code CONVERT PARTITION TO NATIVE}, every row must read back as its
@@ -959,11 +960,12 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
                 drainWalQueue();
 
                 // Expected: the first UTF-16 code unit of each stored value.
-                //   'a' -> 'a'
-                //   'é' -> 'é' (U+00E9)
-                //   '日' -> '日' (U+65E5)
-                // With the UTF-8-as-ASCII bug, non-ASCII rows produce the first UTF-8 byte
-                // as a char (e.g. 'é' -> 'Ã'), so this assertion fails while the bug is present.
+                //   'a'      -> 'a'
+                //   U+00E9   -> U+00E9
+                //   U+65E5   -> U+65E5
+                // The VARCHAR-to-CHAR materializer must decode UTF-8 before taking
+                // the first code unit; treating the leading UTF-8 byte as a char
+                // would map U+00E9 to U+00C3 (the C3 byte of the C3 A9 sequence).
                 assertSql(
                         """
                                 val
@@ -982,12 +984,13 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
     /**
      * Same absolute-oracle approach for the O3PartitionJob.convertVarColumnToFixed
      * path, which is taken by CONVERT PARTITION TO NATIVE (and by O3 merge into a
-     * parquet partition whose column was ALTERed to a fixed type). The previous code
-     * accumulated UTF-8 bytes into a Utf8StringSink and exposed them via
-     * asAsciiCharSequence(), so the multi-byte sequence for 'é' (0xC3 0xA9) became
-     * two Latin-1 chars (U+00C3, U+00A9) and CHAR materialized as 'Ã' on disk.
+     * parquet partition whose column was ALTERed to a fixed type). The materializer
+     * must UTF-8 decode the source bytes before taking the first CHAR; routing the
+     * bytes through {@code Utf8StringSink} + {@code asAsciiCharSequence()} would
+     * map the multi-byte sequence for U+00E9 (0xC3 0xA9) to two Latin-1 chars
+     * (U+00C3, U+00A9) and CHAR would materialize as U+00C3 on disk.
      * The differential assertConversion helper does not catch this because both
-     * native and the lazy parquet read path use a proper UTF-8 decode now, while
+     * native and the lazy parquet read path use a proper UTF-8 decode, while
      * this materialization path is only reachable through the O3 merge / convert
      * pipeline.
      */
@@ -1236,10 +1239,11 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
                     execute("ALTER TABLE pt ALTER COLUMN val TYPE UUID");
                     drainWalQueue();
                     // Materializes the var->fixed conversion through
-                    // O3PartitionJob.writeFixedParsedValue. With the bug, row 6
-                    // ('...-extra') round-trips as the prefix UUID because
-                    // parseLo/parseHi only read positions [0, 36); the trailing
-                    // characters are silently dropped.
+                    // O3PartitionJob.writeFixedParsedValue. parseLo/parseHi only
+                    // read positions [0, 36); writeFixedParsedValue must reject
+                    // values longer than 36 characters as NULL, otherwise row 6
+                    // ('...-extra') would round-trip as the prefix UUID with the
+                    // trailing characters silently dropped.
                     execute("ALTER TABLE pt CONVERT PARTITION TO NATIVE LIST '2024-01-01'");
                     drainWalQueue();
 
@@ -1518,16 +1522,17 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
     }
 
     /**
-     * Reproduces the aliasing bug where the pool's {@code sourceColumnTypes}
-     * {@link io.questdb.std.IntList} is stored by reference in BOTH Record A and Record B
-     * via the package-private {@code init(...)} overload in {@link io.questdb.cairo.sql.PageFrameMemoryRecord}
-     * (line 1499). When Record B is navigated via {@code recordAt} to a partition whose
-     * parquet schema does NOT need conversion, the pool's {@code sourceColumnTypes} is
-     * rebuilt in place (see {@code PageFrameMemoryPool.openParquet} at the
-     * {@code setAll(readParquetColumnCount, -1)} call). Record A, which is still
-     * anchored at a partition that DOES need INT-&gt;STRING lazy conversion, now reads the
-     * overwritten mapping and silently skips the conversion, returning raw INT bytes
-     * interpreted as native STRING storage -- garbage.
+     * Pins the contract that the pool's {@code sourceColumnTypes}
+     * {@link io.questdb.std.IntList} must not be aliased between Record A and Record B.
+     * The package-private {@code init(...)} overload in
+     * {@link io.questdb.cairo.sql.PageFrameMemoryRecord} (around line 1499) takes the
+     * list by reference; navigating Record B via {@code recordAt} to a partition whose
+     * parquet schema does NOT need conversion rebuilds {@code sourceColumnTypes} in
+     * place (see {@code PageFrameMemoryPool.openParquet} at the
+     * {@code setAll(readParquetColumnCount, -1)} call). If Record A keeps the same
+     * reference, its view of the conversion mapping is clobbered while it is still
+     * anchored at a partition that needs INT-&gt;STRING lazy conversion, and reads
+     * return raw INT bytes interpreted as native STRING storage -- garbage.
      * <p>
      * Setup:
      * <ul>
@@ -1540,9 +1545,9 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
      * </ul>
      * Trigger: iterate the cursor to land Record A on partition 2024-01-01, then call
      * {@code recordAt(recordB, rowIdInPartition_2024_01_02)} to navigate Record B to the
-     * other partition. Re-reading Record A's {@code getStrA(val)} should still return the
-     * correctly-converted INT value as a string, but with the aliasing bug it returns
-     * garbage or throws.
+     * other partition. Re-reading Record A's {@code getStrA(val)} must still return the
+     * INT value as a string; a shared-reference implementation would return garbage
+     * or throw.
      */
     @Test
     public void testRecordABMixedConversionStatesAcrossPartitions() throws Exception {
@@ -1575,9 +1580,10 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
                 );
 
                 // Now manually drive the cursor so we can interleave Record A iteration with
-                // a Record B recordAt() on a different frame. The aliasing bug hits when
+                // a Record B recordAt() on a different frame. This exercises the case where
                 // the pool's sourceColumnTypes is rebuilt for a non-converting partition
-                // while Record A is still pointing at the converting one.
+                // while Record A is still pointing at the converting one; each record must
+                // retain its own conversion mapping.
                 try (
                         RecordCursorFactory factory = select("SELECT val FROM pt ORDER BY ts");
                         RecordCursor cursor = factory.getCursor(sqlExecutionContext)
@@ -1602,19 +1608,19 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
                     cursor.recordAt(recordA, rowIdPartition1);
                     TestUtils.assertEquals("42", recordA.getStrA(0));
 
-                    // Trigger the aliasing bug: navigate recordB to partition 2.
+                    // Exercise the aliasing path: navigate recordB to partition 2.
                     // This rebuilds the pool's sourceColumnTypes in place with partition 2's
-                    // mapping (no conversion), silently overwriting the state Record A relies on.
+                    // mapping (no conversion). A correct implementation must not let this
+                    // rebuild leak into Record A's view; an aliased reference would silently
+                    // overwrite the state Record A relies on.
                     cursor.recordAt(recordB, rowIdPartition2);
                     TestUtils.assertEquals("hello-from-p2", recordB.getStrA(0));
 
                     // Re-read Record A: it is still anchored at partition 1 (rowIdPartition1)
-                    // which needs INT->STRING conversion. If the pool's sourceColumnTypes is
-                    // aliased between Record A and Record B, partition 2's "no conversion"
-                    // mapping clobbers Record A's view and the read returns garbage.
-                    //
-                    // With the fix (per-record snapshot of sourceColumnTypes), the assertion
-                    // below holds. With the current shared-reference code, it fails.
+                    // which needs INT->STRING conversion. The pool must give each record a
+                    // private sourceColumnTypes snapshot; sharing a single array between
+                    // Record A and Record B would let partition 2's "no conversion" mapping
+                    // clobber Record A's view and the read would return garbage.
                     final CharSequence afterB = recordA.getStrA(0);
                     final String afterBStr = afterB == null ? "<null>" : afterB.toString();
                     TestUtils.assertEquals(
@@ -1674,6 +1680,100 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
             } finally {
                 tryDrop("nt");
                 tryDrop("pt");
+            }
+        });
+    }
+
+    @Test
+    public void testAddColumnAfterParquetConversionReadsNullThenAltersType() throws Exception {
+        // ADD COLUMN fires AFTER the partition is parquet, so the parquet file
+        // never carries the new column. The lazy decoder must surface NULL for
+        // all existing rows (column-top covers the whole partition), and a
+        // subsequent ALTER COLUMN TYPE on that column must keep the NULLs
+        // matching the native control table.
+        assertMemoryLeak(() -> {
+            try {
+                execute("CREATE TABLE nt (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                execute("CREATE TABLE pt (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+                String values = """
+                        INSERT INTO %s(id, ts) VALUES
+                        (1, '2024-01-01T00:00:01.000000Z'),
+                        (2, '2024-01-01T00:00:02.000000Z'),
+                        (3, '2024-01-01T00:00:03.000000Z')""";
+                execute(values.formatted("nt"));
+                execute(values.formatted("pt"));
+                drainWalQueue();
+
+                execute("ALTER TABLE pt CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+                drainWalQueue();
+
+                // Add the column after parquet conversion. The new column is
+                // absent from the parquet file; the reader must materialise
+                // NULL for every row through the column-top path. INT carries
+                // a null sentinel (Integer.MIN_VALUE), so column-top rows must
+                // surface as NULL rather than 0.
+                execute("ALTER TABLE nt ADD COLUMN extra INT");
+                execute("ALTER TABLE pt ADD COLUMN extra INT");
+                drainWalQueue();
+
+                // Lazy read: the parquet file has no 'extra' column, so all
+                // rows must surface as NULL through the column-top fallback.
+                assertQueryNoLeakCheck(
+                        "id\tts\textra\n" +
+                                "1\t2024-01-01T00:00:01.000000Z\tnull\n" +
+                                "2\t2024-01-01T00:00:02.000000Z\tnull\n" +
+                                "3\t2024-01-01T00:00:03.000000Z\tnull\n",
+                        "SELECT * FROM pt ORDER BY ts",
+                        "ts",
+                        true,
+                        true
+                );
+
+                assertSqlCursors("SELECT * FROM nt ORDER BY ts", "SELECT * FROM pt ORDER BY ts");
+
+                // ALTER the absent column's type. The parquet partition has
+                // no data for 'extra', so the converter must still report
+                // NULL after the type change.
+                execute("ALTER TABLE nt ALTER COLUMN extra TYPE LONG");
+                execute("ALTER TABLE pt ALTER COLUMN extra TYPE LONG");
+                drainWalQueue();
+
+                assertSqlCursors("SELECT * FROM nt ORDER BY ts", "SELECT * FROM pt ORDER BY ts");
+
+                // Eager rewrite to native must preserve the NULLs.
+                execute("ALTER TABLE pt CONVERT PARTITION TO NATIVE LIST '2024-01-01'");
+                drainWalQueue();
+                assertSqlCursors("SELECT * FROM nt ORDER BY ts", "SELECT * FROM pt ORDER BY ts");
+            } finally {
+                tryDrop("nt");
+                tryDrop("pt");
+            }
+        });
+    }
+
+    @Test
+    public void testAllNullColumnInParquetConvertsToTargetNulls() throws Exception {
+        // A partition where one column is entirely NULL must round-trip NULLs
+        // through both the lazy parquet read and the eager rewrite, regardless
+        // of source and target type. Covers fixed-source, var-source, and
+        // var-target paths.
+        assertMemoryLeak(() -> {
+            String[][] pairs = new String[][]{
+                    {"INT", "LONG"},
+                    {"INT", "STRING"},
+                    {"STRING", "INT"},
+                    {"STRING", "VARCHAR"},
+                    {"DOUBLE", "FLOAT"},
+                    {"DOUBLE", "VARCHAR"}
+            };
+            for (String[] pair : pairs) {
+                String values = """
+                        (NULL, '2024-01-01T00:00:01.000000Z'),
+                        (NULL, '2024-01-01T00:00:02.000000Z'),
+                        (NULL, '2024-01-01T00:00:03.000000Z'),
+                        (NULL, '2024-01-01T00:00:04.000000Z')""";
+                assertConversion(pair[0], pair[1], values);
             }
         });
     }
@@ -1760,7 +1860,7 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
      * conversion path ({@code sourceColumnTypes[val] >= 0}, {@code hasTypeCasts=true}).
      * <p>
      * The query groups by {@code val} and filters on a separate non-typecast column
-     * {@code other}. This sequences the failing code path:
+     * {@code other}. This sequences the code path under test:
      * <ol>
      *   <li>{@code AsyncGroupByRecordCursorFactory.run} sees
      *       {@code frameMemory.hasColumnTypeCasts()} and falls back to the scalar filter,
@@ -1779,9 +1879,9 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
      *   <li>The non-filter column buffer holds only {@code rows.size()} entries in
      *       compacted layout, so the absolute-index read goes out of bounds.</li>
      * </ol>
-     * The bug surfaces as wrong GROUP BY keys (silent data corruption) or a JVM crash
-     * on native OOB. The control table {@code nt} is native; both tables produce
-     * identical cursors after the fix.
+     * A miss on this path surfaces as wrong GROUP BY keys (silent data corruption)
+     * or a JVM crash on native OOB. The control table {@code nt} is native; the
+     * parquet+ALTER table {@code pt} must produce an identical cursor.
      */
     @Test
     public void testAsyncGroupByKeyedByFixedToStrParquetColumn() throws Exception {
@@ -1933,10 +2033,10 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
      * aggregated output row. Two HORIZON JOIN clauses share a single offset {@code LIST},
      * which routes the query through {@code AsyncMultiHorizonJoinNotKeyedRecordCursorFactory}.
      * The {@code WHERE t.val > 50} predicate is JIT-compiled against the current INT
-     * metadata, but the parquet frame still stores {@code val} as STRING. Without the
-     * {@code hasColumnTypeCasts()} fallback the compiled filter would read VARCHAR aux
-     * bytes as INT and select wrong rows -- the parity check against the native control
-     * pins the bug.
+     * metadata, but the parquet frame still stores {@code val} as STRING. The factory
+     * must consult {@code hasColumnTypeCasts()} and fall back to the scalar filter;
+     * applying the compiled filter directly would read VARCHAR aux bytes as INT and
+     * select wrong rows. The parity check against the native control pins this gate.
      */
     @Test
     public void testAsyncMultiHorizonJoinNotKeyedOverAlteredParquetColumn() throws Exception {

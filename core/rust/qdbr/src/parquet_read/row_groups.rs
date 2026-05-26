@@ -395,7 +395,7 @@ pub(super) fn post_convert(
                 |v| v as i64,
             )?;
         }
-        // Float ↔ Double (infinity and out-of-range map to dst null sentinel)
+        // Float <-> Double (infinity and out-of-range map to dst null sentinel)
         (ColumnTypeTag::Float, ColumnTypeTag::Double) => {
             convert_numeric_in_place::<f32, f64>(
                 &mut bufs.data_vec,
@@ -412,7 +412,33 @@ pub(super) fn post_convert(
                 |v| v as f32,
             )?;
         }
-        _ => return Ok(()),
+        // No-op pairs reached when plan_decode_conversion chose DecodeAs::Target
+        // (decoder produced target-physical bytes directly) or src tag == dst tag.
+        // Enumerated explicitly so a new pair added to plan_decode_conversion
+        // without a matching arm here fails loudly via the catch-all below
+        // instead of silently leaving the buffer in the source layout.
+        (a, b) if a == b => {}
+        (
+            ColumnTypeTag::Byte | ColumnTypeTag::Short | ColumnTypeTag::Int,
+            ColumnTypeTag::Byte | ColumnTypeTag::Short | ColumnTypeTag::Int,
+        ) => {}
+        (
+            ColumnTypeTag::Long | ColumnTypeTag::Date | ColumnTypeTag::Timestamp,
+            ColumnTypeTag::Long | ColumnTypeTag::Date | ColumnTypeTag::Timestamp,
+        ) => {}
+        (
+            ColumnTypeTag::String | ColumnTypeTag::Varchar | ColumnTypeTag::Symbol,
+            ColumnTypeTag::String | ColumnTypeTag::Varchar,
+        ) => {}
+        (ColumnTypeTag::Array, ColumnTypeTag::Array) => {}
+        _ => {
+            return Err(fmt_err!(
+                InvalidType,
+                "post_convert: unsupported conversion {} -> {}",
+                from_type,
+                to_type,
+            ));
+        }
     }
     bufs.data_ptr = bufs.data_vec.as_mut_ptr();
     bufs.data_size = bufs.data_vec.len();
@@ -3479,6 +3505,88 @@ mod multi_dict_tests {
         assert_ne!(page1_view.as_ptr(), page2.buffer.as_ptr());
         // Both buffers must end up persisted.
         assert_eq!(persistent.len(), 2);
+    }
+
+    /// post_convert must reject pairs that are not handled by an explicit
+    /// conversion arm and are not recognised no-ops. The two upstream gates
+    /// (SQL ALTER's columnConversionSupport matrix and plan_decode_conversion)
+    /// already prevent these pairs from reaching post_convert today; the
+    /// explicit catch-all guarantees a loud failure if either gate loosens
+    /// in the future.
+    #[test]
+    fn post_convert_rejects_unsupported_pairs() {
+        use crate::allocator::{AcVec, TestAllocatorState};
+        use crate::parquet::tests::ColumnTypeTagExt;
+        let tas = TestAllocatorState::new();
+        let allocator = tas.allocator();
+
+        // Pairs that have never been wired up in either gate: their entry to
+        // post_convert would represent a real bug.
+        let unsupported = [
+            (ColumnTypeTag::Boolean, ColumnTypeTag::Char),
+            (ColumnTypeTag::Char, ColumnTypeTag::Byte),
+            (ColumnTypeTag::Char, ColumnTypeTag::Short),
+            (ColumnTypeTag::Char, ColumnTypeTag::Int),
+            (ColumnTypeTag::Char, ColumnTypeTag::Long),
+            (ColumnTypeTag::Char, ColumnTypeTag::Float),
+            (ColumnTypeTag::Char, ColumnTypeTag::Double),
+        ];
+        for (src, dst) in unsupported {
+            let mut bufs = ColumnChunkBuffers {
+                data_size: 0,
+                data_ptr: std::ptr::null_mut(),
+                data_vec: AcVec::new_in(allocator.clone()),
+                aux_size: 0,
+                aux_ptr: std::ptr::null_mut(),
+                aux_vec: AcVec::new_in(allocator.clone()),
+                page_buffers: Vec::new(),
+            };
+            let err = post_convert(src.into_type(), dst.into_type(), &mut bufs).unwrap_err();
+            let msg = err.to_string();
+            assert!(
+                msg.contains("post_convert: unsupported conversion"),
+                "unexpected error for {src:?} -> {dst:?}: {msg}"
+            );
+        }
+    }
+
+    /// Same-physical and identity pairs reach post_convert legitimately when
+    /// plan_decode_conversion chose DecodeAs::Target. Each must be accepted
+    /// without an error.
+    #[test]
+    fn post_convert_accepts_known_no_op_pairs() {
+        use crate::allocator::{AcVec, TestAllocatorState};
+        use crate::parquet::tests::ColumnTypeTagExt;
+        let tas = TestAllocatorState::new();
+        let allocator = tas.allocator();
+
+        let no_ops = [
+            (ColumnTypeTag::Byte, ColumnTypeTag::Short),
+            (ColumnTypeTag::Short, ColumnTypeTag::Int),
+            (ColumnTypeTag::Int, ColumnTypeTag::Byte),
+            (ColumnTypeTag::Long, ColumnTypeTag::Date),
+            (ColumnTypeTag::Date, ColumnTypeTag::Long),
+            (ColumnTypeTag::Long, ColumnTypeTag::Timestamp),
+            (ColumnTypeTag::Timestamp, ColumnTypeTag::Long),
+            (ColumnTypeTag::String, ColumnTypeTag::Varchar),
+            (ColumnTypeTag::Varchar, ColumnTypeTag::String),
+            (ColumnTypeTag::Symbol, ColumnTypeTag::Varchar),
+            (ColumnTypeTag::Int, ColumnTypeTag::Int),
+            (ColumnTypeTag::Boolean, ColumnTypeTag::Boolean),
+        ];
+        for (src, dst) in no_ops {
+            let mut bufs = ColumnChunkBuffers {
+                data_size: 0,
+                data_ptr: std::ptr::null_mut(),
+                data_vec: AcVec::new_in(allocator.clone()),
+                aux_size: 0,
+                aux_ptr: std::ptr::null_mut(),
+                aux_vec: AcVec::new_in(allocator.clone()),
+                page_buffers: Vec::new(),
+            };
+            post_convert(src.into_type(), dst.into_type(), &mut bufs)
+                .unwrap_or_else(|e| panic!("expected no-op for {src:?} -> {dst:?}, got {e}"));
+        }
     }
 
     /// Uncompressed dict pages reuse the input mmap slice directly, but the buffer pointer

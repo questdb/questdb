@@ -3751,9 +3751,9 @@ public class ParquetWriteTest extends AbstractCairoTest {
             );
 
             // Read from the copied row group (RG1) to exercise the symbol
-            // null chunk. Before the fix, the null chunk used Plain encoding
-            // which the symbol decoder does not support, causing a decode error.
-            // Old rows have no symbol data -> NULL (empty).
+            // null chunk. The symbol decoder must accept the encoding used
+            // for the null chunk; Plain encoding is unsupported and would
+            // cause a decode error. Old rows have no symbol data -> NULL (empty).
             assertSql(
                     """
                             x\tts\ts
@@ -4348,9 +4348,10 @@ public class ParquetWriteTest extends AbstractCairoTest {
             );
 
             // Round 2: O3 insert against the rewritten parquet file.
-            // timestampIndex=2, timestampParquetIdx=1 — they now differ.
-            // With the bug, row group stat lookup reads parquet column 2
-            // ('b', LONG) with type TIMESTAMP → type mismatch → table suspended.
+            // timestampIndex=2, timestampParquetIdx=1 -- they now differ.
+            // The row group stat lookup must use timestampParquetIdx, not
+            // timestampIndex; reading parquet column 2 ('b', LONG) as TIMESTAMP
+            // would produce a type mismatch and suspend the table.
             execute(
                     """
                             INSERT INTO x(x, b, ts) VALUES
@@ -4618,15 +4619,18 @@ public class ParquetWriteTest extends AbstractCairoTest {
             drainWalQueue();
             assertSql(expected, "SELECT * FROM x");
 
-            // Convert back to native — decoder materializes ALL rows.
-            // Without the fix, column_top stays at 4 in ColumnVersionWriter.
+            // Convert back to native -- decoder materializes ALL rows, so
+            // the native files contain every row. CONVERT PARTITION TO NATIVE
+            // must zero column_top in ColumnVersionWriter; a stale column_top
+            // of 4 would cause the subsequent re-encode to skip the first 4
+            // rows of the native file.
             execute("ALTER TABLE x CONVERT PARTITION TO NATIVE LIST '2020-01-01'");
             drainWalQueue();
             assertSql(expected, "SELECT * FROM x");
 
-            // Convert to parquet again — with the stale column_top, the
-            // encoder would read from offset 0 in the native file but skip 4
-            // rows, shifting DOUBLE[][] data by 4 positions.
+            // Re-encode to parquet. A stale column_top of 4 would make the
+            // encoder read from offset 0 in the native file but skip the
+            // first 4 rows, shifting DOUBLE[][] data by 4 positions.
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
             drainWalQueue();
 
@@ -4738,9 +4742,9 @@ public class ParquetWriteTest extends AbstractCairoTest {
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
             drainWalQueue();
 
-            // Convert back to native — this is the operation that was failing
-            // because the conversion used parquet sequential indices instead of
-            // table column IDs for file naming.
+            // Convert back to native. The conversion must use table column IDs
+            // (not parquet sequential indices) for native file naming; otherwise
+            // the rewritten partition cannot be opened against the table metadata.
             execute("ALTER TABLE x CONVERT PARTITION TO NATIVE LIST '2020-01-01'");
             drainWalQueue();
 
@@ -5399,19 +5403,18 @@ public class ParquetWriteTest extends AbstractCairoTest {
 
     @Test
     public void testRewriteWithColumnTop() throws Exception {
-        // Regression test: after a rewrite-mode O3 merge on a partition with
-        // column_top > 0, stale column_top values in the Parquet QDB metadata
-        // caused the decoder to skip row groups that now contain actual data.
-        // The fix zeroes column_top in the rewritten file so the decoder reads
-        // the (null) pages instead of skipping them.
+        // After a rewrite-mode O3 merge on a partition with column_top > 0,
+        // the rewritten Parquet QDB metadata must zero column_top so the
+        // decoder reads the (null) pages for the new column instead of
+        // skipping the row groups that now hold actual data.
         //
         // Steps:
         // 1. Create table, insert rows, add a new column (column_top > 0).
         // 2. Insert more rows with the new column populated.
-        // 3. Convert to Parquet (single row group → rewrite is guaranteed).
+        // 3. Convert to Parquet (single row group => rewrite is guaranteed).
         // 4. O3 insert into the Parquet partition, triggering REWRITE.
-        // 5. Read back all data — without the fix, the decoder would return
-        //    wrong results for the new column in copied row group regions.
+        // 5. Read back all data -- the new column must materialize correctly
+        //    in the copied row group regions.
         assertMemoryLeak(() -> {
             execute(
                     """

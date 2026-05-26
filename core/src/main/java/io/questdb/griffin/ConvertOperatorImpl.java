@@ -232,7 +232,7 @@ public class ConvertOperatorImpl implements Closeable {
                     .getColumnMetadata(existingColIndex).getReplacingIndex() >= 0;
             boolean isTargetSymbol = ColumnType.isSymbol(newType);
             if (hasPriorConversion || isTargetSymbol) {
-                boolean anyPartitionConverted = false;
+                boolean hasAnyPartitionConverted = false;
                 for (int pi = 0, pn = tableWriter.getPartitionCount(); pi < pn; pi++) {
                     if (tableWriter.getPartitionFormat(pi) != PartitionFormat.PARQUET) {
                         continue;
@@ -248,10 +248,10 @@ public class ConvertOperatorImpl implements Closeable {
                                 .$(", targetType=").$(ColumnType.nameOf(newType))
                                 .I$();
                         tableWriter.convertPartitionParquetToNative(pts, false);
-                        anyPartitionConverted = true;
+                        hasAnyPartitionConverted = true;
                     } else {
                         long pts = tableWriter.getPartitionTimestamp(pi);
-                        LOG.info()
+                        LOG.debug()
                                 .$("skipping parquet partition conversion [partition=").$ts(pts)
                                 .$(", column=").$safe(columnName)
                                 .$(", parquetType=").$(ColumnType.nameOf(parquetColType)).$('(').$(parquetColType).$(')')
@@ -263,7 +263,7 @@ public class ConvertOperatorImpl implements Closeable {
                                 .I$();
                     }
                 }
-                if (anyPartitionConverted) {
+                if (hasAnyPartitionConverted) {
                     tableWriter.commitPendingParquetToNativeConversions();
                 }
             }

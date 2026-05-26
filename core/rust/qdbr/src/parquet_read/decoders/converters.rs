@@ -4,6 +4,7 @@
 //! produce QuestDB destination types (for example scaled decimals, timestamps or
 //! UUID byte-order normalization).
 
+use crate::parquet::error::{fmt_err, ParquetResult};
 use num_traits::AsPrimitive;
 use std::marker::PhantomData;
 
@@ -147,12 +148,20 @@ pub mod int32 {
     }
 
     impl Int32ToDoubleConverter {
-        pub fn new(ratio: usize) -> Self {
-            // Decimal scales are bounded by parquet (max 76), so this conversion is exact
-            // in practice. Saturate on a corrupt/tampered metadata value rather than letting
-            // `as i32` silently wrap and produce a nonsense ratio.
-            let exp = i32::try_from(ratio).unwrap_or(i32::MAX);
-            Self { ratio: 10f64.powi(exp) }
+        /// QuestDB's maximum decimal precision; the parquet spec caps decimal
+        /// precision at 38, so anything above 76 must be malformed metadata.
+        const MAX_SCALE: usize = 76;
+
+        pub fn try_new(scale: usize) -> ParquetResult<Self> {
+            if scale > Self::MAX_SCALE {
+                return Err(fmt_err!(
+                    InvalidType,
+                    "decimal scale {} exceeds maximum of {}",
+                    scale,
+                    Self::MAX_SCALE,
+                ));
+            }
+            Ok(Self { ratio: 10f64.powi(scale as i32) })
         }
     }
 
@@ -255,5 +264,41 @@ pub mod int128 {
             // In QuestDB the UUID is stored as a little-endian int128, but in Parquet it's big-endian. We need to reverse the byte order.
             u128::from_be(input)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::int32::Int32ToDoubleConverter;
+    use super::Converter;
+
+    /// 10f64.powi(n) overflows to +inf for n >= 309 (f64::MAX ~= 1.8e308). A scale
+    /// that high should be rejected as nonsense parquet metadata rather than
+    /// silently producing `value / +inf == 0.0` for every row.
+    #[test]
+    fn int32_to_double_rejects_scale_that_overflows_f64() {
+        assert!(Int32ToDoubleConverter::try_new(309).is_err());
+    }
+
+    /// QuestDB caps decimal precision at 76 and parquet at 38. Anything past the
+    /// QuestDB ceiling is treated as malformed metadata, even if the resulting
+    /// ratio would still be finite.
+    #[test]
+    fn int32_to_double_rejects_scale_above_questdb_max() {
+        assert!(Int32ToDoubleConverter::try_new(77).is_err());
+    }
+
+    /// Legitimate parquet scales (0..=38 in spec, up to 76 in QuestDB) must be
+    /// accepted and produce the correct ratio.
+    #[test]
+    fn int32_to_double_accepts_realistic_scales() {
+        let conv = Int32ToDoubleConverter::try_new(2).unwrap();
+        // 12345 with scale 2 represents 123.45.
+        assert!((conv.convert(12345) - 123.45).abs() < 1e-12);
+
+        // Maximum legitimate QuestDB scale.
+        let conv = Int32ToDoubleConverter::try_new(76).unwrap();
+        // i32::MAX / 1e76 is a sensible tiny positive number, not zero.
+        assert!(conv.convert(i32::MAX) > 0.0);
     }
 }

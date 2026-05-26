@@ -455,12 +455,12 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
                 }
 
                 if (ColumnType.isSymbol(sourceTag) && !ColumnType.isSymbol(targetTag)) {
-                    // Symbol → non-symbol: decode as VARCHAR_SLICE, Java converts lazily.
-                    // For Symbol→VARCHAR, the fallthrough below handles it (VARCHAR_SLICE is native format).
+                    // Symbol -> non-symbol: decode as VARCHAR_SLICE, Java converts lazily.
+                    // For Symbol->VARCHAR, the fallthrough below handles it (VARCHAR_SLICE is native format).
                     if (targetTag != ColumnType.VARCHAR && targetTag != ColumnType.STRING) {
                         addDecodeSlotIfAbsent(parquetIdx, ColumnType.VARCHAR_SLICE);
-                        // Negative VARCHAR tag signals var→fixed/var→string conversion.
-                        // Same target-type metadata layout as the var→fixed branch
+                        // Negative VARCHAR tag signals var->fixed/var->string conversion.
+                        // Same target-type metadata layout as the var->fixed branch
                         // below; the Symbol-as-VARCHAR_SLICE rows are converted by
                         // the same lazy converters in PageFrameMemoryRecord.
                         int encoded = ColumnType.VARCHAR;
@@ -474,12 +474,12 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
                         hasTypeCasts = true;
                         return;
                     }
-                    // Symbol→VARCHAR falls through to the bottom of this method.
+                    // Symbol->VARCHAR falls through to the bottom of this method.
                 }
 
                 if (!ColumnType.isVarSize(sourceTag) && !ColumnType.isSymbol(sourceTag)
                         && (targetTag == ColumnType.VARCHAR || targetTag == ColumnType.STRING)) {
-                    // Fixed → var-size: decode as source fixed type.
+                    // Fixed -> var-size: decode as source fixed type.
                     // Java does lazy per-row conversion in PageFrameMemoryRecord.
                     addDecodeSlotIfAbsent(parquetIdx, sourceType);
                     sourceColumnTypes.setQuick(i, sourceType);
@@ -489,12 +489,12 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
 
                 if (ColumnType.isVarSize(sourceTag) && !ColumnType.isVarSize(targetTag)
                         && !ColumnType.isSymbol(targetTag)) {
-                    // Var → fixed-size: decode as source var type.
+                    // Var -> fixed-size: decode as source var type.
                     // Java does lazy per-row conversion in PageFrameMemoryRecord.
                     int decodeType = (sourceTag == ColumnType.VARCHAR)
                             ? ColumnType.VARCHAR_SLICE : sourceType;
                     addDecodeSlotIfAbsent(parquetIdx, decodeType);
-                    // Negative value signals var→fixed direction.
+                    // Negative value signals var->fixed direction.
                     // -1 remains the "no conversion" sentinel.
                     // Bit layout of the encoded value (target-specific metadata
                     // in the upper bits - only one target family fills 8-23 at a time):
@@ -514,7 +514,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
                     return;
                 }
 
-                // Fixed → fixed type conversion: tell Rust to decode as target type.
+                // Fixed -> fixed type conversion: tell Rust to decode as target type.
                 if (targetTag == ColumnType.VARCHAR) {
                     targetType = ColumnType.VARCHAR_SLICE;
                 }

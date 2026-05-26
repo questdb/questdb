@@ -2723,7 +2723,7 @@ public final class TableUtils {
                 while (marker < 0) {
                     if (++hops > columnCount) {
                         throw validationException(metaMem)
-                                .put("replacingIndex cycle detected in dead-marker chain at column ").put(i);
+                                .put("replacingIndex cycle detected in dead-marker chain at column ").put(i).put(", slot ").put(targetSlot);
                     }
                     targetSlot = -marker - 1;
                     marker = targetList.getQuick(3 * targetSlot);

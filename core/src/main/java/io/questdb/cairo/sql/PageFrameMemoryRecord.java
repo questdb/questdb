@@ -1215,7 +1215,7 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
      * The returned CharSequence may be backed by the single shared {@link #utf16DecodeSink}
      * (on the non-ASCII VARCHAR path) or by a per-column DirectString view (STRING path).
      * In both cases the caller must finish consuming the result before invoking
-     * readVarValueForConversion again on the same record — a subsequent call writes into
+     * readVarValueForConversion again on the same record -- a subsequent call writes into
      * the same sink, which would invalidate any reference still held by the caller.
      * All current convertVarToXxx callers consume the result in a single parse call before
      * returning, so the invariant holds today.

@@ -1455,12 +1455,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             for (int i = 0, n = pendingParquetToNativeConversions.size(); i < n; i += 3) {
                 long pts = pendingParquetToNativeConversions.getQuick(i);
                 long oldNameTxn = pendingParquetToNativeConversions.getQuick(i + 1);
-                boolean lastConverted = pendingParquetToNativeConversions.getQuick(i + 2) != 0L;
-                if (lastConverted) {
+                boolean isLastConverted = pendingParquetToNativeConversions.getQuick(i + 2) != 0L;
+                if (isLastConverted) {
                     closeActivePartition(false);
                 }
                 safeDeletePartitionDir(pts, oldNameTxn);
-                if (lastConverted) {
+                if (isLastConverted) {
                     openPartition(pts, txWriter.getTransientRowCount());
                     setAppendPosition(txWriter.getTransientRowCount(), false);
                 }
@@ -10161,9 +10161,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                 }
                                 try {
                                     if (ColumnType.isVarchar(tableColumnType)) {
-                                        O3PartitionJob.convertFixedColumnToVarchar(parquetColumnType, srcDataPtr, (int) rowGroupRowCount, auxBuf, dataBuf, utf8Sink);
+                                        O3PartitionJob.convertFixedColumnToVarchar(parquetColumnType, srcDataPtr, (int) rowGroupRowCount, auxBuf, dataBuf, dataBufCap, utf8Sink);
                                     } else {
-                                        O3PartitionJob.convertFixedColumnToString(parquetColumnType, srcDataPtr, (int) rowGroupRowCount, auxBuf, dataBuf, utf16Sink);
+                                        O3PartitionJob.convertFixedColumnToString(parquetColumnType, srcDataPtr, (int) rowGroupRowCount, auxBuf, dataBuf, dataBufCap, utf16Sink);
                                     }
 
                                     // Compute actual bytes from the aux vector *before* shifting,

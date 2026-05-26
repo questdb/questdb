@@ -2554,9 +2554,9 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
     public void testMinMaxPruningShortNegative() throws Exception {
         // SHORT is INT32-backed in parquet. The skip path reads inline stats
         // at INT32 physical width, so a negative min must round-trip through
-        // the u64 slot as the correct i32. Surfaced by the query fuzzer:
-        // a SHORT column with min -74 was previously read back as 65462,
-        // dropping every row group whose true min was negative.
+        // the u64 slot as the correct i32. A SHORT column with min -74 must
+        // not appear as an unsigned 65462 to the skip path; otherwise every
+        // row group whose true min is negative gets dropped.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE x (val SHORT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
@@ -2571,8 +2571,8 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= 0");
 
             // val = 0 must not skip the row group whose min is -30000.
-            // Before the round-trip fix the inline min read back as 35536,
-            // which is greater than 0, dropping every match.
+            // An unsigned-extended inline min of 35536 would be greater than 0
+            // and would drop every match.
             ParquetRowGroupFilter.resetRowGroupsSkipped();
             assertQueryNoLeakCheck(
                     """
@@ -4400,8 +4400,8 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
             drainWalQueue();
 
             // After type change INT->LONG, pushdown must be disabled for val.
-            // Without the fix, bloom filter bytes are interpreted under the wrong
-            // physical type, which can cause false-negative skips (missing rows).
+            // Otherwise the bloom filter bytes (stored as i32) would be probed
+            // with an i64 hash, producing false-negative skips and missing rows.
             assertQueryNoLeakCheck(
                     """
                             val
@@ -4520,8 +4520,8 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
             drainWalQueue();
 
             // After type change INT->LONG, min/max pushdown must be disabled for val.
-            // Without the fix, comparing i64 filter bytes against i32 stats would
-            // produce wrong comparisons.
+            // The parquet file stores i32 stats but the filter serializes i64
+            // values; cross-width comparisons would produce wrong skip decisions.
             assertQueryNoLeakCheck(
                     """
                             val
@@ -4562,8 +4562,9 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
 
             // After TIMESTAMP(us)->TIMESTAMP_NS, the parquet min/max stats are in
             // microseconds but the filter values are in nanoseconds (1000x larger).
-            // Without the fix, the tag-only check passes (both are TIMESTAMP tag)
-            // and min/max comparisons produce wrong results.
+            // The skip path must compare precision in addition to the TIMESTAMP
+            // tag; otherwise cross-precision min/max comparisons drop matching
+            // row groups.
             assertQueryNoLeakCheck(
                     """
                             val

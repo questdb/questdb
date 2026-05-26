@@ -798,7 +798,7 @@ fn decode_int32_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
                 (Encoding::RleDictionary | Encoding::PlainDictionary, Some(dict_page)) => {
                     let dict_decoder = ConvertablePrimitiveDictDecoder::try_new(
                         dict_page,
-                        Int32ToDoubleConverter::new(scale),
+                        Int32ToDoubleConverter::try_new(scale)?,
                     )?;
                     decode_page0_mode::<_, FILTERED, FILL_NULLS>(
                         page,
@@ -821,7 +821,7 @@ fn decode_int32_dispatch<const FILTERED: bool, const FILL_NULLS: bool>(
                             values_buffer,
                             bufs,
                             nulls::DOUBLE,
-                            Int32ToDoubleConverter::new(scale),
+                            Int32ToDoubleConverter::try_new(scale)?,
                         ),
                     )?;
                     Ok(true)
