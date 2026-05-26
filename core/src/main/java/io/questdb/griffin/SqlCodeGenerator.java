@@ -9544,17 +9544,16 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             int tag = ColumnType.tagOf(f.getType());
                             // Only types whose LEAD factory has a streaming variant (ZERO_PASS,
                             // positive getLookahead(), streamingBackfill / streamingFlushDefault)
-                            // can reach this dispatch. INT and FLOAT use the LONG / DOUBLE factory
-                            // via implicit widening at parse time. DECIMAL types are not on this
-                            // list because LeadDecimalFunctionFactory inherits the default
-                            // ONE_PASS, which trips the isFastPath gate further up and routes the
-                            // query to CachedWindow regardless of what is allowed here.
+                            // can reach this dispatch. INT and FLOAT are NOT in this list because
+                            // they widen to LONG / DOUBLE at function-resolution time (no
+                            // LeadInt / LeadFloat factory exists), so the function's getType()
+                            // never reports INT or FLOAT here. DECIMAL types are excluded because
+                            // LeadDecimalFunctionFactory inherits the default ONE_PASS, which
+                            // would trip isFastPath further up.
                             if (!(tag == ColumnType.LONG
                                     || tag == ColumnType.DOUBLE
                                     || tag == ColumnType.DATE
-                                    || tag == ColumnType.TIMESTAMP
-                                    || tag == ColumnType.INT
-                                    || tag == ColumnType.FLOAT)) {
+                                    || tag == ColumnType.TIMESTAMP)) {
                                 allWindowsFit8Bytes = false;
                                 break;
                             }

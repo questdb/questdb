@@ -104,7 +104,7 @@ public class LeadTimestampFunctionFactory extends AbstractWindowFunctionFactory 
             offset = offsetFunc.getLong(null);
             if (offset <= 0) return null;
         }
-        if (offset >= 63) return null;
+        if (offset > 63) return null;
 
         Function defaultValue = null;
         if (args.size() == 3) {

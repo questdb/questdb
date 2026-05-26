@@ -131,8 +131,9 @@ public class LeadLongFunctionFactory extends AbstractWindowFunctionFactory {
                 return null;
             }
         }
-        // Cursor's filled-bit mask is a single long; cap to leave room for the +1 ring slot.
-        if (offset >= 63) {
+        // Cursor's filled-bit mask is a single long, so single-function ringCap = offset + 1 must
+        // fit in 64 bits, i.e. offset <= 63.
+        if (offset > 63) {
             return null;
         }
 

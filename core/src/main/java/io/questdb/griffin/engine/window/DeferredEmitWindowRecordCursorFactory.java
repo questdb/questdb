@@ -126,99 +126,115 @@ public class DeferredEmitWindowRecordCursorFactory extends AbstractRecordCursorF
     ) {
         super(metadata);
 
-        if (!base.recordCursorSupportsRandomAccess()) {
-            throw CairoException.critical(0)
-                    .put("DeferredEmitWindowRecordCursorFactory requires a base cursor that supports random access");
-        }
+        // Inputs become factory-owned the moment we enter this constructor. If any of the
+        // validation checks below throws, the caller cannot free them (they'd need to keep
+        // references and a separate cleanup path), so the constructor body wraps its work and
+        // releases everything on failure. The fields are final but Java allows referencing them
+        // in the catch block because they were never assigned.
+        boolean ownershipTaken = false;
+        try {
+            if (!base.recordCursorSupportsRandomAccess()) {
+                throw CairoException.critical(0)
+                        .put("DeferredEmitWindowRecordCursorFactory requires a base cursor that supports random access");
+            }
 
-        // Inventory all window functions; bucket into LAG (lookahead=0) and LEAD (lookahead>0).
-        // Each function's value occupies 8 bytes in the slot. The function's column index is its
-        // position i in the functions list (consistent with how SqlCodeGenerator wires
-        // setColumnIndex).
-        final int columnCount = metadata.getColumnCount();
-        final ObjList<WindowFunction> lagFns = new ObjList<>();
-        final ObjList<WindowFunction> leadFns = new ObjList<>();
-        final int[] colToSlot = new int[columnCount];
-        for (int i = 0; i < columnCount; i++) {
-            colToSlot[i] = -1;
-        }
-        // We need leadColumnIndices in the same order as leadFns; build them in lock-step.
-        // Same for lagColumnIndices. Use primitive list types so we don't autobox into Integer/Long.
-        final IntList lagColIdxTmp = new IntList();
-        final IntList leadColIdxTmp = new IntList();
-        final LongList leadOffsetsTmp = new LongList();
-        int windowFnIndex = 0;
-        int maxLA = 0;
-        for (int i = 0, n = functions.size(); i < n; i++) {
-            Function f = functions.getQuick(i);
-            if (f instanceof WindowFunction wf) {
-                int t = wf.getType();
-                if (!isFixed8ByteType(t)) {
-                    throw CairoException.critical(0)
-                            .put("DeferredEmitWindowRecordCursorFactory cannot stream window function of type ")
-                            .put(ColumnType.nameOf(t));
-                }
-                colToSlot[i] = ROWID_BYTES + windowFnIndex * FUNC_VALUE_BYTES;
-                windowFnIndex++;
-                int la = wf.getLookahead();
-                if (la > 0) {
-                    leadFns.add(wf);
-                    leadColIdxTmp.add(i);
-                    leadOffsetsTmp.add(la);
-                    if (la > maxLA) {
-                        maxLA = la;
+            // Inventory all window functions; bucket into LAG (lookahead=0) and LEAD (lookahead>0).
+            // Each function's value occupies 8 bytes in the slot. The function's column index is its
+            // position i in the functions list (consistent with how SqlCodeGenerator wires
+            // setColumnIndex).
+            final int columnCount = metadata.getColumnCount();
+            final ObjList<WindowFunction> lagFns = new ObjList<>();
+            final ObjList<WindowFunction> leadFns = new ObjList<>();
+            final int[] colToSlot = new int[columnCount];
+            for (int i = 0; i < columnCount; i++) {
+                colToSlot[i] = -1;
+            }
+            // We need leadColumnIndices in the same order as leadFns; build them in lock-step.
+            // Same for lagColumnIndices. Use primitive list types so we don't autobox into Integer/Long.
+            final IntList lagColIdxTmp = new IntList();
+            final IntList leadColIdxTmp = new IntList();
+            final LongList leadOffsetsTmp = new LongList();
+            int windowFnIndex = 0;
+            int maxLA = 0;
+            for (int i = 0, n = functions.size(); i < n; i++) {
+                Function f = functions.getQuick(i);
+                if (f instanceof WindowFunction wf) {
+                    int t = wf.getType();
+                    if (!isFixed8ByteType(t)) {
+                        throw CairoException.critical(0)
+                                .put("DeferredEmitWindowRecordCursorFactory cannot stream window function of type ")
+                                .put(ColumnType.nameOf(t));
                     }
-                } else {
-                    lagFns.add(wf);
-                    lagColIdxTmp.add(i);
+                    colToSlot[i] = ROWID_BYTES + windowFnIndex * FUNC_VALUE_BYTES;
+                    windowFnIndex++;
+                    int la = wf.getLookahead();
+                    if (la > 0) {
+                        leadFns.add(wf);
+                        leadColIdxTmp.add(i);
+                        leadOffsetsTmp.add(la);
+                        if (la > maxLA) {
+                            maxLA = la;
+                        }
+                    } else {
+                        lagFns.add(wf);
+                        lagColIdxTmp.add(i);
+                    }
                 }
             }
-        }
-        if (leadFns.size() == 0) {
-            throw CairoException.critical(0)
-                    .put("DeferredEmitWindowRecordCursorFactory requires at least one positive-lookahead window function");
-        }
+            if (leadFns.size() == 0) {
+                throw CairoException.critical(0)
+                        .put("DeferredEmitWindowRecordCursorFactory requires at least one positive-lookahead window function");
+            }
 
-        final int ringCap = maxLA + 1;
-        final int lCount = leadFns.size();
-        if ((long) ringCap * lCount > 64) {
-            throw CairoException.critical(0)
-                    .put("DeferredEmitWindowRecordCursorFactory: (lookahead+1)*leadCount must be <= 64 (got ")
-                    .put(ringCap).put('x').put(lCount).put(')');
-        }
-        if ((partitionByRecord == null) != (partitionBySink == null) || (partitionByRecord == null) != (partitionMap == null)) {
-            throw CairoException.critical(0)
-                    .put("DeferredEmitWindowRecordCursorFactory: partitionByRecord, partitionBySink and partitionMap must all be null or all non-null");
-        }
+            final int ringCap = maxLA + 1;
+            final int lCount = leadFns.size();
+            if ((long) ringCap * lCount > 64) {
+                throw CairoException.critical(0)
+                        .put("DeferredEmitWindowRecordCursorFactory: (lookahead+1)*leadCount must be <= 64 (got ")
+                        .put(ringCap).put('x').put(lCount).put(')');
+            }
+            if ((partitionByRecord == null) != (partitionBySink == null) || (partitionByRecord == null) != (partitionMap == null)) {
+                throw CairoException.critical(0)
+                        .put("DeferredEmitWindowRecordCursorFactory: partitionByRecord, partitionBySink and partitionMap must all be null or all non-null");
+            }
 
-        this.base = base;
-        this.functions = functions;
-        this.lagFunctions = lagFns;
-        this.leadFunctions = leadFns;
-        this.maxLookahead = maxLA;
-        this.ringCapacity = ringCap;
-        this.leadCount = lCount;
-        this.perSlotLeadMask = (1L << lCount) - 1;
-        this.slotBytes = ROWID_BYTES + (lagFns.size() + leadFns.size()) * FUNC_VALUE_BYTES;
-        this.columnToSlotOffset = colToSlot;
+            this.base = base;
+            this.functions = functions;
+            this.lagFunctions = lagFns;
+            this.leadFunctions = leadFns;
+            this.maxLookahead = maxLA;
+            this.ringCapacity = ringCap;
+            this.leadCount = lCount;
+            this.perSlotLeadMask = (1L << lCount) - 1;
+            this.slotBytes = ROWID_BYTES + (lagFns.size() + leadFns.size()) * FUNC_VALUE_BYTES;
+            this.columnToSlotOffset = colToSlot;
 
-        this.leadOffsets = new long[lCount];
-        this.leadColumnIndices = new int[lCount];
-        for (int i = 0; i < lCount; i++) {
-            this.leadOffsets[i] = leadOffsetsTmp.getQuick(i);
-            this.leadColumnIndices[i] = leadColIdxTmp.getQuick(i);
-        }
-        this.lagColumnIndices = new int[lagFns.size()];
-        for (int i = 0, n = lagFns.size(); i < n; i++) {
-            this.lagColumnIndices[i] = lagColIdxTmp.getQuick(i);
-        }
-        // Release the temp lists to GC; we've copied into primitive arrays.
+            this.leadOffsets = new long[lCount];
+            this.leadColumnIndices = new int[lCount];
+            for (int i = 0; i < lCount; i++) {
+                this.leadOffsets[i] = leadOffsetsTmp.getQuick(i);
+                this.leadColumnIndices[i] = leadColIdxTmp.getQuick(i);
+            }
+            this.lagColumnIndices = new int[lagFns.size()];
+            for (int i = 0, n = lagFns.size(); i < n; i++) {
+                this.lagColumnIndices[i] = lagColIdxTmp.getQuick(i);
+            }
+            // Release the temp lists to GC; we've copied into primitive arrays.
 
-        this.partitionByRecord = partitionByRecord;
-        this.partitionBySink = partitionBySink;
-        this.partitionMap = partitionMap;
-        this.maxPartitions = maxPartitions;
-        this.cursor = new DeferredEmitWindowRecordCursor();
+            this.partitionByRecord = partitionByRecord;
+            this.partitionBySink = partitionBySink;
+            this.partitionMap = partitionMap;
+            this.maxPartitions = maxPartitions;
+            this.cursor = new DeferredEmitWindowRecordCursor();
+            ownershipTaken = true;
+        } finally {
+            if (!ownershipTaken) {
+                Misc.free(base);
+                Misc.free(partitionMap);
+                Misc.free(partitionByRecord);
+                Misc.freeObjList(functions);
+            }
+        }
     }
 
     @Override
@@ -306,15 +322,15 @@ public class DeferredEmitWindowRecordCursorFactory extends AbstractRecordCursorF
     private static boolean isFixed8ByteType(int type) {
         // Defensive type check on the cursor. The actual dispatch in SqlCodeGenerator is more
         // restrictive (it also checks the function's getPassCount() and getLookahead() values).
-        // Only types whose LEAD factory has a Streaming variant can reach the cursor; the others
-        // would have failed the isFastPath gate. Keeping the list in sync with the dispatch site.
+        // Only types whose LEAD factory has a Streaming variant can reach the cursor.
+        // INT and FLOAT widen to LONG and DOUBLE at parse time (no LeadInt / LeadFloat factories
+        // exist), so the function's getType() never reports those tags — the LONG and DOUBLE
+        // entries cover them.
         final int tag = ColumnType.tagOf(type);
         return tag == ColumnType.LONG
                 || tag == ColumnType.DOUBLE
                 || tag == ColumnType.DATE
-                || tag == ColumnType.TIMESTAMP
-                || tag == ColumnType.INT
-                || tag == ColumnType.FLOAT;
+                || tag == ColumnType.TIMESTAMP;
     }
 
     /**
@@ -389,6 +405,10 @@ public class DeferredEmitWindowRecordCursorFactory extends AbstractRecordCursorF
 
         @Override
         public Record getRecordB() {
+            // Returns the secondary OutputRecord. Callers that try to position it via recordAt()
+            // will get UnsupportedOperationException — the streaming cursor cannot back random
+            // access. Returning the unbound record matches the RecordCursor interface contract;
+            // most window-function consumers only need getRecord() and never touch recordB.
             return outputRecordB;
         }
 
@@ -443,15 +463,7 @@ public class DeferredEmitWindowRecordCursorFactory extends AbstractRecordCursorF
                 partitionMap.clear();
             }
             clearState();
-            if (partitionByRecord == null) {
-                nextFreeSlotOffset = (long) slotBytes * ringCapacity;
-                pendingMem.jumpTo(nextFreeSlotOffset);
-                singlePartitionState[0] = 0L;
-                singlePartitionState[1] = 0L;
-                singlePartitionState[2] = 0L;
-                singlePartitionState[3] = 0L;
-                singlePartitionState[4] = 0L;
-            }
+            resetSinglePartitionStateIfNonPartitioned();
             flushPhase = false;
             pendingEmitSlotOffset = -1L;
             flushMapCursor = null;
@@ -501,17 +513,7 @@ public class DeferredEmitWindowRecordCursorFactory extends AbstractRecordCursorF
                 partitionMap.clear();
             }
             clearState();
-            if (partitionByRecord == null) {
-                nextFreeSlotOffset = (long) slotBytes * ringCapacity;
-                pendingMem.jumpTo(nextFreeSlotOffset);
-                singlePartitionState[0] = 0L;
-                singlePartitionState[1] = 0L;
-                singlePartitionState[2] = 0L;
-                singlePartitionState[3] = 0L;
-                singlePartitionState[4] = 0L;
-            } else {
-                nextFreeSlotOffset = 0L;
-            }
+            resetSinglePartitionStateIfNonPartitioned();
             flushPhase = false;
             pendingEmitSlotOffset = -1L;
             flushMapCursor = null;
@@ -701,6 +703,20 @@ public class DeferredEmitWindowRecordCursorFactory extends AbstractRecordCursorF
                 if (f instanceof Reopenable) {
                     ((Reopenable) f).reopen();
                 }
+            }
+        }
+
+        private void resetSinglePartitionStateIfNonPartitioned() {
+            if (partitionByRecord == null) {
+                nextFreeSlotOffset = (long) slotBytes * ringCapacity;
+                pendingMem.jumpTo(nextFreeSlotOffset);
+                singlePartitionState[0] = 0L;
+                singlePartitionState[1] = 0L;
+                singlePartitionState[2] = 0L;
+                singlePartitionState[3] = 0L;
+                singlePartitionState[4] = 0L;
+            } else {
+                nextFreeSlotOffset = 0L;
             }
         }
 
