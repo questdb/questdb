@@ -127,6 +127,19 @@ public class StreamingLeadFuzzTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testEdgeCaseLimitWithOuterOrderBy() throws Exception {
+        // Outer ORDER BY ts ASC LIMIT pins the emission order. Both paths sort then take N.
+        assertMemoryLeak(() -> {
+            execute("create table t (x long, sym symbol, ts timestamp) timestamp(ts) partition by day");
+            execute(
+                    "insert into t select x, ('S' || (x % 3))::symbol as sym, (1000_000L * x)::timestamp from long_sequence(30)"
+            );
+            String sql = "select x, sym, lead(x, 1) over (partition by sym) as lx from t order by ts asc limit 5";
+            StreamingLeadEquivalence.assertEquivalent(engine, sqlExecutionContext, sql, "ordered-limit");
+        });
+    }
+
+    @Test
     public void testEdgeCaseLargeLookahead() throws Exception {
         // Lookahead 30 with a single LEAD function -> ringCapacity 31. Single-function so
         // ringCap * leadCount = 31 <= 64. Validates the pending-bit-mask layout near its upper
