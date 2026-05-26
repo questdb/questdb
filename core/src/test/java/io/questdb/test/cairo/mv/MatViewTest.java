@@ -7008,6 +7008,49 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testMaterializedViewsBackfillMaxTs() throws Exception {
+        // materialized_views().backfill_max_ts surfaces the current frozen-zone
+        // cutoff. NULL when REFRESH LIMIT is not set; otherwise the boundary's
+        // bucket floor in the base table's units.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table base_price (" +
+                            "  sym symbol, price double, ts #TIMESTAMP" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            execute("insert into base_price values('a', 1.0, '2024-09-10T12:00')");
+            drainWalQueue();
+            execute(
+                    "create materialized view price_1h refresh manual deferred as " +
+                            "select sym, last(price) as price, ts from base_price sample by 1h;"
+            );
+            drainQueues();
+
+            currentMicros = parseFloorPartialTimestamp("2024-09-10T12:30:00.000000Z");
+
+            // No REFRESH LIMIT set -- backfill_max_ts is NULL.
+            assertQueryNoLeakCheck(
+                    "view_name\tbackfill_max_ts\n" +
+                            "price_1h\t\n",
+                    "select view_name, backfill_max_ts from materialized_views()",
+                    null
+            );
+
+            execute("alter materialized view price_1h set refresh limit 1 hour;");
+            drainQueues();
+
+            // With 1h limit and wall clock 12:30, boundary = min(12:00, 12:30) - 1h
+            // = 11:00. Bucket floor for 1h sampling is also 11:00 (already aligned).
+            assertQueryNoLeakCheck(
+                    "view_name\tbackfill_max_ts\n" +
+                            "price_1h\t2024-09-10T11:00:00.000000Z\n",
+                    "select view_name, backfill_max_ts from materialized_views()",
+                    null
+            );
+        });
+    }
+
+    @Test
     public void testRefreshFullPreservesFrozenZone() throws Exception {
         // Plain REFRESH MATERIALIZED VIEW ... FULL preserves rows below the
         // REFRESH LIMIT boundary (the frozen zone). The user-backfilled row at

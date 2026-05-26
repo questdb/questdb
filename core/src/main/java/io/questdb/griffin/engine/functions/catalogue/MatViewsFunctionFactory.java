@@ -33,6 +33,7 @@ import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.file.BlockFileReader;
+import io.questdb.cairo.mv.MatViewBackfillValidator;
 import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.mv.MatViewState;
 import io.questdb.cairo.mv.MatViewStateReader;
@@ -119,6 +120,7 @@ public class MatViewsFunctionFactory implements FunctionFactory {
         private static final int COLUMN_REFRESH_AVG_SCAN_SAMPLE_NANOS = COLUMN_REFRESH_AVG_COMMIT_NANOS + 1;
         private static final int COLUMN_REFRESH_AVG_SCAN_RANGE_TS_UNITS = COLUMN_REFRESH_AVG_SCAN_SAMPLE_NANOS + 1;
         private static final int COLUMN_REFRESH_GAP_THRESHOLD_TS_UNITS = COLUMN_REFRESH_AVG_SCAN_RANGE_TS_UNITS + 1;
+        private static final int COLUMN_BACKFILL_MAX_TS = COLUMN_REFRESH_GAP_THRESHOLD_TS_UNITS + 1;
         private static final RecordMetadata METADATA;
         private final ViewsListCursor cursor;
 
@@ -243,6 +245,14 @@ public class MatViewsFunctionFactory implements FunctionFactory {
                         final long avgScanRangeTsUnits = state != null ? state.getAvgScanRangeTsUnits() : 0L;
                         final long commitGapThresholdTsUnits = state != null ? state.getCommitGapThresholdTsUnits() : 0L;
 
+                        // backfill_max_ts is a snapshot of the frozen-zone cutoff in
+                        // the base table's timestamp units; convert to micros for the
+                        // column. LONG_NULL stays LONG_NULL.
+                        final long backfillBucketFloor = MatViewBackfillValidator.computeFrozenBoundaryBucketFloor(engine, viewDefinition);
+                        final long backfillMaxTs = backfillBucketFloor == Numbers.LONG_NULL
+                                ? Numbers.LONG_NULL
+                                : viewDefinition.getBaseTableTimestampDriver().toMicros(backfillBucketFloor);
+
                         record.of(
                                 viewDefinition,
                                 lastRefreshStartTimestamp,
@@ -263,7 +273,8 @@ public class MatViewsFunctionFactory implements FunctionFactory {
                                 avgCommitNanos,
                                 avgScanSampleNanos,
                                 avgScanRangeTsUnits,
-                                commitGapThresholdTsUnits
+                                commitGapThresholdTsUnits,
+                                backfillMaxTs
                         );
                         viewIndex++;
                         return true;
@@ -294,6 +305,7 @@ public class MatViewsFunctionFactory implements FunctionFactory {
                 private long avgCommitNanos;
                 private long avgScanRangeTsUnits;
                 private long avgScanSampleNanos;
+                private long backfillMaxTs;
                 private long commitGapThresholdTsUnits;
                 private boolean invalid;
                 private long lastAppliedBaseTxn;
@@ -335,6 +347,7 @@ public class MatViewsFunctionFactory implements FunctionFactory {
                         case COLUMN_REFRESH_BASE_TABLE_TXN -> lastRefreshTxn;
                         case COLUMN_APPLIED_BASE_TABLE_TXN -> lastAppliedBaseTxn;
                         case COLUMN_TIMER_START -> timerStart;
+                        case COLUMN_BACKFILL_MAX_TS -> backfillMaxTs;
                         default -> 0;
                     };
                 }
@@ -398,7 +411,8 @@ public class MatViewsFunctionFactory implements FunctionFactory {
                         long avgCommitNanos,
                         long avgScanSampleNanos,
                         long avgScanRangeTsUnits,
-                        long commitGapThresholdTsUnits
+                        long commitGapThresholdTsUnits,
+                        long backfillMaxTs
                 ) {
                     this.viewDefinition = viewDefinition;
                     this.lastRefreshStartTimestamp = lastRefreshStartTimestamp;
@@ -421,6 +435,7 @@ public class MatViewsFunctionFactory implements FunctionFactory {
                     this.avgScanSampleNanos = avgScanSampleNanos;
                     this.avgScanRangeTsUnits = avgScanRangeTsUnits;
                     this.commitGapThresholdTsUnits = commitGapThresholdTsUnits;
+                    this.backfillMaxTs = backfillMaxTs;
                 }
 
                 private CharSequence getViewStatus() {
@@ -462,6 +477,11 @@ public class MatViewsFunctionFactory implements FunctionFactory {
             metadata.add(new TableColumnMetadata("refresh_avg_scan_sample_nanos", ColumnType.LONG));
             metadata.add(new TableColumnMetadata("refresh_avg_scan_range_ts_units", ColumnType.LONG));
             metadata.add(new TableColumnMetadata("refresh_gap_threshold_ts_units", ColumnType.LONG));
+            // Snapshot of the current frozen-zone cutoff: rows with ts strictly
+            // less than this value can be backfilled into the view; equal-or-greater
+            // rows fall in or past the managed zone and are rejected at commit.
+            // NULL when REFRESH LIMIT is not set (no frozen zone exists).
+            metadata.add(new TableColumnMetadata("backfill_max_ts", ColumnType.TIMESTAMP_MICRO));
             METADATA = metadata;
         }
     }
