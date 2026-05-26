@@ -146,7 +146,9 @@ public class FuzzTransactionGenerator {
                 continue;
             }
             if (i == setParquetEncodingIteration) {
-                generateSetParquetEncoding(transactionList, metaVersion, waitBarrierVersion++, rnd, meta);
+                if (generateSetParquetEncoding(transactionList, metaVersion, waitBarrierVersion, rnd, meta)) {
+                    waitBarrierVersion++;
+                }
                 continue;
             }
             final double rndDouble = rnd.nextDouble();
@@ -445,7 +447,7 @@ public class FuzzTransactionGenerator {
         return null;
     }
 
-    private static void generateSetParquetEncoding(
+    private static boolean generateSetParquetEncoding(
             ObjList<FuzzTransaction> transactionList,
             int metadataVersion,
             int waitBarrierVersion,
@@ -509,12 +511,11 @@ public class FuzzTransactionGenerator {
             FuzzTransaction transaction = new FuzzTransaction();
             transaction.waitBarrierVersion = waitBarrierVersion;
             transaction.structureVersion = metadataVersion;
-            transaction.waitAllDone = true;
-            transaction.reopenTable = true;
             transaction.operationList.add(new FuzzSetParquetEncodingOperation(colName, encoding, compression, level));
             transactionList.add(transaction);
-            return;
+            return true;
         }
+        return false;
     }
 
     private static void generateSetTtl(ObjList<FuzzTransaction> transactionList, int metadataVersion, int waitBarrierVersion, Rnd rnd) {
