@@ -33,10 +33,14 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.VirtualRecord;
 import io.questdb.cairo.sql.WindowSPI;
+import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryARW;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.std.IntList;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
@@ -58,6 +62,20 @@ public class LeadLongFunctionFactory extends AbstractWindowFunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
+        // When the streaming-lead session flag is on and the call shape fits the Phase 3 streaming
+        // path (no PARTITION BY, no IGNORE NULLS, constant offset > 0, constant or absent default),
+        // construct StreamingLeadFunction directly so it reports ZERO_PASS + positive lookahead to
+        // the planner. Otherwise fall through to the cached helper path.
+        Function streaming = tryNewStreamingInstance(
+                args,
+                argPositions,
+                configuration,
+                sqlExecutionContext
+        );
+        if (streaming != null) {
+            return streaming;
+        }
+
         return LeadLagWindowFunctionFactoryHelper.newInstance(
                 position,
                 args,
@@ -73,6 +91,127 @@ public class LeadLongFunctionFactory extends AbstractWindowFunctionFactory {
                 LagLongFunctionFactory.LeadLagValueCurrentRow::new,
                 LeadOverPartitionFunction::new
         );
+    }
+
+    /**
+     * Returns a {@link StreamingLeadFunction} if the call shape qualifies for Phase 3 deferred-emit
+     * streaming, otherwise {@code null} to indicate the caller should fall through to the cached
+     * helper path. Validates only the constraints relevant to the streaming decision; the helper
+     * re-validates everything when it constructs the cached fallback.
+     */
+    private static Function tryNewStreamingInstance(
+            ObjList<Function> args,
+            IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) throws SqlException {
+        if (!configuration.getSqlWindowStreamingLeadEnabled()) {
+            return null;
+        }
+        if (sqlExecutionContext.getWindowContext().isEmpty()) {
+            return null;
+        }
+        if (sqlExecutionContext.getWindowContext().getPartitionByRecord() != null) {
+            return null;
+        }
+        if (sqlExecutionContext.getWindowContext().isIgnoreNulls()) {
+            return null;
+        }
+        if (args.size() > 3) {
+            return null;
+        }
+
+        long offset = 1;
+        if (args.size() >= 2) {
+            Function offsetFunc = args.getQuick(1);
+            if (!offsetFunc.isConstant()) {
+                return null;
+            }
+            offset = offsetFunc.getLong(null);
+            if (offset <= 0) {
+                return null;
+            }
+        }
+        if (offset > Integer.MAX_VALUE) {
+            // Lookahead is stored as int on the protocol. Bail to cached for absurdly large offsets.
+            return null;
+        }
+
+        Function defaultValue = null;
+        if (args.size() == 3) {
+            Function dv = args.getQuick(2);
+            if (dv instanceof WindowFunction) {
+                throw SqlException.$(argPositions.getQuick(2), "default value can not be a window function");
+            }
+            if (!dv.isConstant()) {
+                // Streaming flush evaluates defaultValue without a current base record; require constant.
+                return null;
+            }
+            if (!ColumnType.isSameOrBuiltInWideningCast(dv.getType(), ColumnType.LONG)) {
+                throw SqlException.$(argPositions.getQuick(2), "default value must be can cast to long");
+            }
+            defaultValue = dv;
+        }
+
+        // Allocate the cached-fallback circular buffer so the inherited pass1 path works even if the
+        // planner subsequently routes us through CachedWindow. The streaming path itself does not
+        // touch this buffer.
+        MemoryARW mem = null;
+        try {
+            mem = Vm.getCARWInstance(
+                    configuration.getSqlWindowStorePageSize(),
+                    configuration.getSqlWindowStoreMaxPages(),
+                    MemoryTag.NATIVE_CIRCULAR_BUFFER
+            );
+            return new StreamingLeadFunction(args.get(0), defaultValue, offset, mem);
+        } catch (Throwable th) {
+            Misc.free(mem);
+            throw th;
+        }
+    }
+
+    /**
+     * Streaming variant of LEAD that participates in the deferred-emit fast path.
+     * <p>
+     * Reports {@link WindowFunction#ZERO_PASS} and a positive {@link #getLookahead()} so the planner
+     * can choose {@code DeferredEmitWindowRecordCursorFactory} when the rest of the constraints are
+     * satisfied. Inherits the cached {@code pass1} implementation from {@link LeadFunction} so that
+     * if the planner subsequently picks the cached executor (because some other function in the
+     * same query is not ZERO_PASS) the cached fallback still produces correct results.
+     * <p>
+     * Construction is only valid when {@code ignoreNulls == false} and {@code defaultValue} is either
+     * {@code null} or a constant. Phase 3 does not support IGNORE NULLS streaming or row-dependent
+     * default expressions.
+     */
+    static final class StreamingLeadFunction extends LeadFunction {
+        private final long defaultLongValue;
+
+        StreamingLeadFunction(Function arg, Function defaultValueFunc, long offset, MemoryARW memory) {
+            super(arg, defaultValueFunc, offset, memory, false);
+            // Pre-resolve defaultValue at construction so streamingFlushDefault doesn't need a record.
+            // defaultValueFunc, when non-null, was validated as constant by the dispatch site.
+            this.defaultLongValue = defaultValueFunc == null ? Numbers.LONG_NULL : defaultValueFunc.getLong(null);
+        }
+
+        @Override
+        public int getLookahead() {
+            return (int) offset;
+        }
+
+        @Override
+        public int getPassCount() {
+            return ZERO_PASS;
+        }
+
+        @Override
+        public void streamingBackfill(Record source, long pendingSlot, WindowSPI spi) {
+            Unsafe.putLong(spi.getAddress(pendingSlot, columnIndex), arg.getLong(source));
+        }
+
+        @Override
+        public void streamingFlushDefault(long pendingSlot, WindowSPI spi) {
+            Unsafe.putLong(spi.getAddress(pendingSlot, columnIndex), defaultLongValue);
+        }
     }
 
     static class LeadFunction extends LeadLagWindowFunctionFactoryHelper.BaseLeadFunction implements Reopenable, WindowLongFunction {

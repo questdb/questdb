@@ -328,6 +328,7 @@ import io.questdb.griffin.engine.union.SetRecordCursorFactoryConstructor;
 import io.questdb.griffin.engine.union.UnionAllRecordCursorFactory;
 import io.questdb.griffin.engine.union.UnionRecordCursorFactory;
 import io.questdb.griffin.engine.window.CachedWindowRecordCursorFactory;
+import io.questdb.griffin.engine.window.DeferredEmitWindowRecordCursorFactory;
 import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.griffin.engine.window.WindowRecordCursorFactory;
 import io.questdb.griffin.model.ExecutionModel;
@@ -9453,19 +9454,43 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             }
 
             if (isFastPath) {
+                int maxLookahead = 0;
+                int lookaheadFunctionCount = 0;
                 for (int i = 0, size = functions.size(); i < size; i++) {
                     Function func = functions.getQuick(i);
                     if (func instanceof WindowFunction) {
+                        WindowFunction wf = (WindowFunction) func;
+                        int la = wf.getLookahead();
+                        if (la > maxLookahead) {
+                            maxLookahead = la;
+                        }
+                        if (la > 0) {
+                            lookaheadFunctionCount++;
+                        }
                         WindowExpression qc = (WindowExpression) columns.getQuick(i);
                         if (qc.getOrderBy().size() > 0) {
                             chainTypes.clear();
-                            ((WindowFunction) func).initRecordComparator(this, baseMetadata, chainTypes, null,
+                            wf.initRecordComparator(this, baseMetadata, chainTypes, null,
                                     qc.getOrderBy(), qc.getOrderByDirection());
                         }
                     }
                 }
-                return new WindowRecordCursorFactory(base, factoryMetadata, functions);
-            } else {
+
+                if (maxLookahead == 0) {
+                    return new WindowRecordCursorFactory(base, factoryMetadata, functions);
+                }
+
+                // Phase 3 deferred-emit dispatch: exactly one positive-lookahead function, base must
+                // support random access (the cursor stores base rowids and uses recordAt at emit
+                // time). If any other constraint blocks streaming, fall through to CachedWindow which
+                // will call pass1 on the streaming-LEAD's inherited cached fallback.
+                if (lookaheadFunctionCount == 1 && base.recordCursorSupportsRandomAccess()) {
+                    return new DeferredEmitWindowRecordCursorFactory(base, factoryMetadata, functions);
+                }
+
+                isFastPath = false;
+            }
+            if (!isFastPath) {
                 factoryMetadata.clear();
                 Misc.freeObjListAndClear(functions);
             }

@@ -1278,6 +1278,16 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public boolean getSqlWindowStreamingLeadEnabled() {
+        return getDelegate().getSqlWindowStreamingLeadEnabled();
+    }
+
+    @Override
+    public int getSqlWindowStreamingMaxPartitions() {
+        return getDelegate().getSqlWindowStreamingMaxPartitions();
+    }
+
+    @Override
     public int getSqlWindowTreeKeyMaxPages() {
         return getDelegate().getSqlWindowTreeKeyMaxPages();
     }
