@@ -43,9 +43,11 @@ import io.questdb.std.Decimal256;
 import io.questdb.std.IntList;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
+import io.questdb.std.Transient;
 import io.questdb.std.str.Utf8Sequence;
 
 public class CastVarcharToDecimalFunctionFactory implements FunctionFactory {
+
     /**
      * Create a new instance of a Function that can cast a varchar to a decimal.
      *
@@ -75,8 +77,8 @@ public class CastVarcharToDecimalFunctionFactory implements FunctionFactory {
     @Override
     public Function newInstance(
             int position,
-            ObjList<Function> args,
-            IntList argPositions,
+            @Transient ObjList<Function> args,
+            @Transient IntList argPositions,
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
@@ -182,6 +184,7 @@ public class CastVarcharToDecimalFunctionFactory implements FunctionFactory {
     }
 
     private static class Func64 extends AbstractCastToDecimal64Function {
+
         public Func64(Function value, int targetType, int position) {
             super(value, targetType, position);
         }

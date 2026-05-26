@@ -25,6 +25,7 @@ import java.math.RoundingMode;
  * </p>
  */
 public class Decimal128 implements Sinkable, Decimal {
+    public static final int BYTES = 16;
     /**
      * Maximum allowed precision (number of digits)
      */

@@ -77,6 +77,7 @@ enum class opcodes : int32_t {
     Or_Sc = 19,  // Short-circuit OR: if true, jump to label[payload.lo] (0 = next_row)
     Begin_Sc = 20, // Create label at index payload.lo
     End_Sc = 21,   // Bind label at index payload.lo
+    Sx_I64 = 22,   // Sign-extend top of stack to i64
 };
 
 struct instruction_t {
@@ -349,6 +350,21 @@ struct ColumnValueCache {
         count = 0;
     }
 
+    // Snapshots the current entry count so the cache can be rolled back via
+    // truncate(). Used to drop entries added inside a BEGIN_SC/END_SC block,
+    // where an OR_SC forward jump may skip the loads that populated them.
+    size_t size() const {
+        return count;
+    }
+
+    // Drops all entries past the given count. Pair with size() to restore the
+    // cache to a snapshot taken earlier in the IR stream.
+    void truncate(size_t new_count) {
+        if (new_count < count) {
+            count = new_count;
+        }
+    }
+
 private:
     size_t count;
     int32_t column_idxs[MAX_VALUES];
@@ -399,6 +415,21 @@ private:
 
     void clear() {
         count = 0;
+    }
+
+    // Snapshots the current entry count so the cache can be rolled back via
+    // truncate(). Used to drop entries added inside a BEGIN_SC/END_SC block,
+    // where an OR_SC forward jump may skip the loads that populated them.
+    size_t size() const {
+        return count;
+    }
+
+    // Drops all entries past the given count. Pair with size() to restore the
+    // cache to a snapshot taken earlier in the IR stream.
+    void truncate(size_t new_count) {
+        if (new_count < count) {
+            count = new_count;
+        }
     }
 
 private:

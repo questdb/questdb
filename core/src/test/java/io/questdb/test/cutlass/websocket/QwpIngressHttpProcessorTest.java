@@ -25,7 +25,7 @@
 package io.questdb.test.cutlass.websocket;
 
 import io.questdb.cutlass.http.HttpRequestHeader;
-import io.questdb.cutlass.qwp.server.QwpWebSocketHttpProcessor;
+import io.questdb.cutlass.qwp.server.QwpIngressHttpProcessor;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.DirectUtf8String;
@@ -43,7 +43,7 @@ import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
  * Note: Full processor instantiation tests require CairoEngine and configuration
  * These are covered by integration tests (QwpWebSocketHandshakeTest, etc.)
  */
-public class QwpWebSocketHttpProcessorTest extends AbstractWebSocketTest {
+public class QwpIngressHttpProcessorTest extends AbstractWebSocketTest {
 
     @Test
     public void testGetWebSocketKey() throws Exception {
@@ -51,7 +51,7 @@ public class QwpWebSocketHttpProcessorTest extends AbstractWebSocketTest {
             try (MockHttpRequestHeader header = new MockHttpRequestHeader()) {
                 header.setHeader("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ==");
 
-                Utf8Sequence key = QwpWebSocketHttpProcessor.getWebSocketKey(header);
+                Utf8Sequence key = QwpIngressHttpProcessor.getWebSocketKey(header);
                 Assert.assertNotNull(key);
                 Assert.assertEquals("dGhlIHNhbXBsZSBub25jZQ==", key.toString());
             }
@@ -62,7 +62,7 @@ public class QwpWebSocketHttpProcessorTest extends AbstractWebSocketTest {
     public void testGetWebSocketKeyMissing() throws Exception {
         assertMemoryLeak(() -> {
             try (MockHttpRequestHeader header = new MockHttpRequestHeader()) {
-                Utf8Sequence key = QwpWebSocketHttpProcessor.getWebSocketKey(header);
+                Utf8Sequence key = QwpIngressHttpProcessor.getWebSocketKey(header);
                 Assert.assertNull(key);
             }
         });
@@ -77,7 +77,7 @@ public class QwpWebSocketHttpProcessorTest extends AbstractWebSocketTest {
                 header.setHeader("Sec-WebSocket-Key", "tooshort");
                 header.setHeader("Sec-WebSocket-Version", "13");
 
-                String error = QwpWebSocketHttpProcessor.validateHandshake(header);
+                String error = QwpIngressHttpProcessor.validateHandshake(header);
                 Assert.assertNotNull(error);
                 Assert.assertTrue(error.contains("key"));
             }
@@ -93,7 +93,7 @@ public class QwpWebSocketHttpProcessorTest extends AbstractWebSocketTest {
                 header.setHeader("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ==");
                 header.setHeader("Sec-WebSocket-Version", "12");
 
-                String error = QwpWebSocketHttpProcessor.validateHandshake(header);
+                String error = QwpIngressHttpProcessor.validateHandshake(header);
                 Assert.assertNotNull(error);
                 Assert.assertTrue(error.contains("version"));
             }
@@ -108,7 +108,7 @@ public class QwpWebSocketHttpProcessorTest extends AbstractWebSocketTest {
                 header.setHeader("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ==");
                 header.setHeader("Sec-WebSocket-Version", "13");
 
-                String error = QwpWebSocketHttpProcessor.validateHandshake(header);
+                String error = QwpIngressHttpProcessor.validateHandshake(header);
                 Assert.assertNotNull(error);
                 Assert.assertTrue(error.contains("Connection"));
             }
@@ -123,7 +123,7 @@ public class QwpWebSocketHttpProcessorTest extends AbstractWebSocketTest {
                 header.setHeader("Connection", "Upgrade");
                 header.setHeader("Sec-WebSocket-Version", "13");
 
-                String error = QwpWebSocketHttpProcessor.validateHandshake(header);
+                String error = QwpIngressHttpProcessor.validateHandshake(header);
                 Assert.assertNotNull(error);
                 Assert.assertTrue(error.contains("Sec-WebSocket-Key"));
             }
@@ -138,7 +138,7 @@ public class QwpWebSocketHttpProcessorTest extends AbstractWebSocketTest {
                 header.setHeader("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ==");
                 header.setHeader("Sec-WebSocket-Version", "13");
 
-                String error = QwpWebSocketHttpProcessor.validateHandshake(header);
+                String error = QwpIngressHttpProcessor.validateHandshake(header);
                 Assert.assertNotNull(error);
                 Assert.assertTrue(error.contains("Upgrade"));
             }
@@ -153,7 +153,7 @@ public class QwpWebSocketHttpProcessorTest extends AbstractWebSocketTest {
                 header.setHeader("Connection", "Upgrade");
                 header.setHeader("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ==");
 
-                String error = QwpWebSocketHttpProcessor.validateHandshake(header);
+                String error = QwpIngressHttpProcessor.validateHandshake(header);
                 Assert.assertNotNull(error);
                 Assert.assertTrue(error.contains("Sec-WebSocket-Version"));
             }
@@ -170,7 +170,7 @@ public class QwpWebSocketHttpProcessorTest extends AbstractWebSocketTest {
                 header.setHeader("Sec-WebSocket-Version", "13");
                 header.setHeader("Origin", "https://evil-site.com");
 
-                String error = QwpWebSocketHttpProcessor.validateHandshake(header);
+                String error = QwpIngressHttpProcessor.validateHandshake(header);
                 Assert.assertNotNull(error);
                 Assert.assertTrue(error.contains("Origin"));
             }
@@ -186,7 +186,7 @@ public class QwpWebSocketHttpProcessorTest extends AbstractWebSocketTest {
                 header.setHeader("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ==");
                 header.setHeader("Sec-WebSocket-Version", "13");
 
-                String error = QwpWebSocketHttpProcessor.validateHandshake(header);
+                String error = QwpIngressHttpProcessor.validateHandshake(header);
                 Assert.assertNull(error);
             }
         });
