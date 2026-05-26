@@ -2654,10 +2654,12 @@ public class SqlOptimiser implements Mutable {
             // the column is already being referenced by the translating model
             final CharSequence groupByColumnName = groupByModel.getColumnNameToAliasMap().get(translatedColumnName);
             final QueryColumn translatedColumn;
+            final QueryColumn outerColumn;
             if (isGroupBy && groupByColumnName != null) {
                 // there is already a key referencing the column in the group-by model;
                 // to minimize the number of group-by keys, we simply refer to the key in the outer models
                 translatedColumn = nextColumn(columnName, groupByColumnName, includeIntoWildcard);
+                outerColumn = translatedColumn;
             } else {
                 // no key in the group-by model;
                 // create an alias and add it to the inner models
@@ -2666,12 +2668,19 @@ public class SqlOptimiser implements Mutable {
                 innerVirtualModel.addBottomUpColumn(columnAst.position, translatedColumn, true);
                 groupByModel.addBottomUpColumn(translatedColumn);
                 windowModel.addBottomUpColumn(translatedColumn);
+                // The group-by exposes innerAlias for this column, not translatedColumnName,
+                // so when columnName != translatedColumnName the outer reference must use
+                // innerAlias or codegen fails to resolve the token. The SAMPLE BY wrapper
+                // (isGroupBy=false) deliberately keeps translatedColumnName.
+                outerColumn = isGroupBy
+                        ? nextColumn(columnName, innerAlias, includeIntoWildcard)
+                        : translatedColumn;
             }
 
             // expose the column in the outer models
-            outerVirtualModel.addBottomUpColumn(translatedColumn);
+            outerVirtualModel.addBottomUpColumn(outerColumn);
             if (distinctModel != null) {
-                distinctModel.addBottomUpColumn(translatedColumn);
+                distinctModel.addBottomUpColumn(outerColumn);
             }
         } else {
             // the column is not referenced by the translating model

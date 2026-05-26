@@ -227,6 +227,23 @@ public class DistinctTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDistinctReusedColumnWithUserAliasRepro() throws Exception {
+        // Duplicate aliased refs to the same column (x AS e1, x AS e2) under DISTINCT
+        // pointed the outer projection at the translating-model alias "x" while the
+        // group-by metadata only exposed "e1"; generateSelectChoose hit "wtf? x".
+        assertQuery(
+                "e0\te1\te2\n" +
+                        "1\t1\t1\n" +
+                        "2\t2\t2\n" +
+                        "3\t3\t3\n",
+                "SELECT DISTINCT abs(x) AS e0, x AS e1, x AS e2 FROM long_sequence(3)",
+                null,
+                true,
+                true
+        );
+    }
+
+    @Test
     public void testDistinctConstAliasOrderByLimitFromFuzzer() throws Exception {
         // Original failing query from the query fuzzer (seed s0=104514844543552, s1=1779785264959).
         assertQuery(
