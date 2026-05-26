@@ -698,7 +698,11 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             // Just mark the view invalid to prevent intermediate incremental refreshes and republish the task.
             LOG.debug().$("could not lock materialized view for full refresh, will retry [view=").$(viewToken).I$();
             viewState.markAsPendingInvalidation();
-            stateStore.enqueueFullRefresh(viewToken);
+            if (refreshTask.forceFull) {
+                stateStore.enqueueFullForceRefresh(viewToken);
+            } else {
+                stateStore.enqueueFullRefresh(viewToken);
+            }
             return false;
         }
 
@@ -715,7 +719,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             }
 
             // Steps:
-            // - truncate view
+            // - truncate view (FULL FORCE, or FULL with no REFRESH LIMIT)
             // - compile view and insert as select on all base table partitions
             // - write the result set to WAL (or directly to table writer O3 area)
             // - apply resulting commit
@@ -727,7 +731,14 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 engine.detachReader(baseTableReader);
                 refreshSqlExecutionContext.of(baseTableReader);
                 try {
-                    walWriter.truncateSoft();
+                    // Plain FULL preserves the frozen zone -- the per-interval REPLACE_RANGE
+                    // commits inside insertAsSelect rewrite managed-zone buckets atomically,
+                    // leaving rows below the REFRESH LIMIT boundary untouched. FULL FORCE
+                    // (and FULL on a view without REFRESH LIMIT, where no frozen zone exists)
+                    // wipes the entire view first, matching the pre-frozen-zone behaviour.
+                    if (refreshTask.forceFull || viewDefinition.getRefreshLimitHoursOrMonths() == 0) {
+                        walWriter.truncateSoft();
+                    }
                     resetInvalidState(viewState, walWriter);
 
                     final RefreshContext refreshContext = findRefreshIntervals(baseTableReader, viewDefinition, viewState, walWriter, Numbers.LONG_NULL);
@@ -799,7 +810,11 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                         if (refreshTask == null || refreshTask.operation == MatViewRefreshTask.INCREMENTAL_REFRESH) {
                             stateStore.enqueueIncrementalRefresh(updatedToken);
                         } else if (refreshTask.operation == MatViewRefreshTask.FULL_REFRESH) {
-                            stateStore.enqueueFullRefresh(updatedToken);
+                            if (refreshTask.forceFull) {
+                                stateStore.enqueueFullForceRefresh(updatedToken);
+                            } else {
+                                stateStore.enqueueFullRefresh(updatedToken);
+                            }
                         } else if (refreshTask.operation == MatViewRefreshTask.RANGE_REFRESH) {
                             stateStore.enqueueRangeRefresh(updatedToken, refreshTask.rangeFrom, refreshTask.rangeTo);
                         } else {

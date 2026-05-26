@@ -3457,6 +3457,19 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         // data refresh. Handled inline here rather than through the refresh
         // queue because it's a synchronous metadata-only operation.
         final boolean isStatsReset = SqlKeywords.isStatsKeyword(tok);
+        boolean fullForceRefresh = false;
+        if (fullRefresh) {
+            // Optional FORCE qualifier: FULL FORCE wipes the frozen zone as well as
+            // the managed zone. Plain FULL preserves frozen-zone rows. The FORCE
+            // keyword is a destructive-acknowledgement modifier, the same role it
+            // plays in ALTER TABLE ... FORCE DROP PARTITION LIST.
+            final CharSequence peeked = SqlUtil.fetchNext(lexer);
+            if (peeked != null && SqlKeywords.isForceKeyword(peeked)) {
+                fullForceRefresh = true;
+            } else if (peeked != null) {
+                lexer.unparseLast();
+            }
+        }
         long from = Numbers.LONG_NULL;
         long to = Numbers.LONG_NULL;
         if (isRangeKeyword(tok)) {
@@ -3503,7 +3516,11 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     }
                 }
             } else if (fullRefresh) {
-                matViewStateStore.enqueueFullRefresh(matViewToken);
+                if (fullForceRefresh) {
+                    matViewStateStore.enqueueFullForceRefresh(matViewToken);
+                } else {
+                    matViewStateStore.enqueueFullRefresh(matViewToken);
+                }
             } else if (from != Numbers.LONG_NULL) {
                 matViewStateStore.enqueueRangeRefresh(matViewToken, from, to);
             } else {

@@ -6960,6 +6960,128 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRefreshFullForceWipesFrozenZone() throws Exception {
+        // REFRESH MATERIALIZED VIEW ... FULL FORCE wipes the entire mat view
+        // including frozen-zone backfill, then reinserts from base. The frozen-zone
+        // user row inserted before the refresh disappears after FORCE.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table base_price (" +
+                            "  sym symbol, price double, ts #TIMESTAMP" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            execute("insert into base_price values('a', 9.0, '2024-09-10T12:00')");
+            drainWalQueue();
+            execute(
+                    "create materialized view price_1h refresh manual deferred as " +
+                            "select sym, last(price) as price, ts from base_price sample by 1h;"
+            );
+            execute("alter materialized view price_1h set refresh limit 1 hour;");
+            drainQueues();
+
+            // Wall clock 12:30: boundary = min(12:00, 12:30) - 1h = 11:00.
+            currentMicros = parseFloorPartialTimestamp("2024-09-10T12:30:00.000000Z");
+            execute("insert into price_1h values('a', 1.0, '2024-09-10T09:00')");
+            drainQueues();
+
+            execute("refresh materialized view price_1h full force;");
+            drainQueues();
+
+            // FORCE wiped the frozen-zone backfill; only the refresh-computed bucket remains.
+            assertQueryNoLeakCheck(
+                    replaceExpectedTimestamp("""
+                            sym\tprice\tts
+                            a\t9.0\t2024-09-10T12:00:00.000000Z
+                            """),
+                    "price_1h order by ts",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testRefreshFullForceWithoutRefreshLimitMatchesLegacyFull() throws Exception {
+        // FULL FORCE on a view without REFRESH LIMIT is indistinguishable from FULL --
+        // there is no frozen zone to preserve so both wipe and reinsert.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table base_price (" +
+                            "  sym symbol, price double, ts #TIMESTAMP" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            execute("insert into base_price values('a', 5.0, '2024-09-10T12:00')");
+            drainWalQueue();
+            execute(
+                    "create materialized view price_1h refresh manual deferred as " +
+                            "select sym, last(price) as price, ts from base_price sample by 1h;"
+            );
+            drainQueues();
+
+            currentMicros = parseFloorPartialTimestamp("2024-09-10T13:00:00.000000Z");
+            execute("refresh materialized view price_1h full force;");
+            drainQueues();
+
+            assertQueryNoLeakCheck(
+                    replaceExpectedTimestamp("""
+                            sym\tprice\tts
+                            a\t5.0\t2024-09-10T12:00:00.000000Z
+                            """),
+                    "price_1h order by ts",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testRefreshFullPreservesFrozenZone() throws Exception {
+        // Plain REFRESH MATERIALIZED VIEW ... FULL preserves rows below the
+        // REFRESH LIMIT boundary (the frozen zone). The user-backfilled row at
+        // 09:00 survives a FULL refresh that recomputes the managed-zone bucket
+        // [12:00, 13:00) from the base table.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table base_price (" +
+                            "  sym symbol, price double, ts #TIMESTAMP" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            execute("insert into base_price values('a', 9.0, '2024-09-10T12:00')");
+            drainWalQueue();
+            execute(
+                    "create materialized view price_1h refresh manual deferred as " +
+                            "select sym, last(price) as price, ts from base_price sample by 1h;"
+            );
+            execute("alter materialized view price_1h set refresh limit 1 hour;");
+            drainQueues();
+
+            // Wall clock 12:30: boundary = min(12:00, 12:30) - 1h = 11:00.
+            // Bucket [09:00, 10:00) ends at 10:00 <= 11:00 -> frozen zone.
+            currentMicros = parseFloorPartialTimestamp("2024-09-10T12:30:00.000000Z");
+            execute("insert into price_1h values('a', 1.0, '2024-09-10T09:00')");
+            drainQueues();
+
+            execute("refresh materialized view price_1h full;");
+            drainQueues();
+
+            // Backfill row at 09:00 survives; managed-zone bucket 12:00 is refreshed from base.
+            assertQueryNoLeakCheck(
+                    replaceExpectedTimestamp("""
+                            sym\tprice\tts
+                            a\t1.0\t2024-09-10T09:00:00.000000Z
+                            a\t9.0\t2024-09-10T12:00:00.000000Z
+                            """),
+                    "price_1h order by ts",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
     public void testRefreshSkipsUnchangedBuckets() throws Exception {
         // Verify that incremental refresh skips unchanged SAMPLE BY buckets.
         assertMemoryLeak(() -> {
