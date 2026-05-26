@@ -12791,8 +12791,10 @@ public class CoveringIndexTest extends AbstractCairoTest {
             assertPlanNoLeakCheck(
                     "SELECT count(*), min(price), max(price) FROM t_vw_agg WHERE sym = 'A'",
                     """
-                            GroupBy vectorized: true workers: 1
+                            Async Group By workers: 1
+                              vectorized: true
                               values: [count(*),min(price),max(price)]
+                              filter: null
                                 CoveringIndex on: sym with: price
                                   filter: sym='A'
                             """

@@ -25,13 +25,14 @@
 package io.questdb.griffin.engine.functions.groupby;
 
 import io.questdb.cairo.ArrayColumnTypes;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrameMemoryRecord;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.GroupByFunction;
-import io.questdb.griffin.engine.functions.TimestampFunction;
+import io.questdb.griffin.engine.functions.IntFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.groupby.FlyweightPackedMapValue;
 import io.questdb.griffin.engine.groupby.GroupByUtils;
@@ -40,39 +41,32 @@ import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 import org.jetbrains.annotations.NotNull;
 
-public class MinTimestampGroupByFunction extends TimestampFunction implements GroupByFunction, UnaryFunction {
+public class MaxShortGroupByFunction extends IntFunction implements GroupByFunction, UnaryFunction {
     private final Function arg;
     private final int argColumnIndex;
-    // Set when arg is the designated timestamp column. Page frame data is sorted ASC by the designated
-    // timestamp, so the first row of any frame is its minimum and computeBatch can skip the column scan.
-    private boolean isDesignated;
     private int valueIndex;
 
-    public MinTimestampGroupByFunction(@NotNull Function arg, int timestampType) {
-        super(timestampType);
+    public MaxShortGroupByFunction(@NotNull Function arg) {
         this.arg = arg;
-        // The factory derives timestampType from arg.getType(), so this check also
-        // filters out non-direct args (e.g., CASTs) that happen to produce timestamps.
-        this.argColumnIndex = GroupByUtils.directArgColumnIndex(arg, timestampType);
+        this.argColumnIndex = GroupByUtils.directArgColumnIndex(arg, ColumnType.SHORT);
     }
 
     @Override
     public void computeBatch(MapValue mapValue, long dataAddr, int rowCount, long startRowId) {
         if (rowCount > 0) {
-            // Designated timestamp column has no nulls and is sorted ASC within a frame.
-            final long batchMin = isDesignated ? Unsafe.getLong(dataAddr) : Vect.minLong(dataAddr, rowCount);
-            if (batchMin != Numbers.LONG_NULL) {
-                final long existing = mapValue.getTimestamp(valueIndex);
-                if (batchMin < existing || existing == Numbers.LONG_NULL) {
-                    mapValue.putTimestamp(valueIndex, batchMin);
-                }
+            // Vect.maxShort returns the int max of native short values; SHORT has no NULL.
+            // INT_NULL == Integer.MIN_VALUE, so any short max is greater than an unset cell.
+            final int batchMax = Vect.maxShort(dataAddr, rowCount);
+            final int existing = mapValue.getInt(valueIndex);
+            if (batchMax > existing) {
+                mapValue.putInt(valueIndex, batchMax);
             }
         }
     }
 
     @Override
     public void computeFirst(MapValue mapValue, Record record, long rowId) {
-        mapValue.putLong(valueIndex, arg.getLong(record));
+        mapValue.putInt(valueIndex, arg.getShort(record));
     }
 
     @Override
@@ -84,38 +78,33 @@ public class MinTimestampGroupByFunction extends TimestampFunction implements Gr
             long rowCount,
             long baseRowId
     ) {
+        // INT_NULL == Integer.MIN_VALUE, so Math.max handles every INT_NULL combination naturally.
         final long valueColumnOffset = mapValue.getOffset(valueIndex);
-        // Fast path: arg is a direct timestamp column with data on the current frame.
+        // Fast path: arg is a direct short column with data on the current frame.
         // Zero page address means a column top; fall through to the record-based path.
         final long argAddr = argColumnIndex >= 0 ? record.getPageAddress(argColumnIndex) : 0;
         if (argAddr != 0) {
             for (long i = 0; i < rowCount; i++) {
                 final long encoded = Unsafe.getLong(batchAddr + (i << 3));
                 final long rowIndex = Map.decodeBatchRowIndex(encoded);
-                final long value = Unsafe.getLong(argAddr + (rowIndex << 3));
-                if (value != Numbers.LONG_NULL) {
-                    final long addr = baseValueAddr + Map.decodeBatchOffset(encoded) + valueColumnOffset;
-                    final long current = Unsafe.getLong(addr);
-                    Unsafe.putLong(addr, current != Numbers.LONG_NULL ? Math.min(current, value) : value);
-                }
+                final short value = Unsafe.getShort(argAddr + (rowIndex << 1));
+                final long addr = baseValueAddr + Map.decodeBatchOffset(encoded) + valueColumnOffset;
+                Unsafe.putInt(addr, Math.max(value, Unsafe.getInt(addr)));
             }
         } else {
             for (long i = 0; i < rowCount; i++) {
                 final long encoded = Unsafe.getLong(batchAddr + (i << 3));
                 record.setRowIndex(Map.decodeBatchRowIndex(encoded));
-                final long value = arg.getTimestamp(record);
-                if (value != Numbers.LONG_NULL) {
-                    final long addr = baseValueAddr + Map.decodeBatchOffset(encoded) + valueColumnOffset;
-                    final long current = Unsafe.getLong(addr);
-                    Unsafe.putLong(addr, current != Numbers.LONG_NULL ? Math.min(current, value) : value);
-                }
+                final short value = arg.getShort(record);
+                final long addr = baseValueAddr + Map.decodeBatchOffset(encoded) + valueColumnOffset;
+                Unsafe.putInt(addr, Math.max(value, Unsafe.getInt(addr)));
             }
         }
     }
 
     @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
-        mapValue.minLong(valueIndex, arg.getTimestamp(record));
+        mapValue.maxInt(valueIndex, arg.getShort(record));
     }
 
     @Override
@@ -124,13 +113,23 @@ public class MinTimestampGroupByFunction extends TimestampFunction implements Gr
     }
 
     @Override
-    public String getName() {
-        return isDesignated ? "min_designated" : "min";
+    public int getComputeBatchArgType() {
+        return ColumnType.SHORT;
     }
 
     @Override
-    public long getTimestamp(Record rec) {
-        return rec.getTimestamp(valueIndex);
+    public int getInt(Record rec) {
+        return rec.getInt(valueIndex);
+    }
+
+    @Override
+    public String getName() {
+        return "max";
+    }
+
+    @Override
+    public int getSampleByFlags() {
+        return GroupByFunction.SAMPLE_BY_FILL_ALL;
     }
 
     @Override
@@ -146,7 +145,7 @@ public class MinTimestampGroupByFunction extends TimestampFunction implements Gr
     @Override
     public void initValueTypes(ArrayColumnTypes columnTypes) {
         this.valueIndex = columnTypes.getColumnCount();
-        columnTypes.add(timestampType);
+        columnTypes.add(ColumnType.INT);
     }
 
     @Override
@@ -161,20 +160,21 @@ public class MinTimestampGroupByFunction extends TimestampFunction implements Gr
 
     @Override
     public void merge(MapValue destValue, MapValue srcValue) {
-        long srcMin = srcValue.getTimestamp(valueIndex);
-        long destMin = destValue.getTimestamp(valueIndex);
-        if (srcMin != Numbers.LONG_NULL && (srcMin < destMin || destMin == Numbers.LONG_NULL)) {
-            destValue.putTimestamp(valueIndex, srcMin);
+        int srcMax = srcValue.getInt(valueIndex);
+        int destMax = destValue.getInt(valueIndex);
+        if (srcMax > destMax) {
+            destValue.putInt(valueIndex, srcMax);
         }
     }
 
-    public void setDesignated(boolean isDesignated) {
-        this.isDesignated = isDesignated;
+    @Override
+    public void setInt(MapValue mapValue, int value) {
+        mapValue.putInt(valueIndex, value);
     }
 
     @Override
     public void setNull(MapValue mapValue) {
-        mapValue.putTimestamp(valueIndex, Numbers.LONG_NULL);
+        mapValue.putInt(valueIndex, Numbers.INT_NULL);
     }
 
     @Override

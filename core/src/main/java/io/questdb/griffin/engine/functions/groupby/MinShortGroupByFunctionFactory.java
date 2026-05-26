@@ -26,17 +26,17 @@ package io.questdb.griffin.engine.functions.groupby;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
-import org.jetbrains.annotations.NotNull;
+import io.questdb.std.Transient;
 
-public class RegressionInterceptFunctionFactory implements FunctionFactory {
+public class MinShortGroupByFunctionFactory implements FunctionFactory {
+
     @Override
     public String getSignature() {
-        return "regr_intercept(DD)";
+        return "min(E)";
     }
 
     @Override
@@ -45,35 +45,13 @@ public class RegressionInterceptFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return new RegressionInterceptFunction(args.getQuick(0), args.getQuick(1));
-    }
-
-    private static class RegressionInterceptFunction extends AbstractRegressionGroupByFunction {
-
-        public RegressionInterceptFunction(@NotNull Function arg0, @NotNull Function arg1) {
-            super(arg0, arg1);
-        }
-
-        @Override
-        public double getDouble(Record rec) {
-            long count = rec.getLong(valueIndex + 5);
-            if (count <= 0) {
-                return Double.NaN;
-            }
-            double sumX = rec.getDouble(valueIndex + 3);
-            if (sumX == 0) {
-                return Double.NaN;
-            }
-            double sumXY = rec.getDouble(valueIndex + 4);
-            double meanY = rec.getDouble(valueIndex);
-            double meanX = rec.getDouble(valueIndex + 2);
-            return meanY - meanX * (sumXY / sumX);
-        }
-
-        @Override
-        public String getName() {
-            return "regr_intercept";
-        }
+    public Function newInstance(
+            int position,
+            @Transient ObjList<Function> args,
+            @Transient IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) {
+        return new MinShortGroupByFunction(args.getQuick(0));
     }
 }

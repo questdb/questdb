@@ -788,6 +788,7 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
             Socket socket = context.getSocket();
             if (socket != null) {
                 socket.shutdown(Net.SHUT_WR);
+                context.drainRecvBuffer();
             }
         } catch (Throwable ignored) {
         }
