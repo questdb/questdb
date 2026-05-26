@@ -732,10 +732,12 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                     // managed-zone buckets atomically while rows below the boundary stay
                     // put. Without REFRESH LIMIT there is no frozen zone, so the legacy
                     // wipe-then-reinsert is safe and avoids leaving orphan managed-zone
-                    // buckets when base data has gone missing. Users who want to discard
-                    // the frozen-zone backfill on a view with REFRESH LIMIT set should
-                    // DROP and recreate the view.
-                    if (viewDefinition.getRefreshLimitHoursOrMonths() == 0) {
+                    // buckets when base data has gone missing. The escape-hatch config
+                    // also forces the legacy truncate so the whole frozen-zone feature
+                    // reverts together. Users who want to discard the frozen-zone backfill
+                    // on a view with REFRESH LIMIT set should DROP and recreate the view.
+                    if (viewDefinition.getRefreshLimitHoursOrMonths() == 0
+                            || configuration.isMatViewRefreshLimitWallClockEnabled()) {
                         walWriter.truncateSoft();
                     }
                     resetInvalidState(viewState, walWriter);

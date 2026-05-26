@@ -1873,7 +1873,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     private void checkMatViewInsertOrCopyModification(ExecutionModel executionModel) throws SqlException {
         final CharSequence name = executionModel.getTableName();
         final TableToken tableToken = engine.getTableTokenIfExists(name);
-        if (tableToken != null && tableToken.isMatView() && !engine.canBackfillMatView(tableToken)) {
+        if (tableToken != null && tableToken.isMatView() && !engine.isBackfillableMatView(tableToken)) {
             throw SqlException.position(executionModel.getTableNameExpr().position).put("cannot modify materialized view [view=").put(name).put(']');
         }
     }
@@ -2085,10 +2085,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                         // Warn when the new limit removes or shrinks the managed zone (boundary
                         // shifts further into the past). Previously-managed buckets now turn
                         // frozen and stop being refreshed -- their last-computed values stay
-                        // put, which may surprise the user who assumed continuing refresh.
-                        // Removal (limitHoursOrMonths == 0) is the same warning + the FULL/FULL
-                        // FORCE distinction collapses (no frozen zone means plain FULL also
-                        // wipes).
+                        // put, which may surprise users who assumed continuing refresh.
+                        // Removal (limitHoursOrMonths == 0) is the same warning plus the loss
+                        // of the frozen-zone semantics altogether (plain FULL reverts to
+                        // wipe-and-reinsert because there is no frozen zone left to preserve).
                         final MatViewDefinition existing = engine.getMatViewGraph().getViewDefinition(matViewToken);
                         if (existing != null) {
                             final int oldLimit = existing.getRefreshLimitHoursOrMonths();

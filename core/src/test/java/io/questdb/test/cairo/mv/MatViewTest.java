@@ -6882,6 +6882,29 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRefreshLimitWallClockEscapeHatchRejectsBackfill() throws Exception {
+        // With the escape-hatch on, isBackfillableMatView returns false even
+        // when REFRESH LIMIT is set -- the entry-point gate must reject INSERT
+        // with the legacy "cannot modify materialized view" error.
+        setProperty(PropertyKey.CAIRO_MAT_VIEW_REFRESH_LIMIT_WALL_CLOCK_ENABLED, "true");
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table base_price (" +
+                            "  sym symbol, price double, ts #TIMESTAMP" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            execute(
+                    "create materialized view price_1h refresh manual deferred as " +
+                            "select sym, last(price) as price, ts from base_price sample by 1h;"
+            );
+            execute("alter materialized view price_1h set refresh limit 1 hour;");
+            drainQueues();
+
+            assertCannotModifyMatView("insert into price_1h values('a', 1.0, '2024-09-10T09:00')");
+        });
+    }
+
+    @Test
     public void testMatViewBackfillCopyAcceptedWithRefreshLimit() throws Exception {
         // With REFRESH LIMIT set, the COPY entry-point gate (canBackfillMatView via
         // checkMatViewInsertOrCopyModification + CairoTextWriter) accepts COPY into

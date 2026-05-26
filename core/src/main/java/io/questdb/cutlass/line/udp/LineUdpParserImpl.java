@@ -313,7 +313,7 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
                                     .put(tableToken.getTableName())
                                     .put(']');
                         }
-                        if (tableToken != null && tableToken.isMatView() && !engine.canBackfillMatView(tableToken)) {
+                        if (tableToken != null && tableToken.isMatView() && !engine.isBackfillableMatView(tableToken)) {
                             throw CairoException.nonCritical()
                                     .put("cannot modify materialized view [view=")
                                     .put(tableToken.getTableName())

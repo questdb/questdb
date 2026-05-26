@@ -536,18 +536,24 @@ public class CairoEngine implements Closeable, WriterSource {
 
     /**
      * Shared backfill gate for mat views: returns {@code true} when {@code matViewToken}
-     * is a materialized view that has a non-zero {@code REFRESH LIMIT} set, which means
-     * direct user INSERT/COPY/ILP/QWP into it should be allowed in principle. Returns
-     * {@code false} for non-mat-views (caller's existing path applies) and for mat views
-     * without {@code REFRESH LIMIT} (caller rejects with its existing "cannot modify
-     * materialized view" error).
+     * is a materialized view that has a non-zero {@code REFRESH LIMIT} set and the
+     * frozen-zone feature is enabled (i.e. the wall-clock escape-hatch config is off).
+     * In that case direct user INSERT/COPY/ILP/QWP into it is allowed in principle.
+     * Returns {@code false} for non-mat-views (caller's existing path applies), for
+     * mat views without {@code REFRESH LIMIT} (caller rejects with its existing
+     * "cannot modify materialized view" error), and whenever the escape-hatch is on
+     * (the entire feature is meant to be off).
      * <p>
      * This is only the entry-point gate. Per-row bucket-whole enforcement happens later
      * at write/apply time using the boundary computed at commit time -- the compile-time
      * boundary cannot be trusted because the boundary keeps moving.
      */
-    public boolean canBackfillMatView(@NotNull TableToken matViewToken) {
+    public boolean isBackfillableMatView(@NotNull TableToken matViewToken) {
         if (!matViewToken.isMatView()) {
+            return false;
+        }
+        if (configuration.isMatViewRefreshLimitWallClockEnabled()) {
+            // Escape-hatch on: the whole frozen-zone feature is meant to be off.
             return false;
         }
         final MatViewState state = matViewStateStore.getViewState(matViewToken);

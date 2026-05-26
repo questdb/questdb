@@ -243,7 +243,7 @@ public class LineHttpTudCache implements QuietCloseable {
         if (tableToken != null && tableToken.isView()) {
             throw parseException.of("cannot modify view", tableToken.getTableName());
         }
-        if (tableToken != null && tableToken.isMatView() && !engine.canBackfillMatView(tableToken)) {
+        if (tableToken != null && tableToken.isMatView() && !engine.isBackfillableMatView(tableToken)) {
             throw parseException.of("cannot modify materialized view", tableToken.getTableName());
         }
         return tableToken;
