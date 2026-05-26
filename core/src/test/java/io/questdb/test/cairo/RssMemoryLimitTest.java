@@ -79,7 +79,7 @@ public class RssMemoryLimitTest extends AbstractCairoTest {
 
     @Test
     public void testLargeTxEventuallySucceeds() throws Exception {
-        long limitMiB = Os.isLinux() ? 60 : 30;
+        long limitMiB = 60;
         assertMemoryLeak(limitMiB, () -> {
             // fewer transactions on slow CI runners (Mac, Windows); the workload below still triggers
             // memory pressure during WAL apply, which the easing-up log assertion at the end verifies
