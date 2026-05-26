@@ -24,19 +24,16 @@
 
 package io.questdb.test.cutlass.qwp;
 
-import io.questdb.cairo.CairoEngine;
+import io.questdb.PropertyKey;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
 import io.questdb.network.NetworkError;
 import io.questdb.std.Chars;
-import io.questdb.std.Files;
-import io.questdb.std.Misc;
 import io.questdb.std.Os;
-import io.questdb.std.Unsafe;
-import io.questdb.std.str.Path;
+import io.questdb.std.Rnd;
 import io.questdb.test.AbstractBootstrapTest;
 import io.questdb.test.TestServerMain;
-import org.junit.After;
-import org.junit.AfterClass;
-import org.junit.Assert;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Before;
 import org.junit.BeforeClass;
 
@@ -46,98 +43,70 @@ import static io.questdb.PropertyKey.PG_ENABLED;
 
 /**
  * Base for QWP egress tests that drive the server only through the engine and the QWP WebSocket
- * endpoint. Such tests booted a fresh {@link TestServerMain} per test, which is dominated by
- * on-disk database creation plus the recursive root wipe in {@code tearDown} - several hundred
- * milliseconds per test. This base boots a single server once for the whole class and drops the
- * user tables between tests instead.
+ * endpoint. Each test boots its own {@link TestServerMain} inside an {@code assertMemoryLeak} +
+ * try-with-resources so per-test FD/native-memory checks apply and a failing test cannot poison
+ * the next one with leftover server state.
  * <p>
- * Trade-offs and how they are handled:
- * <ul>
- *     <li>The shared server skips the PGWire, ILP and HTTP-min listeners. Egress tests only use the
- *     HTTP/QWP WebSocket port, so dropping the rest cuts per-boot work and listener resources.</li>
- *     <li>The per-test memory/FD leak check is disabled, because a persistent server's FDs and
- *     native memory do not return to a per-test baseline (e.g. async WAL purge of dropped tables).
- *     Instead a single class-level check brackets the whole class: it snapshots FD/native memory
- *     before the server boots and asserts they return to that baseline after the server is freed.
- *     FD counts must return exactly - a long-lived reused server leaking descriptors is the real
- *     risk. Native memory is checked with a small tolerance, because the persistent worker threads
- *     retain a bounded amount of thread-local {@link Path} memory that a byte-exact check would
- *     flag; a genuine leak across dozens of tests would be far larger.</li>
- *     <li>A test that needs a differently configured server calls {@link #freeSharedServer()} and
- *     boots its own; {@link #setUp()} reboots the shared instance (resetting any state the test's
- *     own server left under the same root) before the next test.</li>
- * </ul>
+ * The base class only sets up the on-disk configuration and the per-class fragmentation chunk
+ * sizes used by {@link #startEgressServer()}; the dummy server config skips the PGWire, ILP and
+ * HTTP-min listeners that egress tests never touch. Tests that need a different config call
+ * {@link #startServerWithRetry(String...)} directly with their own env vars.
  */
 public abstract class AbstractReusedServerQwpEgressTest extends AbstractBootstrapTest {
 
-    private static final long NATIVE_MEM_TOLERANCE_BYTES = 256 * 1024;
-    protected static TestServerMain serverMain;
-    private static long cachedFdBaseline;
-    private static long fdBaseline;
-    private static long memBaseline;
+    private static final Log LOG = LogFactory.getLog(AbstractReusedServerQwpEgressTest.class);
+    protected static int recvChunk;
+    protected static int sendChunk;
 
     @BeforeClass
-    public static void setUpSharedServer() throws Exception {
-        // Egress tests only use the HTTP/QWP WebSocket port; skip the listeners they never touch.
-        createDummyConfiguration(
-                PG_ENABLED + "=false",
-                LINE_TCP_ENABLED + "=false",
-                HTTP_MIN_ENABLED + "=false"
-        );
-        dbPath.parent().$();
-        Path.clearThreadLocals();
-        fdBaseline = Files.getOpenFileCount();
-        cachedFdBaseline = Files.getOpenCachedFileCount();
-        memBaseline = Unsafe.getMemUsed();
-    }
-
-    @AfterClass
-    public static void tearDownSharedServer() {
-        serverMain = Misc.free(serverMain);
-        Path.clearThreadLocals();
-        Assert.assertEquals("leaked OS file descriptors across the class", fdBaseline, Files.getOpenFileCount());
-        Assert.assertEquals("leaked cached file descriptors across the class", cachedFdBaseline, Files.getOpenCachedFileCount());
-        final long memGrowth = Unsafe.getMemUsed() - memBaseline;
-        Assert.assertTrue("native memory grew by " + memGrowth + " bytes across the class", memGrowth < NATIVE_MEM_TOLERANCE_BYTES);
+    public static void setUpEgressConfiguration() {
+        // One fragmentation chunk pair per class - tests boot a fresh server each, but
+        // re-randomising inside every test would make the seed log noisy without adding
+        // coverage. Per-class variation still exercises the fragmentation paths across
+        // the suite, and the seed is logged for deterministic replay.
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        recvChunk = 1 + rnd.nextInt(500);
+        sendChunk = 1 + rnd.nextInt(500);
     }
 
     @Override
     @Before
     public void setUp() {
         super.setUp();
-        if (serverMain != null) {
-            return;
-        }
-        // First test, or a previous test closed the shared server to run against its own instance.
-        // Boot a fresh default-config server, then drop any tables that closed instance may have
-        // left under the same root.
-        serverMain = startServerWithRetry();
-        resetState();
-    }
-
-    @Override
-    @After
-    public void tearDown() {
-        // Drop the test's tables instead of tearing the server down (the server is freed in
-        // @AfterClass, and the root must stay around while it holds it open).
-        if (serverMain != null) {
-            resetState();
+        // AbstractTest.tearDown() wipes the root between tests, so the conf/ directory
+        // written by createDummyConfiguration() goes with it. Re-create it here so each
+        // test's freshly booted server reads our port + listener overrides instead of
+        // falling back to default ports.
+        try {
+            // Egress tests only use the HTTP/QWP WebSocket port; skip the listeners they never touch.
+            createDummyConfiguration(
+                    PG_ENABLED + "=false",
+                    LINE_TCP_ENABLED + "=false",
+                    HTTP_MIN_ENABLED + "=false"
+            );
+        } catch (Exception e) {
+            throw new AssertionError(e);
         }
     }
 
     /**
-     * Frees the shared server so a single test can boot its own differently configured instance on
-     * the same ports. {@link #setUp()} reboots the shared instance before the next test.
+     * Convenience: boot a server with the per-class fragmentation chunk sizes. Most egress tests
+     * use this; tests that need extra env vars call {@link #startServerWithRetry(String...)}
+     * directly.
      */
-    protected static void freeSharedServer() {
-        serverMain = Misc.free(serverMain);
+    protected static TestServerMain startEgressServer() {
+        return startServerWithRetry(
+                PropertyKey.DEBUG_HTTP_FORCE_RECV_FRAGMENTATION_CHUNK_SIZE.getEnvVarName(),
+                Integer.toString(recvChunk),
+                PropertyKey.DEBUG_HTTP_FORCE_SEND_FRAGMENTATION_CHUNK_SIZE.getEnvVarName(),
+                Integer.toString(sendChunk)
+        );
     }
 
     /**
      * Boots a server, retrying on a bind failure. These tests use fixed ports, and closing a server
      * does not release its listening port instantly, so a server booting right after another on the
-     * same ports closed (across a class boundary, or after {@link #freeSharedServer()}) can hit
-     * EADDRINUSE. Back off and retry until the port frees.
+     * same ports closed can hit EADDRINUSE. Back off and retry until the port frees.
      */
     protected static TestServerMain startServerWithRetry(String... envs) {
         NetworkError lastError = null;
@@ -155,13 +124,5 @@ public abstract class AbstractReusedServerQwpEgressTest extends AbstractBootstra
             }
         }
         throw lastError;
-    }
-
-    protected void resetState() {
-        serverMain.execute("DROP ALL TABLES");
-        final CairoEngine engine = serverMain.getEngine();
-        engine.releaseInactive();
-        // Apply the enqueued WAL drops so the table names are free for the next test's CREATE.
-        drainWalQueue(engine);
     }
 }
