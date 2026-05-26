@@ -22,9 +22,10 @@
  *
  ******************************************************************************/
 
-package io.questdb.test.griffin.engine.window;
+package io.questdb.test.cairo.fuzz;
 
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.griffin.engine.window.StreamingLeadEquivalence;
 import org.junit.Test;
 
 import java.util.Random;

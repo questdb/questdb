@@ -39,7 +39,7 @@ import java.util.Arrays;
  * both flag states, and asserts the resulting row multisets are identical (sorted, because
  * streaming emits partition-major while cached emits scan-order).
  */
-final class StreamingLeadEquivalence {
+public final class StreamingLeadEquivalence {
 
     private StreamingLeadEquivalence() {
     }
@@ -49,7 +49,7 @@ final class StreamingLeadEquivalence {
      * the header line matches verbatim and the data rows match as a sorted multiset. Caller is
      * responsible for setting up the table state before invoking.
      */
-    static void assertEquivalent(CairoEngine engine, SqlExecutionContext ctx, String sql, String contextMsg) throws Exception {
+    public static void assertEquivalent(CairoEngine engine, SqlExecutionContext ctx, String sql, String contextMsg) throws Exception {
         AbstractCairoTest.staticOverrides.setProperty(PropertyKey.CAIRO_SQL_WINDOW_STREAMING_LEAD_ENABLED, "false");
         StringSink cachedSink = new StringSink();
         engine.print(sql, cachedSink, ctx);
