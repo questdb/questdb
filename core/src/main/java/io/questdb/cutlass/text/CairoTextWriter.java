@@ -409,7 +409,7 @@ public class CairoTextWriter implements Closeable, Mutable {
                             .put(tableToken.getTableName())
                             .put(']');
                 }
-                if (tableToken != null && tableToken.isMatView()) {
+                if (tableToken != null && tableToken.isMatView() && !engine.canBackfillMatView(tableToken)) {
                     throw CairoException.nonCritical()
                             .put("cannot modify materialized view [view=")
                             .put(tableToken.getTableName())

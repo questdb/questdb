@@ -534,6 +534,30 @@ public class CairoEngine implements Closeable, WriterSource {
         }
     }
 
+    /**
+     * Shared backfill gate for mat views: returns {@code true} when {@code matViewToken}
+     * is a materialized view that has a non-zero {@code REFRESH LIMIT} set, which means
+     * direct user INSERT/COPY/ILP/QWP into it should be allowed in principle. Returns
+     * {@code false} for non-mat-views (caller's existing path applies) and for mat views
+     * without {@code REFRESH LIMIT} (caller rejects with its existing "cannot modify
+     * materialized view" error).
+     * <p>
+     * This is only the entry-point gate. Per-row bucket-whole enforcement happens later
+     * at write/apply time using the boundary computed at commit time -- the compile-time
+     * boundary cannot be trusted because the boundary keeps moving.
+     */
+    public boolean canBackfillMatView(@NotNull TableToken matViewToken) {
+        if (!matViewToken.isMatView()) {
+            return false;
+        }
+        final MatViewState state = matViewStateStore.getViewState(matViewToken);
+        if (state == null) {
+            return false;
+        }
+        final MatViewDefinition def = state.getViewDefinition();
+        return def != null && def.getRefreshLimitHoursOrMonths() != 0;
+    }
+
     public void checkpointCreate(SqlExecutionCircuitBreaker circuitBreaker, boolean isIncrementalBackup) throws SqlException {
         checkpointAgent.checkpointCreate(circuitBreaker, false, isIncrementalBackup);
     }

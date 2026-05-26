@@ -1852,6 +1852,20 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
     }
 
+    /**
+     * INSERT/COPY-only variant of {@link #checkMatViewModification(ExecutionModel)} that
+     * also accepts the model when the mat view has {@code REFRESH LIMIT} set, allowing
+     * the row to be backfilled into the frozen zone. ALTER/RENAME/UPDATE/TRUNCATE/VACUUM
+     * still go through the strict {@link #checkMatViewModification} variants.
+     */
+    private void checkMatViewInsertOrCopyModification(ExecutionModel executionModel) throws SqlException {
+        final CharSequence name = executionModel.getTableName();
+        final TableToken tableToken = engine.getTableTokenIfExists(name);
+        if (tableToken != null && tableToken.isMatView() && !engine.canBackfillMatView(tableToken)) {
+            throw SqlException.position(executionModel.getTableNameExpr().position).put("cannot modify materialized view [view=").put(name).put(']');
+        }
+    }
+
     private void checkViewModification(ExecutionModel executionModel) throws SqlException {
         final CharSequence name = executionModel.getTableName();
         final TableToken tableToken = engine.getTableTokenIfExists(name);
@@ -3784,7 +3798,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                         assert executionModel.getModelType() == ExecutionModel.COPY;
                         if (((ExportModel) executionModel).getType() == COPY_TYPE_FROM) {
                             checkViewModification(executionModel);
-                            checkMatViewModification(executionModel);
+                            checkMatViewInsertOrCopyModification(executionModel);
                         }
                     }
                     copy(executionContext, (ExportModel) executionModel);
@@ -3834,7 +3848,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     break;
                 default:
                     checkViewModification(executionModel);
-                    checkMatViewModification(executionModel);
+                    checkMatViewInsertOrCopyModification(executionModel);
                     final InsertModel insertModel = (InsertModel) executionModel;
                     // we use SQL Compiler state (reusing objects) to generate InsertOperation
                     if (insertModel.getQueryModel() != null) {

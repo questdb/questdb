@@ -493,7 +493,7 @@ public class LineTcpMeasurementScheduler implements Closeable {
                                     .put(tableToken.getTableName())
                                     .put(']');
                         }
-                        if (tableToken.isMatView()) {
+                        if (tableToken.isMatView() && !engine.canBackfillMatView(tableToken)) {
                             throw CairoException.nonCritical()
                                     .put("cannot modify materialized view [view=")
                                     .put(tableToken.getTableName())

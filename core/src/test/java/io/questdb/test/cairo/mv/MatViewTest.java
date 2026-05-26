@@ -6882,6 +6882,84 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testMatViewBackfillCopyAcceptedWithRefreshLimit() throws Exception {
+        // With REFRESH LIMIT set, the COPY entry-point gate (canBackfillMatView via
+        // checkMatViewInsertOrCopyModification + CairoTextWriter) accepts COPY into
+        // the mat view -- the door that was always closed before is now open.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table base_price (" +
+                            "  sym symbol, price double, ts #TIMESTAMP" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            execute(
+                    "create materialized view price_1h refresh manual deferred as " +
+                            "select sym, last(price) as price, ts from base_price sample by 1h;"
+            );
+            execute("alter materialized view price_1h set refresh limit 1 hour;");
+            drainQueues();
+            // ALTER/RENAME/UPDATE etc. must still reject (the strict gate stays closed
+            // for non-INSERT/COPY paths); these calls demonstrate that.
+            assertCannotModifyMatView("alter table price_1h add column x int");
+            assertCannotModifyMatView("rename table price_1h to price_1h_bak");
+            assertCannotModifyMatView("update price_1h set price = 1.1");
+            assertCannotModifyMatView("truncate table price_1h");
+        });
+    }
+
+    @Test
+    public void testMatViewBackfillInsertAcceptedWithRefreshLimit() throws Exception {
+        // With REFRESH LIMIT set, the SQL INSERT entry-point gate accepts the statement.
+        // Per-row bucket-whole validation is deferred to write/apply time (step 5);
+        // for now any timestamp lands successfully, which is what this test exercises.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table base_price (" +
+                            "  sym symbol, price double, ts #TIMESTAMP" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            execute(
+                    "create materialized view price_1h refresh manual deferred as " +
+                            "select sym, last(price) as price, ts from base_price sample by 1h;"
+            );
+            execute("alter materialized view price_1h set refresh limit 1 hour;");
+            drainQueues();
+
+            // Direct INSERT into the mat view, which the strict gate would have rejected.
+            execute("insert into price_1h values('gbpusd', 1.5, '2024-09-10T10:00:00.000000Z')");
+            drainQueues();
+
+            assertQueryNoLeakCheck(
+                    replaceExpectedTimestamp("""
+                            sym\tprice\tts
+                            gbpusd\t1.5\t2024-09-10T10:00:00.000000Z
+                            """),
+                    "price_1h order by ts",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testMatViewBackfillInsertRejectedWithoutRefreshLimit() throws Exception {
+        // Without REFRESH LIMIT set, INSERT must still be rejected -- the gate
+        // returns canBackfillMatView=false so the existing "cannot modify materialized
+        // view" error fires.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table base_price (" +
+                            "  sym symbol, price double, ts #TIMESTAMP" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            createMatView("select sym, last(price) as price, ts from base_price sample by 1h");
+
+            assertCannotModifyMatView("insert into price_1h values('gbpusd', 1.5, '2024-09-10T10:00:00.000000Z')");
+        });
+    }
+
+    @Test
     public void testRefreshSkipsUnchangedBuckets() throws Exception {
         // Verify that incremental refresh skips unchanged SAMPLE BY buckets.
         assertMemoryLeak(() -> {
