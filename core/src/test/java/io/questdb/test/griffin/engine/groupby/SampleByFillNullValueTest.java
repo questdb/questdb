@@ -6,30 +6,9 @@
 package io.questdb.test.griffin.engine.groupby;
 
 import io.questdb.PropertyKey;
-import io.questdb.cairo.CairoException;
-import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
-import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.griffin.DefaultSqlExecutionCircuitBreakerConfiguration;
-import io.questdb.griffin.SqlException;
-import io.questdb.griffin.SqlExecutionContextImpl;
-import io.questdb.mp.WorkerPool;
-import io.questdb.std.BinarySequence;
-import io.questdb.std.Chars;
-import io.questdb.std.MemoryTag;
-import io.questdb.std.Misc;
-import io.questdb.std.Numbers;
-import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.test.AbstractCairoTest;
-import io.questdb.test.tools.TestUtils;
-import org.jetbrains.annotations.NotNull;
-import org.junit.Assert;
 import org.junit.Test;
-
-import java.util.concurrent.atomic.AtomicLong;
-
-import static org.junit.Assert.fail;
 
 /**
  * Keyed FILL tests in this class assert exact row order within each bucket
@@ -1997,16 +1976,20 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
                     ('2024-01-01T00:00:00.000000Z', 'a', 5),
                     ('2024-01-01T03:00:00.000000Z', 'a', 7)
                     """);
-            final String expectedNonKeyed = "ts\ttotal\n" +
-                    "2024-01-01T00:00:00.000000Z\t50\n" +
-                    "2024-01-01T01:00:00.000000Z\t42\n" +
-                    "2024-01-01T02:00:00.000000Z\t42\n" +
-                    "2024-01-01T03:00:00.000000Z\t70\n";
-            final String expectedKeyed = "ts\tk\ttotal\n" +
-                    "2024-01-01T00:00:00.000000Z\ta\t50\n" +
-                    "2024-01-01T01:00:00.000000Z\ta\t42\n" +
-                    "2024-01-01T02:00:00.000000Z\ta\t42\n" +
-                    "2024-01-01T03:00:00.000000Z\ta\t70\n";
+            final String expectedNonKeyed = """
+                    ts\ttotal
+                    2024-01-01T00:00:00.000000Z\t50
+                    2024-01-01T01:00:00.000000Z\t42
+                    2024-01-01T02:00:00.000000Z\t42
+                    2024-01-01T03:00:00.000000Z\t70
+                    """;
+            final String expectedKeyed = """
+                    ts\tk\ttotal
+                    2024-01-01T00:00:00.000000Z\ta\t50
+                    2024-01-01T01:00:00.000000Z\ta\t42
+                    2024-01-01T02:00:00.000000Z\ta\t42
+                    2024-01-01T03:00:00.000000Z\ta\t70
+                    """;
 
             assertQueryNoLeakCheck(
                     expectedNonKeyed,
@@ -2161,14 +2144,18 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
                     ('2024-01-01T00:00:00.000000Z', 'a', 5),
                     ('2024-01-01T02:00:00.000000Z', 'a', 7)
                     """);
-            final String expectedNonKeyed = "ts\ta\tb\n" +
-                    "2024-01-01T00:00:00.000000Z\t5\t5\n" +
-                    "2024-01-01T01:00:00.000000Z\t0\t42\n" +
-                    "2024-01-01T02:00:00.000000Z\t7\t7\n";
-            final String expectedKeyed = "ts\tk\ta\tb\n" +
-                    "2024-01-01T00:00:00.000000Z\ta\t5\t5\n" +
-                    "2024-01-01T01:00:00.000000Z\ta\t0\t42\n" +
-                    "2024-01-01T02:00:00.000000Z\ta\t7\t7\n";
+            final String expectedNonKeyed = """
+                    ts\ta\tb
+                    2024-01-01T00:00:00.000000Z\t5\t5
+                    2024-01-01T01:00:00.000000Z\t0\t42
+                    2024-01-01T02:00:00.000000Z\t7\t7
+                    """;
+            final String expectedKeyed = """
+                    ts\tk\ta\tb
+                    2024-01-01T00:00:00.000000Z\ta\t5\t5
+                    2024-01-01T01:00:00.000000Z\ta\t0\t42
+                    2024-01-01T02:00:00.000000Z\ta\t7\t7
+                    """;
 
             assertQueryNoLeakCheck(
                     expectedNonKeyed,

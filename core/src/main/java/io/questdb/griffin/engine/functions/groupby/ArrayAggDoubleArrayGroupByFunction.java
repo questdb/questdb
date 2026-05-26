@@ -25,7 +25,6 @@
 package io.questdb.griffin.engine.functions.groupby;
 
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.CairoException;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.arr.FlatArrayView;
 import io.questdb.cairo.map.MapValue;

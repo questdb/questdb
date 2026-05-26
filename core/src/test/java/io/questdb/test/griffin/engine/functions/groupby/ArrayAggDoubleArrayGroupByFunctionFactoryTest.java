@@ -390,9 +390,8 @@ public class ArrayAggDoubleArrayGroupByFunctionFactoryTest extends AbstractCairo
                             new SingleColumnType(ColumnType.LONG), 16, 0.8, 24);
                     FastGroupByAllocator allocator = new FastGroupByAllocator(1024, 1024 * 1024)
             ) {
-                ArrayAggDoubleArrayGroupByFunction fn = new ArrayAggDoubleArrayGroupByFunction(
-                        DoubleConstant.NULL, configuration);
-                try {
+                try (ArrayAggDoubleArrayGroupByFunction fn = new ArrayAggDoubleArrayGroupByFunction(
+                        DoubleConstant.NULL, configuration)) {
                     fn.initValueIndex(0);
                     fn.setAllocator(allocator);
 
@@ -405,7 +404,7 @@ public class ArrayAggDoubleArrayGroupByFunctionFactoryTest extends AbstractCairo
                     Unsafe.putInt(srcPtr + 4, srcCount);
                     for (int i = 0; i < srcCount; i++) {
                         long entry = srcPtr + headerSize + (long) i * entrySize;
-                        Unsafe.putLong(entry, (long) i);
+                        Unsafe.putLong(entry, i);
                         Unsafe.putDouble(entry + 8, 10.0 + i);
                     }
 
@@ -429,11 +428,9 @@ public class ArrayAggDoubleArrayGroupByFunctionFactoryTest extends AbstractCairo
                     Assert.assertEquals(srcCount, Unsafe.getInt(newDestPtr + 4));
                     for (int i = 0; i < srcCount; i++) {
                         long entry = newDestPtr + headerSize + (long) i * entrySize;
-                        Assert.assertEquals((long) i, Unsafe.getLong(entry));
+                        Assert.assertEquals(i, Unsafe.getLong(entry));
                         Assert.assertEquals(10.0 + i, Unsafe.getDouble(entry + 8), 0.0);
                     }
-                } finally {
-                    fn.close();
                 }
             }
         });

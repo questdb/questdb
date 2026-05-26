@@ -15694,7 +15694,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
     private static String sampleByPushdownPlan(String fill, String align) {
         boolean isFastPath = (fill.equals("null") || fill.equals("prev"))
                 && !"align to first observation".equals(align);
-        boolean isNoneFill = "".equals(fill) || "none".equals(fill);
+        boolean isNoneFill = fill.isEmpty() || "none".equals(fill);
         if (isFastPath) {
             return "Filter filter: (tstmp>=2022-12-01T00:00:00.000000000Z and 0<length(sym)*tstmp::long)\n" +
                     "    Sample By Fill\n" +
@@ -15732,7 +15732,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
         try (WorkerPool pool = new WorkerPool(() -> workerCount)) {
             assertMemoryLeak(() -> TestUtils.execute(
                     pool,
-                    (engine, compiler, sqlExecutionContext) -> {
+                    (engine, _, sqlExecutionContext) -> {
                         engine.execute(
                                 "create table x (d1 double, d2 double, s symbol index, kms long, k timestamp_ns) timestamp(k) partition by day;",
                                 sqlExecutionContext

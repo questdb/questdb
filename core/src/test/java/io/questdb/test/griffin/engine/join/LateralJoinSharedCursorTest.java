@@ -797,7 +797,8 @@ public class LateralJoinSharedCursorTest extends AbstractCairoTest {
                     ORDER BY o.category, sub.rate
                     """;
             try (final RecordCursorFactory factory = select(query)) {
-                for (int i = 1; i <= 5; i++) {
+                final int ROW_CNT = 5;
+                for (int i = 1; i <= ROW_CNT; i++) {
                     execute("INSERT INTO items VALUES ('A', " + i + ".0, '2024-01-01T0" + i + ":00:00.000000Z')");
                     final StringBuilder arr = new StringBuilder("[");
                     for (int j = 1; j <= i; j++) {
@@ -806,7 +807,7 @@ public class LateralJoinSharedCursorTest extends AbstractCairoTest {
                     }
                     arr.append(']');
                     final String expected;
-                    if (i >= 5) {
+                    if (i == ROW_CNT) {
                         expected = "category\tarr\trate\nA\t" + arr + "\t0.1\nA\t" + arr + "\t0.2\n";
                     } else {
                         expected = "category\tarr\trate\nA\t" + arr + "\t0.1\n";

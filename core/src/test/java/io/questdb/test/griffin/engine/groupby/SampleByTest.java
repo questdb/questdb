@@ -454,10 +454,12 @@ public class SampleByTest extends AbstractCairoTest {
                     ('2024-01-01T02:00:00', 'a', 3.0)
                     """);
             assertQueryNoLeakCheck(
-                    "ts\tgrp\tarr\ts\n" +
-                            "2024-01-01T00:00:00.000000Z\ta\t[1.0,2.0]\t3.0\n" +
-                            "2024-01-01T01:00:00.000000Z\ta\tnull\t0.0\n" +
-                            "2024-01-01T02:00:00.000000Z\ta\t[3.0]\t3.0\n",
+                    """
+                            ts\tgrp\tarr\ts
+                            2024-01-01T00:00:00.000000Z\ta\t[1.0,2.0]\t3.0
+                            2024-01-01T01:00:00.000000Z\ta\tnull\t0.0
+                            2024-01-01T02:00:00.000000Z\ta\t[3.0]\t3.0
+                            """,
                     "SELECT ts, grp, array_agg(val) arr, sum(val) s FROM tab "
                             + "SAMPLE BY 1h FILL(NULL, 0) ALIGN TO CALENDAR",
                     "ts",
@@ -484,11 +486,13 @@ public class SampleByTest extends AbstractCairoTest {
                     ('2024-01-01T03:00:00.000000Z', 30)
                     """);
             assertQueryNoLeakCheck(
-                    "ts\tvalue\n" +
-                            "2024-01-01T00:00:00.000000Z\t10\n" +
-                            "2024-01-01T01:00:00.000000Z\t0\n" +
-                            "2024-01-01T02:00:00.000000Z\t0\n" +
-                            "2024-01-01T03:00:00.000000Z\t30\n",
+                    """
+                            ts\tvalue
+                            2024-01-01T00:00:00.000000Z\t10
+                            2024-01-01T01:00:00.000000Z\t0
+                            2024-01-01T02:00:00.000000Z\t0
+                            2024-01-01T03:00:00.000000Z\t30
+                            """,
                     "SELECT ts, sum(val) value FROM tab SAMPLE BY 1h FILL(0)",
                     "ts",
                     false,
@@ -546,8 +550,10 @@ public class SampleByTest extends AbstractCairoTest {
                     ('a', ARRAY[1.0, 2.0])
                     """);
             assertQueryNoLeakCheck(
-                    "grp\tlast\n" +
-                            "a\t[1.0,2.0]\n",
+                    """
+                            grp\tlast
+                            a\t[1.0,2.0]
+                            """,
                     "SELECT a.grp, last(b.arr) " +
                             "FROM (SELECT ts, grp, sum(val) sumval FROM tabA SAMPLE BY 1h FILL(0)) a " +
                             "JOIN tabB b ON a.grp = b.grp",
@@ -17636,18 +17642,20 @@ public class SampleByTest extends AbstractCairoTest {
             execute("INSERT INTO t_fv_no_fill VALUES (10::SHORT, '2024-01-01T00:00:00.000000Z'), (20::SHORT, '2024-01-01T03:00:00.000000Z')");
             assertPlanNoLeakCheck(
                     "SELECT sum(c - 1000) AS s, ts FROM t_fv_no_fill SAMPLE BY 1h ALIGN TO CALENDAR",
-                    "Encode sort light\n" +
-                            "  keys: [ts]\n" +
-                            "    VirtualRecord\n" +
-                            "      functions: [sum-COUNT*1000,ts]\n" +
-                            "        Async Group By workers: 1\n" +
-                            "          keys: [ts]\n" +
-                            "          keyFunctions: [timestamp_floor_utc('1h',ts)]\n" +
-                            "          values: [sum(c),count(*)]\n" +
-                            "          filter: null\n" +
-                            "            PageFrame\n" +
-                            "                Row forward scan\n" +
-                            "                Frame forward scan on: t_fv_no_fill\n"
+                    """
+                            Encode sort light
+                              keys: [ts]
+                                VirtualRecord
+                                  functions: [sum-COUNT*1000,ts]
+                                    Async Group By workers: 1
+                                      keys: [ts]
+                                      keyFunctions: [timestamp_floor_utc('1h',ts)]
+                                      values: [sum(c),count(*)]
+                                      filter: null
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: t_fv_no_fill
+                            """
             );
         });
     }
@@ -18288,7 +18296,7 @@ public class SampleByTest extends AbstractCairoTest {
         // takes a different code path through the old Sample By node.
         boolean isFastPath = (fill.equals("null") || fill.equals("prev"))
                 && !"align to first observation".equals(align);
-        boolean isNoneFill = "".equals(fill) || "none".equals(fill);
+        boolean isNoneFill = fill.isEmpty() || "none".equals(fill);
         if (isFastPath) {
             return "Filter filter: (tstmp>=2022-12-01T00:00:00.000000Z and 0<length(sym)*tstmp::long)\n" +
                     "    Sample By Fill\n" +

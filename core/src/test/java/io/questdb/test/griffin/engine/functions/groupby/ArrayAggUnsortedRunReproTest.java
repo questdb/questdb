@@ -85,7 +85,7 @@ public class ArrayAggUnsortedRunReproTest extends AbstractCairoTest {
 
         assertMemoryLeak(() -> {
             try (WorkerPool pool = new WorkerPool(() -> 2)) {
-                TestUtils.execute(pool, (engine, compiler, sqlExecutionContext) -> {
+                TestUtils.execute(pool, (engine, _, sqlExecutionContext) -> {
                     engine.execute(
                             "CREATE TABLE tab (val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR",
                             sqlExecutionContext
