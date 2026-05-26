@@ -29,7 +29,6 @@ import io.questdb.client.cutlass.qwp.client.QwpColumnBatchHandler;
 import io.questdb.client.cutlass.qwp.client.QwpQueryClient;
 import io.questdb.client.std.str.DirectUtf8Sequence;
 import io.questdb.cutlass.qwp.server.egress.QwpEgressUpgradeProcessor;
-import io.questdb.test.AbstractBootstrapTest;
 import io.questdb.test.TestServerMain;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -51,7 +50,7 @@ import org.junit.Test;
  *   <li>fresh connection gets a fresh dict (server state isolation).</li>
  * </ul>
  */
-public class QwpEgressSymbolEdgeCaseTest extends AbstractBootstrapTest {
+public class QwpEgressSymbolEdgeCaseTest extends AbstractQwpBootstrapTest {
 
     /**
      * Row count sized off the live server cap so the test reliably spans
@@ -75,7 +74,7 @@ public class QwpEgressSymbolEdgeCaseTest extends AbstractBootstrapTest {
         // Catches off-by-one errors in the "SYMBOL column with empty dict"
         // path and any accidental attempt to index into an empty dict.
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables()) {
+            try (final TestServerMain serverMain = startFragmented()) {
                 serverMain.execute("CREATE TABLE allnull(s SYMBOL, ts TIMESTAMP) "
                         + "TIMESTAMP(ts) PARTITION BY DAY WAL");
                 serverMain.execute("INSERT INTO allnull VALUES (NULL, 1::TIMESTAMP), (NULL, 2::TIMESTAMP), "
@@ -120,7 +119,7 @@ public class QwpEgressSymbolEdgeCaseTest extends AbstractBootstrapTest {
         // the client memcpys the same bytes into its connection dict heap.
         // Catches bugs in the surrogate-pair branch of either encoder.
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables()) {
+            try (final TestServerMain serverMain = startFragmented()) {
                 serverMain.execute("CREATE TABLE emojis(s SYMBOL, ts TIMESTAMP) "
                         + "TIMESTAMP(ts) PARTITION BY DAY WAL");
                 // Rocket: U+1F680 (0xF0 0x9F 0x9A 0x80), thumbs up: U+1F44D.
@@ -183,7 +182,7 @@ public class QwpEgressSymbolEdgeCaseTest extends AbstractBootstrapTest {
         // previous client's state was tied to the previous socket. Catches
         // leaks of connection dict state across connections.
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables()) {
+            try (final TestServerMain serverMain = startFragmented()) {
                 serverMain.execute("CREATE TABLE shared(s SYMBOL, ts TIMESTAMP) "
                         + "TIMESTAMP(ts) PARTITION BY DAY WAL");
                 serverMain.execute("INSERT INTO shared VALUES ('red', 1::TIMESTAMP), ('green', 2::TIMESTAMP), "
@@ -260,7 +259,7 @@ public class QwpEgressSymbolEdgeCaseTest extends AbstractBootstrapTest {
         // 200-char ASCII value fits in the initial 4 KiB heap but verifies
         // length varints can be > 1 byte when emitted.
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables()) {
+            try (final TestServerMain serverMain = startFragmented()) {
                 serverMain.execute("CREATE TABLE longsym(s SYMBOL, ts TIMESTAMP) "
                         + "TIMESTAMP(ts) PARTITION BY DAY WAL");
                 // 200 chars 'x' repeated -- distinct from any tiny test value.
@@ -320,7 +319,7 @@ public class QwpEgressSymbolEdgeCaseTest extends AbstractBootstrapTest {
         // where the schema-reference branch accidentally skips or corrupts
         // the delta section read.
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables()) {
+            try (final TestServerMain serverMain = startFragmented()) {
                 serverMain.execute("CREATE TABLE multi(s SYMBOL, x LONG, ts TIMESTAMP) "
                         + "TIMESTAMP(ts) PARTITION BY DAY WAL");
                 // 4 unique symbols cycling; all unique values appear in batch 1,
@@ -388,7 +387,7 @@ public class QwpEgressSymbolEdgeCaseTest extends AbstractBootstrapTest {
         // many varint ids get emitted. Off-by-one in the null bitmap OR in the
         // nonNullCount-based emit loop would produce garbage here.
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables()) {
+            try (final TestServerMain serverMain = startFragmented()) {
                 serverMain.execute("CREATE TABLE mix(s SYMBOL, ts TIMESTAMP) "
                         + "TIMESTAMP(ts) PARTITION BY DAY WAL");
                 serverMain.execute(String.format("""
@@ -452,7 +451,7 @@ public class QwpEgressSymbolEdgeCaseTest extends AbstractBootstrapTest {
         // one entry. Per-row payload is 1000 varint ids all encoding 0 (one
         // byte each). Verifies the tiniest-dict case still works end-to-end.
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables()) {
+            try (final TestServerMain serverMain = startFragmented()) {
                 serverMain.execute("CREATE TABLE uniq(s SYMBOL, ts TIMESTAMP) "
                         + "TIMESTAMP(ts) PARTITION BY DAY WAL");
                 serverMain.execute("INSERT INTO uniq SELECT 'only', x::TIMESTAMP FROM long_sequence(1000)");
@@ -499,7 +498,7 @@ public class QwpEgressSymbolEdgeCaseTest extends AbstractBootstrapTest {
         // encodeUtf8's continuation-byte branches on the server and
         // stringFromUtf8 on the client.
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables()) {
+            try (final TestServerMain serverMain = startFragmented()) {
                 serverMain.execute("CREATE TABLE uni(s SYMBOL, ts TIMESTAMP) "
                         + "TIMESTAMP(ts) PARTITION BY DAY WAL");
                 // café (5 bytes: c a f 0xC3 0xA9), 中文 (6 bytes).
@@ -542,4 +541,5 @@ public class QwpEgressSymbolEdgeCaseTest extends AbstractBootstrapTest {
             }
         });
     }
+
 }

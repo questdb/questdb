@@ -27,7 +27,6 @@ package io.questdb.test.cutlass.qwp;
 import io.questdb.client.cutlass.qwp.client.QwpColumnBatch;
 import io.questdb.client.cutlass.qwp.client.QwpColumnBatchHandler;
 import io.questdb.client.cutlass.qwp.client.QwpQueryClient;
-import io.questdb.test.AbstractBootstrapTest;
 import io.questdb.test.TestServerMain;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -43,7 +42,7 @@ import java.util.concurrent.atomic.AtomicReference;
  * {@code execute()} calls short-circuit via {@code handler.onError} without
  * submitting the query to the now-broken connection.
  */
-public class QwpQueryClientTerminalFailureTest extends AbstractBootstrapTest {
+public class QwpQueryClientTerminalFailureTest extends AbstractQwpBootstrapTest {
 
     @Before
     public void setUp() {
@@ -55,7 +54,7 @@ public class QwpQueryClientTerminalFailureTest extends AbstractBootstrapTest {
     @Test
     public void testExecuteShortCircuitsAfterTerminalFailure() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (TestServerMain serverMain = startWithEnvVariables()) {
+            try (TestServerMain serverMain = startFragmented()) {
                 serverMain.execute("CREATE TABLE t(id LONG, ts TIMESTAMP) "
                         + "TIMESTAMP(ts) PARTITION BY DAY WAL");
                 serverMain.execute("INSERT INTO t SELECT x, x::TIMESTAMP FROM long_sequence(8)");
@@ -147,7 +146,7 @@ public class QwpQueryClientTerminalFailureTest extends AbstractBootstrapTest {
     @Test
     public void testFailoverCeilingHitSurfacesExplicitMessage() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (TestServerMain serverMain = startWithEnvVariables()) {
+            try (TestServerMain serverMain = startFragmented()) {
                 serverMain.execute("CREATE TABLE t2(id LONG, ts TIMESTAMP) "
                         + "TIMESTAMP(ts) PARTITION BY DAY WAL");
                 serverMain.execute("INSERT INTO t2 SELECT x, x::TIMESTAMP FROM long_sequence(1)");
@@ -194,7 +193,7 @@ public class QwpQueryClientTerminalFailureTest extends AbstractBootstrapTest {
     @Test
     public void testRecordTerminalFailureKeepsFirstFailure() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (TestServerMain ignored = startWithEnvVariables()) {
+            try (TestServerMain ignored = startFragmented()) {
                 try (QwpQueryClient client = QwpQueryClient.fromConfig(
                         "ws::addr=127.0.0.1:" + HTTP_PORT + ";failover=off;")) {
                     client.connect();

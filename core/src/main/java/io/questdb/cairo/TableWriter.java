@@ -5924,6 +5924,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private void enforceTtl(long wallClockMicros) {
+        final int ttl = metadata.getTtlHoursOrMonths();
+        if (ttl == 0) {
+            return;
+        }
+
         if (metadata.getPartitionBy() == PartitionBy.NONE) {
             LOG.error().$("TTL set on a non-partitioned table. Ignoring").$();
             return;
@@ -5931,11 +5936,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         if (getPartitionCount() < 2) {
             // there is only a single partition, which is the active one
-            return;
-        }
-
-        final int ttl = metadata.getTtlHoursOrMonths();
-        if (ttl == 0) {
             return;
         }
 
@@ -6681,8 +6681,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         long rowId = Math.max(rowCount, columnTop);
                         final long addr = rowGroupBuffers.getChunkDataPtr(0);
                         final long size = rowGroupBuffers.getChunkDataSize(0);
-                        for (long p = addr, lim = addr + size; p < lim; p += 4, rowId++) {
-                            indexWriter.add(TableUtils.toIndexKey(Unsafe.getInt(p)), rowId);
+                        if (size == 0) {
+                            BitmapIndexUtils.addNullEntries(indexWriter, rowId, rowCount + rowGroupSize);
+                        } else {
+                            for (long p = addr, lim = addr + size; p < lim; p += 4, rowId++) {
+                                indexWriter.add(TableUtils.toIndexKey(Unsafe.getInt(p)), rowId);
+                            }
                         }
 
                         rowCount += rowGroupSize;

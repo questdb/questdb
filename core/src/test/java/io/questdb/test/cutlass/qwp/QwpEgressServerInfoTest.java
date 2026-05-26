@@ -29,7 +29,6 @@ import io.questdb.client.cutlass.qwp.client.QwpQueryClient;
 import io.questdb.client.cutlass.qwp.client.QwpRoleMismatchException;
 import io.questdb.client.cutlass.qwp.client.QwpServerInfo;
 import io.questdb.client.cutlass.qwp.protocol.QwpConstants;
-import io.questdb.test.AbstractBootstrapTest;
 import io.questdb.test.TestServerMain;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -43,7 +42,7 @@ import org.junit.Test;
  * the routing / failover contracts that don't need a multi-node deployment
  * (role matching, role-mismatch exception).
  */
-public class QwpEgressServerInfoTest extends AbstractBootstrapTest {
+public class QwpEgressServerInfoTest extends AbstractQwpBootstrapTest {
 
     @Before
     public void setUp() {
@@ -55,7 +54,7 @@ public class QwpEgressServerInfoTest extends AbstractBootstrapTest {
     @Test
     public void testNegotiatesVersion2() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (TestServerMain ignored = startWithEnvVariables()) {
+            try (TestServerMain ignored = startFragmented()) {
                 try (QwpQueryClient client = QwpQueryClient.newPlainText("127.0.0.1", HTTP_PORT)) {
                     client.connect();
                     Assert.assertEquals(
@@ -72,7 +71,7 @@ public class QwpEgressServerInfoTest extends AbstractBootstrapTest {
     @Test
     public void testOssServerReportsStandalone() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (TestServerMain ignored = startWithEnvVariables()) {
+            try (TestServerMain ignored = startFragmented()) {
                 try (QwpQueryClient client = QwpQueryClient.newPlainText("127.0.0.1", HTTP_PORT)) {
                     client.connect();
                     QwpServerInfo info = client.getServerInfo();
@@ -94,7 +93,7 @@ public class QwpEgressServerInfoTest extends AbstractBootstrapTest {
     @Test
     public void testTargetAnyAcceptsStandalone() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (TestServerMain ignored = startWithEnvVariables()) {
+            try (TestServerMain ignored = startFragmented()) {
                 String conf = "ws::addr=127.0.0.1:" + HTTP_PORT + ";target=any;";
                 try (QwpQueryClient client = QwpQueryClient.fromConfig(conf)) {
                     client.connect();
@@ -107,7 +106,7 @@ public class QwpEgressServerInfoTest extends AbstractBootstrapTest {
     @Test
     public void testTargetPrimaryAcceptsStandalone() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (TestServerMain ignored = startWithEnvVariables()) {
+            try (TestServerMain ignored = startFragmented()) {
                 // OSS standalone passes the primary filter so single-node deployments
                 // don't get excluded by client configs that default to target=primary.
                 String conf = "ws::addr=127.0.0.1:" + HTTP_PORT + ";target=primary;";
@@ -123,7 +122,7 @@ public class QwpEgressServerInfoTest extends AbstractBootstrapTest {
     @Test
     public void testTargetReplicaRejectsStandalone() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (TestServerMain ignored = startWithEnvVariables()) {
+            try (TestServerMain ignored = startFragmented()) {
                 String conf = "ws::addr=127.0.0.1:" + HTTP_PORT + ";target=replica;";
                 try (QwpQueryClient client = QwpQueryClient.fromConfig(conf)) {
                     try {
@@ -142,4 +141,5 @@ public class QwpEgressServerInfoTest extends AbstractBootstrapTest {
             }
         });
     }
+
 }

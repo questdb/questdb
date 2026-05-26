@@ -59,7 +59,7 @@ import org.junit.Test;
  *   <li>Compression interoperates with artificial network fragmentation.</li>
  * </ul>
  */
-public class QwpEgressCompressionTest extends AbstractBootstrapTest {
+public class QwpEgressCompressionTest extends AbstractQwpBootstrapTest {
 
     @Before
     public void setUp() {
@@ -223,7 +223,7 @@ public class QwpEgressCompressionTest extends AbstractBootstrapTest {
         TestUtils.assertMemoryLeak(() -> {
             createDummyConfiguration(
                     PropertyKey.QWP_EGRESS_COMPRESSION_FORCE_LEVEL.getPropertyPath() + "=3");
-            try (final TestServerMain serverMain = startWithEnvVariables()) {
+            try (final TestServerMain serverMain = startFragmented()) {
                 Assert.assertEquals(
                         "force-level property must surface on the engine's configuration",
                         3, serverMain.getEngine().getConfiguration().getQwpEgressForcedZstdLevel());
@@ -288,8 +288,8 @@ public class QwpEgressCompressionTest extends AbstractBootstrapTest {
         });
     }
 
-    private static TestServerMain startQuestDB() {
-        return AbstractBootstrapTest.startWithEnvVariables();
+    private TestServerMain startQuestDB() {
+        return startFragmented();
     }
 
     private void assertLongSum(QwpQueryClient client, String sql, int expectedRows, long expectedSum) {

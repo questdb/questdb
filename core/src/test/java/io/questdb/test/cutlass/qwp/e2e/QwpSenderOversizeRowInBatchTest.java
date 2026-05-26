@@ -31,7 +31,7 @@ import io.questdb.cutlass.http.DefaultHttpServerConfiguration;
 import io.questdb.cutlass.http.HttpFullFatServerConfiguration;
 import io.questdb.cutlass.http.HttpRequestHandlerFactory;
 import io.questdb.cutlass.http.HttpServer;
-import io.questdb.cutlass.qwp.server.QwpWebSocketHttpProcessor;
+import io.questdb.cutlass.qwp.server.QwpIngressHttpProcessor;
 import io.questdb.griffin.SqlException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -140,10 +140,10 @@ public class QwpSenderOversizeRowInBatchTest extends AbstractCairoTest {
                                     + " got: " + msg,
                             msg.contains("batch too large for server batch cap"));
                 }
-                drainWalQueue();
-                engine.releaseInactive();
             } finally {
                 server.stop();
+                drainWalQueue();
+                engine.releaseInactive();
             }
         });
     }
@@ -202,14 +202,10 @@ public class QwpSenderOversizeRowInBatchTest extends AbstractCairoTest {
                                     + " got: " + msg,
                             msg.contains("row too large for server batch cap"));
                 }
-                // The QWP processor on the sidecar may have acquired WAL
-                // writers to ingest the small row. Drain explicitly and
-                // release inactive pool entries so assertMemoryLeak
-                // doesn't see them as a leak.
-                drainWalQueue();
-                engine.releaseInactive();
             } finally {
                 server.stop();
+                drainWalQueue();
+                engine.releaseInactive();
             }
         });
     }
@@ -263,8 +259,8 @@ public class QwpSenderOversizeRowInBatchTest extends AbstractCairoTest {
                 }
 
                 @Override
-                public QwpWebSocketHttpProcessor newInstance() {
-                    return new QwpWebSocketHttpProcessor(engine, httpConfig);
+                public QwpIngressHttpProcessor newInstance() {
+                    return new QwpIngressHttpProcessor(engine, httpConfig);
                 }
             });
             // Intentionally skip setupWriterJobs: the test only exercises
