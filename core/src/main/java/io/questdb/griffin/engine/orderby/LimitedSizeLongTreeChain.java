@@ -80,6 +80,7 @@ public class LimitedSizeLongTreeChain extends AbstractRedBlackTree implements Re
     private final DirectIntList freeList;
     private final long initialValueHeapSize;
     private final long maxValueHeapSize;
+    private final String valueHeapConfigKey;
     // number of all values stored in tree (including repeating ones)
     private int currentValues = 0;
     // firstN - keep <first->N> set , otherwise keep <last-N->last> set
@@ -97,8 +98,15 @@ public class LimitedSizeLongTreeChain extends AbstractRedBlackTree implements Re
     private long valueHeapSize;
     private long valueHeapStart;
 
-    public LimitedSizeLongTreeChain(long keyPageSize, long maxKeyHeapBytes, long valuePageSize, long maxValueHeapBytes) {
-        super(keyPageSize, maxKeyHeapBytes);
+    public LimitedSizeLongTreeChain(
+            long keyPageSize,
+            long maxKeyHeapBytes,
+            long valuePageSize,
+            long maxValueHeapBytes,
+            String keyHeapConfigKey,
+            String valueHeapConfigKey
+    ) {
+        super(keyPageSize, maxKeyHeapBytes, keyHeapConfigKey);
         try {
             freeList = new DirectIntList(16, MemoryTag.NATIVE_TREE_CHAIN);
             chainFreeList = new DirectIntList(16, MemoryTag.NATIVE_TREE_CHAIN);
@@ -106,6 +114,7 @@ public class LimitedSizeLongTreeChain extends AbstractRedBlackTree implements Re
             valueHeapStart = valueHeapPos = Unsafe.malloc(valueHeapSize, MemoryTag.NATIVE_TREE_CHAIN);
             valueHeapLimit = valueHeapStart + valueHeapSize;
             maxValueHeapSize = Math.min(Math.max(maxValueHeapBytes, valuePageSize), MAX_VALUE_HEAP_SIZE_LIMIT);
+            this.valueHeapConfigKey = valueHeapConfigKey;
         } catch (Throwable th) {
             close();
             throw th;
@@ -351,7 +360,9 @@ public class LimitedSizeLongTreeChain extends AbstractRedBlackTree implements Re
         if (valueHeapPos + CHAIN_VALUE_SIZE > valueHeapLimit) {
             final long newHeapSize = valueHeapSize << 1;
             if (newHeapSize > maxValueHeapSize) {
-                throw LimitOverflowException.instance().put("limit of ").put(maxValueHeapSize).put(" memory exceeded in LimitedSizeLongTreeChain");
+                throw LimitOverflowException.instance()
+                        .put("limit of ").put(maxValueHeapSize)
+                        .put(" memory exceeded in LimitedSizeLongTreeChain (raise ").put(valueHeapConfigKey).put(" to increase)");
             }
             long newHeapPos = Unsafe.realloc(valueHeapStart, valueHeapSize, newHeapSize, MemoryTag.NATIVE_TREE_CHAIN);
 

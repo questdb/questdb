@@ -59,7 +59,9 @@ public class LimitedSizeLongTreeChainTest extends AbstractCairoTest {
                 configuration.getSqlSortKeyPageSize(),
                 configuration.getSqlSortKeyMaxBytes(),
                 configuration.getSqlSortLightValuePageSize(),
-                configuration.getSqlSortLightValueMaxBytes()
+                configuration.getSqlSortLightValueMaxBytes(),
+                "cairo.sql.sort.key.max.bytes",
+                "cairo.sql.sort.light.value.max.bytes"
         );
         chain.updateLimits(true, 20);
     }

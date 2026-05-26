@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.table;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ListColumnFilter;
 import io.questdb.cairo.Reopenable;
@@ -106,7 +107,9 @@ public class AsyncTopKAtom implements StatefulAtom, Reopenable, Plannable {
                     configuration.getSqlSortKeyPageSize(),
                     configuration.getSqlSortKeyMaxBytes(),
                     configuration.getSqlSortLightValuePageSize(),
-                    configuration.getSqlSortLightValueMaxBytes()
+                    configuration.getSqlSortLightValueMaxBytes(),
+                    PropertyKey.CAIRO_SQL_SORT_KEY_MAX_BYTES.getPropertyPath(),
+                    PropertyKey.CAIRO_SQL_SORT_LIGHT_VALUE_MAX_BYTES.getPropertyPath()
             );
             ownerChain.updateLimits(true, lo);
 
@@ -123,7 +126,9 @@ public class AsyncTopKAtom implements StatefulAtom, Reopenable, Plannable {
                         configuration.getSqlSortKeyPageSize(),
                         configuration.getSqlSortKeyMaxBytes(),
                         configuration.getSqlSortLightValuePageSize(),
-                        configuration.getSqlSortLightValueMaxBytes()
+                        configuration.getSqlSortLightValueMaxBytes(),
+                        PropertyKey.CAIRO_SQL_SORT_KEY_MAX_BYTES.getPropertyPath(),
+                        PropertyKey.CAIRO_SQL_SORT_LIGHT_VALUE_MAX_BYTES.getPropertyPath()
                 );
                 chain.updateLimits(true, lo);
                 perWorkerChains.extendAndSet(i, chain);

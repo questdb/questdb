@@ -53,6 +53,7 @@ public abstract class AbstractRedBlackTree implements Mutable, Reopenable {
     private static final long OFFSET_REF = 16;
     private static final long OFFSET_RIGHT = 8;
     private final long initialKeyHeapSize;
+    private final String keyHeapConfigKey;
     private final long maxKeyHeapSize;
     protected int root = -1;
     private long keyHeapLimit;
@@ -60,12 +61,13 @@ public abstract class AbstractRedBlackTree implements Mutable, Reopenable {
     private long keyHeapSize;
     private long keyHeapStart;
 
-    public AbstractRedBlackTree(long keyPageSize, long maxKeyHeapBytes) {
+    public AbstractRedBlackTree(long keyPageSize, long maxKeyHeapBytes, String keyHeapConfigKey) {
         assert keyPageSize >= BLOCK_SIZE;
         keyHeapSize = initialKeyHeapSize = keyPageSize;
         keyHeapStart = keyHeapPos = Unsafe.malloc(keyHeapSize, MemoryTag.NATIVE_TREE_CHAIN);
         keyHeapLimit = keyHeapStart + keyHeapSize;
         maxKeyHeapSize = Math.min(Math.max(maxKeyHeapBytes, keyPageSize), MAX_KEY_HEAP_SIZE_LIMIT);
+        this.keyHeapConfigKey = keyHeapConfigKey;
     }
 
     @Override
@@ -109,7 +111,9 @@ public abstract class AbstractRedBlackTree implements Mutable, Reopenable {
         if (keyHeapPos + BLOCK_SIZE > keyHeapLimit) {
             final long newHeapSize = keyHeapSize << 1;
             if (newHeapSize > maxKeyHeapSize) {
-                throw LimitOverflowException.instance().put("limit of ").put(maxKeyHeapSize).put(" memory exceeded in RedBlackTree");
+                throw LimitOverflowException.instance()
+                        .put("limit of ").put(maxKeyHeapSize)
+                        .put(" memory exceeded in RedBlackTree (raise ").put(keyHeapConfigKey).put(" to increase)");
             }
             long newHeapPos = Unsafe.realloc(keyHeapStart, keyHeapSize, newHeapSize, MemoryTag.NATIVE_TREE_CHAIN);
 

@@ -126,7 +126,7 @@ public class CachedWindowMemoryCapTest extends AbstractCairoTest {
             assertExceptionNoLeakCheck(
                     "SELECT sym, ts, lag(ts, 1) OVER (PARTITION BY sym ORDER BY ts DESC) FROM tab",
                     0,
-                    "memory exceeded in LongTreeChain"
+                    "memory exceeded in LongTreeChain (raise cairo.sql.window.rowid.max.bytes to increase)"
             );
         });
     }
@@ -146,7 +146,7 @@ public class CachedWindowMemoryCapTest extends AbstractCairoTest {
             assertExceptionNoLeakCheck(
                     "SELECT sym, ts, lag(ts, 1) OVER (PARTITION BY sym ORDER BY ts DESC) FROM tab",
                     0,
-                    "memory exceeded in RedBlackTree"
+                    "memory exceeded in RedBlackTree (raise cairo.sql.window.tree.max.bytes to increase)"
             );
         });
     }

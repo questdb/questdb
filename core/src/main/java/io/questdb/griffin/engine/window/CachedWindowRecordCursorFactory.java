@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.window;
 
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnTypes;
@@ -119,7 +120,9 @@ public class CachedWindowRecordCursorFactory extends AbstractRecordCursorFactory
                                     configuration.getSqlWindowTreeKeyPageSize(),
                                     configuration.getSqlWindowTreeKeyMaxBytes(),
                                     configuration.getSqlWindowRowIdPageSize(),
-                                    configuration.getSqlWindowRowIdMaxBytes()
+                                    configuration.getSqlWindowRowIdMaxBytes(),
+                                    PropertyKey.CAIRO_SQL_WINDOW_TREE_MAX_BYTES.getPropertyPath(),
+                                    PropertyKey.CAIRO_SQL_WINDOW_ROWID_MAX_BYTES.getPropertyPath()
                             )
                     );
                 }

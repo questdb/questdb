@@ -44,18 +44,27 @@ public class LongTreeChain extends AbstractRedBlackTree implements Reopenable {
     private final TreeCursor cursor = new TreeCursor();
     private final long initialValueHeapSize;
     private final long maxValueHeapSize;
+    private final String valueHeapConfigKey;
     private long valueHeapLimit;
     private long valueHeapPos;
     private long valueHeapSize;
     private long valueHeapStart;
 
-    public LongTreeChain(long keyPageSize, long maxKeyHeapBytes, long valuePageSize, long maxValueHeapBytes) {
-        super(keyPageSize, maxKeyHeapBytes);
+    public LongTreeChain(
+            long keyPageSize,
+            long maxKeyHeapBytes,
+            long valuePageSize,
+            long maxValueHeapBytes,
+            String keyHeapConfigKey,
+            String valueHeapConfigKey
+    ) {
+        super(keyPageSize, maxKeyHeapBytes, keyHeapConfigKey);
         try {
             valueHeapSize = initialValueHeapSize = valuePageSize;
             valueHeapStart = valueHeapPos = Unsafe.malloc(valueHeapSize, MemoryTag.NATIVE_TREE_CHAIN);
             valueHeapLimit = valueHeapStart + valueHeapSize;
             maxValueHeapSize = Math.min(Math.max(maxValueHeapBytes, valuePageSize), MAX_VALUE_HEAP_SIZE_LIMIT);
+            this.valueHeapConfigKey = valueHeapConfigKey;
         } catch (Throwable th) {
             close();
             throw th;
@@ -164,7 +173,9 @@ public class LongTreeChain extends AbstractRedBlackTree implements Reopenable {
         if (valueHeapPos + CHAIN_VALUE_SIZE > valueHeapLimit) {
             final long newHeapSize = valueHeapSize << 1;
             if (newHeapSize > maxValueHeapSize) {
-                throw LimitOverflowException.instance().put("limit of ").put(maxValueHeapSize).put(" memory exceeded in LongTreeChain");
+                throw LimitOverflowException.instance()
+                        .put("limit of ").put(maxValueHeapSize)
+                        .put(" memory exceeded in LongTreeChain (raise ").put(valueHeapConfigKey).put(" to increase)");
             }
             long newHeapPos = Unsafe.realloc(valueHeapStart, valueHeapSize, newHeapSize, MemoryTag.NATIVE_TREE_CHAIN);
 
