@@ -697,8 +697,8 @@ public class LateralJoinSharedCursorTest extends AbstractCairoTest {
             // The outer query reads o.arr both for projection and through
             // array_count(o.arr) in the lateral filter. The lateral subquery
             // runs as a SharedRecordCursorFactory backed by the inner Group By,
-            // so the read-only shared GroupByFunction instance must render the
-            // array without mutating the build buffer or the MapValue.
+            // so the shared GroupByFunction flyweight must serve both reads
+            // from the same MapValue without corrupting the rendered array.
             assertQueryNoLeakCheck(
                     """
                             arr\trate
@@ -737,7 +737,7 @@ public class LateralJoinSharedCursorTest extends AbstractCairoTest {
                     (3, 0.2, '2024-01-01T00:00:01.000000Z')
                     """);
             // Keyed variant: each group's array is rendered through the shared
-            // cursor's read-only GroupByFunction, then re-read in the lateral
+            // cursor's GroupByFunction flyweight, then re-read in the lateral
             // subquery's filter. The per-instance render cache holds one slot,
             // so iterating across categories cache-misses on every group and
             // verifies that each render is computed correctly from a clean

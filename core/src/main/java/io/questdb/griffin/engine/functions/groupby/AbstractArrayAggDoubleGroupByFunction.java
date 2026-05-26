@@ -76,12 +76,17 @@ import org.jetbrains.annotations.NotNull;
  * the first time a group is read and caches the source build-buffer pointer.
  * The scratch buffer is grow-only (1.5x reallocation), and its native memory
  * is owned by the {@code DirectArray} instance and freed on {@link #close()},
- * not by the {@link GroupByAllocator}. The build buffer is never written to
- * during render, so the read path is safe to call from a shared cursor's
- * GroupByFunction whose {@code initSharedFrom} hands back a read-only
- * flyweight over the same {@link MapValue}; shared instances reuse the
- * primary's scratch through a back-reference, so a single render serves all
- * readers of a given group.
+ * not by the {@link GroupByAllocator}. The read path is not pure: on a
+ * cache miss {@link SortedRunsMerge#compactInPlace} sorts the build buffer
+ * in place and, when the buffer holds more than one run, {@code memcpy}s
+ * the sorted result back over it. That mutation is safe because a single
+ * consumer thread drives the cursor sequentially, and the
+ * {@code cachedSrcPtr} guard short-circuits subsequent reads of the same
+ * buffer without re-mutating it. Shared cursor instances
+ * ({@code initSharedFrom}) hand back a flyweight over the same
+ * {@link MapValue} and route render through the primary, so a single
+ * render serves all readers of a given group on that consumer thread.
+ * Concurrent reads of the same {@link MapValue} are not supported.
  * <p>
  * A single LONG slot in the map value stores the build buffer pointer
  * (0 = null/empty group).
