@@ -429,6 +429,14 @@ public final class QueryRunner {
      *       inspects cursor metadata; an indexed-symbol lookup loses TS-ASC
      *       where a full scan preserves it, so primary and shadow legitimately
      *       differ.</li>
+     *   <li>"left side of splice join doesn't support random access" - SPLICE
+     *       JOIN requires its master input to support random access. When the
+     *       master's filtered SYMBOL column carries a POSTING (or bitmap)
+     *       index, the planner picks an index-driven scan that does not
+     *       support random access and the join is rejected at compile time;
+     *       the same logical query against a non-indexed sibling full-scans
+     *       and compiles fine. Same planner-sensitivity shape as the
+     *       ASC-timestamp check above.</li>
      *   <li>"column must appear in GROUP BY clause" - the literal form
      *       constant-folds a sub-expression so its repeated occurrence in
      *       projection and GROUP BY becomes the same constant; the bind
@@ -474,6 +482,7 @@ public final class QueryRunner {
             return false;
         }
         return o.exceptionMessage.contains("doesn't have ASC timestamp order")
+                || o.exceptionMessage.contains("left side of splice join doesn't support random access")
                 || o.exceptionMessage.contains("column must appear in GROUP BY clause")
                 || o.exceptionMessage.contains("constant expected")
                 || o.exceptionMessage.contains("there is no matching function")
