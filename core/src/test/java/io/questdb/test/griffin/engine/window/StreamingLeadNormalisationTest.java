@@ -110,20 +110,23 @@ public class StreamingLeadNormalisationTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testLagDescWithPartitionByNotNormalised() throws Exception {
+    public void testLagDescWithPartitionByStreamsViaNormalisation() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table t (x long, sym symbol, ts timestamp) timestamp(ts) partition by day");
-            execute("insert into t values (10, 'A', 0), (20, 'B', 1000)");
+            execute("insert into t values (10, 'A', 0), (20, 'B', 1000), (30, 'A', 2000), (40, 'B', 3000), (50, 'A', 4000)");
 
-            // PARTITION BY blocks Phase 4 normalisation (the deferred-emit cursor doesn't yet support
-            // PARTITION BY); query falls through to CachedWindow.
-            assertPlanNoLeakCheck(
-                    "select x, lag(x, 1) over (partition by sym order by ts desc) as lx from t",
-                    "CachedWindow\n" +
-                            "  orderedFunctions: [[ts desc] => [lag(x, 1, NULL) over (partition by [sym])]]\n" +
-                            "    PageFrame\n" +
-                            "        Row forward scan\n" +
-                            "        Frame forward scan on: t\n"
+            // Phase 5: PARTITION BY no longer blocks normalisation. LAG-DESC normalises to LEAD-ASC
+            // and streams via per-partition deferred emit. Output is partition-major-resolution order:
+            // in-stream emissions when the next row of a partition arrives; remaining entries flushed
+            // per partition at end-of-cursor in map iteration order.
+            assertSql(
+                    "x\tsym\tlx\n" +
+                            "10\tA\t30\n" +
+                            "20\tB\t40\n" +
+                            "30\tA\t50\n" +
+                            "50\tA\tnull\n" +
+                            "40\tB\tnull\n",
+                    "select x, sym, lag(x, 1) over (partition by sym order by ts desc) as lx from t"
             );
         });
     }

@@ -92,9 +92,9 @@ public class LeadTimestampFunctionFactory extends AbstractWindowFunctionFactory 
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
         if (!configuration.getSqlWindowStreamingLeadEnabled()) return null;
-        if (sqlExecutionContext.getWindowContext().isEmpty()) return null;
-        if (sqlExecutionContext.getWindowContext().getPartitionByRecord() != null) return null;
-        if (sqlExecutionContext.getWindowContext().isIgnoreNulls()) return null;
+        final io.questdb.griffin.engine.window.WindowContext wc = sqlExecutionContext.getWindowContext();
+        if (wc.isEmpty()) return null;
+        if (wc.isIgnoreNulls()) return null;
         if (args.size() > 3) return null;
 
         long offset = 1;
@@ -104,7 +104,7 @@ public class LeadTimestampFunctionFactory extends AbstractWindowFunctionFactory 
             offset = offsetFunc.getLong(null);
             if (offset <= 0) return null;
         }
-        if (offset > Integer.MAX_VALUE) return null;
+        if (offset >= 63) return null;
 
         Function defaultValue = null;
         if (args.size() == 3) {
@@ -117,6 +117,31 @@ public class LeadTimestampFunctionFactory extends AbstractWindowFunctionFactory 
                 throw SqlException.$(argPositions.getQuick(2), "default value must be can cast to timestamp");
             }
             defaultValue = dv;
+        }
+
+        if (wc.getPartitionByRecord() != null) {
+            io.questdb.cairo.map.Map cachedMap = null;
+            MemoryARW cachedMem = null;
+            try {
+                cachedMap = io.questdb.cairo.map.MapFactory.createUnorderedMap(
+                        configuration,
+                        wc.getPartitionByKeyTypes(),
+                        LeadLagWindowFunctionFactoryHelper.LAG_COLUMN_TYPES
+                );
+                cachedMem = Vm.getCARWInstance(
+                        configuration.getSqlWindowStorePageSize(),
+                        configuration.getSqlWindowStoreMaxPages(),
+                        MemoryTag.NATIVE_CIRCULAR_BUFFER
+                );
+                return new StreamingLeadOverPartitionFunction(
+                        cachedMap, wc.getPartitionByRecord(), wc.getPartitionBySink(), cachedMem,
+                        args.get(0), defaultValue, offset
+                );
+            } catch (Throwable th) {
+                Misc.free(cachedMap);
+                Misc.free(cachedMem);
+                throw th;
+            }
         }
 
         MemoryARW mem = null;
@@ -133,21 +158,59 @@ public class LeadTimestampFunctionFactory extends AbstractWindowFunctionFactory 
         }
     }
 
+    private static long resolveTimestampDefault(Function arg, Function defaultValueFunc) {
+        if (defaultValueFunc == null) {
+            return Numbers.LONG_NULL;
+        }
+        int argType = arg.getType();
+        int defaultType = ColumnType.getTimestampType(defaultValueFunc.getType());
+        TimestampDriver driver = ColumnType.getTimestampDriver(ColumnType.getTimestampType(argType));
+        return driver.from(defaultValueFunc.getTimestamp(null), defaultType);
+    }
+
     static final class StreamingLeadFunction extends LeadFunction {
         private final long defaultTimestampValue;
 
         StreamingLeadFunction(Function arg, Function defaultValueFunc, long offset, MemoryARW memory) {
             super(arg, defaultValueFunc, offset, memory, false);
-            if (defaultValueFunc == null) {
-                this.defaultTimestampValue = Numbers.LONG_NULL;
-            } else {
-                // Pre-resolve the constant default through the arg's TimestampDriver, mirroring the
-                // conversion the cached doPass1 performs per-row.
-                int argType = arg.getType();
-                int defaultType = ColumnType.getTimestampType(defaultValueFunc.getType());
-                TimestampDriver driver = ColumnType.getTimestampDriver(ColumnType.getTimestampType(argType));
-                this.defaultTimestampValue = driver.from(defaultValueFunc.getTimestamp(null), defaultType);
-            }
+            this.defaultTimestampValue = resolveTimestampDefault(arg, defaultValueFunc);
+        }
+
+        @Override
+        public int getLookahead() {
+            return (int) offset;
+        }
+
+        @Override
+        public int getPassCount() {
+            return ZERO_PASS;
+        }
+
+        @Override
+        public void streamingBackfill(Record source, long pendingSlot, WindowSPI spi) {
+            Unsafe.putLong(spi.getAddress(pendingSlot, columnIndex), arg.getTimestamp(source));
+        }
+
+        @Override
+        public void streamingFlushDefault(long pendingSlot, WindowSPI spi) {
+            Unsafe.putLong(spi.getAddress(pendingSlot, columnIndex), defaultTimestampValue);
+        }
+    }
+
+    static final class StreamingLeadOverPartitionFunction extends LeadOverPartitionFunction {
+        private final long defaultTimestampValue;
+
+        StreamingLeadOverPartitionFunction(
+                io.questdb.cairo.map.Map map,
+                VirtualRecord partitionByRecord,
+                RecordSink partitionBySink,
+                MemoryARW memory,
+                Function arg,
+                Function defaultValue,
+                long offset
+        ) {
+            super(map, partitionByRecord, partitionBySink, memory, arg, false, defaultValue, offset);
+            this.defaultTimestampValue = resolveTimestampDefault(arg, defaultValue);
         }
 
         @Override

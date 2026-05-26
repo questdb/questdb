@@ -166,19 +166,25 @@ public class StreamingLeadIntegrationTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testPartitionByFallsBackToCached() throws Exception {
+    public void testPartitionByStreams() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table t (x long, sym symbol, ts timestamp) timestamp(ts) partition by day");
-            execute("insert into t values (10, 'A', 0), (20, 'B', 1000)");
+            execute("insert into t values (10, 'A', 0), (20, 'B', 1000), (30, 'A', 2000), (40, 'B', 3000), (50, 'A', 4000)");
 
-            // PARTITION BY is a Phase 5+ feature; planner uses cached.
-            assertPlanNoLeakCheck(
-                    "select x, lead(x, 1) over (partition by sym) as lx from t",
-                    "CachedWindow\n" +
-                            "  unorderedFunctions: [lead(x, 1, NULL) over (partition by [sym])]\n" +
-                            "    PageFrame\n" +
-                            "        Row forward scan\n" +
-                            "        Frame forward scan on: t\n"
+            // Phase 5: PARTITION BY streams via DeferredEmitWindow with per-partition ring buffers.
+            // LEAD(x,1) per symbol: A's rows pair (10,30) (30,50) (50,NULL); B's rows pair (20,40) (40,NULL).
+            // Output is partition-major-resolution order (per documented contract): in-stream
+            // emissions happen as the next row in each partition arrives, end-of-cursor flush emits
+            // remaining pending entries in map iteration order. Within each partition rows stay in
+            // OVER ORDER BY order.
+            assertSql(
+                    "x\tsym\tlx\n" +
+                            "10\tA\t30\n" +
+                            "20\tB\t40\n" +
+                            "30\tA\t50\n" +
+                            "50\tA\tnull\n" +
+                            "40\tB\tnull\n",
+                    "select x, sym, lead(x, 1) over (partition by sym) as lx from t"
             );
         });
     }
@@ -257,6 +263,65 @@ public class StreamingLeadIntegrationTest extends AbstractCairoTest {
                             "1970-01-01T00:00:00.002000Z\t1970-01-01T00:00:00.003000Z\n" +
                             "1970-01-01T00:00:00.003000Z\t\n",
                     "select ts, lead(ts, 1) over () as lts from t"
+            );
+        });
+    }
+
+    @Test
+    public void testOriginalTriggeringQueryShape() throws Exception {
+        // This is the query that originally motivated the design: LAG(ts) OVER (PARTITION BY symbol
+        // ORDER BY ts DESC) — previously OOM'd via CachedWindow on a 2B-row table. With Phase 4+5 it
+        // normalises to LEAD(ts) ASC + PARTITION BY symbol and streams via DeferredEmitWindow.
+        assertMemoryLeak(() -> {
+            execute("create table t (sym symbol, ts timestamp) timestamp(ts) partition by day");
+            // Three timestamps per symbol; the planner streams; per-partition LEAD computes the
+            // next-higher ts per symbol.
+            execute(
+                    "insert into t values " +
+                            "('A', 1000), ('B', 2000), ('A', 3000), " +
+                            "('B', 4000), ('A', 5000), ('B', 6000)"
+            );
+
+            assertSql(
+                    "sym\tts\tnext_ts\n" +
+                            "A\t1970-01-01T00:00:00.001000Z\t1970-01-01T00:00:00.003000Z\n" +
+                            "B\t1970-01-01T00:00:00.002000Z\t1970-01-01T00:00:00.004000Z\n" +
+                            "A\t1970-01-01T00:00:00.003000Z\t1970-01-01T00:00:00.005000Z\n" +
+                            "B\t1970-01-01T00:00:00.004000Z\t1970-01-01T00:00:00.006000Z\n" +
+                            "A\t1970-01-01T00:00:00.005000Z\t\n" +
+                            "B\t1970-01-01T00:00:00.006000Z\t\n",
+                    "select sym, ts, lag(ts, 1) over (partition by sym order by ts desc) as next_ts from t"
+            );
+        });
+    }
+
+    @Test
+    public void testPartitionByLargerLookahead() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t (x long, sym symbol, ts timestamp) timestamp(ts) partition by day");
+            // Two symbols, 4 rows each interleaved.
+            execute(
+                    "insert into t values " +
+                            "(1, 'A', 0), (1, 'B', 1000), " +
+                            "(2, 'A', 2000), (2, 'B', 3000), " +
+                            "(3, 'A', 4000), (3, 'B', 5000), " +
+                            "(4, 'A', 6000), (4, 'B', 7000)"
+            );
+
+            // LEAD(x, 2) per partition: A: (1,3) (2,4) (3,NULL) (4,NULL); B: (1,3) (2,4) (3,NULL) (4,NULL).
+            // In-stream emissions when R+2 arrives for the same partition; remaining 2 per partition
+            // flushed at EOF. Within each partition rows stay in OVER ORDER BY order.
+            assertSql(
+                    "x\tsym\tlx\n" +
+                            "1\tA\t3\n" +
+                            "1\tB\t3\n" +
+                            "2\tA\t4\n" +
+                            "2\tB\t4\n" +
+                            "3\tA\tnull\n" +
+                            "4\tA\tnull\n" +
+                            "3\tB\tnull\n" +
+                            "4\tB\tnull\n",
+                    "select x, sym, lead(x, 2) over (partition by sym) as lx from t"
             );
         });
     }

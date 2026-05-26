@@ -91,9 +91,9 @@ public class LeadDateFunctionFactory extends AbstractWindowFunctionFactory {
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
         if (!configuration.getSqlWindowStreamingLeadEnabled()) return null;
-        if (sqlExecutionContext.getWindowContext().isEmpty()) return null;
-        if (sqlExecutionContext.getWindowContext().getPartitionByRecord() != null) return null;
-        if (sqlExecutionContext.getWindowContext().isIgnoreNulls()) return null;
+        final io.questdb.griffin.engine.window.WindowContext wc = sqlExecutionContext.getWindowContext();
+        if (wc.isEmpty()) return null;
+        if (wc.isIgnoreNulls()) return null;
         if (args.size() > 3) return null;
 
         long offset = 1;
@@ -103,7 +103,7 @@ public class LeadDateFunctionFactory extends AbstractWindowFunctionFactory {
             offset = offsetFunc.getLong(null);
             if (offset <= 0) return null;
         }
-        if (offset > Integer.MAX_VALUE) return null;
+        if (offset >= 63) return null;
 
         Function defaultValue = null;
         if (args.size() == 3) {
@@ -116,6 +116,31 @@ public class LeadDateFunctionFactory extends AbstractWindowFunctionFactory {
                 throw SqlException.$(argPositions.getQuick(2), "default value must be can cast to date");
             }
             defaultValue = dv;
+        }
+
+        if (wc.getPartitionByRecord() != null) {
+            io.questdb.cairo.map.Map cachedMap = null;
+            MemoryARW cachedMem = null;
+            try {
+                cachedMap = io.questdb.cairo.map.MapFactory.createUnorderedMap(
+                        configuration,
+                        wc.getPartitionByKeyTypes(),
+                        LeadLagWindowFunctionFactoryHelper.LAG_COLUMN_TYPES
+                );
+                cachedMem = Vm.getCARWInstance(
+                        configuration.getSqlWindowStorePageSize(),
+                        configuration.getSqlWindowStoreMaxPages(),
+                        MemoryTag.NATIVE_CIRCULAR_BUFFER
+                );
+                return new StreamingLeadOverPartitionFunction(
+                        cachedMap, wc.getPartitionByRecord(), wc.getPartitionBySink(), cachedMem,
+                        args.get(0), defaultValue, offset
+                );
+            } catch (Throwable th) {
+                Misc.free(cachedMap);
+                Misc.free(cachedMem);
+                throw th;
+            }
         }
 
         MemoryARW mem = null;
@@ -138,6 +163,43 @@ public class LeadDateFunctionFactory extends AbstractWindowFunctionFactory {
         StreamingLeadFunction(Function arg, Function defaultValueFunc, long offset, MemoryARW memory) {
             super(arg, defaultValueFunc, offset, memory, false);
             this.defaultDateValue = defaultValueFunc == null ? Numbers.LONG_NULL : defaultValueFunc.getDate(null);
+        }
+
+        @Override
+        public int getLookahead() {
+            return (int) offset;
+        }
+
+        @Override
+        public int getPassCount() {
+            return ZERO_PASS;
+        }
+
+        @Override
+        public void streamingBackfill(Record source, long pendingSlot, WindowSPI spi) {
+            Unsafe.putLong(spi.getAddress(pendingSlot, columnIndex), arg.getDate(source));
+        }
+
+        @Override
+        public void streamingFlushDefault(long pendingSlot, WindowSPI spi) {
+            Unsafe.putLong(spi.getAddress(pendingSlot, columnIndex), defaultDateValue);
+        }
+    }
+
+    static final class StreamingLeadOverPartitionFunction extends LeadOverPartitionFunction {
+        private final long defaultDateValue;
+
+        StreamingLeadOverPartitionFunction(
+                io.questdb.cairo.map.Map map,
+                VirtualRecord partitionByRecord,
+                RecordSink partitionBySink,
+                MemoryARW memory,
+                Function arg,
+                Function defaultValue,
+                long offset
+        ) {
+            super(map, partitionByRecord, partitionBySink, memory, arg, false, defaultValue, offset);
+            this.defaultDateValue = defaultValue == null ? Numbers.LONG_NULL : defaultValue.getDate(null);
         }
 
         @Override

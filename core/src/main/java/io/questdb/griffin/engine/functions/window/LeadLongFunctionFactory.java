@@ -29,6 +29,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.Reopenable;
 import io.questdb.cairo.map.Map;
+import io.questdb.cairo.map.MapFactory;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.VirtualRecord;
@@ -108,13 +109,11 @@ public class LeadLongFunctionFactory extends AbstractWindowFunctionFactory {
         if (!configuration.getSqlWindowStreamingLeadEnabled()) {
             return null;
         }
-        if (sqlExecutionContext.getWindowContext().isEmpty()) {
+        final io.questdb.griffin.engine.window.WindowContext wc = sqlExecutionContext.getWindowContext();
+        if (wc.isEmpty()) {
             return null;
         }
-        if (sqlExecutionContext.getWindowContext().getPartitionByRecord() != null) {
-            return null;
-        }
-        if (sqlExecutionContext.getWindowContext().isIgnoreNulls()) {
+        if (wc.isIgnoreNulls()) {
             return null;
         }
         if (args.size() > 3) {
@@ -132,8 +131,8 @@ public class LeadLongFunctionFactory extends AbstractWindowFunctionFactory {
                 return null;
             }
         }
-        if (offset > Integer.MAX_VALUE) {
-            // Lookahead is stored as int on the protocol. Bail to cached for absurdly large offsets.
+        // Cursor's filled-bit mask is a single long; cap to leave room for the +1 ring slot.
+        if (offset >= 63) {
             return null;
         }
 
@@ -153,9 +152,35 @@ public class LeadLongFunctionFactory extends AbstractWindowFunctionFactory {
             defaultValue = dv;
         }
 
-        // Allocate the cached-fallback circular buffer so the inherited pass1 path works even if the
-        // planner subsequently routes us through CachedWindow. The streaming path itself does not
-        // touch this buffer.
+        if (wc.getPartitionByRecord() != null) {
+            // Partition mode: construct the partitioned streaming variant. The cached-fallback Map and
+            // MemoryARW are allocated even though the streaming path uses the cursor's own per-partition
+            // ring; they are exercised only if the planner subsequently picks CachedWindow.
+            Map cachedMap = null;
+            MemoryARW cachedMem = null;
+            try {
+                cachedMap = MapFactory.createUnorderedMap(
+                        configuration,
+                        wc.getPartitionByKeyTypes(),
+                        LeadLagWindowFunctionFactoryHelper.LAG_COLUMN_TYPES
+                );
+                cachedMem = Vm.getCARWInstance(
+                        configuration.getSqlWindowStorePageSize(),
+                        configuration.getSqlWindowStoreMaxPages(),
+                        MemoryTag.NATIVE_CIRCULAR_BUFFER
+                );
+                return new StreamingLeadOverPartitionFunction(
+                        cachedMap, wc.getPartitionByRecord(), wc.getPartitionBySink(), cachedMem,
+                        args.get(0), defaultValue, offset
+                );
+            } catch (Throwable th) {
+                Misc.free(cachedMap);
+                Misc.free(cachedMem);
+                throw th;
+            }
+        }
+
+        // No partition by: simple ring buffer variant.
         MemoryARW mem = null;
         try {
             mem = Vm.getCARWInstance(
@@ -191,6 +216,48 @@ public class LeadLongFunctionFactory extends AbstractWindowFunctionFactory {
             // Pre-resolve defaultValue at construction so streamingFlushDefault doesn't need a record.
             // defaultValueFunc, when non-null, was validated as constant by the dispatch site.
             this.defaultLongValue = defaultValueFunc == null ? Numbers.LONG_NULL : defaultValueFunc.getLong(null);
+        }
+
+        @Override
+        public int getLookahead() {
+            return (int) offset;
+        }
+
+        @Override
+        public int getPassCount() {
+            return ZERO_PASS;
+        }
+
+        @Override
+        public void streamingBackfill(Record source, long pendingSlot, WindowSPI spi) {
+            Unsafe.putLong(spi.getAddress(pendingSlot, columnIndex), arg.getLong(source));
+        }
+
+        @Override
+        public void streamingFlushDefault(long pendingSlot, WindowSPI spi) {
+            Unsafe.putLong(spi.getAddress(pendingSlot, columnIndex), defaultLongValue);
+        }
+    }
+
+    /**
+     * Partitioned streaming variant of LEAD. Extends the cached {@link LeadOverPartitionFunction} so
+     * the cached fallback still works correctly; the streaming protocol methods write directly into
+     * the cursor-owned slot via the supplied {@link WindowSPI}.
+     */
+    static final class StreamingLeadOverPartitionFunction extends LeadOverPartitionFunction {
+        private final long defaultLongValue;
+
+        StreamingLeadOverPartitionFunction(
+                Map map,
+                VirtualRecord partitionByRecord,
+                RecordSink partitionBySink,
+                MemoryARW memory,
+                Function arg,
+                Function defaultValue,
+                long offset
+        ) {
+            super(map, partitionByRecord, partitionBySink, memory, arg, false, defaultValue, offset);
+            this.defaultLongValue = defaultValue == null ? Numbers.LONG_NULL : defaultValue.getLong(null);
         }
 
         @Override

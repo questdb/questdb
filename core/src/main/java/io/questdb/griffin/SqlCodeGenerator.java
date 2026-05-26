@@ -32,6 +32,7 @@ import io.questdb.cairo.ColumnFilter;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.EntityColumnFilter;
+import io.questdb.cairo.map.MapFactory;
 import io.questdb.cairo.FullPartitionFrameCursorFactory;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.IndexType;
@@ -9359,7 +9360,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     if (configuration.getSqlWindowStreamingLeadEnabled()
                             && osz == 1
                             && timestampIdx != -1
-                            && partitionByFunctions == null
                             && baseMetadata.getColumnIndexQuiet(ac.getOrderBy().getQuick(0).token) == timestampIdx
                             && !ac.isIgnoreNulls()) {
                         int dir = ac.getOrderByDirection().getQuick(0);
@@ -9495,6 +9495,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             if (isFastPath) {
                 int maxLookahead = 0;
                 int lookaheadFunctionCount = 0;
+                int lookaheadColumnIndex = -1;
                 for (int i = 0, size = functions.size(); i < size; i++) {
                     Function func = functions.getQuick(i);
                     if (func instanceof WindowFunction) {
@@ -9505,6 +9506,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         }
                         if (la > 0) {
                             lookaheadFunctionCount++;
+                            lookaheadColumnIndex = i;
                         }
                         WindowExpression qc = (WindowExpression) columns.getQuick(i);
                         if (qc.getOrderBy().size() > 0) {
@@ -9524,7 +9526,48 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 // time). If any other constraint blocks streaming, fall through to CachedWindow which
                 // will call pass1 on the streaming-LEAD's inherited cached fallback.
                 if (lookaheadFunctionCount == 1 && base.recordCursorSupportsRandomAccess()) {
-                    return new DeferredEmitWindowRecordCursorFactory(base, factoryMetadata, functions);
+                    // Phase 5: rebuild PARTITION BY info for the LEAD column (the per-column locals
+                    // computed inside the loop above were reused/cleared). Re-parse the window
+                    // expression's PARTITION BY here to make the cursor-owned partition map.
+                    VirtualRecord cursorPartitionByRecord = null;
+                    RecordSink cursorPartitionBySink = null;
+                    io.questdb.cairo.map.Map cursorPartitionMap = null;
+                    int maxPartitions = configuration.getSqlWindowStreamingMaxPartitions();
+                    final WindowExpression leadCol = (WindowExpression) columns.getQuick(lookaheadColumnIndex);
+                    final int psz = leadCol.getPartitionBy().size();
+                    if (psz > 0) {
+                        ObjList<Function> leadPartitionFns = new ObjList<>(psz);
+                        ArrayColumnTypes leadKeyTypes = new ArrayColumnTypes();
+                        try {
+                            for (int j = 0; j < psz; j++) {
+                                Function pf = functionParser.parseFunction(
+                                        leadCol.getPartitionBy().getQuick(j),
+                                        baseMetadata,
+                                        executionContext
+                                );
+                                leadPartitionFns.add(pf);
+                                leadKeyTypes.add(pf.getType());
+                            }
+                            cursorPartitionByRecord = new VirtualRecord(leadPartitionFns);
+                            EntityColumnFilter entityFilter = new EntityColumnFilter();
+                            entityFilter.of(psz);
+                            cursorPartitionBySink = RecordSinkFactory.getInstance(configuration, asm, leadKeyTypes, entityFilter);
+                            cursorPartitionMap = MapFactory.createUnorderedMap(
+                                    configuration,
+                                    leadKeyTypes,
+                                    DeferredEmitWindowRecordCursorFactory.PARTITION_VALUE_TYPES
+                            );
+                        } catch (Throwable t) {
+                            Misc.freeObjList(leadPartitionFns);
+                            Misc.free(cursorPartitionMap);
+                            throw t;
+                        }
+                    }
+                    return new DeferredEmitWindowRecordCursorFactory(
+                            base, factoryMetadata, functions,
+                            cursorPartitionByRecord, cursorPartitionBySink, cursorPartitionMap,
+                            maxPartitions
+                    );
                 }
 
                 isFastPath = false;

@@ -194,7 +194,7 @@ public class DeferredEmitWindowRecordCursorFactoryTest extends AbstractCairoTest
             functions.add(lag);
 
             try {
-                new DeferredEmitWindowRecordCursorFactory(base, metadata, functions);
+                new DeferredEmitWindowRecordCursorFactory(base, metadata, functions, null, null, null, 1_048_576);
                 Assert.fail("expected CairoException for mixed lookahead/non-lookahead functions");
             } catch (CairoException e) {
                 Assert.assertTrue(
@@ -232,7 +232,7 @@ public class DeferredEmitWindowRecordCursorFactoryTest extends AbstractCairoTest
             functions.add(lead2);
 
             try {
-                new DeferredEmitWindowRecordCursorFactory(base, metadata, functions);
+                new DeferredEmitWindowRecordCursorFactory(base, metadata, functions, null, null, null, 1_048_576);
                 Assert.fail("expected CairoException for two lookahead functions");
             } catch (CairoException e) {
                 Assert.assertTrue(
@@ -325,7 +325,7 @@ public class DeferredEmitWindowRecordCursorFactoryTest extends AbstractCairoTest
         functions.add(lead);
 
         try {
-            return new DeferredEmitWindowRecordCursorFactory(base, metadata, functions);
+            return new DeferredEmitWindowRecordCursorFactory(base, metadata, functions, null, null, null, 1_048_576);
         } catch (Throwable t) {
             Misc.free(base);
             Misc.freeObjList(functions);
