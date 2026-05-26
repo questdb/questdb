@@ -979,6 +979,73 @@ public class AsOfJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAsOfJoinLinearStringAndVarcharToSymbol() throws Exception {
+        // Regression: AsOf Light path called SymbolJoinKeyMapping.of(RecordCursor)
+        // which the String/Varchar -> Symbol mappings did not implement, throwing
+        // UnsupportedOperationException. asof_linear forces the Light path.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    """
+                            CREATE TABLE master_str (
+                                s STRING,
+                                v VARCHAR,
+                                ts #TIMESTAMP
+                            ) TIMESTAMP(ts) PARTITION BY DAY
+                            """,
+                    leftTableTimestampType.getTypeName()
+            );
+            executeWithRewriteTimestamp(
+                    """
+                            CREATE TABLE slave_sym (
+                                sym SYMBOL,
+                                price DOUBLE,
+                                ts #TIMESTAMP
+                            ) TIMESTAMP(ts) PARTITION BY DAY
+                            """,
+                    rightTableTimestampType.getTypeName()
+            );
+
+            execute("""
+                    INSERT INTO master_str VALUES
+                        ('A', 'A', '2024-01-01T10:00:00.000000Z'),
+                        ('B', 'B', '2024-01-01T10:01:00.000000Z'),
+                        ('C', 'C', '2024-01-01T10:02:00.000000Z'),
+                        (NULL, NULL, '2024-01-01T10:03:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO slave_sym VALUES
+                        ('A', 1.0, '2024-01-01T09:00:00.000000Z'),
+                        ('B', 2.0, '2024-01-01T09:30:00.000000Z'),
+                        (NULL, 9.0, '2024-01-01T09:45:00.000000Z')
+                    """);
+
+            // STRING (master) = SYMBOL (slave) on the Light path
+            assertQueryNoLeakCheck(
+                    "s\tsym\tprice\n"
+                            + "A\tA\t1.0\n"
+                            + "B\tB\t2.0\n"
+                            + "C\t\tnull\n"
+                            + "\t\t9.0\n",
+                    "SELECT /*+ asof_linear(m s) */ m.s, s.sym, s.price "
+                            + "FROM master_str m ASOF JOIN slave_sym s ON m.s = s.sym",
+                    null, false, true
+            );
+
+            // VARCHAR (master) = SYMBOL (slave) on the Light path
+            assertQueryNoLeakCheck(
+                    "v\tsym\tprice\n"
+                            + "A\tA\t1.0\n"
+                            + "B\tB\t2.0\n"
+                            + "C\t\tnull\n"
+                            + "\t\t9.0\n",
+                    "SELECT /*+ asof_linear(m s) */ m.v, s.sym, s.price "
+                            + "FROM master_str m ASOF JOIN slave_sym s ON m.v = s.sym",
+                    null, false, true
+            );
+        });
+    }
+
+    @Test
     public void testAsOfJoinNoAliasDuplication() throws Exception {
         assertMemoryLeak(() -> {
             // ASKS

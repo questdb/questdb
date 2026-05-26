@@ -27,9 +27,21 @@ package io.questdb.griffin.engine.join;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.StaticSymbolTable;
+import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.TimeFrameCursor;
+import io.questdb.griffin.engine.functions.SymbolFunction;
 
 public interface SymbolJoinKeyMapping {
+
+    static StaticSymbolTable toStaticSymbolTable(SymbolTable symbolTable) {
+        if (symbolTable instanceof StaticSymbolTable) {
+            return (StaticSymbolTable) symbolTable;
+        }
+        if (symbolTable instanceof SymbolFunction) {
+            return ((SymbolFunction) symbolTable).getStaticSymbolTable();
+        }
+        throw new AssertionError("Failed to get static symbol table from " + symbolTable);
+    }
 
     /**
      * When joining on a single symbol column, returns the symbol key in the slave
@@ -41,7 +53,5 @@ public interface SymbolJoinKeyMapping {
 
     void of(TimeFrameCursor slaveCursor);
 
-    default void of(RecordCursor slaveCursor) {
-        throw new UnsupportedOperationException();
-    }
+    void of(RecordCursor slaveCursor);
 }
