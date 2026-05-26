@@ -6662,8 +6662,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     long rowId = Math.max(rowCount, columnTop);
                     final long addr = rowGroupBuffers.getChunkDataPtr(0);
                     final long size = rowGroupBuffers.getChunkDataSize(0);
-                    for (long p = addr, lim = addr + size; p < lim; p += 4, rowId++) {
-                        indexWriter.add(TableUtils.toIndexKey(Unsafe.getInt(p)), rowId);
+                    if (size == 0) {
+                        BitmapIndexUtils.addNullEntries(indexWriter, rowId, rowCount + rowGroupSize);
+                    } else {
+                        for (long p = addr, lim = addr + size; p < lim; p += 4, rowId++) {
+                            indexWriter.add(TableUtils.toIndexKey(Unsafe.getInt(p)), rowId);
+                        }
                     }
 
                     rowCount += rowGroupSize;
