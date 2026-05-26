@@ -6665,7 +6665,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     }
                 }
 
-                final long dataRowCount = partitionSize - Math.max(columnTop, 0);
+                final long dataRowCount = partitionSize - columnTop;
                 // Allocate per-cover-column buffers to accumulate decoded data.
                 final long[] coverBufs = new long[coverCount];
                 final long[] coverBufSizes = new long[coverCount];
@@ -6728,7 +6728,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         }
 
                         // Copy decoded covered column data into contiguous buffers.
-                        long rowsInGroup = size / Integer.BYTES;
+                        long rowsInGroup = rowGroupSize - rowGroupLo;
                         if (decodedCoverCount > 0) {
                             for (int c = 0; c < coverCount; c++) {
                                 if (coverDecodeSlot[c] < 0) {
@@ -6747,6 +6747,42 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                     ColumnTypeDriver driver = ColumnType.getDriver(covType);
 
                                     if (chunkDataPtr == 0 && chunkAuxPtr == 0) {
+                                        long nullDataSize = rowsInGroup * driver.getDataVectorMinEntrySize();
+                                        if (nullDataSize > 0) {
+                                            long newDataSize = coverDataBytesWritten[c] + nullDataSize;
+                                            if (newDataSize > coverBufSizes[c]) {
+                                                long newCap = Math.max(newDataSize, coverBufSizes[c] * 2);
+                                                coverBufs[c] = Unsafe.realloc(coverBufs[c], coverBufSizes[c], newCap, MemoryTag.NATIVE_TABLE_WRITER);
+                                                coverBufSizes[c] = newCap;
+                                            }
+                                            driver.setDataVectorEntriesToNull(coverBufs[c] + coverDataBytesWritten[c], rowsInGroup);
+                                        }
+
+                                        long fullAuxSize = driver.getAuxVectorSize(rowsInGroup);
+                                        long nullAuxBuf = Unsafe.malloc(fullAuxSize, MemoryTag.NATIVE_TABLE_WRITER);
+                                        try {
+                                            driver.setFullAuxVectorNull(nullAuxBuf, rowsInGroup);
+                                            if (coverDataBytesWritten[c] > 0 && rowsInGroup > 0) {
+                                                driver.shiftCopyAuxVector(
+                                                        -coverDataBytesWritten[c],
+                                                        nullAuxBuf, 0, rowsInGroup - 1,
+                                                        nullAuxBuf, fullAuxSize
+                                                );
+                                            }
+                                            long auxPtr = nullAuxBuf;
+                                            long auxBytes = fullAuxSize;
+                                            if (decodedRows > 0) {
+                                                long adjust = driver.getMinAuxVectorSize();
+                                                auxPtr += adjust;
+                                                auxBytes -= adjust;
+                                            }
+                                            Unsafe.copyMemory(auxPtr, coverAuxBufs[c] + coverAuxBytesWritten[c], auxBytes);
+                                            coverAuxBytesWritten[c] += auxBytes;
+                                        } finally {
+                                            Unsafe.free(nullAuxBuf, fullAuxSize, MemoryTag.NATIVE_TABLE_WRITER);
+                                        }
+
+                                        coverDataBytesWritten[c] += nullDataSize;
                                         continue;
                                     }
 
@@ -6776,7 +6812,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                 } else {
                                     int shift = ColumnType.pow2SizeOf(covType);
                                     long destOffset = decodedRows << shift;
-                                    Unsafe.copyMemory(chunkDataPtr, coverBufs[c] + destOffset, chunkDataSize);
+                                    if (chunkDataPtr == 0) {
+                                        TableUtils.setNull(covType, coverBufs[c] + destOffset, rowsInGroup);
+                                    } else {
+                                        Unsafe.copyMemory(chunkDataPtr, coverBufs[c] + destOffset, chunkDataSize);
+                                    }
                                 }
                             }
                         }

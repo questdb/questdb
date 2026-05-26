@@ -24,6 +24,7 @@
 
 package io.questdb.test.cairo.covering;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoConfigurationWrapper;
 import io.questdb.cairo.CairoException;
@@ -124,17 +125,140 @@ public class CoveringIndexTest extends AbstractCairoTest {
 
             // Verify DOUBLE, INT, and TIMESTAMP covered values from the parquet partition.
             assertSql(
-                    "sym\tprice\tqty\tevent_time\n" +
-                            "A\t1.0\t10\t2024-01-01T00:00:01.000000Z\n" +
-                            "A\t3.0\t30\t2024-01-01T02:00:01.000000Z\n",
+                    """
+                            sym\tprice\tqty\tevent_time
+                            A\t1.0\t10\t2024-01-01T00:00:01.000000Z
+                            A\t3.0\t30\t2024-01-01T02:00:01.000000Z
+                            """,
                     "SELECT sym, price, qty, event_time FROM t_cover_pq_fixed WHERE sym = 'A' AND ts IN '2024-01-01' ORDER BY ts"
             );
 
             // Also verify the native partition still works.
             assertSql(
-                    "sym\tprice\tqty\tevent_time\n" +
-                            "B\t5.0\t50\t2024-01-02T01:00:01.000000Z\n",
+                    """
+                            sym\tprice\tqty\tevent_time
+                            B\t5.0\t50\t2024-01-02T01:00:01.000000Z
+                            """,
                     "SELECT sym, price, qty, event_time FROM t_cover_pq_fixed WHERE sym = 'B' AND ts IN '2024-01-02'"
+            );
+        });
+    }
+
+    @Test
+    public void testAddPostingCoveringIndexOnParquetPartitionNullSymbolRowGroup() throws Exception {
+        // When an entire Parquet row group has NULL symbol values, the decoder
+        // sets data_size=0 for that column chunk. indexParquetPartition() derives
+        // rowsInGroup from the symbol column's data size, so it computes 0 rows
+        // for that group. This causes decodedRows not to advance, and subsequent
+        // row groups overwrite covered column data at offset 0.
+        // Parquet row group size minimum is 4, so we need 8+ rows to get
+        // two row groups.
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 4);
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_cover_pq_null_sym (
+                        ts TIMESTAMP,
+                        sym SYMBOL,
+                        price DOUBLE,
+                        label VARCHAR
+                    ) TIMESTAMP(ts) PARTITION BY DAY WAL
+                    """);
+            // First 4 rows: sym is NULL (forms row group 0 with all-null symbol).
+            // Next 4 rows: sym is 'A' (forms row group 1).
+            execute("""
+                    INSERT INTO t_cover_pq_null_sym VALUES
+                    ('2024-01-01T00:00:00Z', NULL, 1.0, 'a1'),
+                    ('2024-01-01T01:00:00Z', NULL, 2.0, 'a2'),
+                    ('2024-01-01T02:00:00Z', NULL, 3.0, 'a3'),
+                    ('2024-01-01T03:00:00Z', NULL, 4.0, 'a4'),
+                    ('2024-01-01T04:00:00Z', 'A', 5.0, 'a5'),
+                    ('2024-01-01T05:00:00Z', 'A', 6.0, 'a6'),
+                    ('2024-01-01T06:00:00Z', 'A', 7.0, 'a7'),
+                    ('2024-01-01T07:00:00Z', 'A', 8.0, 'a8')
+                    """);
+            drainWalQueue();
+
+            execute("ALTER TABLE t_cover_pq_null_sym CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            drainWalQueue();
+
+            execute("ALTER TABLE t_cover_pq_null_sym ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (price, label)");
+            drainWalQueue();
+
+            assertSql(
+                    "suspended\nfalse\n",
+                    "SELECT suspended FROM wal_tables() WHERE name = 't_cover_pq_null_sym'"
+            );
+
+            assertSql(
+                    """
+                            sym\tprice\tlabel
+                            A\t5.0\ta5
+                            A\t6.0\ta6
+                            A\t7.0\ta7
+                            A\t8.0\ta8
+                            """,
+                    "SELECT sym, price, label FROM t_cover_pq_null_sym WHERE sym = 'A' AND ts IN '2024-01-01' ORDER BY ts"
+            );
+        });
+    }
+
+    @Test
+    public void testAddPostingCoveringIndexOnParquetPartitionNullCoveredColumnRowGroup() throws Exception {
+        // When a covered column is all-NULL in a row group but the indexed
+        // column has non-null values, the Parquet decoder resets the covered
+        // chunk (data_ptr=0, data_size=0). The fixed-size path copies 0 bytes,
+        // leaving uninitialized malloc garbage in the buffer. The var-size path
+        // skips the chunk entirely, leaving uninitialized aux memory.
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 4);
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_cover_pq_null_cov (
+                        ts TIMESTAMP,
+                        sym SYMBOL,
+                        price DOUBLE,
+                        label VARCHAR
+                    ) TIMESTAMP(ts) PARTITION BY DAY WAL
+                    """);
+            // First 4 rows: sym='A', price=NULL, label=NULL (covered cols all-null).
+            // Next 4 rows: sym='A', price and label have real values.
+            execute("""
+                    INSERT INTO t_cover_pq_null_cov VALUES
+                    ('2024-01-01T00:00:00Z', 'A', NULL, NULL),
+                    ('2024-01-01T01:00:00Z', 'A', NULL, NULL),
+                    ('2024-01-01T02:00:00Z', 'A', NULL, NULL),
+                    ('2024-01-01T03:00:00Z', 'A', NULL, NULL),
+                    ('2024-01-01T04:00:00Z', 'A', 5.0, 'a5'),
+                    ('2024-01-01T05:00:00Z', 'A', 6.0, 'a6'),
+                    ('2024-01-01T06:00:00Z', 'A', 7.0, 'a7'),
+                    ('2024-01-01T07:00:00Z', 'A', 8.0, 'a8')
+                    """);
+            drainWalQueue();
+
+            execute("ALTER TABLE t_cover_pq_null_cov CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            drainWalQueue();
+
+            execute("ALTER TABLE t_cover_pq_null_cov ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (price, label)");
+            drainWalQueue();
+
+            assertSql(
+                    "suspended\nfalse\n",
+                    "SELECT suspended FROM wal_tables() WHERE name = 't_cover_pq_null_cov'"
+            );
+
+            // The first 4 rows must return NULL for price and label, not garbage.
+            assertSql(
+                    """
+                            sym\tprice\tlabel
+                            A\tnull\t
+                            A\tnull\t
+                            A\tnull\t
+                            A\tnull\t
+                            A\t5.0\ta5
+                            A\t6.0\ta6
+                            A\t7.0\ta7
+                            A\t8.0\ta8
+                            """,
+                    "SELECT sym, price, label FROM t_cover_pq_null_cov WHERE sym = 'A' AND ts IN '2024-01-01' ORDER BY ts"
             );
         });
     }
@@ -173,9 +297,11 @@ public class CoveringIndexTest extends AbstractCairoTest {
             );
 
             assertSql(
-                    "sym\tlabel\tprice\n" +
-                            "A\talpha\t1.0\n" +
-                            "A\tgamma\t3.0\n",
+                    """
+                            sym\tlabel\tprice
+                            A\talpha\t1.0
+                            A\tgamma\t3.0
+                            """,
                     "SELECT sym, label, price FROM t_cover_pq_var WHERE sym = 'A' AND ts IN '2024-01-01' ORDER BY ts"
             );
         });

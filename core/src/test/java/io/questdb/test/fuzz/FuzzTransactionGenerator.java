@@ -80,7 +80,7 @@ public class FuzzTransactionGenerator {
     ) {
         ObjList<FuzzTransaction> transactionList = new ObjList<>();
         int waitBarrierVersion = 0;
-        RecordMetadata meta = deepMetadataCopyOf(sequencerMetadata, tableMetadata);
+        RecordMetadata meta                                                  = deepMetadataCopyOf(sequencerMetadata, tableMetadata);
 
         long lastTimestamp = minTimestamp;
 
@@ -139,7 +139,9 @@ public class FuzzTransactionGenerator {
 
         long estimatedTotalRows = rowCount + initialRowCount;
 
+
         for (int i = 0; i < transactionCount; i++) {
+            Assert.assertNotNull(meta);
             if (i == tableDropIteration) {
                 generateTableDropCreate(transactionList, metaVersion, waitBarrierVersion++);
                 metaVersion = 0;
@@ -199,8 +201,6 @@ public class FuzzTransactionGenerator {
 
             aggregateProbability += probabilityOfAddCoveringIndex;
             boolean wantToAddCoveringIndex = !wantSomething && rndDouble < aggregateProbability;
-
-            Assert.assertNotNull(meta);
 
             if (wantToRemoveColumn) {
                 RecordMetadata newTableMetadata = generateDropColumn(transactionList, metaVersion, waitBarrierVersion, rnd, meta);

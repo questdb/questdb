@@ -55,46 +55,10 @@ public class FuzzAddCoveringIndexOperation implements FuzzTransactionOperation {
 
     @Override
     public boolean apply(Rnd tempRnd, CairoEngine engine, TableWriterAPI wApi, int virtualTimestampIndex, LongList excludedTsIntervals) {
-        TableRecordMetadata metadata = wApi.getMetadata();
-        if (symbolColumnIndex >= metadata.getColumnCount()) {
-            return false;
-        }
-        int colType = metadata.getColumnType(symbolColumnIndex);
-        if (colType < 0 || !ColumnType.isSymbol(colType)) {
-            return false;
-        }
-        if (metadata.isColumnIndexed(symbolColumnIndex)) {
-            return false;
-        }
-
-        String symColName = metadata.getColumnName(symbolColumnIndex);
-        StringBuilder includeList = new StringBuilder();
-        for (int i = 0, n = includeColumnIndices.size(); i < n; i++) {
-            int idx = includeColumnIndices.getQuick(i);
-            if (idx >= metadata.getColumnCount()) {
-                continue;
-            }
-            int incType = metadata.getColumnType(idx);
-            if (incType < 0) {
-                continue;
-            }
-            if (includeList.length() > 0) {
-                includeList.append(", ");
-            }
-            includeList.append('"').append(metadata.getColumnName(idx)).append('"');
-        }
-
-        if (includeList.length() == 0) {
-            return false;
-        }
-
-        // Do not apply through the WAL writer (wApi.apply). ADD INDEX is
-        // non-structural and non-idempotent: parallel WAL writers can each
-        // write it to their segment, and the second replay suspends the table.
-        // Instead, return false (no WAL txn produced) and let the fuzz harness
-        // drain+apply the WAL, then execute the DDL directly on the engine.
-        // The fuzz transaction is marked rollback=true so the harness does not
-        // expect a committed seqTxn from this operation.
+        // Do not apply through the WAL writer. ADD INDEX is non-structural and
+        // non-idempotent: parallel WAL writers can each write it to their segment,
+        // and the second replay suspends the table. executePostDrain() runs the
+        // DDL directly on the engine after the WAL is drained.
         return false;
     }
 
@@ -134,12 +98,12 @@ public class FuzzAddCoveringIndexOperation implements FuzzTransactionOperation {
                 if (incType < 0) {
                     continue;
                 }
-                if (includeList.length() > 0) {
+                if (!includeList.isEmpty()) {
                     includeList.append(", ");
                 }
                 includeList.append('"').append(metadata.getColumnName(idx)).append('"');
             }
-            if (includeList.length() == 0) {
+            if (includeList.isEmpty()) {
                 return;
             }
 

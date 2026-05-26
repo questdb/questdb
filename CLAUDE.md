@@ -10,6 +10,14 @@ with native C/C++ libraries for performance-critical operations. It features
 column-oriented storage, SIMD-accelerated vector execution, and specialized
 time-series SQL extensions.
 
+## Code analysis rules
+
+When analyzing code (validating claims, tracing bugs, assessing null safety,
+etc.), list every code path you haven't checked before making any claim. No
+conclusions until all paths are traced. Read every assignment, every branch,
+every caller — then answer. If you start talking before you've finished reading,
+you're pattern-matching, not analyzing.
+
 ## Coding guidelines
 
 Java class members are grouped by kind (static vs. instance) and visibility, and
