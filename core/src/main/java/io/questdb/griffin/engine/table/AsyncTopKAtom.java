@@ -104,9 +104,9 @@ public class AsyncTopKAtom implements StatefulAtom, Reopenable, Plannable {
             this.ownerRecordB = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_B_LETTER);
             this.ownerChain = new LimitedSizeLongTreeChain(
                     configuration.getSqlSortKeyPageSize(),
-                    configuration.getSqlSortKeyMaxPages(),
+                    configuration.getSqlSortKeyMaxBytes(),
                     configuration.getSqlSortLightValuePageSize(),
-                    configuration.getSqlSortLightValueMaxPages()
+                    configuration.getSqlSortLightValueMaxBytes()
             );
             ownerChain.updateLimits(true, lo);
 
@@ -121,9 +121,9 @@ public class AsyncTopKAtom implements StatefulAtom, Reopenable, Plannable {
 
                 final LimitedSizeLongTreeChain chain = new LimitedSizeLongTreeChain(
                         configuration.getSqlSortKeyPageSize(),
-                        configuration.getSqlSortKeyMaxPages(),
+                        configuration.getSqlSortKeyMaxBytes(),
                         configuration.getSqlSortLightValuePageSize(),
-                        configuration.getSqlSortLightValueMaxPages()
+                        configuration.getSqlSortLightValueMaxBytes()
                 );
                 chain.updateLimits(true, lo);
                 perWorkerChains.extendAndSet(i, chain);

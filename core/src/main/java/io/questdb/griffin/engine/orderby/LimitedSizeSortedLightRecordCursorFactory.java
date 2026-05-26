@@ -133,9 +133,9 @@ public class LimitedSizeSortedLightRecordCursorFactory extends AbstractRecordCur
         computeLimits(baseCursor, executionContext);
         this.chain = new LimitedSizeLongTreeChain(
                 configuration.getSqlSortKeyPageSize(),
-                configuration.getSqlSortKeyMaxPages(),
+                configuration.getSqlSortKeyMaxBytes(),
                 configuration.getSqlSortLightValuePageSize(),
-                configuration.getSqlSortLightValueMaxPages()
+                configuration.getSqlSortLightValueMaxBytes()
         );
 
         if (timestampIndex == -1 || !isFirstN) {
@@ -259,9 +259,9 @@ public class LimitedSizeSortedLightRecordCursorFactory extends AbstractRecordCur
     private void initializeUnlimitedSizeCursor() {
         LongTreeChain chain = new LongTreeChain(
                 configuration.getSqlSortKeyPageSize(),
-                configuration.getSqlSortKeyMaxPages(),
+                configuration.getSqlSortKeyMaxBytes(),
                 configuration.getSqlSortLightValuePageSize(),
-                configuration.getSqlSortLightValueMaxPages()
+                configuration.getSqlSortLightValueMaxBytes()
         );
         this.cursor = new SortedLightRecordCursor(chain, comparator, rankMaps);
     }

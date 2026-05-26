@@ -533,24 +533,25 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int sqlSmallPageFrameMinRows;
     private final long sqlSortEncodedParallelThreshold;
     private final int sqlSortKeyMaterializationThreshold;
-    private final int sqlSortKeyMaxPages;
+    private final long sqlSortKeyMaxBytes;
     private final long sqlSortKeyPageSize;
-    private final int sqlSortLightValueMaxPages;
+    private final long sqlSortLightValueMaxBytes;
     private final long sqlSortLightValuePageSize;
-    private final int sqlSortValueMaxPages;
+    private final long sqlSortValueMaxBytes;
     private final int sqlSortValuePageSize;
     private final int sqlStrFunctionBufferMaxSize;
     private final int sqlTxnScoreboardEntryCount;
     private final int sqlUnorderedMapMaxEntrySize;
     private final int sqlViewLexerPoolCapacity;
+    private final long sqlWindowCacheMaxBytes;
     private final int sqlWindowColumnPoolCapacity;
     private final int sqlWindowInitialRangeBufferSize;
     private final int sqlWindowMaxRecursion;
-    private final int sqlWindowRowIdMaxPages;
+    private final long sqlWindowRowIdMaxBytes;
     private final int sqlWindowRowIdPageSize;
     private final int sqlWindowStoreMaxPages;
     private final int sqlWindowStorePageSize;
-    private final int sqlWindowTreeKeyMaxPages;
+    private final long sqlWindowTreeKeyMaxBytes;
     private final int sqlWindowTreeKeyPageSize;
     private final int sqlWithClauseModelPoolCapacity;
     private final long symbolTableMaxAllocationPageSize;
@@ -1549,11 +1550,13 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.sqlModelPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_MODEL_POOL_CAPACITY, 1024);
             this.sqlMaxNegativeLimit = getInt(properties, env, PropertyKey.CAIRO_SQL_MAX_NEGATIVE_LIMIT, 10_000);
             this.sqlSortKeyPageSize = getLongSize(properties, env, PropertyKey.CAIRO_SQL_SORT_KEY_PAGE_SIZE, 128 * 1024);
-            this.sqlSortKeyMaxPages = getIntSize(properties, env, PropertyKey.CAIRO_SQL_SORT_KEY_MAX_PAGES, Integer.MAX_VALUE);
+            this.sqlSortKeyMaxBytes = getLongSize(properties, env, PropertyKey.CAIRO_SQL_SORT_KEY_MAX_BYTES,
+                    deriveMaxBytesDefault(properties, env, PropertyKey.CAIRO_SQL_SORT_KEY_MAX_PAGES, this.sqlSortKeyPageSize));
             this.sqlSortKeyMaterializationThreshold = getInt(properties, env, PropertyKey.CAIRO_SQL_SORT_KEY_MATERIALIZATION_THRESHOLD, 3);
             this.sqlSortEncodedParallelThreshold = getLong(properties, env, PropertyKey.CAIRO_SQL_SORT_ENCODED_PARALLEL_THRESHOLD, 1_024_000);
             this.sqlSortLightValuePageSize = getLongSize(properties, env, PropertyKey.CAIRO_SQL_SORT_LIGHT_VALUE_PAGE_SIZE, 128 * 1024);
-            this.sqlSortLightValueMaxPages = getIntSize(properties, env, PropertyKey.CAIRO_SQL_SORT_LIGHT_VALUE_MAX_PAGES, Integer.MAX_VALUE);
+            this.sqlSortLightValueMaxBytes = getLongSize(properties, env, PropertyKey.CAIRO_SQL_SORT_LIGHT_VALUE_MAX_BYTES,
+                    deriveMaxBytesDefault(properties, env, PropertyKey.CAIRO_SQL_SORT_LIGHT_VALUE_MAX_PAGES, this.sqlSortLightValuePageSize));
             this.sqlHashJoinValuePageSize = getIntSize(properties, env, PropertyKey.CAIRO_SQL_HASH_JOIN_VALUE_PAGE_SIZE, 16777216);
             this.sqlHashJoinValueMaxPages = getIntSize(properties, env, PropertyKey.CAIRO_SQL_HASH_JOIN_VALUE_MAX_PAGES, Integer.MAX_VALUE);
             this.sqlLatestByRowCount = getInt(properties, env, PropertyKey.CAIRO_SQL_LATEST_BY_ROW_COUNT, 1000);
@@ -1563,7 +1566,8 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.sqlAsOfJoinShortCircuitCacheCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_ASOF_JOIN_SHORT_CIRCUIT_CACHE_CAPACITY, 10_000_000);
             this.sqlAsOfJoinEvacuationThreshold = getInt(properties, env, PropertyKey.CAIRO_SQL_ASOF_JOIN_EVACUATION_THRESHOLD, 10_000_000);
             this.sqlSortValuePageSize = getIntSize(properties, env, PropertyKey.CAIRO_SQL_SORT_VALUE_PAGE_SIZE, 16777216);
-            this.sqlSortValueMaxPages = getIntSize(properties, env, PropertyKey.CAIRO_SQL_SORT_VALUE_MAX_PAGES, Integer.MAX_VALUE);
+            this.sqlSortValueMaxBytes = getLongSize(properties, env, PropertyKey.CAIRO_SQL_SORT_VALUE_MAX_BYTES,
+                    deriveMaxBytesDefault(properties, env, PropertyKey.CAIRO_SQL_SORT_VALUE_MAX_PAGES, this.sqlSortValuePageSize));
             this.workStealTimeoutNanos = getNanos(properties, env, PropertyKey.CAIRO_WORK_STEAL_TIMEOUT_NANOS, 10_000);
             this.parallelIndexingEnabled = getBoolean(properties, env, PropertyKey.CAIRO_PARALLEL_INDEXING_ENABLED, true);
             this.postingIndexAutoIncludeTimestamp = getBoolean(properties, env, PropertyKey.CAIRO_POSTING_INDEX_AUTO_INCLUDE_TIMESTAMP, true);
@@ -1740,14 +1744,17 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.sqlWindowStorePageSize = Numbers.ceilPow2(getIntSize(properties, env, PropertyKey.CAIRO_SQL_WINDOW_STORE_PAGE_SIZE, sqlWindowStorePageSize));
             int sqlWindowStoreMaxPages = getInt(properties, env, PropertyKey.CAIRO_SQL_ANALYTIC_STORE_MAX_PAGES, Integer.MAX_VALUE);
             this.sqlWindowStoreMaxPages = getInt(properties, env, PropertyKey.CAIRO_SQL_WINDOW_STORE_MAX_PAGES, sqlWindowStoreMaxPages);
+            this.sqlWindowCacheMaxBytes = getLongSize(properties, env, PropertyKey.CAIRO_SQL_WINDOW_CACHE_MAX_BYTES, 4L * Numbers.SIZE_1GB);
             int sqlWindowRowIdPageSize = Numbers.ceilPow2(getIntSize(properties, env, PropertyKey.CAIRO_SQL_ANALYTIC_ROWID_PAGE_SIZE, 512 * 1024));
             this.sqlWindowRowIdPageSize = Numbers.ceilPow2(getIntSize(properties, env, PropertyKey.CAIRO_SQL_WINDOW_ROWID_PAGE_SIZE, sqlWindowRowIdPageSize));
-            int sqlWindowRowIdMaxPages = getInt(properties, env, PropertyKey.CAIRO_SQL_ANALYTIC_ROWID_MAX_PAGES, Integer.MAX_VALUE);
-            this.sqlWindowRowIdMaxPages = getInt(properties, env, PropertyKey.CAIRO_SQL_WINDOW_ROWID_MAX_PAGES, sqlWindowRowIdMaxPages);
+            this.sqlWindowRowIdMaxBytes = getLongSize(properties, env, PropertyKey.CAIRO_SQL_WINDOW_ROWID_MAX_BYTES,
+                    deriveMaxBytesDefault(properties, env, PropertyKey.CAIRO_SQL_WINDOW_ROWID_MAX_PAGES,
+                            PropertyKey.CAIRO_SQL_ANALYTIC_ROWID_MAX_PAGES, this.sqlWindowRowIdPageSize));
             int sqlWindowTreeKeyPageSize = Numbers.ceilPow2(getIntSize(properties, env, PropertyKey.CAIRO_SQL_ANALYTIC_TREE_PAGE_SIZE, 512 * 1024));
             this.sqlWindowTreeKeyPageSize = Numbers.ceilPow2(getIntSize(properties, env, PropertyKey.CAIRO_SQL_WINDOW_TREE_PAGE_SIZE, sqlWindowTreeKeyPageSize));
-            int sqlWindowTreeKeyMaxPages = getInt(properties, env, PropertyKey.CAIRO_SQL_ANALYTIC_TREE_MAX_PAGES, Integer.MAX_VALUE);
-            this.sqlWindowTreeKeyMaxPages = getInt(properties, env, PropertyKey.CAIRO_SQL_WINDOW_TREE_MAX_PAGES, sqlWindowTreeKeyMaxPages);
+            this.sqlWindowTreeKeyMaxBytes = getLongSize(properties, env, PropertyKey.CAIRO_SQL_WINDOW_TREE_MAX_BYTES,
+                    deriveMaxBytesDefault(properties, env, PropertyKey.CAIRO_SQL_WINDOW_TREE_MAX_PAGES,
+                            PropertyKey.CAIRO_SQL_ANALYTIC_TREE_MAX_PAGES, this.sqlWindowTreeKeyPageSize));
             this.sqlIntervalMaxBracketDepth = getInt(properties, env, PropertyKey.CAIRO_SQL_INTERVAL_MAX_BRACKET_DEPTH, 8);
             this.sqlIntervalMaxIntervalsAfterMerge = getInt(properties, env, PropertyKey.CAIRO_SQL_INTERVAL_MAX_INTERVALS_AFTER_MERGE, 1024);
             this.sqlIntervalIncrementalMergeThreshold = getInt(properties, env, PropertyKey.CAIRO_SQL_INTERVAL_INCREMENTAL_MERGE_THRESHOLD, 256);
@@ -2598,6 +2605,33 @@ public class PropServerConfiguration implements ServerConfiguration {
                 log.advisory().$(validation.message).$();
             }
         }
+    }
+
+    protected long deriveMaxBytesDefault(
+            Properties properties,
+            @Nullable Map<String, String> env,
+            ConfigPropertyKey deprecatedMaxPagesKey,
+            long pageSize
+    ) throws ServerConfigurationException {
+        return deriveMaxBytesDefault(properties, env, deprecatedMaxPagesKey, null, pageSize);
+    }
+
+    protected long deriveMaxBytesDefault(
+            Properties properties,
+            @Nullable Map<String, String> env,
+            ConfigPropertyKey deprecatedMaxPagesKey,
+            @Nullable ConfigPropertyKey deprecatedAliasMaxPagesKey,
+            long pageSize
+    ) throws ServerConfigurationException {
+        int maxPages = Integer.MAX_VALUE;
+        if (deprecatedAliasMaxPagesKey != null) {
+            maxPages = getInt(properties, env, deprecatedAliasMaxPagesKey, maxPages);
+        }
+        maxPages = getInt(properties, env, deprecatedMaxPagesKey, maxPages);
+        if (maxPages != Integer.MAX_VALUE) {
+            return pageSize * (long) maxPages;
+        }
+        return 4L * Numbers.SIZE_1GB;
     }
 
     protected String getAcceptingWrites() {
@@ -4604,8 +4638,8 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public int getSqlSortKeyMaxPages() {
-            return sqlSortKeyMaxPages;
+        public long getSqlSortKeyMaxBytes() {
+            return sqlSortKeyMaxBytes;
         }
 
         @Override
@@ -4614,8 +4648,8 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public int getSqlSortLightValueMaxPages() {
-            return sqlSortLightValueMaxPages;
+        public long getSqlSortLightValueMaxBytes() {
+            return sqlSortLightValueMaxBytes;
         }
 
         @Override
@@ -4624,8 +4658,8 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public int getSqlSortValueMaxPages() {
-            return sqlSortValueMaxPages;
+        public long getSqlSortValueMaxBytes() {
+            return sqlSortValueMaxBytes;
         }
 
         @Override
@@ -4639,6 +4673,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public long getSqlWindowCacheMaxBytes() {
+            return sqlWindowCacheMaxBytes;
+        }
+
+        @Override
         public int getSqlWindowInitialRangeBufferSize() {
             return sqlWindowInitialRangeBufferSize;
         }
@@ -4649,8 +4688,8 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public int getSqlWindowRowIdMaxPages() {
-            return sqlWindowRowIdMaxPages;
+        public long getSqlWindowRowIdMaxBytes() {
+            return sqlWindowRowIdMaxBytes;
         }
 
         @Override
@@ -4669,8 +4708,8 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public int getSqlWindowTreeKeyMaxPages() {
-            return sqlWindowTreeKeyMaxPages;
+        public long getSqlWindowTreeKeyMaxBytes() {
+            return sqlWindowTreeKeyMaxBytes;
         }
 
         @Override

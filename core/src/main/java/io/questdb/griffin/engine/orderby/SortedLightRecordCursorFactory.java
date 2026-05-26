@@ -58,9 +58,9 @@ public class SortedLightRecordCursorFactory extends AbstractRecordCursorFactory 
         try {
             chain = new LongTreeChain(
                     configuration.getSqlSortKeyPageSize(),
-                    configuration.getSqlSortKeyMaxPages(),
+                    configuration.getSqlSortKeyMaxBytes(),
                     configuration.getSqlSortLightValuePageSize(),
-                    configuration.getSqlSortLightValueMaxPages()
+                    configuration.getSqlSortLightValueMaxBytes()
             );
             // Hoist rankMaps into a named local so the catch can free the
             // (native-memory-owning) list if the cursor ctor below throws after

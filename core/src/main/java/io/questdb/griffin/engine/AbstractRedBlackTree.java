@@ -44,6 +44,8 @@ public abstract class AbstractRedBlackTree implements Mutable, Reopenable {
     protected static final byte RED = 1;
     // P + L + R + C + REF + LAST_REF
     private static final long BLOCK_SIZE = 4 + 4 + 4 + 4 + 4 + 4; // 24, must be divisible by 8
+    // Upper bound enforced by the compressed-offset encoding (offsets are 8-byte-aligned and
+    // stored as 32-bit ints), independent of any user-supplied byte cap.
     private static final long MAX_KEY_HEAP_SIZE_LIMIT = (Integer.toUnsignedLong(-1) - 1) << 3;
     private static final long OFFSET_COLOUR = 12;
     // offset to last reference in value chain (kept to avoid having to traverse whole chain on each addition)
@@ -58,12 +60,12 @@ public abstract class AbstractRedBlackTree implements Mutable, Reopenable {
     private long keyHeapSize;
     private long keyHeapStart;
 
-    public AbstractRedBlackTree(long keyPageSize, int keyMaxPages) {
+    public AbstractRedBlackTree(long keyPageSize, long maxKeyHeapBytes) {
         assert keyPageSize >= BLOCK_SIZE;
         keyHeapSize = initialKeyHeapSize = keyPageSize;
         keyHeapStart = keyHeapPos = Unsafe.malloc(keyHeapSize, MemoryTag.NATIVE_TREE_CHAIN);
         keyHeapLimit = keyHeapStart + keyHeapSize;
-        maxKeyHeapSize = Math.min(keyPageSize * keyMaxPages, MAX_KEY_HEAP_SIZE_LIMIT);
+        maxKeyHeapSize = Math.min(Math.max(maxKeyHeapBytes, keyPageSize), MAX_KEY_HEAP_SIZE_LIMIT);
     }
 
     @Override

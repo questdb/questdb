@@ -790,25 +790,27 @@ public interface CairoConfiguration {
 
     int getSqlSortKeyMaterializationThreshold();
 
-    int getSqlSortKeyMaxPages();
+    long getSqlSortKeyMaxBytes();
 
     long getSqlSortKeyPageSize();
 
-    int getSqlSortLightValueMaxPages();
+    long getSqlSortLightValueMaxBytes();
 
     long getSqlSortLightValuePageSize();
 
-    int getSqlSortValueMaxPages();
+    long getSqlSortValueMaxBytes();
 
     int getSqlSortValuePageSize();
 
     int getSqlUnorderedMapMaxEntrySize();
 
+    long getSqlWindowCacheMaxBytes();
+
     int getSqlWindowInitialRangeBufferSize();
 
     int getSqlWindowMaxRecursion();
 
-    int getSqlWindowRowIdMaxPages();
+    long getSqlWindowRowIdMaxBytes();
 
     int getSqlWindowRowIdPageSize();
 
@@ -816,7 +818,7 @@ public interface CairoConfiguration {
 
     int getSqlWindowStorePageSize();
 
-    int getSqlWindowTreeKeyMaxPages();
+    long getSqlWindowTreeKeyMaxBytes();
 
     int getSqlWindowTreeKeyPageSize();
 

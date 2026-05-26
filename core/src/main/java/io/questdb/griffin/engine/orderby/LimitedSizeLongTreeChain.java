@@ -70,6 +70,8 @@ public class LimitedSizeLongTreeChain extends AbstractRedBlackTree implements Re
     // marks value chain entry as unused (belonging to a node on the freelist)
     // it's meant to avoid unnecessary reallocations when removing nodes and adding nodes
     private static final long FREE_SLOT = -2;
+    // Upper bound enforced by the compressed-offset encoding (offsets are 4-byte-aligned and
+    // stored as 32-bit ints), independent of any user-supplied byte cap.
     private static final long MAX_VALUE_HEAP_SIZE_LIMIT = (Integer.toUnsignedLong(-1) - 1) << 2;
     // LIFO list of free blocks to reuse, allocated on the value chain
     private final DirectIntList chainFreeList;
@@ -95,15 +97,15 @@ public class LimitedSizeLongTreeChain extends AbstractRedBlackTree implements Re
     private long valueHeapSize;
     private long valueHeapStart;
 
-    public LimitedSizeLongTreeChain(long keyPageSize, int keyMaxPages, long valuePageSize, int valueMaxPages) {
-        super(keyPageSize, keyMaxPages);
+    public LimitedSizeLongTreeChain(long keyPageSize, long maxKeyHeapBytes, long valuePageSize, long maxValueHeapBytes) {
+        super(keyPageSize, maxKeyHeapBytes);
         try {
             freeList = new DirectIntList(16, MemoryTag.NATIVE_TREE_CHAIN);
             chainFreeList = new DirectIntList(16, MemoryTag.NATIVE_TREE_CHAIN);
             valueHeapSize = initialValueHeapSize = valuePageSize;
             valueHeapStart = valueHeapPos = Unsafe.malloc(valueHeapSize, MemoryTag.NATIVE_TREE_CHAIN);
             valueHeapLimit = valueHeapStart + valueHeapSize;
-            maxValueHeapSize = Math.min(valuePageSize * valueMaxPages, MAX_VALUE_HEAP_SIZE_LIMIT);
+            maxValueHeapSize = Math.min(Math.max(maxValueHeapBytes, valuePageSize), MAX_VALUE_HEAP_SIZE_LIMIT);
         } catch (Throwable th) {
             close();
             throw th;

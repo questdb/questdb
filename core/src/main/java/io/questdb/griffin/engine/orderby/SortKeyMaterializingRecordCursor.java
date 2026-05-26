@@ -60,8 +60,10 @@ class SortKeyMaterializingRecordCursor implements DelegatingRecordCursor {
             int columnCount,
             IntList materializedColIndices,
             IntList materializedColTypes,
-            int maxPages
+            long maxBytes
     ) {
+        final long maxPagesByBytes = Math.max(1L, maxBytes / PAGE_SIZE);
+        final int maxPages = (int) Math.min(maxPagesByBytes, Integer.MAX_VALUE);
         final int bufferCount = materializedColIndices.size();
         this.buffers = new MemoryCARW[bufferCount];
         this.colToBufferIndex = new int[columnCount];

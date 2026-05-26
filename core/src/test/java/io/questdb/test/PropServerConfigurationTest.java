@@ -251,9 +251,9 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(1024, configuration.getCairoConfiguration().getSqlModelPoolCapacity());
         Assert.assertEquals(10_000, configuration.getCairoConfiguration().getSqlMaxNegativeLimit());
         Assert.assertEquals(128 * 1024, configuration.getCairoConfiguration().getSqlSortKeyPageSize());
-        Assert.assertEquals(Integer.MAX_VALUE, configuration.getCairoConfiguration().getSqlSortKeyMaxPages());
+        Assert.assertEquals(4L * Numbers.SIZE_1GB, configuration.getCairoConfiguration().getSqlSortKeyMaxBytes());
         Assert.assertEquals(128 * 1024, configuration.getCairoConfiguration().getSqlSortLightValuePageSize());
-        Assert.assertEquals(Integer.MAX_VALUE, configuration.getCairoConfiguration().getSqlSortLightValueMaxPages());
+        Assert.assertEquals(4L * Numbers.SIZE_1GB, configuration.getCairoConfiguration().getSqlSortLightValueMaxBytes());
         Assert.assertEquals(16 * 1024 * 1024, configuration.getCairoConfiguration().getSqlHashJoinValuePageSize());
         Assert.assertEquals(Integer.MAX_VALUE, configuration.getCairoConfiguration().getSqlHashJoinValueMaxPages());
         Assert.assertEquals(131_072, configuration.getCairoConfiguration().getSqlHorizonJoinBwdScanAbsoluteThreshold());
@@ -267,7 +267,7 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(10_000_000, configuration.getCairoConfiguration().getSqlAsOfJoinMapEvacuationThreshold());
         Assert.assertEquals(10_000_000, configuration.getCairoConfiguration().getSqlAsOfJoinShortCircuitCacheCapacity());
         Assert.assertEquals(16 * 1024 * 1024, configuration.getCairoConfiguration().getSqlSortValuePageSize());
-        Assert.assertEquals(Integer.MAX_VALUE, configuration.getCairoConfiguration().getSqlSortValueMaxPages());
+        Assert.assertEquals(4L * Numbers.SIZE_1GB, configuration.getCairoConfiguration().getSqlSortValueMaxBytes());
         Assert.assertEquals(10000, configuration.getCairoConfiguration().getWorkStealTimeoutNanos());
         Assert.assertTrue(configuration.getCairoConfiguration().isParallelIndexingEnabled());
         Assert.assertEquals(16 * 1024, configuration.getCairoConfiguration().getSqlJoinMetadataPageSize());
@@ -275,11 +275,12 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(64, configuration.getCairoConfiguration().getWindowColumnPoolCapacity());
         Assert.assertEquals(128, configuration.getCairoConfiguration().getSqlWindowMaxRecursion());
         Assert.assertEquals(512 * 1024, configuration.getCairoConfiguration().getSqlWindowTreeKeyPageSize());
-        Assert.assertEquals(Integer.MAX_VALUE, configuration.getCairoConfiguration().getSqlWindowTreeKeyMaxPages());
+        Assert.assertEquals(4L * Numbers.SIZE_1GB, configuration.getCairoConfiguration().getSqlWindowTreeKeyMaxBytes());
         Assert.assertEquals(1024 * 1024, configuration.getCairoConfiguration().getSqlWindowStorePageSize());
         Assert.assertEquals(Integer.MAX_VALUE, configuration.getCairoConfiguration().getSqlWindowStoreMaxPages());
+        Assert.assertEquals(4L * Numbers.SIZE_1GB, configuration.getCairoConfiguration().getSqlWindowCacheMaxBytes());
         Assert.assertEquals(512 * 1024, configuration.getCairoConfiguration().getSqlWindowRowIdPageSize());
-        Assert.assertEquals(Integer.MAX_VALUE, configuration.getCairoConfiguration().getSqlWindowRowIdMaxPages());
+        Assert.assertEquals(4L * Numbers.SIZE_1GB, configuration.getCairoConfiguration().getSqlWindowRowIdMaxBytes());
         Assert.assertEquals(128, configuration.getCairoConfiguration().getWithClauseModelPoolCapacity());
         Assert.assertEquals(16, configuration.getCairoConfiguration().getRenameTableModelPoolCapacity());
         Assert.assertEquals(64, configuration.getCairoConfiguration().getInsertModelPoolCapacity());
@@ -767,6 +768,40 @@ public class PropServerConfigurationTest {
         Assert.assertNotEquals(-1, result.message().indexOf("Deprecated settings"));
         Assert.assertNotEquals(-1, result.message().indexOf(
                 "Replaced by `http.min.net.connection.rcvbuf` and `http.net.connection.rcvbuf`"));
+    }
+
+    @Test
+    public void testDeprecatedMaxPagesDerivesMaxBytes() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty("cairo.sql.window.tree.page.size", "512k");
+        properties.setProperty("cairo.sql.window.tree.max.pages", "200");
+        properties.setProperty("cairo.sql.sort.key.page.size", "128k");
+        properties.setProperty("cairo.sql.sort.key.max.pages", "10");
+        // The deprecated analytic alias still works too.
+        properties.setProperty("cairo.sql.window.rowid.page.size", "256k");
+        properties.setProperty("cairo.sql.analytic.rowid.max.pages", "50");
+
+        CairoConfiguration cairo = newPropServerConfiguration(properties).getCairoConfiguration();
+
+        Assert.assertEquals(200L * 512 * 1024, cairo.getSqlWindowTreeKeyMaxBytes());
+        Assert.assertEquals(10L * 128 * 1024, cairo.getSqlSortKeyMaxBytes());
+        Assert.assertEquals(50L * 256 * 1024, cairo.getSqlWindowRowIdMaxBytes());
+        // Keys whose deprecated max.pages remained unset fall back to the new 4 GiB default.
+        Assert.assertEquals(4L * Numbers.SIZE_1GB, cairo.getSqlSortValueMaxBytes());
+        Assert.assertEquals(4L * Numbers.SIZE_1GB, cairo.getSqlWindowCacheMaxBytes());
+    }
+
+    @Test
+    public void testNewMaxBytesWinsOverDeprecatedMaxPages() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty("cairo.sql.window.tree.page.size", "512k");
+        properties.setProperty("cairo.sql.window.tree.max.pages", "200");
+        properties.setProperty("cairo.sql.window.tree.max.bytes", "1g");
+
+        CairoConfiguration cairo = newPropServerConfiguration(properties).getCairoConfiguration();
+
+        // The new key takes precedence over the deprecated alias.
+        Assert.assertEquals(Numbers.SIZE_1GB, cairo.getSqlWindowTreeKeyMaxBytes());
     }
 
     @Test
@@ -2250,9 +2285,10 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(256, configuration.getSqlModelPoolCapacity());
         Assert.assertEquals(42, configuration.getSqlMaxNegativeLimit());
         Assert.assertEquals(10 * 1024 * 1024, configuration.getSqlSortKeyPageSize());
-        Assert.assertEquals(256, configuration.getSqlSortKeyMaxPages());
+        // New max.bytes key wins over the deprecated max.pages alias.
+        Assert.assertEquals(123L * 1024 * 1024, configuration.getSqlSortKeyMaxBytes());
         Assert.assertEquals(3 * 1024 * 1024, configuration.getSqlSortLightValuePageSize());
-        Assert.assertEquals(1027, configuration.getSqlSortLightValueMaxPages());
+        Assert.assertEquals(321L * 1024 * 1024, configuration.getSqlSortLightValueMaxBytes());
         Assert.assertEquals(8 * 1024 * 1024, configuration.getSqlHashJoinValuePageSize());
         Assert.assertEquals(1024, configuration.getSqlHashJoinValueMaxPages());
         Assert.assertEquals(65_536, configuration.getSqlHorizonJoinBwdScanAbsoluteThreshold());
@@ -2266,7 +2302,7 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(1000, configuration.getSqlAsOfJoinShortCircuitCacheCapacity());
         Assert.assertEquals(1000, configuration.getSqlAsOfJoinMapEvacuationThreshold());
         Assert.assertEquals(4 * 1024 * 1024, configuration.getSqlSortValuePageSize());
-        Assert.assertEquals(1028, configuration.getSqlSortValueMaxPages());
+        Assert.assertEquals(678L * 1024 * 1024, configuration.getSqlSortValueMaxBytes());
         Assert.assertEquals(1000000, configuration.getWorkStealTimeoutNanos());
         Assert.assertFalse(configuration.isParallelIndexingEnabled());
         Assert.assertEquals(8 * 1024, configuration.getSqlJoinMetadataPageSize());
@@ -2279,11 +2315,12 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(256, configuration.getWindowColumnPoolCapacity());
         Assert.assertEquals(256, configuration.getSqlWindowMaxRecursion());
         Assert.assertEquals(512 * 1024, configuration.getSqlWindowTreeKeyPageSize());
-        Assert.assertEquals(1031, configuration.getSqlWindowTreeKeyMaxPages());
+        Assert.assertEquals(456L * 1024 * 1024, configuration.getSqlWindowTreeKeyMaxBytes());
         Assert.assertEquals(1024 * 1024, configuration.getSqlWindowStorePageSize());
         Assert.assertEquals(1029, configuration.getSqlWindowStoreMaxPages());
+        Assert.assertEquals(234L * 1024 * 1024, configuration.getSqlWindowCacheMaxBytes());
         Assert.assertEquals(524288, configuration.getSqlWindowRowIdPageSize());
-        Assert.assertEquals(1030, configuration.getSqlWindowRowIdMaxPages());
+        Assert.assertEquals(345L * 1024 * 1024, configuration.getSqlWindowRowIdMaxBytes());
         Assert.assertEquals(1024, configuration.getWithClauseModelPoolCapacity());
         Assert.assertEquals(512, configuration.getRenameTableModelPoolCapacity());
         Assert.assertEquals(128, configuration.getInsertModelPoolCapacity());

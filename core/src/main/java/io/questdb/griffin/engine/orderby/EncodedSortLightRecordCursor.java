@@ -70,8 +70,7 @@ class EncodedSortLightRecordCursor implements DelegatingRecordCursor {
             this.encoder = new SortKeyEncoder(metadata, sortColumnFilter);
             this.entryMem = new DirectLongList(16 * 1024, MemoryTag.NATIVE_DEFAULT, true); // 128KB
             this.maxEntryMemBytes = Math.min(
-                    configuration.getSqlSortKeyPageSize() * (long) configuration.getSqlSortKeyMaxPages()
-                            + configuration.getSqlSortLightValuePageSize() * (long) configuration.getSqlSortLightValueMaxPages(),
+                    configuration.getSqlSortKeyMaxBytes() + configuration.getSqlSortLightValueMaxBytes(),
                     MAX_HEAP_SIZE_LIMIT
             );
             this.parallelThreshold = configuration.getSqlSortEncodedParallelThreshold();

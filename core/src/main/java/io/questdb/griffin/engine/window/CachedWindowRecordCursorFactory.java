@@ -87,11 +87,14 @@ public class CachedWindowRecordCursorFactory extends AbstractRecordCursorFactory
             assert orderedGroupCount == orderedFunctions.size();
             this.orderedFunctions = orderedFunctions;
             this.comparators = comparators;
+            final long cachePageSize = configuration.getSqlWindowStorePageSize();
+            final long cacheMaxPagesByBytes = Math.max(1L, configuration.getSqlWindowCacheMaxBytes() / cachePageSize);
+            final int cacheMaxPages = (int) Math.min(cacheMaxPagesByBytes, configuration.getSqlWindowStoreMaxPages());
             RecordArray recordChain = new RecordArray(
                     chainTypes,
                     recordSink,
-                    configuration.getSqlWindowStorePageSize(),
-                    configuration.getSqlWindowStoreMaxPages()
+                    cachePageSize,
+                    cacheMaxPages
             );
             this.sortKeys = sortKeys;
             this.chainMetadata = chainMetadata;
@@ -114,9 +117,9 @@ public class CachedWindowRecordCursorFactory extends AbstractRecordCursorFactory
                     orderedSources.add(
                             new LongTreeChain(
                                     configuration.getSqlWindowTreeKeyPageSize(),
-                                    configuration.getSqlWindowTreeKeyMaxPages(),
+                                    configuration.getSqlWindowTreeKeyMaxBytes(),
                                     configuration.getSqlWindowRowIdPageSize(),
-                                    configuration.getSqlWindowRowIdMaxPages()
+                                    configuration.getSqlWindowRowIdMaxBytes()
                             )
                     );
                 }

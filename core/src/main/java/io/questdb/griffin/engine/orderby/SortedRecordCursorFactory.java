@@ -64,9 +64,9 @@ public class SortedRecordCursorFactory extends AbstractRecordCursorFactory {
                     recordSink,
                     comparator,
                     configuration.getSqlSortKeyPageSize(),
-                    configuration.getSqlSortKeyMaxPages(),
+                    configuration.getSqlSortKeyMaxBytes(),
                     configuration.getSqlSortValuePageSize(),
-                    configuration.getSqlSortValueMaxPages()
+                    configuration.getSqlSortValueMaxBytes()
             );
             // Hoist rankMaps into a named local so the catch can free the
             // (native-memory-owning) list if the cursor ctor below throws after

@@ -1207,8 +1207,8 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public int getSqlSortKeyMaxPages() {
-        return 1024;
+    public long getSqlSortKeyMaxBytes() {
+        return 4L * Numbers.SIZE_1GB;
     }
 
     @Override
@@ -1217,8 +1217,8 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public int getSqlSortLightValueMaxPages() {
-        return 1024;
+    public long getSqlSortLightValueMaxBytes() {
+        return 4L * Numbers.SIZE_1GB;
     }
 
     @Override
@@ -1227,8 +1227,8 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public int getSqlSortValueMaxPages() {
-        return 1024;
+    public long getSqlSortValueMaxBytes() {
+        return 4L * Numbers.SIZE_1GB;
     }
 
     @Override
@@ -1242,6 +1242,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public long getSqlWindowCacheMaxBytes() {
+        return 4L * Numbers.SIZE_1GB;
+    }
+
+    @Override
     public int getSqlWindowInitialRangeBufferSize() {
         return 32;
     }
@@ -1252,8 +1257,8 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public int getSqlWindowRowIdMaxPages() {
-        return Integer.MAX_VALUE;
+    public long getSqlWindowRowIdMaxBytes() {
+        return 4L * Numbers.SIZE_1GB;
     }
 
     @Override
@@ -1272,8 +1277,8 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
-    public int getSqlWindowTreeKeyMaxPages() {
-        return Integer.MAX_VALUE;
+    public long getSqlWindowTreeKeyMaxBytes() {
+        return 4L * Numbers.SIZE_1GB;
     }
 
     @Override

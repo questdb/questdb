@@ -38,6 +38,8 @@ import io.questdb.std.Unsafe;
  */
 public class LongTreeChain extends AbstractRedBlackTree implements Reopenable {
     private static final long CHAIN_VALUE_SIZE = 12;
+    // Upper bound enforced by the compressed-offset encoding (offsets are 4-byte-aligned and
+    // stored as 32-bit ints), independent of any user-supplied byte cap.
     private static final long MAX_VALUE_HEAP_SIZE_LIMIT = (Integer.toUnsignedLong(-1) - 1) << 2;
     private final TreeCursor cursor = new TreeCursor();
     private final long initialValueHeapSize;
@@ -47,13 +49,13 @@ public class LongTreeChain extends AbstractRedBlackTree implements Reopenable {
     private long valueHeapSize;
     private long valueHeapStart;
 
-    public LongTreeChain(long keyPageSize, int keyMaxPages, long valuePageSize, int valueMaxPages) {
-        super(keyPageSize, keyMaxPages);
+    public LongTreeChain(long keyPageSize, long maxKeyHeapBytes, long valuePageSize, long maxValueHeapBytes) {
+        super(keyPageSize, maxKeyHeapBytes);
         try {
             valueHeapSize = initialValueHeapSize = valuePageSize;
             valueHeapStart = valueHeapPos = Unsafe.malloc(valueHeapSize, MemoryTag.NATIVE_TREE_CHAIN);
             valueHeapLimit = valueHeapStart + valueHeapSize;
-            maxValueHeapSize = Math.min(valuePageSize * valueMaxPages, MAX_VALUE_HEAP_SIZE_LIMIT);
+            maxValueHeapSize = Math.min(Math.max(maxValueHeapBytes, valuePageSize), MAX_VALUE_HEAP_SIZE_LIMIT);
         } catch (Throwable th) {
             close();
             throw th;

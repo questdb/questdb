@@ -57,9 +57,9 @@ public class LimitedSizeLongTreeChainTest extends AbstractCairoTest {
     public void before() {
         chain = new LimitedSizeLongTreeChain(
                 configuration.getSqlSortKeyPageSize(),
-                configuration.getSqlSortKeyMaxPages(),
+                configuration.getSqlSortKeyMaxBytes(),
                 configuration.getSqlSortLightValuePageSize(),
-                configuration.getSqlSortLightValueMaxPages()
+                configuration.getSqlSortLightValueMaxBytes()
         );
         chain.updateLimits(true, 20);
     }

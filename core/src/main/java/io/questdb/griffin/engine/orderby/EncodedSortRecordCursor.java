@@ -73,15 +73,17 @@ class EncodedSortRecordCursor implements DelegatingRecordCursor {
             this.encoder = new SortKeyEncoder(metadata, sortColumnFilter);
             this.entryMem = new DirectLongList(16 * 1024, MemoryTag.NATIVE_DEFAULT, true); // 128KB
             this.maxEntryMemBytes = Math.min(
-                    configuration.getSqlSortKeyPageSize() * (long) configuration.getSqlSortKeyMaxPages(),
+                    configuration.getSqlSortKeyMaxBytes(),
                     MAX_HEAP_SIZE_LIMIT
             );
             this.parallelThreshold = configuration.getSqlSortEncodedParallelThreshold();
+            final long valuePageSize = configuration.getSqlSortValuePageSize();
+            final long valueMaxPagesByBytes = Math.max(1L, configuration.getSqlSortValueMaxBytes() / valuePageSize);
             this.recordChain = new RecordChain(
                     metadata,
                     recordSink,
-                    configuration.getSqlSortValuePageSize(),
-                    configuration.getSqlSortValueMaxPages()
+                    valuePageSize,
+                    (int) Math.min(valueMaxPagesByBytes, Integer.MAX_VALUE)
             );
             this.isOpen = true;
         } finally {
