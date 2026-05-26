@@ -41,7 +41,7 @@ public class MatchStrFunctionFactoryTest extends AbstractCairoTest {
             assertQuery(
                     "name\n",
                     "select * from x where name ~ null",
-                    false,
+                    true,
                     true
             );
         });

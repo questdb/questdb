@@ -34,6 +34,7 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.mp.SOCountDownLatch;
@@ -217,6 +218,30 @@ public class CancelQueryFunctionFactoryTest extends AbstractCairoTest {
 
             if (error.get() != null) {
                 throw error.get();
+            }
+        });
+    }
+
+    @Test
+    public void testValidateCancelQueryDoesNotCancel() throws Exception {
+        assertMemoryLeak(() -> {
+            final SqlExecutionContextImpl ctx = (SqlExecutionContextImpl) sqlExecutionContext;
+
+            // Validation compiles CANCEL QUERY but skips the registry lookup, so it succeeds
+            // even for an id that is not registered - no "query to cancel not found" error.
+            ctx.setValidationOnly(true);
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                compiler.compile("cancel query 123456789", ctx);
+            } finally {
+                ctx.setValidationOnly(false);
+            }
+
+            // Real execution performs the lookup and fails because the id is not registered.
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                compiler.compile("cancel query 123456789", ctx);
+                Assert.fail("expected query-not-found error");
+            } catch (SqlException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "query to cancel not found in registry");
             }
         });
     }

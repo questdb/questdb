@@ -346,7 +346,7 @@ public final class TableUtils {
     public static long checkMemSize(MemoryMR metaMem, long minSize) {
         final long memSize = metaMem.size();
         if (memSize < minSize) {
-            throw CairoException.critical(0).put("File is too small, size=").put(memSize).put(", required=").put(minSize);
+            throw CairoException.fileTooSmall(memSize, minSize);
         }
         return memSize;
     }
@@ -837,7 +837,7 @@ public final class TableUtils {
 
     public static int getInt(MemoryR metaMem, long memSize, long offset) {
         if (memSize < offset + Integer.BYTES) {
-            throw CairoException.critical(0).put("File is too small, size=").put(memSize).put(", required=").put(offset + Integer.BYTES);
+            throw CairoException.fileTooSmall(memSize, offset + Integer.BYTES);
         }
         return metaMem.getInt(offset);
     }
@@ -2473,11 +2473,7 @@ public final class TableUtils {
     public static void validateMetaVersion(Utf8Sequence metaPath, MemoryMR metaMem, long metaVersionOffset, int expectedVersion) {
         final int metaVersion = metaMem.getInt(metaVersionOffset);
         if (expectedVersion != metaVersion) {
-            throw validationException()
-                    .put("metadata version does not match runtime version [path=").put(metaPath)
-                    .put(", expectedVersion=").put(expectedVersion)
-                    .put(", actualVersion=").put(metaVersion)
-                    .put(']');
+            throw CairoException.metadataVersionMismatch(metaPath, expectedVersion, metaVersion);
         }
     }
 
@@ -2610,7 +2606,7 @@ public final class TableUtils {
         }
         final long storageLength = Vm.getStorageLength(strLength);
         if (offset + storageLength > memSize) {
-            throw CairoException.critical(0).put("File is too small, size=").put(memSize).put(", required=").put(offset + storageLength);
+            throw CairoException.fileTooSmall(memSize, offset + storageLength);
         }
         return metaMem.getStrA(offset);
     }

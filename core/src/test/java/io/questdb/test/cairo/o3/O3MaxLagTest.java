@@ -42,6 +42,7 @@ import io.questdb.std.Files;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
+import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.Utf8StringSink;
 import io.questdb.test.cairo.TableModel;
@@ -272,14 +273,25 @@ public class O3MaxLagTest extends AbstractO3Test {
                     int longsPerPage = dataAppendPageSize / 8;
                     int hi = (longsPerPage + 8) * 2;
                     int lo = (longsPerPage - 8) * 2;
-                    int maxUncommitted = TestUtils.generateRandom(null).nextInt(hi);
+                    Rnd rnd = TestUtils.generateRandom(LOG);
+                    int maxUncommitted = rnd.nextInt(hi);
 
                     int initialCountLo = longsPerPage - 1;
                     int additionalCountLo = longsPerPage - 1;
 
+                    // Sample a sliding window of the inner range; smaller on slow CI runners (Mac, Windows).
+                    // The window always covers the page boundary (longsPerPage * 2), the value this test
+                    // exists to exercise, so every run still hits the boundary while total iterations drop.
+                    int pageBoundary = longsPerPage * 2;
+                    int innerWindow = Os.isLinux() ? 8 : 2;
+                    int startLo = Math.max(lo, pageBoundary - innerWindow + 1);
+                    int startHi = Math.min(pageBoundary, hi - innerWindow);
+                    int innerStart = startLo + rnd.nextInt(Math.max(1, startHi - startLo + 1));
+                    int innerEnd = innerStart + innerWindow;
+
                     for (int initialCount = initialCountLo; initialCount < initialCountLo + 3; initialCount++) {
                         for (int additionalCount = additionalCountLo; additionalCount < additionalCountLo + 3; additionalCount++) {
-                            for (int i = lo; i < hi; i++) {
+                            for (int i = innerStart; i < innerEnd; i++) {
                                 LOG.info().$("=========== count1 ").$(initialCount).$(" count2 = ").$(additionalCount).$("iteration ").$(i).$(", max uncommitted ").$(maxUncommitted).$(" ===================").$();
                                 testVarColumnMergeWithColumnTops(
                                         engine,

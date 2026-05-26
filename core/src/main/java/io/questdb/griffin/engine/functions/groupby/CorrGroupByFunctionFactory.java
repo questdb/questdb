@@ -195,12 +195,6 @@ public class CorrGroupByFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void setDouble(MapValue mapValue, double value) {
-            mapValue.putDouble(valueIndex + 4, value);
-            mapValue.putLong(valueIndex + 5, 1L);
-        }
-
-        @Override
         public void setNull(MapValue mapValue) {
             mapValue.putDouble(valueIndex, Double.NaN);
             mapValue.putDouble(valueIndex + 1, Double.NaN);
@@ -212,7 +206,7 @@ public class CorrGroupByFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean supportsParallelism() {
-            return true;
+            return BinaryFunction.super.supportsParallelism();
         }
 
         // mean_x, sum_x, mean_y, sum_y, sum_xy

@@ -172,6 +172,38 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
     private PageFrameMemoryPool pageFrameMemoryPool;
     private PageFrameMemoryRecord pageFrameMemoryRecord;
     /**
+     * Cache-reset bitmask the upcoming query applies locally on the server
+     * but has NOT yet emitted on the wire. Set by
+     * {@code applyCacheResetForUpcomingQuery} in handleQueryRequest before
+     * the cursor is opened; consumed by {@code emitPendingCacheReset} at
+     * the top of streamResults, after {@code state.beginStreaming} has
+     * flipped {@code streamingActive=true}.
+     * <p>
+     * Splitting "apply locally" from "emit on the wire" lets the wire-send
+     * sit inside a streaming-active region. If the send parks on
+     * {@code PeerIsSlowToReadException} under a small send fragmentation
+     * cap, {@code resumeSend} can re-enter {@code streamResults} and the
+     * query continues; emitting from {@code handleQueryRequest} (the
+     * earlier shape) abandoned the query because {@code resumeSend} saw
+     * {@code streamingActive=false} and returned.
+     */
+    private byte pendingCacheResetMask;
+    /**
+     * True between a CLOSE-frame send that parked on
+     * {@code PeerIsSlowToReadException} (either the {@code handleClose} echo
+     * or a {@code sendFatalClose} diagnostic) and the {@code resumeSend} that
+     * finishes flushing the residual bytes. While true, {@code resumeSend}
+     * runs {@code gracefulCloseAndDisconnect} after the deferred flush
+     * completes, instead of attempting to continue streaming.
+     * <p>
+     * Without this flag, the catch-and-swallow pattern that used to live in
+     * {@code handleClose} / {@code sendFatalClose} tore the connection down
+     * before the rest of the CLOSE frame left the box, so the client saw EOF
+     * mid-frame and reported "peer disconnect" instead of the close code we
+     * promised.
+     */
+    private boolean pendingDisconnectAfterFlush;
+    /**
      * Byte count of the WebSocket 101 handshake response written by
      * {@code onHeadersReady} but not yet committed. {@code onRequestComplete}
      * issues the {@code rawSocket.send(pendingHandshakeBytes)} -- PISR from
@@ -497,6 +529,8 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
         recvBufferLen = 0;
         wsHandshakeSent = false;
         handshakeFlushPending = false;
+        pendingCacheResetMask = 0;
+        pendingDisconnectAfterFlush = false;
         pendingHandshakeBytes = 0;
         fd = -1;
         securityContext = null;
@@ -737,6 +771,10 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
         return negotiatedVersion;
     }
 
+    public byte getPendingCacheResetMask() {
+        return pendingCacheResetMask;
+    }
+
     public int getPendingHandshakeBytes() {
         return pendingHandshakeBytes;
     }
@@ -816,6 +854,17 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
         return handshakeFlushPending;
     }
 
+    /**
+     * True between a CLOSE-frame send that parked on
+     * {@code PeerIsSlowToReadException} and the {@code resumeSend} that
+     * finishes flushing the residual bytes. {@code resumeSend} consumes the
+     * flag and triggers {@code gracefulCloseAndDisconnect} once the deferred
+     * flush completes.
+     */
+    public boolean isPendingDisconnectAfterFlush() {
+        return pendingDisconnectAfterFlush;
+    }
+
     public boolean isStreamingActive() {
         return streamingActive;
     }
@@ -877,6 +926,20 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
         streamingCreditSuspended = true;
     }
 
+    /**
+     * OR-merges {@code additionalBits} into the staged {@code CACHE_RESET}
+     * mask. Used by the egress processor when a soft cap trips and a fresh
+     * mask must accumulate on top of any bits already staged by an earlier
+     * query whose {@code emitPendingCacheReset} never ran (non-SELECT path
+     * via {@code executeNonSelect}, or a SELECT that failed between
+     * {@code findOrAllocateSchemaId} and {@code emitPendingCacheReset}).
+     * Plain assignment would silently drop the prior bits and let the client
+     * fall out of sync with the server's already-cleared caches.
+     */
+    public void mergePendingCacheResetMask(byte additionalBits) {
+        pendingCacheResetMask |= additionalBits;
+    }
+
     public void of(long fd, SecurityContext securityContext) {
         this.fd = fd;
         this.securityContext = securityContext;
@@ -932,6 +995,14 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
 
     public void setHandshakeFlushPending(boolean pending) {
         this.handshakeFlushPending = pending;
+    }
+
+    public void setPendingCacheResetMask(byte mask) {
+        this.pendingCacheResetMask = mask;
+    }
+
+    public void setPendingDisconnectAfterFlush(boolean pending) {
+        this.pendingDisconnectAfterFlush = pending;
     }
 
     /**

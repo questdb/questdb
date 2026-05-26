@@ -10931,7 +10931,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
             assertExceptionNoLeakCheck(
                     "REFRESH MATERIALIZED VIEW 'x_view' foobar",
                     35,
-                    "'full' or 'incremental' or 'range' expected"
+                    "'full', 'incremental', 'range' or 'stats' expected"
             );
         });
     }

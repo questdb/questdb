@@ -1899,6 +1899,236 @@ public class SampleByFillTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFillValueIntCastsToDecimalAggregate() throws Exception {
+        // IntFunction has no typed DECIMAL accessor, so SampleByFillRecord would crash at runtime
+        // with UnsupportedOperationException. The compiler wraps the fill value in an INT -> DECIMAL
+        // implicit cast so it reads correctly at runtime.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t_fv_dec_i (d DECIMAL(10,2), ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t_fv_dec_i VALUES (1.5::DECIMAL(10,2), 0), (2.5::DECIMAL(10,2), 300_000_000)");
+            execute("CREATE TABLE t_fv_dec_i_out AS (SELECT ts, avg(d) AS avg FROM t_fv_dec_i SAMPLE BY 1m FILL(0))");
+        });
+    }
+
+    @Test
+    public void testFillValueIntWidensToLongAggregate() throws Exception {
+        // Sanity check: INT -> LONG is a built-in widening cast, no wrapper needed.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t_fv_long (n INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t_fv_long VALUES (1, 0), (2, 300_000_000)");
+            execute("CREATE TABLE t_fv_long_out AS (SELECT ts, sum(n) AS s FROM t_fv_long SAMPLE BY 1m FILL(0))");
+        });
+    }
+
+    @Test
+    public void testFillValueRejectedForArrayAggregate() throws Exception {
+        // first(array) returns DOUBLE[]; no INT -> ARRAY implicit cast exists.
+        assertException(
+                "SELECT ts, first(a) FROM t_fv_arr SAMPLE BY 1m FILL(0)",
+                "CREATE TABLE t_fv_arr (a DOUBLE[], ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY",
+                52,
+                "fill value of type INT cannot fill column of type DOUBLE[]"
+        );
+    }
+
+    @Test
+    public void testFillValueRejectedForGeoHashAggregate() throws Exception {
+        // first(geohash) returns GEOHASH; no INT -> GEOHASH implicit cast exists.
+        assertException(
+                "SELECT ts, first(g) FROM t_fv_geo SAMPLE BY 1m FILL(0)",
+                "CREATE TABLE t_fv_geo (g GEOHASH(5c), ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY",
+                52,
+                "fill value of type INT cannot fill column of type GEOHASH(5c)"
+        );
+    }
+
+    @Test
+    public void testFillValueRejectedForIPv4Aggregate() throws Exception {
+        // first(ipv4) returns IPv4; no INT -> IPv4 implicit cast exists, and IntFunction.getIPv4
+        // throws UnsupportedOperationException at runtime.
+        assertException(
+                "SELECT ts, first(ip) FROM t_fv_ip SAMPLE BY 1m FILL(0)",
+                "CREATE TABLE t_fv_ip (ip IPv4, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY",
+                52,
+                "fill value of type INT cannot fill column of type IPv4"
+        );
+    }
+
+    @Test
+    public void testFillValueRejectedForLong256Aggregate() throws Exception {
+        // sum(long256) returns LONG256; no INT -> LONG256 implicit cast exists.
+        assertException(
+                "SELECT ts, sum(l) FROM t_fv_l256 SAMPLE BY 1m FILL(0)",
+                "CREATE TABLE t_fv_l256 (l LONG256, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY",
+                51,
+                "fill value of type INT cannot fill column of type LONG256"
+        );
+    }
+
+    @Test
+    public void testFillValueRejectedForStringAggregate() throws Exception {
+        // first(string) returns STRING; no INT -> STRING implicit cast exists.
+        assertException(
+                "SELECT ts, first(s) FROM t_fv_str SAMPLE BY 1m FILL(0)",
+                "CREATE TABLE t_fv_str (s STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY",
+                52,
+                "fill value of type INT cannot fill column of type STRING"
+        );
+    }
+
+    @Test
+    public void testFillValueRejectedForUuidAggregate() throws Exception {
+        // first(uuid) returns UUID; no INT -> UUID implicit cast exists.
+        assertException(
+                "SELECT ts, first(u) FROM t_fv_uuid SAMPLE BY 1m FILL(0)",
+                "CREATE TABLE t_fv_uuid (u UUID, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY",
+                53,
+                "fill value of type INT cannot fill column of type UUID"
+        );
+    }
+
+    @Test
+    public void testFillValueStringCastsToDecimalAggregate() throws Exception {
+        // STRING -> DECIMAL implicit cast exists via CastStrToDecimalFunctionFactory.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t_fv_dec_s (d DECIMAL(10,2), ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t_fv_dec_s VALUES (1.5::DECIMAL(10,2), 0), (2.5::DECIMAL(10,2), 300_000_000)");
+            execute("CREATE TABLE t_fv_dec_s_out AS (SELECT ts, avg(d) AS avg FROM t_fv_dec_s SAMPLE BY 1m FILL('1.5'))");
+        });
+    }
+
+    @Test
+    public void testFillValueWithSumMinusConstantOverFill() throws Exception {
+        // SqlOptimiser.rewriteAggregate splits sum(c - K) into sum(c) - count(*) * K when K is
+        // an integer constant. Verify that SAMPLE BY FILL drives the resulting two-aggregate
+        // plan correctly through SampleByFillRecordCursorFactory and that the fill rows still
+        // evaluate to the expected constant.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t_fv_sum_minus (c SHORT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t_fv_sum_minus VALUES (10::SHORT, '2024-01-01T00:00:00.000000Z'), (20::SHORT, '2024-01-01T03:00:00.000000Z')");
+            assertPlanNoLeakCheck(
+                    "SELECT sum(c - 1000) AS s, ts FROM t_fv_sum_minus SAMPLE BY 1h FILL(0) ALIGN TO CALENDAR",
+                    """
+                            VirtualRecord
+                              functions: [sum-COUNT*1000,ts]
+                                Sample By Fill
+                                  stride: '1h'
+                                  fill: value
+                                    Encode sort light
+                                      keys: [ts]
+                                        Async Group By workers: 1
+                                          keys: [ts]
+                                          keyFunctions: [timestamp_floor_utc('1h',ts)]
+                                          values: [sum(c),count(*)]
+                                          filter: null
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: t_fv_sum_minus
+                            """
+            );
+            assertQueryNoLeakCheck(
+                    """
+                            s\tts
+                            -990\t2024-01-01T00:00:00.000000Z
+                            0\t2024-01-01T01:00:00.000000Z
+                            0\t2024-01-01T02:00:00.000000Z
+                            -980\t2024-01-01T03:00:00.000000Z
+                            """,
+                    "SELECT sum(c - 1000) AS s, ts FROM t_fv_sum_minus SAMPLE BY 1h FILL(0) ALIGN TO CALENDAR",
+                    "ts",
+                    false,
+                    false
+            );
+        });
+    }
+
+    @Test
+    public void testFillValueWithSumPlusConstantOverFill() throws Exception {
+        // Companion to testFillValueWithSumMinusConstantOverFill for the '+' branch:
+        // sum(c + K) splits to sum(c) + count(*) * K.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t_fv_sum_plus (c SHORT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t_fv_sum_plus VALUES (10::SHORT, '2024-01-01T00:00:00.000000Z'), (20::SHORT, '2024-01-01T03:00:00.000000Z')");
+            assertPlanNoLeakCheck(
+                    "SELECT sum(c + 1000) AS s, ts FROM t_fv_sum_plus SAMPLE BY 1h FILL(0) ALIGN TO CALENDAR",
+                    """
+                            VirtualRecord
+                              functions: [sum+COUNT*1000,ts]
+                                Sample By Fill
+                                  stride: '1h'
+                                  fill: value
+                                    Encode sort light
+                                      keys: [ts]
+                                        Async Group By workers: 1
+                                          keys: [ts]
+                                          keyFunctions: [timestamp_floor_utc('1h',ts)]
+                                          values: [sum(c),count(*)]
+                                          filter: null
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: t_fv_sum_plus
+                            """
+            );
+            assertQueryNoLeakCheck(
+                    """
+                            s\tts
+                            1010\t2024-01-01T00:00:00.000000Z
+                            0\t2024-01-01T01:00:00.000000Z
+                            0\t2024-01-01T02:00:00.000000Z
+                            1020\t2024-01-01T03:00:00.000000Z
+                            """,
+                    "SELECT sum(c + 1000) AS s, ts FROM t_fv_sum_plus SAMPLE BY 1h FILL(0) ALIGN TO CALENDAR",
+                    "ts",
+                    false,
+                    false
+            );
+        });
+    }
+
+    @Test
+    public void testFillValueWithSumTimesConstantOverFill() throws Exception {
+        // Companion for the '*' branch: sum(c * K) lifts the multiplier outside as sum(c) * K
+        // without adding count(*). Verify SAMPLE BY FILL still produces correct fill rows.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t_fv_sum_mul (c SHORT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t_fv_sum_mul VALUES (10::SHORT, '2024-01-01T00:00:00.000000Z'), (20::SHORT, '2024-01-01T03:00:00.000000Z')");
+            assertPlanNoLeakCheck(
+                    "SELECT sum(c * 1000) AS s, ts FROM t_fv_sum_mul SAMPLE BY 1h FILL(0) ALIGN TO CALENDAR",
+                    """
+                            VirtualRecord
+                              functions: [sum*1000,ts]
+                                Sample By Fill
+                                  stride: '1h'
+                                  fill: value
+                                    Encode sort light
+                                      keys: [ts]
+                                        Async Group By workers: 1
+                                          keys: [ts]
+                                          keyFunctions: [timestamp_floor_utc('1h',ts)]
+                                          values: [sum(c)]
+                                          filter: null
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: t_fv_sum_mul
+                            """
+            );
+            assertQueryNoLeakCheck(
+                    """
+                            s\tts
+                            10000\t2024-01-01T00:00:00.000000Z
+                            0\t2024-01-01T01:00:00.000000Z
+                            0\t2024-01-01T02:00:00.000000Z
+                            20000\t2024-01-01T03:00:00.000000Z
+                            """,
+                    "SELECT sum(c * 1000) AS s, ts FROM t_fv_sum_mul SAMPLE BY 1h FILL(0) ALIGN TO CALENDAR",
+                    "ts",
+                    false,
+                    false
+            );
+        });
+    }
+
+    @Test
     public void testFillWithOffsetAndTimezoneAcrossDst() throws Exception {
         assertMemoryLeak(() -> {
             // Sub-day stride with ALIGN TO CALENDAR + TIME ZONE + WITH OFFSET

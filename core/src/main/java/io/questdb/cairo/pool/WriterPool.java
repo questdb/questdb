@@ -325,8 +325,8 @@ public class WriterPool extends AbstractPool {
             // Retry from very beginning
             throw EntryUnavailableException.instance("please retry");
         }
-        // Mark command as being executed asynchronously and publish it.
-        asyncWriterCommand.startAsync();
+        // Publish it. publishAsyncWriterCommand() marks the command as executing
+        // asynchronously (startAsync) once it has validated the WAL invariant.
         writer.publishAsyncWriterCommand(asyncWriterCommand);
 
         // Make sure writer does not go to the pool with command in the queue

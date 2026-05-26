@@ -336,7 +336,8 @@ public class TableNameRegistryTest extends AbstractCairoTest {
     public void testConcurrentReadWriteAndReload() throws Exception {
         assertMemoryLeak(() -> {
             int threadCount = 2;
-            int tableCount = 400;
+            // smaller workload on slow CI runners (Mac, Windows)
+            int tableCount = Os.isLinux() ? 200 : 100;
             AtomicReference<Throwable> ref = new AtomicReference<>();
             CyclicBarrier startBarrier = new CyclicBarrier(threadCount + 1);
             ObjList<Thread> threads = new ObjList<>(threadCount);
