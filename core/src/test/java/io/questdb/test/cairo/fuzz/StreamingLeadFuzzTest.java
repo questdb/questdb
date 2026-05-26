@@ -401,6 +401,81 @@ public class StreamingLeadFuzzTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDispatchActuallyStreamsForEachType() throws Exception {
+        // The dispatch's isFixed8ByteType allowlist advertises LONG, DOUBLE, DATE, TIMESTAMP, INT,
+        // FLOAT, and DECIMAL8/16/32/64. But only a subset of LEAD factories implement the streaming
+        // protocol (positive getLookahead + ZERO_PASS + streamingBackfill). For types whose LEAD
+        // factory inherits the default ONE_PASS, the planner's isFastPath gate falls back to cached
+        // and the streaming dispatch is never reached.
+        //
+        // Probe: for each type, run lead(col, 1) over () with the flag on and assert the EXPLAIN
+        // plan shows DeferredEmitWindow. A plan showing CachedWindow means that type silently does
+        // not stream — equivalence tests trivially pass (cached == cached) but the type allowlist
+        // is misleading.
+        assertMemoryLeak(() -> {
+            execute(
+                    "create table t (" +
+                            "l long, " +
+                            "i int, " +
+                            "d double, " +
+                            "f float, " +
+                            "dt date, " +
+                            "ts timestamp, " +
+                            "dec8 decimal(2), " +
+                            "dec16 decimal(4), " +
+                            "dec32 decimal(8), " +
+                            "dec64 decimal(16) " +
+                            ") timestamp(ts) partition by day"
+            );
+            execute(
+                    "insert into t select " +
+                            "x as l, x::int as i, x * 1.0 as d, (x * 0.5)::float as f, " +
+                            "cast(x * 1000 as date) as dt, (1000_000L * x)::timestamp as tsv, " +
+                            "x::decimal(2) as dec8, x::decimal(4) as dec16, " +
+                            "x::decimal(8) as dec32, x::decimal(16) as dec64 " +
+                            "from long_sequence(5)"
+            );
+
+            staticOverrides.setProperty(io.questdb.PropertyKey.CAIRO_SQL_WINDOW_STREAMING_LEAD_ENABLED, "true");
+            // Contract: types whose LEAD factory has a streaming variant reach DeferredEmitWindow.
+            // Types without a streaming variant fall back to CachedWindow even though their column
+            // type is small enough; the dispatch allowlist no longer advertises them.
+            String[][] expectStreaming = {
+                    {"long", "select l, lead(l, 1) over () as lx from t"},
+                    {"int", "select i, lead(i, 1) over () as lx from t"},
+                    {"double", "select d, lead(d, 1) over () as lx from t"},
+                    {"float", "select f, lead(f, 1) over () as lx from t"},
+                    {"date", "select dt, lead(dt, 1) over () as lx from t"},
+                    {"timestamp", "select ts, lead(ts, 1) over () as lx from t"},
+            };
+            String[][] expectCached = {
+                    {"dec8", "select dec8, lead(dec8, 1) over () as lx from t"},
+                    {"dec16", "select dec16, lead(dec16, 1) over () as lx from t"},
+                    {"dec32", "select dec32, lead(dec32, 1) over () as lx from t"},
+                    {"dec64", "select dec64, lead(dec64, 1) over () as lx from t"},
+            };
+            for (String[] probe : expectStreaming) {
+                io.questdb.std.str.StringSink sink = new io.questdb.std.str.StringSink();
+                engine.print("explain " + probe[1], sink, sqlExecutionContext);
+                String plan = sink.toString();
+                org.junit.Assert.assertTrue(
+                        probe[0] + " expected to stream but plan was:\n" + plan,
+                        plan.contains("DeferredEmitWindow")
+                );
+            }
+            for (String[] probe : expectCached) {
+                io.questdb.std.str.StringSink sink = new io.questdb.std.str.StringSink();
+                engine.print("explain " + probe[1], sink, sqlExecutionContext);
+                String plan = sink.toString();
+                org.junit.Assert.assertTrue(
+                        probe[0] + " expected to fall back to cached but plan was:\n" + plan,
+                        plan.contains("CachedWindow")
+                );
+            }
+        });
+    }
+
+    @Test
     public void testTypeDate() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table t (d date, sym symbol, ts timestamp) timestamp(ts) partition by day");

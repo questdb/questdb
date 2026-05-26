@@ -298,17 +298,17 @@ public class DeferredEmitWindowRecordCursorFactory extends AbstractRecordCursorF
     }
 
     private static boolean isFixed8ByteType(int type) {
+        // Defensive type check on the cursor. The actual dispatch in SqlCodeGenerator is more
+        // restrictive (it also checks the function's getPassCount() and getLookahead() values).
+        // Only types whose LEAD factory has a Streaming variant can reach the cursor; the others
+        // would have failed the isFastPath gate. Keeping the list in sync with the dispatch site.
         final int tag = ColumnType.tagOf(type);
         return tag == ColumnType.LONG
                 || tag == ColumnType.DOUBLE
                 || tag == ColumnType.DATE
                 || tag == ColumnType.TIMESTAMP
                 || tag == ColumnType.INT
-                || tag == ColumnType.FLOAT
-                || tag == ColumnType.DECIMAL8
-                || tag == ColumnType.DECIMAL16
-                || tag == ColumnType.DECIMAL32
-                || tag == ColumnType.DECIMAL64;
+                || tag == ColumnType.FLOAT;
     }
 
     /**
