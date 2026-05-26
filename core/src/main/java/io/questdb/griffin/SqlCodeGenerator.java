@@ -9347,11 +9347,48 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     int timestampIdx = base.getMetadata().getTimestampIndex();
                     int orderByPos = osz > 0 ? ac.getOrderBy().getQuick(0).position : -1;
 
+                    // Phase 4: LAG <-> LEAD normalisation. When the streaming-lead flag is enabled and
+                    // the window OVER ORDER BY direction on the designated timestamp opposes the base
+                    // scan direction, swap the function token (lag <-> lead) and the effective order
+                    // direction so the OVER ORDER BY aligns with the base scan. The AST mutation happens
+                    // on a deep clone of the original node so the model is left untouched (defensive
+                    // against pool-recycled AST reuse across re-compilations).
+                    ExpressionNode astForParse = ast;
+                    int effectiveOrderByDirection = osz > 0 ? ac.getOrderByDirection().getQuick(0) : ORDER_ASC;
+                    boolean leadLagNormalised = false;
+                    if (configuration.getSqlWindowStreamingLeadEnabled()
+                            && osz == 1
+                            && timestampIdx != -1
+                            && partitionByFunctions == null
+                            && baseMetadata.getColumnIndexQuiet(ac.getOrderBy().getQuick(0).token) == timestampIdx
+                            && !ac.isIgnoreNulls()) {
+                        int dir = ac.getOrderByDirection().getQuick(0);
+                        int baseDir = base.getScanDirection();
+                        boolean mismatch = (dir == ORDER_ASC && baseDir == RecordCursorFactory.SCAN_DIRECTION_BACKWARD)
+                                || (dir == ORDER_DESC && baseDir == RecordCursorFactory.SCAN_DIRECTION_FORWARD);
+                        if (mismatch) {
+                            CharSequence newToken = null;
+                            if (Chars.equalsIgnoreCase("lag", ast.token)) {
+                                newToken = "lead";
+                            } else if (Chars.equalsIgnoreCase("lead", ast.token)) {
+                                newToken = "lag";
+                            }
+                            if (newToken != null) {
+                                astForParse = ExpressionNode.deepClone(expressionNodePool, ast);
+                                astForParse.token = newToken;
+                                effectiveOrderByDirection = dir == ORDER_ASC ? ORDER_DESC : ORDER_ASC;
+                                leadLagNormalised = true;
+                            }
+                        }
+                    }
+
                     if (base.followedOrderByAdvice() && osz > 0 && orderHash.size() > 0) {
                         dismissOrder = true;
                         for (int j = 0; j < osz; j++) {
                             ExpressionNode node = ac.getOrderBy().getQuick(j);
-                            int direction = ac.getOrderByDirection().getQuick(j);
+                            int direction = j == 0 && leadLagNormalised
+                                    ? effectiveOrderByDirection
+                                    : ac.getOrderByDirection().getQuick(j);
                             if (!Chars.equalsIgnoreCase(node.token, orderHash.keys().get(j)) ||
                                     orderHash.get(node.token) != direction) {
                                 dismissOrder = false;
@@ -9361,7 +9398,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     }
                     if (!dismissOrder && osz == 1 && timestampIdx != -1 && orderHash.size() < 2) {
                         ExpressionNode orderByNode = ac.getOrderBy().getQuick(0);
-                        int orderByDirection = ac.getOrderByDirection().getQuick(0);
+                        int orderByDirection = leadLagNormalised
+                                ? effectiveOrderByDirection
+                                : ac.getOrderByDirection().getQuick(0);
 
                         if (baseMetadata.getColumnIndexQuiet(orderByNode.token) == timestampIdx &&
                                 ((orderByDirection == ORDER_ASC && base.getScanDirection() == RecordCursorFactory.SCAN_DIRECTION_FORWARD) ||
@@ -9394,7 +9433,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     );
                     final Function f;
                     try {
-                        f = functionParser.parseFunction(ast, baseMetadata, executionContext);
+                        f = functionParser.parseFunction(astForParse, baseMetadata, executionContext);
                         if (!(f instanceof WindowFunction af)) {
                             Misc.free(f);
                             throw SqlException.$(ast.position, "non-window function called in window context");

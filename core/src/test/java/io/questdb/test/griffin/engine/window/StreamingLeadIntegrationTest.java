@@ -37,6 +37,15 @@ import org.junit.Test;
  */
 public class StreamingLeadIntegrationTest extends AbstractCairoTest {
 
+    @org.junit.Before
+    public void reapplyStreamingLeadFlag() {
+        // The standard test tearDown (Cairo.tearDown -> overrides.reset()) wipes property overrides
+        // after every test, so the flag set in @BeforeClass survives only the first test. Re-apply
+        // here so each test executes with the flag enabled. The CairoConfigurationWrapper reads
+        // overrides dynamically per call, so this takes effect for queries compiled in the test body.
+        setProperty(PropertyKey.CAIRO_SQL_WINDOW_STREAMING_LEAD_ENABLED, "true");
+    }
+
     @BeforeClass
     public static void setUpStatic() throws Exception {
         // Enable the streaming-lead flag before the engine is built so the captured CairoConfiguration
