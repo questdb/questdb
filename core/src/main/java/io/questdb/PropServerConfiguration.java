@@ -3300,7 +3300,11 @@ public class PropServerConfiguration implements ServerConfiguration {
             );
             registerDeprecated(
                     PropertyKey.CAIRO_SQL_ANALYTIC_ROWID_MAX_PAGES,
-                    PropertyKey.CAIRO_SQL_WINDOW_ROWID_MAX_PAGES
+                    PropertyKey.CAIRO_SQL_WINDOW_ROWID_MAX_BYTES
+            );
+            registerDeprecated(
+                    PropertyKey.CAIRO_SQL_WINDOW_ROWID_MAX_PAGES,
+                    PropertyKey.CAIRO_SQL_WINDOW_ROWID_MAX_BYTES
             );
             registerDeprecated(
                     PropertyKey.CAIRO_SQL_ANALYTIC_TREE_PAGE_SIZE,
@@ -3308,7 +3312,23 @@ public class PropServerConfiguration implements ServerConfiguration {
             );
             registerDeprecated(
                     PropertyKey.CAIRO_SQL_ANALYTIC_TREE_MAX_PAGES,
-                    PropertyKey.CAIRO_SQL_WINDOW_TREE_MAX_PAGES
+                    PropertyKey.CAIRO_SQL_WINDOW_TREE_MAX_BYTES
+            );
+            registerDeprecated(
+                    PropertyKey.CAIRO_SQL_WINDOW_TREE_MAX_PAGES,
+                    PropertyKey.CAIRO_SQL_WINDOW_TREE_MAX_BYTES
+            );
+            registerDeprecated(
+                    PropertyKey.CAIRO_SQL_SORT_KEY_MAX_PAGES,
+                    PropertyKey.CAIRO_SQL_SORT_KEY_MAX_BYTES
+            );
+            registerDeprecated(
+                    PropertyKey.CAIRO_SQL_SORT_LIGHT_VALUE_MAX_PAGES,
+                    PropertyKey.CAIRO_SQL_SORT_LIGHT_VALUE_MAX_BYTES
+            );
+            registerDeprecated(
+                    PropertyKey.CAIRO_SQL_SORT_VALUE_MAX_PAGES,
+                    PropertyKey.CAIRO_SQL_SORT_VALUE_MAX_BYTES
             );
             registerDeprecated(
                     PropertyKey.CAIRO_SQL_COLUMN_CAST_MODEL_POOL_CAPACITY,
