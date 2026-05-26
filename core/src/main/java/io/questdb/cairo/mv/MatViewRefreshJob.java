@@ -604,6 +604,11 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                     // Empty base table reports Long.MIN_VALUE; fall back to now to avoid underflow.
                     boundaryAnchor = maxBaseTs == Long.MIN_VALUE ? now : Math.min(maxBaseTs, now);
                 }
+                // The interval iterators snap minTs down to the containing bucket floor
+                // (FixedOffsetIntervalIterator.ofCommon and TimeZoneIntervalIterator.of),
+                // so refresh always processes whole buckets even when the boundary lands
+                // mid-bucket. The backfill validator (separate layer) replicates the same
+                // snap so the managed/frozen split is bucket-aligned on both sides.
                 if (refreshLimitHoursOrMonths > 0) { // hours
                     minTs = Math.max(minTs, boundaryAnchor - driver.fromHours(refreshLimitHoursOrMonths));
                 } else { // months
