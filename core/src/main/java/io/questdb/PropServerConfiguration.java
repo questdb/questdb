@@ -2386,6 +2386,43 @@ public class PropServerConfiguration implements ServerConfiguration {
         return poolConfiguration.sharedWorkerCount;
     }
 
+    private long deriveMaxBytesDefault(
+            Properties properties,
+            @Nullable Map<String, String> env,
+            ConfigPropertyKey deprecatedMaxPagesKey,
+            long pageSize
+    ) throws ServerConfigurationException {
+        return deriveMaxBytesDefault(properties, env, deprecatedMaxPagesKey, null, pageSize);
+    }
+
+    private long deriveMaxBytesDefault(
+            Properties properties,
+            @Nullable Map<String, String> env,
+            ConfigPropertyKey deprecatedMaxPagesKey,
+            @Nullable ConfigPropertyKey deprecatedAliasMaxPagesKey,
+            long pageSize
+    ) throws ServerConfigurationException {
+        // Always read both deprecated keys so they remain registered in the property tracker and
+        // visible in (show parameters), even when neither is explicitly set.
+        int aliasMaxPages = Integer.MAX_VALUE;
+        if (deprecatedAliasMaxPagesKey != null) {
+            aliasMaxPages = getInt(properties, env, deprecatedAliasMaxPagesKey, aliasMaxPages);
+        }
+        final int mainMaxPages = getInt(properties, env, deprecatedMaxPagesKey, Integer.MAX_VALUE);
+
+        // Detect explicit presence rather than comparing to a sentinel. The previously-documented
+        // default for *.max.pages was Integer.MAX_VALUE; a user who pinned the deprecated key to
+        // that exact value intended "unbounded" and must not be silently downgraded to the new
+        // 4 GiB default. Main key wins over alias, matching the previous behavior.
+        if (isPropertyExplicitlySet(properties, env, deprecatedMaxPagesKey)) {
+            return pageSize * (long) mainMaxPages;
+        }
+        if (deprecatedAliasMaxPagesKey != null && isPropertyExplicitlySet(properties, env, deprecatedAliasMaxPagesKey)) {
+            return pageSize * (long) aliasMaxPages;
+        }
+        return 4L * Numbers.SIZE_1GB;
+    }
+
     private int getCommitMode(Properties properties, @Nullable Map<String, String> env, ConfigPropertyKey key) {
         final String commitMode = getString(properties, env, key, "nosync");
 
@@ -2522,6 +2559,13 @@ public class PropServerConfiguration implements ServerConfiguration {
         return sink.toString();
     }
 
+    private boolean isPropertyExplicitlySet(Properties properties, @Nullable Map<String, String> env, ConfigPropertyKey key) {
+        if (env != null && env.get(key.getEnvVarName()) != null) {
+            return true;
+        }
+        return properties.getProperty(key.getPropertyPath()) != null;
+    }
+
     private boolean pathEquals(String p1, String p2) {
         try {
             if (p1 == null || p2 == null) {
@@ -2605,43 +2649,6 @@ public class PropServerConfiguration implements ServerConfiguration {
                 log.advisory().$(validation.message).$();
             }
         }
-    }
-
-    protected long deriveMaxBytesDefault(
-            Properties properties,
-            @Nullable Map<String, String> env,
-            ConfigPropertyKey deprecatedMaxPagesKey,
-            long pageSize
-    ) throws ServerConfigurationException {
-        return deriveMaxBytesDefault(properties, env, deprecatedMaxPagesKey, null, pageSize);
-    }
-
-    protected long deriveMaxBytesDefault(
-            Properties properties,
-            @Nullable Map<String, String> env,
-            ConfigPropertyKey deprecatedMaxPagesKey,
-            @Nullable ConfigPropertyKey deprecatedAliasMaxPagesKey,
-            long pageSize
-    ) throws ServerConfigurationException {
-        // Always read both deprecated keys so they remain registered in the property tracker and
-        // visible in (show parameters), even when neither is explicitly set.
-        int aliasMaxPages = Integer.MAX_VALUE;
-        if (deprecatedAliasMaxPagesKey != null) {
-            aliasMaxPages = getInt(properties, env, deprecatedAliasMaxPagesKey, aliasMaxPages);
-        }
-        final int mainMaxPages = getInt(properties, env, deprecatedMaxPagesKey, Integer.MAX_VALUE);
-
-        // Detect explicit presence rather than comparing to a sentinel. The previously-documented
-        // default for *.max.pages was Integer.MAX_VALUE; a user who pinned the deprecated key to
-        // that exact value intended "unbounded" and must not be silently downgraded to the new
-        // 4 GiB default. Main key wins over alias, matching the previous behavior.
-        if (isPropertyExplicitlySet(properties, env, deprecatedMaxPagesKey)) {
-            return pageSize * (long) mainMaxPages;
-        }
-        if (deprecatedAliasMaxPagesKey != null && isPropertyExplicitlySet(properties, env, deprecatedAliasMaxPagesKey)) {
-            return pageSize * (long) aliasMaxPages;
-        }
-        return 4L * Numbers.SIZE_1GB;
     }
 
     protected String getAcceptingWrites() {
@@ -2935,13 +2942,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     protected boolean instanceAcceptingWrites() {
         // overwritten in Enterprise
         return !isReadOnlyInstance;
-    }
-
-    protected boolean isPropertyExplicitlySet(Properties properties, @Nullable Map<String, String> env, ConfigPropertyKey key) {
-        if (env != null && env.get(key.getEnvVarName()) != null) {
-            return true;
-        }
-        return properties.getProperty(key.getPropertyPath()) != null;
     }
 
     protected PropertyValidator newValidator() {

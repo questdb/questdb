@@ -51,30 +51,27 @@ public class CachedWindowMemoryCapTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testRepeatedCursorsStayUnderCap() throws Exception {
-        // The cap is enforced per cursor execution. Running the same query twice in a row,
-        // with each run staying under the cap, must succeed both times - the second run
-        // must not see leftover state from the first.
-        final long perCursorBytes = 16L * 1024 * 1024;
-        node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_TREE_MAX_BYTES, perCursorBytes);
-        node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_ROWID_MAX_BYTES, perCursorBytes);
-        node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_CACHE_MAX_BYTES, perCursorBytes);
+    public void testCacheCapRaisedUnblocksQuery() throws Exception {
+        // testCacheCapFires uses the same query/dataset and fails at the 8 KiB cap.
+        // Raising cairo.sql.window.cache.max.bytes lets the same workload complete.
+        node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_CACHE_MAX_BYTES, 16L * 1024 * 1024);
 
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tab AS (" +
                     "SELECT" +
                     " ('s' || (x % 8))::SYMBOL AS sym," +
                     " (x * 1_000_000_000L)::TIMESTAMP AS ts" +
-                    " FROM long_sequence(5_000)) TIMESTAMP(ts)");
+                    " FROM long_sequence(50_000)) TIMESTAMP(ts)");
 
-            final String query = "SELECT sym, ts, lag(ts, 1) OVER (PARTITION BY sym ORDER BY ts DESC) FROM tab LIMIT 3";
-            final String expected = "sym\tts\tlag\n" +
-                    "s1\t1970-01-01T00:16:40.000000Z\t1970-01-01T02:30:00.000000Z\n" +
-                    "s2\t1970-01-01T00:33:20.000000Z\t1970-01-01T02:46:40.000000Z\n" +
-                    "s3\t1970-01-01T00:50:00.000000Z\t1970-01-01T03:03:20.000000Z\n";
-
-            assertQueryNoLeakCheck(expected, query, "ts", true);
-            assertQueryNoLeakCheck(expected, query, "ts", true);
+            assertQueryNoLeakCheck(
+                    "sym\tts\tlag\n" +
+                            "s1\t1970-01-01T00:16:40.000000Z\t1970-01-01T02:30:00.000000Z\n" +
+                            "s2\t1970-01-01T00:33:20.000000Z\t1970-01-01T02:46:40.000000Z\n" +
+                            "s3\t1970-01-01T00:50:00.000000Z\t1970-01-01T03:03:20.000000Z\n",
+                    "SELECT sym, ts, lag(ts, 1) OVER (PARTITION BY sym ORDER BY ts DESC) FROM tab LIMIT 3",
+                    "ts",
+                    true
+            );
         });
     }
 
@@ -108,6 +105,34 @@ public class CachedWindowMemoryCapTest extends AbstractCairoTest {
                     false,
                     true
             );
+        });
+    }
+
+    @Test
+    public void testRepeatedCursorsStayUnderCap() throws Exception {
+        // The cap is enforced per cursor execution. Running the same query twice in a row,
+        // with each run staying under the cap, must succeed both times - the second run
+        // must not see leftover state from the first.
+        final long perCursorBytes = 16L * 1024 * 1024;
+        node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_TREE_MAX_BYTES, perCursorBytes);
+        node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_ROWID_MAX_BYTES, perCursorBytes);
+        node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_CACHE_MAX_BYTES, perCursorBytes);
+
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab AS (" +
+                    "SELECT" +
+                    " ('s' || (x % 8))::SYMBOL AS sym," +
+                    " (x * 1_000_000_000L)::TIMESTAMP AS ts" +
+                    " FROM long_sequence(5_000)) TIMESTAMP(ts)");
+
+            final String query = "SELECT sym, ts, lag(ts, 1) OVER (PARTITION BY sym ORDER BY ts DESC) FROM tab LIMIT 3";
+            final String expected = "sym\tts\tlag\n" +
+                    "s1\t1970-01-01T00:16:40.000000Z\t1970-01-01T02:30:00.000000Z\n" +
+                    "s2\t1970-01-01T00:33:20.000000Z\t1970-01-01T02:46:40.000000Z\n" +
+                    "s3\t1970-01-01T00:50:00.000000Z\t1970-01-01T03:03:20.000000Z\n";
+
+            assertQueryNoLeakCheck(expected, query, "ts", true);
+            assertQueryNoLeakCheck(expected, query, "ts", true);
         });
     }
 
