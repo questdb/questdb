@@ -47,6 +47,7 @@ import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.PartitionFrameCursorFactory;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.RowCursor;
 import io.questdb.cairo.sql.StaticSymbolTable;
@@ -13699,6 +13700,50 @@ public class CoveringIndexTest extends AbstractCairoTest {
         } finally {
             basePath.trimTo(len);
         }
+    }
+
+    @Test
+    public void testSampleByFillKeyedIndexedNullScanDoesNotLeak() throws Exception {
+        // Regression: keyed SAMPLE BY FILL(PREV) drives the base twice and calls
+        // baseCursor.toTop() between passes. PageFrameRecordCursorImpl.toTop()
+        // used to drop rowCursor by assigning null instead of closing it, which
+        // stranded the active PostingIndexFwdReader.Cursor outside the reader's
+        // freeCursors pool and leaked the cursor's block buffer.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_leak (
+                        sym SYMBOL INDEX TYPE POSTING,
+                        v BYTE,
+                        k INT,
+                        ts TIMESTAMP
+                    ) TIMESTAMP(ts) PARTITION BY DAY WAL
+                    """);
+            // Interleaved NULL/'A' sym values: the IS NULL probe has entries to
+            // walk on every sampled hour, so loadDenseGenerationCached allocates.
+            execute("""
+                    INSERT INTO t_leak
+                    SELECT
+                        CASE WHEN x % 2 = 0 THEN cast(NULL as SYMBOL) ELSE cast('A' as SYMBOL) END,
+                        (x % 8)::BYTE,
+                        (x % 3)::INT,
+                        dateadd('m', (x * 30)::INT, '2024-01-01T00:00:00.000000Z')::TIMESTAMP
+                    FROM long_sequence(48)
+                    """);
+            drainWalQueue();
+
+            // The keyed projection forces the keyed SampleByFillPrev path.
+            try (RecordCursorFactory f = select(
+                    "SELECT k, avg(v), ts FROM (SELECT * FROM t_leak WHERE sym IS NULL) "
+                            + "SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR ORDER BY ts ASC"
+            );
+                 RecordCursor cursor = f.getCursor(sqlExecutionContext)) {
+                int rows = 0;
+                while (cursor.hasNext()) {
+                    rows++;
+                }
+                assertTrue("expected at least one fill-prev row", rows > 0);
+            }
+        });
     }
 
     private void assertPlanDoesNotContain(String query) throws SqlException {
