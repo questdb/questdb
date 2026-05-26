@@ -26,11 +26,13 @@ package org.questdb;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.CursorPrinter;
 import io.questdb.cairo.DefaultCairoConfiguration;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -38,7 +40,6 @@ import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.window.CachedWindowRecordCursorFactory;
 import io.questdb.griffin.engine.window.DeferredEmitWindowRecordCursorFactory;
 import io.questdb.griffin.engine.window.WindowRecordCursorFactory;
-import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.std.Misc;
 import io.questdb.std.str.StringSink;
 import org.openjdk.jmh.annotations.Benchmark;
@@ -60,9 +61,12 @@ import org.openjdk.jmh.runner.RunnerException;
 import org.openjdk.jmh.runner.options.Options;
 import org.openjdk.jmh.runner.options.OptionsBuilder;
 
+import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Arrays;
 import java.util.Comparator;
 import java.util.concurrent.TimeUnit;
+import java.util.stream.Stream;
 
 /**
  * End-to-end window-function LEAD/LAG benchmark comparing the deferred-emit streaming path
@@ -195,7 +199,7 @@ public class WindowLeadLagBenchmark {
                 // Drain every output column. For the partitioned shapes the first column is sym
                 // (SYMBOL) so cannot be read as long; everything else is x/ts/window-result which
                 // are long. Probe column 0 by type to avoid the cast issue, drain the rest as long.
-                if (factory.getMetadata().getColumnType(0) == io.questdb.cairo.ColumnType.SYMBOL) {
+                if (factory.getMetadata().getColumnType(0) == ColumnType.SYMBOL) {
                     bh.consume(record.getSymA(0));
                 } else {
                     bh.consume(record.getLong(0));
@@ -209,7 +213,7 @@ public class WindowLeadLagBenchmark {
 
     @Setup(Level.Trial)
     public void setUp() throws Exception {
-        tempRoot = java.nio.file.Files.createTempDirectory("windowleadlagbench-");
+        tempRoot = Files.createTempDirectory("windowleadlagbench-");
         final boolean streaming = "STREAMING".equals(path);
         final CairoConfiguration configuration = new DefaultCairoConfiguration(tempRoot.toString()) {
             @Override
@@ -246,11 +250,11 @@ public class WindowLeadLagBenchmark {
         factory = Misc.free(factory);
         compiler = Misc.free(compiler);
         engine = Misc.free(engine);
-        if (tempRoot != null && java.nio.file.Files.exists(tempRoot)) {
-            try (java.util.stream.Stream<Path> stream = java.nio.file.Files.walk(tempRoot)) {
+        if (tempRoot != null && Files.exists(tempRoot)) {
+            try (Stream<Path> stream = Files.walk(tempRoot)) {
                 stream.sorted(Comparator.reverseOrder()).forEach(p -> {
                     try {
-                        java.nio.file.Files.deleteIfExists(p);
+                        Files.deleteIfExists(p);
                     } catch (Exception ignore) {
                     }
                 });
@@ -387,8 +391,8 @@ public class WindowLeadLagBenchmark {
         String[] streamingData = new String[streamingLines.length - 1];
         System.arraycopy(cachedLines, 1, cachedData, 0, cachedData.length);
         System.arraycopy(streamingLines, 1, streamingData, 0, streamingData.length);
-        java.util.Arrays.sort(cachedData);
-        java.util.Arrays.sort(streamingData);
+        Arrays.sort(cachedData);
+        Arrays.sort(streamingData);
         for (int i = 0; i < cachedData.length; i++) {
             if (!cachedData[i].equals(streamingData[i])) {
                 throw new IllegalStateException(
@@ -401,7 +405,7 @@ public class WindowLeadLagBenchmark {
     }
 
     private StringSink renderShapeUnderFlag(String sql, boolean streaming, int rows, int partitions) throws Exception {
-        Path root = java.nio.file.Files.createTempDirectory("windowleadlagbench-verify-");
+        Path root = Files.createTempDirectory("windowleadlagbench-verify-");
         CairoEngine verifyEngine = null;
         SqlCompilerImpl verifyCompiler = null;
         try {
@@ -449,11 +453,11 @@ public class WindowLeadLagBenchmark {
         } finally {
             Misc.free(verifyCompiler);
             Misc.free(verifyEngine);
-            if (java.nio.file.Files.exists(root)) {
-                try (java.util.stream.Stream<Path> stream = java.nio.file.Files.walk(root)) {
+            if (Files.exists(root)) {
+                try (Stream<Path> stream = Files.walk(root)) {
                     stream.sorted(Comparator.reverseOrder()).forEach(p -> {
                         try {
-                            java.nio.file.Files.deleteIfExists(p);
+                            Files.deleteIfExists(p);
                         } catch (Exception ignore) {
                         }
                     });

@@ -24,10 +24,20 @@
 
 package io.questdb.test.cairo.fuzz;
 
+import io.questdb.PropertyKey;
+import io.questdb.cairo.CursorPrinter;
+import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.griffin.SqlCompiler;
+import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.griffin.engine.window.StreamingLeadEquivalence;
+import org.junit.Assert;
 import org.junit.Test;
 
+import java.util.Arrays;
 import java.util.Random;
 
 /**
@@ -382,11 +392,12 @@ public class StreamingLeadFuzzTest extends AbstractCairoTest {
         // toTop() path including partition-map clear, nextFreeSlotOffset reset, singlePartitionState
         // zeroing, and function.toTop() propagation.
         assertMemoryLeak(() -> {
-            io.questdb.std.str.StringSink first = new io.questdb.std.str.StringSink();
-            io.questdb.std.str.StringSink second = new io.questdb.std.str.StringSink();
+            // Reuse two StringSink instances across all 20 iterations (QuestDB zero-GC convention).
+            final StringSink first = new StringSink();
+            final StringSink second = new StringSink();
             for (int iter = 0; iter < 20; iter++) {
                 long seed = 0xC0DE_70_70L + iter;
-                java.util.Random r = new java.util.Random(seed);
+                Random r = new Random(seed);
                 String table = "ttop_" + Long.toHexString(seed);
                 int rows = 5 + r.nextInt(60);
                 int partitions = 1 + r.nextInt(4);
@@ -398,32 +409,32 @@ public class StreamingLeadFuzzTest extends AbstractCairoTest {
                 String sql = "select x, sym, lead(x, " + lookahead + ") over "
                         + (partitioned ? "(partition by sym)" : "()") + " as lx from " + table;
 
-                staticOverrides.setProperty(io.questdb.PropertyKey.CAIRO_SQL_WINDOW_STREAMING_LEAD_ENABLED, "true");
-                try (io.questdb.griffin.SqlCompiler compiler = engine.getSqlCompiler();
-                     io.questdb.cairo.sql.RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
-                    try (io.questdb.cairo.sql.RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                        io.questdb.cairo.sql.RecordMetadata md = factory.getMetadata();
+                staticOverrides.setProperty(PropertyKey.CAIRO_SQL_WINDOW_STREAMING_LEAD_ENABLED, "true");
+                try (SqlCompiler compiler = engine.getSqlCompiler();
+                     RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
+                    try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                        RecordMetadata md = factory.getMetadata();
                         first.clear();
-                        io.questdb.cairo.CursorPrinter.println(md, first);
-                        io.questdb.cairo.sql.Record rec = cursor.getRecord();
+                        CursorPrinter.println(md, first);
+                        Record rec = cursor.getRecord();
                         while (cursor.hasNext()) {
-                            io.questdb.cairo.CursorPrinter.println(rec, md, first);
+                            CursorPrinter.println(rec, md, first);
                         }
                         // Now reset and iterate again on the SAME cursor.
                         cursor.toTop();
                         second.clear();
-                        io.questdb.cairo.CursorPrinter.println(md, second);
+                        CursorPrinter.println(md, second);
                         while (cursor.hasNext()) {
-                            io.questdb.cairo.CursorPrinter.println(rec, md, second);
+                            CursorPrinter.println(rec, md, second);
                         }
                     }
                 }
                 if (!first.toString().equals(second.toString())) {
                     String[] firstLines = first.toString().split("\n");
                     String[] secondLines = second.toString().split("\n");
-                    java.util.Arrays.sort(firstLines);
-                    java.util.Arrays.sort(secondLines);
-                    org.junit.Assert.assertEquals(
+                    Arrays.sort(firstLines);
+                    Arrays.sort(secondLines);
+                    Assert.assertEquals(
                             "cursor.toTop() produced different rows on second pass. seed=0x" + Long.toHexString(seed)
                                     + " rows=" + rows + " partitions=" + partitions + " lookahead=" + lookahead
                                     + " partitioned=" + partitioned,
@@ -497,7 +508,7 @@ public class StreamingLeadFuzzTest extends AbstractCairoTest {
                             "from long_sequence(5)"
             );
 
-            staticOverrides.setProperty(io.questdb.PropertyKey.CAIRO_SQL_WINDOW_STREAMING_LEAD_ENABLED, "true");
+            staticOverrides.setProperty(PropertyKey.CAIRO_SQL_WINDOW_STREAMING_LEAD_ENABLED, "true");
             // Contract: types whose LEAD factory has a streaming variant reach DeferredEmitWindow.
             // Types without a streaming variant fall back to CachedWindow even though their column
             // type is small enough; the dispatch allowlist no longer advertises them.
@@ -515,20 +526,22 @@ public class StreamingLeadFuzzTest extends AbstractCairoTest {
                     {"dec32", "select dec32, lead(dec32, 1) over () as lx from t"},
                     {"dec64", "select dec64, lead(dec64, 1) over () as lx from t"},
             };
+            // One reusable sink for all 10 probes.
+            final StringSink planSink = new StringSink();
             for (String[] probe : expectStreaming) {
-                io.questdb.std.str.StringSink sink = new io.questdb.std.str.StringSink();
-                engine.print("explain " + probe[1], sink, sqlExecutionContext);
-                String plan = sink.toString();
-                org.junit.Assert.assertTrue(
+                planSink.clear();
+                engine.print("explain " + probe[1], planSink, sqlExecutionContext);
+                String plan = planSink.toString();
+                Assert.assertTrue(
                         probe[0] + " expected to stream but plan was:\n" + plan,
                         plan.contains("DeferredEmitWindow")
                 );
             }
             for (String[] probe : expectCached) {
-                io.questdb.std.str.StringSink sink = new io.questdb.std.str.StringSink();
-                engine.print("explain " + probe[1], sink, sqlExecutionContext);
-                String plan = sink.toString();
-                org.junit.Assert.assertTrue(
+                planSink.clear();
+                engine.print("explain " + probe[1], planSink, sqlExecutionContext);
+                String plan = planSink.toString();
+                Assert.assertTrue(
                         probe[0] + " expected to fall back to cached but plan was:\n" + plan,
                         plan.contains("CachedWindow")
                 );

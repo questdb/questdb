@@ -41,6 +41,12 @@ import java.util.Arrays;
  */
 public final class StreamingLeadEquivalence {
 
+    // Thread-local sinks so tight fuzz loops don't allocate fresh buffers per call. Tests are
+    // single-threaded under Surefire, so a thread-local is effectively a per-thread singleton; if
+    // the runner ever moves to parallel execution each thread still gets its own sink.
+    private static final ThreadLocal<StringSink> CACHED_SINK = ThreadLocal.withInitial(StringSink::new);
+    private static final ThreadLocal<StringSink> STREAMING_SINK = ThreadLocal.withInitial(StringSink::new);
+
     private StreamingLeadEquivalence() {
     }
 
@@ -50,12 +56,14 @@ public final class StreamingLeadEquivalence {
      * responsible for setting up the table state before invoking.
      */
     public static void assertEquivalent(CairoEngine engine, SqlExecutionContext ctx, String sql, String contextMsg) throws Exception {
+        final StringSink cachedSink = CACHED_SINK.get();
+        cachedSink.clear();
         AbstractCairoTest.staticOverrides.setProperty(PropertyKey.CAIRO_SQL_WINDOW_STREAMING_LEAD_ENABLED, "false");
-        StringSink cachedSink = new StringSink();
         engine.print(sql, cachedSink, ctx);
 
+        final StringSink streamingSink = STREAMING_SINK.get();
+        streamingSink.clear();
         AbstractCairoTest.staticOverrides.setProperty(PropertyKey.CAIRO_SQL_WINDOW_STREAMING_LEAD_ENABLED, "true");
-        StringSink streamingSink = new StringSink();
         engine.print(sql, streamingSink, ctx);
 
         String[] cachedLines = splitLines(cachedSink.toString());

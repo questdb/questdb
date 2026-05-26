@@ -50,6 +50,8 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
+import io.questdb.std.IntList;
+import io.questdb.std.LongList;
 import io.questdb.std.ObjList;
 
 /**
@@ -141,10 +143,10 @@ public class DeferredEmitWindowRecordCursorFactory extends AbstractRecordCursorF
             colToSlot[i] = -1;
         }
         // We need leadColumnIndices in the same order as leadFns; build them in lock-step.
-        // Same for lagColumnIndices.
-        final ObjList<Integer> lagColIdxTmp = new ObjList<>();
-        final ObjList<Integer> leadColIdxTmp = new ObjList<>();
-        final ObjList<Long> leadOffsetsTmp = new ObjList<>();
+        // Same for lagColumnIndices. Use primitive list types so we don't autobox into Integer/Long.
+        final IntList lagColIdxTmp = new IntList();
+        final IntList leadColIdxTmp = new IntList();
+        final LongList leadOffsetsTmp = new LongList();
         int windowFnIndex = 0;
         int maxLA = 0;
         for (int i = 0, n = functions.size(); i < n; i++) {
@@ -162,7 +164,7 @@ public class DeferredEmitWindowRecordCursorFactory extends AbstractRecordCursorF
                 if (la > 0) {
                     leadFns.add(wf);
                     leadColIdxTmp.add(i);
-                    leadOffsetsTmp.add((long) la);
+                    leadOffsetsTmp.add(la);
                     if (la > maxLA) {
                         maxLA = la;
                     }
@@ -210,6 +212,7 @@ public class DeferredEmitWindowRecordCursorFactory extends AbstractRecordCursorF
         for (int i = 0, n = lagFns.size(); i < n; i++) {
             this.lagColumnIndices[i] = lagColIdxTmp.getQuick(i);
         }
+        // Release the temp lists to GC; we've copied into primitive arrays.
 
         this.partitionByRecord = partitionByRecord;
         this.partitionBySink = partitionBySink;
