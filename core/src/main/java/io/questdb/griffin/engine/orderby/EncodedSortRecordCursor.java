@@ -101,13 +101,6 @@ class EncodedSortRecordCursor implements DelegatingRecordCursor {
         }
     }
 
-    private void forceClose() {
-        Misc.free(entryMem);
-        Misc.free(encoder);
-        Misc.free(recordChain);
-        baseCursor = Misc.free(baseCursor);
-    }
-
     @Override
     public Record getRecord() {
         return recordChain.getRecord();
@@ -217,10 +210,10 @@ class EncodedSortRecordCursor implements DelegatingRecordCursor {
                     circuitBreaker.statefulThrowExceptionIfTripped();
                     if (count >= maxEntries) {
                         throw LimitOverflowException.instance()
-                            .put("limit of ").put(maxEntryMemBytes)
-                            .put(" memory exceeded in EncodedSort (raise ")
-                            .put(PropertyKey.CAIRO_SQL_SORT_KEY_MAX_BYTES.getPropertyPath())
-                            .put(')');
+                                .put("limit of ").put(maxEntryMemBytes)
+                                .put(" memory exceeded in EncodedSort (raise ")
+                                .put(PropertyKey.CAIRO_SQL_SORT_KEY_MAX_BYTES.getPropertyPath())
+                                .put(')');
                     }
                     long chainOffset = recordChain.put(record, -1L);
                     entryMem.ensureCapacity(longsPerEntry);
@@ -244,5 +237,12 @@ class EncodedSortRecordCursor implements DelegatingRecordCursor {
         circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
         startAddr = entryMem.getAddress() + rowIdOffset;
         toTop();
+    }
+
+    private void forceClose() {
+        Misc.free(entryMem);
+        Misc.free(encoder);
+        Misc.free(recordChain);
+        baseCursor = Misc.free(baseCursor);
     }
 }

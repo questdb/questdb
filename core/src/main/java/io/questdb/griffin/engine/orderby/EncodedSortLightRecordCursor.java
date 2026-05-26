@@ -200,12 +200,12 @@ class EncodedSortLightRecordCursor implements DelegatingRecordCursor {
                     circuitBreaker.statefulThrowExceptionIfTripped();
                     if (count >= maxEntries) {
                         throw LimitOverflowException.instance()
-                            .put("limit of ").put(maxEntryMemBytes)
-                            .put(" memory exceeded in EncodedSort (raise ")
-                            .put(PropertyKey.CAIRO_SQL_SORT_KEY_MAX_BYTES.getPropertyPath())
-                            .put(" or ")
-                            .put(PropertyKey.CAIRO_SQL_SORT_LIGHT_VALUE_MAX_BYTES.getPropertyPath())
-                            .put(')');
+                                .put("limit of ").put(maxEntryMemBytes)
+                                .put(" memory exceeded in EncodedSort (raise ")
+                                .put(PropertyKey.CAIRO_SQL_SORT_KEY_MAX_BYTES.getPropertyPath())
+                                .put(" or ")
+                                .put(PropertyKey.CAIRO_SQL_SORT_LIGHT_VALUE_MAX_BYTES.getPropertyPath())
+                                .put(')');
                     }
                     entryMem.ensureCapacity(longsPerEntry);
                     long addr = entryMem.getAppendAddress();
