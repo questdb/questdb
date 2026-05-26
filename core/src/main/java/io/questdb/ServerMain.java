@@ -83,7 +83,6 @@ public class ServerMain implements Closeable {
     private WorkerPoolManager workerPoolManager;
     private Thread compileViewsThread;
     private Thread hydrateMetadataThread;
-    private boolean initialized;
     private io.questdb.lifecycle.LifecycleOrchestrator orchestrator;
 
     public ServerMain(String... args) {
@@ -535,46 +534,6 @@ public class ServerMain implements Closeable {
         }
     }
 
-    /**
-     * Protocol bind paths moved to per-envelope start() methods.
-     * Residual: metadata hydrator + compile-views threads (not protocol-envelope work).
-     *
-     * @deprecated Use lifecycle envelopes; kept for tests that call initialize() directly.
-     */
-    private void bindAndStartNetworkServices(Log log) {
-        // metadata and write tracker hydration
-        hydrateMetadataThread = new Thread(() -> {
-            engine.getMetadataCache().onStartupAsyncHydrator();
-            engine.hydrateRecentWriteTracker();
-        });
-        hydrateMetadataThread.start();
-
-        // populate view state store and hydrate metadata cache with view metadata
-        compileViewsThread = new Thread(() -> {
-            // temporary list to re-use for listing dependent views
-            ObjList<TableToken> tempSink = new ObjList<>();
-            try (SqlExecutionContext executionContext = engine.createViewCompilerContext(0)) {
-                ViewCompilerJob.compileAllViews(engine, executionContext, tempSink);
-            }
-        });
-        compileViewsThread.start();
-
-        System.gc(); // GC 1
-        bootstrap.getLog().advisoryW().$("server is ready to be started").$();
-        initialized = true;
-    }
-
-    /**
-     * Backward-compatibility shim. Delegates to the envelope helper methods.
-     * Lifecycle envelopes own this work.
-     *
-     * @deprecated Use lifecycle envelopes; kept for tests that call initialize() directly.
-     */
-    private synchronized void initialize(Log log) {
-        constructAndAssignWorkerPoolManager(log);
-        bindAndStartNetworkServices(log);
-    }
-
     private void joinThread(Thread thread, boolean ignoreInterrupt) {
         if (thread != null) {
             try {
@@ -638,6 +597,7 @@ public class ServerMain implements Closeable {
         final ObjList<io.questdb.lifecycle.Component> components = new ObjList<>();
         components.add(new FactoryProviderEnvelope());
         components.add(new EngineEnvelope());
+        components.add(new HydrationEnvelope());
         components.add(new MinHttpEnvelope(bootstrap.getLog()));
         components.add(new WorkerPoolManagerEnvelope(bootstrap.getLog()));
         components.add(new PgWireEnvelope(bootstrap.getLog()));
@@ -889,6 +849,91 @@ public class ServerMain implements Closeable {
     }
 
     /**
+     * Post-engine-READY hydration envelope. Fires the async metadata hydrator
+     * (onStartupAsyncHydrator + hydrateRecentWriteTracker) and the materialised-view
+     * compiler (ViewCompilerJob.compileAllViews) after the engine publishes READY.
+     * <p>
+     * Hard-deps on engine so the orchestrator dispatches engine to READY via
+     * onDependencyState; both work units run on dedicated background threads so this
+     * envelope itself reaches READY immediately and never blocks the orchestrator.
+     * <p>
+     * Replaces the now-deleted bindAndStartNetworkServices() / initialize() shims, which
+     * had no production caller (only @Deprecated annotations + a few tests) yet remained
+     * the only path that ran compileAllViews. Without this envelope, production boot
+     * silently skipped view compilation -- finding #079.
+     */
+    private final class HydrationEnvelope implements io.questdb.lifecycle.Component {
+        private final ObjList<String> empty = new ObjList<>();
+        private final ObjList<String> hardDeps;
+
+        HydrationEnvelope() {
+            this.hardDeps = new ObjList<>();
+            this.hardDeps.add("engine");
+        }
+
+        @Override
+        public ObjList<String> hardRequiredDependencies() {
+            return hardDeps;
+        }
+
+        @Override
+        public String name() {
+            return "hydration";
+        }
+
+        @Override
+        public void onDependencyState(String depName, State previous, State current) {
+            if ("engine".equals(depName) && current == State.READY) {
+                ServerMain.this.hydrateMetadataThread = new Thread(() -> {
+                    ServerMain.this.engine.getMetadataCache().onStartupAsyncHydrator();
+                    ServerMain.this.engine.hydrateRecentWriteTracker();
+                });
+                ServerMain.this.hydrateMetadataThread.start();
+
+                ServerMain.this.compileViewsThread = new Thread(() -> {
+                    ObjList<TableToken> tempSink = new ObjList<>();
+                    try (SqlExecutionContext executionContext = ServerMain.this.engine.createViewCompilerContext(0)) {
+                        ViewCompilerJob.compileAllViews(ServerMain.this.engine, executionContext, tempSink);
+                    }
+                });
+                ServerMain.this.compileViewsThread.start();
+
+                // GC and the "enjoy" advisory fire from the WorkerPoolManagerEnvelope's tail
+                // (onStableBelow callback). No second System.gc() here -- the production tail
+                // gc already runs exactly once after pool start.
+                ServerMain.this.bootstrap.getLog().advisoryW().$("server is ready to be started").$();
+            }
+        }
+
+        @Override
+        public ObjList<String> softDependencies() {
+            return empty;
+        }
+
+        @Override
+        public void start(io.questdb.lifecycle.LifecycleContext ctx) {
+            // The hydrator work runs on background threads from onDependencyState when engine
+            // reaches READY. The envelope itself publishes READY synchronously so the orchestrator
+            // does not block on it -- the background threads can outlive this start() call and the
+            // ctor-owned freeOnExit chain ensures shutdown still joins them via ServerMain.close().
+            ctx.publish(io.questdb.lifecycle.State.STARTING);
+            ctx.publish(io.questdb.lifecycle.State.READY);
+            // Catch-up: if engine reached READY synchronously inside EngineEnvelope.start()
+            // before our registration completed, onDependencyState would have missed it.
+            // Self-fire the hydrator now.
+            if (ctx.state("engine") == State.READY && ServerMain.this.hydrateMetadataThread == null) {
+                onDependencyState("engine", State.STARTING, State.READY);
+            }
+        }
+
+        @Override
+        public void stop() {
+            joinThread(ServerMain.this.hydrateMetadataThread, true);
+            joinThread(ServerMain.this.compileViewsThread, true);
+        }
+    }
+
+    /**
      * ILP-TCP protocol envelope: binds the InfluxDB Line Protocol TCP and UDP receivers early,
      * then gates the accept loop on engine==READY via onDependencyState.
      * Hard-dep on worker-pool-manager; soft-dep on engine.
@@ -942,28 +987,52 @@ public class ServerMain implements Closeable {
         public void start(LifecycleContext ctx) {
             this.ctxRef = ctx;
             ctx.publish(State.STARTING);
-            final ServerConfiguration cfg = ServerMain.this.bootstrap.getConfiguration();
-            final boolean isReadOnly = cfg.getCairoConfiguration().isReadOnlyInstance();
-            if (!isReadOnly && cfg.getLineTcpReceiverConfiguration().isEnabled()) {
-                this.lineTcpReceiver = ServerMain.this.services().createLineTcpReceiver(
-                        cfg.getLineTcpReceiverConfiguration(),
-                        ServerMain.this.engine,
-                        ServerMain.this.workerPoolManager,
-                        acceptOpen);
-                this.lineUdpReceiver = ServerMain.this.services().createLineUdpReceiver(
-                        cfg.getLineUdpReceiverConfiguration(),
-                        ServerMain.this.engine,
-                        ServerMain.this.workerPoolManager,
-                        acceptOpen);
-            }
-            log.info().$("ilp-tcp envelope: bound, accept paused").$();
-            ctx.publish(State.DEGRADED);
-            // Catch-up: if engine reached READY synchronously inside EngineEnvelope.start()
-            // before our ctxRef was set, the onDependencyState dispatch was lost. Self-publish now.
-            if (ctx.state("engine") == State.READY) {
-                acceptOpen.set(true);
-                log.info().$("ilp-tcp envelope: accept loop open (catch-up)").$();
-                ctx.publish(State.READY);
+            try {
+                final ServerConfiguration cfg = ServerMain.this.bootstrap.getConfiguration();
+                final boolean isReadOnly = cfg.getCairoConfiguration().isReadOnlyInstance();
+                if (!isReadOnly && cfg.getLineTcpReceiverConfiguration().isEnabled()) {
+                    this.lineTcpReceiver = ServerMain.this.services().createLineTcpReceiver(
+                            cfg.getLineTcpReceiverConfiguration(),
+                            ServerMain.this.engine,
+                            ServerMain.this.workerPoolManager,
+                            acceptOpen);
+                    this.lineUdpReceiver = ServerMain.this.services().createLineUdpReceiver(
+                            cfg.getLineUdpReceiverConfiguration(),
+                            ServerMain.this.engine,
+                            ServerMain.this.workerPoolManager,
+                            acceptOpen);
+                }
+                log.info().$("ilp-tcp envelope: bound, accept paused").$();
+                ctx.publish(State.DEGRADED);
+                // Catch-up: if engine reached READY synchronously inside EngineEnvelope.start()
+                // before our ctxRef was set, the onDependencyState dispatch was lost. Self-publish now.
+                if (ctx.state("engine") == State.READY) {
+                    acceptOpen.set(true);
+                    log.info().$("ilp-tcp envelope: accept loop open (catch-up)").$();
+                    ctx.publish(State.READY);
+                }
+            } catch (Throwable t) {
+                // #090: free partially-allocated resources in reverse-construction order before
+                // rethrow. The orchestrator's close loop skips FAILED components, so without this
+                // wrap a mid-body throw leaks the LineTcpReceiver / LineUdpReceiver. Mirrors the
+                // WR-09 addSuppressed pattern from PrimaryRoleState.openLoops.
+                if (this.lineUdpReceiver != null) {
+                    try {
+                        Misc.free(this.lineUdpReceiver);
+                        this.lineUdpReceiver = null;
+                    } catch (Throwable suppressed) {
+                        t.addSuppressed(suppressed);
+                    }
+                }
+                if (this.lineTcpReceiver != null) {
+                    try {
+                        Misc.free(this.lineTcpReceiver);
+                        this.lineTcpReceiver = null;
+                    } catch (Throwable suppressed) {
+                        t.addSuppressed(suppressed);
+                    }
+                }
+                throw t;
             }
         }
 
@@ -1017,39 +1086,64 @@ public class ServerMain implements Closeable {
         @Override
         public void start(io.questdb.lifecycle.LifecycleContext ctx) {
             ctx.publish(io.questdb.lifecycle.State.STARTING);
-            final io.questdb.cutlass.http.HttpServerConfiguration httpMinConfig =
-                    ServerMain.this.bootstrap.getConfiguration().getHttpMinServerConfiguration();
-            if (!httpMinConfig.isEnabled()) {
-                log.info().$("min-http envelope: http.min.enabled=false, skipping bind").$();
-                ctx.publish(io.questdb.lifecycle.State.READY);
-                return;
-            }
-            int workerCount = httpMinConfig.getWorkerCount();
-            if (workerCount <= 0) {
-                log.advisoryW().$("min-http envelope: http.min.worker.count=").$(workerCount).$(" is <= 0, remapping to 1").$();
-                workerCount = 1;
-            }
-            pool = new WorkerPool(new MinHttpPoolConfiguration(workerCount));
-            // createMinHttpServer() calls pool.assign() on the dispatcher and reschedule jobs.
-            // The pool must NOT be started yet -- assign() asserts !running. Start after bind.
-            server = ServerMain.this.services().createMinHttpServer(httpMinConfig, pool);
-            if (server != null) {
-                final io.questdb.lifecycle.LifecycleOrchestrator orch = ServerMain.this.orchestrator;
-                server.bind(new io.questdb.cutlass.http.HttpRequestHandlerFactory() {
-                    @Override
-                    public io.questdb.std.ObjHashSet<String> getUrls() {
-                        return httpMinConfig.getContextPathLifecycle();
-                    }
+            try {
+                final io.questdb.cutlass.http.HttpServerConfiguration httpMinConfig =
+                        ServerMain.this.bootstrap.getConfiguration().getHttpMinServerConfiguration();
+                if (!httpMinConfig.isEnabled()) {
+                    log.info().$("min-http envelope: http.min.enabled=false, skipping bind").$();
+                    ctx.publish(io.questdb.lifecycle.State.READY);
+                    return;
+                }
+                int workerCount = httpMinConfig.getWorkerCount();
+                if (workerCount <= 0) {
+                    log.advisoryW().$("min-http envelope: http.min.worker.count=").$(workerCount).$(" is <= 0, remapping to 1").$();
+                    workerCount = 1;
+                }
+                pool = new WorkerPool(new MinHttpPoolConfiguration(workerCount));
+                // createMinHttpServer() calls pool.assign() on the dispatcher and reschedule jobs.
+                // The pool must NOT be started yet -- assign() asserts !running. Start after bind.
+                server = ServerMain.this.services().createMinHttpServer(httpMinConfig, pool);
+                if (server != null) {
+                    final io.questdb.lifecycle.LifecycleOrchestrator orch = ServerMain.this.orchestrator;
+                    server.bind(new io.questdb.cutlass.http.HttpRequestHandlerFactory() {
+                        @Override
+                        public io.questdb.std.ObjHashSet<String> getUrls() {
+                            return httpMinConfig.getContextPathLifecycle();
+                        }
 
-                    @Override
-                    public io.questdb.cutlass.http.HttpRequestHandler newInstance() {
-                        return ServerMain.this.newLifecycleProcessor(httpMinConfig, orch);
+                        @Override
+                        public io.questdb.cutlass.http.HttpRequestHandler newInstance() {
+                            return ServerMain.this.newLifecycleProcessor(httpMinConfig, orch);
+                        }
+                    });
+                    ServerMain.this.bindAdditionalMinHttpHandlers(server, httpMinConfig, orch);
+                }
+                pool.start(log);
+                ctx.publish(io.questdb.lifecycle.State.READY);
+            } catch (Throwable t) {
+                // #090: free partially-allocated resources in reverse-construction order before
+                // rethrow. Server first (it captured pool slots via assign() during construction),
+                // then the pool itself. The orchestrator's close loop skips FAILED components, so
+                // without this wrap a mid-body throw leaks the HttpServer and WorkerPool. Mirrors
+                // the WR-09 addSuppressed pattern from PrimaryRoleState.openLoops.
+                if (server != null) {
+                    try {
+                        Misc.free(server);
+                        server = null;
+                    } catch (Throwable suppressed) {
+                        t.addSuppressed(suppressed);
                     }
-                });
-                ServerMain.this.bindAdditionalMinHttpHandlers(server, httpMinConfig, orch);
+                }
+                if (pool != null) {
+                    try {
+                        pool.halt();
+                        pool = null;
+                    } catch (Throwable suppressed) {
+                        t.addSuppressed(suppressed);
+                    }
+                }
+                throw t;
             }
-            pool.start(log);
-            ctx.publish(io.questdb.lifecycle.State.READY);
         }
 
         @Override
@@ -1200,10 +1294,11 @@ public class ServerMain implements Closeable {
         @Override
         public void onDependencyState(String depName, State previous, State current) {
             if ("engine".equals(depName) && current == State.READY) {
-                // OSS standalone: qwip accepts whenever engine is READY. Enterprise overlays the
-                // role-aware gate (primary-only) via an envelope override.
-                acceptOpen.set(true);
-                log.info().$("qwip envelope: accept loop open").$();
+                // Consult the role-aware seam BEFORE flipping acceptOpen. OSS default returns
+                // true; ENT overlay returns role == PRIMARY so a REPLICA boot never opens the
+                // accept loop (#083).
+                acceptOpen.set(shouldOpenAccept(ctxRef));
+                log.info().$("qwip envelope: accept loop state on engine READY [open=").$(acceptOpen.get()).$(']').$();
                 if (ctxRef != null) {
                     ctxRef.publish(State.READY);
                 }
@@ -1218,6 +1313,17 @@ public class ServerMain implements Closeable {
         @TestOnly
         public QwpUdpReceiver getReceiver() {
             return receiver;
+        }
+
+        /**
+         * Role-aware override seam. OSS standalone returns true (accept opens whenever engine
+         * is READY). Enterprise overlays return role == PRIMARY so a REPLICA boot does not
+         * briefly accept QWIP UDP datagrams (#083). The gate is consulted at the moment accept
+         * could open, not after-the-fact, so the brief acceptance window on REPLICA boot
+         * becomes impossible by construction.
+         */
+        protected boolean shouldOpenAccept(LifecycleContext ctx) {
+            return true;
         }
 
         @Override
@@ -1244,8 +1350,11 @@ public class ServerMain implements Closeable {
             // Catch-up: if engine reached READY before our ctxRef was set, the
             // onDependencyState dispatch was lost. Self-publish now.
             if (ctx.state("engine") == State.READY) {
-                acceptOpen.set(true);
-                log.info().$("qwip envelope: accept loop open (catch-up)").$();
+                // Consult the role-aware seam on catch-up too -- otherwise the catch-up branch
+                // would unconditionally flip acceptOpen=true and a REPLICA boot would briefly
+                // accept datagrams (#083).
+                acceptOpen.set(shouldOpenAccept(ctx));
+                log.info().$("qwip envelope: accept loop state on engine READY (catch-up) [open=").$(acceptOpen.get()).$(']').$();
                 ctx.publish(State.READY);
             }
         }
@@ -1310,25 +1419,42 @@ public class ServerMain implements Closeable {
         public void start(LifecycleContext ctx) {
             this.ctxRef = ctx;
             ctx.publish(State.STARTING);
-            final ServerConfiguration cfg = ServerMain.this.bootstrap.getConfiguration();
-            this.server = ServerMain.this.services().createHttpServer(
-                    cfg,
-                    ServerMain.this.engine,
-                    ServerMain.this.workerPoolManager,
-                    acceptOpen);
-            // FlushQueryCacheJob per RESEARCH Section 6: owned by web-http;
-            // reads the PGServer reference from PgWireEnvelope via cross-envelope lookup.
-            final PGServer pgServer = ServerMain.this.findEnvelope("pg-wire", PgWireEnvelope.class).getPgServer();
-            ServerMain.this.workerPoolManager.getSharedPoolNetwork().assign(
-                    new FlushQueryCacheJob(ServerMain.this.engine.getMessageBus(), this.server, pgServer));
-            log.info().$("web-http envelope: bound, accept paused").$();
-            ctx.publish(State.DEGRADED);
-            // Catch-up: if engine reached READY synchronously inside EngineEnvelope.start()
-            // before our ctxRef was set, the onDependencyState dispatch was lost. Self-publish now.
-            if (ctx.state("engine") == State.READY) {
-                acceptOpen.set(true);
-                log.info().$("web-http envelope: accept loop open (catch-up)").$();
-                ctx.publish(State.READY);
+            try {
+                final ServerConfiguration cfg = ServerMain.this.bootstrap.getConfiguration();
+                this.server = ServerMain.this.services().createHttpServer(
+                        cfg,
+                        ServerMain.this.engine,
+                        ServerMain.this.workerPoolManager,
+                        acceptOpen);
+                // FlushQueryCacheJob per RESEARCH Section 6: owned by web-http;
+                // reads the PGServer reference from PgWireEnvelope via cross-envelope lookup.
+                final PGServer pgServer = ServerMain.this.findEnvelope("pg-wire", PgWireEnvelope.class).getPgServer();
+                ServerMain.this.workerPoolManager.getSharedPoolNetwork().assign(
+                        new FlushQueryCacheJob(ServerMain.this.engine.getMessageBus(), this.server, pgServer));
+                log.info().$("web-http envelope: bound, accept paused").$();
+                ctx.publish(State.DEGRADED);
+                // Catch-up: if engine reached READY synchronously inside EngineEnvelope.start()
+                // before our ctxRef was set, the onDependencyState dispatch was lost. Self-publish now.
+                if (ctx.state("engine") == State.READY) {
+                    acceptOpen.set(true);
+                    log.info().$("web-http envelope: accept loop open (catch-up)").$();
+                    ctx.publish(State.READY);
+                }
+            } catch (Throwable t) {
+                // #090: free partially-allocated resources before rethrow. The orchestrator's
+                // close loop skips FAILED components, so without this wrap a mid-body throw
+                // (e.g. inside findEnvelope or the FlushQueryCacheJob.assign() step) leaks the
+                // HttpServer. Mirrors the WR-09 addSuppressed pattern from
+                // PrimaryRoleState.openLoops.
+                if (this.server != null) {
+                    try {
+                        Misc.free(this.server);
+                        this.server = null;
+                    } catch (Throwable suppressed) {
+                        t.addSuppressed(suppressed);
+                    }
+                }
+                throw t;
             }
         }
 

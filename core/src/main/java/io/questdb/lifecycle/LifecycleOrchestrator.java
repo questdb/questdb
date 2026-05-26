@@ -98,6 +98,19 @@ public class LifecycleOrchestrator implements QuietCloseable {
         if (!closed.compareAndSet(false, true)) {
             return;
         }
+        // Shut down + await the executor BEFORE the reverse-topo stop loop. Previously the
+        // stop loop ran first and executor.shutdown ran after -- which left a window where an
+        // in-flight switchRole on the lifecycle executor thread could touch a component that
+        // the stop loop had just freed (#084 native UAF / NPE). Draining the executor here
+        // means every in-flight task either completes before the stop loop runs, or the new
+        // closed.get() short-circuit at the top of startAllInTopologicalOrder fires first and
+        // the task exits without progressing further.
+        executor.shutdown();
+        try {
+            executor.awaitTermination(30, TimeUnit.SECONDS);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
         // reverseTopoOrder is null if validateAndComputeOrder() never ran (or threw before
         // assignment). In that case there are no started components -- skip the per-component stop
         // loop and just shut down the executor. This makes close() safe to call after a validation
@@ -122,12 +135,6 @@ public class LifecycleOrchestrator implements QuietCloseable {
                     }
                 }
             }
-        }
-        executor.shutdown();
-        try {
-            executor.awaitTermination(30, TimeUnit.SECONDS);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
         }
     }
 
@@ -234,6 +241,15 @@ public class LifecycleOrchestrator implements QuietCloseable {
     protected void closeLogAndExit(int code) {
         LogFactory.closeInstance();
         System.exit(code);
+    }
+
+    /**
+     * Closed-state accessor for subclass consumption. {@code EntLifecycleOrchestrator.submitSwitch}
+     * (plan 09-08) consults this to reject post-close switch requests without elevating the
+     * visibility of the {@code private final AtomicBoolean closed} field.
+     */
+    protected boolean isClosed() {
+        return closed.get();
     }
 
     protected void publishInternal(String name, State next, @Nullable CharSequence reason) {
@@ -474,6 +490,14 @@ public class LifecycleOrchestrator implements QuietCloseable {
         // available for future parallel exploitation.
         assert topoOrder != null;
         for (int i = 0, n = topoOrder.size(); i < n; i++) {
+            // #084 close-race short-circuit: if close() raced startup, exit the loop now so the
+            // remaining components stay in INIT and the reverse-topo stop loop has nothing to
+            // tear down for them. The in-flight component finishes start() naturally; close()'s
+            // executor.shutdown + awaitTermination (run BEFORE the stop loop now) ensures that
+            // completion drains before any stop() touches shared engine state.
+            if (closed.get()) {
+                return;
+            }
             Component c = topoOrder.getQuick(i);
             // Check for failed hard deps before starting.
             ObjList<String> hard = c.hardRequiredDependencies();
