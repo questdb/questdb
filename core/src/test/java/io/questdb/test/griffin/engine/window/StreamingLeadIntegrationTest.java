@@ -268,6 +268,39 @@ public class StreamingLeadIntegrationTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCardinalityCapTrips() throws Exception {
+        // Force the partition cap low so a moderate symbol cardinality trips it.
+        setProperty(PropertyKey.CAIRO_SQL_WINDOW_STREAMING_MAX_PARTITIONS, "4");
+        assertMemoryLeak(() -> {
+            execute("create table t (x long, sym symbol, ts timestamp) timestamp(ts) partition by day");
+            // Insert 6 distinct symbols; with cap=4 the 5th unique symbol should trigger the cap.
+            // Two rows per symbol so the cursor actually pushes through processBaseRow.
+            execute(
+                    "insert into t values " +
+                            "(1, 'A', 0),  (2, 'A', 1000), " +
+                            "(1, 'B', 2000), (2, 'B', 3000), " +
+                            "(1, 'C', 4000), (2, 'C', 5000), " +
+                            "(1, 'D', 6000), (2, 'D', 7000), " +
+                            "(1, 'E', 8000), (2, 'E', 9000), " +
+                            "(1, 'F', 10000), (2, 'F', 11000)"
+            );
+
+            try {
+                assertSql("dummy", "select x, sym, lead(x, 1) over (partition by sym) as lx from t");
+                org.junit.Assert.fail("expected CairoException for cap exceeded");
+            } catch (io.questdb.cairo.CairoException e) {
+                org.junit.Assert.assertTrue(
+                        "unexpected error: " + e.getFlyweightMessage(),
+                        e.getFlyweightMessage().toString().contains("partition cap exceeded")
+                );
+            }
+        });
+        // Restore to default for subsequent tests in this class (matters because @Before re-applies
+        // the streaming flag but not this cap; explicit reset keeps the run order independent).
+        setProperty(PropertyKey.CAIRO_SQL_WINDOW_STREAMING_MAX_PARTITIONS, "1048576");
+    }
+
+    @Test
     public void testOriginalTriggeringQueryShape() throws Exception {
         // This is the query that originally motivated the design: LAG(ts) OVER (PARTITION BY symbol
         // ORDER BY ts DESC) — previously OOM'd via CachedWindow on a 2B-row table. With Phase 4+5 it
@@ -323,6 +356,31 @@ public class StreamingLeadIntegrationTest extends AbstractCairoTest {
                             "4\tB\tnull\n",
                     "select x, sym, lead(x, 2) over (partition by sym) as lx from t"
             );
+        });
+    }
+
+    @Test
+    public void testPartitionByReexecutesIdentically() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t (x long, sym symbol, ts timestamp) timestamp(ts) partition by day");
+            execute(
+                    "insert into t values " +
+                            "(10, 'A', 0), (20, 'B', 1000), " +
+                            "(30, 'A', 2000), (40, 'B', 3000)"
+            );
+
+            // Running the same query twice in the same test should produce the same partition-major
+            // output — verifies toTop / partition-map clear is correct under PARTITION BY.
+            String expected =
+                    "x\tsym\tlx\n" +
+                            "10\tA\t30\n" +
+                            "20\tB\t40\n" +
+                            "30\tA\tnull\n" +
+                            "40\tB\tnull\n";
+            String sql = "select x, sym, lead(x, 1) over (partition by sym) as lx from t";
+            assertSql(expected, sql);
+            assertSql(expected, sql);
+            assertSql(expected, sql);
         });
     }
 
