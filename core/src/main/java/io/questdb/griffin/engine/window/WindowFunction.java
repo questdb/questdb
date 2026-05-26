@@ -195,6 +195,31 @@ public interface WindowFunction extends Function {
     }
 
     /**
+     * Returns the number of forward rows this function requires from the same partition
+     * before it can finalise its output for the current row. {@code 0} means the function
+     * can emit immediately on {@link #computeNext(Record)} (e.g. LAG). A positive value
+     * means the function needs that many additional rows of the same partition before its
+     * value is known (e.g. LEAD with non-zero offset).
+     * <p>
+     * Only consulted by the streaming executor when {@link #getPassCount()} is
+     * {@link #ZERO_PASS}. The streaming executor reserves per-partition buffering
+     * proportional to the maximum lookahead across all window functions in the query.
+     * Functions with positive lookahead must support deferred emission: the row enqueued
+     * when the function is first invoked on a record may be emitted to the consumer
+     * lookahead rows later, after the function has back-filled the slot via a subsequent
+     * {@link #computeNext(Record)} call.
+     * <p>
+     * Returning a positive value here has no effect on the cached executor path. Functions
+     * that are routed through {@link CachedWindowRecordCursorFactory} still go through
+     * {@link #pass1(Record, long, WindowSPI)} regardless of lookahead.
+     *
+     * @return non-negative lookahead in rows; {@code 0} for immediate-emit functions
+     */
+    default int getLookahead() {
+        return 0;
+    }
+
+    /**
      * @return pass1 scan direction.
      * Some {@link #ONE_PASS} and {@link #TWO_PASS} window functions may be more efficient when using a backward scan.
      */
