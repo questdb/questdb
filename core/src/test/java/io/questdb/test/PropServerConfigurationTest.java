@@ -792,6 +792,20 @@ public class PropServerConfigurationTest {
     }
 
     @Test
+    public void testDeprecatedMaxPagesHonorsExplicitIntegerMaxValue() throws Exception {
+        // The previously-documented default for cairo.sql.*.max.pages was 2^31 (Integer.MAX_VALUE).
+        // A user who explicitly pinned the deprecated key to that exact value intended "unbounded"
+        // and must not be silently downgraded to the new 4 GiB default.
+        Properties properties = new Properties();
+        properties.setProperty("cairo.sql.sort.key.page.size", "128k");
+        properties.setProperty("cairo.sql.sort.key.max.pages", Integer.toString(Integer.MAX_VALUE));
+
+        CairoConfiguration cairo = newPropServerConfiguration(properties).getCairoConfiguration();
+
+        Assert.assertEquals(128L * 1024 * Integer.MAX_VALUE, cairo.getSqlSortKeyMaxBytes());
+    }
+
+    @Test
     public void testNewMaxBytesWinsOverDeprecatedMaxPages() throws Exception {
         Properties properties = new Properties();
         properties.setProperty("cairo.sql.window.tree.page.size", "512k");

@@ -2623,13 +2623,23 @@ public class PropServerConfiguration implements ServerConfiguration {
             @Nullable ConfigPropertyKey deprecatedAliasMaxPagesKey,
             long pageSize
     ) throws ServerConfigurationException {
-        int maxPages = Integer.MAX_VALUE;
+        // Always read both deprecated keys so they remain registered in the property tracker and
+        // visible in (show parameters), even when neither is explicitly set.
+        int aliasMaxPages = Integer.MAX_VALUE;
         if (deprecatedAliasMaxPagesKey != null) {
-            maxPages = getInt(properties, env, deprecatedAliasMaxPagesKey, maxPages);
+            aliasMaxPages = getInt(properties, env, deprecatedAliasMaxPagesKey, aliasMaxPages);
         }
-        maxPages = getInt(properties, env, deprecatedMaxPagesKey, maxPages);
-        if (maxPages != Integer.MAX_VALUE) {
-            return pageSize * (long) maxPages;
+        final int mainMaxPages = getInt(properties, env, deprecatedMaxPagesKey, Integer.MAX_VALUE);
+
+        // Detect explicit presence rather than comparing to a sentinel. The previously-documented
+        // default for *.max.pages was Integer.MAX_VALUE; a user who pinned the deprecated key to
+        // that exact value intended "unbounded" and must not be silently downgraded to the new
+        // 4 GiB default. Main key wins over alias, matching the previous behavior.
+        if (isPropertyExplicitlySet(properties, env, deprecatedMaxPagesKey)) {
+            return pageSize * (long) mainMaxPages;
+        }
+        if (deprecatedAliasMaxPagesKey != null && isPropertyExplicitlySet(properties, env, deprecatedAliasMaxPagesKey)) {
+            return pageSize * (long) aliasMaxPages;
         }
         return 4L * Numbers.SIZE_1GB;
     }
@@ -2925,6 +2935,13 @@ public class PropServerConfiguration implements ServerConfiguration {
     protected boolean instanceAcceptingWrites() {
         // overwritten in Enterprise
         return !isReadOnlyInstance;
+    }
+
+    protected boolean isPropertyExplicitlySet(Properties properties, @Nullable Map<String, String> env, ConfigPropertyKey key) {
+        if (env != null && env.get(key.getEnvVarName()) != null) {
+            return true;
+        }
+        return properties.getProperty(key.getPropertyPath()) != null;
     }
 
     protected PropertyValidator newValidator() {
