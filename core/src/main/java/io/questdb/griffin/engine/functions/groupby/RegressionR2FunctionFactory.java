@@ -33,10 +33,10 @@ import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
 
-public class RegressionInterceptFunctionFactory implements FunctionFactory {
+public class RegressionR2FunctionFactory implements FunctionFactory {
     @Override
     public String getSignature() {
-        return "regr_intercept(DD)";
+        return "regr_r2(DD)";
     }
 
     @Override
@@ -46,12 +46,12 @@ public class RegressionInterceptFunctionFactory implements FunctionFactory {
 
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return new RegressionInterceptFunction(args.getQuick(0), args.getQuick(1));
+        return new RegressionR2Function(args.getQuick(0), args.getQuick(1));
     }
 
-    private static class RegressionInterceptFunction extends AbstractRegressionGroupByFunction {
+    private static class RegressionR2Function extends AbstractRegressionGroupByFunction {
 
-        public RegressionInterceptFunction(@NotNull Function arg0, @NotNull Function arg1) {
+        public RegressionR2Function(@NotNull Function arg0, @NotNull Function arg1) {
             super(arg0, arg1);
         }
 
@@ -61,19 +61,25 @@ public class RegressionInterceptFunctionFactory implements FunctionFactory {
             if (count <= 0) {
                 return Double.NaN;
             }
+            // SQL:2003 §10.9: when VAR_POP(X) = 0 (zero X variance) the result is NULL.
+            // Covers count = 1 and all-identical-X cases.
             double sumX = rec.getDouble(valueIndex + 3);
             if (sumX == 0) {
                 return Double.NaN;
             }
+            // SQL:2003 §10.9: when VAR_POP(Y) = 0 and VAR_POP(X) != 0 the result is 1
+            // (X varies, Y constant - a horizontal line fits perfectly).
+            double sumY = rec.getDouble(valueIndex + 1);
+            if (sumY == 0) {
+                return 1.0;
+            }
             double sumXY = rec.getDouble(valueIndex + 4);
-            double meanY = rec.getDouble(valueIndex);
-            double meanX = rec.getDouble(valueIndex + 2);
-            return meanY - meanX * (sumXY / sumX);
+            return (sumXY * sumXY) / (sumX * sumY);
         }
 
         @Override
         public String getName() {
-            return "regr_intercept";
+            return "regr_r2";
         }
     }
 }
