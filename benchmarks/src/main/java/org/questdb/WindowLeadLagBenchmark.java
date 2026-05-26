@@ -26,6 +26,7 @@ package org.questdb;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CursorPrinter;
 import io.questdb.cairo.DefaultCairoConfiguration;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
@@ -37,7 +38,9 @@ import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.window.CachedWindowRecordCursorFactory;
 import io.questdb.griffin.engine.window.DeferredEmitWindowRecordCursorFactory;
 import io.questdb.griffin.engine.window.WindowRecordCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.std.Misc;
+import io.questdb.std.str.StringSink;
 import org.openjdk.jmh.annotations.Benchmark;
 import org.openjdk.jmh.annotations.BenchmarkMode;
 import org.openjdk.jmh.annotations.Fork;
@@ -228,6 +231,12 @@ public class WindowLeadLagBenchmark {
         seedTable();
 
         final String sql = buildSql();
+        // Belt-and-braces correctness guard: run the current shape under both flag states against a
+        // small slice of the seeded data and assert the row multisets match before we measure. Any
+        // result drift between cached and streaming paths fails setup with a clear diff, instead of
+        // silently producing fast-but-wrong numbers.
+        assertCachedStreamingEquivalent(sql);
+
         factory = compiler.compile(sql, ctx).getRecordCursorFactory();
         assertRouting(factory);
     }
@@ -344,6 +353,120 @@ public class WindowLeadLagBenchmark {
                     CachedWindowRecordCursorFactory.class;
             default -> throw new IllegalArgumentException("unknown shape: " + shape);
         };
+    }
+
+    /**
+     * Runs the current shape's SQL twice on a small dedicated dataset — once with the
+     * streaming-lead flag off and once on — and asserts the row multisets match. Catches result
+     * drift between the cached and streaming paths before the benchmark starts measuring. The
+     * bench's actual engine has its flag baked in at construction time, so this method builds two
+     * separate verification engines, runs the comparison, then disposes them.
+     */
+    private void assertCachedStreamingEquivalent(String sql) throws Exception {
+        final int verifyRowCount = 200;
+        final int verifyPartitionCardinality = Math.min(8, partitionCardinality);
+        StringSink cachedOut = renderShapeUnderFlag(sql, false, verifyRowCount, verifyPartitionCardinality);
+        StringSink streamingOut = renderShapeUnderFlag(sql, true, verifyRowCount, verifyPartitionCardinality);
+
+        String[] cachedLines = splitLines(cachedOut.toString());
+        String[] streamingLines = splitLines(streamingOut.toString());
+        if (cachedLines.length != streamingLines.length) {
+            throw new IllegalStateException(
+                    "equivalence check failed: row count differs for shape=" + shape
+                            + " cached=" + cachedLines.length + " streaming=" + streamingLines.length
+            );
+        }
+        if (!cachedLines[0].equals(streamingLines[0])) {
+            throw new IllegalStateException(
+                    "equivalence check failed: header differs for shape=" + shape
+                            + "\n  cached:    " + cachedLines[0]
+                            + "\n  streaming: " + streamingLines[0]
+            );
+        }
+        String[] cachedData = new String[cachedLines.length - 1];
+        String[] streamingData = new String[streamingLines.length - 1];
+        System.arraycopy(cachedLines, 1, cachedData, 0, cachedData.length);
+        System.arraycopy(streamingLines, 1, streamingData, 0, streamingData.length);
+        java.util.Arrays.sort(cachedData);
+        java.util.Arrays.sort(streamingData);
+        for (int i = 0; i < cachedData.length; i++) {
+            if (!cachedData[i].equals(streamingData[i])) {
+                throw new IllegalStateException(
+                        "equivalence check failed: row " + i + " differs for shape=" + shape
+                                + "\n  cached:    " + cachedData[i]
+                                + "\n  streaming: " + streamingData[i]
+                );
+            }
+        }
+    }
+
+    private StringSink renderShapeUnderFlag(String sql, boolean streaming, int rows, int partitions) throws Exception {
+        Path root = java.nio.file.Files.createTempDirectory("windowleadlagbench-verify-");
+        CairoEngine verifyEngine = null;
+        SqlCompilerImpl verifyCompiler = null;
+        try {
+            final CairoConfiguration verifyConf = new DefaultCairoConfiguration(root.toString()) {
+                @Override
+                public boolean getSqlWindowStreamingLeadEnabled() {
+                    return streaming;
+                }
+            };
+            verifyEngine = new CairoEngine(verifyConf);
+            SqlExecutionContext verifyCtx = new SqlExecutionContextImpl(verifyEngine, 1)
+                    .with(
+                            verifyConf.getFactoryProvider().getSecurityContextFactory().getRootContext(),
+                            null, null, -1, null
+                    );
+            verifyCompiler = new SqlCompilerImpl(verifyEngine);
+            verifyEngine.execute(
+                    "CREATE TABLE t ("
+                            + "sym SYMBOL CAPACITY " + SYMBOL_CAPACITY + ","
+                            + "x LONG,"
+                            + "ts TIMESTAMP"
+                            + ") TIMESTAMP(ts) PARTITION BY DAY",
+                    verifyCtx
+            );
+            verifyEngine.execute(
+                    "INSERT INTO t SELECT "
+                            + "(x % " + partitions + ")::SYMBOL AS sym, "
+                            + "x AS x, "
+                            + "timestamp_sequence('2024-01-01T00:00:00.000000Z'::timestamp, 1000) AS ts "
+                            + "FROM long_sequence(" + rows + ")",
+                    verifyCtx
+            );
+
+            StringSink sink = new StringSink();
+            try (RecordCursorFactory f = verifyCompiler.compile(sql, verifyCtx).getRecordCursorFactory();
+                 RecordCursor c = f.getCursor(verifyCtx)) {
+                RecordMetadata md = f.getMetadata();
+                CursorPrinter.println(md, sink);
+                Record r = c.getRecord();
+                while (c.hasNext()) {
+                    CursorPrinter.println(r, md, sink);
+                }
+            }
+            return sink;
+        } finally {
+            Misc.free(verifyCompiler);
+            Misc.free(verifyEngine);
+            if (java.nio.file.Files.exists(root)) {
+                try (java.util.stream.Stream<Path> stream = java.nio.file.Files.walk(root)) {
+                    stream.sorted(Comparator.reverseOrder()).forEach(p -> {
+                        try {
+                            java.nio.file.Files.deleteIfExists(p);
+                        } catch (Exception ignore) {
+                        }
+                    });
+                }
+            }
+        }
+    }
+
+    private static String[] splitLines(String s) {
+        if (s.endsWith("\n")) {
+            s = s.substring(0, s.length() - 1);
+        }
+        return s.split("\n", -1);
     }
 
     private void seedTable() throws SqlException {

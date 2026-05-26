@@ -327,6 +327,7 @@ public class DeferredEmitWindowRecordCursorFactory extends AbstractRecordCursorF
         private Record baseRecordForEmit;
         private SqlExecutionCircuitBreaker circuitBreaker;
         private MapRecordCursor flushMapCursor;
+        private long flushPartitionFilled;
         private boolean flushPartitionOpen;
         private long flushPartitionRingCount;
         private long flushPartitionRingHead;
@@ -528,6 +529,7 @@ public class DeferredEmitWindowRecordCursorFactory extends AbstractRecordCursorF
                 flushPartitionSlotsOff = singlePartitionState[0];
                 flushPartitionRingHead = singlePartitionState[1];
                 flushPartitionRingCount = singlePartitionState[3];
+                flushPartitionFilled = singlePartitionState[4];
                 return;
             }
             flushMapCursor = partitionMap.getCursor();
@@ -557,6 +559,7 @@ public class DeferredEmitWindowRecordCursorFactory extends AbstractRecordCursorF
                     flushPartitionSlotsOff = rec.getLong(0);
                     flushPartitionRingHead = rec.getLong(1);
                     flushPartitionRingCount = rec.getLong(3);
+                    flushPartitionFilled = rec.getLong(4);
                     flushPartitionOpen = true;
                 }
                 if (flushPartitionRingCount == 0) {
@@ -567,10 +570,16 @@ public class DeferredEmitWindowRecordCursorFactory extends AbstractRecordCursorF
                     continue;
                 }
                 final long headSlot = flushPartitionSlotsOff + flushPartitionRingHead * slotBytes;
-                // Fill remaining LEAD slots with defaultValue. LAG slots were already filled at
-                // enqueue.
+                // Fill UNFILLED LEAD slots with defaultValue. The pendingFilled bitmask tracks
+                // which (slot, lead) pairs were already backfilled during processBaseRow — those
+                // must not be overwritten. LAG slots were already filled at enqueue and have no
+                // pending bits.
+                final long headSlotPendingShift = flushPartitionRingHead * leadCount;
                 for (int i = 0; i < leadCount; i++) {
-                    leadFunctions.getQuick(i).streamingFlushDefault(headSlot, this);
+                    long bit = 1L << (headSlotPendingShift + i);
+                    if ((flushPartitionFilled & bit) == 0L) {
+                        leadFunctions.getQuick(i).streamingFlushDefault(headSlot, this);
+                    }
                 }
                 flushPartitionRingHead = (flushPartitionRingHead + 1) % ringCapacity;
                 flushPartitionRingCount--;
