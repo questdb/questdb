@@ -32,6 +32,7 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.vm.api.MemoryCR;
 import io.questdb.cairo.wal.WalEventCursor;
+import io.questdb.cairo.wal.WalDirectoryPolicy;
 import io.questdb.cairo.wal.WalEventReader;
 import io.questdb.cairo.wal.WalReader;
 import io.questdb.cairo.wal.WalTxnType;
@@ -730,6 +731,29 @@ public class WalToParquet {
         }
     }
 
+    // No-op WalDirectoryPolicy for V2 sequencer read-only access. V2's
+    // constructor requires one but only invokes it on the write path, so all
+    // methods can be no-ops.
+    private static final class ReadOnlyWalDirectoryPolicy implements WalDirectoryPolicy {
+        @Override
+        public void initDirectory(Path dirPath) {
+        }
+
+        @Override
+        public boolean isInUse(Path path) {
+            return false;
+        }
+
+        @Override
+        public void rollbackDirectory(Path path) {
+        }
+
+        @Override
+        public boolean truncateFilesOnClose() {
+            return false;
+        }
+    }
+
     private static final class SegmentInfo {
         long firstCommitTs;
         long firstSeqTxn;
@@ -743,20 +767,6 @@ public class WalToParquet {
         SegmentInfo(int walId, int segmentId) {
             this.walId = walId;
             this.segmentId = segmentId;
-        }
-    }
-
-    private static final class TxnLogHeader {
-        final int formatVersion;
-        final long maxStructureVersion;
-        final long maxTxn;
-        final TableTransactionLogFile txnLog;
-
-        TxnLogHeader(TableTransactionLogFile txnLog, int formatVersion, long maxTxn, long maxStructureVersion) {
-            this.txnLog = txnLog;
-            this.formatVersion = formatVersion;
-            this.maxTxn = maxTxn;
-            this.maxStructureVersion = maxStructureVersion;
         }
     }
 
@@ -785,6 +795,20 @@ public class WalToParquet {
             info.tableId = 0;
             info.tableName = dirName;
             return info;
+        }
+    }
+
+    private static final class TxnLogHeader {
+        final int formatVersion;
+        final long maxStructureVersion;
+        final long maxTxn;
+        final TableTransactionLogFile txnLog;
+
+        TxnLogHeader(TableTransactionLogFile txnLog, int formatVersion, long maxTxn, long maxStructureVersion) {
+            this.txnLog = txnLog;
+            this.formatVersion = formatVersion;
+            this.maxTxn = maxTxn;
+            this.maxStructureVersion = maxStructureVersion;
         }
     }
 }
