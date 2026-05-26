@@ -375,6 +375,67 @@ public class StreamingLeadFuzzTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFuzzCursorToTop() throws Exception {
+        // Hold the same compiled factory and the SAME cursor instance; iterate to exhaustion, call
+        // cursor.toTop(), iterate again, assert both passes produce identical multisets. This is
+        // strictly stronger than testFuzzReExecution (which recompiles): it exercises the cursor's
+        // toTop() path including partition-map clear, nextFreeSlotOffset reset, singlePartitionState
+        // zeroing, and function.toTop() propagation.
+        assertMemoryLeak(() -> {
+            io.questdb.std.str.StringSink first = new io.questdb.std.str.StringSink();
+            io.questdb.std.str.StringSink second = new io.questdb.std.str.StringSink();
+            for (int iter = 0; iter < 20; iter++) {
+                long seed = 0xC0DE_70_70L + iter;
+                java.util.Random r = new java.util.Random(seed);
+                String table = "ttop_" + Long.toHexString(seed);
+                int rows = 5 + r.nextInt(60);
+                int partitions = 1 + r.nextInt(4);
+                int lookahead = 1 + r.nextInt(3);
+                boolean partitioned = r.nextBoolean();
+                execute("create table " + table
+                        + " (x long, sym symbol, ts timestamp) timestamp(ts) partition by day");
+                execute(buildInsertLong(table, rows, partitions, false));
+                String sql = "select x, sym, lead(x, " + lookahead + ") over "
+                        + (partitioned ? "(partition by sym)" : "()") + " as lx from " + table;
+
+                staticOverrides.setProperty(io.questdb.PropertyKey.CAIRO_SQL_WINDOW_STREAMING_LEAD_ENABLED, "true");
+                try (io.questdb.griffin.SqlCompiler compiler = engine.getSqlCompiler();
+                     io.questdb.cairo.sql.RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
+                    try (io.questdb.cairo.sql.RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                        io.questdb.cairo.sql.RecordMetadata md = factory.getMetadata();
+                        first.clear();
+                        io.questdb.cairo.CursorPrinter.println(md, first);
+                        io.questdb.cairo.sql.Record rec = cursor.getRecord();
+                        while (cursor.hasNext()) {
+                            io.questdb.cairo.CursorPrinter.println(rec, md, first);
+                        }
+                        // Now reset and iterate again on the SAME cursor.
+                        cursor.toTop();
+                        second.clear();
+                        io.questdb.cairo.CursorPrinter.println(md, second);
+                        while (cursor.hasNext()) {
+                            io.questdb.cairo.CursorPrinter.println(rec, md, second);
+                        }
+                    }
+                }
+                if (!first.toString().equals(second.toString())) {
+                    String[] firstLines = first.toString().split("\n");
+                    String[] secondLines = second.toString().split("\n");
+                    java.util.Arrays.sort(firstLines);
+                    java.util.Arrays.sort(secondLines);
+                    org.junit.Assert.assertEquals(
+                            "cursor.toTop() produced different rows on second pass. seed=0x" + Long.toHexString(seed)
+                                    + " rows=" + rows + " partitions=" + partitions + " lookahead=" + lookahead
+                                    + " partitioned=" + partitioned,
+                            String.join("\n", firstLines),
+                            String.join("\n", secondLines)
+                    );
+                }
+            }
+        });
+    }
+
+    @Test
     public void testFuzzReExecution() throws Exception {
         // Re-execute the same factory multiple times in succession. Catches partition-map clear
         // bugs and mem-arena reset bugs that would only show after the first invocation. Compares
