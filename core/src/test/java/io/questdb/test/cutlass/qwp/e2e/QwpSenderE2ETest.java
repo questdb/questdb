@@ -2697,6 +2697,158 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
     }
 
     @Test
+    public void testDeferredCommitMultipleCycles() throws Exception {
+        runInContext((port) -> {
+            try (QwpWebSocketSender sender = connectWs(port)) {
+                // Cycle 1: defer → commit
+                sender.setDeferCommit(true);
+                for (int i = 0; i < 10; i++) {
+                    sender.table("defer_multi_cycle")
+                            .longColumn("id", i)
+                            .at(1_000_000_000_000L + i * 1000L, ChronoUnit.MICROS);
+                }
+                sender.flush();
+
+                sender.setDeferCommit(false);
+                for (int i = 10; i < 15; i++) {
+                    sender.table("defer_multi_cycle")
+                            .longColumn("id", i)
+                            .at(1_000_000_000_000L + i * 1000L, ChronoUnit.MICROS);
+                }
+                sender.flush();
+
+                // Cycle 2: defer → commit on the same connection
+                sender.setDeferCommit(true);
+                for (int i = 15; i < 25; i++) {
+                    sender.table("defer_multi_cycle")
+                            .longColumn("id", i)
+                            .at(1_000_000_000_000L + i * 1000L, ChronoUnit.MICROS);
+                }
+                sender.flush();
+
+                sender.setDeferCommit(false);
+                for (int i = 25; i < 30; i++) {
+                    sender.table("defer_multi_cycle")
+                            .longColumn("id", i)
+                            .at(1_000_000_000_000L + i * 1000L, ChronoUnit.MICROS);
+                }
+                sender.flush();
+            }
+
+            drainWalQueue();
+            assertSql("SELECT count() FROM defer_multi_cycle", "count\n30\n");
+            assertSql(
+                    "SELECT min(id), max(id) FROM defer_multi_cycle",
+                    "min\tmax\n0\t29\n"
+            );
+        });
+    }
+
+    @Test
+    public void testDeferredCommitSchemaMismatchRollsBack() throws Exception {
+        runInContext((port) -> {
+            // Seed table_a with a DOUBLE column
+            try (QwpWebSocketSender sender = connectWs(port)) {
+                sender.table("defer_mismatch_a")
+                        .doubleColumn("px", 1.5)
+                        .at(1_000_000, ChronoUnit.MICROS);
+                sender.flush();
+            }
+            drainWalQueue();
+
+            // Deferred sequence: valid rows for table_b, then schema error on table_a
+            CompletableFuture<SenderError> errorFut = new CompletableFuture<>();
+            try (QwpWebSocketSender sender = connectWs(port, errorFut::complete)) {
+                sender.setDeferCommit(true);
+                for (int i = 0; i < 10; i++) {
+                    sender.table("defer_mismatch_b")
+                            .longColumn("id", i)
+                            .at(1_000_000_000_000L + i * 1000L, ChronoUnit.MICROS);
+                }
+                sender.flush();
+
+                // STRING value for a DOUBLE column triggers SCHEMA_MISMATCH on the server;
+                // all accumulated deferred WAL rows (including table_b) must be rolled back
+                sender.table("defer_mismatch_a")
+                        .stringColumn("px", "not-a-double")
+                        .at(2_000_000, ChronoUnit.MICROS);
+                sender.flush();
+
+                SenderError err = errorFut.get(10, TimeUnit.SECONDS);
+                Assert.assertEquals(SenderError.Category.SCHEMA_MISMATCH, err.getCategory());
+            }
+
+            drainWalQueue();
+
+            // Original row in table_a survives; the mismatched row was not committed
+            assertSql("SELECT px FROM defer_mismatch_a", "px\n1.5\n");
+
+            // Deferred rows for table_b were rolled back together with the error
+            try {
+                assertSql("SELECT count() FROM defer_mismatch_b", "count\n0\n");
+            } catch (AssertionError e) {
+                if (!e.getMessage().contains("defer_mismatch_b")) {
+                    throw e;
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testDeferredCommitSymbolDictContinuity() throws Exception {
+        runInContext((port) -> {
+            try (QwpWebSocketSender sender = connectWs(port)) {
+                // Deferred message 1: introduce symbols
+                sender.setDeferCommit(true);
+                sender.table("defer_symbol")
+                        .symbol("host", "server-01")
+                        .longColumn("val", 1)
+                        .at(1_000_000, ChronoUnit.MICROS);
+                sender.table("defer_symbol")
+                        .symbol("host", "server-02")
+                        .longColumn("val", 2)
+                        .at(2_000_000, ChronoUnit.MICROS);
+                sender.flush();
+
+                // Deferred message 2: reuse "server-01" + add new "server-03"
+                sender.table("defer_symbol")
+                        .symbol("host", "server-01")
+                        .longColumn("val", 3)
+                        .at(3_000_000, ChronoUnit.MICROS);
+                sender.table("defer_symbol")
+                        .symbol("host", "server-03")
+                        .longColumn("val", 4)
+                        .at(4_000_000, ChronoUnit.MICROS);
+                sender.flush();
+
+                // Committing message: reuse symbol from message 1
+                sender.setDeferCommit(false);
+                sender.table("defer_symbol")
+                        .symbol("host", "server-02")
+                        .longColumn("val", 5)
+                        .at(5_000_000, ChronoUnit.MICROS);
+                sender.flush();
+            }
+
+            drainWalQueue();
+            assertQueryNoLeakCheck(
+                    """
+                            host\tval\ttimestamp
+                            server-01\t1\t1970-01-01T00:00:01.000000Z
+                            server-02\t2\t1970-01-01T00:00:02.000000Z
+                            server-01\t3\t1970-01-01T00:00:03.000000Z
+                            server-03\t4\t1970-01-01T00:00:04.000000Z
+                            server-02\t5\t1970-01-01T00:00:05.000000Z
+                            """,
+                    "SELECT host, val, timestamp FROM defer_symbol ORDER BY timestamp",
+                    "timestamp",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
     public void testDecimal() throws Exception {
         runInContext((port) -> {
             String table = "test_qwp_decimal";
