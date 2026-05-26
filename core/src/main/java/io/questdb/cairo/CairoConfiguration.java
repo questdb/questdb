@@ -806,6 +806,21 @@ public interface CairoConfiguration {
 
     long getSqlWindowCacheMaxBytes();
 
+    /**
+     * Resolves which config key the CachedWindow record-store cap was sourced from. Returned as a
+     * property path string (e.g. "cairo.sql.window.cache.max.bytes") so error messages can name the
+     * actual binding constraint when growth fails. The new bytes key wins when explicitly set; the
+     * legacy pages key wins when only it is explicit; the new bytes default wins otherwise.
+     */
+    String getSqlWindowCacheMaxPagesConfigKey();
+
+    /**
+     * Effective cap (in pages of {@link #getSqlWindowStorePageSize()}) on the CachedWindow record
+     * store, after reconciling cairo.sql.window.cache.max.bytes and the legacy
+     * cairo.sql.window.store.max.pages. Paired with {@link #getSqlWindowCacheMaxPagesConfigKey()}.
+     */
+    int getSqlWindowCacheMaxPagesResolved();
+
     int getSqlWindowInitialRangeBufferSize();
 
     int getSqlWindowMaxRecursion();

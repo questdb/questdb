@@ -31,6 +31,7 @@ import io.questdb.DefaultTelemetryConfiguration;
 import io.questdb.FactoryProvider;
 import io.questdb.Metrics;
 import io.questdb.PropServerConfiguration;
+import io.questdb.PropertyKey;
 import io.questdb.TelemetryConfiguration;
 import io.questdb.VolumeDefinitions;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
@@ -1244,6 +1245,17 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public long getSqlWindowCacheMaxBytes() {
         return 4L * Numbers.SIZE_1GB;
+    }
+
+    @Override
+    public String getSqlWindowCacheMaxPagesConfigKey() {
+        return PropertyKey.CAIRO_SQL_WINDOW_CACHE_MAX_BYTES.getPropertyPath();
+    }
+
+    @Override
+    public int getSqlWindowCacheMaxPagesResolved() {
+        final long fromBytes = Math.max(1L, getSqlWindowCacheMaxBytes() / getSqlWindowStorePageSize());
+        return (int) Math.min(fromBytes, Integer.MAX_VALUE);
     }
 
     @Override

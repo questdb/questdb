@@ -1253,6 +1253,16 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public String getSqlWindowCacheMaxPagesConfigKey() {
+        return getDelegate().getSqlWindowCacheMaxPagesConfigKey();
+    }
+
+    @Override
+    public int getSqlWindowCacheMaxPagesResolved() {
+        return getDelegate().getSqlWindowCacheMaxPagesResolved();
+    }
+
+    @Override
     public int getSqlWindowInitialRangeBufferSize() {
         return getDelegate().getSqlWindowInitialRangeBufferSize();
     }

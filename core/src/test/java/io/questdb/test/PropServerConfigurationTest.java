@@ -806,6 +806,59 @@ public class PropServerConfigurationTest {
     }
 
     @Test
+    public void testWindowCacheResolvedDefault() throws Exception {
+        Properties properties = new Properties();
+
+        CairoConfiguration cairo = newPropServerConfiguration(properties).getCairoConfiguration();
+
+        // No explicit keys: 4 GiB / 1 MiB page = 4096 pages, error names the new bytes key.
+        Assert.assertEquals(4096, cairo.getSqlWindowCacheMaxPagesResolved());
+        Assert.assertEquals("cairo.sql.window.cache.max.bytes", cairo.getSqlWindowCacheMaxPagesConfigKey());
+    }
+
+    @Test
+    public void testWindowCacheResolvedExplicitBytesWinsOverExplicitStorePages() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty("cairo.sql.window.store.page.size", "1m");
+        properties.setProperty("cairo.sql.window.store.max.pages", "64");
+        properties.setProperty("cairo.sql.window.cache.max.bytes", "8m");
+
+        CairoConfiguration cairo = newPropServerConfiguration(properties).getCairoConfiguration();
+
+        // Both explicit: the new bytes key wins, error names it.
+        Assert.assertEquals(8, cairo.getSqlWindowCacheMaxPagesResolved());
+        Assert.assertEquals("cairo.sql.window.cache.max.bytes", cairo.getSqlWindowCacheMaxPagesConfigKey());
+    }
+
+    @Test
+    public void testWindowCacheResolvedLegacyAnalyticStorePagesWins() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty("cairo.sql.window.store.page.size", "1m");
+        // Legacy analytic.* alias is the only explicit cap.
+        properties.setProperty("cairo.sql.analytic.store.max.pages", "32");
+
+        CairoConfiguration cairo = newPropServerConfiguration(properties).getCairoConfiguration();
+
+        // Bytes unset: the legacy alias drives the cap and the error names the legacy pages key.
+        Assert.assertEquals(32, cairo.getSqlWindowCacheMaxPagesResolved());
+        Assert.assertEquals("cairo.sql.window.store.max.pages", cairo.getSqlWindowCacheMaxPagesConfigKey());
+    }
+
+    @Test
+    public void testWindowCacheResolvedLegacyStorePagesWinsWhenBytesUnset() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty("cairo.sql.window.store.page.size", "1m");
+        properties.setProperty("cairo.sql.window.store.max.pages", "64");
+
+        CairoConfiguration cairo = newPropServerConfiguration(properties).getCairoConfiguration();
+
+        // Bytes unset: the legacy pages key drives the cap and the error message names it,
+        // matching what the user would actually need to raise.
+        Assert.assertEquals(64, cairo.getSqlWindowCacheMaxPagesResolved());
+        Assert.assertEquals("cairo.sql.window.store.max.pages", cairo.getSqlWindowCacheMaxPagesConfigKey());
+    }
+
+    @Test
     public void testEmptyTimestampTimezone() throws Exception {
         Properties properties = new Properties();
         properties.setProperty("log.timestamp.timezone", "");

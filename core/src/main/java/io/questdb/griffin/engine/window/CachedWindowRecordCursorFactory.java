@@ -88,15 +88,12 @@ public class CachedWindowRecordCursorFactory extends AbstractRecordCursorFactory
             assert orderedGroupCount == orderedFunctions.size();
             this.orderedFunctions = orderedFunctions;
             this.comparators = comparators;
-            final long cachePageSize = configuration.getSqlWindowStorePageSize();
-            final long cacheMaxPagesFromBytes = Math.max(1L, configuration.getSqlWindowCacheMaxBytes() / cachePageSize);
-            final int cacheMaxPages = (int) Math.min(cacheMaxPagesFromBytes, configuration.getSqlWindowStoreMaxPages());
             RecordArray recordChain = new RecordArray(
                     chainTypes,
                     recordSink,
-                    cachePageSize,
-                    cacheMaxPages,
-                    PropertyKey.CAIRO_SQL_WINDOW_CACHE_MAX_BYTES.getPropertyPath()
+                    configuration.getSqlWindowStorePageSize(),
+                    configuration.getSqlWindowCacheMaxPagesResolved(),
+                    configuration.getSqlWindowCacheMaxPagesConfigKey()
             );
             this.sortKeys = sortKeys;
             this.chainMetadata = chainMetadata;

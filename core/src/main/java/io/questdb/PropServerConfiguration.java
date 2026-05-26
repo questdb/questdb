@@ -544,6 +544,8 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int sqlUnorderedMapMaxEntrySize;
     private final int sqlViewLexerPoolCapacity;
     private final long sqlWindowCacheMaxBytes;
+    private final String sqlWindowCacheMaxPagesConfigKey;
+    private final int sqlWindowCacheMaxPagesResolved;
     private final int sqlWindowColumnPoolCapacity;
     private final int sqlWindowInitialRangeBufferSize;
     private final int sqlWindowMaxRecursion;
@@ -1745,6 +1747,25 @@ public class PropServerConfiguration implements ServerConfiguration {
             int sqlWindowStoreMaxPages = getInt(properties, env, PropertyKey.CAIRO_SQL_ANALYTIC_STORE_MAX_PAGES, Integer.MAX_VALUE);
             this.sqlWindowStoreMaxPages = getInt(properties, env, PropertyKey.CAIRO_SQL_WINDOW_STORE_MAX_PAGES, sqlWindowStoreMaxPages);
             this.sqlWindowCacheMaxBytes = getLongSize(properties, env, PropertyKey.CAIRO_SQL_WINDOW_CACHE_MAX_BYTES, 4L * Numbers.SIZE_1GB);
+            // Resolve the CachedWindow record-store cap. Two legacy keys can cap the same RecordArray:
+            // the new byte-denominated cairo.sql.window.cache.max.bytes, and the older page-denominated
+            // cairo.sql.window.store.max.pages (whose own alias is cairo.sql.analytic.store.max.pages
+            // and which still drives the ~30 per-partition window function buffers). When both are
+            // explicit, the new bytes key wins; when only the legacy pages key is explicit, honour it
+            // so a previously-tuned deployment keeps its old cap; otherwise fall back to the new bytes
+            // default. The resolved key string is what the runtime error message names to "raise X",
+            // so it is always accurate.
+            final boolean cacheMaxBytesExplicit = isPropertyExplicitlySet(properties, env, PropertyKey.CAIRO_SQL_WINDOW_CACHE_MAX_BYTES);
+            final boolean storeMaxPagesExplicit = isPropertyExplicitlySet(properties, env, PropertyKey.CAIRO_SQL_WINDOW_STORE_MAX_PAGES)
+                    || isPropertyExplicitlySet(properties, env, PropertyKey.CAIRO_SQL_ANALYTIC_STORE_MAX_PAGES);
+            if (!cacheMaxBytesExplicit && storeMaxPagesExplicit) {
+                this.sqlWindowCacheMaxPagesResolved = this.sqlWindowStoreMaxPages;
+                this.sqlWindowCacheMaxPagesConfigKey = PropertyKey.CAIRO_SQL_WINDOW_STORE_MAX_PAGES.getPropertyPath();
+            } else {
+                final long fromBytes = Math.max(1L, this.sqlWindowCacheMaxBytes / this.sqlWindowStorePageSize);
+                this.sqlWindowCacheMaxPagesResolved = (int) Math.min(fromBytes, Integer.MAX_VALUE);
+                this.sqlWindowCacheMaxPagesConfigKey = PropertyKey.CAIRO_SQL_WINDOW_CACHE_MAX_BYTES.getPropertyPath();
+            }
             int sqlWindowRowIdPageSize = Numbers.ceilPow2(getIntSize(properties, env, PropertyKey.CAIRO_SQL_ANALYTIC_ROWID_PAGE_SIZE, 512 * 1024));
             this.sqlWindowRowIdPageSize = Numbers.ceilPow2(getIntSize(properties, env, PropertyKey.CAIRO_SQL_WINDOW_ROWID_PAGE_SIZE, sqlWindowRowIdPageSize));
             this.sqlWindowRowIdMaxBytes = getLongSize(properties, env, PropertyKey.CAIRO_SQL_WINDOW_ROWID_MAX_BYTES,
@@ -4712,6 +4733,16 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public long getSqlWindowCacheMaxBytes() {
             return sqlWindowCacheMaxBytes;
+        }
+
+        @Override
+        public String getSqlWindowCacheMaxPagesConfigKey() {
+            return sqlWindowCacheMaxPagesConfigKey;
+        }
+
+        @Override
+        public int getSqlWindowCacheMaxPagesResolved() {
+            return sqlWindowCacheMaxPagesResolved;
         }
 
         @Override

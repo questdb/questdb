@@ -31,6 +31,29 @@ import org.junit.Test;
 public class CachedWindowMemoryCapTest extends AbstractCairoTest {
 
     @Test
+    public void testCacheCapErrorNamesLegacyStorePagesWhenBytesUnset() throws Exception {
+        // When the legacy cairo.sql.window.store.max.pages is the only explicit cap, the runtime
+        // error must name it so the user can raise the right key. The new bytes key would have no
+        // effect here because store.max.pages drives the resolved cap.
+        node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_STORE_PAGE_SIZE, 4096);
+        node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_STORE_MAX_PAGES, 2);
+
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab AS (" +
+                    "SELECT" +
+                    " ('s' || (x % 8))::SYMBOL AS sym," +
+                    " (x * 1_000_000_000L)::TIMESTAMP AS ts" +
+                    " FROM long_sequence(50_000)) TIMESTAMP(ts)");
+
+            assertExceptionNoLeakCheck(
+                    "SELECT sym, ts, lag(ts, 1) OVER (PARTITION BY sym ORDER BY ts DESC) FROM tab",
+                    0,
+                    "breached in VirtualMemory (raise cairo.sql.window.store.max.pages)"
+            );
+        });
+    }
+
+    @Test
     public void testCacheCapFires() throws Exception {
         node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_STORE_PAGE_SIZE, 4096);
         node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_CACHE_MAX_BYTES, 8192);
