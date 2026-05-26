@@ -95,7 +95,8 @@ public class CachedWindowRecordCursorFactory extends AbstractRecordCursorFactory
                     chainTypes,
                     recordSink,
                     cachePageSize,
-                    cacheMaxPages
+                    cacheMaxPages,
+                    PropertyKey.CAIRO_SQL_WINDOW_CACHE_MAX_BYTES.getPropertyPath()
             );
             this.sortKeys = sortKeys;
             this.chainMetadata = chainMetadata;

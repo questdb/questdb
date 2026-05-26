@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.orderby;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.DelegatingRecordCursor;
 import io.questdb.cairo.sql.Record;
@@ -172,7 +173,13 @@ class EncodedSortLightRecordCursor implements DelegatingRecordCursor {
             long maxEntries = maxEntryMemBytes / entrySize;
             if (estimatedSize > 0) {
                 if (estimatedSize > maxEntries) {
-                    throw LimitOverflowException.instance().put("limit of ").put(maxEntryMemBytes).put(" memory exceeded in EncodedSort");
+                    throw LimitOverflowException.instance()
+                            .put("limit of ").put(maxEntryMemBytes)
+                            .put(" memory exceeded in EncodedSort (raise ")
+                            .put(PropertyKey.CAIRO_SQL_SORT_KEY_MAX_BYTES.getPropertyPath())
+                            .put(" or ")
+                            .put(PropertyKey.CAIRO_SQL_SORT_LIGHT_VALUE_MAX_BYTES.getPropertyPath())
+                            .put(" to increase)");
                 }
                 entryMem.setCapacity(estimatedSize * longsPerEntry);
             }
@@ -192,7 +199,13 @@ class EncodedSortLightRecordCursor implements DelegatingRecordCursor {
                 while (baseCursor.hasNext()) {
                     circuitBreaker.statefulThrowExceptionIfTripped();
                     if (count >= maxEntries) {
-                        throw LimitOverflowException.instance().put("limit of ").put(maxEntryMemBytes).put(" memory exceeded in EncodedSort");
+                        throw LimitOverflowException.instance()
+                            .put("limit of ").put(maxEntryMemBytes)
+                            .put(" memory exceeded in EncodedSort (raise ")
+                            .put(PropertyKey.CAIRO_SQL_SORT_KEY_MAX_BYTES.getPropertyPath())
+                            .put(" or ")
+                            .put(PropertyKey.CAIRO_SQL_SORT_LIGHT_VALUE_MAX_BYTES.getPropertyPath())
+                            .put(" to increase)");
                     }
                     entryMem.ensureCapacity(longsPerEntry);
                     long addr = entryMem.getAppendAddress();

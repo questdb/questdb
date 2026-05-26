@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.orderby;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.RecordChain;
 import io.questdb.cairo.RecordSink;
@@ -83,7 +84,8 @@ class EncodedSortRecordCursor implements DelegatingRecordCursor {
                     metadata,
                     recordSink,
                     valuePageSize,
-                    (int) Math.min(valueMaxPagesByBytes, Integer.MAX_VALUE)
+                    (int) Math.min(valueMaxPagesByBytes, Integer.MAX_VALUE),
+                    PropertyKey.CAIRO_SQL_SORT_VALUE_MAX_BYTES.getPropertyPath()
             );
             this.isOpen = true;
         } finally {
@@ -189,7 +191,11 @@ class EncodedSortRecordCursor implements DelegatingRecordCursor {
             long maxEntries = maxEntryMemBytes / entrySize;
             if (estimatedSize > 0) {
                 if (estimatedSize > maxEntries) {
-                    throw LimitOverflowException.instance().put("limit of ").put(maxEntryMemBytes).put(" memory exceeded in EncodedSort");
+                    throw LimitOverflowException.instance()
+                            .put("limit of ").put(maxEntryMemBytes)
+                            .put(" memory exceeded in EncodedSort (raise ")
+                            .put(PropertyKey.CAIRO_SQL_SORT_KEY_MAX_BYTES.getPropertyPath())
+                            .put(" to increase)");
                 }
                 entryMem.setCapacity(estimatedSize * longsPerEntry);
             }
@@ -210,7 +216,11 @@ class EncodedSortRecordCursor implements DelegatingRecordCursor {
                 while (baseCursor.hasNext()) {
                     circuitBreaker.statefulThrowExceptionIfTripped();
                     if (count >= maxEntries) {
-                        throw LimitOverflowException.instance().put("limit of ").put(maxEntryMemBytes).put(" memory exceeded in EncodedSort");
+                        throw LimitOverflowException.instance()
+                            .put("limit of ").put(maxEntryMemBytes)
+                            .put(" memory exceeded in EncodedSort (raise ")
+                            .put(PropertyKey.CAIRO_SQL_SORT_KEY_MAX_BYTES.getPropertyPath())
+                            .put(" to increase)");
                     }
                     long chainOffset = recordChain.put(record, -1L);
                     entryMem.ensureCapacity(longsPerEntry);

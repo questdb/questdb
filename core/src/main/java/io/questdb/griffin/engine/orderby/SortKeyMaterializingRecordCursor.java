@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.orderby;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.DelegatingRecordCursor;
 import io.questdb.cairo.sql.Record;
@@ -80,7 +81,12 @@ class SortKeyMaterializingRecordCursor implements DelegatingRecordCursor {
             for (int i = 0; i < bufferCount; i++) {
                 final int colIndex = materializedColIndices.getQuick(i);
                 final int colType = materializedColTypes.getQuick(i);
-                buffers[i] = Vm.getCARWInstance(PAGE_SIZE, maxPages, MemoryTag.NATIVE_TREE_CHAIN);
+                buffers[i] = Vm.getCARWInstance(
+                        PAGE_SIZE,
+                        maxPages,
+                        MemoryTag.NATIVE_TREE_CHAIN,
+                        PropertyKey.CAIRO_SQL_SORT_KEY_MAX_BYTES.getPropertyPath()
+                );
                 colToBufferIndex[colIndex] = i;
                 bufferToColIndex[i] = colIndex;
                 colTypes[i] = colType;

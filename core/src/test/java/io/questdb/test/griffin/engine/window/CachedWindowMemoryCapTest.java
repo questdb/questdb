@@ -45,7 +45,7 @@ public class CachedWindowMemoryCapTest extends AbstractCairoTest {
             assertExceptionNoLeakCheck(
                     "SELECT sym, ts, lag(ts, 1) OVER (PARTITION BY sym ORDER BY ts DESC) FROM tab",
                     0,
-                    "Maximum number of pages"
+                    "breached in VirtualMemory (raise cairo.sql.window.cache.max.bytes to increase)"
             );
         });
     }
