@@ -319,10 +319,31 @@ public class WindowLeadLagBenchmark {
         if ("CACHED".equals(path)) {
             return CachedWindowRecordCursorFactory.class;
         }
-        // STREAMING. With Phase 6, every shape that has at least one positive-lookahead function
-        // and where every window function's value fits in 8 bytes routes through DeferredEmit. All
-        // remaining shapes (S1-S4, Q1-Q9, Q11) qualify.
-        return DeferredEmitWindowRecordCursorFactory.class;
+        // STREAMING path under the Phase 6.1 cost-model heuristic: only dispatch to DeferredEmit when
+        // there's a real win to be had — Phase 4 normalisation fires (cached would build a sort tree)
+        // OR every window function is positive-lookahead (cached would have to materialise to look
+        // ahead). All other mixed shapes route to cached because cached's natural-scan path is
+        // already optimal and streaming's per-row overhead is pure tax.
+        return switch (shape) {
+            // Single-function: S2/S4 normalise (LAG DESC -> LEAD ASC); S1/S3 are all-LEAD.
+            case "S1_LEAD_NO_PARTITION", "S2_LAG_DESC_NO_PARTITION",
+                 "S3_LEAD_PARTITIONED", "S4_LAG_DESC_PARTITIONED" ->
+                    DeferredEmitWindowRecordCursorFactory.class;
+            // Mixed with DESC ORDER BY -> normalisation fires.
+            case "Q3_MIXED_DESC", "Q6_MIXED_PARTITION_DESC",
+                 "Q7_MIXED_INVERSE_NO_PARTITION", "Q8_MIXED_INVERSE_PARTITION" ->
+                    DeferredEmitWindowRecordCursorFactory.class;
+            // All-LEAD (no LAG to make cached optimal).
+            case "Q9_DUAL_LEAD" -> DeferredEmitWindowRecordCursorFactory.class;
+            // Mixed without normalisation -> cached is already optimal.
+            // Q1 (no order), Q2 (ASC matches forward), Q4 (partition-only),
+            // Q5 (partition + ASC), Q11 (outer DESC reverses base scan so OVER DESC matches).
+            case "Q1_MIXED_NO_ORDER", "Q2_MIXED_ASC",
+                 "Q4_MIXED_PARTITION_NO_ORDER", "Q5_MIXED_PARTITION_ASC",
+                 "Q11_MIXED_DESC_OUTER_DESC" ->
+                    CachedWindowRecordCursorFactory.class;
+            default -> throw new IllegalArgumentException("unknown shape: " + shape);
+        };
     }
 
     private void seedTable() throws SqlException {

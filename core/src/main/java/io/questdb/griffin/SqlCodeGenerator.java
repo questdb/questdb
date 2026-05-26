@@ -9301,6 +9301,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         try {
             // if all window function don't require sorting or more than one pass then use streaming factory
             boolean isFastPath = true;
+            // Phase 6 cost-model heuristic: track whether any column triggered Phase 4 LAG<->LEAD
+            // normalisation. Streaming dispatch is a win when the cached executor would otherwise pay
+            // for sort trees (DESC orders or mixed directions vs base scan). It's a regression when
+            // cached is already optimal (orders match natural scan direction, so cached just materialises
+            // into a RecordArray and walks linearly). Normalisation fires precisely when there's a sort
+            // tree to eliminate.
+            boolean normalisationFiredAnywhere = false;
 
             for (int i = 0; i < columnCount; i++) {
                 final QueryColumn qc = columns.getQuick(i);
@@ -9378,6 +9385,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 astForParse.token = newToken;
                                 effectiveOrderByDirection = dir == ORDER_ASC ? ORDER_DESC : ORDER_ASC;
                                 leadLagNormalised = true;
+                                normalisationFiredAnywhere = true;
                             }
                         }
                     }
@@ -9550,10 +9558,21 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         }
                     }
                 }
+                // Cost-model heuristic: only dispatch to streaming when there's a real win to be had.
+                // Phase 4 normalisation firing means cached would build a sort tree to satisfy the
+                // OVER ORDER BY; streaming eliminates that tree. When every window function is
+                // positive-lookahead (no LAG), cached must materialise the full input to look ahead,
+                // and streaming avoids the materialisation. In all other cases (e.g. LAG-only with
+                // OVER ORDER BY matching base scan), cached's natural-scan path is already optimal
+                // and streaming's per-row overhead (map lookup, slot allocation, recordAt) is pure
+                // tax.
+                boolean costModelFavoursStreaming = normalisationFiredAnywhere
+                        || lookaheadFunctionCount == windowFunctionCount;
                 if (lookaheadFunctionCount >= 1
                         && allWindowsFit8Bytes
                         && (long) ringCap * lookaheadFunctionCount <= 64
-                        && base.recordCursorSupportsRandomAccess()) {
+                        && base.recordCursorSupportsRandomAccess()
+                        && costModelFavoursStreaming) {
                     // Phase 5: rebuild PARTITION BY info for the LEAD column (the per-column locals
                     // computed inside the loop above were reused/cleared). Re-parse the window
                     // expression's PARTITION BY here to make the cursor-owned partition map.

@@ -148,48 +148,18 @@ public class StreamingLeadIntegrationTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testMixedLagAndLeadPartitionedStreams() throws Exception {
-        // Phase 6 + Phase 5: mixed LAG + LEAD with PARTITION BY streams via DeferredEmitWindow.
-        // For each symbol, lag and lead computed per partition.
-        assertMemoryLeak(() -> {
-            execute("create table t (x long, sym symbol, ts timestamp) timestamp(ts) partition by day");
-            execute(
-                    "insert into t values " +
-                            "(10, 'A', 0), (20, 'B', 1000), " +
-                            "(30, 'A', 2000), (40, 'B', 3000), " +
-                            "(50, 'A', 4000)"
-            );
-
-            // A's sequence: 10, 30, 50. LAG: NULL, 10, 30. LEAD: 30, 50, NULL.
-            // B's sequence: 20, 40. LAG: NULL, 20. LEAD: 40, NULL.
-            // Emission is partition-major-resolution; within each partition rows stay in OVER ORDER BY.
-            assertSql(
-                    "x\tsym\tl\tld\n" +
-                            "10\tA\tnull\t30\n" +
-                            "20\tB\tnull\t40\n" +
-                            "30\tA\t10\t50\n" +
-                            "50\tA\t30\tnull\n" +
-                            "40\tB\t20\tnull\n",
-                    "select x, sym, lag(x, 1) over (partition by sym) as l, lead(x, 1) over (partition by sym) as ld from t"
-            );
-        });
-    }
-
-    @Test
-    public void testMixedLagAndLeadStreams() throws Exception {
-        // Phase 6: a query mixing LAG (lookahead=0) and LEAD (lookahead>0) now streams via
-        // DeferredEmitWindow. LAG values are written into the pending slot at processBaseRow time
-        // via the function's own pass1; LEAD values are back-filled via streamingBackfill on the
-        // matching future row.
+    public void testMixedLagAndLeadFallsBackToCachedWhenNotNormalised() throws Exception {
+        // Phase 6.1 cost-model: mixed LAG + LEAD without OVER ORDER BY (or with an order matching the
+        // base scan direction) has no sort tree for streaming to eliminate. Cached is already optimal,
+        // so the planner routes to CachedWindow.
         assertMemoryLeak(() -> {
             execute("create table t (x long, ts timestamp) timestamp(ts) partition by day");
             execute("insert into t values (1, 0), (2, 1000), (3, 2000)");
 
             assertPlanNoLeakCheck(
                     "select x, lag(x, 1) over () as l, lead(x, 1) over () as ld from t",
-                    "DeferredEmitWindow\n" +
-                            "  functions: [lag(x, 1, NULL) over (),lead(x, 1, NULL) over ()]\n" +
-                            "  maxLookahead: 1\n" +
+                    "CachedWindow\n" +
+                            "  unorderedFunctions: [lag(x, 1, NULL) over (),lead(x, 1, NULL) over ()]\n" +
                             "    PageFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: t\n"
@@ -201,6 +171,78 @@ public class StreamingLeadIntegrationTest extends AbstractCairoTest {
                             "2\t1\t3\n" +
                             "3\t2\tnull\n",
                     "select x, lag(x, 1) over () as l, lead(x, 1) over () as ld from t"
+            );
+        });
+    }
+
+    @Test
+    public void testMixedLagAndLeadPartitionedFallsBackToCachedWhenNotNormalised() throws Exception {
+        // Phase 6.1 cost-model: mixed LAG + LEAD with PARTITION BY but no OVER ORDER BY means cached
+        // builds no sort tree. CachedWindow's natural-scan path is optimal here, so route to it.
+        // Output rows appear in base scan order with per-partition LAG/LEAD values.
+        assertMemoryLeak(() -> {
+            execute("create table t (x long, sym symbol, ts timestamp) timestamp(ts) partition by day");
+            execute(
+                    "insert into t values " +
+                            "(10, 'A', 0), (20, 'B', 1000), " +
+                            "(30, 'A', 2000), (40, 'B', 3000), " +
+                            "(50, 'A', 4000)"
+            );
+
+            // A: 10,30,50  LAG=null,10,30  LEAD=30,50,null
+            // B: 20,40     LAG=null,20     LEAD=40,null
+            // Cached emits in base scan order.
+            assertSql(
+                    "x\tsym\tl\tld\n" +
+                            "10\tA\tnull\t30\n" +
+                            "20\tB\tnull\t40\n" +
+                            "30\tA\t10\t50\n" +
+                            "40\tB\t20\tnull\n" +
+                            "50\tA\t30\tnull\n",
+                    "select x, sym, lag(x, 1) over (partition by sym) as l, lead(x, 1) over (partition by sym) as ld from t"
+            );
+        });
+    }
+
+    @Test
+    public void testMixedLagAndLeadStreamsWhenNormalisationFires() throws Exception {
+        // Phase 6 + 6.1: mixed LAG + LEAD with OVER ORDER BY ts DESC opposes the base forward scan, so
+        // Phase 4 LAG<->LEAD normalisation fires for both columns. Cost model gates streaming on
+        // normalisation firing — it does here, so the planner routes to DeferredEmitWindow. After
+        // normalisation the LAG becomes LEAD(ASC) and the LEAD becomes LAG(ASC).
+        assertMemoryLeak(() -> {
+            execute("create table t (x long, ts timestamp) timestamp(ts) partition by day");
+            execute("insert into t values (1, 0), (2, 1000), (3, 2000)");
+
+            // After Phase 4 normalisation, column 0 (originally lag DESC) becomes lead ASC and column 1
+            // (originally lead DESC) becomes lag ASC. The cursor's toPlan groups by category (LAG funcs
+            // first, then LEAD funcs). The ORDER BY is dismissed because ASC matches the forward scan.
+            assertPlanNoLeakCheck(
+                    "select x, " +
+                            "lag(x, 1) over (order by ts desc) as l, " +
+                            "lead(x, 1) over (order by ts desc) as ld " +
+                            "from t",
+                    "DeferredEmitWindow\n" +
+                            "  functions: [lag(x, 1, NULL) over (),lead(x, 1, NULL) over ()]\n" +
+                            "  maxLookahead: 1\n" +
+                            "    PageFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: t\n"
+            );
+
+            // OVER ORDER BY ts DESC means: for row R, LAG(x,1) = x at R's predecessor in DESC = R's
+            // successor in scan; LEAD(x,1) = x at R's successor in DESC = R's predecessor in scan.
+            // Rows emit in stream order (DeferredEmitWindow's emission contract; partition-major when
+            // partitioned, scan-order otherwise).
+            assertSql(
+                    "x\tl\tld\n" +
+                            "1\t2\tnull\n" +
+                            "2\t3\t1\n" +
+                            "3\tnull\t2\n",
+                    "select x, " +
+                            "lag(x, 1) over (order by ts desc) as l, " +
+                            "lead(x, 1) over (order by ts desc) as ld " +
+                            "from t"
             );
         });
     }
