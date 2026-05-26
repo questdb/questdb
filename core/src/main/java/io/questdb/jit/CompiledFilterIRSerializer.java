@@ -470,6 +470,49 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         return type == STRING_HEADER_TYPE || type == BINARY_HEADER_TYPE || type == VARCHAR_HEADER_TYPE;
     }
 
+    /**
+     * Returns {@link #I8_TYPE} when {@code token} is the lexical form of a
+     * LONG integer constant, {@link #UNDEFINED_CODE} otherwise. Recognises a
+     * trailing {@code 'L'/'l'} suffix or a magnitude that overflows
+     * {@code int}; non-numeric and float-shaped tokens return
+     * {@code UNDEFINED_CODE}. Used by the narrow-widen pre-pass so a literal
+     * LONG operand alone (e.g. {@code c4 * c8 >= -432577L}) is enough to
+     * pull narrow integer operands up to i64 and match the Java filter's
+     * {@code MulInt.getLong} long-width arithmetic.
+     */
+    private static int longConstantTypeCode(CharSequence token) {
+        int len = token.length();
+        if (len == 0) {
+            return UNDEFINED_CODE;
+        }
+        char first = token.charAt(0);
+        if (first == '\'' || first == '"' || first == '`' || first == '#' || first == ':') {
+            return UNDEFINED_CODE;
+        }
+        // Floats are detected separately; do not classify them as LONG.
+        if (floatConstantTypeCode(token) != UNDEFINED_CODE) {
+            return UNDEFINED_CODE;
+        }
+        char last = token.charAt(len - 1);
+        if (last == 'L' || last == 'l') {
+            return I8_TYPE;
+        }
+        // No suffix: classify by magnitude. A parseInt success means the
+        // value fits in i32; a parseLong success after parseInt failure means
+        // it doesn't and the constant is effectively LONG.
+        try {
+            Numbers.parseInt(token);
+            return UNDEFINED_CODE;
+        } catch (NumericException ignored) {
+        }
+        try {
+            Numbers.parseLong(token);
+            return I8_TYPE;
+        } catch (NumericException ignored) {
+        }
+        return UNDEFINED_CODE;
+    }
+
     private void backfillConstant(long offset, final ExpressionNode node) throws SqlException {
         int position = node.position;
         CharSequence token = node.token;
@@ -1863,7 +1906,15 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                     // whose only float source is a literal (e.g. c7 + 0.5)
                     // suppresses narrow-int widening, matching the Java
                     // filter's IntFunction#getDouble path that wraps at int32.
+                    // Also observe LONG integer constants (L/l suffix or
+                    // magnitude that overflows int) so a predicate whose only
+                    // long source is a literal (e.g. c4 * c8 >= -432577L) is
+                    // enough to pull narrow operands up to i64, matching the
+                    // Java filter's MulInt.getLong long-width arithmetic.
                     int typeCode = floatConstantTypeCode(node.token);
+                    if (typeCode == UNDEFINED_CODE) {
+                        typeCode = longConstantTypeCode(node.token);
+                    }
                     if (typeCode != UNDEFINED_CODE) {
                         typesObserver.observe(typeCode);
                     }
