@@ -1655,9 +1655,9 @@ public class SqlOptimiser implements Mutable {
                             addPostJoinWhereClause(parent.getJoinModels().getQuick(jc.slaveIndex), node);
                         } else {
                             addJoinContext(parent, jc);
-                            if (lhi != rhi) {
-                                linkDependencies(parent, Math.min(lhi, rhi), Math.max(lhi, rhi));
-                            }
+                            // lhi == rhi returned above, so we are guaranteed to have two
+                            // distinct tables here.
+                            linkDependencies(parent, Math.min(lhi, rhi), Math.max(lhi, rhi));
                         }
                     } else {
                         addOuterJoinExpression(parent, joinModel, joinIndex, node);
