@@ -11558,11 +11558,11 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, val long) timestamp(ts)", timestampType.getTypeName());
             execute(timestampType == TestTimestampType.MICRO
                     ? "insert into tab values " +
-                    "(1, 1, 10), (1_000_000, 1, 20), (2_000_000, 1, 30), " +
-                    "(3_000_001, 2, 100), (4_000_001, 2, 200), (5_000_001, 2, 300)"
+                      "(1, 1, 10), (1_000_000, 1, 20), (2_000_000, 1, 30), " +
+                      "(3_000_001, 2, 100), (4_000_001, 2, 200), (5_000_001, 2, 300)"
                     : "insert into tab values " +
-                    "(1_000, 1, 10), (1_000_000_000, 1, 20), (2_000_000_000, 1, 30), " +
-                    "(3_000_000_001, 2, 100), (4_000_000_001, 2, 200), (5_000_000_001, 2, 300)");
+                      "(1_000, 1, 10), (1_000_000_000, 1, 20), (2_000_000_000, 1, 30), " +
+                      "(3_000_000_001, 2, 100), (4_000_000_001, 2, 200), (5_000_000_001, 2, 300)");
 
             assertQueryNoLeakCheck(
                     timestampType == TestTimestampType.MICRO
@@ -11606,13 +11606,13 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, val long) timestamp(ts)", timestampType.getTypeName());
             execute(timestampType == TestTimestampType.MICRO
                     ? "insert into tab values " +
-                    "(1_000_000, 1, 10), (1_000_001, 2, 11), " +
-                    "(2_000_000, 1, 20), (2_000_001, 2, 22), " +
-                    "(5_000_000, 1, 50), (5_000_001, 2, 55)"
+                      "(1_000_000, 1, 10), (1_000_001, 2, 11), " +
+                      "(2_000_000, 1, 20), (2_000_001, 2, 22), " +
+                      "(5_000_000, 1, 50), (5_000_001, 2, 55)"
                     : "insert into tab values " +
-                    "(1_000_000_000, 1, 10), (1_000_000_001, 2, 11), " +
-                    "(2_000_000_000, 1, 20), (2_000_000_001, 2, 22), " +
-                    "(5_000_000_000, 1, 50), (5_000_000_001, 2, 55)");
+                      "(1_000_000_000, 1, 10), (1_000_000_001, 2, 11), " +
+                      "(2_000_000_000, 1, 20), (2_000_000_001, 2, 22), " +
+                      "(5_000_000_000, 1, 50), (5_000_000_001, 2, 55)");
 
             // nth_value(val, 2) over (partition by i order by ts range between 2 seconds preceding and current row)
             // Per partition:
@@ -11659,19 +11659,19 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, val long) timestamp(ts)", timestampType.getTypeName());
             execute(timestampType == TestTimestampType.MICRO
                     ? "insert into tab values " +
-                    "(1000000, 1, 10), (1000001, 2, 100), " +
-                    "(2000000, 1, 20), (2000001, 2, 200), " +
-                    "(3000000, 1, 30), (3000001, 2, 300), " +
-                    "(4000000, 1, 40), (4000001, 2, 400), " +
-                    "(5000000, 1, 50), (5000001, 2, 500), " +
-                    "(6000000, 1, 60), (6000001, 2, 600)"
+                      "(1000000, 1, 10), (1000001, 2, 100), " +
+                      "(2000000, 1, 20), (2000001, 2, 200), " +
+                      "(3000000, 1, 30), (3000001, 2, 300), " +
+                      "(4000000, 1, 40), (4000001, 2, 400), " +
+                      "(5000000, 1, 50), (5000001, 2, 500), " +
+                      "(6000000, 1, 60), (6000001, 2, 600)"
                     : "insert into tab values " +
-                    "(1000000000, 1, 10), (1000000001, 2, 100), " +
-                    "(2000000000, 1, 20), (2000000001, 2, 200), " +
-                    "(3000000000, 1, 30), (3000000001, 2, 300), " +
-                    "(4000000000, 1, 40), (4000000001, 2, 400), " +
-                    "(5000000000, 1, 50), (5000000001, 2, 500), " +
-                    "(6000000000, 1, 60), (6000000001, 2, 600)");
+                      "(1000000000, 1, 10), (1000000001, 2, 100), " +
+                      "(2000000000, 1, 20), (2000000001, 2, 200), " +
+                      "(3000000000, 1, 30), (3000000001, 2, 300), " +
+                      "(4000000000, 1, 40), (4000000001, 2, 400), " +
+                      "(5000000000, 1, 50), (5000000001, 2, 500), " +
+                      "(6000000000, 1, 60), (6000000001, 2, 600)");
 
             assertQueryNoLeakCheck(
                     timestampType == TestTimestampType.MICRO
@@ -11758,11 +11758,11 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, val long) timestamp(ts)", timestampType.getTypeName());
             execute(timestampType == TestTimestampType.MICRO
                     ? "insert into tab values " +
-                    "(1000, 1, 10), (1100, 2, 15), (1200, 1, 20), (1300, 2, 25), " +
-                    "(1400, 1, 30), (1500, 2, 35), (3000, 1, 40), (3100, 2, 45)"
+                      "(1000, 1, 10), (1100, 2, 15), (1200, 1, 20), (1300, 2, 25), " +
+                      "(1400, 1, 30), (1500, 2, 35), (3000, 1, 40), (3100, 2, 45)"
                     : "insert into tab values " +
-                    "(1000000, 1, 10), (1100000, 2, 15), (1200000, 1, 20), (1300000, 2, 25), " +
-                    "(1400000, 1, 30), (1500000, 2, 35), (3000000, 1, 40), (3100000, 2, 45)");
+                      "(1000000, 1, 10), (1100000, 2, 15), (1200000, 1, 20), (1300000, 2, 25), " +
+                      "(1400000, 1, 30), (1500000, 2, 35), (3000000, 1, 40), (3100000, 2, 45)");
 
             assertQueryNoLeakCheck(
                     timestampType == TestTimestampType.MICRO
@@ -13272,13 +13272,13 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, val double) timestamp(ts)", timestampType.getTypeName());
             execute(timestampType == TestTimestampType.MICRO
                     ? "insert into tab values " +
-                    "(1000000, 1, 10.0), (1000001, 2, 11.0), " +
-                    "(2000000, 1, 20.0), (2000001, 2, 22.0), " +
-                    "(5000000, 1, 50.0), (5000001, 2, 55.0)"
+                      "(1000000, 1, 10.0), (1000001, 2, 11.0), " +
+                      "(2000000, 1, 20.0), (2000001, 2, 22.0), " +
+                      "(5000000, 1, 50.0), (5000001, 2, 55.0)"
                     : "insert into tab values " +
-                    "(1000000000, 1, 10.0), (1000000001, 2, 11.0), " +
-                    "(2000000000, 1, 20.0), (2000000001, 2, 22.0), " +
-                    "(5000000000, 1, 50.0), (5000000001, 2, 55.0)");
+                      "(1000000000, 1, 10.0), (1000000001, 2, 11.0), " +
+                      "(2000000000, 1, 20.0), (2000000001, 2, 22.0), " +
+                      "(5000000000, 1, 50.0), (5000000001, 2, 55.0)");
 
             // nth_value(val, 2) over (partition by i order by ts range between 2 seconds preceding and current row)
             // Per partition:
@@ -13331,19 +13331,19 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, val double) timestamp(ts)", timestampType.getTypeName());
             execute(timestampType == TestTimestampType.MICRO
                     ? "insert into tab values " +
-                    "(1000000, 1, 10.0), (1000001, 2, 100.0), " +
-                    "(2000000, 1, 20.0), (2000001, 2, 200.0), " +
-                    "(3000000, 1, 30.0), (3000001, 2, 300.0), " +
-                    "(4000000, 1, 40.0), (4000001, 2, 400.0), " +
-                    "(5000000, 1, 50.0), (5000001, 2, 500.0), " +
-                    "(6000000, 1, 60.0), (6000001, 2, 600.0)"
+                      "(1000000, 1, 10.0), (1000001, 2, 100.0), " +
+                      "(2000000, 1, 20.0), (2000001, 2, 200.0), " +
+                      "(3000000, 1, 30.0), (3000001, 2, 300.0), " +
+                      "(4000000, 1, 40.0), (4000001, 2, 400.0), " +
+                      "(5000000, 1, 50.0), (5000001, 2, 500.0), " +
+                      "(6000000, 1, 60.0), (6000001, 2, 600.0)"
                     : "insert into tab values " +
-                    "(1000000000, 1, 10.0), (1000000001, 2, 100.0), " +
-                    "(2000000000, 1, 20.0), (2000000001, 2, 200.0), " +
-                    "(3000000000, 1, 30.0), (3000000001, 2, 300.0), " +
-                    "(4000000000, 1, 40.0), (4000000001, 2, 400.0), " +
-                    "(5000000000, 1, 50.0), (5000000001, 2, 500.0), " +
-                    "(6000000000, 1, 60.0), (6000000001, 2, 600.0)");
+                      "(1000000000, 1, 10.0), (1000000001, 2, 100.0), " +
+                      "(2000000000, 1, 20.0), (2000000001, 2, 200.0), " +
+                      "(3000000000, 1, 30.0), (3000000001, 2, 300.0), " +
+                      "(4000000000, 1, 40.0), (4000000001, 2, 400.0), " +
+                      "(5000000000, 1, 50.0), (5000000001, 2, 500.0), " +
+                      "(6000000000, 1, 60.0), (6000000001, 2, 600.0)");
 
             assertQueryNoLeakCheck(
                     timestampType == TestTimestampType.MICRO
@@ -13437,11 +13437,11 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, val double) timestamp(ts)", timestampType.getTypeName());
             execute(timestampType == TestTimestampType.MICRO
                     ? "insert into tab values " +
-                    "(1000, 1, 10.0), (1100, 2, 15.0), (1200, 1, 20.0), (1300, 2, 25.0), " +
-                    "(1400, 1, 30.0), (1500, 2, 35.0), (3000, 1, 40.0), (3100, 2, 45.0)"
+                      "(1000, 1, 10.0), (1100, 2, 15.0), (1200, 1, 20.0), (1300, 2, 25.0), " +
+                      "(1400, 1, 30.0), (1500, 2, 35.0), (3000, 1, 40.0), (3100, 2, 45.0)"
                     : "insert into tab values " +
-                    "(1000000, 1, 10.0), (1100000, 2, 15.0), (1200000, 1, 20.0), (1300000, 2, 25.0), " +
-                    "(1400000, 1, 30.0), (1500000, 2, 35.0), (3000000, 1, 40.0), (3100000, 2, 45.0)");
+                      "(1000000, 1, 10.0), (1100000, 2, 15.0), (1200000, 1, 20.0), (1300000, 2, 25.0), " +
+                      "(1400000, 1, 30.0), (1500000, 2, 35.0), (3000000, 1, 40.0), (3100000, 2, 45.0)");
 
             assertQueryNoLeakCheck(
                     timestampType == TestTimestampType.MICRO
@@ -15083,11 +15083,11 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, val timestamp) timestamp(ts)", timestampType.getTypeName());
             execute(timestampType == TestTimestampType.MICRO
                     ? "insert into tab values " +
-                    "(1, 1, 100), (1_000_000, 1, 200), (2_000_000, 1, 300), " +
-                    "(3_000_001, 2, 1000), (4_000_001, 2, 2000), (5_000_001, 2, 3000)"
+                      "(1, 1, 100), (1_000_000, 1, 200), (2_000_000, 1, 300), " +
+                      "(3_000_001, 2, 1000), (4_000_001, 2, 2000), (5_000_001, 2, 3000)"
                     : "insert into tab values " +
-                    "(1_000, 1, 100), (1_000_000_000, 1, 200), (2_000_000_000, 1, 300), " +
-                    "(3_000_000_001, 2, 1000), (4_000_000_001, 2, 2000), (5_000_000_001, 2, 3000)");
+                      "(1_000, 1, 100), (1_000_000_000, 1, 200), (2_000_000_000, 1, 300), " +
+                      "(3_000_000_001, 2, 1000), (4_000_000_001, 2, 2000), (5_000_000_001, 2, 3000)");
 
             assertQueryNoLeakCheck(
                     timestampType == TestTimestampType.MICRO
@@ -15128,13 +15128,13 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, val timestamp) timestamp(ts)", timestampType.getTypeName());
             execute(timestampType == TestTimestampType.MICRO
                     ? "insert into tab values " +
-                    "(1_000_000, 1, 10), (1_000_001, 2, 11), " +
-                    "(2_000_000, 1, 20), (2_000_001, 2, 22), " +
-                    "(5_000_000, 1, 50), (5_000_001, 2, 55)"
+                      "(1_000_000, 1, 10), (1_000_001, 2, 11), " +
+                      "(2_000_000, 1, 20), (2_000_001, 2, 22), " +
+                      "(5_000_000, 1, 50), (5_000_001, 2, 55)"
                     : "insert into tab values " +
-                    "(1_000_000_000, 1, 10), (1_000_000_001, 2, 11), " +
-                    "(2_000_000_000, 1, 20), (2_000_000_001, 2, 22), " +
-                    "(5_000_000_000, 1, 50), (5_000_000_001, 2, 55)");
+                      "(1_000_000_000, 1, 10), (1_000_000_001, 2, 11), " +
+                      "(2_000_000_000, 1, 20), (2_000_000_001, 2, 22), " +
+                      "(5_000_000_000, 1, 50), (5_000_000_001, 2, 55)");
 
             assertQueryNoLeakCheck(
                     timestampType == TestTimestampType.MICRO
@@ -15175,19 +15175,19 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, val timestamp) timestamp(ts)", timestampType.getTypeName());
             execute(timestampType == TestTimestampType.MICRO
                     ? "insert into tab values " +
-                    "(1000000, 1, 10), (1000001, 2, 100), " +
-                    "(2000000, 1, 20), (2000001, 2, 200), " +
-                    "(3000000, 1, 30), (3000001, 2, 300), " +
-                    "(4000000, 1, 40), (4000001, 2, 400), " +
-                    "(5000000, 1, 50), (5000001, 2, 500), " +
-                    "(6000000, 1, 60), (6000001, 2, 600)"
+                      "(1000000, 1, 10), (1000001, 2, 100), " +
+                      "(2000000, 1, 20), (2000001, 2, 200), " +
+                      "(3000000, 1, 30), (3000001, 2, 300), " +
+                      "(4000000, 1, 40), (4000001, 2, 400), " +
+                      "(5000000, 1, 50), (5000001, 2, 500), " +
+                      "(6000000, 1, 60), (6000001, 2, 600)"
                     : "insert into tab values " +
-                    "(1000000000, 1, 10), (1000000001, 2, 100), " +
-                    "(2000000000, 1, 20), (2000000001, 2, 200), " +
-                    "(3000000000, 1, 30), (3000000001, 2, 300), " +
-                    "(4000000000, 1, 40), (4000000001, 2, 400), " +
-                    "(5000000000, 1, 50), (5000000001, 2, 500), " +
-                    "(6000000000, 1, 60), (6000000001, 2, 600)");
+                      "(1000000000, 1, 10), (1000000001, 2, 100), " +
+                      "(2000000000, 1, 20), (2000000001, 2, 200), " +
+                      "(3000000000, 1, 30), (3000000001, 2, 300), " +
+                      "(4000000000, 1, 40), (4000000001, 2, 400), " +
+                      "(5000000000, 1, 50), (5000000001, 2, 500), " +
+                      "(6000000000, 1, 60), (6000000001, 2, 600)");
 
             assertQueryNoLeakCheck(
                     timestampType == TestTimestampType.MICRO
@@ -15274,11 +15274,11 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, val timestamp) timestamp(ts)", timestampType.getTypeName());
             execute(timestampType == TestTimestampType.MICRO
                     ? "insert into tab values " +
-                    "(1000, 1, 10), (1100, 2, 15), (1200, 1, 20), (1300, 2, 25), " +
-                    "(1400, 1, 30), (1500, 2, 35), (3000, 1, 40), (3100, 2, 45)"
+                      "(1000, 1, 10), (1100, 2, 15), (1200, 1, 20), (1300, 2, 25), " +
+                      "(1400, 1, 30), (1500, 2, 35), (3000, 1, 40), (3100, 2, 45)"
                     : "insert into tab values " +
-                    "(1000000, 1, 10), (1100000, 2, 15), (1200000, 1, 20), (1300000, 2, 25), " +
-                    "(1400000, 1, 30), (1500000, 2, 35), (3000000, 1, 40), (3100000, 2, 45)");
+                      "(1000000, 1, 10), (1100000, 2, 15), (1200000, 1, 20), (1300000, 2, 25), " +
+                      "(1400000, 1, 30), (1500000, 2, 35), (3000000, 1, 40), (3100000, 2, 45)");
 
             assertQueryNoLeakCheck(
                     timestampType == TestTimestampType.MICRO
@@ -21365,23 +21365,23 @@ public class WindowFunctionTest extends AbstractCairoTest {
                         func.contains("first_value") || func.contains("last_value") ?
                                 "Window\n" +
                                         "  functions: [#FUNCT_NAME(1) over (partition by [i] rows between 1 preceding and current row)]\n".replace("#FUNCT_NAME(1)", replace) +
-                                        "    FilterOnValues\n" +
-                                        "        Table-order scan\n" +
-                                        "            Index forward scan on: sym deferred: true\n" +
-                                        "              filter: sym='B'\n" +
-                                        "            Index forward scan on: sym deferred: true\n" +
-                                        "              filter: sym='A'\n" +
-                                        "        Frame forward scan on: tab\n"
+                                "    FilterOnValues\n" +
+                                "        Table-order scan\n" +
+                                "            Index forward scan on: sym deferred: true\n" +
+                                "              filter: sym='B'\n" +
+                                "            Index forward scan on: sym deferred: true\n" +
+                                "              filter: sym='A'\n" +
+                                "        Frame forward scan on: tab\n"
                                 :
                                 "CachedWindow\n" +
                                         "  orderedFunctions: [[ts] => [#FUNCT_NAME(1) over (partition by [i] rows between 1 preceding and current row)]]\n".replace("#FUNCT_NAME(1)", replace) +
-                                        "    FilterOnValues symbolOrder: desc\n" +
-                                        "        Cursor-order scan\n" +
-                                        "            Index forward scan on: sym deferred: true\n" +
-                                        "              filter: sym='B'\n" +
-                                        "            Index forward scan on: sym deferred: true\n" +
-                                        "              filter: sym='A'\n" +
-                                        "        Frame forward scan on: tab\n"
+                                "    FilterOnValues symbolOrder: desc\n" +
+                                "        Cursor-order scan\n" +
+                                "            Index forward scan on: sym deferred: true\n" +
+                                "              filter: sym='B'\n" +
+                                "            Index forward scan on: sym deferred: true\n" +
+                                "              filter: sym='A'\n" +
+                                "        Frame forward scan on: tab\n"
 
                 );
 
