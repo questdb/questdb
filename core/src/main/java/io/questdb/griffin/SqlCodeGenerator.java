@@ -9571,11 +9571,44 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 // tax.
                 boolean costModelFavoursStreaming = normalisationFiredAnywhere
                         || lookaheadFunctionCount == windowFunctionCount;
+                // The cursor maintains a single per-partition map keyed by ONE window expression's
+                // PARTITION BY clause. All window functions in the query must agree on partition
+                // semantics, otherwise their slots share the wrong partition state and produce
+                // wrong values. Compare every window column's PARTITION BY against the first
+                // column's; bail to cached on any divergence.
+                boolean allWindowsSharePartitionBy = true;
+                if (lookaheadFunctionCount >= 1) {
+                    ObjList<ExpressionNode> sharedPartitionBy = null;
+                    boolean sharedInitialised = false;
+                    for (int i = 0, n = columns.size(); i < n && allWindowsSharePartitionBy; i++) {
+                        QueryColumn qc = columns.getQuick(i);
+                        if (!qc.isWindowExpression()) {
+                            continue;
+                        }
+                        ObjList<ExpressionNode> pb = ((WindowExpression) qc).getPartitionBy();
+                        if (!sharedInitialised) {
+                            sharedPartitionBy = pb;
+                            sharedInitialised = true;
+                            continue;
+                        }
+                        if (sharedPartitionBy.size() != pb.size()) {
+                            allWindowsSharePartitionBy = false;
+                            break;
+                        }
+                        for (int j = 0, m = pb.size(); j < m; j++) {
+                            if (!ExpressionNode.compareNodesExact(sharedPartitionBy.getQuick(j), pb.getQuick(j))) {
+                                allWindowsSharePartitionBy = false;
+                                break;
+                            }
+                        }
+                    }
+                }
                 if (lookaheadFunctionCount >= 1
                         && allWindowsFit8Bytes
                         && (long) ringCap * lookaheadFunctionCount <= 64
                         && base.recordCursorSupportsRandomAccess()
-                        && costModelFavoursStreaming) {
+                        && costModelFavoursStreaming
+                        && allWindowsSharePartitionBy) {
                     // Phase 5: rebuild PARTITION BY info for the LEAD column (the per-column locals
                     // computed inside the loop above were reused/cleared). Re-parse the window
                     // expression's PARTITION BY here to make the cursor-owned partition map.

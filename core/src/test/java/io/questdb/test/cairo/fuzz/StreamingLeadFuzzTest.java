@@ -177,6 +177,27 @@ public class StreamingLeadFuzzTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testEdgeCaseMixedPartitionByPerFunction() throws Exception {
+        // PROBE: each LEAD has its OWN partition-by clause. The cursor only builds one partition
+        // map (using lookaheadColumnIndex's partition definition). If the dispatch lets this
+        // through, both functions share the first column's partition state, which is wrong.
+        assertMemoryLeak(() -> {
+            execute("create table t (x long, sym_a symbol, sym_b symbol, ts timestamp) timestamp(ts) partition by day");
+            execute(
+                    "insert into t select x, " +
+                            "case when x % 2 = 0 then 'A0' else 'A1' end, " +
+                            "case when x % 3 = 0 then 'B0' when x % 3 = 1 then 'B1' else 'B2' end, " +
+                            "(1000_000L * x)::timestamp from long_sequence(20)"
+            );
+            String sql = "select x, sym_a, sym_b, " +
+                    "lead(x, 1) over (partition by sym_a) as l_a, " +
+                    "lead(x, 1) over (partition by sym_b) as l_b " +
+                    "from t";
+            StreamingLeadEquivalence.assertEquivalent(engine, sqlExecutionContext, sql, "mixed-partition-by");
+        });
+    }
+
+    @Test
     public void testEdgeCaseMixedLookaheads() throws Exception {
         // Mixed lookaheads in the same query: lead(x,2) + lead(x,5). ringCap=6, leadCount=2,
         // product=12 <= 64. Validates per-slot bit layout when each slot has multiple LEAD bits.

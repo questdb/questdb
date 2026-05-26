@@ -48,10 +48,10 @@ import io.questdb.cairo.vm.api.MemoryARW;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.std.MemoryTag;
-import io.questdb.std.Misc;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 
 /**
@@ -296,6 +296,9 @@ public class DeferredEmitWindowRecordCursorFactory extends AbstractRecordCursorF
         Misc.free(base);
         Misc.free(cursor);
         Misc.free(partitionMap);
+        // partitionByRecord owns the partition-by Function instances that SqlCodeGenerator
+        // parsed when building this factory; VirtualRecord.close() cascades to free them.
+        Misc.free(partitionByRecord);
         Misc.freeObjList(functions);
         closed = true;
     }
