@@ -148,25 +148,53 @@ public class StreamingLeadIntegrationTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testMixedLagAndLeadFallsBackToCached() throws Exception {
-        // Regression: with the streaming-lead flag on, a query mixing LAG (lookahead=0) and LEAD
-        // (lookahead>0) must NOT route to DeferredEmitWindow — that cursor requires every window
-        // function to be positive-lookahead and would throw at construction otherwise. The planner
-        // detects the mix and falls through to CachedWindow.
+    public void testMixedLagAndLeadPartitionedStreams() throws Exception {
+        // Phase 6 + Phase 5: mixed LAG + LEAD with PARTITION BY streams via DeferredEmitWindow.
+        // For each symbol, lag and lead computed per partition.
+        assertMemoryLeak(() -> {
+            execute("create table t (x long, sym symbol, ts timestamp) timestamp(ts) partition by day");
+            execute(
+                    "insert into t values " +
+                            "(10, 'A', 0), (20, 'B', 1000), " +
+                            "(30, 'A', 2000), (40, 'B', 3000), " +
+                            "(50, 'A', 4000)"
+            );
+
+            // A's sequence: 10, 30, 50. LAG: NULL, 10, 30. LEAD: 30, 50, NULL.
+            // B's sequence: 20, 40. LAG: NULL, 20. LEAD: 40, NULL.
+            // Emission is partition-major-resolution; within each partition rows stay in OVER ORDER BY.
+            assertSql(
+                    "x\tsym\tl\tld\n" +
+                            "10\tA\tnull\t30\n" +
+                            "20\tB\tnull\t40\n" +
+                            "30\tA\t10\t50\n" +
+                            "50\tA\t30\tnull\n" +
+                            "40\tB\t20\tnull\n",
+                    "select x, sym, lag(x, 1) over (partition by sym) as l, lead(x, 1) over (partition by sym) as ld from t"
+            );
+        });
+    }
+
+    @Test
+    public void testMixedLagAndLeadStreams() throws Exception {
+        // Phase 6: a query mixing LAG (lookahead=0) and LEAD (lookahead>0) now streams via
+        // DeferredEmitWindow. LAG values are written into the pending slot at processBaseRow time
+        // via the function's own pass1; LEAD values are back-filled via streamingBackfill on the
+        // matching future row.
         assertMemoryLeak(() -> {
             execute("create table t (x long, ts timestamp) timestamp(ts) partition by day");
             execute("insert into t values (1, 0), (2, 1000), (3, 2000)");
 
             assertPlanNoLeakCheck(
                     "select x, lag(x, 1) over () as l, lead(x, 1) over () as ld from t",
-                    "CachedWindow\n" +
-                            "  unorderedFunctions: [lag(x, 1, NULL) over (),lead(x, 1, NULL) over ()]\n" +
+                    "DeferredEmitWindow\n" +
+                            "  functions: [lag(x, 1, NULL) over (),lead(x, 1, NULL) over ()]\n" +
+                            "  maxLookahead: 1\n" +
                             "    PageFrame\n" +
                             "        Row forward scan\n" +
                             "        Frame forward scan on: t\n"
             );
 
-            // Verify output is also correct (planner falls back, query still works).
             assertSql(
                     "x\tl\tld\n" +
                             "1\tnull\t2\n" +

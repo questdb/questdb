@@ -170,7 +170,10 @@ public class DeferredEmitWindowRecordCursorFactoryTest extends AbstractCairoTest
     }
 
     @Test
-    public void testRejectsAdditionalNonLookaheadWindowFunction() throws Exception {
+    public void testRejectsAllWindowFunctionsZeroLookahead() throws Exception {
+        // Phase 6 still requires AT LEAST ONE positive-lookahead function. If all window functions
+        // have lookahead=0, the factory rejects (the planner would route through
+        // WindowRecordCursorFactory instead).
         assertMemoryLeak(() -> {
             execute("create table t (x long, ts timestamp) timestamp(ts) partition by day");
 
@@ -181,25 +184,21 @@ public class DeferredEmitWindowRecordCursorFactoryTest extends AbstractCairoTest
 
             GenericRecordMetadata metadata = new GenericRecordMetadata();
             metadata.add(new TableColumnMetadata("x", ColumnType.LONG));
-            metadata.add(new TableColumnMetadata("lead_x", ColumnType.LONG));
             metadata.add(new TableColumnMetadata("zero_pass_lag", ColumnType.LONG));
 
             ObjList<Function> functions = new ObjList<>();
             functions.add(LongColumn.newInstance(0));
-            TestStreamingLeadLongFunction lead = new TestStreamingLeadLongFunction(LongColumn.newInstance(0), 1);
-            lead.setColumnIndex(1);
-            functions.add(lead);
             TestZeroLookaheadFunction lag = new TestZeroLookaheadFunction(LongColumn.newInstance(0));
-            lag.setColumnIndex(2);
+            lag.setColumnIndex(1);
             functions.add(lag);
 
             try {
                 new DeferredEmitWindowRecordCursorFactory(base, metadata, functions, null, null, null, 1_048_576);
-                Assert.fail("expected CairoException for mixed lookahead/non-lookahead functions");
+                Assert.fail("expected CairoException when no positive-lookahead functions present");
             } catch (CairoException e) {
                 Assert.assertTrue(
                         "unexpected error message: " + e.getFlyweightMessage(),
-                        e.getFlyweightMessage().toString().contains("mixing")
+                        e.getFlyweightMessage().toString().contains("positive-lookahead")
                 );
                 Misc.free(base);
                 Misc.freeObjList(functions);
@@ -208,7 +207,9 @@ public class DeferredEmitWindowRecordCursorFactoryTest extends AbstractCairoTest
     }
 
     @Test
-    public void testRejectsTwoLookaheadFunctions() throws Exception {
+    public void testRejectsRingTimesLeadCountOverflow() throws Exception {
+        // (lookahead+1) * leadCount must be <= 64 for the LEAD pending-bit mask to fit in one long.
+        // Two LEAD functions with lookahead=33 each gives ringCapacity=34, 34*2=68, should reject.
         assertMemoryLeak(() -> {
             execute("create table t (x long, ts timestamp) timestamp(ts) partition by day");
 
@@ -224,20 +225,20 @@ public class DeferredEmitWindowRecordCursorFactoryTest extends AbstractCairoTest
 
             ObjList<Function> functions = new ObjList<>();
             functions.add(LongColumn.newInstance(0));
-            TestStreamingLeadLongFunction lead1 = new TestStreamingLeadLongFunction(LongColumn.newInstance(0), 1);
+            TestStreamingLeadLongFunction lead1 = new TestStreamingLeadLongFunction(LongColumn.newInstance(0), 33);
             lead1.setColumnIndex(1);
             functions.add(lead1);
-            TestStreamingLeadLongFunction lead2 = new TestStreamingLeadLongFunction(LongColumn.newInstance(0), 2);
+            TestStreamingLeadLongFunction lead2 = new TestStreamingLeadLongFunction(LongColumn.newInstance(0), 33);
             lead2.setColumnIndex(2);
             functions.add(lead2);
 
             try {
                 new DeferredEmitWindowRecordCursorFactory(base, metadata, functions, null, null, null, 1_048_576);
-                Assert.fail("expected CairoException for two lookahead functions");
+                Assert.fail("expected CairoException when (lookahead+1)*leadCount > 64");
             } catch (CairoException e) {
                 Assert.assertTrue(
                         "unexpected error message: " + e.getFlyweightMessage(),
-                        e.getFlyweightMessage().toString().contains("exactly one")
+                        e.getFlyweightMessage().toString().contains("must be <= 64")
                 );
                 Misc.free(base);
                 Misc.freeObjList(functions);

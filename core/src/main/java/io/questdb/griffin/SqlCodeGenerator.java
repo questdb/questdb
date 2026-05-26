@@ -9523,13 +9523,36 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     return new WindowRecordCursorFactory(base, factoryMetadata, functions);
                 }
 
-                // Phase 3+5 deferred-emit dispatch: the cursor requires exactly one window function,
-                // positive-lookahead, and base random access. If the query mixes a deferred-emit LEAD
-                // with another (immediate-emit) window function — typically a LAG — the cursor would
-                // throw at construction time. Detect that here and fall through to cached so the
-                // streaming-LEAD's inherited pass1 still produces correct results.
-                if (lookaheadFunctionCount == 1
-                        && windowFunctionCount == 1
+                // Phase 6 deferred-emit dispatch: at least one positive-lookahead window function, base
+                // random access, and (ringCapacity * leadCount) <= 64 so the cursor's per-slot LEAD
+                // pending-bit mask fits in one long. All window function values must be 8-byte
+                // fixed-width types (Long/Double/Date/Timestamp/Int/Float/Decimal<=64).
+                final int ringCap = maxLookahead + 1;
+                boolean allWindowsFit8Bytes = true;
+                if (lookaheadFunctionCount >= 1) {
+                    for (int i = 0, n = functions.size(); i < n; i++) {
+                        Function f = functions.getQuick(i);
+                        if (f instanceof WindowFunction) {
+                            int tag = ColumnType.tagOf(f.getType());
+                            if (!(tag == ColumnType.LONG
+                                    || tag == ColumnType.DOUBLE
+                                    || tag == ColumnType.DATE
+                                    || tag == ColumnType.TIMESTAMP
+                                    || tag == ColumnType.INT
+                                    || tag == ColumnType.FLOAT
+                                    || tag == ColumnType.DECIMAL8
+                                    || tag == ColumnType.DECIMAL16
+                                    || tag == ColumnType.DECIMAL32
+                                    || tag == ColumnType.DECIMAL64)) {
+                                allWindowsFit8Bytes = false;
+                                break;
+                            }
+                        }
+                    }
+                }
+                if (lookaheadFunctionCount >= 1
+                        && allWindowsFit8Bytes
+                        && (long) ringCap * lookaheadFunctionCount <= 64
                         && base.recordCursorSupportsRandomAccess()) {
                     // Phase 5: rebuild PARTITION BY info for the LEAD column (the per-column locals
                     // computed inside the loop above were reused/cleared). Re-parse the window

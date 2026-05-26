@@ -53,44 +53,64 @@ import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 
 /**
- * Streaming window factory that supports deferred-emit window functions (e.g. LEAD).
+ * Streaming window factory that supports mixed deferred-emit and immediate-emit window functions
+ * within a single query — Phase 6 generalisation of the original Phase 2 single-LEAD cursor.
  * <p>
- * Phase 2/3/4/5 restrictions enforced at construction time:
+ * Each pending row gets a fixed-width native slot laid out as
+ * <pre>
+ *   [rowid:8][value_0:8][value_1:8]...[value_n-1:8]
+ * </pre>
+ * where {@code value_i} corresponds to the i-th window function in column order. LAG-style
+ * (lookahead = 0) functions write their value at processBaseRow time via {@link Function#pass1}
+ * which delegates to {@link WindowSPI#getAddress} on this cursor; LEAD-style (lookahead &gt; 0)
+ * functions defer via {@link WindowFunction#streamingBackfill} and have a one-bit-per-slot pending
+ * marker. The slot is emittable when every LEAD function's bit is filled.
+ * <p>
+ * Phase 6 constraints enforced at construction:
  * <ul>
- *   <li>Exactly one window function with positive {@link WindowFunction#getLookahead() lookahead}.</li>
- *   <li>No additional window functions in the output (no mixed LAG + LEAD yet).</li>
- *   <li>Lookahead {@code <=} 63 (per-partition filled-bit mask is a single long).</li>
- *   <li>Base cursor must support random access. Pending entries store the base row id and look up
- *       base column values via {@link RecordCursor#recordAt(Record, long)} at emission time.</li>
+ *   <li>Every window function's value must fit in 8 bytes (Long, Double, Date, Timestamp, Int).</li>
+ *   <li>At least one window function must have positive lookahead (otherwise the planner uses
+ *       {@link WindowRecordCursorFactory} directly).</li>
+ *   <li>{@code ringCapacity * leadCount <= 64} so the per-slot LEAD-pending bits fit in a single
+ *       {@code long}. Equivalently, {@code (maxLookahead + 1) * leadCount <= 64}.</li>
+ *   <li>Base cursor must support random access (rowids are stored per pending entry; base columns
+ *       are looked up via {@link RecordCursor#recordAt(Record, long)} at emission time).</li>
  * </ul>
  * Optionally supports {@code PARTITION BY} via the {@link Map}/{@link VirtualRecord}/{@link RecordSink}
- * trio supplied at construction. When no PARTITION BY is present (partitionByRecord {@code == null}),
- * the cursor uses a single global ring buffer; otherwise it lazily allocates one ring per partition
- * inside a shared {@link MemoryARW} and tracks per-partition state in the supplied {@link Map}.
- * <p>
- * The cursor enforces {@code cairo.sql.window.streaming.max.partitions} at runtime; an overflowing
- * partition map throws {@link CairoException} mid-cursor rather than allowing unbounded memory
- * growth.
- * <p>
- * Cross-thread safety: the cursor is single-threaded. The partition map, pending memory, and base
- * cursor are private to this cursor instance and never shared across threads.
+ * trio. Per-partition state is stored in {@link #PARTITION_VALUE_TYPES} (5 longs:
+ * slotsByteOffset, ringHead, ringTail, ringCount, pendingFilled). The cursor enforces the runtime
+ * partition cardinality cap from {@code cairo.sql.window.streaming.max.partitions}.
  */
 public class DeferredEmitWindowRecordCursorFactory extends AbstractRecordCursorFactory {
 
     public static final ArrayColumnTypes PARTITION_VALUE_TYPES;
-    private static final long SLOT_BYTES = 16L;          // 8 (rowid) + 8 (lead value)
-    private static final long SLOT_LEAD_OFFSET = 8L;     // byte offset of lead value within a slot
-    private static final long SLOT_ROWID_OFFSET = 0L;    // byte offset of base rowid within a slot
+    private static final int FUNC_VALUE_BYTES = 8;       // each window function's value is 8 bytes
+    private static final int ROWID_OFFSET = 0;
+    private static final int ROWID_BYTES = 8;
     private final RecordCursorFactory base;
+    // For each output column index: the slot byte offset of that column's window value, or -1 if
+    // the column is not a window function.
+    private final int[] columnToSlotOffset;
     private final DeferredEmitWindowRecordCursor cursor;
     private final ObjList<Function> functions;
-    private final WindowFunction leadFunction;
-    private final int leadFunctionColumnIndex;
-    private final int lookahead;
+    private final int[] lagColumnIndices;
+    // LAG (immediate-emit) functions in column order.
+    private final ObjList<WindowFunction> lagFunctions;
+    private final int leadCount;
+    private final int[] leadColumnIndices;
+    // LEAD (deferred-emit) functions in column order. leadOffsets[i] is the lookahead of leadFunctions[i].
+    private final ObjList<WindowFunction> leadFunctions;
+    private final long[] leadOffsets;
+    private final int maxLookahead;
     private final int maxPartitions;
     private final Map partitionMap;
     private final RecordSink partitionBySink;
     private final VirtualRecord partitionByRecord;
+    // Mask of leadCount bits, representing one slot's LEAD pending bits.
+    private final long perSlotLeadMask;
+    private final int ringCapacity;
+    // Per-slot bytes = ROWID_BYTES + FUNC_VALUE_BYTES * windowFunctions.size().
+    private final int slotBytes;
     private boolean closed;
 
     public DeferredEmitWindowRecordCursorFactory(
@@ -109,34 +129,60 @@ public class DeferredEmitWindowRecordCursorFactory extends AbstractRecordCursorF
                     .put("DeferredEmitWindowRecordCursorFactory requires a base cursor that supports random access");
         }
 
-        WindowFunction lead = null;
-        int leadIdx = -1;
-        int la = 0;
+        // Inventory all window functions; bucket into LAG (lookahead=0) and LEAD (lookahead>0).
+        // Each function's value occupies 8 bytes in the slot. The function's column index is its
+        // position i in the functions list (consistent with how SqlCodeGenerator wires
+        // setColumnIndex).
+        final int columnCount = metadata.getColumnCount();
+        final ObjList<WindowFunction> lagFns = new ObjList<>();
+        final ObjList<WindowFunction> leadFns = new ObjList<>();
+        final int[] colToSlot = new int[columnCount];
+        for (int i = 0; i < columnCount; i++) {
+            colToSlot[i] = -1;
+        }
+        // We need leadColumnIndices in the same order as leadFns; build them in lock-step.
+        // Same for lagColumnIndices.
+        final ObjList<Integer> lagColIdxTmp = new ObjList<>();
+        final ObjList<Integer> leadColIdxTmp = new ObjList<>();
+        final ObjList<Long> leadOffsetsTmp = new ObjList<>();
+        int windowFnIndex = 0;
+        int maxLA = 0;
         for (int i = 0, n = functions.size(); i < n; i++) {
             Function f = functions.getQuick(i);
             if (f instanceof WindowFunction wf) {
-                if (wf.getLookahead() > 0) {
-                    if (lead != null) {
-                        throw CairoException.critical(0)
-                                .put("DeferredEmitWindowRecordCursorFactory supports exactly one lookahead function");
-                    }
-                    lead = wf;
-                    leadIdx = i;
-                    la = wf.getLookahead();
-                } else {
+                int t = wf.getType();
+                if (!isFixed8ByteType(t)) {
                     throw CairoException.critical(0)
-                            .put("DeferredEmitWindowRecordCursorFactory does not yet support mixing immediate-emit and deferred window functions");
+                            .put("DeferredEmitWindowRecordCursorFactory cannot stream window function of type ")
+                            .put(ColumnType.nameOf(t));
+                }
+                colToSlot[i] = ROWID_BYTES + windowFnIndex * FUNC_VALUE_BYTES;
+                windowFnIndex++;
+                int la = wf.getLookahead();
+                if (la > 0) {
+                    leadFns.add(wf);
+                    leadColIdxTmp.add(i);
+                    leadOffsetsTmp.add((long) la);
+                    if (la > maxLA) {
+                        maxLA = la;
+                    }
+                } else {
+                    lagFns.add(wf);
+                    lagColIdxTmp.add(i);
                 }
             }
         }
-        if (lead == null) {
+        if (leadFns.size() == 0) {
             throw CairoException.critical(0)
-                    .put("DeferredEmitWindowRecordCursorFactory requires at least one lookahead function");
+                    .put("DeferredEmitWindowRecordCursorFactory requires at least one positive-lookahead window function");
         }
-        // ringCapacity == lookahead + 1; with a single-long filled-bit mask we cap at 63.
-        if (la >= 63) {
+
+        final int ringCap = maxLA + 1;
+        final int lCount = leadFns.size();
+        if ((long) ringCap * lCount > 64) {
             throw CairoException.critical(0)
-                    .put("DeferredEmitWindowRecordCursorFactory lookahead must be less than 63 (filled-bit mask is one long)");
+                    .put("DeferredEmitWindowRecordCursorFactory: (lookahead+1)*leadCount must be <= 64 (got ")
+                    .put(ringCap).put('x').put(lCount).put(')');
         }
         if ((partitionByRecord == null) != (partitionBySink == null) || (partitionByRecord == null) != (partitionMap == null)) {
             throw CairoException.critical(0)
@@ -145,9 +191,26 @@ public class DeferredEmitWindowRecordCursorFactory extends AbstractRecordCursorF
 
         this.base = base;
         this.functions = functions;
-        this.leadFunction = lead;
-        this.leadFunctionColumnIndex = leadIdx;
-        this.lookahead = la;
+        this.lagFunctions = lagFns;
+        this.leadFunctions = leadFns;
+        this.maxLookahead = maxLA;
+        this.ringCapacity = ringCap;
+        this.leadCount = lCount;
+        this.perSlotLeadMask = (1L << lCount) - 1;
+        this.slotBytes = ROWID_BYTES + (lagFns.size() + leadFns.size()) * FUNC_VALUE_BYTES;
+        this.columnToSlotOffset = colToSlot;
+
+        this.leadOffsets = new long[lCount];
+        this.leadColumnIndices = new int[lCount];
+        for (int i = 0; i < lCount; i++) {
+            this.leadOffsets[i] = leadOffsetsTmp.getQuick(i);
+            this.leadColumnIndices[i] = leadColIdxTmp.getQuick(i);
+        }
+        this.lagColumnIndices = new int[lagFns.size()];
+        for (int i = 0, n = lagFns.size(); i < n; i++) {
+            this.lagColumnIndices[i] = lagColIdxTmp.getQuick(i);
+        }
+
         this.partitionByRecord = partitionByRecord;
         this.partitionBySink = partitionBySink;
         this.partitionMap = partitionMap;
@@ -184,16 +247,31 @@ public class DeferredEmitWindowRecordCursorFactory extends AbstractRecordCursorF
 
     @Override
     public boolean recordCursorSupportsRandomAccess() {
-        // Deferred-emit output positions do not correspond 1:1 to base positions (rows are emitted later
-        // than they are read), so downstream operators cannot seek to arbitrary output rowids.
         return false;
     }
 
     @Override
     public void toPlan(PlanSink sink) {
         sink.type("DeferredEmitWindow");
-        sink.attr("functions").val('[').val(leadFunction).val(']');
-        sink.attr("maxLookahead").val(lookahead);
+        // Emit LAG functions first, then LEAD functions, in column order within each group.
+        sink.attr("functions").val('[');
+        boolean first = true;
+        for (int i = 0, n = lagFunctions.size(); i < n; i++) {
+            if (!first) {
+                sink.val(',');
+            }
+            sink.val(lagFunctions.getQuick(i));
+            first = false;
+        }
+        for (int i = 0, n = leadFunctions.size(); i < n; i++) {
+            if (!first) {
+                sink.val(',');
+            }
+            sink.val(leadFunctions.getQuick(i));
+            first = false;
+        }
+        sink.val(']');
+        sink.attr("maxLookahead").val(maxLookahead);
         sink.child(base);
     }
 
@@ -219,51 +297,52 @@ public class DeferredEmitWindowRecordCursorFactory extends AbstractRecordCursorF
         closed = true;
     }
 
+    private static boolean isFixed8ByteType(int type) {
+        final int tag = ColumnType.tagOf(type);
+        return tag == ColumnType.LONG
+                || tag == ColumnType.DOUBLE
+                || tag == ColumnType.DATE
+                || tag == ColumnType.TIMESTAMP
+                || tag == ColumnType.INT
+                || tag == ColumnType.FLOAT
+                || tag == ColumnType.DECIMAL8
+                || tag == ColumnType.DECIMAL16
+                || tag == ColumnType.DECIMAL32
+                || tag == ColumnType.DECIMAL64;
+    }
+
     /**
-     * Cursor implementing the deferred-emit state machine. Owns the per-cursor pending memory and the
-     * partition map (when in PARTITION BY mode). Implements {@link WindowSPI} so the LEAD function can
-     * address its slot via {@link #getAddress(long, int)} during back-fill and flush.
+     * Cursor implementing the deferred-emit state machine. Owns the per-cursor pending memory and
+     * the partition map (when in PARTITION BY mode). Implements {@link WindowSPI} so window
+     * functions can address their slot via {@link #getAddress(long, int)}.
      */
     final class DeferredEmitWindowRecordCursor implements RecordCursor, WindowSPI, Reopenable {
 
         private final OutputRecord outputRecord = new OutputRecord();
         private final OutputRecord outputRecordB = new OutputRecord();
-        // Capacity of a per-partition ring (in slots). Equals lookahead + 1; one slot beyond what the
-        // function needs so we always have room to enqueue the current row immediately after emitting
-        // the head.
-        private final int ringCapacity;
-        // For no-partition mode: deferred-emit slots for the single global partition.
-        // For partition mode: drained on demand from the partition map's record cursor.
+        // For no-partition mode this is the only partition state; for partition mode it's a scratch
+        // copy holding the looked-up Map value during processBaseRow.
         private final long[] singlePartitionState = new long[5];
         private RecordCursor baseCursor;
         private Record baseRecordForEmit;
         private SqlExecutionCircuitBreaker circuitBreaker;
-        // Drives partition iteration during flush.
         private MapRecordCursor flushMapCursor;
-        // Tracks position within flushMapCursor's "current partition" between hasNext calls.
         private boolean flushPartitionOpen;
         private long flushPartitionRingCount;
         private long flushPartitionRingHead;
         private long flushPartitionSlotsOff;
-        // True once base cursor exhausts; we are draining pending entries with defaultValue back-fill.
         private boolean flushPhase;
         private boolean isOpen;
         private long nextFreeSlotOffset;
-        // Slot address staged by processBaseRow for emission on the next hasNext iteration. -1 = none.
         private long pendingEmitSlotOffset = -1L;
-        // Native memory holding ring slots. Layout per slot: [rowid:long][leadValue:long].
-        // Sized at construction for the single-partition case; grown lazily for partition mode.
         private MemoryARW pendingMem;
 
         DeferredEmitWindowRecordCursor() {
-            this.ringCapacity = lookahead + 1;
             this.isOpen = true;
         }
 
         @Override
         public void calculateSize(SqlExecutionCircuitBreaker circuitBreaker, Counter counter) {
-            // Output row count equals base row count: every base row produces exactly one output row,
-            // whether emitted in-stream or via end-of-cursor flush.
             baseCursor.calculateSize(circuitBreaker, counter);
         }
 
@@ -277,7 +356,6 @@ public class DeferredEmitWindowRecordCursorFactory extends AbstractRecordCursorF
             baseRecordForEmit = null;
             pendingMem = Misc.free(pendingMem);
             flushMapCursor = null;
-            // Reset functions and clear partition map so a subsequent reopen starts from a clean state.
             resetFunctions();
             if (partitionMap != null) {
                 partitionMap.clear();
@@ -287,9 +365,9 @@ public class DeferredEmitWindowRecordCursorFactory extends AbstractRecordCursorF
 
         @Override
         public long getAddress(long pendingSlot, int columnIndex) {
-            // For Phase 5: there is exactly one LEAD function, stored at the LEAD offset within each slot.
-            // columnIndex is the output column index; the cursor maps it implicitly to slot+LEAD_OFFSET.
-            return pendingMem.getPageAddress(0) + pendingSlot + SLOT_LEAD_OFFSET;
+            // Map output column index to slot offset. Called by window functions via pass1 (LAG)
+            // and streamingBackfill (LEAD). columnIndex is the function's setColumnIndex value.
+            return pendingMem.getPageAddress(0) + pendingSlot + columnToSlotOffset[columnIndex];
         }
 
         @Override
@@ -325,7 +403,6 @@ public class DeferredEmitWindowRecordCursorFactory extends AbstractRecordCursorF
                     beginFlush();
                     continue;
                 }
-                // flush phase: drain remaining pending entries
                 long flushSlot = nextFlushSlot();
                 if (flushSlot != -1L) {
                     bindOutputToSlot(outputRecord, flushSlot);
@@ -348,29 +425,25 @@ public class DeferredEmitWindowRecordCursorFactory extends AbstractRecordCursorF
                     throw t;
                 }
             }
-            // Allocate pendingMem if not yet allocated. Use a generous initial size for partition mode
-            // (it'll grow); for no-partition mode size it exactly for one ring.
             if (pendingMem == null) {
                 pendingMem = Vm.getCARWInstance(
-                        Math.max(16L, SLOT_BYTES * ringCapacity),
+                        Math.max(16L, (long) slotBytes * ringCapacity),
                         Integer.MAX_VALUE,
                         MemoryTag.NATIVE_WINDOW_PENDING
                 );
             }
-            // Reset state on every (re)open.
             if (partitionMap != null) {
                 partitionMap.clear();
             }
             clearState();
-            // No-partition: pre-reserve the single ring slice and seed singlePartitionState.
             if (partitionByRecord == null) {
-                nextFreeSlotOffset = SLOT_BYTES * ringCapacity;
+                nextFreeSlotOffset = (long) slotBytes * ringCapacity;
                 pendingMem.jumpTo(nextFreeSlotOffset);
-                singlePartitionState[0] = 0L;             // slotsByteOffset
-                singlePartitionState[1] = 0L;             // ringHead
-                singlePartitionState[2] = 0L;             // ringTail
-                singlePartitionState[3] = 0L;             // ringCount
-                singlePartitionState[4] = 0L;             // pendingFilled
+                singlePartitionState[0] = 0L;
+                singlePartitionState[1] = 0L;
+                singlePartitionState[2] = 0L;
+                singlePartitionState[3] = 0L;
+                singlePartitionState[4] = 0L;
             }
             flushPhase = false;
             pendingEmitSlotOffset = -1L;
@@ -422,7 +495,7 @@ public class DeferredEmitWindowRecordCursorFactory extends AbstractRecordCursorF
             }
             clearState();
             if (partitionByRecord == null) {
-                nextFreeSlotOffset = SLOT_BYTES * ringCapacity;
+                nextFreeSlotOffset = (long) slotBytes * ringCapacity;
                 pendingMem.jumpTo(nextFreeSlotOffset);
                 singlePartitionState[0] = 0L;
                 singlePartitionState[1] = 0L;
@@ -441,28 +514,30 @@ public class DeferredEmitWindowRecordCursorFactory extends AbstractRecordCursorF
             }
         }
 
-        // ------------------------------------------------------------------------------------------
-        // Flush phase: iterate all partitions and drain remaining pending slots.
-        // ------------------------------------------------------------------------------------------
+        private long allocatePartitionSlice() {
+            final long sliceBytes = (long) slotBytes * ringCapacity;
+            final long off = nextFreeSlotOffset;
+            nextFreeSlotOffset += sliceBytes;
+            pendingMem.jumpTo(nextFreeSlotOffset);
+            return off;
+        }
+
         private void beginFlush() {
             if (partitionByRecord == null) {
-                // Single global partition. nextFlushSlot will drain singlePartitionState.
                 flushPartitionOpen = true;
                 flushPartitionSlotsOff = singlePartitionState[0];
                 flushPartitionRingHead = singlePartitionState[1];
                 flushPartitionRingCount = singlePartitionState[3];
                 return;
             }
-            // Partition mode: iterate map records.
             flushMapCursor = partitionMap.getCursor();
             flushPartitionOpen = false;
         }
 
         private void bindOutputToSlot(OutputRecord rec, long slotOff) {
-            final long rowid = pendingMem.getLong(slotOff + SLOT_ROWID_OFFSET);
-            final long leadValue = pendingMem.getLong(slotOff + SLOT_LEAD_OFFSET);
+            final long rowid = pendingMem.getLong(slotOff + ROWID_OFFSET);
             baseCursor.recordAt(baseRecordForEmit, rowid);
-            rec.of(baseRecordForEmit, leadValue);
+            rec.of(baseRecordForEmit, slotOff);
         }
 
         private void clearState() {
@@ -473,7 +548,6 @@ public class DeferredEmitWindowRecordCursorFactory extends AbstractRecordCursorF
             while (true) {
                 if (!flushPartitionOpen) {
                     if (flushMapCursor == null) {
-                        // No-partition single ring was already drained.
                         return -1L;
                     }
                     if (!flushMapCursor.hasNext()) {
@@ -492,9 +566,12 @@ public class DeferredEmitWindowRecordCursorFactory extends AbstractRecordCursorF
                     }
                     continue;
                 }
-                final long headSlot = flushPartitionSlotsOff + flushPartitionRingHead * SLOT_BYTES;
-                // Fill with defaultValue (or NULL) before emitting; the function writes into the slot.
-                leadFunction.streamingFlushDefault(headSlot, this);
+                final long headSlot = flushPartitionSlotsOff + flushPartitionRingHead * slotBytes;
+                // Fill remaining LEAD slots with defaultValue. LAG slots were already filled at
+                // enqueue.
+                for (int i = 0; i < leadCount; i++) {
+                    leadFunctions.getQuick(i).streamingFlushDefault(headSlot, this);
+                }
                 flushPartitionRingHead = (flushPartitionRingHead + 1) % ringCapacity;
                 flushPartitionRingCount--;
                 return headSlot;
@@ -517,10 +594,10 @@ public class DeferredEmitWindowRecordCursorFactory extends AbstractRecordCursorF
                     }
                     final long slotsOff = allocatePartitionSlice();
                     mapValue.putLong(0, slotsOff);
-                    mapValue.putLong(1, 0L); // ringHead
-                    mapValue.putLong(2, 0L); // ringTail
-                    mapValue.putLong(3, 0L); // ringCount
-                    mapValue.putLong(4, 0L); // pendingFilled
+                    mapValue.putLong(1, 0L);
+                    mapValue.putLong(2, 0L);
+                    mapValue.putLong(3, 0L);
+                    mapValue.putLong(4, 0L);
                 }
                 singlePartitionState[0] = mapValue.getLong(0);
                 singlePartitionState[1] = mapValue.getLong(1);
@@ -536,36 +613,57 @@ public class DeferredEmitWindowRecordCursorFactory extends AbstractRecordCursorF
             long ringCount = state[3];
             long pendingFilled = state[4];
 
-            // 1) Back-fill if head's lookahead has been reached.
-            if (ringCount >= lookahead && (pendingFilled & (1L << ringHead)) == 0L) {
-                final long headSlot = slotsOff + ringHead * SLOT_BYTES;
-                leadFunction.streamingBackfill(baseRow, headSlot, this);
-                pendingFilled |= (1L << ringHead);
-                // Head is now fully resolved; stage it for emission and immediately advance head so the
-                // post-state in the map reflects post-emit (eliminates a second map lookup at emit time).
-                pendingEmitSlotOffset = headSlot;
-                pendingFilled &= ~(1L << ringHead);
+            // 1) Back-fill: for each LEAD function with offset k_i, find the entry at age k_i
+            //    (i.e., enqueued k_i partition-local rows ago) and write LEAD's value into its slot.
+            //    The target ring index = (ringHead + (ringCount - k_i)) % ringCapacity, valid only
+            //    when ringCount >= k_i.
+            for (int i = 0; i < leadCount; i++) {
+                long k = leadOffsets[i];
+                if (ringCount >= k) {
+                    long targetRingIdx = (ringHead + (ringCount - k)) % ringCapacity;
+                    long bit = 1L << (targetRingIdx * leadCount + i);
+                    if ((pendingFilled & bit) == 0L) {
+                        long targetSlotOff = slotsOff + targetRingIdx * slotBytes;
+                        leadFunctions.getQuick(i).streamingBackfill(baseRow, targetSlotOff, this);
+                        pendingFilled |= bit;
+                    }
+                }
+            }
+
+            // 2) If head is fully resolved (all leadCount bits set in its slot mask), stage it for
+            //    emission and advance head. Only one head emit per processBaseRow; subsequent
+            //    backfills wait for the next row arrival.
+            long headSlotMask = perSlotLeadMask << (ringHead * leadCount);
+            if (ringCount > 0 && (pendingFilled & headSlotMask) == headSlotMask) {
+                pendingEmitSlotOffset = slotsOff + ringHead * slotBytes;
+                pendingFilled &= ~headSlotMask;
                 ringHead = (ringHead + 1) % ringCapacity;
                 ringCount--;
             }
 
-            // 2) Enqueue the current row at the tail.
-            final long tailSlot = slotsOff + ringTail * SLOT_BYTES;
-            pendingMem.putLong(tailSlot + SLOT_ROWID_OFFSET, baseRow.getRowId());
-            // Defensive clear of the lead slot and the filled bit (streamingBackfill / flush will write).
-            pendingMem.putLong(tailSlot + SLOT_LEAD_OFFSET, 0L);
-            pendingFilled &= ~(1L << ringTail);
+            // 3) Enqueue R at ringTail. Write rowid first, then call LAG functions' pass1 to write
+            //    their values into R's slot. LEAD functions are not invoked here; their values are
+            //    deferred to back-fill / flush.
+            final long newSlot = slotsOff + ringTail * slotBytes;
+            pendingMem.putLong(newSlot + ROWID_OFFSET, baseRow.getRowId());
+            // Clear LEAD pending bits for the new slot (defensive — should already be 0 from prior
+            // emit or initial state).
+            long newSlotMask = perSlotLeadMask << (ringTail * leadCount);
+            pendingFilled &= ~newSlotMask;
+            // LAG functions write their values directly to the new slot.
+            for (int i = 0, n = lagFunctions.size(); i < n; i++) {
+                lagFunctions.getQuick(i).pass1(baseRow, newSlot, this);
+            }
             ringTail = (ringTail + 1) % ringCapacity;
             ringCount++;
 
-            // 3) Write back state.
+            // 4) Persist state.
             if (partitionByRecord == null) {
                 state[1] = ringHead;
                 state[2] = ringTail;
                 state[3] = ringCount;
                 state[4] = pendingFilled;
             } else {
-                // Re-acquire the map value (createValue above invalidates references after subsequent ops).
                 partitionByRecord.of(baseRow);
                 MapKey key2 = partitionMap.withKey();
                 key2.put(partitionByRecord, partitionBySink);
@@ -580,15 +678,6 @@ public class DeferredEmitWindowRecordCursorFactory extends AbstractRecordCursorF
                 mapValue2.putLong(3, ringCount);
                 mapValue2.putLong(4, pendingFilled);
             }
-        }
-
-        private long allocatePartitionSlice() {
-            final long sliceBytes = SLOT_BYTES * ringCapacity;
-            final long off = nextFreeSlotOffset;
-            nextFreeSlotOffset += sliceBytes;
-            // Grow pendingMem to cover the new slice.
-            pendingMem.jumpTo(nextFreeSlotOffset);
-            return off;
         }
 
         private void reopenFunctions() {
@@ -610,14 +699,13 @@ public class DeferredEmitWindowRecordCursorFactory extends AbstractRecordCursorF
         }
 
         /**
-         * Output record that combines base columns (read via baseCursor.recordAt) with the pre-computed
-         * LEAD value held as the raw 8-byte pendingMem slot. The accessor methods for the LEAD column
-         * decode {@link #leadValue} according to the supported scalar types (long, double, int, date,
-         * timestamp); all other column accesses delegate to the base record.
+         * Output record dispatching column accesses to either the slot (for window-function columns)
+         * or the base record (for everything else). The slot holds 8-byte raw values; type-specific
+         * decode happens in the accessor based on which getX method the caller invoked.
          */
         final class OutputRecord implements Record {
             private Record baseRec;
-            private long leadValue;
+            private long slotOff;
 
             @Override
             public boolean getBool(int col) {
@@ -636,37 +724,45 @@ public class DeferredEmitWindowRecordCursorFactory extends AbstractRecordCursorF
 
             @Override
             public long getDate(int col) {
-                if (col == leadFunctionColumnIndex) {
-                    return leadValue;
+                int off = columnToSlotOffset[col];
+                if (off != -1) {
+                    return pendingMem.getLong(slotOff + off);
                 }
                 return baseRec.getDate(col);
             }
 
             @Override
             public double getDouble(int col) {
-                if (col == leadFunctionColumnIndex) {
-                    return Double.longBitsToDouble(leadValue);
+                int off = columnToSlotOffset[col];
+                if (off != -1) {
+                    return Double.longBitsToDouble(pendingMem.getLong(slotOff + off));
                 }
                 return baseRec.getDouble(col);
             }
 
             @Override
             public float getFloat(int col) {
+                int off = columnToSlotOffset[col];
+                if (off != -1) {
+                    return Float.intBitsToFloat((int) pendingMem.getLong(slotOff + off));
+                }
                 return baseRec.getFloat(col);
             }
 
             @Override
             public int getInt(int col) {
-                if (col == leadFunctionColumnIndex) {
-                    return (int) leadValue;
+                int off = columnToSlotOffset[col];
+                if (off != -1) {
+                    return (int) pendingMem.getLong(slotOff + off);
                 }
                 return baseRec.getInt(col);
             }
 
             @Override
             public long getLong(int col) {
-                if (col == leadFunctionColumnIndex) {
-                    return leadValue;
+                int off = columnToSlotOffset[col];
+                if (off != -1) {
+                    return pendingMem.getLong(slotOff + off);
                 }
                 return baseRec.getLong(col);
             }
@@ -703,15 +799,16 @@ public class DeferredEmitWindowRecordCursorFactory extends AbstractRecordCursorF
 
             @Override
             public long getTimestamp(int col) {
-                if (col == leadFunctionColumnIndex) {
-                    return leadValue;
+                int off = columnToSlotOffset[col];
+                if (off != -1) {
+                    return pendingMem.getLong(slotOff + off);
                 }
                 return baseRec.getTimestamp(col);
             }
 
-            void of(Record baseRec, long leadValue) {
+            void of(Record baseRec, long slotOff) {
                 this.baseRec = baseRec;
-                this.leadValue = leadValue;
+                this.slotOff = slotOff;
             }
         }
     }
