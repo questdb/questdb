@@ -25,6 +25,7 @@
 package io.questdb.cutlass.qwp.codec;
 
 import io.questdb.cairo.CairoException;
+import io.questdb.cutlass.qwp.protocol.QwpVarint;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.Unsafe;
@@ -66,6 +67,7 @@ public final class QwpEgressConnSymbolDict implements QuietCloseable {
     private int heapCapacity;
     private int heapPos;
     private int size;
+    private long totalWireBytes;
 
     /**
      * Encodes {@code cs} as UTF-8 and returns its {@code connId}. If the same
@@ -95,6 +97,8 @@ public final class QwpEgressConnSymbolDict implements QuietCloseable {
         ensureEntriesCapacity(4 * (size + 1));
         Unsafe.putInt(entriesAddr + 4L * size, heapPos);
         size++;
+        int entryLen = heapPos - startPos;
+        totalWireBytes += QwpVarint.encodedLength(entryLen) + entryLen;
         // putAt copies probe's bytes into a fresh Utf8String -- a one-time
         // allocation per unique value per connection.
         dedupMap.putAt(mapIdx, dedupProbe, id);
@@ -109,6 +113,7 @@ public final class QwpEgressConnSymbolDict implements QuietCloseable {
     public void clear() {
         heapPos = 0;
         size = 0;
+        totalWireBytes = 0;
         dedupMap.clear();
     }
 
@@ -148,6 +153,10 @@ public final class QwpEgressConnSymbolDict implements QuietCloseable {
         return heapAddr;
     }
 
+    public long getTotalWireBytes() {
+        return totalWireBytes;
+    }
+
     /**
      * Bytes committed to the concatenated-UTF-8 heap so far. Combined with
      * {@link #size()}, lets callers enforce connection-level memory caps and
@@ -182,13 +191,17 @@ public final class QwpEgressConnSymbolDict implements QuietCloseable {
                     .put(", size=").put(size).put(']');
         }
         for (int i = targetSize; i < size; i++) {
-            long start = heapAddr + entryStart(i);
-            long end = heapAddr + entryEnd(i);
+            int sOff = entryStart(i);
+            int eOff = entryEnd(i);
+            long start = heapAddr + sOff;
+            long end = heapAddr + eOff;
             dedupProbe.of(start, end);
             int idx = dedupMap.keyIndex(dedupProbe);
             if (idx < 0) {
                 dedupMap.removeAt(idx);
             }
+            int entryLen = eOff - sOff;
+            totalWireBytes -= QwpVarint.encodedLength(entryLen) + entryLen;
         }
         heapPos = targetSize == 0 ? 0 : entryEnd(targetSize - 1);
         size = targetSize;
