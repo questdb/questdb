@@ -33,10 +33,14 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.VirtualRecord;
 import io.questdb.cairo.sql.WindowSPI;
+import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryARW;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.std.IntList;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
@@ -58,6 +62,11 @@ public class LeadDoubleFunctionFactory extends AbstractWindowFunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
+        Function streaming = tryNewStreamingInstance(args, argPositions, configuration, sqlExecutionContext);
+        if (streaming != null) {
+            return streaming;
+        }
+
         return LeadLagWindowFunctionFactoryHelper.newInstance(
                 position,
                 args,
@@ -73,6 +82,83 @@ public class LeadDoubleFunctionFactory extends AbstractWindowFunctionFactory {
                 LagDoubleFunctionFactory.LeadLagValueCurrentRow::new,
                 LeadOverPartitionFunction::new
         );
+    }
+
+    private static Function tryNewStreamingInstance(
+            ObjList<Function> args,
+            IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) throws SqlException {
+        if (!configuration.getSqlWindowStreamingLeadEnabled()) return null;
+        if (sqlExecutionContext.getWindowContext().isEmpty()) return null;
+        if (sqlExecutionContext.getWindowContext().getPartitionByRecord() != null) return null;
+        if (sqlExecutionContext.getWindowContext().isIgnoreNulls()) return null;
+        if (args.size() > 3) return null;
+
+        long offset = 1;
+        if (args.size() >= 2) {
+            Function offsetFunc = args.getQuick(1);
+            if (!offsetFunc.isConstant()) return null;
+            offset = offsetFunc.getLong(null);
+            if (offset <= 0) return null;
+        }
+        if (offset > Integer.MAX_VALUE) return null;
+
+        Function defaultValue = null;
+        if (args.size() == 3) {
+            Function dv = args.getQuick(2);
+            if (dv instanceof WindowFunction) {
+                throw SqlException.$(argPositions.getQuick(2), "default value can not be a window function");
+            }
+            if (!dv.isConstant()) return null;
+            if (!ColumnType.isSameOrBuiltInWideningCast(dv.getType(), ColumnType.DOUBLE)) {
+                throw SqlException.$(argPositions.getQuick(2), "default value must be can cast to double");
+            }
+            defaultValue = dv;
+        }
+
+        MemoryARW mem = null;
+        try {
+            mem = Vm.getCARWInstance(
+                    configuration.getSqlWindowStorePageSize(),
+                    configuration.getSqlWindowStoreMaxPages(),
+                    MemoryTag.NATIVE_CIRCULAR_BUFFER
+            );
+            return new StreamingLeadFunction(args.get(0), defaultValue, offset, mem);
+        } catch (Throwable th) {
+            Misc.free(mem);
+            throw th;
+        }
+    }
+
+    static final class StreamingLeadFunction extends LeadFunction {
+        private final double defaultDoubleValue;
+
+        StreamingLeadFunction(Function arg, Function defaultValueFunc, long offset, MemoryARW memory) {
+            super(arg, defaultValueFunc, offset, memory, false);
+            this.defaultDoubleValue = defaultValueFunc == null ? Double.NaN : defaultValueFunc.getDouble(null);
+        }
+
+        @Override
+        public int getLookahead() {
+            return (int) offset;
+        }
+
+        @Override
+        public int getPassCount() {
+            return ZERO_PASS;
+        }
+
+        @Override
+        public void streamingBackfill(Record source, long pendingSlot, WindowSPI spi) {
+            Unsafe.putDouble(spi.getAddress(pendingSlot, columnIndex), arg.getDouble(source));
+        }
+
+        @Override
+        public void streamingFlushDefault(long pendingSlot, WindowSPI spi) {
+            Unsafe.putDouble(spi.getAddress(pendingSlot, columnIndex), defaultDoubleValue);
+        }
     }
 
     static class LeadFunction extends LeadLagWindowFunctionFactoryHelper.BaseLeadFunction implements Reopenable, WindowDoubleFunction {

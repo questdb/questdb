@@ -184,6 +184,84 @@ public class StreamingLeadIntegrationTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLeadDateStreams() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t (d date, ts timestamp) timestamp(ts) partition by day");
+            execute("insert into t values (cast(100 as date), 0), (cast(200 as date), 1000), (cast(300 as date), 2000)");
+
+            assertPlanNoLeakCheck(
+                    "select d, lead(d, 1) over () as ld from t",
+                    "DeferredEmitWindow\n" +
+                            "  functions: [lead(d, 1, NULL) over ()]\n" +
+                            "  maxLookahead: 1\n" +
+                            "    PageFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: t\n"
+            );
+
+            assertSql(
+                    "d\tld\n" +
+                            "1970-01-01T00:00:00.100Z\t1970-01-01T00:00:00.200Z\n" +
+                            "1970-01-01T00:00:00.200Z\t1970-01-01T00:00:00.300Z\n" +
+                            "1970-01-01T00:00:00.300Z\t\n",
+                    "select d, lead(d, 1) over () as ld from t"
+            );
+        });
+    }
+
+    @Test
+    public void testLeadDoubleStreams() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t (d double, ts timestamp) timestamp(ts) partition by day");
+            execute("insert into t values (1.5, 0), (2.5, 1000), (3.5, 2000)");
+
+            assertPlanNoLeakCheck(
+                    "select d, lead(d, 1) over () as ld from t",
+                    "DeferredEmitWindow\n" +
+                            "  functions: [lead(d, 1, NULL) over ()]\n" +
+                            "  maxLookahead: 1\n" +
+                            "    PageFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: t\n"
+            );
+
+            assertSql(
+                    "d\tld\n" +
+                            "1.5\t2.5\n" +
+                            "2.5\t3.5\n" +
+                            "3.5\tnull\n",
+                    "select d, lead(d, 1) over () as ld from t"
+            );
+        });
+    }
+
+    @Test
+    public void testLeadTimestampStreams() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t (ts timestamp) timestamp(ts) partition by day");
+            execute("insert into t values (1000), (2000), (3000)");
+
+            assertPlanNoLeakCheck(
+                    "select ts, lead(ts, 1) over () as lts from t",
+                    "DeferredEmitWindow\n" +
+                            "  functions: [lead(ts, 1, NULL) over ()]\n" +
+                            "  maxLookahead: 1\n" +
+                            "    PageFrame\n" +
+                            "        Row forward scan\n" +
+                            "        Frame forward scan on: t\n"
+            );
+
+            assertSql(
+                    "ts\tlts\n" +
+                            "1970-01-01T00:00:00.001000Z\t1970-01-01T00:00:00.002000Z\n" +
+                            "1970-01-01T00:00:00.002000Z\t1970-01-01T00:00:00.003000Z\n" +
+                            "1970-01-01T00:00:00.003000Z\t\n",
+                    "select ts, lead(ts, 1) over () as lts from t"
+            );
+        });
+    }
+
+    @Test
     public void testSingleRowFlushedAsNull() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table t (x long, ts timestamp) timestamp(ts) partition by day");

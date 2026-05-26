@@ -34,10 +34,14 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.VirtualRecord;
 import io.questdb.cairo.sql.WindowSPI;
+import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryARW;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.std.IntList;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
@@ -59,6 +63,11 @@ public class LeadTimestampFunctionFactory extends AbstractWindowFunctionFactory 
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
+        Function streaming = tryNewStreamingInstance(args, argPositions, configuration, sqlExecutionContext);
+        if (streaming != null) {
+            return streaming;
+        }
+
         return LeadLagWindowFunctionFactoryHelper.newInstance(
                 position,
                 args,
@@ -74,6 +83,92 @@ public class LeadTimestampFunctionFactory extends AbstractWindowFunctionFactory 
                 LagLongFunctionFactory.LeadLagValueCurrentRow::new,
                 LeadOverPartitionFunction::new
         );
+    }
+
+    private static Function tryNewStreamingInstance(
+            ObjList<Function> args,
+            IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) throws SqlException {
+        if (!configuration.getSqlWindowStreamingLeadEnabled()) return null;
+        if (sqlExecutionContext.getWindowContext().isEmpty()) return null;
+        if (sqlExecutionContext.getWindowContext().getPartitionByRecord() != null) return null;
+        if (sqlExecutionContext.getWindowContext().isIgnoreNulls()) return null;
+        if (args.size() > 3) return null;
+
+        long offset = 1;
+        if (args.size() >= 2) {
+            Function offsetFunc = args.getQuick(1);
+            if (!offsetFunc.isConstant()) return null;
+            offset = offsetFunc.getLong(null);
+            if (offset <= 0) return null;
+        }
+        if (offset > Integer.MAX_VALUE) return null;
+
+        Function defaultValue = null;
+        if (args.size() == 3) {
+            Function dv = args.getQuick(2);
+            if (dv instanceof WindowFunction) {
+                throw SqlException.$(argPositions.getQuick(2), "default value can not be a window function");
+            }
+            if (!dv.isConstant()) return null;
+            if (!ColumnType.isSameTagOrBuiltInWideningCast(dv.getType(), args.getQuick(0).getType())) {
+                throw SqlException.$(argPositions.getQuick(2), "default value must be can cast to timestamp");
+            }
+            defaultValue = dv;
+        }
+
+        MemoryARW mem = null;
+        try {
+            mem = Vm.getCARWInstance(
+                    configuration.getSqlWindowStorePageSize(),
+                    configuration.getSqlWindowStoreMaxPages(),
+                    MemoryTag.NATIVE_CIRCULAR_BUFFER
+            );
+            return new StreamingLeadFunction(args.get(0), defaultValue, offset, mem);
+        } catch (Throwable th) {
+            Misc.free(mem);
+            throw th;
+        }
+    }
+
+    static final class StreamingLeadFunction extends LeadFunction {
+        private final long defaultTimestampValue;
+
+        StreamingLeadFunction(Function arg, Function defaultValueFunc, long offset, MemoryARW memory) {
+            super(arg, defaultValueFunc, offset, memory, false);
+            if (defaultValueFunc == null) {
+                this.defaultTimestampValue = Numbers.LONG_NULL;
+            } else {
+                // Pre-resolve the constant default through the arg's TimestampDriver, mirroring the
+                // conversion the cached doPass1 performs per-row.
+                int argType = arg.getType();
+                int defaultType = ColumnType.getTimestampType(defaultValueFunc.getType());
+                TimestampDriver driver = ColumnType.getTimestampDriver(ColumnType.getTimestampType(argType));
+                this.defaultTimestampValue = driver.from(defaultValueFunc.getTimestamp(null), defaultType);
+            }
+        }
+
+        @Override
+        public int getLookahead() {
+            return (int) offset;
+        }
+
+        @Override
+        public int getPassCount() {
+            return ZERO_PASS;
+        }
+
+        @Override
+        public void streamingBackfill(Record source, long pendingSlot, WindowSPI spi) {
+            Unsafe.putLong(spi.getAddress(pendingSlot, columnIndex), arg.getTimestamp(source));
+        }
+
+        @Override
+        public void streamingFlushDefault(long pendingSlot, WindowSPI spi) {
+            Unsafe.putLong(spi.getAddress(pendingSlot, columnIndex), defaultTimestampValue);
+        }
     }
 
     static class LeadFunction extends LeadLagWindowFunctionFactoryHelper.BaseLeadFunction implements Reopenable, WindowTimestampFunction {

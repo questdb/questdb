@@ -474,12 +474,57 @@ public class DeferredEmitWindowRecordCursorFactory extends AbstractRecordCursorF
 
         /**
          * Output record that combines base columns (read via baseCursor.recordAt) with the pre-computed
-         * LEAD value. Phase 2 supports only Long-typed LEAD; getX methods for other types are inherited
-         * from the base record where applicable.
+         * LEAD value held as the raw 8-byte pendingMem slot. The accessor methods for the LEAD column
+         * decode {@link #leadValue} according to the supported scalar types (long, double, int, date,
+         * timestamp); all other column accesses delegate to the base record.
          */
         final class OutputRecord implements Record {
             private Record baseRec;
             private long leadValue;
+
+            @Override
+            public boolean getBool(int col) {
+                return baseRec.getBool(col);
+            }
+
+            @Override
+            public byte getByte(int col) {
+                return baseRec.getByte(col);
+            }
+
+            @Override
+            public char getChar(int col) {
+                return baseRec.getChar(col);
+            }
+
+            @Override
+            public long getDate(int col) {
+                if (col == leadFunctionColumnIndex) {
+                    return leadValue;
+                }
+                return baseRec.getDate(col);
+            }
+
+            @Override
+            public double getDouble(int col) {
+                if (col == leadFunctionColumnIndex) {
+                    return Double.longBitsToDouble(leadValue);
+                }
+                return baseRec.getDouble(col);
+            }
+
+            @Override
+            public float getFloat(int col) {
+                return baseRec.getFloat(col);
+            }
+
+            @Override
+            public int getInt(int col) {
+                if (col == leadFunctionColumnIndex) {
+                    return (int) leadValue;
+                }
+                return baseRec.getInt(col);
+            }
 
             @Override
             public long getLong(int col) {
@@ -490,26 +535,8 @@ public class DeferredEmitWindowRecordCursorFactory extends AbstractRecordCursorF
             }
 
             @Override
-            public int getInt(int col) {
-                return baseRec.getInt(col);
-            }
-
-            @Override
-            public long getTimestamp(int col) {
-                if (col == leadFunctionColumnIndex) {
-                    return leadValue;
-                }
-                return baseRec.getTimestamp(col);
-            }
-
-            @Override
-            public CharSequence getSymA(int col) {
-                return baseRec.getSymA(col);
-            }
-
-            @Override
-            public CharSequence getSymB(int col) {
-                return baseRec.getSymB(col);
+            public short getShort(int col) {
+                return baseRec.getShort(col);
             }
 
             @Override
@@ -528,33 +555,21 @@ public class DeferredEmitWindowRecordCursorFactory extends AbstractRecordCursorF
             }
 
             @Override
-            public double getDouble(int col) {
-                return baseRec.getDouble(col);
+            public CharSequence getSymA(int col) {
+                return baseRec.getSymA(col);
             }
 
             @Override
-            public float getFloat(int col) {
-                return baseRec.getFloat(col);
+            public CharSequence getSymB(int col) {
+                return baseRec.getSymB(col);
             }
 
             @Override
-            public byte getByte(int col) {
-                return baseRec.getByte(col);
-            }
-
-            @Override
-            public short getShort(int col) {
-                return baseRec.getShort(col);
-            }
-
-            @Override
-            public boolean getBool(int col) {
-                return baseRec.getBool(col);
-            }
-
-            @Override
-            public char getChar(int col) {
-                return baseRec.getChar(col);
+            public long getTimestamp(int col) {
+                if (col == leadFunctionColumnIndex) {
+                    return leadValue;
+                }
+                return baseRec.getTimestamp(col);
             }
 
             void of(Record baseRec, long leadValue) {
