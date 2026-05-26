@@ -960,6 +960,25 @@ public interface CairoConfiguration {
 
     boolean isMatViewParallelSqlEnabled();
 
+    /**
+     * When false (the default), the mat-view REFRESH LIMIT boundary uses
+     * {@code min(maxBaseTimestamp, wallClock) - LIMIT}, so a stale-ingestion
+     * gap on the base table does not move the boundary forward and accidentally
+     * push managed-zone rows into the frozen zone.
+     * <p>
+     * When true, the boundary reverts to the pre-frozen-zone formula
+     * {@code wallClock - LIMIT}. The entire frozen-zone feature (backfill,
+     * FULL vs FULL FORCE distinction) then reverts to pre-feature behaviour as
+     * well; the flag is a "revert to pre-feature behaviour" escape hatch, not
+     * a "use a different formula" switch.
+     *
+     * @return true if the boundary should use wall-clock only (pre-feature
+     * behaviour), false otherwise (default)
+     */
+    default boolean isMatViewRefreshLimitWallClockEnabled() {
+        return false;
+    }
+
     boolean isMatViewRefreshMissingWalFilesFatal();
 
     boolean isMultiKeyDedupEnabled();

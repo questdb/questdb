@@ -592,10 +592,22 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             // Check if refresh limit should be applied.
             final int refreshLimitHoursOrMonths = viewDefinition.getRefreshLimitHoursOrMonths();
             if (refreshLimitHoursOrMonths != 0) {
+                // Cap the boundary anchor by max(base_ts) to prevent a stale-ingestion gap
+                // from silently pushing managed-zone rows into the frozen zone. Mirrors the
+                // TTL formula in TableUtils.getMaxTimestamp(). The wall-clock escape hatch
+                // restores the pre-frozen-zone anchor.
+                final long boundaryAnchor;
+                if (configuration.isMatViewRefreshLimitWallClockEnabled()) {
+                    boundaryAnchor = now;
+                } else {
+                    final long maxBaseTs = baseTableReader.getMaxTimestamp();
+                    // Empty base table reports Long.MIN_VALUE; fall back to now to avoid underflow.
+                    boundaryAnchor = maxBaseTs == Long.MIN_VALUE ? now : Math.min(maxBaseTs, now);
+                }
                 if (refreshLimitHoursOrMonths > 0) { // hours
-                    minTs = Math.max(minTs, now - driver.fromHours(refreshLimitHoursOrMonths));
+                    minTs = Math.max(minTs, boundaryAnchor - driver.fromHours(refreshLimitHoursOrMonths));
                 } else { // months
-                    minTs = Math.max(minTs, driver.addMonths(now, refreshLimitHoursOrMonths));
+                    minTs = Math.max(minTs, driver.addMonths(boundaryAnchor, refreshLimitHoursOrMonths));
                 }
                 intersectIntervals(refreshIntervals, minTs, Long.MAX_VALUE);
             }

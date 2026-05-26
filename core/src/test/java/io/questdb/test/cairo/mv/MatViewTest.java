@@ -6728,6 +6728,160 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRefreshLimitBoundaryEmptyBaseTable() throws Exception {
+        // Boundary computation on an empty base table: max(base_ts) is Long.MIN_VALUE.
+        // The fallback to wall clock keeps the boundary math from underflowing; the
+        // refresh skips the empty range and leaves the view empty.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table base_price (" +
+                            "  sym symbol, price double, ts #TIMESTAMP" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            execute(
+                    "create materialized view price_1h refresh manual deferred as " +
+                            "select sym, last(price) as price, ts from base_price sample by 1h;"
+            );
+            execute("alter materialized view price_1h set refresh limit 2 months;");
+
+            currentMicros = parseFloorPartialTimestamp("2024-01-01T00:00:00.000000Z");
+            execute("refresh materialized view price_1h full;");
+            drainQueues();
+
+            assertQueryNoLeakCheck(
+                    "sym\tprice\tts\n",
+                    "price_1h order by sym, ts"
+            );
+        });
+    }
+
+    @Test
+    public void testRefreshLimitBoundaryFutureDatedBaseTimestamp() throws Exception {
+        // Boundary anchor is min(max(base_ts), wallClock): when base data contains
+        // future timestamps relative to wall clock, the anchor caps at wall clock so
+        // the boundary does not jump forward and exclude legitimate current data.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table base_price (" +
+                            "  sym symbol, price double, ts #TIMESTAMP" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            execute(
+                    "insert into base_price(sym, price, ts) values ('gbpusd', 1.320, '2024-09-10T11:00')" +
+                            ",('gbpusd', 1.321, '2024-09-10T12:00')" +
+                            ",('gbpusd', 1.322, '2030-01-01T00:00')"
+            );
+            drainWalQueue();
+            execute(
+                    "create materialized view price_1h refresh manual deferred as " +
+                            "select sym, last(price) as price, ts from base_price sample by 1h;"
+            );
+            execute("alter materialized view price_1h set refresh limit 1 day;");
+
+            // Without the wall-clock cap, anchor would be 2030-01-01 and the boundary
+            // 2029-12-31, dropping every 2024 row. With the cap, anchor = 2024-09-10T12:30,
+            // boundary = 2024-09-09T12:30, so all rows survive.
+            currentMicros = parseFloorPartialTimestamp("2024-09-10T12:30:00.000000Z");
+            execute("refresh materialized view price_1h full;");
+            drainQueues();
+
+            assertQueryNoLeakCheck(
+                    replaceExpectedTimestamp("""
+                            sym\tprice\tts
+                            gbpusd\t1.32\t2024-09-10T11:00:00.000000Z
+                            gbpusd\t1.321\t2024-09-10T12:00:00.000000Z
+                            gbpusd\t1.322\t2030-01-01T00:00:00.000000Z
+                            """),
+                    "price_1h order by ts",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testRefreshLimitBoundaryUsesMaxBaseTimestamp() throws Exception {
+        // New boundary formula: min(max(base_ts), wallClock) - LIMIT. When wall clock
+        // has advanced well past max(base_ts) (stale base ingestion), the boundary
+        // stays anchored at max(base_ts), preserving rows the old wall-clock-only
+        // formula would have pushed below the boundary.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table base_price (" +
+                            "  sym symbol, price double, ts #TIMESTAMP" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            execute(
+                    "insert into base_price(sym, price, ts) values ('gbpusd', 1.320, '2024-09-10T10:00')" +
+                            ",('gbpusd', 1.321, '2024-09-10T11:00')" +
+                            ",('gbpusd', 1.322, '2024-09-10T12:00')"
+            );
+            drainWalQueue();
+            execute(
+                    "create materialized view price_1h refresh manual deferred as " +
+                            "select sym, last(price) as price, ts from base_price sample by 1h;"
+            );
+            execute("alter materialized view price_1h set refresh limit 1 hour;");
+
+            // Wall clock is 12 hours past max(base_ts). Under the old formula the
+            // boundary would be 23:00, excluding every row. The new formula anchors
+            // at max(base_ts) = 12:00, so the boundary is 11:00 and the 11:00/12:00
+            // buckets survive.
+            currentMicros = parseFloorPartialTimestamp("2024-09-11T00:00:00.000000Z");
+            execute("refresh materialized view price_1h full;");
+            drainQueues();
+
+            assertQueryNoLeakCheck(
+                    replaceExpectedTimestamp("""
+                            sym\tprice\tts
+                            gbpusd\t1.321\t2024-09-10T11:00:00.000000Z
+                            gbpusd\t1.322\t2024-09-10T12:00:00.000000Z
+                            """),
+                    "price_1h order by ts",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testRefreshLimitBoundaryWallClockEscapeHatch() throws Exception {
+        // Same stale-ingestion setup as testRefreshLimitBoundaryUsesMaxBaseTimestamp,
+        // but with the escape hatch on. The boundary reverts to the pre-frozen-zone
+        // formula (wallClock - LIMIT), so every row falls below the boundary.
+        setProperty(PropertyKey.CAIRO_MAT_VIEW_REFRESH_LIMIT_WALL_CLOCK_ENABLED, "true");
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table base_price (" +
+                            "  sym symbol, price double, ts #TIMESTAMP" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            execute(
+                    "insert into base_price(sym, price, ts) values ('gbpusd', 1.320, '2024-09-10T10:00')" +
+                            ",('gbpusd', 1.321, '2024-09-10T11:00')" +
+                            ",('gbpusd', 1.322, '2024-09-10T12:00')"
+            );
+            drainWalQueue();
+            execute(
+                    "create materialized view price_1h refresh manual deferred as " +
+                            "select sym, last(price) as price, ts from base_price sample by 1h;"
+            );
+            execute("alter materialized view price_1h set refresh limit 1 hour;");
+
+            currentMicros = parseFloorPartialTimestamp("2024-09-11T00:00:00.000000Z");
+            execute("refresh materialized view price_1h full;");
+            drainQueues();
+
+            assertQueryNoLeakCheck(
+                    "sym\tprice\tts\n",
+                    "price_1h order by sym, ts"
+            );
+        });
+    }
+
+    @Test
     public void testRefreshSkipsUnchangedBuckets() throws Exception {
         // Verify that incremental refresh skips unchanged SAMPLE BY buckets.
         assertMemoryLeak(() -> {

@@ -1568,6 +1568,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public boolean isMatViewRefreshLimitWallClockEnabled() {
+        return getDelegate().isMatViewRefreshLimitWallClockEnabled();
+    }
+
+    @Override
     public boolean isMatViewRefreshMissingWalFilesFatal() {
         return getDelegate().isMatViewRefreshMissingWalFilesFatal();
     }
