@@ -2668,6 +2668,21 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     public void publishAsyncWriterCommand(AsyncWriterCommand asyncWriterCommand) {
+        // A WAL table's structural ALTERs route through the sequencer, so only non-structural
+        // commands (e.g. storage policy) may reach its async command queue. Non-WAL tables can
+        // legitimately carry structural ALTERs here (published on writer contention). The WAL
+        // apply job drains this queue via tick() after each batch, so a structural command
+        // slipping in would be applied to the writer's metadata out of band with the sequencer,
+        // diverging the two and corrupting subsequent WAL transactions. Reject at publish time.
+        if (tableToken.isWal() && asyncWriterCommand.isStructural()) {
+            throw CairoException.critical(0)
+                    .put("structural command must not reach a WAL table's async command queue [table=")
+                    .put(tableToken.getTableName())
+                    .put(", cmdType=").put(asyncWriterCommand.getCmdType())
+                    .put(']');
+        }
+        // Mark command as being executed asynchronously, only after the invariant above holds.
+        asyncWriterCommand.startAsync();
         while (true) {
             long seq = commandPubSeq.next();
             if (seq > -1) {
@@ -2996,7 +3011,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 // when we rolled transaction back, hasO3() has to be false
                 o3MasterRef = -1;
                 LOG.info().$("tx rollback complete [table=").$(tableToken).I$();
-                processCommandQueue(false);
+                processCommandQueue(false, Long.MAX_VALUE);
                 metrics.tableWriterMetrics().incrementRollbacks();
             } catch (Throwable e) {
                 LOG.critical().$("could not perform rollback [table=").$(tableToken).$(", msg=").$(e).I$();
@@ -3305,9 +3320,23 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      *                                         structure changes like a column drop, rename
      */
     public void tick(boolean contextAllowsAnyStructureChanges) {
+        tick(contextAllowsAnyStructureChanges, Long.MAX_VALUE);
+    }
+
+    /**
+     * Processes writer command queue to execute writer async commands such as replication and table alters.
+     * Some tick calls can result into transaction commit.
+     *
+     * @param contextAllowsAnyStructureChanges If true accepts any Alter table command, if false does not accept significant table
+     *                                         structure changes like a column drop, rename
+     * @param deadlineMicros                   wall-clock deadline (microsecond clock) after which the drain stops and
+     *                                         leaves the remaining commands queued for the next tick. Use
+     *                                         {@link Long#MAX_VALUE} to drain the whole queue without a time bound.
+     */
+    public void tick(boolean contextAllowsAnyStructureChanges, long deadlineMicros) {
         // Some alter table trigger commit() which trigger tick()
         // If already inside the tick(), do not re-enter it.
-        processCommandQueue(contextAllowsAnyStructureChanges);
+        processCommandQueue(contextAllowsAnyStructureChanges, deadlineMicros);
     }
 
     @Override
@@ -6253,8 +6282,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private long getWalMaxLagRows() {
-        return Math.min(
-                Math.max(0L, (long) configuration.getWalLagRowsMultiplier() * metadata.getMaxUncommittedRows()),
+        return Math.clamp((long) configuration.getWalLagRowsMultiplier() * metadata.getMaxUncommittedRows(), 0L,
                 getWalMaxLagSize()
         );
     }
@@ -8412,6 +8440,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     .$(", cursor=").$(cursor)
                     .I$();
             asyncWriterCommand = asyncWriterCommand.deserialize(cmd);
+            // publishAsyncWriterCommand() rejects structural commands on a WAL table's async
+            // queue before they ever land here, so deserialized commands are known-safe. This
+            // assert is a redundant consumer-side check that the invariant still holds.
+            assert !tableToken.isWal() || !asyncWriterCommand.isStructural()
+                    : "structural command must not reach a WAL table's async command queue";
             affectedRowsCount = asyncWriterCommand.apply(this, contextAllowsAnyStructureChanges);
         } catch (TableReferenceOutOfDateException ex) {
             LOG.info()
@@ -8447,7 +8480,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         publishTableWriterEvent(cmdType, tableId, correlationId, errorCode, errorMsg, affectedRowsCount, TSK_COMPLETE);
     }
 
-    private void processCommandQueue(boolean contextAllowsAnyStructureChanges) {
+    private void processCommandQueue(boolean contextAllowsAnyStructureChanges, long deadlineMicros) {
         // In case processing of a queue calls rollback() on the writer
         // do not recursively start processing the queue again.
         if (!processingQueue) {
@@ -8458,6 +8491,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     if (cursor > -1) {
                         TableWriterTask cmd = commandQueue.get(cursor);
                         processCommandQueue(cmd, commandSubSeq, cursor, contextAllowsAnyStructureChanges);
+                        // Bound the drain so a backlog of expensive commands (partition squash,
+                        // parquet conversion, drop-local) cannot monopolize a shared apply worker.
+                        // The deadline is checked after processing one command, so the drain always
+                        // makes forward progress; whatever is left stays queued for the next tick.
+                        if (deadlineMicros != Long.MAX_VALUE && configuration.getMicrosecondClock().getTicks() >= deadlineMicros) {
+                            break;
+                        }
                     } else {
                         Os.pause();
                     }
@@ -10182,7 +10222,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
             final int rowGroupCount = parquetMetadata.getRowGroupCount();
             for (int rowGroupIndex = 0; rowGroupIndex < rowGroupCount; rowGroupIndex++) {
-                assert parquetMetadata.getRowGroupSize(rowGroupIndex) <= Integer.MAX_VALUE;
                 final long rowGroupRowCount = parquetFileDecoder.decodeRowGroup(
                         rowGroupBuffers,
                         parquetColumnIdsAndTypes,
