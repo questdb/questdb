@@ -13746,6 +13746,56 @@ public class CoveringIndexTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testFilterOnExcludedValuesThrowingFilterDoesNotLeakIndexReader() throws Exception {
+        // Regression: FilterOnExcludedValues opens per-symbol index cursors via
+        // HeapRowCursor.of(), whose first hasNext() evaluates the post-filter on each
+        // sub-cursor. When that filter throws (here, a DECIMAL scale-adjustment overflow
+        // on small < big), the singleton HeapRowCursor was left un-closed because
+        // PageFrameRecordCursorImpl.rowCursor never got assigned. The per-symbol index
+        // cursors then stayed outside the PostingIndexFwdReader.freeCursors pool and
+        // their block buffers leaked. The fix closes the row cursor factory from
+        // PageFrameRecordCursorImpl.close() so the singleton always cleans up.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_excl_leak (
+                        sym SYMBOL INDEX TYPE POSTING DELTA INCLUDE (v),
+                        small DECIMAL(38, 3),
+                        big DECIMAL(76, 2),
+                        v DOUBLE,
+                        ts TIMESTAMP
+                    ) TIMESTAMP(ts) PARTITION BY DAY WAL
+                    """);
+            // big holds the maximum value of DECIMAL(76, 2). Scaling it up by 10^1 to
+            // match small's scale overflows the 256-bit intermediate at filter time.
+            execute("""
+                    INSERT INTO t_excl_leak
+                    SELECT
+                        rnd_symbol('s0','s1','s2','s3','s4','s5','s6','s7',null),
+                        '1.000'::DECIMAL(38, 3),
+                        '99999999999999999999999999999999999999999999999999999999999999999999999999.99'::DECIMAL(76, 2),
+                        rnd_double(),
+                        timestamp_sequence(to_timestamp('2024-01-01', 'yyyy-MM-dd'), 1_800_000_000L)
+                    FROM long_sequence(120)
+                    """);
+            drainWalQueue();
+
+            // SELECT v (a column value) forces per-row materialization through the per-symbol
+            // cursors, so HeapRowCursor.of() evaluates the post-filter and throws on it.
+            Throwable caught = null;
+            try (RecordCursorFactory f = select(
+                    "SELECT v FROM t_excl_leak " +
+                            "WHERE NOT ((sym IN ('s7', null) OR small < big))");
+                 RecordCursor cursor = f.getCursor(sqlExecutionContext)) {
+                while (cursor.hasNext()) {
+                }
+            } catch (Throwable t) {
+                caught = t;
+            }
+            assertNotNull("expected DECIMAL scale-adjustment overflow", caught);
+        });
+    }
+
     private void assertPlanDoesNotContain(String query) throws SqlException {
         try (io.questdb.cairo.sql.RecordCursorFactory factory = select(query)) {
             planSink.clear();
