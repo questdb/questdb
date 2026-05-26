@@ -311,26 +311,18 @@ public class WindowLeadLagBenchmark {
 
     private Class<?> expectedFactory() {
         // Q10 (dual LAG ASC) always streams via the existing immediate-emit Window factory because
-        // LAG is ZERO_PASS + lookahead=0; the streaming flag doesn't change anything for it.
+        // both LAGs are ZERO_PASS + lookahead=0; no positive-lookahead function -> the deferred-emit
+        // dispatch doesn't apply.
         if ("Q10_DUAL_LAG".equals(shape)) {
             return WindowRecordCursorFactory.class;
         }
         if ("CACHED".equals(path)) {
-            // Flag off: every LEAD-bearing query routes through CachedWindow.
             return CachedWindowRecordCursorFactory.class;
         }
-        // STREAMING. Path depends on the shape.
-        return switch (shape) {
-            // Single-function streamable shapes.
-            case "S1_LEAD_NO_PARTITION",
-                 "S2_LAG_DESC_NO_PARTITION",
-                 "S3_LEAD_PARTITIONED",
-                 "S4_LAG_DESC_PARTITIONED" -> DeferredEmitWindowRecordCursorFactory.class;
-            // All Q-prefixed mixed/multi-LEAD shapes currently fall through to CachedWindow because
-            // the deferred-emit cursor requires exactly one window function. Phase 6 would change
-            // these expectations.
-            default -> CachedWindowRecordCursorFactory.class;
-        };
+        // STREAMING. With Phase 6, every shape that has at least one positive-lookahead function
+        // and where every window function's value fits in 8 bytes routes through DeferredEmit. All
+        // remaining shapes (S1-S4, Q1-Q9, Q11) qualify.
+        return DeferredEmitWindowRecordCursorFactory.class;
     }
 
     private void seedTable() throws SqlException {
