@@ -1518,7 +1518,7 @@ public class PostingIndexWriter implements IndexWriter {
             case ColumnType.BYTE, ColumnType.BOOLEAN, ColumnType.GEOBYTE, ColumnType.DECIMAL8 ->
                     CoveringCompressor.compressBytes(rawBuf, valueCount, destBuf, longWorkspaceAddr);
             default -> {
-                // Raw copy for remaining fixed-width types: UUID, LONG256, DECIMAL128/256
+                // Raw copy for remaining fixed-width types: LONG128, UUID, LONG256, DECIMAL128/256
                 Unsafe.putInt(destBuf, valueCount);
                 Unsafe.copyMemory(rawBuf, destBuf + 4, (long) valueCount << shift);
                 yield 4 + (valueCount << shift);
@@ -6366,6 +6366,9 @@ public class PostingIndexWriter implements IndexWriter {
             // O3 addr-based path: all addresses provided by caller, no per-column mapping needed
             ensureCoveredColumnReadMaps();
             for (int c = 0; c < coverCount; c++) {
+                if (coveredColumnIndices.getQuick(c) < 0) {
+                    continue;
+                }
                 writeSidecarForColumn(c, sc, siSize, totalCountsAddr, strideValsAddr, globalMaxKeyCount);
             }
         }
@@ -6406,6 +6409,9 @@ public class PostingIndexWriter implements IndexWriter {
         } else if (coveredColumnAddrs.size() > 0) {
             ensureCoveredColumnReadMaps();
             for (int c = 0; c < coverCount; c++) {
+                if (coveredColumnIndices.getQuick(c) < 0) {
+                    continue;
+                }
                 writeSidecarForColumnStreaming(c, sc, siSize, totalCountsAddr, keyBuffer, maxKeyCount, keyCounts);
             }
         }

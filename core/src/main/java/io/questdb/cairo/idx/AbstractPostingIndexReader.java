@@ -2312,6 +2312,8 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
                         CoveringCompressor.decompressShortsToAddr(blockAddr, colCacheAddrs[includeIdx], decodeWorkspaceAddr);
                 case ColumnType.BYTE, ColumnType.BOOLEAN, ColumnType.GEOBYTE, ColumnType.DECIMAL8 ->
                         CoveringCompressor.decompressBytesToAddr(blockAddr, colCacheAddrs[includeIdx], decodeWorkspaceAddr);
+                case ColumnType.LONG128, ColumnType.UUID, ColumnType.DECIMAL128, ColumnType.LONG256, ColumnType.DECIMAL256 ->
+                        Unsafe.copyMemory(blockAddr + 4, colCacheAddrs[includeIdx], (long) count * elemSize);
             }
             colCacheBlockAddrs[includeIdx] = blockAddr;
             return true;
