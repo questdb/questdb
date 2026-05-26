@@ -675,7 +675,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         }
     }
 
-    private static abstract class CoveringPageFrameCursor implements PageFrameCursor {
+    private static abstract class CoveringPageFrameCursor implements TablePageFrameCursor {
         private static final int INITIAL_CAPACITY = 4096;
         // Tracks all native allocations as (addr, size) pairs for bulk cleanup.
         // Each fillFrameForKey() call allocates fresh buffers so that
@@ -763,6 +763,11 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         }
 
         @Override
+        public TableReader getTableReader() {
+            return tableReader;
+        }
+
+        @Override
         public boolean isExternal() {
             return false;
         }
@@ -781,6 +786,12 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                 return null;
             }
             return nextImpl();
+        }
+
+        // Initialized via the package-private of(PartitionFrameCursor) below.
+        @Override
+        public TablePageFrameCursor of(SqlExecutionContext executionContext, PartitionFrameCursor partitionFrameCursor) {
+            throw new UnsupportedOperationException();
         }
 
         @Override

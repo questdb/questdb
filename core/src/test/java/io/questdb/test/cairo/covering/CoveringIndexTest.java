@@ -13796,6 +13796,65 @@ public class CoveringIndexTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testParallelKeyedGroupByOverCoveringIndexUnderSelectedRecord() throws Exception {
+        // Regression: a parallel keyed GROUP BY whose base is CoveringIndex wrapped by
+        // SelectedRecord (e.g. via a CTE) crashed with ClassCastException because
+        // CoveringPageFrameCursor was a plain PageFrameCursor while
+        // SelectedRecordCursorFactory casts to TablePageFrameCursor. The fix
+        // promotes CoveringPageFrameCursor to TablePageFrameCursor.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_bug9 (
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (k, v),
+                        k SYMBOL,
+                        v INT,
+                        ts TIMESTAMP
+                    ) TIMESTAMP(ts) PARTITION BY DAY WAL
+                    """);
+            execute("""
+                    INSERT INTO t_bug9 VALUES
+                        ('a', 'k1', 1, 0),
+                        ('b', 'k2', 2, 1_000_000),
+                        (null, 'k1', 3, 2_000_000),
+                        (null, 'k2', 4, 3_000_000),
+                        (null, 'k1', 5, 4_000_000)
+                    """);
+            drainWalQueue();
+
+            // The CTE introduces a SelectedRecord layer above the WHERE-driven
+            // CoveringIndex factory; the constant aggregate (avg(-1)) keeps the
+            // group-by on the Async (parallel) keyed path rather than the
+            // vectorised one.
+            String q = "WITH cte0 AS (SELECT * FROM t_bug9) "
+                    + "SELECT t0.k AS e0, avg(-1) AS a0 FROM cte0 t0 WHERE sym IS NULL "
+                    + "ORDER BY e0";
+            assertPlanNoLeakCheck(
+                    q,
+                    "Encode sort light\n" +
+                            "  keys: [e0]\n" +
+                            "    Async Group By workers: 1\n" +
+                            "      keys: [e0]\n" +
+                            "      values: [avg(-1)]\n" +
+                            "      filter: null\n" +
+                            "        SelectedRecord\n" +
+                            "            SelectedRecord\n" +
+                            "                CoveringIndex on: sym with: k\n" +
+                            "                  filter: sym=null\n"
+            );
+            assertQueryNoLeakCheck(
+                    "e0\ta0\n" +
+                            "k1\t-1.0\n" +
+                            "k2\t-1.0\n",
+                    q,
+                    null,
+                    null,
+                    true,
+                    true
+            );
+        });
+    }
+
     private void assertPlanDoesNotContain(String query) throws SqlException {
         try (io.questdb.cairo.sql.RecordCursorFactory factory = select(query)) {
             planSink.clear();
