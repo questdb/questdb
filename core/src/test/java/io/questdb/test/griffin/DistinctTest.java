@@ -211,6 +211,40 @@ public class DistinctTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDistinctConstAliasOrderByLimitWithDuplicateCol() throws Exception {
+        // Duplicate column refs trigger rewriteTrivialGroupByExpressions which used to push
+        // LIMIT past the virtual carrying the constant alias; ORDER BY e0 then resolved at the
+        // limited group-by and crashed with AIOOBE.
+        assertQuery(
+                "e0\te1\te4\n" +
+                        "-1\t3\t3\n" +
+                        "-1\t2\t2\n",
+                "SELECT DISTINCT -1 AS e0, t0.x AS e1, t0.x AS e4 FROM long_sequence(3) t0 ORDER BY e0 DESC LIMIT 2",
+                null,
+                true,
+                true
+        );
+    }
+
+    @Test
+    public void testDistinctConstAliasOrderByLimitFromFuzzer() throws Exception {
+        // Original failing query from the query fuzzer (seed s0=104514844543552, s1=1779785264959).
+        assertQuery(
+                "e0\te1\te2\te3\te4\n" +
+                        "-676\t36\t-97\t2024-01-23T16:57:00.000000Z\t36\n" +
+                        "-676\t26\t-97\t2024-01-23T16:57:00.000000Z\t26\n",
+                "SELECT DISTINCT -676 AS e0, t0.x AS e1, -97 AS e2," +
+                        " '2024-01-23T16:57:00.000000Z'::TIMESTAMP AS e3, t0.x AS e4" +
+                        " FROM long_sequence(73) t0" +
+                        " WHERE (t0.x > (t0.x - t0.x) AND t0.x IS NOT NULL)" +
+                        " ORDER BY e0 DESC LIMIT 2",
+                null,
+                true,
+                true
+        );
+    }
+
+    @Test
     public void testDuplicateColumnInWhereClauseSubQuery() throws Exception {
         assertQuery(
                 """

@@ -121,6 +121,10 @@ public class SqlOptimiser implements Mutable {
     public static final int REWRITE_STATUS_USE_OUTER_MODEL = 8;
     public static final int REWRITE_STATUS_USE_WINDOW_JOIN_MODE = 128;
     public static final int REWRITE_STATUS_USE_WINDOW_MODEL = 2;
+    private static final int JOIN_OP_AND = 2;
+    private static final int JOIN_OP_EQUAL = 1;
+    private static final int JOIN_OP_OR = 3;
+    private static final int JOIN_OP_REGEX = 4;
     // Rewriters that break the 1:1 relationship between baseModel rows and
     // the rows the outer LIMIT counts: DISTINCT and GROUP BY drop rows
     // (SAMPLE BY is encoded as GROUP BY); WINDOW preserves the count but
@@ -139,10 +143,6 @@ public class SqlOptimiser implements Mutable {
                     | REWRITE_STATUS_USE_GROUP_BY_MODEL
                     | REWRITE_STATUS_USE_HORIZON_JOIN_MODE
                     | REWRITE_STATUS_USE_WINDOW_MODEL;
-    private static final int JOIN_OP_AND = 2;
-    private static final int JOIN_OP_EQUAL = 1;
-    private static final int JOIN_OP_OR = 3;
-    private static final int JOIN_OP_REGEX = 4;
     private static final Log LOG = LogFactory.getLog(SqlOptimiser.class);
     private static final String LONG_MAX_VALUE_STR = "" + Long.MAX_VALUE;
     // Maximum depth of nested window functions (e.g., sum(sum(row_number() OVER ()) OVER ()) OVER () is 3 levels)
@@ -433,6 +433,17 @@ public class SqlOptimiser implements Mutable {
             }
         }
         return false;
+    }
+
+    private static boolean allColumnsPresentIn(IQueryModel src, IQueryModel target) {
+        final LowerCaseCharSequenceObjHashMap<QueryColumn> targetMap = target.getAliasToColumnMap();
+        final ObjList<QueryColumn> srcColumns = src.getBottomUpColumns();
+        for (int i = 0, n = srcColumns.size(); i < n; i++) {
+            if (!targetMap.contains(srcColumns.getQuick(i).getAlias())) {
+                return false;
+            }
+        }
+        return true;
     }
 
     private static boolean columnNotExistsInJoinModels(IQueryModel baseModel, CharSequence columnName) {
@@ -1682,7 +1693,6 @@ public class SqlOptimiser implements Mutable {
                 } else {
                     addOuterJoinExpression(parent, joinModel, joinIndex, node);
                 }
-
                 break;
         }
     }
@@ -10339,9 +10349,11 @@ public class SqlOptimiser implements Mutable {
     }
 
     /**
-     * Looks for models with trivial expressions over the same column, and lifts them from the group by.
+     * Lifts trivial expressions such as {@code A + 1} out of a GROUP BY when several keys share
+     * the same underlying column. Triggered when a VIRTUAL wraps a single-join, non-union,
+     * non-sample-by GROUP BY.
      * <p>
-     * For now, this rewrite is very specific and only kicks in for queries similar to ClickBench's Q35:
+     * Inspired by ClickBench Q35:
      * <pre>
      * SELECT ClientIP, ClientIP - 1, ClientIP - 2, ClientIP - 3, COUNT(*) AS c
      * FROM hits
@@ -10349,25 +10361,30 @@ public class SqlOptimiser implements Mutable {
      * ORDER BY c DESC
      * LIMIT 10;
      * </pre>
-     * The above query gets effectively rewritten into:
-     * <p>
-     * SELECT ClientIP, ClientIP - 1, COUNT(*) AS c<br>
-     * FROM (<br>
-     * SELECT ClientIP, COUNT() c<br>
-     * FROM hits <br>
-     * ORDER BY c DESC<br>
-     * LIMIT 10<br>
-     * )
+     * After parsing, the model tree wraps the GROUP BY (with all four keys) in an outer VIRTUAL.
+     * The four keys all derive from {@code ClientIP}, so grouping by them produces the same set
+     * of groups as grouping by {@code ClientIP} alone with the offsets recomputed in the
+     * projection. This method removes the redundant keys from the GROUP BY and moves the
+     * surviving expressions up to the VIRTUAL:
      * <pre>
-     * SELECT ClientIP, ClientIP - 1, ClientIP - 2, ClientIP - 3, c
+     * SELECT ClientIP, ClientIP - 1, ClientIP - 2, ClientIP - 3, c   -- outer VIRTUAL recomputes the offsets
      * FROM (
-     *   SELECT ClientIP, COUNT(*) AS c
+     *   SELECT ClientIP, COUNT(*) AS c                               -- inner GROUP BY keys on ClientIP only
      *   FROM hits
      *   GROUP BY ClientIP
      *   ORDER BY c DESC
      *   LIMIT 10
      * );
      * </pre>
+     * Detection: for each nested GROUP BY column take its base token - either the literal itself
+     * or the column inside a trivial two-arg operation like {@code A + k} or {@code k + A} - and
+     * lift candidates whose base appears more than once.
+     * <p>
+     * LIMIT interaction: when the outer VIRTUAL has a LIMIT and the nested GROUP BY does not,
+     * push the LIMIT down so the group-by factory can report a bounded cursor size. The push
+     * is gated on the VIRTUAL exposing no columns beyond the GROUP BY's output; otherwise an
+     * ORDER BY resolving against a virtual-only alias (such as a folded constant after DISTINCT)
+     * would attach to the limited GROUP BY and fail to resolve at code-generation time.
      */
     private void rewriteTrivialGroupByExpressions(IQueryModel model) throws SqlException {
         if (model == null || !model.isOptimisable()) {
@@ -10448,10 +10465,14 @@ public class SqlOptimiser implements Mutable {
                     }
                 }
 
-                // If limit is on the virtual model, push it down to the group by.
+                // Push limit from virtual down to group by only if every virtual column has a
+                // matching group-by output. Otherwise, a later ORDER BY by a virtual-only alias
+                // (e.g. a folded constant after DISTINCT) attaches to the limited group-by and
+                // dangles.
                 final ExpressionNode lo = model.getLimitLo();
                 final ExpressionNode hi = model.getLimitHi();
-                if (lo != null && nestedModel.getLimitLo() == null && nestedModel.getLimitHi() == null) {
+                if (lo != null && nestedModel.getLimitLo() == null && nestedModel.getLimitHi() == null
+                        && allColumnsPresentIn(model, nestedModel)) {
                     nestedModel.setLimit(lo, hi);
                     model.setLimit(null, null);
                 }
