@@ -79,12 +79,12 @@ class EncodedSortRecordCursor implements DelegatingRecordCursor {
             );
             this.parallelThreshold = configuration.getSqlSortEncodedParallelThreshold();
             final long valuePageSize = configuration.getSqlSortValuePageSize();
-            final long valueMaxPagesByBytes = Math.max(1L, configuration.getSqlSortValueMaxBytes() / valuePageSize);
+            final long valueMaxPagesFromBytes = Math.max(1L, configuration.getSqlSortValueMaxBytes() / valuePageSize);
             this.recordChain = new RecordChain(
                     metadata,
                     recordSink,
                     valuePageSize,
-                    (int) Math.min(valueMaxPagesByBytes, Integer.MAX_VALUE),
+                    (int) Math.min(valueMaxPagesFromBytes, Integer.MAX_VALUE),
                     PropertyKey.CAIRO_SQL_SORT_VALUE_MAX_BYTES.getPropertyPath()
             );
             this.isOpen = true;
@@ -195,7 +195,7 @@ class EncodedSortRecordCursor implements DelegatingRecordCursor {
                             .put("limit of ").put(maxEntryMemBytes)
                             .put(" memory exceeded in EncodedSort (raise ")
                             .put(PropertyKey.CAIRO_SQL_SORT_KEY_MAX_BYTES.getPropertyPath())
-                            .put(" to increase)");
+                            .put(')');
                 }
                 entryMem.setCapacity(estimatedSize * longsPerEntry);
             }
@@ -220,7 +220,7 @@ class EncodedSortRecordCursor implements DelegatingRecordCursor {
                             .put("limit of ").put(maxEntryMemBytes)
                             .put(" memory exceeded in EncodedSort (raise ")
                             .put(PropertyKey.CAIRO_SQL_SORT_KEY_MAX_BYTES.getPropertyPath())
-                            .put(" to increase)");
+                            .put(')');
                     }
                     long chainOffset = recordChain.put(record, -1L);
                     entryMem.ensureCapacity(longsPerEntry);

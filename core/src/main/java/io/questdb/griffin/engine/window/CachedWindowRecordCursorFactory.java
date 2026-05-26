@@ -89,8 +89,8 @@ public class CachedWindowRecordCursorFactory extends AbstractRecordCursorFactory
             this.orderedFunctions = orderedFunctions;
             this.comparators = comparators;
             final long cachePageSize = configuration.getSqlWindowStorePageSize();
-            final long cacheMaxPagesByBytes = Math.max(1L, configuration.getSqlWindowCacheMaxBytes() / cachePageSize);
-            final int cacheMaxPages = (int) Math.min(cacheMaxPagesByBytes, configuration.getSqlWindowStoreMaxPages());
+            final long cacheMaxPagesFromBytes = Math.max(1L, configuration.getSqlWindowCacheMaxBytes() / cachePageSize);
+            final int cacheMaxPages = (int) Math.min(cacheMaxPagesFromBytes, configuration.getSqlWindowStoreMaxPages());
             RecordArray recordChain = new RecordArray(
                     chainTypes,
                     recordSink,

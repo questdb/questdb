@@ -175,7 +175,7 @@ public class LongTreeChain extends AbstractRedBlackTree implements Reopenable {
             if (newHeapSize > maxValueHeapSize) {
                 throw LimitOverflowException.instance()
                         .put("limit of ").put(maxValueHeapSize)
-                        .put(" memory exceeded in LongTreeChain (raise ").put(valueHeapConfigKey).put(" to increase)");
+                        .put(" memory exceeded in LongTreeChain (raise ").put(valueHeapConfigKey).put(')');
             }
             long newHeapPos = Unsafe.realloc(valueHeapStart, valueHeapSize, newHeapSize, MemoryTag.NATIVE_TREE_CHAIN);
 

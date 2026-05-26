@@ -113,7 +113,7 @@ public class MemoryPages implements Closeable, Mutable, Reopenable {
             LimitOverflowException ex = LimitOverflowException.instance();
             ex.put("Maximum number of pages (").put(maxPages).put(") breached in MemoryPages");
             if (maxPagesConfigKey != null) {
-                ex.put(" (raise ").put(maxPagesConfigKey).put(" to increase)");
+                ex.put(" (raise ").put(maxPagesConfigKey).put(')');
             }
             throw ex;
         }

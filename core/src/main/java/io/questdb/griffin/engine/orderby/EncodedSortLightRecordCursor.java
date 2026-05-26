@@ -179,7 +179,7 @@ class EncodedSortLightRecordCursor implements DelegatingRecordCursor {
                             .put(PropertyKey.CAIRO_SQL_SORT_KEY_MAX_BYTES.getPropertyPath())
                             .put(" or ")
                             .put(PropertyKey.CAIRO_SQL_SORT_LIGHT_VALUE_MAX_BYTES.getPropertyPath())
-                            .put(" to increase)");
+                            .put(')');
                 }
                 entryMem.setCapacity(estimatedSize * longsPerEntry);
             }
@@ -205,7 +205,7 @@ class EncodedSortLightRecordCursor implements DelegatingRecordCursor {
                             .put(PropertyKey.CAIRO_SQL_SORT_KEY_MAX_BYTES.getPropertyPath())
                             .put(" or ")
                             .put(PropertyKey.CAIRO_SQL_SORT_LIGHT_VALUE_MAX_BYTES.getPropertyPath())
-                            .put(" to increase)");
+                            .put(')');
                     }
                     entryMem.ensureCapacity(longsPerEntry);
                     long addr = entryMem.getAppendAddress();

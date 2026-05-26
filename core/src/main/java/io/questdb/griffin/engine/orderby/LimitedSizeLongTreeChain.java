@@ -362,7 +362,7 @@ public class LimitedSizeLongTreeChain extends AbstractRedBlackTree implements Re
             if (newHeapSize > maxValueHeapSize) {
                 throw LimitOverflowException.instance()
                         .put("limit of ").put(maxValueHeapSize)
-                        .put(" memory exceeded in LimitedSizeLongTreeChain (raise ").put(valueHeapConfigKey).put(" to increase)");
+                        .put(" memory exceeded in LimitedSizeLongTreeChain (raise ").put(valueHeapConfigKey).put(')');
             }
             long newHeapPos = Unsafe.realloc(valueHeapStart, valueHeapSize, newHeapSize, MemoryTag.NATIVE_TREE_CHAIN);
 
