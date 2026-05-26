@@ -615,6 +615,18 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
     }
 
+    /**
+     * Approximate REFRESH LIMIT duration in microseconds. Positive value means hours,
+     * negative means months. Months are approximated as 30 days. Used only for ordering
+     * (warning emission), never for refresh boundary computation.
+     */
+    private static long approxRefreshLimitMicros(int hoursOrMonths) {
+        if (hoursOrMonths > 0) {
+            return hoursOrMonths * 3_600L * 1_000_000L;
+        }
+        return -hoursOrMonths * 30L * 86_400L * 1_000_000L;
+    }
+
     // returns number of copied rows
     private static long copyOrderedBatched0(
             SqlExecutionContext context,
@@ -2070,6 +2082,23 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                         // SET REFRESH LIMIT
                         executionContext.getSecurityContext().authorizeAlterMatViewSetRefreshLimit(matViewToken);
                         final int limitHoursOrMonths = SqlParser.parseTtlHoursOrMonths(lexer);
+                        // Warn when the new limit removes or shrinks the managed zone (boundary
+                        // shifts further into the past). Previously-managed buckets now turn
+                        // frozen and stop being refreshed -- their last-computed values stay
+                        // put, which may surprise the user who assumed continuing refresh.
+                        // Removal (limitHoursOrMonths == 0) is the same warning + the FULL/FULL
+                        // FORCE distinction collapses (no frozen zone means plain FULL also
+                        // wipes).
+                        final MatViewDefinition existing = engine.getMatViewGraph().getViewDefinition(matViewToken);
+                        if (existing != null) {
+                            final int oldLimit = existing.getRefreshLimitHoursOrMonths();
+                            if (oldLimit != 0 && (limitHoursOrMonths == 0 || approxRefreshLimitMicros(limitHoursOrMonths) < approxRefreshLimitMicros(oldLimit))) {
+                                LOG.advisory().$("REFRESH LIMIT shrink or remove on materialized view [view=").$(matViewToken)
+                                        .$(", from=").$(oldLimit)
+                                        .$(", to=").$(limitHoursOrMonths)
+                                        .$("]; previously-managed buckets are now frozen and will stop being refreshed").$();
+                            }
+                        }
                         final AlterOperationBuilder setRefreshLimit = alterOperationBuilder.ofSetMatViewRefreshLimit(
                                 matViewNamePosition,
                                 matViewToken,
