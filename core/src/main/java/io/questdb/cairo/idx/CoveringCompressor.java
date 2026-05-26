@@ -799,8 +799,8 @@ public class CoveringCompressor {
                     SHORT_HEADER_SIZE + BitpackUtils.packedDataSize(count, 16);
             case ColumnType.BYTE, ColumnType.BOOLEAN, ColumnType.GEOBYTE, ColumnType.DECIMAL8 ->
                     BYTE_HEADER_SIZE + BitpackUtils.packedDataSize(count, 8);
-            case ColumnType.LONG128, ColumnType.UUID, ColumnType.DECIMAL128, ColumnType.LONG256, ColumnType.DECIMAL256 ->
-                    4 + count * ColumnType.sizeOf(columnType);
+            case ColumnType.LONG128, ColumnType.UUID, ColumnType.DECIMAL128, ColumnType.LONG256,
+                 ColumnType.DECIMAL256 -> 4 + count * ColumnType.sizeOf(columnType);
             default -> throw new AssertionError("maxCompressedSize: unsupported column type " + columnType);
         };
     }
