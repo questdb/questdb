@@ -49,11 +49,13 @@ import org.jetbrains.annotations.Nullable;
  */
 public class UnorderedPageFrameReduceJob implements Job, QuietCloseable {
     private static final Log LOG = LogFactory.getLog(UnorderedPageFrameReduceJob.class);
+    private final CairoEngine engine;
     private final MessageBus messageBus;
     private SqlExecutionCircuitBreakerWrapper circuitBreaker;
     private PageFrameMemoryRecord record;
 
     public UnorderedPageFrameReduceJob(CairoEngine engine, MessageBus messageBus) {
+        this.engine = engine;
         this.messageBus = messageBus;
         this.record = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_A_LETTER);
         this.circuitBreaker = new SqlExecutionCircuitBreakerWrapper(engine, engine.getConfiguration().getCircuitBreakerConfiguration());
@@ -73,9 +75,19 @@ public class UnorderedPageFrameReduceJob implements Job, QuietCloseable {
     }
 
     @Override
+    public Job cloneInstance() {
+        return new UnorderedPageFrameReduceJob(engine, messageBus);
+    }
+
+    @Override
     public void close() {
         circuitBreaker = Misc.free(circuitBreaker);
         record = Misc.free(record);
+    }
+
+    @Override
+    public void recycleInstance() {
+        record.clear();
     }
 
     @Override

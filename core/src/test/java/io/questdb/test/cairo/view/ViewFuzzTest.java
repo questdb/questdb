@@ -214,7 +214,7 @@ public class ViewFuzzTest extends AbstractFuzzTest {
                     try {
                         try (ViewCompilerJob job = new ViewCompilerJob(workerId, engine, 0)) {
                             while (!stop.get()) {
-                                job.run(workerId);
+                                job.run(0);
                                 Os.sleep(rnd.nextInt(50));
                             }
 
@@ -222,7 +222,7 @@ public class ViewFuzzTest extends AbstractFuzzTest {
                             try (ApplyWal2TableJob walApplyJob = createWalApplyJob()) {
                                 do {
                                     drainWalQueue(walApplyJob, engine);
-                                } while (job.run(workerId));
+                                } while (job.run(0));
                             }
                         }
                     } catch (Throwable throwable) {

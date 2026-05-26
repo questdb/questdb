@@ -29,13 +29,13 @@ import io.questdb.cairo.wal.WalUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.AbstractQueueConsumerJob;
+import io.questdb.mp.Job;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
-import io.questdb.std.ObjList;
 import io.questdb.std.Vect;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.str.Path;
@@ -54,36 +54,51 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
     private final static Log LOG = LogFactory.getLog(O3PartitionPurgeJob.class);
     private final CairoConfiguration configuration;
     private final CairoEngine engine;
-    private final Utf8StringSink[] fileNameSinks;
+    private final Utf8StringSink fileNameSink;
     private final AtomicBoolean halted = new AtomicBoolean(false);
-    private final ObjList<DirectLongList> partitionList;
-    private final ObjList<TxReader> txnReaders;
+    private final DirectLongList partitionList;
+    private final TxReader txnReader;
 
-    public O3PartitionPurgeJob(CairoEngine engine, int workerCount) {
+    public O3PartitionPurgeJob(CairoEngine engine) {
         super(engine.getMessageBus().getO3PurgeDiscoveryQueue(), engine.getMessageBus().getO3PurgeDiscoverySubSeq());
         try {
             this.engine = engine;
             this.configuration = engine.getMessageBus().getConfiguration();
-            this.fileNameSinks = new Utf8StringSink[workerCount];
-            this.partitionList = new ObjList<>(workerCount);
-            this.txnReaders = new ObjList<>(workerCount);
-
-            for (int i = 0; i < workerCount; i++) {
-                fileNameSinks[i] = new Utf8StringSink();
-                partitionList.add(new DirectLongList(configuration.getPartitionPurgeListCapacity() * 2L, MemoryTag.NATIVE_O3));
-                txnReaders.add(new TxReader(configuration.getFilesFacade()));
-            }
+            // Single-instance per-iteration scratch. Under continuation rotation
+            // the framework mints a fresh instance per snapshot via
+            // cloneInstance(); concurrent access to this instance's scratch
+            // is therefore impossible.
+            this.fileNameSink = new Utf8StringSink();
+            this.partitionList = new DirectLongList(
+                    configuration.getPartitionPurgeListCapacity() * 2L,
+                    MemoryTag.NATIVE_O3
+            );
+            this.txnReader = new TxReader(configuration.getFilesFacade());
         } catch (Throwable th) {
             close();
             throw th;
         }
     }
 
+    /**
+     * Legacy constructor kept for callers that still pass a workerCount
+     * (pool-sizing hint). The hint is ignored; per-iteration scratch is
+     * single-instance now.
+     */
+    public O3PartitionPurgeJob(CairoEngine engine, int workerCount) {
+        this(engine);
+    }
+
+    @Override
+    public Job cloneInstance() {
+        return new O3PartitionPurgeJob(engine);
+    }
+
     @Override
     public void close() {
         if (halted.compareAndSet(false, true)) {
-            Misc.freeObjList(partitionList);
-            Misc.freeObjList(txnReaders);
+            Misc.free(partitionList);
+            Misc.free(txnReader);
         }
     }
 
@@ -449,11 +464,11 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
         final O3PartitionPurgeTask task = queue.get(cursor);
         discoverPartitions(
                 configuration.getFilesFacade(),
-                fileNameSinks[workerId],
-                partitionList.get(workerId),
+                fileNameSink,
+                partitionList,
                 configuration.getDbRoot(),
                 task.getTableToken(),
-                txnReaders.get(workerId),
+                txnReader,
                 task.getTimestampType(),
                 task.getPartitionBy()
         );

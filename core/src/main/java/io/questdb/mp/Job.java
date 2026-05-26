@@ -31,6 +31,33 @@ public interface Job {
     RunStatus RUNNING_STATUS = () -> false;
     RunStatus TERMINATING_STATUS = () -> true;
 
+    /**
+     * Produces a Job instance safe to use concurrently with the receiver on a
+     * different OS thread. The framework calls this on each Job in a worker's
+     * current generation when a continuation suspends mid-iteration, so the
+     * fresh generation that A's next continuation runs shares no mutable state
+     * with the parked generation that may later resume on a peer carrier.
+     * <p>
+     * Default returns {@code this}. Correct only for stateless Jobs whose
+     * mutable state is limited to engine-level shared collaborators
+     * (e.g., {@code CairoEngine}, {@code MessageBus}, {@code CairoConfiguration})
+     * that are themselves concurrency-safe.
+     * <p>
+     * Contract for overrides:
+     * <ul>
+     *   <li>MUST allocate a brand new instance (or return one previously
+     *       released via {@link #recycleInstance()}). MUST NOT alias any
+     *       mutable field of the receiver.</li>
+     *   <li>MAY reuse references to engine-level shared collaborators.</li>
+     *   <li>A pooled instance must be indistinguishable from a freshly
+     *       constructed one; {@code recycleInstance()} is responsible for
+     *       the reset before the instance returns to the pool.</li>
+     * </ul>
+     */
+    default Job cloneInstance() {
+        return this;
+    }
+
     default void drain(int workerId) {
         while (true) {
             if (!run(workerId)) {
@@ -40,10 +67,38 @@ public interface Job {
     }
 
     /**
+     * Per-iteration scratch reset hook. The framework calls this when a
+     * continuation snapshot containing this instance completes, before the
+     * snapshot is returned to the worker's snapshot pool for reuse.
+     * <p>
+     * Default is a no-op. Correct for stateless Jobs and for Jobs whose
+     * per-iteration state is fully reinitialized on entry to {@link #run}.
+     * <p>
+     * Contract for overrides:
+     * <ul>
+     *   <li>MUST clear every per-iteration mutable field so the next reuse
+     *       starts clean.</li>
+     *   <li>MUST NOT close or release engine-level shared collaborators.</li>
+     *   <li>MUST be safe to call from any worker's outer driver.</li>
+     *   <li>MUST NOT throw; the framework drops misbehaving snapshots silently.</li>
+     * </ul>
+     */
+    default void recycleInstance() {
+    }
+
+    /**
      * Runs and returns true if it should be rescheduled ASAP.
+     * <p>
+     * {@code workerId} is the calling carrier's globally-unique id (see
+     * {@link io.questdb.mp.CarrierIdentity}). Unlike the legacy pool-local
+     * worker index, ids do NOT overlap across pools: shared:0 and io:0 carriers
+     * receive distinct ids. The {@link Worker} loop body fills this argument
+     * with {@code CarrierIdentity.current()} at every call site.
      *
-     * @param workerId  worker id
-     * @param runStatus set to 1 when job is running, 2 when it is halting
+     * @param workerId  caller's carrier id; unique across the JVM for a given
+     *                  carrier's bound lifetime
+     * @param runStatus signals lifecycle: terminating when the worker pool
+     *                  is halting
      * @return true if job should be rescheduled ASAP
      */
     boolean run(int workerId, @NotNull RunStatus runStatus);
@@ -51,7 +106,7 @@ public interface Job {
     /**
      * Runs and returns true if it should be rescheduled ASAP.
      *
-     * @param workerId worker id
+     * @param workerId caller's carrier id; unique across the JVM
      * @return true if job should be rescheduled ASAP
      */
     default boolean run(int workerId) {

@@ -112,7 +112,6 @@ class LineTcpNetworkIOJob implements NetworkIOJob {
 
     @Override
     public boolean run(int workerId, @NotNull RunStatus runStatus) {
-        assert this.workerId == workerId;
         boolean busy = false;
         if (busyContext != null) {
             if (handleIO(busyContext, dispatcher)) {

@@ -24,7 +24,9 @@
 
 package io.questdb.mp.continuation;
 
+import io.questdb.mp.Job;
 import io.questdb.std.CarrierLocal;
+import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
 import jdk.internal.vm.Continuation;
 import jdk.internal.vm.ContinuationScope;
@@ -57,6 +59,12 @@ public final class WorkerContinuation {
     // called run(); the yield/run boundary supplies the memory fence, so no
     // volatile is needed.
     private WorkerContinuation handoff;
+    // Snapshot of the worker's job generation that the body inside this cont is
+    // iterating. Attached by the outer driver before run() and read after the
+    // cont becomes done so the framework can call recycleInstance() on each
+    // stateful Job. Single-writer-during-mount / single-reader-after-unmount,
+    // same fence reasoning as {@link #handoff}.
+    private ObjList<Job> jobs;
     // Set (1) when a body called suspend() but the JDK refused the yield AND a
     // scheduleResume has already pushed this cont onto its pool's resume queue
     // (i.e. a phantom entry exists). The cont is still mounted on the carrier
@@ -106,6 +114,17 @@ public final class WorkerContinuation {
      */
     public static boolean suspend() {
         return Continuation.yield(SCOPE);
+    }
+
+    /**
+     * Attach the worker's job-generation snapshot that the body inside this
+     * cont is iterating. The outer driver calls this before {@link #run()}.
+     * On cont completion the framework reads the snapshot via
+     * {@link #takeJobs()} and calls {@link Job#recycleInstance()} on each
+     * entry so stateful instances return to their class pools.
+     */
+    public void attachJobs(ObjList<Job> jobs) {
+        this.jobs = jobs;
     }
 
     /**
@@ -203,5 +222,16 @@ public final class WorkerContinuation {
         WorkerContinuation h = handoff;
         handoff = null;
         return h;
+    }
+
+    /**
+     * Read and clear the attached job-generation snapshot. Called by the
+     * framework after {@link #run()} returns with {@link #isDone()} true so
+     * stateful Jobs in the snapshot can be recycled to their class pools.
+     */
+    public ObjList<Job> takeJobs() {
+        ObjList<Job> j = jobs;
+        jobs = null;
+        return j;
     }
 }

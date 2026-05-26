@@ -83,7 +83,6 @@ class LineTcpLegacyWriterJob implements Job, Closeable {
 
     @Override
     public boolean run(int workerId, @NotNull RunStatus runStatus) {
-        assert this.workerId == workerId;
         boolean busy = drainQueue();
         // while ILP is hammering the database via multiple connections the writer
         // is likely to be very busy so commitTables() will run infrequently

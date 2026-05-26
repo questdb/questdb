@@ -30,6 +30,7 @@ import io.questdb.mp.continuation.ContinuationQueue;
 import io.questdb.mp.continuation.WorkerContinuation;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjHashSet;
+import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.Clock;
@@ -60,11 +61,6 @@ public class Worker extends Thread {
     private final ObjHashSet<? extends Job> jobs;
     private final AtomicReference<WorkerLifecycle> lifecycle = new AtomicReference<>(WorkerLifecycle.BORN);
     private final Log log;
-    // Bound method reference reused for every WorkerContinuation in the outer
-    // driver loop. Avoids a fresh `this::loopBody` lambda allocation per yield
-    // episode; the Continuation and its native stack chunk are still allocated
-    // per iteration because the JDK API does not expose a reset.
-    private final Runnable loopBodyRef = this::loopBody;
     private final Metrics metrics;
     private final long napThreshold;
     private final OnHaltAction onHaltAction;
@@ -72,6 +68,12 @@ public class Worker extends Thread {
     private final Job.RunStatus runStatus = () -> lifecycle.get() == WorkerLifecycle.HALTED;
     private final long sleepMs;
     private final long sleepThreshold;
+    // Per-worker pool of recycled job-generation snapshots. Touched only by
+    // this worker's outer driver, so no synchronization is needed. A snapshot
+    // is pushed here by recycleSnapshot() after a cont becomes done and
+    // popped by mintNextGen() on the next suspend. Pool size converges to the
+    // workload's concurrent-suspend high-water mark; empty on cold start.
+    private final ObjList<ObjList<Job>> snapshotPool = new ObjList<>();
     private final int workerId;
     private final long yieldThreshold;
 
@@ -88,7 +90,7 @@ public class Worker extends Thread {
             long sleepThreshold,
             long sleepMs,
             Metrics metrics,
-            ContinuationQueue continuationQueue,
+            @Nullable ContinuationQueue continuationQueue,
             @Nullable Log log
     ) {
         assert yieldThreshold > 0L;
@@ -168,10 +170,28 @@ public class Worker extends Thread {
                     }
                 }
 
+                ObjList<Job> currentJobsGen = buildInitialGeneration(jobs);
+                if (continuationQueue == null) {
+                    // Legacy pool: no continuation wrapping. Workers iterate
+                    // their job set directly, never park, never clone. workerId
+                    // identity is stable for the worker's lifetime.
+                    loopBody(currentJobsGen);
+                    return;
+                }
+
                 // Outer driver: this thread is NOT carrying any cont here.
                 //
+                // currentJobsGen is the worker's current job generation: gen-0 is the
+                // registered Job instances; subsequent generations are minted by
+                // mintNextGen() when a body suspends mid-iteration. The captured
+                // cont keeps its own snapshot via the lambda's effectively-final
+                // capture and via WorkerContinuation.attachJobs(); the framework
+                // calls recycleInstance() on each Job in the snapshot when the
+                // cont completes.
+                //
                 // Each iteration:
-                //   1. Build and run a fresh worker-loop continuation.
+                //   1. Build and run a fresh worker-loop continuation over the
+                //      current generation.
                 //   2. After every run() return, read the cont's handoff slot. The
                 //      body writes the slot just before suspending if it dequeued
                 //      a parked cont; we then remount that cont here. A remounted
@@ -191,11 +211,17 @@ public class Worker extends Thread {
                 // to per-mount state must travel with the cont, not be aliased to
                 // a specific Worker instance.
                 while (lifecycle.get() == WorkerLifecycle.RUNNING) {
-                    WorkerContinuation cont = new WorkerContinuation(loopBodyRef, continuationQueue);
+                    final ObjList<Job> jobsForThisCont = currentJobsGen;
+                    WorkerContinuation cont = new WorkerContinuation(
+                            () -> loopBody(jobsForThisCont),
+                            continuationQueue
+                    );
+                    cont.attachJobs(jobsForThisCont);
                     cont.run();
                     if (cont.isDone()) {
                         // loopBody returned, which only happens when this worker
                         // observed lifecycle HALTED. Exit the pool.
+                        recycleJobList(cont);
                         return;
                     }
                     // Walk the handoff chain. Each parked body, just before yielding,
@@ -214,14 +240,19 @@ public class Worker extends Thread {
                         WorkerContinuation handoff = cont.takeHandoff();
                         if (handoff == null) {
                             // Body parked deep inside a job (no dequeue this turn).
-                            // The next outer iteration's fresh cont is enough;
-                            // whoever fires the parked cont will push it onto the
-                            // queue and a worker will dequeue it.
+                            // Our cont retains the current generation in its snapshot;
+                            // mint a fresh generation so the next outer iteration's
+                            // cont runs on instances that share no state with the
+                            // parked one. Stateless slots return the same singleton
+                            // from cloneInstance(); stateful slots return fresh or
+                            // pooled instances.
+                            currentJobsGen = mintNextGen(currentJobsGen);
                             break;
                         }
                         cont = handoff;
                         mountForeignCont(cont);
                         if (cont.isDone()) {
+                            recycleJobList(cont);
                             break;
                         }
                     }
@@ -271,9 +302,13 @@ public class Worker extends Thread {
      * may be remounted on a peer carrier, and any per-mount writes need to
      * travel with the cont rather than be aliased to a specific Worker.
      */
-    private void loopBody() {
-        WorkerContinuation self = WorkerContinuation.current();
-        ContinuationQueue.ResumeTask scratchResumeTask = new ContinuationQueue.ResumeTask();
+    private void loopBody(ObjList<Job> myJobs) {
+        // On legacy pools continuationQueue is null and no cont is mounted; the
+        // dequeue/suspend block below is skipped. self stays null in that case.
+        WorkerContinuation self = continuationQueue != null ? WorkerContinuation.current() : null;
+        ContinuationQueue.ResumeTask scratchResumeTask = continuationQueue != null
+                ? new ContinuationQueue.ResumeTask()
+                : null;
         long ticker = 0L;
         // Throttle: log a refused yield at most once per
         // YIELD_REFUSED_LOG_INTERVAL_MICROS. A successful suspend resets the
@@ -283,10 +318,11 @@ public class Worker extends Thread {
             boolean runAsap = false;
             // measure latency of all jobs tick
             jobStartMicros.lazySet(CLOCK_MICROS.getTicks());
-            for (int i = 0, n = jobs.size(); i < n; i++) {
+            final int carrierId = CarrierIdentity.current();
+            for (int i = 0, n = myJobs.size(); i < n; i++) {
                 Unsafe.loadFence();
                 try {
-                    runAsap |= jobs.get(i).run(workerId, runStatus);
+                    runAsap |= myJobs.get(i).run(carrierId, runStatus);
                 } catch (Throwable e) {
                     if (metrics.isEnabled()) {
                         try {
@@ -296,7 +332,7 @@ public class Worker extends Thread {
                         }
                     }
                     if (log != null) {
-                        log.critical().$("unhandled error [job=").$(jobs.get(i).toString()).$(", ex=").$(e).I$();
+                        log.critical().$("unhandled error [job=").$(myJobs.get(i).toString()).$(", ex=").$(e).I$();
                     } else {
                         stdErrCritical(e); // log regardless
                     }
@@ -313,37 +349,40 @@ public class Worker extends Thread {
             // lose the race (tryDequeue returns null) keep running their own
             // jobs. ConcurrentQueue tryDequeue on an empty queue is a couple of
             // volatile reads, cheap enough to do every iteration without a hint.
-            WorkerContinuation toResume = continuationQueue.tryDequeue(scratchResumeTask);
-            if (toResume != null) {
-                self.setHandoff(toResume);
-                if (!WorkerContinuation.suspend()) {
-                    // Yield refused (carrier pinned). We can't escape this cont
-                    // to mount the dequeued one. Re-queue it so a peer worker
-                    // can pick it up, and continue the loop.
-                    long now = CLOCK_MICROS.getTicks();
-                    if (now >= nextYieldRefusedLogMicros) {
-                        nextYieldRefusedLogMicros = now + YIELD_REFUSED_LOG_INTERVAL_MICROS;
-                        if (log != null) {
-                            log.info().$("async yield to run continuation is refused (carrier pinned), re-queuing [worker=").$(getName()).I$();
-                        } else {
-                            StringSink sink = Misc.getThreadLocalSink();
-                            MicrosFormatUtils.appendDateTimeUSec(sink, now);
-                            sink.put(" I async yield to run continuation is refused (carrier pinned), re-queuing [worker=").put(getName()).put(']');
-                            System.err.println(sink);
+            // Skipped on legacy pools (continuationQueue == null).
+            if (continuationQueue != null) {
+                WorkerContinuation toResume = continuationQueue.tryDequeue(scratchResumeTask);
+                if (toResume != null) {
+                    self.setHandoff(toResume);
+                    if (!WorkerContinuation.suspend()) {
+                        // Yield refused (carrier pinned). We can't escape this cont
+                        // to mount the dequeued one. Re-queue it so a peer worker
+                        // can pick it up, and continue the loop.
+                        long now = CLOCK_MICROS.getTicks();
+                        if (now >= nextYieldRefusedLogMicros) {
+                            nextYieldRefusedLogMicros = now + YIELD_REFUSED_LOG_INTERVAL_MICROS;
+                            if (log != null) {
+                                log.info().$("async yield to run continuation is refused (carrier pinned), re-queuing [worker=").$(getName()).I$();
+                            } else {
+                                StringSink sink = Misc.getThreadLocalSink();
+                                MicrosFormatUtils.appendDateTimeUSec(sink, now);
+                                sink.put(" I async yield to run continuation is refused (carrier pinned), re-queuing [worker=").put(getName()).put(']');
+                                System.err.println(sink);
+                            }
                         }
+                        self.setHandoff(null);
+                        continuationQueue.put(toResume);
+                    } else {
+                        // Resumed after a successful yield: reset the throttle so a
+                        // future pin episode logs immediately rather than waiting
+                        // for the residual window to expire.
+                        nextYieldRefusedLogMicros = 0L;
                     }
-                    self.setHandoff(null);
-                    continuationQueue.put(toResume);
-                } else {
-                    // Resumed after a successful yield: reset the throttle so a
-                    // future pin episode logs immediately rather than waiting
-                    // for the residual window to expire.
-                    nextYieldRefusedLogMicros = 0L;
+                    // If suspend yielded, body never returns here directly --
+                    // whichever outer driver mounted this cont takes the handoff
+                    // and runs it; execution lands on the else branch above only
+                    // when this cont is later remounted.
                 }
-                // If suspend yielded, body never returns here directly --
-                // whichever outer driver mounted this cont takes the handoff
-                // and runs it; execution lands on the else branch above only
-                // when this cont is later remounted.
             }
 
             if (runAsap) {
@@ -361,6 +400,41 @@ public class Worker extends Thread {
                 Os.pause();
             }
         }
+    }
+
+    /**
+     * Builds the initial job generation from the registered Job instances.
+     * Gen-0 references the very same Job instances assigned to the pool; no
+     * cloning happens on the hot path. Subsequent generations are minted via
+     * {@link #mintNextGen(ObjList)} only when a suspend creates demand.
+     */
+    private static ObjList<Job> buildInitialGeneration(ObjHashSet<? extends Job> registered) {
+        ObjList<Job> gen = new ObjList<>(registered.size());
+        for (int i = 0, n = registered.size(); i < n; i++) {
+            gen.add(registered.get(i));
+        }
+        return gen;
+    }
+
+    /**
+     * Mints the next job generation. Prefers a snapshot recycled to this
+     * worker's snapshot pool; on a cold pool, allocates a fresh generation by
+     * calling {@link Job#cloneInstance()} on each entry of the current
+     * generation. Stateless slots return the same singleton reference from
+     * cloneInstance() (cheap); stateful slots return fresh instances that
+     * share no mutable state with the captured cont's snapshot.
+     */
+    private ObjList<Job> mintNextGen(ObjList<Job> from) {
+        if (snapshotPool.size() > 0) {
+            ObjList<Job> recycled = snapshotPool.getLast();
+            snapshotPool.remove(snapshotPool.size() - 1);
+            return recycled;
+        }
+        ObjList<Job> next = new ObjList<>(from.size());
+        for (int i = 0, n = from.size(); i < n; i++) {
+            next.add(from.get(i).cloneInstance());
+        }
+        return next;
     }
 
     /**
@@ -399,6 +473,28 @@ public class Worker extends Thread {
                 Os.pause();
             }
         }
+    }
+
+    /**
+     * Returns the cont's attached job-generation snapshot to this worker's
+     * snapshot pool for reuse on the next suspend. Calls
+     * {@link Job#recycleInstance()} on each entry first to clear per-iteration
+     * scratch. Called by the outer driver after a cont becomes done via the
+     * primary {@code cont.run()} site or via {@link #mountForeignCont}.
+     */
+    private void recycleJobList(WorkerContinuation cont) {
+        ObjList<Job> snapshot = cont.takeJobs();
+        if (snapshot == null) {
+            return;
+        }
+        for (int i = 0, n = snapshot.size(); i < n; i++) {
+            try {
+                snapshot.get(i).recycleInstance();
+            } catch (Throwable ignore) {
+                // contract: recycleInstance() must not throw
+            }
+        }
+        snapshotPool.add(snapshot);
     }
 
     private void stdErrCritical(Throwable e) {

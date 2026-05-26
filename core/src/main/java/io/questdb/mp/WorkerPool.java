@@ -43,16 +43,21 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 public class WorkerPool implements Closeable {
     private final AtomicBoolean closed = new AtomicBoolean();
-    // Every pool owns a ContinuationQueue. Workers drain it from their outer
-    // driver between continuation mounts, NOT as a regular job. It cannot be a
-    // regular job because resume requires the calling thread to not already be
-    // carrying a cont in the same scope, which holds in the outer driver but
-    // not inside a mounted worker-loop body.
+    // Non-legacy pools own a ContinuationQueue. Workers drain it from their
+    // outer driver between continuation mounts, NOT as a regular job. It cannot
+    // be a regular job because resume requires the calling thread to not already
+    // be carrying a cont in the same scope, which holds in the outer driver but
+    // not inside a mounted worker-loop body. Null on legacy pools.
     private final ContinuationQueue continuationQueue;
     private final boolean daemons;
     private final ObjList<Closeable> freeOnExit = new ObjList<>();
     private final boolean haltOnError;
     private final SOCountDownLatch halted;
+    // Legacy pools run their loop body directly (no WorkerContinuation
+    // wrapping) and accept per-worker Job assignment via
+    // {@link #assign(int, Job)}. Used today for the ILP TCP IO and writer
+    // Jobs which key per-worker state by workerId at construction time.
+    private final boolean legacy;
     private final Metrics metrics;
     private final long napThreshold;
     private final String poolName;
@@ -79,6 +84,7 @@ public class WorkerPool implements Closeable {
         this.halted = new SOCountDownLatch(workerCount);
         this.haltOnError = configuration.haltOnError();
         this.daemons = configuration.isDaemonPool();
+        this.legacy = configuration.isLegacy();
         this.poolName = configuration.getPoolName();
         this.yieldThreshold = configuration.getYieldThreshold();
         this.napThreshold = configuration.getNapThreshold();
@@ -96,7 +102,9 @@ public class WorkerPool implements Closeable {
             threadLocalCleaners.add(new ObjList<>());
         }
 
-        this.continuationQueue = new ContinuationQueue();
+        // Legacy pools skip the continuation queue entirely; workers do not
+        // wrap their loop body and no peer-cont remount path exists.
+        this.continuationQueue = legacy ? null : new ContinuationQueue();
         // NOT assigned via assign(): drained by worker outer driver instead.
     }
 
@@ -111,11 +119,24 @@ public class WorkerPool implements Closeable {
         assert !running.get() && !closed.get();
 
         for (int i = 0; i < workerCount; i++) {
-            workerJobs.getQuick(i).add(job);
+            workerJobs.getQuick(i).add(job.cloneInstance());
         }
     }
 
+    /**
+     * Legacy-pool-only: assigns a specific Job instance to a specific worker.
+     * Use this when the Job's instance state is keyed by the workerId it was
+     * constructed with (e.g., ILP TCP IO and writer jobs). Non-legacy pools
+     * reject this entry point because the continuation rotation framework
+     * needs to clone instances per cont snapshot, not pin them per worker.
+     */
     public void assign(int worker, Job job) {
+        if (!legacy) {
+            throw new IllegalStateException(
+                    "assign(int worker, Job) is only allowed on legacy worker pools; " +
+                            "non-legacy pools must use assign(Job) so cloneInstance() can be invoked per worker"
+            );
+        }
         assert worker > -1 && worker < workerCount && !running.get() && !closed.get();
         workerJobs.getQuick(worker).add(job);
     }
@@ -138,10 +159,13 @@ public class WorkerPool implements Closeable {
 
     /**
      * Returns the {@link ContinuationSink} for this pool. Continuations constructed
-     * with this sink will resume on workers of this pool. Always non-null; the sink
-     * is wired during pool construction.
+     * with this sink will resume on workers of this pool. Non-null on non-legacy
+     * pools; throws on legacy pools, which do not run continuations.
      */
     public ContinuationSink getContinuationSink() {
+        if (legacy) {
+            throw new IllegalStateException("legacy worker pool does not host continuations");
+        }
         return continuationQueue;
     }
 
@@ -163,6 +187,16 @@ public class WorkerPool implements Closeable {
                 halted.await();
             }
             workers.clear(); // Worker is not closable
+            // Free Closeable entries owned by the pool: clones produced by
+            // assign(Job) live in workerJobs without a separate freeOnExit
+            // registration, so the pool must close them on halt.
+            for (int i = 0, n = workerJobs.size(); i < n; i++) {
+                ObjHashSet<Job> jobsForWorker = workerJobs.getQuick(i);
+                for (int j = 0, m = jobsForWorker.size(); j < m; j++) {
+                    Misc.freeIfCloseable(jobsForWorker.get(j));
+                }
+                jobsForWorker.clear();
+            }
             Misc.freeObjListAndClear(freeOnExit);
         }
     }
@@ -170,9 +204,13 @@ public class WorkerPool implements Closeable {
     /**
      * Constructs a fresh {@link WorkerContinuation} bound to this pool's resume sink.
      * Used by workers to build their own loop-body continuation, and by
-     * suspending-evaluation gateways to wrap a one-shot body.
+     * suspending-evaluation gateways to wrap a one-shot body. Throws on legacy
+     * pools, which do not run continuations.
      */
     public WorkerContinuation newContinuation(Runnable body) {
+        if (legacy) {
+            throw new IllegalStateException("legacy worker pool does not host continuations");
+        }
         return new WorkerContinuation(body, continuationQueue);
     }
 

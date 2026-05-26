@@ -90,6 +90,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
     private final MicrosecondClock microClock;
     private final MatViewRefreshTask mvRefreshTask = new MatViewRefreshTask();
     private final OperationExecutor operationExecutor;
+    private final int sharedQueryWorkerCount;
     private final long tableTimeQuotaMicros;
     private final Telemetry<TelemetryTask> telemetry;
     private final TelemetryFacade telemetryFacade;
@@ -102,6 +103,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
     public ApplyWal2TableJob(CairoEngine engine, int sharedQueryWorkerCount) {
         super(engine.getMessageBus().getWalTxnNotificationQueue(), engine.getMessageBus().getWalTxnNotificationSubSequence());
         this.engine = engine;
+        this.sharedQueryWorkerCount = sharedQueryWorkerCount;
         walTelemetry = engine.getTelemetryWal();
         walTelemetryFacade = walTelemetry.isEnabled() ? this::doStoreWalTelemetry : this::storeWalTelemetryNoop;
         telemetry = engine.getTelemetry();
@@ -117,10 +119,22 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
     }
 
     @Override
+    public Job cloneInstance() {
+        return new ApplyWal2TableJob(engine, sharedQueryWorkerCount);
+    }
+
+    @Override
     public void close() {
         Misc.free(operationExecutor);
         Misc.free(walEventReader);
         Misc.free(blockFileWriter);
+    }
+
+    @Override
+    public void recycleInstance() {
+        mvRefreshTask.clear();
+        lastAttemptSeqTxn = 0L;
+        lastCommittedRows = 0L;
     }
 
     private static long calculateSkipTransactionCount(long initialSeqTxn, WalTxnDetails walTxnDetails) {

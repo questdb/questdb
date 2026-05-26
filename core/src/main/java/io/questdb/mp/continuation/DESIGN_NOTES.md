@@ -236,3 +236,121 @@ If you add a `CarrierLocal<T>` where `T` holds native memory or other
 non-GC-managed resources, add an `assignThreadLocalCleaner` call in
 every worker pool that runs code touching that local. There is no
 catch-all; this is enforced by code review.
+
+## Per-worker Job rotation under continuation migration
+
+The framework lets a worker's `loopBody` suspend mid-Job-iteration on
+one carrier and resume on a peer carrier. Without intervention, the
+peer would unwind through the suspending Job's `run()` and continue
+iterating the worker's job set on the peer thread, while the
+originating worker's outer driver simultaneously launches a fresh cont
+running the same Job instances. Two OS threads then mutate
+single-thread-confined Job instance state -- torn writes to scratch,
+mmap/fd hand-offs mid-load, native-pointer aliasing.
+
+### The rotation model
+
+Each `Worker` tracks a current job generation -- gen-0 references the
+Job instances registered to the pool. The outer driver attaches the
+current generation to every `WorkerContinuation` it builds via
+`WorkerContinuation.attachJobs(...)` and passes it into `loopBody` via
+the lambda capture. The captured cont keeps its own generation through
+suspend/resume.
+
+When the body parks without a handoff (`handoff == null`), the outer
+driver mints a fresh generation by calling `Job.cloneInstance()` on
+each entry of the current generation. The captured cont keeps
+references to its (now-old) generation's stateful instances; the next
+outer-iteration's cont runs on the freshly minted generation.
+
+When a cont becomes done -- either at the primary `cont.run()` site or
+inside `mountForeignCont` after a foreign-cont remount -- the
+framework calls `Job.recycleInstance()` on each entry of its attached
+snapshot so stateful instances can return to per-class pools.
+
+### `Job.cloneInstance()` contract
+
+- MUST allocate a brand-new object (or return one previously released
+  via `recycleInstance()`). MUST NOT alias any mutable field of the
+  receiver. Even an `ObjList` or `StringSink` field must be a fresh
+  instance.
+- MAY reuse references to engine-level shared collaborators --
+  `CairoEngine`, `MessageBus`, `CairoConfiguration`, message-bus
+  queues, log instances. These are concurrency-safe by construction.
+- A pooled instance must be indistinguishable from a freshly
+  constructed one; `recycleInstance()` is responsible for the reset.
+- MAY safely read the receiver's blueprint fields (constructor inputs
+  stored as final fields). The receiver may be mid-iteration in a
+  parked cont; `cloneInstance()` must not touch the receiver's
+  per-iteration scratch.
+- Default: `return this`. Correct only for stateless Jobs whose only
+  state is shared collaborators.
+
+### `Job.recycleInstance()` contract
+
+- MUST clear every per-iteration mutable field so the instance is
+  indistinguishable from a freshly constructed one before the next
+  `cloneInstance()` hands it out.
+- MUST NOT close or release engine-level shared collaborators.
+- MUST be safe to call concurrently from any worker's outer driver
+  (the per-class pool is shared across all workers in the
+  `WorkerPool`).
+- MUST NOT throw. The framework drops misbehaving instances silently
+  to keep the release path safe.
+- Default: no-op. Correct for stateless Jobs and for stateful Jobs
+  that prefer construction over pooling.
+
+### Pool ownership
+
+Each stateful Job class owns its own `ConcurrentLinkedQueue` (or
+similar) as a `private static final` field. The pool is encapsulated
+inside `cloneInstance()` / `recycleInstance()` -- the framework never
+touches a pool directly. Steady-state pool size converges to the
+workload's concurrent-suspend count.
+
+### Hot path
+
+When no suspend ever happens, exactly one `loopBody` invocation runs
+for the lifetime of the worker, iterating the same gen-0 snapshot
+forever. No allocation, no pool access, identical to the
+pre-framework behaviour. The framework cost is paid only on suspend.
+
+### Override checklist
+
+When adding a per-worker stateful Job:
+
+1. Declare a `private static final ConcurrentLinkedQueue<Self> POOL`.
+2. Override `cloneInstance()`: poll the pool; on miss, construct fresh
+   with the same constructor args used at registration. Only re-use
+   engine-level shared refs from the receiver -- everything mutable
+   must be freshly allocated.
+3. Override `recycleInstance()`: reset every mutable scratch field
+   (lists clear, sinks clear, primitives zero), then `POOL.offer(this)`.
+4. Drop any `assert this.workerId == workerId` -- the invariant is now
+   "one instance per cont snapshot," enforced by the rotation, not by
+   the workerId argument.
+5. Drop any `private final int workerId` field that only served the
+   dropped assertion. The Job-level `run(int workerId, ...)` argument
+   stays.
+6. Verify the Job's `close()` releases everything `cloneInstance()`
+   constructed -- pooled instances eventually become unreachable when
+   the WorkerPool tears down.
+
+### Currently overridden
+
+`PageFrameReduceJob`, `UnorderedPageFrameReduceJob`,
+`MatViewRefreshJob`, `ViewCompilerJob`, `ApplyWal2TableJob`.
+
+### Deferred
+
+- `O3PartitionPurgeJob` -- its `doRun` indexes per-worker scratch
+  arrays by the `workerId` argument. Convert by minting clones with
+  `workerCount=1` and indexing into slot 0 always, then enable
+  rotation. Not on the immediate path because `sharedPoolWrite`
+  currently hosts no suspending Job.
+- `LineTcpNetworkIOJob` -- handled by separate plan
+  (`LINETCP_NETWORKIO_ROTATION_PLAN.md`). The chosen approach is
+  pool isolation rather than rotation, because `workerId` is exposed
+  via `getWorkerId()` and is load-bearing in `TableUpdateDetails`'s
+  scratch array layout. Isolating both ILP Jobs in a dedicated
+  continuation-free pool sidesteps the wide refactor.

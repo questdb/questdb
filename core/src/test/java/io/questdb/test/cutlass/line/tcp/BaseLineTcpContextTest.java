@@ -141,6 +141,13 @@ abstract class BaseLineTcpContextTest extends AbstractCairoTest {
             public boolean haltOnError() {
                 return haltOnError;
             }
+
+            @Override
+            public boolean isLegacy() {
+                // ILP TCP IO and writer Jobs use assign(int worker, Job) for
+                // workerId-keyed per-worker state; both pools must be legacy.
+                return true;
+            }
         });
     }
 

@@ -72,7 +72,12 @@ public class HttpServer implements Closeable {
     private final HttpContextFactory httpContextFactory;
     private final WaitProcessor rescheduleContext;
     private final AssociativeCache<RecordCursorFactory> selectCache;
-    private final ObjList<HttpRequestProcessorSelectorImpl> selectors;
+    // Single shared selector across all workers in the pool. Populated at
+    // setup time via bind(); after setup it is treated as read-only for
+    // dispatch -- a worker reading the handler maps concurrently with another
+    // worker is safe. lastSelectedHandlerId is per-call scratch used only for
+    // logging and may race benignly.
+    private final HttpRequestProcessorSelectorImpl selector;
     private final int workerCount;
     private int nextHandlerId = 0;
 
@@ -82,11 +87,7 @@ public class HttpServer implements Closeable {
             SocketFactory socketFactory
     ) {
         this.workerCount = networkSharedPool.getWorkerCount();
-        this.selectors = new ObjList<>(workerCount);
-
-        for (int i = 0; i < workerCount; i++) {
-            selectors.add(new HttpRequestProcessorSelectorImpl());
-        }
+        this.selector = new HttpRequestProcessorSelectorImpl();
 
         if (configuration instanceof HttpFullFatServerConfiguration serverConfiguration) {
             if (serverConfiguration.isQueryCacheEnabled()) {
@@ -106,26 +107,21 @@ public class HttpServer implements Closeable {
         this.rescheduleContext = new WaitProcessor(configuration.getWaitProcessorConfiguration(), dispatcher);
         networkSharedPool.assign(rescheduleContext);
 
+        // Single shared dispatcher Job. The shared selector is safe across
+        // workers because bind() populates it once before workers start, and
+        // dispatch is read-only against the handler map.
+        final IORequestProcessor<HttpConnectionContext> processor =
+                (operation, context, dispatcher)
+                        -> handleClientOperation(context, operation, selector, rescheduleContext, dispatcher);
+        networkSharedPool.assign((workerId, runStatus) -> {
+            boolean useful = dispatcher.processIOQueue(processor);
+            useful |= rescheduleContext.runReruns(selector);
+            return useful;
+        });
+
+        // http context factory has thread local pools
+        // therefore we need each thread to clean their thread locals individually
         for (int i = 0; i < workerCount; i++) {
-            final int index = i;
-
-            networkSharedPool.assign(i, new Job() {
-
-                private final HttpRequestProcessorSelector selector = selectors.getQuick(index);
-                private final IORequestProcessor<HttpConnectionContext> processor =
-                        (operation, context, dispatcher)
-                                -> handleClientOperation(context, operation, selector, rescheduleContext, dispatcher);
-
-                @Override
-                public boolean run(int workerId, @NotNull RunStatus runStatus) {
-                    boolean useful = dispatcher.processIOQueue(processor);
-                    useful |= rescheduleContext.runReruns(selector);
-                    return useful;
-                }
-            });
-
-            // http context factory has thread local pools
-            // therefore we need each thread to clean their thread locals individually
             networkSharedPool.assignThreadLocalCleaner(i, httpContextFactory::freeThreadLocal);
         }
     }
@@ -323,32 +319,25 @@ public class HttpServer implements Closeable {
         assert urls != null;
         for (int j = 0, n = urls.size(); j < n; j++) {
             final String url = urls.get(j);
-            int handlerId = -1; // assigned on first worker that actually registers
-            for (int i = 0; i < workerCount; i++) {
-                HttpRequestProcessorSelectorImpl selector = selectors.getQuick(i);
-                if (HttpFullFatServerConfiguration.DEFAULT_PROCESSOR_URL.equals(url)) {
-                    if (handlerId < 0) {
-                        handlerId = nextHandlerId++;
+            int handlerId = -1;
+            if (HttpFullFatServerConfiguration.DEFAULT_PROCESSOR_URL.equals(url)) {
+                handlerId = nextHandlerId++;
+                final HttpRequestHandler handler = factory.newInstance();
+                selector.defaultRequestProcessor = handler.getDefaultProcessor();
+                selector.defaultProcessorId = handlerId;
+                selector.handlersByIdList.extendAndSet(handlerId, handler);
+            } else {
+                final Utf8String key = new Utf8String(url);
+                int keyIndex = selector.requestHandlerMap.keyIndex(key);
+                if (keyIndex > -1) {
+                    handlerId = nextHandlerId++;
+                    final HttpRequestHandler requestHandler = factory.newInstance();
+                    selector.requestHandlerMap.putAt(keyIndex, key, new IndexedHandler(requestHandler, handlerId));
+                    if (useAsDefault) {
+                        selector.defaultRequestProcessor = requestHandler.getDefaultProcessor();
+                        selector.defaultProcessorId = handlerId;
                     }
-                    final HttpRequestHandler handler = factory.newInstance();
-                    selector.defaultRequestProcessor = handler.getDefaultProcessor();
-                    selector.defaultProcessorId = handlerId;
-                    selector.handlersByIdList.extendAndSet(handlerId, handler);
-                } else {
-                    final Utf8String key = new Utf8String(url);
-                    int keyIndex = selector.requestHandlerMap.keyIndex(key);
-                    if (keyIndex > -1) {
-                        if (handlerId < 0) {
-                            handlerId = nextHandlerId++;
-                        }
-                        final HttpRequestHandler requestHandler = factory.newInstance();
-                        selector.requestHandlerMap.putAt(keyIndex, key, new IndexedHandler(requestHandler, handlerId));
-                        if (useAsDefault) {
-                            selector.defaultRequestProcessor = requestHandler.getDefaultProcessor();
-                            selector.defaultProcessorId = handlerId;
-                        }
-                        selector.handlersByIdList.extendAndSet(handlerId, requestHandler);
-                    }
+                    selector.handlersByIdList.extendAndSet(handlerId, requestHandler);
                 }
             }
         }
@@ -362,7 +351,7 @@ public class HttpServer implements Closeable {
     public void close() {
         Misc.free(dispatcher);
         Misc.free(rescheduleContext);
-        Misc.freeObjListAndClear(selectors);
+        Misc.free(selector);
         Misc.freeObjListAndClear(closeables);
         Misc.free(httpContextFactory);
         Misc.free(selectCache);

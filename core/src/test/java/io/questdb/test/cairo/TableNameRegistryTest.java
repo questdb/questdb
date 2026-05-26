@@ -1228,7 +1228,7 @@ public class TableNameRegistryTest extends AbstractCairoTest {
                                 drainWalQueue();
                                 break;
                             case FUZZ_SWEEP:
-                                purgeJob.run(thread);
+                                purgeJob.run(0);
                                 break;
                             default:
                                 assert false;

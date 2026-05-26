@@ -43,9 +43,7 @@ public class GroupByVectorAggregateJob extends AbstractQueueConsumerJob<VectorAg
         try {
             entry.run(workerId, subSeq, cursor);
         } catch (Throwable th) {
-            LOG.error().$("vectorized reduce error [workerId=").$(workerId)
-                    .$(", ex=").$(th)
-                    .I$();
+            LOG.error().$("vectorized reduce error [ex=").$(th).I$();
         }
         return true;
     }

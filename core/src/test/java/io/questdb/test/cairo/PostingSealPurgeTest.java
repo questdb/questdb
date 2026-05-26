@@ -193,7 +193,7 @@ public class PostingSealPurgeTest extends AbstractCairoTest {
                     // a TableWriter commits with the right partition info.
                 }
 
-                // Drive the purge job synchronously a few times. Each .run(0)
+                // Drive the purge job synchronously a few times. Each .run()
                 // call drains the queue and runs one retry pass; backoff means
                 // we may need several iterations before the orphan window is
                 // actually attempted.

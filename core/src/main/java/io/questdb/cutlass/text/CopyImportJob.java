@@ -26,6 +26,7 @@ package io.questdb.cutlass.text;
 
 import io.questdb.MessageBus;
 import io.questdb.mp.AbstractQueueConsumerJob;
+import io.questdb.mp.Job;
 import io.questdb.mp.WorkerPool;
 import io.questdb.std.Decimal256;
 import io.questdb.std.DirectLongList;
@@ -40,7 +41,9 @@ import java.io.Closeable;
 
 public class CopyImportJob extends AbstractQueueConsumerJob<CopyImportTask> implements Closeable {
     private static final int INDEX_MERGE_LIST_CAPACITY = 64;
+    private final Decimal256 decimal256;
     private final long fileBufAddr;
+    private final MessageBus messageBus;
     private long fileBufSize;
     private CsvFileIndexer indexer;
     private DirectLongList mergeIndexes;
@@ -49,11 +52,11 @@ public class CopyImportJob extends AbstractQueueConsumerJob<CopyImportTask> impl
     private Path tmpPath2;
     private DirectUtf16Sink utf16Sink;
     private DirectUtf8Sink utf8Sink;
-    private final Decimal256 decimal256;
 
     public CopyImportJob(MessageBus messageBus) {
         super(messageBus.getCopyImportQueue(), messageBus.getCopyImportSubSeq());
         try {
+            this.messageBus = messageBus;
             this.tlw = new TextLexerWrapper(messageBus.getConfiguration().getTextConfiguration());
             this.fileBufSize = messageBus.getConfiguration().getSqlCopyBufferSize();
             this.fileBufAddr = Unsafe.malloc(fileBufSize, MemoryTag.NATIVE_IMPORT);
@@ -72,11 +75,14 @@ public class CopyImportJob extends AbstractQueueConsumerJob<CopyImportTask> impl
     }
 
     public static void assignToPool(MessageBus messageBus, WorkerPool sharedPoolWrite) {
-        for (int i = 0, n = sharedPoolWrite.getWorkerCount(); i < n; i++) {
-            CopyImportJob job = new CopyImportJob(messageBus);
-            sharedPoolWrite.assign(i, job);
-            sharedPoolWrite.freeOnExit(job);
-        }
+        // assign(Job) clones once per worker; WorkerPool.halt() frees the
+        // Closeable clones from workerJobs.
+        sharedPoolWrite.assign(new CopyImportJob(messageBus));
+    }
+
+    @Override
+    public Job cloneInstance() {
+        return new CopyImportJob(messageBus);
     }
 
     @Override

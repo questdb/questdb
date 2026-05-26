@@ -1384,7 +1384,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
     }
 
     private void stealWork() {
-        if (localImportJob.run(0, Job.RUNNING_STATUS)) {
+        if (localImportJob.run(io.questdb.mp.CarrierIdentity.current(), Job.RUNNING_STATUS)) {
             return;
         }
         Os.pause();

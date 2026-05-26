@@ -46,6 +46,7 @@ import java.util.concurrent.Callable;
 public class CopyExportRequestJob extends AbstractQueueConsumerJob<CopyExportRequestTask> implements Closeable {
     private static final Log LOG = LogFactory.getLog(CopyExportRequestJob.class);
     private final CopyExportContext copyContext;
+    private final CairoEngine engine;
     private final @NotNull MicrosecondClock microsecondClock;
     @TestOnly
     private @Nullable Callable<Exception> callback;
@@ -54,6 +55,7 @@ public class CopyExportRequestJob extends AbstractQueueConsumerJob<CopyExportReq
 
     public CopyExportRequestJob(final CairoEngine engine) {
         super(engine.getMessageBus().getCopyExportRequestQueue(), engine.getMessageBus().getCopyExportRequestSubSeq());
+        this.engine = engine;
         microsecondClock = engine.getConfiguration().getMicrosecondClock();
         localTaskCopy = new CopyExportRequestTask();
         try {
@@ -69,6 +71,11 @@ public class CopyExportRequestJob extends AbstractQueueConsumerJob<CopyExportReq
     public CopyExportRequestJob(final CairoEngine engine, @Nullable Callable<Exception> callback) {
         this(engine);
         this.callback = callback;
+    }
+
+    @Override
+    public io.questdb.mp.Job cloneInstance() {
+        return new CopyExportRequestJob(engine);
     }
 
     @Override
