@@ -1,5 +1,46 @@
 # QuestDB command line utils
 
+A collection of low-level CLI utilities for inspecting, repairing, migrating,
+and salvaging QuestDB data outside the running database.
+
+## Building
+
+The module ships as a shaded JAR with all dependencies. To build it run:
+
+```bash
+mvn clean package
+```
+
+The artifact lands at `utils/target/utils-<version>-SNAPSHOT.jar`. Pre-built
+binaries from a QuestDB release tarball already contain this jar in the same
+directory layout.
+
+## Running
+
+The shaded JAR does not declare a `Main-Class`, so the tools are invoked by
+classpath, not via `java -jar`:
+
+```bash
+java -cp utils.jar io.questdb.cliutil.<ToolClassName> [options]
+```
+
+On Java 17+ some tools need module-access flags to use `sun.misc.Unsafe` and
+native memory. If you see `IllegalAccessError`, `module access` errors or
+`UnsupportedOperationException` from `Unsafe`, prepend:
+
+```
+--sun-misc-unsafe-memory-access=allow \
+--enable-native-access=ALL-UNNAMED \
+--add-opens=java.base/java.lang=ALL-UNNAMED \
+--add-opens=java.base/java.lang.reflect=ALL-UNNAMED \
+--add-opens=java.base/java.nio=ALL-UNNAMED
+```
+
+These are the same flags QuestDB itself uses (see `core/pom.xml`'s surefire
+config).
+
+---
+
 ### TxSerializer
 
 Serializes binary `_txn` file to / from readable JSON format. Primary usage to
@@ -76,6 +117,122 @@ java -cp utils.jar io.questdb.cliutil.RecoverVarIndex /questdb-root/db/trades-CO
 java -cp utils.jar io.questdb.cliutil.RecoverVarIndex /questdb-root/db/trades-COINBASE -p 2022-03-21 -c stringColumn
 ```
 
+### Export un-applied WAL data to Parquet (WalToParquet)
+
+Forensic recovery tool. Walks the WAL directories of every WAL table in a
+QuestDB data root and exports each un-purged segment to a Parquet file. Useful
+when a table is suspended or its committed partitions are corrupt, and you want
+to extract whatever still lives in the WAL before the table is dropped and
+restored.
+
+Strict read-only against the data root. No QuestDB engine is booted, no WAL is
+applied, no files are written or locked under the source tree. Safe to run
+against a live, running QuestDB instance under snapshot semantics: anything
+visible in `_txnlog` at the start of the walk is in scope, anything appended
+after is ignored.
+
+#### Usage
+
+```
+io.questdb.cliutil.WalToParquet --db-root <path> [options]
+```
+
+- `--db-root <path>` QuestDB data root (the directory containing per-table
+  directories like `mytable~5`). Required.
+- `--output-dir <path>` Where to write Parquet files and the per-table manifest.
+  Required for actual export; omit for a dry-run inspection.
+- `--table-dir <dirName>` Process only this one table directory (skips
+  auto-discovery).
+- `--table-name <name>` Logical table name override for single-table mode.
+- `--table-id <id>` Numeric table id override for single-table mode.
+- `--include-system` Also process `sys.*` tables (off by default).
+- `--include-empty` Also report tables whose WALs are fully purged (off by
+  default).
+- `--no-shoulder` Skip the per-row provenance columns
+  (`_wal_id`, `_segment_id`, `_segment_txn`, `_seq_txn`, `_commit_ts`) that
+  are added by default to help downstream deduplication.
+
+#### Output
+
+Each WAL segment becomes one Parquet file:
+
+```
+<output-dir>/<tableName>__wal<walId>__seg<segId>__seqTxn<lo>-<hi>.parquet
+```
+
+A companion JSON manifest sits next to the data files:
+
+```
+<output-dir>/<tableName>__manifest.json
+```
+
+The manifest lists every segment the tool considered (written, skipped, or
+partial), every structural-change transaction in seqTxn order, the txnlog
+format version and applied/maxTxn watermarks, and per-segment reasons when
+recovery was less than complete.
+
+#### Tiered fallback (file-name suffixes)
+
+The tool degrades gracefully when the source is partially damaged. The output
+filename and manifest status reflect which fallback was needed:
+
+| Suffix | Trigger |
+|---|---|
+| (none) | Tier 1. Everything intact: `_txnlog`, `_event`, `_meta`, all column files. |
+| `__tier3.parquet` | Segment's `_event` is missing or corrupt. Row count is derived from the timestamp `.d` file size; new symbols added in the segment lost (only the base symbol-table snapshot recovers). |
+| `__tier2.parquet` | Whole-table `_txnlog` is missing or corrupt. Filesystem scan of `wal*/N/` finds segments; cross-segment seqTxn ordering is unknown. |
+| `__tier2__tier3.parquet` | Both of the above. |
+
+Additionally, partial column-file loss within a segment (an individual `.d` or
+`.i` is gone) is reported in the manifest's `skippedColumns` list per segment.
+A corrupt `_meta` triggers a peer-segment schema substitution (the schema is
+borrowed from another segment under the same table); the manifest flags this.
+
+#### Examples
+
+Discover every WAL table in the data root and export everything still
+on disk:
+
+```bash
+java -cp utils.jar io.questdb.cliutil.WalToParquet \
+    --db-root /questdb-root/db \
+    --output-dir /tmp/wal_recovery
+```
+
+Process one specific table directory:
+
+```bash
+java -cp utils.jar io.questdb.cliutil.WalToParquet \
+    --db-root /questdb-root/db \
+    --table-dir 'mytable~17' \
+    --output-dir /tmp/wal_recovery
+```
+
+Inspect only (no Parquet output, print structure and segment list to stdout):
+
+```bash
+java -cp utils.jar io.questdb.cliutil.WalToParquet --db-root /questdb-root/db
+```
+
+Include system tables and tables with no un-purged data:
+
+```bash
+java -cp utils.jar io.questdb.cliutil.WalToParquet \
+    --db-root /questdb-root/db \
+    --output-dir /tmp/wal_recovery \
+    --include-system --include-empty
+```
+
+Verify recovered data via the running instance (the Parquet must be inside
+the instance's `import/` directory for `parquet_scan` to read it):
+
+```bash
+cp /tmp/wal_recovery/mytable__wal4__seg0__seqTxn14-16.parquet \
+   /questdb-root/import/recovered.parquet
+curl -G "http://localhost:9000/exec" \
+    --data-urlencode "query=select count(*) from parquet_scan('recovered.parquet')"
+```
+
 ### Copy table from one instance to another using Postgres wire to read and ILP to write
 
 Copies all the data from one QuestDB instance to another. Uses Postgres wire to select the data and ILP to insert it.
@@ -102,12 +259,4 @@ java -cp utils.jar io.questdb.cliutil.Table2Ilp -d trades -dilp "https::addr=loc
      -sc "jdbc:postgresql://localhost:9812/qdb?user=account&password=secret&ssl=false" \
      -sym "ticker,exchagne" -sts start_time
 
-```
-
-## Build Utils project
-
-To build single jar with dependencies run
-
-```bash
-mvn clean package
 ```
