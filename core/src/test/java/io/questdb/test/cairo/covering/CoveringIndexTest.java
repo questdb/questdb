@@ -2991,8 +2991,8 @@ public class CoveringIndexTest extends AbstractCairoTest {
             assertSql("""
                     label
                     hello
-                    foo
                     world
+                    foo
                     """, "SELECT label FROM t_in_string WHERE sym IN ('X', 'Y')");
         });
     }
@@ -3018,12 +3018,12 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     """);
             engine.releaseAllWriters();
 
-            // IN list with covering VARCHAR — results grouped by key (A first, then B)
+            // IN list with covering VARCHAR — multi-key heap-merge emits ts-ascending
             assertSql("""
                     name\tprice
                     alice\t10.0
-                    anna\t30.0
                     bob\t20.0
+                    anna\t30.0
                     """, "SELECT name, price FROM t_in_varchar WHERE sym IN ('A', 'B')");
         });
     }
@@ -5779,12 +5779,12 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     """);
             engine.releaseAllWriters();
 
-            // IN list uses CoveringIndex — results grouped by key (A first, then B)
+            // IN list uses CoveringIndex — multi-key heap-merge emits ts-ascending
             assertSql("""
                     price
                     10.5
-                    11.5
                     20.5
+                    11.5
                     """, "SELECT price FROM t_in WHERE sym IN ('A', 'B')");
 
             // Verify plan shows CoveringIndex
@@ -5796,6 +5796,224 @@ public class CoveringIndexTest extends AbstractCairoTest {
                                   filter: sym IN ['A','B']
                             """
             );
+        });
+    }
+
+    @Test
+    public void testCoveringQueryInListInterleavedAllUnresolvedPageFrame() throws Exception {
+        // All IN-list keys are unresolved; the factory wires the page-frame
+        // cursor with an empty multiKeys list, and nextImpl() must hit
+        // its multiKeys.size() == 0 early return rather than touching the
+        // partition iterator. count() goes through the page-frame path
+        // via CountRecordCursorFactory, so a zero count proves the early
+        // return fires cleanly.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_in_unres_pf (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price),
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_in_unres_pf VALUES
+                    ('2024-01-01T00:00:00', 'A', 1.0),
+                    ('2024-01-01T01:00:00', 'B', 2.0)
+                    """);
+            engine.releaseAllWriters();
+
+            assertSql("count\n0\n",
+                    "SELECT count() FROM t_in_unres_pf WHERE sym IN ('XX', 'YY')");
+        });
+    }
+
+    @Test
+    public void testCoveringQueryInListInterleavedSampleByEquivalent() throws Exception {
+        // Regression: multi-key heap-merge must yield the same SAMPLE BY
+        // result as the FilterOnValues control. Before the fix the
+        // CoveringIndex multi-key cursor advertised SCAN_DIRECTION_FORWARD
+        // while emitting (partition, key, row-id) order, so SAMPLE BY's
+        // monotonic-ts assumption mis-bucketed rows whose row-ids
+        // interleaved in time.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_in_sb (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price),
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_in_sb VALUES
+                    ('2024-01-01T00:30:00', 'A', 1.0),
+                    ('2024-01-01T01:30:00', 'B', 2.0),
+                    ('2024-01-01T02:30:00', 'A', 3.0),
+                    ('2024-01-01T03:30:00', 'B', 4.0),
+                    ('2024-01-01T04:30:00', 'A', 5.0)
+                    """);
+            engine.releaseAllWriters();
+
+            assertSqlCursors(
+                    "SELECT ts, sum(price) AS s FROM t_in_sb WHERE sym IN ('A', 'B') "
+                            + "SAMPLE BY 1h FILL(PREV) ALIGN TO FIRST OBSERVATION",
+                    "SELECT ts, sum(price) AS s FROM t_in_sb WHERE /*+ no_covering */ sym IN ('A', 'B') "
+                            + "SAMPLE BY 1h FILL(PREV) ALIGN TO FIRST OBSERVATION"
+            );
+        });
+    }
+
+    @Test
+    public void testCoveringQueryInListInterleavedSampleByMultiPartition() throws Exception {
+        // Stresses the page-frame multi-partition resume path: SAMPLE BY
+        // consumes via supportsPageFrameCursor() == true, so the heap-merge
+        // page-frame variant must also produce ts-ascending output and
+        // match the FilterOnValues control. Multiple partitions exercise
+        // the partition advance + heap re-population logic.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_in_sb_mp (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price),
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_in_sb_mp
+                    SELECT
+                        dateadd('m', (x * 30)::INT, '2024-01-01T00:00:00.000000Z')::TIMESTAMP,
+                        rnd_symbol('A', 'B', 'C', 'D'),
+                        x::DOUBLE
+                    FROM long_sequence(200)
+                    """);
+            engine.releaseAllWriters();
+
+            assertSqlCursors(
+                    "SELECT ts, count() AS c, sum(price) AS s FROM t_in_sb_mp "
+                            + "WHERE sym IN ('A', 'B') "
+                            + "SAMPLE BY 1h FILL(PREV) ALIGN TO FIRST OBSERVATION",
+                    "SELECT ts, count() AS c, sum(price) AS s FROM t_in_sb_mp "
+                            + "WHERE /*+ no_covering */ sym IN ('A', 'B') "
+                            + "SAMPLE BY 1h FILL(PREV) ALIGN TO FIRST OBSERVATION"
+            );
+        });
+    }
+
+    @Test
+    public void testCoveringQueryInListInterleavedSkipsEmptyPartition() throws Exception {
+        // A partition in the middle of the time range has no rows for any
+        // IN-list key. The multi-key cursor must drop its empty heap,
+        // advance to the next partition, and resume emit there. This
+        // exercises the openPartitionCursors-returned-false branch of
+        // advancePartition (cursor path) and the matching branch of
+        // nextImpl (page-frame path).
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_in_skip (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price),
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_in_skip VALUES
+                    ('2024-01-01T00:00:00', 'A', 1.0),
+                    ('2024-01-01T01:00:00', 'B', 2.0),
+                    ('2024-01-02T00:00:00', 'C', 99.0),
+                    ('2024-01-02T01:00:00', 'D', 88.0),
+                    ('2024-01-03T00:00:00', 'A', 3.0),
+                    ('2024-01-03T01:00:00', 'B', 4.0)
+                    """);
+            engine.releaseAllWriters();
+
+            // Cursor path: ts-ascending across partitions 1 and 3, with
+            // partition 2 silently skipped.
+            assertSql("""
+                    ts\tsym\tprice
+                    2024-01-01T00:00:00.000000Z\tA\t1.0
+                    2024-01-01T01:00:00.000000Z\tB\t2.0
+                    2024-01-03T00:00:00.000000Z\tA\t3.0
+                    2024-01-03T01:00:00.000000Z\tB\t4.0
+                    """, "SELECT ts, sym, price FROM t_in_skip WHERE sym IN ('A', 'B') ORDER BY ts");
+
+            // Page-frame path via vectorized count + sum: correct totals
+            // prove the middle partition is skipped without producing a
+            // bogus frame.
+            assertSql("c\ts\n4\t10.0\n",
+                    "SELECT count() c, sum(price) s FROM t_in_skip WHERE sym IN ('A', 'B')");
+        });
+    }
+
+    @Test
+    public void testCoveringQueryInListInterleavedTsAscending() throws Exception {
+        // Multi-key IN where the keys' row-ids interleave in time. Before
+        // the fix the CoveringIndex multi-key cursor concatenated per-key
+        // blocks while still advertising SCAN_DIRECTION_FORWARD, so the
+        // optimizer elided ORDER BY ts and the output came back grouped
+        // by key. After the heap-merge fix the stream is ts-ascending and
+        // matches the FilterOnValues control without an explicit sort.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_in_asc (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price),
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_in_asc VALUES
+                    ('2024-01-01T00:00:00', 'A', 1.0),
+                    ('2024-01-01T01:00:00', 'B', 2.0),
+                    ('2024-01-01T02:00:00', 'A', 3.0),
+                    ('2024-01-01T03:00:00', 'B', 4.0),
+                    ('2024-01-01T04:00:00', 'A', 5.0)
+                    """);
+            engine.releaseAllWriters();
+
+            assertSql("""
+                    ts\tsym\tprice
+                    2024-01-01T00:00:00.000000Z\tA\t1.0
+                    2024-01-01T01:00:00.000000Z\tB\t2.0
+                    2024-01-01T02:00:00.000000Z\tA\t3.0
+                    2024-01-01T03:00:00.000000Z\tB\t4.0
+                    2024-01-01T04:00:00.000000Z\tA\t5.0
+                    """, "SELECT ts, sym, price FROM t_in_asc WHERE sym IN ('A', 'B') ORDER BY ts");
+        });
+    }
+
+    @Test
+    public void testCoveringQueryInListInterleavedWithUnresolvedKey() throws Exception {
+        // An unresolved literal in the IN list keeps the multi-key code
+        // path but contributes no rows. Output must still be ts-ascending
+        // across the resolved keys.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_in_unres (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price),
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_in_unres VALUES
+                    ('2024-01-01T00:00:00', 'A', 1.0),
+                    ('2024-01-01T01:00:00', 'B', 2.0),
+                    ('2024-01-01T02:00:00', 'A', 3.0)
+                    """);
+            engine.releaseAllWriters();
+
+            assertPlanNoLeakCheck(
+                    "SELECT ts, sym, price FROM t_in_unres WHERE sym IN ('A', 'B', 'XQCE')",
+                    """
+                            CoveringIndex on: sym with: ts, price
+                              filter: sym IN ['A','B','XQCE']
+                            """
+            );
+            assertSql("""
+                    ts\tsym\tprice
+                    2024-01-01T00:00:00.000000Z\tA\t1.0
+                    2024-01-01T01:00:00.000000Z\tB\t2.0
+                    2024-01-01T02:00:00.000000Z\tA\t3.0
+                    """, "SELECT ts, sym, price FROM t_in_unres WHERE sym IN ('A', 'B', 'XQCE')");
         });
     }
 
@@ -5820,14 +6038,15 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     """);
             engine.releaseAllWriters();
 
-            // IN list across 3 partitions — keys grouped per partition (A first, then B)
+            // IN list across 3 partitions — multi-key heap-merge emits ts-ascending
+            // within each partition, partitions iterated in ASC order.
             assertSql("""
                     price
                     1.0
                     2.0
                     3.0
-                    6.0
                     5.0
+                    6.0
                     """, "SELECT price FROM t_in_mp WHERE sym IN ('A', 'B')");
         });
     }
@@ -5905,12 +6124,13 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     """);
             engine.releaseAllWriters();
 
-            // IN list with sym in SELECT — sym value should vary per key
+            // IN list with sym in SELECT — multi-key heap-merge emits ts-ascending,
+            // with sym written per-row from the active heap slot.
             assertSql("""
                     sym\tprice
                     A\t10.5
-                    A\t11.5
                     B\t20.5
+                    A\t11.5
                     """, "SELECT sym, price FROM t_in_sym WHERE sym IN ('A', 'B')");
         });
     }
@@ -6571,12 +6791,12 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     """);
             engine.releaseAllWriters();
 
-            // SYMBOL include with IN list
+            // SYMBOL include with IN list — multi-key heap-merge emits ts-ascending
             assertSql("""
                     sym\ttag
                     A\thot
-                    A\twarm
                     B\tcold
+                    A\twarm
                     """, "SELECT sym, tag FROM t_sym_incl_in WHERE sym IN ('A', 'B')");
         });
     }
@@ -13363,8 +13583,8 @@ public class CoveringIndexTest extends AbstractCairoTest {
             assertSql("""
                     name
                     alpha
-                    delta
                     beta
+                    delta
                     """, "SELECT name FROM t_vw_in WHERE sym IN ('A', 'B') ORDER BY ts");
         });
     }

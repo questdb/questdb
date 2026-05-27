@@ -58,6 +58,7 @@ import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
 import io.questdb.std.Decimals;
 import io.questdb.std.IntList;
+import io.questdb.std.IntLongSortedList;
 import io.questdb.std.Long256;
 import io.questdb.std.Long256Impl;
 import io.questdb.std.LongList;
@@ -95,7 +96,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
     private final boolean latestBy;
     private final Function latestByFilter;
     private final RecordMetadata metadata;
-    private final MultiKeyCoveringCursor multiKeyCursor;
+    private final AbstractMultiKeyCoveringCursor multiKeyCursor;
     private final MultiKeyCoveringPageFrameCursor multiKeyPageFrameCursor;
     private final int[] queryColToIncludeIdx;
     private final IntList resolvedKeys;
@@ -142,7 +143,9 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                     resolvedKeys.add(key);
                 }
             }
-            this.multiKeyCursor = new MultiKeyCoveringCursor(indexColumnIndex, multiKeyCapacity, queryColToIncludeIdx, requiredIncludeIndices, symInclCols, columnIndexes, latestBy, metadata);
+            this.multiKeyCursor = latestBy
+                    ? new MultiKeyLatestByCoveringCursor(indexColumnIndex, multiKeyCapacity, queryColToIncludeIdx, requiredIncludeIndices, symInclCols, columnIndexes, metadata)
+                    : new MultiKeyCoveringCursor(indexColumnIndex, multiKeyCapacity, queryColToIncludeIdx, requiredIncludeIndices, symInclCols, columnIndexes, metadata);
             this.singleKeyCursor = null;
             this.multiKeyPageFrameCursor = !latestBy
                     ? new MultiKeyCoveringPageFrameCursor(indexColumnIndex, queryColToIncludeIdx, requiredIncludeIndices, metadata, columnIndexes)
@@ -297,6 +300,19 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             Misc.free(frameCursor);
             throw th;
         }
+    }
+
+    @Override
+    public int getScanDirection() {
+        // Non-latestBy: partition iteration is ASC, and within each
+        // partition rows are emitted in row-id ascending order (single
+        // key directly; multi key via heap-merge across per-key posting
+        // cursors). Row-id is ts-ascending by the designated timestamp
+        // contract, so the overall stream is ts-ascending and SAMPLE BY
+        // / ORDER-BY-ts elision can trust this advertisement.
+        // latestBy: iterates partitions DESC and emits at most one row
+        // per key; not ts-ascending.
+        return latestBy ? SCAN_DIRECTION_OTHER : SCAN_DIRECTION_FORWARD;
     }
 
     @Override
@@ -689,9 +705,8 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
     }
 
     private static abstract class CoveringPageFrameCursor implements TablePageFrameCursor {
-        private static final int INITIAL_CAPACITY = 4096;
+        protected static final int INITIAL_CAPACITY = 4096;
         private static int maxRowsPerFrameOverride = -1;
-        private int maxRowsPerFrame;
         // Tracks all native allocations as (addr, size) pairs for bulk cleanup.
         // Each fillFrameForKey() call allocates fresh buffers so that
         // PageFrameAddressCache can hold addresses from multiple frames
@@ -724,6 +739,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         protected RowCursor pendingRowCursor;
         protected int pendingSymbolKey = -1;
         protected TableReader tableReader;
+        protected int maxRowsPerFrame;
 
         CoveringPageFrameCursor(
                 int indexColumnIndex,
@@ -793,11 +809,6 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         }
 
         @Override
-        public boolean isExternal() {
-            return false;
-        }
-
-        @Override
         public SymbolTable newSymbolTable(int columnIndex) {
             if (tableReader != null) {
                 return tableReader.newSymbolTable(columnIndexes.getQuick(columnIndex));
@@ -840,7 +851,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             freeBuffers();
         }
 
-        private long allocBuffer(long bytes) {
+        protected long allocBuffer(long bytes) {
             long addr = Unsafe.malloc(bytes, MemoryTag.NATIVE_INDEX_READER);
             allocatedBuffers.add(addr, bytes);
             return addr;
@@ -910,7 +921,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
          * cursor close -- the same leak-on-grow that {@link #ensureVarDataCapacity}
          * fixes.
          */
-        private int growFrameBuffers(long[] addrs, int count, int capacity) {
+        protected int growFrameBuffers(long[] addrs, int count, int capacity) {
             int newCapacity = capacity * 2;
             for (int q = 0; q < queryColCount; q++) {
                 if (queryColToIncludeIdx[q] >= 0) {
@@ -942,6 +953,48 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             long symCopyBytes = (long) count * Integer.BYTES;
             addrs[queryColCount] = growBuffer(addrs[queryColCount], symOldBytes, symNewBytes, symCopyBytes);
             return newCapacity;
+        }
+
+        /**
+         * Either return the already-open {@link CoveringRowCursor} parked
+         * across a previous fillFrameForKey call, or open a new one for the
+         * given key + partition range. The caller MUST advance the (key,
+         * partition, rowLo, rowHi) tuple atomically with this call --
+         * {@link #pendingPartitionIndex} / {@link #pendingSymbolKey} are
+         * consulted to confirm the cached cursor matches; a mismatch means
+         * the caller advanced past the parked cursor without draining it
+         * (a bug in nextImpl), and we defensively close + re-open.
+         */
+        private CoveringRowCursor openOrContinueCoveringCursor(int rawSymbolKey, int partitionIndex, long rowLo, long rowHi) {
+            if (pendingRowCursor != null) {
+                if (pendingSymbolKey == rawSymbolKey && pendingPartitionIndex == partitionIndex) {
+                    return pendingCoveringCursor;
+                }
+                // Defensive: parked cursor doesn't match. Close and re-open.
+                closePendingCursor();
+            }
+            IndexReader indexReader = tableReader.getIndexReader(
+                    partitionIndex,
+                    indexColumnIndex,
+                    IndexReader.DIR_FORWARD
+            );
+            RowCursor rowCursor = indexReader.getCursor(
+                    TableUtils.toIndexKey(rawSymbolKey),
+                    rowLo,
+                    rowHi - 1,
+                    requiredIncludeIndices
+            );
+            // EmptyRowCursor (returned when the key has no rows in this
+            // partition) is not a CoveringRowCursor; emit no frame.
+            if (!(rowCursor instanceof CoveringRowCursor coveringCursor)) {
+                Misc.free(rowCursor);
+                return null;
+            }
+            pendingRowCursor = rowCursor;
+            pendingCoveringCursor = coveringCursor;
+            pendingSymbolKey = rawSymbolKey;
+            pendingPartitionIndex = partitionIndex;
+            return coveringCursor;
         }
 
         private void writeArrayToFrame(long auxAddr, long[] varDataAddrs, int[] varDataPos, int[] varDataCap,
@@ -1024,8 +1077,8 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             }
         }
 
-        private void writeCoveredRow(long[] addrs, long[] varDataAddrs, int[] varDataPos, int[] varDataCap,
-                                     int count, CoveringRowCursor crc) {
+        protected void writeCoveredRow(long[] addrs, long[] varDataAddrs, int[] varDataPos, int[] varDataCap,
+                                       int count, CoveringRowCursor crc) {
             for (int q = 0; q < queryColCount; q++) {
                 int includeIdx = queryColToIncludeIdx[q];
                 if (includeIdx < 0) continue;
@@ -1158,6 +1211,20 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         }
 
         /**
+         * Close and clear the parked cursor. Safe to call when no cursor
+         * is parked (no-op).
+         */
+        protected final void closePendingCursor() {
+            if (pendingRowCursor != null) {
+                Misc.free(pendingRowCursor);
+                pendingRowCursor = null;
+                pendingCoveringCursor = null;
+                pendingSymbolKey = -1;
+                pendingPartitionIndex = -1;
+            }
+        }
+
+        /**
          * Produce up to {@link #maxRowsPerFrame} rows for {@code rawSymbolKey}
          * in the given partition's row range. If the key has more rows than the
          * cap, the open {@link RowCursor} is parked in {@link #pendingRowCursor};
@@ -1285,62 +1352,6 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         }
 
         abstract @Nullable PageFrame nextImpl();
-
-        /**
-         * Either return the already-open {@link CoveringRowCursor} parked
-         * across a previous fillFrameForKey call, or open a new one for the
-         * given key + partition range. The caller MUST advance the (key,
-         * partition, rowLo, rowHi) tuple atomically with this call --
-         * {@link #pendingPartitionIndex} / {@link #pendingSymbolKey} are
-         * consulted to confirm the cached cursor matches; a mismatch means
-         * the caller advanced past the parked cursor without draining it
-         * (a bug in nextImpl), and we defensively close + re-open.
-         */
-        private CoveringRowCursor openOrContinueCoveringCursor(int rawSymbolKey, int partitionIndex, long rowLo, long rowHi) {
-            if (pendingRowCursor != null) {
-                if (pendingSymbolKey == rawSymbolKey && pendingPartitionIndex == partitionIndex) {
-                    return pendingCoveringCursor;
-                }
-                // Defensive: parked cursor doesn't match. Close and re-open.
-                closePendingCursor();
-            }
-            IndexReader indexReader = tableReader.getIndexReader(
-                    partitionIndex,
-                    indexColumnIndex,
-                    IndexReader.DIR_FORWARD
-            );
-            RowCursor rowCursor = indexReader.getCursor(
-                    TableUtils.toIndexKey(rawSymbolKey),
-                    rowLo,
-                    rowHi - 1,
-                    requiredIncludeIndices
-            );
-            // EmptyRowCursor (returned when the key has no rows in this
-            // partition) is not a CoveringRowCursor; emit no frame.
-            if (!(rowCursor instanceof CoveringRowCursor coveringCursor)) {
-                Misc.free(rowCursor);
-                return null;
-            }
-            pendingRowCursor = rowCursor;
-            pendingCoveringCursor = coveringCursor;
-            pendingSymbolKey = rawSymbolKey;
-            pendingPartitionIndex = partitionIndex;
-            return coveringCursor;
-        }
-
-        /**
-         * Close and clear the parked cursor. Safe to call when no cursor
-         * is parked (no-op).
-         */
-        protected final void closePendingCursor() {
-            if (pendingRowCursor != null) {
-                Misc.free(pendingRowCursor);
-                pendingRowCursor = null;
-                pendingCoveringCursor = null;
-                pendingSymbolKey = -1;
-                pendingPartitionIndex = -1;
-            }
-        }
 
         void of(PartitionFrameCursor frameCursor, int configMaxRows) {
             closePendingCursor();
@@ -1784,58 +1795,207 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         }
     }
 
-    private static class MultiKeyCoveringCursor extends CoveringCursor {
+    /**
+     * Shared base for the two multi-key cursor variants. Holds the
+     * resolved-key list the factory populates per getCursor() call.
+     */
+    private static abstract class AbstractMultiKeyCoveringCursor extends CoveringCursor {
         final IntList multiKeys;
-        private int cachedPartitionIndex;
-        private long cachedRowHi;
-        private long cachedRowLo;
-        private int currentKeyIdx;
 
-        MultiKeyCoveringCursor(int indexColumnIndex, int multiKeyCapacity, int[] queryColToIncludeIdx,
-                               int[] requiredIncludeIndices, int[] symbolIncludeCols, IntList columnIndexes,
-                               boolean latestBy, RecordMetadata metadata) {
-            super(indexColumnIndex, SymbolTable.VALUE_NOT_FOUND, queryColToIncludeIdx, requiredIncludeIndices, symbolIncludeCols, columnIndexes, latestBy, metadata);
+        AbstractMultiKeyCoveringCursor(int indexColumnIndex, int multiKeyCapacity, int[] queryColToIncludeIdx,
+                                       int[] requiredIncludeIndices, int[] symbolIncludeCols, IntList columnIndexes,
+                                       boolean latestBy, RecordMetadata metadata) {
+            super(indexColumnIndex, SymbolTable.VALUE_NOT_FOUND, queryColToIncludeIdx, requiredIncludeIndices,
+                    symbolIncludeCols, columnIndexes, latestBy, metadata);
             this.multiKeys = new IntList(multiKeyCapacity);
-            this.cachedPartitionIndex = -1;
         }
 
         @Override
         public long size() {
             return -1;
         }
+    }
+
+    /**
+     * Multi-key covering cursor that emits rows in ts-ascending order.
+     * <p>
+     * Opens one posting cursor per resolved key for the current
+     * partition, then merges them by row-id via a min-heap
+     * ({@link IntLongSortedList}). Row-id within a partition is
+     * ts-ascending by the designated-timestamp contract, so heap-merge
+     * yields a globally ts-ascending stream across the partition. This
+     * is what {@link CoveringIndexRecordCursorFactory#getScanDirection()}
+     * advertises as {@code SCAN_DIRECTION_FORWARD}.
+     * <p>
+     * The earlier per-key concatenation emitted rows in (partition, key,
+     * row-id) order, which broke SAMPLE BY and ORDER-BY-ts elision when
+     * the keys' row-ids interleaved in time.
+     */
+    private static class MultiKeyCoveringCursor extends AbstractMultiKeyCoveringCursor {
+        private final IntLongSortedList heap;
+        private final ObjList<CoveringRowCursor> perKeyCursors;
+        // pendingAdvanceSlot >= 0 means: the previous hasNext() emitted a
+        // row from this slot's cursor and left the cursor positioned at
+        // it. On the next hasNext() we must advance that cursor before
+        // peeking the heap again.
+        private int pendingAdvanceSlot;
+
+        MultiKeyCoveringCursor(int indexColumnIndex, int multiKeyCapacity, int[] queryColToIncludeIdx,
+                               int[] requiredIncludeIndices, int[] symbolIncludeCols, IntList columnIndexes,
+                               RecordMetadata metadata) {
+            super(indexColumnIndex, multiKeyCapacity, queryColToIncludeIdx, requiredIncludeIndices,
+                    symbolIncludeCols, columnIndexes, false, metadata);
+            this.perKeyCursors = new ObjList<>(multiKeyCapacity);
+            this.heap = new IntLongSortedList();
+            this.pendingAdvanceSlot = -1;
+        }
+
+        @Override
+        public void close() {
+            super.close();
+            Misc.freeObjListAndClear(perKeyCursors);
+            heap.clear();
+            pendingAdvanceSlot = -1;
+        }
+
+        @Override
+        public boolean hasNext() {
+            if (frameCursor == null || multiKeys.size() == 0) {
+                return false;
+            }
+            while (true) {
+                // Settle the previous emit's advance. The cursor at
+                // pendingAdvanceSlot is still sitting on the row that was
+                // just emitted (so the consumer could read it). Now bump
+                // it: either push its next row back into the heap, or
+                // remove it from the heap.
+                if (pendingAdvanceSlot >= 0) {
+                    int s = pendingAdvanceSlot;
+                    pendingAdvanceSlot = -1;
+                    CoveringRowCursor c = perKeyCursors.getQuick(s);
+                    if (c.hasNext()) {
+                        heap.pollAndReplace(s, c.next());
+                    } else {
+                        heap.pollValue();
+                    }
+                }
+                if (heap.hasNext()) {
+                    int slot = heap.peekIndex();
+                    CoveringRowCursor c = perKeyCursors.getQuick(slot);
+                    // next() on posting cursors is idempotent — returns
+                    // the row-id of the row the cursor is currently
+                    // positioned at without advancing.
+                    long rowId = c.next();
+                    coveringRecord.of(c);
+                    coveringRecord.setSymbolKey(multiKeys.getQuick(slot));
+                    coveringRecord.setRowId(rowId);
+                    pendingAdvanceSlot = slot;
+                    return true;
+                }
+                if (!advancePartition()) {
+                    return false;
+                }
+            }
+        }
 
         @Override
         boolean advanceKey() {
-            if (multiKeys.size() == 0) {
-                return false;
-            }
-            if (cachedPartitionIndex >= 0) {
-                currentKeyIdx++;
-                while (currentKeyIdx < multiKeys.size()) {
-                    if (tryOpenKey(cachedPartitionIndex, multiKeys.getQuick(currentKeyIdx), cachedRowLo, cachedRowHi)) {
-                        return true;
-                    }
-                    currentKeyIdx++;
-                }
-            }
-            // Advance to next partition and try all keys
+            // Unused: hasNext() is overridden directly.
+            return false;
+        }
+
+        @Override
+        boolean hasNextLatestBy() {
+            // Unused: latestBy uses MultiKeyLatestByCoveringCursor.
+            return false;
+        }
+
+        @Override
+        void resetIterationState() {
+            Misc.freeObjListAndClear(perKeyCursors);
+            heap.clear();
+            pendingAdvanceSlot = -1;
+        }
+
+        private boolean advancePartition() {
+            // Drop cursors from the previous partition. They were
+            // already drained out of the heap; freeing them returns
+            // them to the per-reader free-cursor pool.
+            Misc.freeObjListAndClear(perKeyCursors);
+            heap.clear();
+            pendingAdvanceSlot = -1;
             while (true) {
                 PartitionFrame frame = frameCursor.next();
                 if (frame == null) {
-                    cachedPartitionIndex = -1;
                     return false;
                 }
-                cachedPartitionIndex = frame.getPartitionIndex();
-                cachedRowLo = frame.getRowLo();
-                cachedRowHi = frame.getRowHi();
-                currentKeyIdx = 0;
-                while (currentKeyIdx < multiKeys.size()) {
-                    if (tryOpenKey(cachedPartitionIndex, multiKeys.getQuick(currentKeyIdx), cachedRowLo, cachedRowHi)) {
-                        return true;
+                if (openPartitionCursors(frame.getPartitionIndex(), frame.getRowLo(), frame.getRowHi())) {
+                    return true;
+                }
+                // No key has rows in this partition — try the next one.
+                Misc.freeObjListAndClear(perKeyCursors);
+                heap.clear();
+            }
+        }
+
+        private boolean openPartitionCursors(int partitionIndex, long rowLo, long rowHi) {
+            IndexReader indexReader = tableReader.getIndexReader(
+                    partitionIndex,
+                    indexColumnIndex,
+                    IndexReader.DIR_FORWARD
+            );
+            int n = multiKeys.size();
+            // Slot i corresponds to multiKeys[i]. Slots with no rows in
+            // this partition stay null so that heap-slot indices remain
+            // stable lookups into perKeyCursors and multiKeys.
+            perKeyCursors.setAll(n, null);
+            for (int i = 0; i < n; i++) {
+                int rawSymbolKey = multiKeys.getQuick(i);
+                RowCursor rowCursor = indexReader.getCursor(
+                        TableUtils.toIndexKey(rawSymbolKey),
+                        rowLo,
+                        rowHi - 1,
+                        requiredIncludeIndices
+                );
+                // EmptyRowCursor (no rows for this key in this partition)
+                // is not a CoveringRowCursor; skip it. CoveringRowCursors
+                // with no rows are also skipped after a hasNext()==false.
+                if (rowCursor instanceof CoveringRowCursor crc) {
+                    if (crc.hasNext()) {
+                        perKeyCursors.setQuick(i, crc);
+                        heap.add(i, crc.next());
+                    } else {
+                        Misc.free(crc);
                     }
-                    currentKeyIdx++;
+                } else {
+                    Misc.free(rowCursor);
                 }
             }
+            return heap.hasNext();
+        }
+    }
+
+    /**
+     * Multi-key covering cursor for {@code LATEST BY}. Iterates
+     * partitions DESC and emits at most one row per resolved key,
+     * applying {@link CoveringCursor#latestByFilter} when set. Output is
+     * per-key, not ts-ascending, hence the factory advertises
+     * {@code SCAN_DIRECTION_OTHER} when {@code latestBy} is true.
+     */
+    private static class MultiKeyLatestByCoveringCursor extends AbstractMultiKeyCoveringCursor {
+        private int currentKeyIdx;
+
+        MultiKeyLatestByCoveringCursor(int indexColumnIndex, int multiKeyCapacity, int[] queryColToIncludeIdx,
+                                       int[] requiredIncludeIndices, int[] symbolIncludeCols, IntList columnIndexes,
+                                       RecordMetadata metadata) {
+            super(indexColumnIndex, multiKeyCapacity, queryColToIncludeIdx, requiredIncludeIndices,
+                    symbolIncludeCols, columnIndexes, true, metadata);
+        }
+
+        @Override
+        boolean advanceKey() {
+            // Unused: the base class routes latestBy=true through hasNextLatestBy().
+            return false;
         }
 
         @Override
@@ -1855,14 +2015,34 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         @Override
         void resetIterationState() {
             currentKeyIdx = 0;
-            cachedPartitionIndex = -1;
         }
     }
 
+    /**
+     * Multi-key covering page-frame cursor.
+     * <p>
+     * Opens one posting cursor per resolved key for the current partition
+     * and merges them by row-id via a min-heap. The earlier per-key fill
+     * emitted (key, partition) blocks, which violated the row-id
+     * ascending order page-frame consumers (and the SAMPLE BY entry gate)
+     * rely on. The indexed-symbol column is now written per-row, since
+     * consecutive emitted rows can belong to different keys.
+     * <p>
+     * Resume across nextImpl() calls is heap-based: when a frame fills to
+     * maxRowsPerFrame the heap and per-key cursors are left in place;
+     * the next call continues from {@link #pendingAdvanceSlot}.
+     */
     private static class MultiKeyCoveringPageFrameCursor extends CoveringPageFrameCursor {
         final IntList multiKeys = new IntList();
-        private PartitionFrame cachedPartFrame;
-        private int currentKeyIdx;
+        private final IntLongSortedList heap = new IntLongSortedList();
+        private final ObjList<CoveringRowCursor> perKeyCursors = new ObjList<>();
+        // Partition whose cursors are currently held in perKeyCursors / heap.
+        // -1 when the heap is empty between partitions.
+        private int heapPartitionIndex = -1;
+        // See MultiKeyCoveringCursor.pendingAdvanceSlot. Set to the slot
+        // we just emitted from; the next fillFramePartition() call
+        // advances that cursor before re-peeking the heap.
+        private int pendingAdvanceSlot = -1;
 
         MultiKeyCoveringPageFrameCursor(
                 int indexColumnIndex,
@@ -1875,75 +2055,198 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         }
 
         @Override
+        public void close() {
+            super.close();
+            Misc.freeObjListAndClear(perKeyCursors);
+            heap.clear();
+            pendingAdvanceSlot = -1;
+            heapPartitionIndex = -1;
+        }
+
+        @Override
         @Nullable
         PageFrame nextImpl() {
             if (multiKeys.size() == 0) {
                 isExhausted = true;
                 return null;
             }
-            // Resume a parked cursor first. currentKeyIdx was NOT advanced
-            // when the previous frame was returned (because pendingRowCursor
-            // was still set), so we use the captured pendingSymbolKey /
-            // pendingPartitionIndex to continue the same (key, partition)
-            // tuple. When the resumed cursor exhausts (signalled by
-            // pendingRowCursor going back to null inside fillFrameForKey),
-            // we MUST advance currentKeyIdx here -- the inner while below
-            // never sees this path, so the increment can't happen there.
-            if (pendingRowCursor != null) {
-                PageFrame result = fillFrameForKey(
-                        pendingSymbolKey,
-                        pendingPartitionIndex,
-                        0L, 0L);
-                if (pendingRowCursor == null) {
-                    // Resumed cursor drained; advance to next key for
-                    // the current partition. Without this we'd loop back
-                    // into the inner while below with the SAME key index
-                    // and re-open a fresh cursor for the same (key,
-                    // partition) tuple, producing the same frames again.
-                    currentKeyIdx++;
-                }
-                if (result != null) {
-                    return result;
-                }
-            }
             while (true) {
-                while (currentKeyIdx < multiKeys.size()) {
-                    if (cachedPartFrame != null) {
-                        int rawKey = multiKeys.getQuick(currentKeyIdx);
-                        PageFrame result = fillFrameForKey(
-                                rawKey,
-                                cachedPartFrame.getPartitionIndex(),
-                                cachedPartFrame.getRowLo(),
-                                cachedPartFrame.getRowHi()
-                        );
-                        // Only advance to the next key when fillFrameForKey
-                        // signals the parked cursor for this key drained
-                        // (pendingRowCursor cleared) -- otherwise we'd skip
-                        // its remaining rows.
-                        if (pendingRowCursor == null) {
-                            currentKeyIdx++;
-                        }
-                        if (result != null) {
-                            return result;
-                        }
-                    } else {
-                        break;
+                // Continue draining the heap (or settle a pending advance
+                // left over from the previous frame's last emit).
+                if (heap.hasNext() || pendingAdvanceSlot >= 0) {
+                    PageFrame result = fillFramePartition(heapPartitionIndex);
+                    if (result != null) {
+                        return result;
                     }
+                    // Heap drained for this partition; fall through to
+                    // advance to the next partition.
+                    Misc.freeObjListAndClear(perKeyCursors);
+                    heap.clear();
+                    heapPartitionIndex = -1;
                 }
                 PartitionFrame partFrame = frameCursor.next();
                 if (partFrame == null) {
                     isExhausted = true;
                     return null;
                 }
-                cachedPartFrame = partFrame;
-                currentKeyIdx = 0;
+                if (openPartitionCursors(partFrame.getPartitionIndex(), partFrame.getRowLo(), partFrame.getRowHi())) {
+                    heapPartitionIndex = partFrame.getPartitionIndex();
+                    // Loop back; fillFramePartition will emit from the
+                    // newly populated heap.
+                } else {
+                    // No keys resolved to any rows in this partition.
+                    Misc.freeObjListAndClear(perKeyCursors);
+                    heap.clear();
+                }
             }
         }
 
         @Override
         void resetIterationState() {
-            currentKeyIdx = 0;
-            cachedPartFrame = null;
+            Misc.freeObjListAndClear(perKeyCursors);
+            heap.clear();
+            pendingAdvanceSlot = -1;
+            heapPartitionIndex = -1;
+        }
+
+        private @Nullable PageFrame fillFramePartition(int partitionIndex) {
+            final long[] addrs = frameAddrs;
+            final long[] varDataAddrs = frameVarDataAddrs;
+            final int[] varDataPos = frameVarDataPos;
+            final int[] varDataCap = frameVarDataCap;
+
+            int capacity = INITIAL_CAPACITY;
+            Arrays.fill(varDataAddrs, 0);
+            Arrays.fill(varDataPos, 0);
+            Arrays.fill(varDataCap, 0);
+            for (int q = 0; q < queryColCount; q++) {
+                if (queryColToIncludeIdx[q] >= 0) {
+                    if (columnTypeTags[q] == ColumnType.VARCHAR) {
+                        addrs[q] = allocBuffer((long) capacity * VarcharTypeDriver.VARCHAR_AUX_WIDTH_BYTES);
+                        int initDataCap = capacity * 32;
+                        varDataAddrs[q] = allocBuffer(initDataCap);
+                        varDataCap[q] = initDataCap;
+                    } else if (columnTypeTags[q] == ColumnType.STRING || columnTypeTags[q] == ColumnType.BINARY) {
+                        addrs[q] = allocBuffer((long) (capacity + 1) * Long.BYTES);
+                        int initDataCap = capacity * 32;
+                        varDataAddrs[q] = allocBuffer(initDataCap);
+                        varDataCap[q] = initDataCap;
+                    } else if (columnTypeTags[q] == ColumnType.ARRAY) {
+                        addrs[q] = allocBuffer((long) capacity * ArrayTypeDriver.ARRAY_AUX_WIDTH_BYTES);
+                        int initDataCap = capacity * 32;
+                        varDataAddrs[q] = allocBuffer(initDataCap);
+                        varDataCap[q] = initDataCap;
+                    } else {
+                        addrs[q] = allocBuffer((long) capacity * columnSizeBytes[q]);
+                    }
+                }
+            }
+            addrs[queryColCount] = allocBuffer((long) capacity * Integer.BYTES);
+
+            int count = 0;
+            try {
+                while (true) {
+                    // Settle the previous emit's advance.
+                    if (pendingAdvanceSlot >= 0) {
+                        int s = pendingAdvanceSlot;
+                        pendingAdvanceSlot = -1;
+                        CoveringRowCursor c = perKeyCursors.getQuick(s);
+                        if (c.hasNext()) {
+                            heap.pollAndReplace(s, c.next());
+                        } else {
+                            heap.pollValue();
+                        }
+                    }
+                    if (!heap.hasNext() || count >= maxRowsPerFrame) {
+                        break;
+                    }
+                    int slot = heap.peekIndex();
+                    CoveringRowCursor c = perKeyCursors.getQuick(slot);
+                    if (count >= capacity) {
+                        capacity = growFrameBuffers(addrs, count, capacity);
+                    }
+                    writeCoveredRow(addrs, varDataAddrs, varDataPos, varDataCap, count, c);
+                    Unsafe.putInt(addrs[queryColCount] + (long) count * Integer.BYTES, multiKeys.getQuick(slot));
+                    count++;
+                    pendingAdvanceSlot = slot;
+                }
+            } catch (Throwable t) {
+                // Drop heap state on error so close() doesn't double-free
+                // or operate on a half-consumed cursor.
+                Misc.freeObjListAndClear(perKeyCursors);
+                heap.clear();
+                pendingAdvanceSlot = -1;
+                throw t;
+            }
+            if (count == 0) {
+                return null;
+            }
+
+            long symAddr = addrs[queryColCount];
+            for (int q = 0; q < queryColCount; q++) {
+                int includeIdx = queryColToIncludeIdx[q];
+                if (includeIdx >= 0 && columnTypeTags[q] == ColumnType.VARCHAR) {
+                    frame.auxPageAddresses[q] = addrs[q];
+                    frame.auxPageSizes[q] = (long) count * VarcharTypeDriver.VARCHAR_AUX_WIDTH_BYTES;
+                    frame.pageAddresses[q] = varDataAddrs[q];
+                    frame.pageSizes[q] = varDataPos[q];
+                } else if (includeIdx >= 0 && (columnTypeTags[q] == ColumnType.STRING || columnTypeTags[q] == ColumnType.BINARY)) {
+                    Unsafe.putLong(addrs[q] + (long) count * Long.BYTES, varDataPos[q]);
+                    frame.auxPageAddresses[q] = addrs[q];
+                    frame.auxPageSizes[q] = (long) (count + 1) * Long.BYTES;
+                    frame.pageAddresses[q] = varDataAddrs[q];
+                    frame.pageSizes[q] = varDataPos[q];
+                } else if (includeIdx >= 0 && columnTypeTags[q] == ColumnType.ARRAY) {
+                    frame.auxPageAddresses[q] = addrs[q];
+                    frame.auxPageSizes[q] = (long) count * ArrayTypeDriver.ARRAY_AUX_WIDTH_BYTES;
+                    frame.pageAddresses[q] = varDataAddrs[q];
+                    frame.pageSizes[q] = varDataPos[q];
+                } else if (includeIdx >= 0) {
+                    frame.pageAddresses[q] = addrs[q];
+                    frame.pageSizes[q] = (long) count * columnSizeBytes[q];
+                    frame.auxPageAddresses[q] = 0;
+                    frame.auxPageSizes[q] = 0;
+                } else if (includeIdx == -1) {
+                    frame.pageAddresses[q] = symAddr;
+                    frame.pageSizes[q] = (long) count * Integer.BYTES;
+                    frame.auxPageAddresses[q] = 0;
+                    frame.auxPageSizes[q] = 0;
+                }
+            }
+            frame.partitionLo = 0;
+            frame.partitionHi = count;
+            frame.partitionIndex = partitionIndex;
+            return frame;
+        }
+
+        private boolean openPartitionCursors(int partitionIndex, long rowLo, long rowHi) {
+            IndexReader indexReader = tableReader.getIndexReader(
+                    partitionIndex,
+                    indexColumnIndex,
+                    IndexReader.DIR_FORWARD
+            );
+            int n = multiKeys.size();
+            perKeyCursors.setAll(n, null);
+            for (int i = 0; i < n; i++) {
+                int rawSymbolKey = multiKeys.getQuick(i);
+                RowCursor rowCursor = indexReader.getCursor(
+                        TableUtils.toIndexKey(rawSymbolKey),
+                        rowLo,
+                        rowHi - 1,
+                        requiredIncludeIndices
+                );
+                if (rowCursor instanceof CoveringRowCursor crc) {
+                    if (crc.hasNext()) {
+                        perKeyCursors.setQuick(i, crc);
+                        heap.add(i, crc.next());
+                    } else {
+                        Misc.free(crc);
+                    }
+                } else {
+                    Misc.free(rowCursor);
+                }
+            }
+            return heap.hasNext();
         }
     }
 
