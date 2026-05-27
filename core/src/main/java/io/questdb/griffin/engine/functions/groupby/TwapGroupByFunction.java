@@ -354,9 +354,17 @@ public class TwapGroupByFunction extends DoubleFunction implements GroupByFuncti
         long srcBatches = srcDescPtr == 0 ? 1 : srcDescCount;
         long mergedBatches = destBatches + srcBatches;
 
-        long mergedPtr = allocator.malloc(mergedCount * ENTRY_SIZE);
-        // A single-batch result needs no descriptor buffer.
-        long mergedDescPtr = mergedBatches > 1 ? allocator.malloc(mergedBatches * Long.BYTES) : 0;
+        // Fold the entry buffer and (optional) descriptor buffer into a
+        // single allocator request. Two malloc calls per merge doubled the
+        // chunk-grow rate on the high-cardinality path (JFR: 373 samples on
+        // FastGroupByAllocator.malloc's chunk-alloc slow path under the 1M-
+        // groups scenario); one larger block hits chunk-grow once per
+        // merge and keeps the entry/descriptor pair contiguous for the
+        // next merge's gather.
+        long entryBytes = mergedCount * ENTRY_SIZE;
+        long descBytes = mergedBatches > 1 ? mergedBatches * Long.BYTES : 0;
+        long mergedPtr = allocator.malloc(entryBytes + descBytes);
+        long mergedDescPtr = descBytes > 0 ? mergedPtr + entryBytes : 0;
         SortedRunsMerge.compactInto(
                 runScratch,
                 mergedPtr, mergedDescPtr,

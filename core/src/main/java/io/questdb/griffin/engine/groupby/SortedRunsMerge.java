@@ -83,6 +83,12 @@ public final class SortedRunsMerge {
     // group is seeded with two descriptors, leaving room for six more frames
     // before the first growth.
     private static final long DESC_INITIAL_CAPACITY = 8;
+    // Below this batch count, sortByFirstKey runs an insertion sort in-place
+    // instead of the bottom-up mergesort. The reduce-phase merge over many
+    // small groups visits this code path with single-digit n and is the hot
+    // path in the high-cardinality scenario (see JFR profiling of the 1M-
+    // groups twap benchmark).
+    private static final int INSERTION_SORT_THRESHOLD = 16;
     // Each gathered batch occupies 3 longs in the scratch list:
     //   [firstKey, entriesAddress, entryCount]
     private static final int RECORD_LONGS = 3;
@@ -242,6 +248,13 @@ public final class SortedRunsMerge {
 
     // Appends one [firstKey, address, entryCount] record per batch. A buffer
     // with descPtr == 0 is a single implicit batch covering [0, entryCount).
+    //
+    // Hot path (JFR's top SortedRunsMerge leaf at 439 samples in the 1M-
+    // groups scenario), so it pre-grows the scratch list once via setPos
+    // and writes via setQuick - skipping the per-add capacity check that
+    // would otherwise fire three times per batch. The descriptor loop
+    // also carries the previous iteration's end forward as the next
+    // batch's start, halving the descriptor reads.
     private static void gatherBatches(
             LongList scratch,
             long entriesPtr,
@@ -253,19 +266,26 @@ public final class SortedRunsMerge {
         if (entryCount <= 0) {
             return;
         }
+        final int base = scratch.size();
         if (descPtr == 0) {
-            scratch.add(Unsafe.getLong(entriesPtr));
-            scratch.add(entriesPtr);
-            scratch.add(entryCount);
+            scratch.setPos(base + RECORD_LONGS);
+            scratch.setQuick(base, Unsafe.getLong(entriesPtr));
+            scratch.setQuick(base + 1, entriesPtr);
+            scratch.setQuick(base + 2, entryCount);
             return;
         }
-        for (long i = 0; i < descCount; i++) {
-            final long start = Unsafe.getLong(descPtr + i * Long.BYTES);
-            final long end = (i + 1 < descCount) ? Unsafe.getLong(descPtr + (i + 1) * Long.BYTES) : entryCount;
+        final int n = (int) descCount;
+        scratch.setPos(base + n * RECORD_LONGS);
+        int write = base;
+        long start = Unsafe.getLong(descPtr);
+        for (int i = 0; i < n; i++) {
+            final long end = (i + 1 < n) ? Unsafe.getLong(descPtr + (long) (i + 1) * Long.BYTES) : entryCount;
             final long addr = entriesPtr + start * entryStride;
-            scratch.add(Unsafe.getLong(addr));
-            scratch.add(addr);
-            scratch.add(end - start);
+            scratch.setQuick(write, Unsafe.getLong(addr));
+            scratch.setQuick(write + 1, addr);
+            scratch.setQuick(write + 2, end - start);
+            write += RECORD_LONGS;
+            start = end;
         }
     }
 
@@ -317,8 +337,21 @@ public final class SortedRunsMerge {
     // Stable bottom-up merge sort of the n batch records by first key. Uses the
     // upper half of the scratch list as the ping-pong area. Returns the long
     // base offset of the half holding the sorted records.
+    //
+    // Small-N inputs (the common case under the merge-reduction path for many
+    // small groups) take a separate insertion-sort branch. The bottom-up
+    // mergesort's per-call overhead and ping-pong copies dominate for n in
+    // the single digits, where JFR profiling of the 1M-group scenario showed
+    // {@code mergeRuns} as the hottest leaf in the parallel GROUP BY reduce
+    // path. Insertion sort runs in-place at base 0 and avoids the auxiliary
+    // half entirely; it is also stable for the (irrelevant here, since
+    // batches are key-disjoint by construction) equal-key case.
     private static int sortByFirstKey(LongList scratch, int n) {
         if (n <= 1) {
+            return 0;
+        }
+        if (n <= INSERTION_SORT_THRESHOLD) {
+            insertionSortByFirstKey(scratch, n);
             return 0;
         }
         final int span = n * RECORD_LONGS;
@@ -336,5 +369,36 @@ public final class SortedRunsMerge {
             dstBase = tmp;
         }
         return srcBase;
+    }
+
+    // In-place insertion sort by first key over the first n records of
+    // {@code scratch}. Each record occupies {@link #RECORD_LONGS} consecutive
+    // longs; the first long is the sort key. Strict {@code >} preserves
+    // original order on equal keys (stability), though in this caller's
+    // workloads batches are key-disjoint and ties cannot occur.
+    private static void insertionSortByFirstKey(LongList scratch, int n) {
+        for (int i = 1; i < n; i++) {
+            final int srcBase = i * RECORD_LONGS;
+            final long key = scratch.getQuick(srcBase);
+            // Skip already-in-place records: the prev key is <= ours.
+            if (scratch.getQuick(srcBase - RECORD_LONGS) <= key) {
+                continue;
+            }
+            final long addr = scratch.getQuick(srcBase + 1);
+            final long cnt = scratch.getQuick(srcBase + 2);
+            int j = i;
+            while (j > 0 && scratch.getQuick((j - 1) * RECORD_LONGS) > key) {
+                final int prev = (j - 1) * RECORD_LONGS;
+                final int cur = j * RECORD_LONGS;
+                scratch.setQuick(cur, scratch.getQuick(prev));
+                scratch.setQuick(cur + 1, scratch.getQuick(prev + 1));
+                scratch.setQuick(cur + 2, scratch.getQuick(prev + 2));
+                j--;
+            }
+            final int dst = j * RECORD_LONGS;
+            scratch.setQuick(dst, key);
+            scratch.setQuick(dst + 1, addr);
+            scratch.setQuick(dst + 2, cnt);
+        }
     }
 }
