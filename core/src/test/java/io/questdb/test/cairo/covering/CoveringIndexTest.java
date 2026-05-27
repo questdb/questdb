@@ -10332,13 +10332,13 @@ public class CoveringIndexTest extends AbstractCairoTest {
         final AtomicBoolean failArmed = new AtomicBoolean(false);
         ff = new TestFilesFacadeImpl() {
             @Override
-            public long openAppend(LPSZ name) {
+            public long openRW(LPSZ name, int opts) {
                 if (failArmed.get() && name != null
                         && Utf8s.endsWithAscii(name, "price.d")) {
                     failArmed.set(false);
                     return -1;
                 }
-                return super.openAppend(name);
+                return super.openRW(name, opts);
             }
         };
         assertMemoryLeak(ff, () -> {
