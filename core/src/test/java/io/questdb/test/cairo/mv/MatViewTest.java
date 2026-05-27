@@ -1284,7 +1284,7 @@ public class MatViewTest extends AbstractCairoTest {
             assertExceptionNoLeakCheck(
                     "alter materialized view price_1h set ttl 1 hour;",
                     41,
-                    "TTL value must be an integer multiple of partition size"
+                    "TTL value must be an integer multiple of the partition size (its time interval)"
             );
 
             assertQueryNoLeakCheck(

@@ -651,7 +651,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
             assertExceptionNoLeakCheck(
                     "create materialized view test as (select ts, avg(v) from " + TABLE1 + " sample by 30s) partition by day ttl 12 hours",
                     100,
-                    "TTL value must be an integer multiple of partition size"
+                    "TTL value must be an integer multiple of the partition size (its time interval)"
             );
             assertNull(getMatViewDefinition("test"));
         });
@@ -784,7 +784,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
             assertExceptionNoLeakCheck(
                     "create materialized view test as (select ts, avg(v) from " + TABLE1 + " sample by 30s) ttl 12 hours",
                     83,
-                    "TTL value must be an integer multiple of partition size"
+                    "TTL value must be an integer multiple of the partition size (its time interval)"
             );
             assertNull(getMatViewDefinition("test"));
         });
