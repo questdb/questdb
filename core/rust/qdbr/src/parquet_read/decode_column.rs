@@ -50,7 +50,7 @@ use crate::parquet_read::row_groups::{
 use crate::parquet_read::{ColumnChunkBuffers, DecodeContext};
 
 /// Decode a single i64 timestamp value from a column chunk. Both the `_pm`
-/// read path (`decode_single_ts_from_pm`) and the Mig940 backfill path
+/// read path (`decode_single_ts_from_pm`) and the Mig941 backfill path
 /// (`decode_single_ts_value_from_parquet`) call this after resolving their
 /// own descriptors and byte ranges.
 ///
