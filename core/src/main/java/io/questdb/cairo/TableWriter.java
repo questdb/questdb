@@ -825,17 +825,22 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         columnMetadata.setCoveringColumnIndices(coveringColumnIndices);
 
         final SymbolColumnIndexer indexer = new SymbolColumnIndexer(configuration, indexType);
-        writeIndex(columnName, indexValueBlockSize, indexType, columnIndex, indexer);
+        try {
+            writeIndex(columnName, indexValueBlockSize, indexType, columnIndex, indexer);
 
-        columnMetadata.setIndexType(indexType);
-        columnMetadata.setIndexValueBlockCapacity(indexValueBlockSize);
+            columnMetadata.setIndexType(indexType);
+            columnMetadata.setIndexValueBlockCapacity(indexValueBlockSize);
 
-        // set the index flag in metadata and create new _meta.swp
-        rewriteAndSwapMetadata(metadata);
-        clearTodoAndCommitMeta();
+            // set the index flag in metadata and create new _meta.swp
+            rewriteAndSwapMetadata(metadata);
+            clearTodoAndCommitMeta();
 
-        indexers.extendAndSet(columnIndex, indexer);
-        populateDenseIndexerList();
+            indexers.extendAndSet(columnIndex, indexer);
+            populateDenseIndexerList();
+        } catch (Throwable th) {
+            Misc.free(indexer);
+            throw th;
+        }
 
         try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
             metadataRW.hydrateTable(metadata);
@@ -3630,6 +3635,131 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
+    private void accumulateAllNullFixedChunk(MemoryMARW mem, int columnType, long rowCount) {
+        final long fixSize = rowCount * ColumnType.sizeOf(columnType);
+        if (fixSize == 0) {
+            return;
+        }
+        long nullBuf = Unsafe.malloc(fixSize, MemoryTag.NATIVE_TABLE_WRITER);
+        try {
+            TableUtils.setNull(columnType, nullBuf, rowCount);
+            mem.putBlockOfBytes(nullBuf, fixSize);
+        } finally {
+            Unsafe.free(nullBuf, fixSize, MemoryTag.NATIVE_TABLE_WRITER);
+        }
+    }
+
+    private void accumulateAllNullVarSizeChunk(
+            ColumnTypeDriver driver,
+            MemoryMARW auxMem,
+            MemoryMARW dataMem,
+            int rowGroupIndex,
+            long rowCount,
+            long dataVecBytesWritten
+    ) {
+        final long dataSize = rowCount * driver.getDataVectorMinEntrySize();
+        final long auxSize = driver.getAuxVectorSize(rowCount);
+
+        long nullDataBuf = 0;
+        long nullAuxBuf = 0;
+        try {
+            if (dataSize > 0) {
+                nullDataBuf = Unsafe.malloc(dataSize, MemoryTag.NATIVE_TABLE_WRITER);
+                driver.setDataVectorEntriesToNull(nullDataBuf, rowCount);
+                dataMem.putBlockOfBytes(nullDataBuf, dataSize);
+            }
+            if (auxSize > 0) {
+                nullAuxBuf = Unsafe.malloc(auxSize, MemoryTag.NATIVE_TABLE_WRITER);
+                driver.setFullAuxVectorNull(nullAuxBuf, rowCount);
+                if (dataVecBytesWritten > 0 && rowCount > 0) {
+                    driver.shiftCopyAuxVector(
+                            -dataVecBytesWritten, nullAuxBuf, 0,
+                            rowCount - 1, nullAuxBuf, auxSize);
+                }
+                long auxPtr = nullAuxBuf;
+                long auxBytes = auxSize;
+                if (rowGroupIndex > 0) {
+                    final long adjust = driver.getMinAuxVectorSize();
+                    auxPtr += adjust;
+                    auxBytes -= adjust;
+                }
+                auxMem.putBlockOfBytes(auxPtr, auxBytes);
+            }
+        } finally {
+            if (nullAuxBuf != 0) {
+                Unsafe.free(nullAuxBuf, auxSize, MemoryTag.NATIVE_TABLE_WRITER);
+            }
+            if (nullDataBuf != 0) {
+                Unsafe.free(nullDataBuf, dataSize, MemoryTag.NATIVE_TABLE_WRITER);
+            }
+        }
+    }
+
+    /**
+     * Accumulates one decoded row group's worth of covered column data into
+     * mmap-backed temp files. Called from the merged row-group loop inside
+     * {@link #indexParquetPartition}. Each covered slot's MemoryMARW pair
+     * (data + aux) in {@code covMmaps} grows via mmap extend; the caller
+     * passes the final base addresses to PostingIndexWriter after the loop.
+     *
+     * <p>{@code covSlotMeta} layout per slot (3 longs):
+     * [0] decodedChunkIdx (-1 if skipped), [1] colType, [2] dataVecBytesWritten.
+     */
+    private void accumulateCoveredColumnsFromRowGroup(
+            IntList coveringColumnIndices,
+            DirectLongList covSlotMeta,
+            ObjList<MemoryMARW> covMmaps,
+            RowGroupBuffers rowGroupBuffers,
+            int rowGroupIndex,
+            long rowGroupRowCount
+    ) {
+        final int coverCount = coveringColumnIndices.size();
+        for (int slot = 0; slot < coverCount; slot++) {
+            final int decodedChunkIdx = (int) covSlotMeta.get(3L * slot);
+            if (decodedChunkIdx < 0) {
+                continue;
+            }
+            final int columnType = (int) covSlotMeta.get(3L * slot + 1);
+            final long srcDataPtr = rowGroupBuffers.getChunkDataPtr(decodedChunkIdx);
+            final long srcDataSize = rowGroupBuffers.getChunkDataSize(decodedChunkIdx);
+            long srcAuxPtr = rowGroupBuffers.getChunkAuxPtr(decodedChunkIdx);
+            long srcAuxSize = rowGroupBuffers.getChunkAuxSize(decodedChunkIdx);
+
+            final MemoryMARW dataMem = covMmaps.getQuick(2 * slot + 1);
+            if (ColumnType.isVarSize(columnType)) {
+                final MemoryMARW auxMem = covMmaps.getQuick(2 * slot);
+                final ColumnTypeDriver driver = ColumnType.getDriver(columnType);
+                final long dataVecBytesWritten = covSlotMeta.get(3L * slot + 2);
+
+                if (srcDataPtr == 0 && srcAuxPtr == 0) {
+                    accumulateAllNullVarSizeChunk(
+                            driver, auxMem, dataMem, rowGroupIndex,
+                            rowGroupRowCount, dataVecBytesWritten);
+                    covSlotMeta.set(3L * slot + 2,
+                            dataVecBytesWritten + rowGroupRowCount * driver.getDataVectorMinEntrySize());
+                    continue;
+                }
+                if (rowGroupIndex > 0) {
+                    driver.shiftCopyAuxVector(
+                            -dataVecBytesWritten, srcAuxPtr, 0,
+                            rowGroupRowCount - 1, srcAuxPtr, srcAuxSize);
+                    final long adjust = driver.getMinAuxVectorSize();
+                    srcAuxPtr += adjust;
+                    srcAuxSize -= adjust;
+                }
+                dataMem.putBlockOfBytes(srcDataPtr, srcDataSize);
+                auxMem.putBlockOfBytes(srcAuxPtr, srcAuxSize);
+                covSlotMeta.set(3L * slot + 2, dataVecBytesWritten + srcDataSize);
+            } else {
+                if (srcDataPtr == 0) {
+                    accumulateAllNullFixedChunk(dataMem, columnType, rowGroupRowCount);
+                } else {
+                    dataMem.putBlockOfBytes(srcDataPtr, srcDataSize);
+                }
+            }
+        }
+    }
+
     private void addColumnToMeta(
             CharSequence columnName,
             int columnType,
@@ -4416,27 +4546,26 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     /**
-     * Deletes the temp .d (and .i for var-size) files that
-     * {@link #materialiseCoveredColumnsFromParquet} created at the standard
-     * paths inside the partition. Iterates the {@code materialisedSlots} list
-     * populated by the materialise step so we touch only the slots we actually
-     * wrote.
+     * Removes covered-column temp files (.d and .i) for ALL covered columns
+     * of the given index. Used by the single-pass parquet indexing path where
+     * the caller does not track individual materialised slots.
      */
     private void cleanupMaterialisedCoveredColumnTempFiles(
             IntList coveringColumnIndices,
             long partitionTimestamp,
-            int plen,
-            IntList materialisedSlots
+            int plen
     ) {
-        for (int i = 0, n = materialisedSlots.size(); i < n; i++) {
-            final int slot = materialisedSlots.getQuick(i);
+        for (int slot = 0, n = coveringColumnIndices.size(); slot < n; slot++) {
             final int tableColIdx = coveringColumnIndices.getQuick(slot);
+            if (tableColIdx < 0) {
+                continue;
+            }
             final int columnType = metadata.getColumnType(tableColIdx);
-            final CharSequence columnName = metadata.getColumnName(tableColIdx);
-            final long columnNameTxn = columnVersionWriter.getColumnNameTxn(partitionTimestamp, tableColIdx);
-            ff.removeQuiet(dFile(path.trimTo(plen), columnName, columnNameTxn));
+            final CharSequence colName = metadata.getColumnName(tableColIdx);
+            final long colNameTxn = columnVersionWriter.getColumnNameTxn(partitionTimestamp, tableColIdx);
+            ff.removeQuiet(dFile(path.trimTo(plen), colName, colNameTxn));
             if (ColumnType.isVarSize(columnType)) {
-                ff.removeQuiet(iFile(path.trimTo(plen), columnName, columnNameTxn));
+                ff.removeQuiet(iFile(path.trimTo(plen), colName, colNameTxn));
             }
         }
         path.trimTo(plen);
@@ -4708,6 +4837,56 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             o3TimestampMem = o3MemColumns1.getQuick(getPrimaryColumnIndex(timestampIndex));
             o3TimestampMemCpy = o3MemColumns2.getQuick(getPrimaryColumnIndex(timestampIndex));
         }
+    }
+
+    /**
+     * Wires up the addr-based covering path on the indexer so that
+     * seal reads covered column data from the mmap-backed temp files.
+     * The mmap addresses are stable because the row-group loop has
+     * finished and no more extends will occur.
+     */
+    private void configureCoveringFromMmaps(
+            SymbolColumnIndexer indexer,
+            IntList coveringColumnIndices,
+            long partitionTimestamp,
+            ObjList<MemoryMARW> covMmaps
+    ) {
+        final int coverCount = coveringColumnIndices.size();
+        coveringAddrs.setPos(coverCount);
+        coveringAuxAddrs.setPos(coverCount);
+        coveringTops.clear();
+        coveringShifts.clear();
+        coveringIndices.clear();
+        coveringTypes.clear();
+        coveringNameTxns.clear();
+
+        for (int slot = 0; slot < coverCount; slot++) {
+            int covCol = coveringColumnIndices.getQuick(slot);
+            if (covCol < 0 || metadata.getColumnType(covCol) <= 0) {
+                coveringAddrs.setQuick(slot, 0);
+                coveringAuxAddrs.setQuick(slot, 0);
+                coveringTops.add(0);
+                coveringShifts.add(0);
+                coveringIndices.add(-1);
+                coveringTypes.add(-1);
+                coveringNameTxns.add(TableUtils.COLUMN_NAME_TXN_NONE);
+                continue;
+            }
+            int covType = metadata.getColumnType(covCol);
+            MemoryMARW dataMem = covMmaps.getQuick(2 * slot + 1);
+            MemoryMARW auxMem = covMmaps.getQuick(2 * slot);
+            coveringAddrs.setQuick(slot, dataMem != null && dataMem.isOpen() ? dataMem.addressOf(0) : 0);
+            coveringAuxAddrs.setQuick(slot, auxMem != null && auxMem.isOpen() ? auxMem.addressOf(0) : 0);
+            coveringTops.add(columnVersionWriter.getColumnTopQuick(partitionTimestamp, covCol));
+            coveringShifts.add(ColumnType.pow2SizeOf(covType));
+            coveringIndices.add(covCol);
+            coveringTypes.add(covType);
+            coveringNameTxns.add(columnVersionWriter.getColumnNameTxn(partitionTimestamp, covCol));
+        }
+        indexer.configureCovering(
+                coveringAddrs, coveringAuxAddrs, coveringTops, coveringShifts,
+                coveringIndices, coveringTypes, coverCount, metadata.getTimestampIndex());
+        indexer.setCoveredColumnNameTxns(coveringNameTxns);
     }
 
     private void configureCoveringIfNeeded(ColumnIndexer indexer, int columnIndex, long partitionTimestamp) {
@@ -6764,7 +6943,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     if (hasCovering) {
                         configureCoveringFromMmaps(
                                 indexer, coveringColumnIndices, timestamp,
-                                covSlotMeta, covMmaps);
+                                covMmaps);
                     }
 
                     indexWriter.setMaxValue(partitionSize - 1);
@@ -7088,13 +7267,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             .put("invalid covering column file size [path=").put(colFile)
                             .put(", size=").put(fileSize).put(']');
                 }
-                if (fileSize == 0) {
-                    if (!isVarSize) {
-                        throw CairoException.critical(0)
-                                .put("covering column file is empty [path=").put(colFile)
-                                .put(", size=").put(fileSize).put(']');
-                    }
-                } else {
+                if (fileSize > 0) {
                     long addr = TableUtils.mapRO(ff, fd, fileSize, MemoryTag.MMAP_DEFAULT);
                     o3SealAddrs.setQuick(c, addr);
                     o3SealMappedSizes.setQuick(c, fileSize);
@@ -7125,462 +7298,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     ff.close(auxFd);
                 }
             }
-        }
-    }
-
-    /**
-     * Accumulates one decoded row group's worth of covered column data into
-     * mmap-backed temp files. Called from the merged row-group loop inside
-     * {@link #indexParquetPartition}. Each covered slot's MemoryMARW pair
-     * (data + aux) in {@code covMmaps} grows via mmap extend; the caller
-     * passes the final base addresses to PostingIndexWriter after the loop.
-     *
-     * <p>{@code covSlotMeta} layout per slot (3 longs):
-     * [0] decodedChunkIdx (-1 if skipped), [1] colType, [2] dataVecBytesWritten.
-     */
-    private void accumulateCoveredColumnsFromRowGroup(
-            IntList coveringColumnIndices,
-            DirectLongList covSlotMeta,
-            ObjList<MemoryMARW> covMmaps,
-            RowGroupBuffers rowGroupBuffers,
-            int rowGroupIndex,
-            long rowGroupRowCount
-    ) {
-        final int coverCount = coveringColumnIndices.size();
-        for (int slot = 0; slot < coverCount; slot++) {
-            final int decodedChunkIdx = (int) covSlotMeta.get(3L * slot);
-            if (decodedChunkIdx < 0) {
-                continue;
-            }
-            final int columnType = (int) covSlotMeta.get(3L * slot + 1);
-            final long srcDataPtr = rowGroupBuffers.getChunkDataPtr(decodedChunkIdx);
-            final long srcDataSize = rowGroupBuffers.getChunkDataSize(decodedChunkIdx);
-            long srcAuxPtr = rowGroupBuffers.getChunkAuxPtr(decodedChunkIdx);
-            long srcAuxSize = rowGroupBuffers.getChunkAuxSize(decodedChunkIdx);
-
-            final MemoryMARW dataMem = covMmaps.getQuick(2 * slot + 1);
-            if (ColumnType.isVarSize(columnType)) {
-                final MemoryMARW auxMem = covMmaps.getQuick(2 * slot);
-                final ColumnTypeDriver driver = ColumnType.getDriver(columnType);
-                final long dataVecBytesWritten = covSlotMeta.get(3L * slot + 2);
-
-                if (srcDataPtr == 0 && srcAuxPtr == 0) {
-                    accumulateAllNullVarSizeChunk(
-                            driver, auxMem, dataMem, rowGroupIndex,
-                            rowGroupRowCount, dataVecBytesWritten);
-                    covSlotMeta.set(3L * slot + 2,
-                            dataVecBytesWritten + rowGroupRowCount * driver.getDataVectorMinEntrySize());
-                    continue;
-                }
-                if (rowGroupIndex > 0) {
-                    driver.shiftCopyAuxVector(
-                            -dataVecBytesWritten, srcAuxPtr, 0,
-                            rowGroupRowCount - 1, srcAuxPtr, srcAuxSize);
-                    final long adjust = driver.getMinAuxVectorSize();
-                    srcAuxPtr += adjust;
-                    srcAuxSize -= adjust;
-                }
-                dataMem.putBlockOfBytes(srcDataPtr, srcDataSize);
-                auxMem.putBlockOfBytes(srcAuxPtr, srcAuxSize);
-                covSlotMeta.set(3L * slot + 2, dataVecBytesWritten + srcDataSize);
-            } else {
-                if (srcDataPtr == 0) {
-                    accumulateAllNullFixedChunk(dataMem, columnType, rowGroupRowCount);
-                } else {
-                    dataMem.putBlockOfBytes(srcDataPtr, srcDataSize);
-                }
-            }
-        }
-    }
-
-    private void accumulateAllNullFixedChunk(MemoryMARW mem, int columnType, long rowCount) {
-        final long fixSize = rowCount * ColumnType.sizeOf(columnType);
-        if (fixSize == 0) {
-            return;
-        }
-        long nullBuf = Unsafe.malloc(fixSize, MemoryTag.NATIVE_TABLE_WRITER);
-        try {
-            TableUtils.setNull(columnType, nullBuf, rowCount);
-            mem.putBlockOfBytes(nullBuf, fixSize);
-        } finally {
-            Unsafe.free(nullBuf, fixSize, MemoryTag.NATIVE_TABLE_WRITER);
-        }
-    }
-
-    private void accumulateAllNullVarSizeChunk(
-            ColumnTypeDriver driver,
-            MemoryMARW auxMem,
-            MemoryMARW dataMem,
-            int rowGroupIndex,
-            long rowCount,
-            long dataVecBytesWritten
-    ) {
-        final long dataSize = rowCount * driver.getDataVectorMinEntrySize();
-        final long auxSize = driver.getAuxVectorSize(rowCount);
-
-        long nullDataBuf = 0;
-        long nullAuxBuf = 0;
-        try {
-            if (dataSize > 0) {
-                nullDataBuf = Unsafe.malloc(dataSize, MemoryTag.NATIVE_TABLE_WRITER);
-                driver.setDataVectorEntriesToNull(nullDataBuf, rowCount);
-                dataMem.putBlockOfBytes(nullDataBuf, dataSize);
-            }
-            if (auxSize > 0) {
-                nullAuxBuf = Unsafe.malloc(auxSize, MemoryTag.NATIVE_TABLE_WRITER);
-                driver.setFullAuxVectorNull(nullAuxBuf, rowCount);
-                if (dataVecBytesWritten > 0 && rowCount > 0) {
-                    driver.shiftCopyAuxVector(
-                            -dataVecBytesWritten, nullAuxBuf, 0,
-                            rowCount - 1, nullAuxBuf, auxSize);
-                }
-                long auxPtr = nullAuxBuf;
-                long auxBytes = auxSize;
-                if (rowGroupIndex > 0) {
-                    final long adjust = driver.getMinAuxVectorSize();
-                    auxPtr += adjust;
-                    auxBytes -= adjust;
-                }
-                auxMem.putBlockOfBytes(auxPtr, auxBytes);
-            }
-        } finally {
-            if (nullAuxBuf != 0) {
-                Unsafe.free(nullAuxBuf, auxSize, MemoryTag.NATIVE_TABLE_WRITER);
-            }
-            if (nullDataBuf != 0) {
-                Unsafe.free(nullDataBuf, dataSize, MemoryTag.NATIVE_TABLE_WRITER);
-            }
-        }
-    }
-
-    /**
-     * Removes covered-column temp files (.d and .i) for ALL covered columns
-     * of the given index. Used by the single-pass parquet indexing path where
-     * the caller does not track individual materialised slots.
-     */
-    private void cleanupMaterialisedCoveredColumnTempFiles(
-            IntList coveringColumnIndices,
-            long partitionTimestamp,
-            int plen
-    ) {
-        for (int slot = 0, n = coveringColumnIndices.size(); slot < n; slot++) {
-            final int tableColIdx = coveringColumnIndices.getQuick(slot);
-            if (tableColIdx < 0) {
-                continue;
-            }
-            final int columnType = metadata.getColumnType(tableColIdx);
-            final CharSequence colName = metadata.getColumnName(tableColIdx);
-            final long colNameTxn = columnVersionWriter.getColumnNameTxn(partitionTimestamp, tableColIdx);
-            ff.removeQuiet(dFile(path.trimTo(plen), colName, colNameTxn));
-            if (ColumnType.isVarSize(columnType)) {
-                ff.removeQuiet(iFile(path.trimTo(plen), colName, colNameTxn));
-            }
-        }
-        path.trimTo(plen);
-    }
-
-    /**
-     * Wires up the addr-based covering path on the indexer so that
-     * seal reads covered column data from the mmap-backed temp files.
-     * The mmap addresses are stable because the row-group loop has
-     * finished and no more extends will occur.
-     */
-    private void configureCoveringFromMmaps(
-            SymbolColumnIndexer indexer,
-            IntList coveringColumnIndices,
-            long partitionTimestamp,
-            DirectLongList covSlotMeta,
-            ObjList<MemoryMARW> covMmaps
-    ) {
-        final int coverCount = coveringColumnIndices.size();
-        coveringAddrs.setPos(coverCount);
-        coveringAuxAddrs.setPos(coverCount);
-        coveringTops.clear();
-        coveringShifts.clear();
-        coveringIndices.clear();
-        coveringTypes.clear();
-        coveringNameTxns.clear();
-
-        for (int slot = 0; slot < coverCount; slot++) {
-            int covCol = coveringColumnIndices.getQuick(slot);
-            if (covCol < 0 || metadata.getColumnType(covCol) <= 0) {
-                coveringAddrs.setQuick(slot, 0);
-                coveringAuxAddrs.setQuick(slot, 0);
-                coveringTops.add(0);
-                coveringShifts.add(0);
-                coveringIndices.add(-1);
-                coveringTypes.add(-1);
-                coveringNameTxns.add(TableUtils.COLUMN_NAME_TXN_NONE);
-                continue;
-            }
-            int covType = metadata.getColumnType(covCol);
-            MemoryMARW dataMem = covMmaps.getQuick(2 * slot + 1);
-            MemoryMARW auxMem = covMmaps.getQuick(2 * slot);
-            coveringAddrs.setQuick(slot, dataMem != null && dataMem.isOpen() ? dataMem.addressOf(0) : 0);
-            coveringAuxAddrs.setQuick(slot, auxMem != null && auxMem.isOpen() ? auxMem.addressOf(0) : 0);
-            coveringTops.add(columnVersionWriter.getColumnTopQuick(partitionTimestamp, covCol));
-            coveringShifts.add(ColumnType.pow2SizeOf(covType));
-            coveringIndices.add(covCol);
-            coveringTypes.add(covType);
-            coveringNameTxns.add(columnVersionWriter.getColumnNameTxn(partitionTimestamp, covCol));
-        }
-        indexer.configureCovering(
-                coveringAddrs, coveringAuxAddrs, coveringTops, coveringShifts,
-                coveringIndices, coveringTypes, coverCount, metadata.getTimestampIndex());
-        indexer.setCoveredColumnNameTxns(coveringNameTxns);
-    }
-
-    /**
-     * Opens mmap-backed temp files for each covered column and populates
-     * the combined parquet decode column list. Returns the number of
-     * covered columns actually included (those present in the parquet
-     * schema).
-     *
-     * <p>{@code covSlotMeta} is filled with 3 longs per slot:
-     * [decodedChunkIdx, colType, dataVecBytesWritten].
-     * Slots whose column is absent from parquet get decodedChunkIdx == -1.
-     *
-     * <p>{@code covMmaps} is filled with 2 entries per slot:
-     * [auxMem (null for fixed-size), dataMem]. Both are null for skipped slots.
-     */
-    private int prepareCoveredColumnMmaps(
-            IntList coveringColumnIndices,
-            long partitionTimestamp,
-            int plen,
-            ParquetMetaFileReader parquetMetadata,
-            DirectLongList covSlotMeta,
-            ObjList<MemoryMARW> covMmaps
-    ) {
-        final int coverCount = coveringColumnIndices.size();
-        final long appendPageSize = configuration.getDataAppendPageSize();
-        int includedCount = 0;
-
-        for (int slot = 0; slot < coverCount; slot++) {
-            final int tableColIdx = coveringColumnIndices.getQuick(slot);
-            if (tableColIdx < 0 || metadata.getColumnType(tableColIdx) <= 0) {
-                covSlotMeta.add(-1L);
-                covSlotMeta.add(0L);
-                covSlotMeta.add(0L);
-                covMmaps.add(null);
-                covMmaps.add(null);
-                continue;
-            }
-            final int parquetColIdx = findParquetColumnIndex(parquetMetadata, tableColIdx);
-            if (parquetColIdx < 0) {
-                covSlotMeta.add(-1L);
-                covSlotMeta.add(0L);
-                covSlotMeta.add(0L);
-                covMmaps.add(null);
-                covMmaps.add(null);
-                continue;
-            }
-
-            final int columnType = metadata.getColumnType(tableColIdx);
-            final CharSequence colName = metadata.getColumnName(tableColIdx);
-            final long colNameTxn = columnVersionWriter.getColumnNameTxn(partitionTimestamp, tableColIdx);
-
-            ff.removeQuiet(dFile(path.trimTo(plen), colName, colNameTxn));
-            MemoryMARW dataMem = Vm.getCMARWInstance();
-            dataMem.of(ff, dFile(path.trimTo(plen), colName, colNameTxn),
-                    appendPageSize, 0L, MemoryTag.NATIVE_TABLE_WRITER);
-
-            MemoryMARW auxMem = null;
-            if (ColumnType.isVarSize(columnType)) {
-                ff.removeQuiet(iFile(path.trimTo(plen), colName, colNameTxn));
-                auxMem = Vm.getCMARWInstance();
-                auxMem.of(ff, iFile(path.trimTo(plen), colName, colNameTxn),
-                        appendPageSize, 0L, MemoryTag.NATIVE_TABLE_WRITER);
-            }
-
-            // +1 because chunk index 0 is the SYMBOL column
-            covSlotMeta.add(includedCount + 1);
-            covSlotMeta.add(columnType);
-            covSlotMeta.add(0L);
-            covMmaps.add(auxMem);
-            covMmaps.add(dataMem);
-
-            parquetColumnIdsAndTypes.add(parquetColIdx);
-            parquetColumnIdsAndTypes.add(columnType);
-            includedCount++;
-        }
-        path.trimTo(plen);
-        return includedCount;
-    }
-
-    /**
-     * Decodes ALL covered columns from this Parquet partition into native
-     * {@code .d} (and, for var-size types, {@code .i}) files at the standard
-     * paths inside the partition. Mirrors
-     * {@link #produceNativeFromParquet(Path, Path, long, int, long)} -- one
-     * row-group iteration produces data for every covered column at once, so
-     * the cost is {@code rowGroupCount} decodes rather than
-     * {@code coverCount * rowGroupCount}. Posting-index seal then finds these
-     * files via its existing names-based {@code mapColumnFile} path; the
-     * caller deletes them in a finally via
-     * {@link #cleanupMaterialisedCoveredColumnTempFiles}.
-     *
-     * <p>A column that does not exist in this Parquet partition's schema
-     * (covered column added AFTER convert) is silently skipped -- the
-     * sidecar for that slot stays at its zero-filled maxCompressedSize
-     * allocation and the reader honours column_top.
-     *
-     * <p>Populates {@code materialisedSlots} with the slot indices for which
-     * a temp file was written, so the cleanup pass touches only those.
-     */
-    private void materialiseCoveredColumnsFromParquet(
-            IntList coveringColumnIndices,
-            long partitionTimestamp,
-            int plen,
-            RowGroupBuffers rowGroupBuffers,
-            ParquetMetaFileReader parquetMetadata,
-            IntList materialisedSlots
-    ) {
-        final int coverCount = coveringColumnIndices.size();
-        // [auxFd, dataFd, dataVecBytesWritten] per slot; auxFd == -1 means
-        // fixed-width, dataFd == -1 means the slot was skipped.
-        final DirectLongList slotFds = getTempDirectLongList(3L * coverCount);
-        boolean ok = false;
-        try {
-            parquetColumnIdsAndTypes.clear();
-            int includedCount = 0;
-            for (int slot = 0; slot < coverCount; slot++) {
-                final int tableColIdx = coveringColumnIndices.getQuick(slot);
-                if (tableColIdx < 0 || metadata.getColumnType(tableColIdx) <= 0) {
-                    slotFds.add(-1L);
-                    slotFds.add(-1L);
-                    slotFds.add(0L);
-                    continue;
-                }
-                final int parquetColIdx = findParquetColumnIndex(parquetMetadata, tableColIdx);
-                if (parquetColIdx < 0) {
-                    // Covered column not in this Parquet partition; column_top
-                    // makes the read synthesise null on the read side.
-                    slotFds.add(-1L);
-                    slotFds.add(-1L);
-                    slotFds.add(0L);
-                    continue;
-                }
-
-                final int columnType = metadata.getColumnType(tableColIdx);
-                final CharSequence columnName = metadata.getColumnName(tableColIdx);
-                final long columnNameTxn = columnVersionWriter.getColumnNameTxn(partitionTimestamp, tableColIdx);
-
-                // Track this slot for cleanup BEFORE any I/O. If openAppend
-                // throws after creating a file, the finally sweep finds and
-                // removes it. Without this, an openAppend partial would leak
-                // until the next ADD INDEX retry pre-deletes it.
-                materialisedSlots.add(slot);
-
-                // Pre-fill slotFds with sentinels. Each open below sets the
-                // corresponding slot. If an open throws after a previous one
-                // succeeded, the outer finally still sees the captured fd
-                // in slotFds and closes it -- otherwise the in-progress fd
-                // would leak. Matches produceNativeFromParquet's pattern.
-                final long slotBase = slotFds.size();
-                slotFds.add(-1L);
-                slotFds.add(-1L);
-                slotFds.add(0L);
-
-                // Pre-delete any leftover temp files from a prior crashed
-                // attempt -- openAppend would otherwise add new bytes after
-                // stale partial content on WAL-apply retry.
-                ff.removeQuiet(dFile(path.trimTo(plen), columnName, columnNameTxn));
-                if (ColumnType.isVarSize(columnType)) {
-                    ff.removeQuiet(iFile(path.trimTo(plen), columnName, columnNameTxn));
-                    slotFds.set(slotBase, openAppend(ff,
-                            iFile(path.trimTo(plen), columnName, columnNameTxn), LOG));
-                }
-                slotFds.set(slotBase + 1, openAppend(ff,
-                        dFile(path.trimTo(plen), columnName, columnNameTxn), LOG));
-
-                parquetColumnIdsAndTypes.add(parquetColIdx);
-                parquetColumnIdsAndTypes.add(columnType);
-                includedCount++;
-            }
-            path.trimTo(plen);
-
-            if (includedCount == 0) {
-                ok = true;
-                return;
-            }
-
-            // Single row-group loop fills every included column.
-            final int rowGroupCount = parquetMetadata.getRowGroupCount();
-            for (int rgi = 0; rgi < rowGroupCount; rgi++) {
-                assert parquetMetadata.getRowGroupSize(rgi) <= Integer.MAX_VALUE;
-                final long rgRowCount = parquetDecoder.decodeRowGroup(
-                        rowGroupBuffers,
-                        parquetColumnIdsAndTypes,
-                        rgi,
-                        0,
-                        (int) parquetMetadata.getRowGroupSize(rgi)
-                );
-                // Map slot -> position in the parquetColumnIdsAndTypes
-                // included list (skipped slots are not in the list).
-                int decodedColIdx = 0;
-                for (int slot = 0; slot < coverCount; slot++) {
-                    final long dataFd = slotFds.get(3L * slot + 1);
-                    if (dataFd < 0) {
-                        continue;
-                    }
-                    final int tableColIdx = coveringColumnIndices.getQuick(slot);
-                    final int columnType = metadata.getColumnType(tableColIdx);
-                    final long srcDataPtr = rowGroupBuffers.getChunkDataPtr(decodedColIdx);
-                    final long srcDataSize = rowGroupBuffers.getChunkDataSize(decodedColIdx);
-                    long srcAuxPtr = rowGroupBuffers.getChunkAuxPtr(decodedColIdx);
-                    long srcAuxSize = rowGroupBuffers.getChunkAuxSize(decodedColIdx);
-
-                    if (ColumnType.isVarSize(columnType)) {
-                        final long auxFd = slotFds.get(3L * slot);
-                        final ColumnTypeDriver driver = ColumnType.getDriver(columnType);
-                        final long dataVecBytesWritten = slotFds.get(3L * slot + 2);
-                        if (srcDataPtr == 0 && srcAuxPtr == 0) {
-                            final long newDvbw = appendAllNullVarSizeChunk(
-                                    driver, auxFd, dataFd, rgi, rgRowCount, dataVecBytesWritten);
-                            slotFds.set(3L * slot + 2, newDvbw);
-                            decodedColIdx++;
-                            continue;
-                        }
-                        if (rgi > 0) {
-                            driver.shiftCopyAuxVector(-dataVecBytesWritten, srcAuxPtr, 0, rgRowCount - 1, srcAuxPtr, srcAuxSize);
-                            final long adjust = driver.getMinAuxVectorSize();
-                            srcAuxPtr += adjust;
-                            srcAuxSize -= adjust;
-                        }
-                        appendBuffer(dataFd, srcDataPtr, srcDataSize);
-                        appendBuffer(auxFd, srcAuxPtr, srcAuxSize);
-                        slotFds.set(3L * slot + 2, dataVecBytesWritten + srcDataSize);
-                    } else {
-                        if (srcDataPtr == 0) {
-                            appendAllNullFixedChunk(dataFd, columnType, rgRowCount);
-                        } else {
-                            appendBuffer(dataFd, srcDataPtr, srcDataSize);
-                        }
-                    }
-                    decodedColIdx++;
-                }
-            }
-            ok = true;
-        } finally {
-            // Close all open fds.
-            for (long i = 0, n = slotFds.size() / 3; i < n; i++) {
-                final long auxFd = slotFds.get(3L * i);
-                if (auxFd >= 0) ff.close(auxFd);
-                final long dataFd = slotFds.get(3L * i + 1);
-                if (dataFd >= 0) ff.close(dataFd);
-            }
-            slotFds.resetCapacity();
-            // If we threw mid-decode, sweep up any temp files we may have
-            // produced so a retry pre-delete finds a clean state. The caller's
-            // finally runs only when materialise completes and the try block
-            // is entered; a throw here escapes before that, so this is the
-            // only cleanup path for mid-decode failures.
-            if (!ok) {
-                cleanupMaterialisedCoveredColumnTempFiles(
-                        coveringColumnIndices, partitionTimestamp, plen, materialisedSlots);
-                materialisedSlots.clear();
-            }
-            path.trimTo(plen);
         }
     }
 
@@ -8718,6 +8435,83 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
         }
         indexCount = denseIndexers.size();
+    }
+
+    /**
+     * Opens mmap-backed temp files for each covered column and populates
+     * the combined parquet decode column list. Returns the number of
+     * covered columns actually included (those present in the parquet
+     * schema).
+     *
+     * <p>{@code covSlotMeta} is filled with 3 longs per slot:
+     * [decodedChunkIdx, colType, dataVecBytesWritten].
+     * Slots whose column is absent from parquet get decodedChunkIdx == -1.
+     *
+     * <p>{@code covMmaps} is filled with 2 entries per slot:
+     * [auxMem (null for fixed-size), dataMem]. Both are null for skipped slots.
+     */
+    private int prepareCoveredColumnMmaps(
+            IntList coveringColumnIndices,
+            long partitionTimestamp,
+            int plen,
+            ParquetMetaFileReader parquetMetadata,
+            DirectLongList covSlotMeta,
+            ObjList<MemoryMARW> covMmaps
+    ) {
+        final int coverCount = coveringColumnIndices.size();
+        final long appendPageSize = configuration.getDataAppendPageSize();
+        int includedCount = 0;
+
+        for (int slot = 0; slot < coverCount; slot++) {
+            final int tableColIdx = coveringColumnIndices.getQuick(slot);
+            if (tableColIdx < 0 || metadata.getColumnType(tableColIdx) <= 0) {
+                covSlotMeta.add(-1L);
+                covSlotMeta.add(0L);
+                covSlotMeta.add(0L);
+                covMmaps.add(null);
+                covMmaps.add(null);
+                continue;
+            }
+            final int parquetColIdx = findParquetColumnIndex(parquetMetadata, tableColIdx);
+            if (parquetColIdx < 0) {
+                covSlotMeta.add(-1L);
+                covSlotMeta.add(0L);
+                covSlotMeta.add(0L);
+                covMmaps.add(null);
+                covMmaps.add(null);
+                continue;
+            }
+
+            final int columnType = metadata.getColumnType(tableColIdx);
+            final CharSequence colName = metadata.getColumnName(tableColIdx);
+            final long colNameTxn = columnVersionWriter.getColumnNameTxn(partitionTimestamp, tableColIdx);
+
+            ff.removeQuiet(dFile(path.trimTo(plen), colName, colNameTxn));
+            MemoryMARW dataMem = Vm.getCMARWInstance();
+            dataMem.of(ff, dFile(path.trimTo(plen), colName, colNameTxn),
+                    appendPageSize, 0L, MemoryTag.NATIVE_TABLE_WRITER);
+
+            // +1 because chunk index 0 is the SYMBOL column
+            covSlotMeta.add(includedCount + 1);
+            covSlotMeta.add(columnType);
+            covSlotMeta.add(0L);
+            covMmaps.add(null);
+            covMmaps.add(dataMem);
+
+            if (ColumnType.isVarSize(columnType)) {
+                ff.removeQuiet(iFile(path.trimTo(plen), colName, colNameTxn));
+                MemoryMARW auxMem = Vm.getCMARWInstance();
+                auxMem.of(ff, iFile(path.trimTo(plen), colName, colNameTxn),
+                        appendPageSize, 0L, MemoryTag.NATIVE_TABLE_WRITER);
+                covMmaps.setQuick(covMmaps.size() - 2, auxMem);
+            }
+
+            parquetColumnIdsAndTypes.add(parquetColIdx);
+            parquetColumnIdsAndTypes.add(columnType);
+            includedCount++;
+        }
+        path.trimTo(plen);
+        return includedCount;
     }
 
     private void processAsyncWriterCommand(

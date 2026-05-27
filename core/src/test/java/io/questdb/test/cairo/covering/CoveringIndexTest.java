@@ -802,6 +802,55 @@ public class CoveringIndexTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAlterAddIndexParquetCoveredMmapLeakOnAuxOpenFailure() throws Exception {
+        // When prepareCoveredColumnMmaps opens the .d file for a var-size
+        // covered column but the subsequent .i file open fails, the already-
+        // opened .d MemoryMARW must not leak. Both are added to covMmaps only
+        // after both opens succeed, so a failure on .i leaves .d unreachable
+        // by the finally cleanup. assertMemoryLeak catches the leaked mmap.
+        final AtomicBoolean failArmed = new AtomicBoolean(false);
+        ff = new TestFilesFacadeImpl() {
+            @Override
+            public long openRW(LPSZ name, int opts) {
+                if (failArmed.get() && Utf8s.endsWithAscii(name, ".i")) {
+                    return -1;
+                }
+                return super.openRW(name, opts);
+            }
+        };
+        assertMemoryLeak(ff, () -> {
+            execute("""
+                    CREATE TABLE t_leak (
+                        ts TIMESTAMP,
+                        sym SYMBOL,
+                        tag VARCHAR
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_leak VALUES
+                    ('2024-01-01T00:00:00', 'A', 'v1'),
+                    ('2024-01-01T01:00:00', 'B', 'v2'),
+                    ('2024-01-02T00:00:00', 'A', 'v3')
+                    """);
+            engine.releaseAllWriters();
+            execute("ALTER TABLE t_leak CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            assertSql(
+                    "name\tisParquet\n2024-01-01\ttrue\n",
+                    "SELECT name, isParquet FROM table_partitions('t_leak') WHERE name = '2024-01-01'"
+            );
+
+            failArmed.set(true);
+            try {
+                execute("ALTER TABLE t_leak ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (tag)");
+                fail("expected CairoException from .i open failure");
+            } catch (CairoException e) {
+                assertTrue(e.getMessage().contains("could not open read-write"));
+            }
+            failArmed.set(false);
+        });
+    }
+
+    @Test
     public void testAlterAddIndexIncludeMissingColumnPosition() throws Exception {
         // The SqlException must point at the missing column name, not 0.
         assertMemoryLeak(() -> {
