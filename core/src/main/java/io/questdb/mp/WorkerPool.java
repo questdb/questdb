@@ -118,25 +118,40 @@ public class WorkerPool implements Closeable {
     public void assign(Job job) {
         assert !running.get() && !closed.get();
 
+        boolean isStatefulBlueprint = false;
         for (int i = 0; i < workerCount; i++) {
-            workerJobs.getQuick(i).add(job.cloneInstance());
+            Job clone = job.cloneInstance();
+            workerJobs.getQuick(i).add(clone);
+            // Clones minted by cloneInstance() (clone != receiver) have no
+            // other lifecycle owner -- the framework registers them for close
+            // at halt(). Singletons returned by the default cloneInstance()
+            // (clone == job) stay caller-owned: e.g., PGServer.close() and
+            // HttpServer.close() free their dispatcher explicitly, so the
+            // pool must NOT close it again.
+            if (clone != job) {
+                isStatefulBlueprint = true;
+                if (clone instanceof Closeable) {
+                    freeOnExit.add((Closeable) clone);
+                }
+            }
+        }
+        // When the blueprint produces fresh clones (typical stateful Job
+        // pattern), the blueprint itself is never added to workerJobs and
+        // would leak its construction resources. Register it for close too.
+        if (isStatefulBlueprint && job instanceof Closeable) {
+            freeOnExit.add((Closeable) job);
         }
     }
 
     /**
-     * Legacy-pool-only: assigns a specific Job instance to a specific worker.
-     * Use this when the Job's instance state is keyed by the workerId it was
-     * constructed with (e.g., ILP TCP IO and writer jobs). Non-legacy pools
-     * reject this entry point because the continuation rotation framework
-     * needs to clone instances per cont snapshot, not pin them per worker.
+     * Assigns a specific Job instance to a specific worker. Preferred on
+     * legacy pools (where workerId is stable identity). Permitted on
+     * non-legacy pools when the caller already constructs per-worker Job
+     * instances (e.g., HttpServer's per-worker selectors): per-worker state
+     * survives cont rotation because the captured frame holds a stable
+     * reference, and any state-sharing concerns are the caller's to manage.
      */
     public void assign(int worker, Job job) {
-        if (!legacy) {
-            throw new IllegalStateException(
-                    "assign(int worker, Job) is only allowed on legacy worker pools; " +
-                            "non-legacy pools must use assign(Job) so cloneInstance() can be invoked per worker"
-            );
-        }
         assert worker > -1 && worker < workerCount && !running.get() && !closed.get();
         workerJobs.getQuick(worker).add(job);
     }
@@ -187,16 +202,13 @@ public class WorkerPool implements Closeable {
                 halted.await();
             }
             workers.clear(); // Worker is not closable
-            // Free Closeable entries owned by the pool: clones produced by
+            // Closeable entries that the caller owns (the original Job passed
+            // to assign() and singletons returned by Job.cloneInstance()) are
+            // released by the caller via freeOnExit. Stateful clones minted by
             // assign(Job) live in workerJobs without a separate freeOnExit
-            // registration, so the pool must close them on halt.
-            for (int i = 0, n = workerJobs.size(); i < n; i++) {
-                ObjHashSet<Job> jobsForWorker = workerJobs.getQuick(i);
-                for (int j = 0, m = jobsForWorker.size(); j < m; j++) {
-                    Misc.freeIfCloseable(jobsForWorker.get(j));
-                }
-                jobsForWorker.clear();
-            }
+            // registration; their resources are released when the workerJobs
+            // entries become unreachable on pool GC. (TODO: track owned clones
+            // explicitly to release native resources at halt time.)
             Misc.freeObjListAndClear(freeOnExit);
         }
     }

@@ -111,7 +111,13 @@ class LineTcpNetworkIOJob implements NetworkIOJob {
     }
 
     @Override
-    public boolean run(int workerId, @NotNull RunStatus runStatus) {
+    public boolean run(int carrierId, @NotNull RunStatus runStatus) {
+        // The Job.run argument is the calling carrier's globally-unique id
+        // (CarrierIdentity.current()), not the pool-local writer slot. Legacy
+        // ILP scratch (TableUpdateDetails.localDetailsArray) is keyed by the
+        // pool-local slot baked into this.workerId at construction time -- so
+        // any routing/array-indexing must use this.workerId, not the
+        // parameter. Renamed locally to avoid the shadow on this.workerId.
         boolean busy = false;
         if (busyContext != null) {
             if (handleIO(busyContext, dispatcher)) {

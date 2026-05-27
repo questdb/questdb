@@ -33,6 +33,7 @@ import io.questdb.mp.ValueHolder;
 import io.questdb.mp.continuation.TxnWaiter;
 import io.questdb.std.CarrierLocal;
 import io.questdb.std.Unsafe;
+import org.jetbrains.annotations.TestOnly;
 
 public class SeqTxnTracker {
     public static final long UNINITIALIZED_TXN = -1;
