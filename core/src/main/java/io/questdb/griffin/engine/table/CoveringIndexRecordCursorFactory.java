@@ -2220,6 +2220,12 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         }
 
         private boolean openPartitionCursors(int partitionIndex, long rowLo, long rowHi) {
+            // Free the previous partition's cursors: when fillFramePartition()
+            // drains the heap inside the same call that returns a non-null
+            // frame, perKeyCursors stays populated and nextImpl() advances
+            // straight here. The setAll(n, null) below would otherwise strand
+            // those cursors outside their reader's freeCursors pool.
+            Misc.freeObjListAndClear(perKeyCursors);
             IndexReader indexReader = tableReader.getIndexReader(
                     partitionIndex,
                     indexColumnIndex,

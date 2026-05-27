@@ -9448,6 +9448,56 @@ public class CoveringIndexTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFilterOnExcludedValuesThrowingFilterDoesNotLeakIndexReader() throws Exception {
+        // Regression: FilterOnExcludedValues opens per-symbol index cursors via
+        // HeapRowCursor.of(), whose first hasNext() evaluates the post-filter on each
+        // sub-cursor. When that filter throws (here, a DECIMAL scale-adjustment overflow
+        // on small < big), the singleton HeapRowCursor was left un-closed because
+        // PageFrameRecordCursorImpl.rowCursor never got assigned. The per-symbol index
+        // cursors then stayed outside the PostingIndexFwdReader.freeCursors pool and
+        // their block buffers leaked. The fix closes the row cursor factory from
+        // PageFrameRecordCursorImpl.close() so the singleton always cleans up.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_excl_leak (
+                        sym SYMBOL INDEX TYPE POSTING DELTA INCLUDE (v),
+                        small DECIMAL(38, 3),
+                        big DECIMAL(76, 2),
+                        v DOUBLE,
+                        ts TIMESTAMP
+                    ) TIMESTAMP(ts) PARTITION BY DAY WAL
+                    """);
+            // big holds the maximum value of DECIMAL(76, 2). Scaling it up by 10^1 to
+            // match small's scale overflows the 256-bit intermediate at filter time.
+            execute("""
+                    INSERT INTO t_excl_leak
+                    SELECT
+                        rnd_symbol('s0','s1','s2','s3','s4','s5','s6','s7',null),
+                        '1.000'::DECIMAL(38, 3),
+                        '99999999999999999999999999999999999999999999999999999999999999999999999999.99'::DECIMAL(76, 2),
+                        rnd_double(),
+                        timestamp_sequence(to_timestamp('2024-01-01', 'yyyy-MM-dd'), 1_800_000_000L)
+                    FROM long_sequence(120)
+                    """);
+            drainWalQueue();
+
+            // SELECT v (a column value) forces per-row materialization through the per-symbol
+            // cursors, so HeapRowCursor.of() evaluates the post-filter and throws on it.
+            Throwable caught = null;
+            try (RecordCursorFactory f = select(
+                    "SELECT v FROM t_excl_leak " +
+                            "WHERE NOT ((sym IN ('s7', null) OR small < big))");
+                 RecordCursor cursor = f.getCursor(sqlExecutionContext)) {
+                while (cursor.hasNext()) {
+                }
+            } catch (Throwable t) {
+                caught = t;
+            }
+            assertNotNull("expected DECIMAL scale-adjustment overflow", caught);
+        });
+    }
+
+    @Test
     public void testFilteredIndexScanWithArrayColumn() throws Exception {
         assertMemoryLeak(() -> {
             execute("""
@@ -10867,6 +10917,114 @@ public class CoveringIndexTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testMultiKeyPageFrameMultiPartitionDoesNotLeakIndexReader() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_mki_leak (
+                        sym SYMBOL INDEX TYPE POSTING DELTA INCLUDE (v),
+                        v DOUBLE,
+                        ts TIMESTAMP
+                    ) TIMESTAMP(ts) PARTITION BY DAY WAL
+                    """);
+            execute("""
+                    INSERT INTO t_mki_leak
+                    SELECT rnd_symbol('s0','s1','s2','s3','s4','s5','s6','s7',null),
+                           rnd_double(),
+                           timestamp_sequence(to_timestamp('2024-01-01','yyyy-MM-dd'), 1_800_000_000L)
+                    FROM long_sequence(120)
+                    """);
+            drainWalQueue();
+            execute("ALTER TABLE t_mki_leak CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+            drainWalQueue();
+
+            // max(const) over a 3-key IN where two literals don't resolve.
+            // Routes through Async Group By -> MultiKeyCoveringPageFrameCursor
+            // and produces one frame per partition that drains the heap.
+            try (RecordCursorFactory f = select(
+                    "SELECT max(112526.51::DECIMAL(9, 2)) AS a0 FROM t_mki_leak " +
+                            "WHERE sym IN ('XQCE', 's5', 'YYYZZ'::VARCHAR)");
+                 RecordCursor cursor = f.getCursor(sqlExecutionContext)) {
+                //noinspection StatementWithEmptyBody
+                while (cursor.hasNext()) {
+                }
+            }
+        });
+    }
+
+    /**
+     * Regression for the MultiKey cursor's resume bug. The resume branch
+     * of MultiKeyCoveringPageFrameCursor.nextImpl previously did not
+     * advance currentKeyIdx after the parked CoveringRowCursor exhausted,
+     * so the cursor kept reopening the SAME (key, partition) tuple and
+     * producing the same frames forever. The page-frame buffers
+     * accumulated until the RSS limit fired -- a 2-key multi-key query
+     * with ~28 M rows per key tripped at 15.4 GiB on a 16 GB Mac.
+     * <p>
+     * To trigger the bug deterministically with small data we lower
+     * {@code maxRowsPerFrame} via the {@code @TestOnly} setter so a
+     * 200-row dataset is enough to force the multi-frame-per-key resume
+     * path. Without the fix the test hangs or OOMs; with the fix it
+     * returns the expected count.
+     */
+    @Test
+    public void testMultiKeyResumeAdvancesKeyIndexAfterCursorExhausts() throws Exception {
+        final int capForTest = 50;
+        CoveringIndexRecordCursorFactory.setMaxRowsPerFrameForTesting(capForTest);
+        try {
+            assertMemoryLeak(() -> {
+                execute("""
+                        CREATE TABLE t_mk_resume (
+                            ts TIMESTAMP,
+                            sym SYMBOL,
+                            payload VARCHAR
+                        ) TIMESTAMP(ts) PARTITION BY DAY WAL
+                        """);
+                // 200 rows per partition, alternating between two symbols.
+                // With a 50-row per-frame cap, each (key, partition) tuple
+                // produces 2 frames -- exactly the shape the bug exposed.
+                execute("""
+                        INSERT INTO t_mk_resume
+                        SELECT
+                            dateadd('s', x::INT, '2024-01-01T00:00:00Z'::TIMESTAMP),
+                            CASE WHEN x % 2 = 0 THEN 'K0' ELSE 'K1' END,
+                            'payload-' || x
+                        FROM long_sequence(200)
+                        """);
+                drainWalQueue();
+                execute("ALTER TABLE t_mk_resume ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (payload)");
+                drainWalQueue();
+
+                // Multi-key COUNT — would loop forever on the bugged code
+                // because the resume branch never advances past K0 once
+                // its parked cursor exhausts; the test's surefire timeout
+                // would surface that as a hang.
+                assertSql(
+                        "count\n200\n",
+                        "SELECT count() FROM t_mk_resume WHERE sym IN ('K0','K1')"
+                );
+
+                // Per-key counts also exercise the resume path on both
+                // keys and validate that the per-key totals stay correct
+                // (without the fix some frames would carry duplicate K0
+                // rows from re-iteration, inflating K0 and missing K1).
+                assertSql(
+                        "sym\tc\nK0\t100\nK1\t100\n",
+                        "SELECT sym, count() c FROM t_mk_resume WHERE sym IN ('K0','K1') GROUP BY sym ORDER BY sym"
+                );
+
+                // Covered VARCHAR read through the multi-key cursor: the
+                // 200 unique payloads must come back exactly once each.
+                assertSql(
+                        "c\n200\n",
+                        "SELECT count_distinct(payload::string) c FROM t_mk_resume WHERE sym IN ('K0','K1')"
+                );
+            });
+        } finally {
+            CoveringIndexRecordCursorFactory.setMaxRowsPerFrameForTesting(-1);
+        }
+    }
+
+    @Test
     public void testMultiPartitionAlterAndQuery() throws Exception {
         // Multiple partitions, ALTER TABLE, then query across all
         assertMemoryLeak(() -> {
@@ -12113,6 +12271,65 @@ public class CoveringIndexTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParallelKeyedGroupByOverCoveringIndexUnderSelectedRecord() throws Exception {
+        // Regression: a parallel keyed GROUP BY whose base is CoveringIndex wrapped by
+        // SelectedRecord (e.g. via a CTE) crashed with ClassCastException because
+        // CoveringPageFrameCursor was a plain PageFrameCursor while
+        // SelectedRecordCursorFactory casts to TablePageFrameCursor. The fix
+        // promotes CoveringPageFrameCursor to TablePageFrameCursor.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_bug9 (
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (k, v),
+                        k SYMBOL,
+                        v INT,
+                        ts TIMESTAMP
+                    ) TIMESTAMP(ts) PARTITION BY DAY WAL
+                    """);
+            execute("""
+                    INSERT INTO t_bug9 VALUES
+                        ('a', 'k1', 1, 0),
+                        ('b', 'k2', 2, 1_000_000),
+                        (null, 'k1', 3, 2_000_000),
+                        (null, 'k2', 4, 3_000_000),
+                        (null, 'k1', 5, 4_000_000)
+                    """);
+            drainWalQueue();
+
+            // The CTE introduces a SelectedRecord layer above the WHERE-driven
+            // CoveringIndex factory; the constant aggregate (avg(-1)) keeps the
+            // group-by on the Async (parallel) keyed path rather than the
+            // vectorised one.
+            String q = "WITH cte0 AS (SELECT * FROM t_bug9) "
+                    + "SELECT t0.k AS e0, avg(-1) AS a0 FROM cte0 t0 WHERE sym IS NULL "
+                    + "ORDER BY e0";
+            assertPlanNoLeakCheck(
+                    q,
+                    "Encode sort light\n" +
+                            "  keys: [e0]\n" +
+                            "    Async Group By workers: 1\n" +
+                            "      keys: [e0]\n" +
+                            "      values: [avg(-1)]\n" +
+                            "      filter: null\n" +
+                            "        SelectedRecord\n" +
+                            "            SelectedRecord\n" +
+                            "                CoveringIndex on: sym with: k\n" +
+                            "                  filter: sym=null\n"
+            );
+            assertQueryNoLeakCheck(
+                    "e0\ta0\n" +
+                            "k1\t-1.0\n" +
+                            "k2\t-1.0\n",
+                    q,
+                    null,
+                    null,
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
     public void testPciFileFormat() throws Exception {
         assertMemoryLeak(() -> {
             try (Path path = new Path().of(configuration.getDbRoot())) {
@@ -12736,6 +12953,50 @@ public class CoveringIndexTest extends AbstractCairoTest {
             bindVariableService.setStr(0, "NEVER_INSERTED");
             bindVariableService.setStr(1, "ALSO_UNKNOWN");
             assertSql("price\n", "SELECT price FROM t_bind WHERE sym IN ($1, $2)");
+        });
+    }
+
+    @Test
+    public void testSampleByFillKeyedIndexedNullScanDoesNotLeak() throws Exception {
+        // Regression: keyed SAMPLE BY FILL(PREV) drives the base twice and calls
+        // baseCursor.toTop() between passes. PageFrameRecordCursorImpl.toTop()
+        // used to drop rowCursor by assigning null instead of closing it, which
+        // stranded the active PostingIndexFwdReader.Cursor outside the reader's
+        // freeCursors pool and leaked the cursor's block buffer.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_leak (
+                        sym SYMBOL INDEX TYPE POSTING,
+                        v BYTE,
+                        k INT,
+                        ts TIMESTAMP
+                    ) TIMESTAMP(ts) PARTITION BY DAY WAL
+                    """);
+            // Interleaved NULL/'A' sym values: the IS NULL probe has entries to
+            // walk on every sampled hour, so loadDenseGenerationCached allocates.
+            execute("""
+                    INSERT INTO t_leak
+                    SELECT
+                        CASE WHEN x % 2 = 0 THEN cast(NULL as SYMBOL) ELSE cast('A' as SYMBOL) END,
+                        (x % 8)::BYTE,
+                        (x % 3)::INT,
+                        dateadd('m', (x * 30)::INT, '2024-01-01T00:00:00.000000Z')::TIMESTAMP
+                    FROM long_sequence(48)
+                    """);
+            drainWalQueue();
+
+            // The keyed projection forces the keyed SampleByFillPrev path.
+            try (RecordCursorFactory f = select(
+                    "SELECT k, avg(v), ts FROM (SELECT * FROM t_leak WHERE sym IS NULL) "
+                            + "SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR ORDER BY ts ASC"
+            );
+                 RecordCursor cursor = f.getCursor(sqlExecutionContext)) {
+                int rows = 0;
+                while (cursor.hasNext()) {
+                    rows++;
+                }
+                assertTrue("expected at least one fill-prev row", rows > 0);
+            }
         });
     }
 
@@ -13366,6 +13627,46 @@ public class CoveringIndexTest extends AbstractCairoTest {
                 }
             }
         });
+    }
+
+    @Test
+    public void testSingleKeyResumeProducesAllRowsAcrossFrameCap() throws Exception {
+        final int capForTest = 50;
+        CoveringIndexRecordCursorFactory.setMaxRowsPerFrameForTesting(capForTest);
+        try {
+            assertMemoryLeak(() -> {
+                execute("""
+                        CREATE TABLE t_sk_resume (
+                            ts TIMESTAMP,
+                            sym SYMBOL,
+                            payload VARCHAR
+                        ) TIMESTAMP(ts) PARTITION BY DAY WAL
+                        """);
+                execute("""
+                        INSERT INTO t_sk_resume
+                        SELECT
+                            dateadd('s', x::INT, '2024-01-01T00:00:00Z'::TIMESTAMP),
+                            'K0',
+                            'payload-' || x
+                        FROM long_sequence(200)
+                        """);
+                drainWalQueue();
+                execute("ALTER TABLE t_sk_resume ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (payload)");
+                drainWalQueue();
+
+                assertSql(
+                        "count\n200\n",
+                        "SELECT count() FROM t_sk_resume WHERE sym = 'K0'"
+                );
+
+                assertSql(
+                        "c\n200\n",
+                        "SELECT count_distinct(payload::string) c FROM t_sk_resume WHERE sym = 'K0'"
+                );
+            });
+        } finally {
+            CoveringIndexRecordCursorFactory.setMaxRowsPerFrameForTesting(-1);
+        }
     }
 
     @Test
@@ -14533,159 +14834,6 @@ public class CoveringIndexTest extends AbstractCairoTest {
         }
     }
 
-    @Test
-    public void testSampleByFillKeyedIndexedNullScanDoesNotLeak() throws Exception {
-        // Regression: keyed SAMPLE BY FILL(PREV) drives the base twice and calls
-        // baseCursor.toTop() between passes. PageFrameRecordCursorImpl.toTop()
-        // used to drop rowCursor by assigning null instead of closing it, which
-        // stranded the active PostingIndexFwdReader.Cursor outside the reader's
-        // freeCursors pool and leaked the cursor's block buffer.
-        assertMemoryLeak(() -> {
-            execute("""
-                    CREATE TABLE t_leak (
-                        sym SYMBOL INDEX TYPE POSTING,
-                        v BYTE,
-                        k INT,
-                        ts TIMESTAMP
-                    ) TIMESTAMP(ts) PARTITION BY DAY WAL
-                    """);
-            // Interleaved NULL/'A' sym values: the IS NULL probe has entries to
-            // walk on every sampled hour, so loadDenseGenerationCached allocates.
-            execute("""
-                    INSERT INTO t_leak
-                    SELECT
-                        CASE WHEN x % 2 = 0 THEN cast(NULL as SYMBOL) ELSE cast('A' as SYMBOL) END,
-                        (x % 8)::BYTE,
-                        (x % 3)::INT,
-                        dateadd('m', (x * 30)::INT, '2024-01-01T00:00:00.000000Z')::TIMESTAMP
-                    FROM long_sequence(48)
-                    """);
-            drainWalQueue();
-
-            // The keyed projection forces the keyed SampleByFillPrev path.
-            try (RecordCursorFactory f = select(
-                    "SELECT k, avg(v), ts FROM (SELECT * FROM t_leak WHERE sym IS NULL) "
-                            + "SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR ORDER BY ts ASC"
-            );
-                 RecordCursor cursor = f.getCursor(sqlExecutionContext)) {
-                int rows = 0;
-                while (cursor.hasNext()) {
-                    rows++;
-                }
-                assertTrue("expected at least one fill-prev row", rows > 0);
-            }
-        });
-    }
-
-    @Test
-    public void testFilterOnExcludedValuesThrowingFilterDoesNotLeakIndexReader() throws Exception {
-        // Regression: FilterOnExcludedValues opens per-symbol index cursors via
-        // HeapRowCursor.of(), whose first hasNext() evaluates the post-filter on each
-        // sub-cursor. When that filter throws (here, a DECIMAL scale-adjustment overflow
-        // on small < big), the singleton HeapRowCursor was left un-closed because
-        // PageFrameRecordCursorImpl.rowCursor never got assigned. The per-symbol index
-        // cursors then stayed outside the PostingIndexFwdReader.freeCursors pool and
-        // their block buffers leaked. The fix closes the row cursor factory from
-        // PageFrameRecordCursorImpl.close() so the singleton always cleans up.
-        assertMemoryLeak(() -> {
-            execute("""
-                    CREATE TABLE t_excl_leak (
-                        sym SYMBOL INDEX TYPE POSTING DELTA INCLUDE (v),
-                        small DECIMAL(38, 3),
-                        big DECIMAL(76, 2),
-                        v DOUBLE,
-                        ts TIMESTAMP
-                    ) TIMESTAMP(ts) PARTITION BY DAY WAL
-                    """);
-            // big holds the maximum value of DECIMAL(76, 2). Scaling it up by 10^1 to
-            // match small's scale overflows the 256-bit intermediate at filter time.
-            execute("""
-                    INSERT INTO t_excl_leak
-                    SELECT
-                        rnd_symbol('s0','s1','s2','s3','s4','s5','s6','s7',null),
-                        '1.000'::DECIMAL(38, 3),
-                        '99999999999999999999999999999999999999999999999999999999999999999999999999.99'::DECIMAL(76, 2),
-                        rnd_double(),
-                        timestamp_sequence(to_timestamp('2024-01-01', 'yyyy-MM-dd'), 1_800_000_000L)
-                    FROM long_sequence(120)
-                    """);
-            drainWalQueue();
-
-            // SELECT v (a column value) forces per-row materialization through the per-symbol
-            // cursors, so HeapRowCursor.of() evaluates the post-filter and throws on it.
-            Throwable caught = null;
-            try (RecordCursorFactory f = select(
-                    "SELECT v FROM t_excl_leak " +
-                            "WHERE NOT ((sym IN ('s7', null) OR small < big))");
-                 RecordCursor cursor = f.getCursor(sqlExecutionContext)) {
-                while (cursor.hasNext()) {
-                }
-            } catch (Throwable t) {
-                caught = t;
-            }
-            assertNotNull("expected DECIMAL scale-adjustment overflow", caught);
-        });
-    }
-
-    @Test
-    public void testParallelKeyedGroupByOverCoveringIndexUnderSelectedRecord() throws Exception {
-        // Regression: a parallel keyed GROUP BY whose base is CoveringIndex wrapped by
-        // SelectedRecord (e.g. via a CTE) crashed with ClassCastException because
-        // CoveringPageFrameCursor was a plain PageFrameCursor while
-        // SelectedRecordCursorFactory casts to TablePageFrameCursor. The fix
-        // promotes CoveringPageFrameCursor to TablePageFrameCursor.
-        assertMemoryLeak(() -> {
-            execute("""
-                    CREATE TABLE t_bug9 (
-                        sym SYMBOL INDEX TYPE POSTING INCLUDE (k, v),
-                        k SYMBOL,
-                        v INT,
-                        ts TIMESTAMP
-                    ) TIMESTAMP(ts) PARTITION BY DAY WAL
-                    """);
-            execute("""
-                    INSERT INTO t_bug9 VALUES
-                        ('a', 'k1', 1, 0),
-                        ('b', 'k2', 2, 1_000_000),
-                        (null, 'k1', 3, 2_000_000),
-                        (null, 'k2', 4, 3_000_000),
-                        (null, 'k1', 5, 4_000_000)
-                    """);
-            drainWalQueue();
-
-            // The CTE introduces a SelectedRecord layer above the WHERE-driven
-            // CoveringIndex factory; the constant aggregate (avg(-1)) keeps the
-            // group-by on the Async (parallel) keyed path rather than the
-            // vectorised one.
-            String q = "WITH cte0 AS (SELECT * FROM t_bug9) "
-                    + "SELECT t0.k AS e0, avg(-1) AS a0 FROM cte0 t0 WHERE sym IS NULL "
-                    + "ORDER BY e0";
-            assertPlanNoLeakCheck(
-                    q,
-                    "Encode sort light\n" +
-                            "  keys: [e0]\n" +
-                            "    Async Group By workers: 1\n" +
-                            "      keys: [e0]\n" +
-                            "      values: [avg(-1)]\n" +
-                            "      filter: null\n" +
-                            "        SelectedRecord\n" +
-                            "            SelectedRecord\n" +
-                            "                CoveringIndex on: sym with: k\n" +
-                            "                  filter: sym=null\n"
-            );
-            assertQueryNoLeakCheck(
-                    "e0\ta0\n" +
-                            "k1\t-1.0\n" +
-                            "k2\t-1.0\n",
-                    q,
-                    null,
-                    null,
-                    true,
-                    true
-            );
-        });
-    }
-
     private void assertPlanDoesNotContain(String query) throws SqlException {
         try (io.questdb.cairo.sql.RecordCursorFactory factory = select(query)) {
             planSink.clear();
@@ -14693,119 +14841,6 @@ public class CoveringIndexTest extends AbstractCairoTest {
             String planText = planSink.getSink().toString();
             assertFalse("Plan should not contain '" + "CoveringIndex" + "':\n" + planText,
                     planText.contains("CoveringIndex"));
-        }
-    }
-
-    /**
-     * Regression for the MultiKey cursor's resume bug. The resume branch
-     * of MultiKeyCoveringPageFrameCursor.nextImpl previously did not
-     * advance currentKeyIdx after the parked CoveringRowCursor exhausted,
-     * so the cursor kept reopening the SAME (key, partition) tuple and
-     * producing the same frames forever. The page-frame buffers
-     * accumulated until the RSS limit fired -- a 2-key multi-key query
-     * with ~28 M rows per key tripped at 15.4 GiB on a 16 GB Mac.
-     * <p>
-     * To trigger the bug deterministically with small data we lower
-     * {@code maxRowsPerFrame} via the {@code @TestOnly} setter so a
-     * 200-row dataset is enough to force the multi-frame-per-key resume
-     * path. Without the fix the test hangs or OOMs; with the fix it
-     * returns the expected count.
-     */
-    @Test
-    public void testMultiKeyResumeAdvancesKeyIndexAfterCursorExhausts() throws Exception {
-        final int capForTest = 50;
-        CoveringIndexRecordCursorFactory.setMaxRowsPerFrameForTesting(capForTest);
-        try {
-            assertMemoryLeak(() -> {
-                execute("""
-                        CREATE TABLE t_mk_resume (
-                            ts TIMESTAMP,
-                            sym SYMBOL,
-                            payload VARCHAR
-                        ) TIMESTAMP(ts) PARTITION BY DAY WAL
-                        """);
-                // 200 rows per partition, alternating between two symbols.
-                // With a 50-row per-frame cap, each (key, partition) tuple
-                // produces 2 frames -- exactly the shape the bug exposed.
-                execute("""
-                        INSERT INTO t_mk_resume
-                        SELECT
-                            dateadd('s', x::INT, '2024-01-01T00:00:00Z'::TIMESTAMP),
-                            CASE WHEN x % 2 = 0 THEN 'K0' ELSE 'K1' END,
-                            'payload-' || x
-                        FROM long_sequence(200)
-                        """);
-                drainWalQueue();
-                execute("ALTER TABLE t_mk_resume ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (payload)");
-                drainWalQueue();
-
-                // Multi-key COUNT — would loop forever on the bugged code
-                // because the resume branch never advances past K0 once
-                // its parked cursor exhausts; the test's surefire timeout
-                // would surface that as a hang.
-                assertSql(
-                        "count\n200\n",
-                        "SELECT count() FROM t_mk_resume WHERE sym IN ('K0','K1')"
-                );
-
-                // Per-key counts also exercise the resume path on both
-                // keys and validate that the per-key totals stay correct
-                // (without the fix some frames would carry duplicate K0
-                // rows from re-iteration, inflating K0 and missing K1).
-                assertSql(
-                        "sym\tc\nK0\t100\nK1\t100\n",
-                        "SELECT sym, count() c FROM t_mk_resume WHERE sym IN ('K0','K1') GROUP BY sym ORDER BY sym"
-                );
-
-                // Covered VARCHAR read through the multi-key cursor: the
-                // 200 unique payloads must come back exactly once each.
-                assertSql(
-                        "c\n200\n",
-                        "SELECT count_distinct(payload::string) c FROM t_mk_resume WHERE sym IN ('K0','K1')"
-                );
-            });
-        } finally {
-            CoveringIndexRecordCursorFactory.setMaxRowsPerFrameForTesting(-1);
-        }
-    }
-
-    @Test
-    public void testSingleKeyResumeProducesAllRowsAcrossFrameCap() throws Exception {
-        final int capForTest = 50;
-        CoveringIndexRecordCursorFactory.setMaxRowsPerFrameForTesting(capForTest);
-        try {
-            assertMemoryLeak(() -> {
-                execute("""
-                        CREATE TABLE t_sk_resume (
-                            ts TIMESTAMP,
-                            sym SYMBOL,
-                            payload VARCHAR
-                        ) TIMESTAMP(ts) PARTITION BY DAY WAL
-                        """);
-                execute("""
-                        INSERT INTO t_sk_resume
-                        SELECT
-                            dateadd('s', x::INT, '2024-01-01T00:00:00Z'::TIMESTAMP),
-                            'K0',
-                            'payload-' || x
-                        FROM long_sequence(200)
-                        """);
-                drainWalQueue();
-                execute("ALTER TABLE t_sk_resume ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (payload)");
-                drainWalQueue();
-
-                assertSql(
-                        "count\n200\n",
-                        "SELECT count() FROM t_sk_resume WHERE sym = 'K0'"
-                );
-
-                assertSql(
-                        "c\n200\n",
-                        "SELECT count_distinct(payload::string) c FROM t_sk_resume WHERE sym = 'K0'"
-                );
-            });
-        } finally {
-            CoveringIndexRecordCursorFactory.setMaxRowsPerFrameForTesting(-1);
         }
     }
 
