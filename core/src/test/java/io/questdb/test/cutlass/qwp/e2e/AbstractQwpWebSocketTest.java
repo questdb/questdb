@@ -49,6 +49,12 @@ import org.junit.Before;
 
 public class AbstractQwpWebSocketTest extends AbstractCairoTest {
 
+    // Default close drain timeout (5s) is too tight: worst-case WS fragmentation
+    // (recvChunk=1) drives one kqueue/epoll round-trip per byte against the
+    // single-worker test server, so large payloads or fuzz batches with concurrent
+    // WAL apply can push close() drain past a minute on loaded CI. 5 minutes covers
+    // that without masking real bugs.
+    private static final long CLOSE_FLUSH_TIMEOUT_MS = 300_000L;
     private static final Log LOG = LogFactory.getLog(AbstractQwpWebSocketTest.class);
     protected int recvChunk;
     protected int sendChunk;
@@ -77,7 +83,7 @@ public class AbstractQwpWebSocketTest extends AbstractCairoTest {
      */
     protected static QwpWebSocketSender connectWs(int port) {
         return (QwpWebSocketSender) Sender.fromConfig(
-                "ws::addr=localhost:" + port + ";close_flush_timeout_millis=60000;");
+                "ws::addr=localhost:" + port + ";close_flush_timeout_millis=" + CLOSE_FLUSH_TIMEOUT_MS + ";");
     }
 
     /**
@@ -91,7 +97,7 @@ public class AbstractQwpWebSocketTest extends AbstractCairoTest {
         return (QwpWebSocketSender) Sender.builder(Sender.Transport.WEBSOCKET)
                 .address("localhost:" + port)
                 .errorHandler(errorHandler)
-                .closeFlushTimeoutMillis(60_000L)
+                .closeFlushTimeoutMillis(CLOSE_FLUSH_TIMEOUT_MS)
                 .build();
     }
 
@@ -122,7 +128,7 @@ public class AbstractQwpWebSocketTest extends AbstractCairoTest {
                 .autoFlushRows(rows)
                 .autoFlushBytes(bytes)
                 .autoFlushIntervalMillis(intervalMillis)
-                .closeFlushTimeoutMillis(60_000L)
+                .closeFlushTimeoutMillis(CLOSE_FLUSH_TIMEOUT_MS)
                 .build();
     }
 
@@ -152,11 +158,7 @@ public class AbstractQwpWebSocketTest extends AbstractCairoTest {
         appendAutoFlushRows(cfg, autoFlushRows);
         appendAutoFlushBytes(cfg, autoFlushBytes);
         appendAutoFlushInterval(cfg, autoFlushIntervalNanos);
-        // Default close drain timeout (5s) is too tight for fuzz tests that
-        // push hundreds of batches against a single-worker test server with
-        // concurrent ALTERs slowing down WAL apply. 60s is enough headroom
-        // without masking real problems.
-        cfg.append("close_flush_timeout_millis=60000;");
+        cfg.append("close_flush_timeout_millis=").append(CLOSE_FLUSH_TIMEOUT_MS).append(';');
         return (QwpWebSocketSender) Sender.fromConfig(cfg.toString());
     }
 
