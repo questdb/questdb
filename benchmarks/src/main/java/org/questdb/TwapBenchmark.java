@@ -45,10 +45,8 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 
 /**
- * End-to-end benchmark for the parallel {@code twap()} aggregate, comparing
- * QuestDB before and after the per-key state was widened from 3 to 7 longs
- * to carry per-frame batch descriptors. The benchmark drives a running
- * QuestDB and reports two outputs per scenario:
+ * End-to-end benchmark for the parallel {@code twap()} aggregate. The
+ * benchmark drives a running QuestDB and reports two outputs per scenario:
  *
  * <ul>
  *   <li><b>Perf</b>: wall-clock time of the TWAP query (mean / median /
@@ -59,40 +57,9 @@ import java.util.concurrent.TimeUnit;
  *       from a second connection while the query is in flight.</li>
  * </ul>
  *
- * <h2>Why these scenarios</h2>
- *
- * The PR changes two things:
- * <ul>
- *   <li>Per-key state grows by 32 bytes (4 longs). Worst case is high
- *       group cardinality with few observations per key, where the
- *       per-key constant dominates over per-observation storage.</li>
- *   <li>The merge step (compactInPlace at read time, compactInto under
- *       sharded reduction) switches from O(N log R) element-wise
- *       pairwise mergesort to whole-batch permutation. The win grows
- *       with batch count R and entries per batch. R only becomes large
- *       when a slot's buffer receives page frames in non-monotonic order;
- *       within one query that mostly happens at very heavy obs/group with
- *       slot contention, and across queries it happens deterministically
- *       under cross-query work stealing -- the {@code concurrent}
- *       scenario forces this.</li>
- * </ul>
- *
- * <h2>How to run</h2>
- *
- * <ol>
- *   <li>Start a QuestDB server (default config) on localhost. Expects PG
- *       wire on 8812 and HTTP on 9000.</li>
- *   <li>{@code mvn -pl benchmarks -am -Plocal-client package -DskipTests}</li>
- *   <li>{@code java -cp benchmarks/target/benchmarks.jar org.questdb.TwapBenchmark}</li>
- *   <li>Switch branches, restart QuestDB, re-run with {@code -Dskip.populate=true}
- *       to reuse the table. Compare the two runs' TSV output.</li>
- * </ol>
- *
  * <h2>System properties</h2>
  *
  * <ul>
- *   <li>{@code -Dskip.populate=true}: reuse an existing {@code twap_bench}
- *       table. Default is to drop + recreate + ingest.</li>
  *   <li>{@code -Dconcurrent.threads=8}: thread count for the concurrent
  *       scenario. Set higher than worker count to force slot contention.</li>
  *   <li>{@code -Dmeasure.iters=5} / {@code -Dwarmup.iters=2}: control
@@ -100,6 +67,9 @@ import java.util.concurrent.TimeUnit;
  *   <li>{@code -Drows=10000000}: total row count. Larger gives more page
  *       frames per slot, more contention.</li>
  * </ul>
+ * <p>
+ * The benchmark skips populating the table if it already has the requested row
+ * count.
  */
 public class TwapBenchmark {
 
@@ -150,11 +120,11 @@ public class TwapBenchmark {
             // High cardinality first: stresses the per-key state growth.
             // Few obs/key means the merge step is cheap, so any perf
             // overhead the new layout adds shows up cleanly here.
-//            results.add(runScenario("1M groups, ~10 obs/group (memory-stress)", sqlHigh, 1));
+            results.add(runScenario("1M groups, ~10 obs/group (memory-stress)", sqlHigh, 1));
             // Medium: the typical analytical query shape.
-//            results.add(runScenario("10K groups, ~1K obs/group", sqlMed, 1));
+            results.add(runScenario("10K groups, ~1K obs/group", sqlMed, 1));
             // Low cardinality, many obs/group: maximizes single-query merge work.
-//            results.add(runScenario("16 groups, ~625K obs/group (merge-heavy)", sqlLow, 1));
+            results.add(runScenario("16 groups, ~625K obs/group (merge-heavy)", sqlLow, 1));
             // Concurrent low cardinality: forces cross-query work stealing.
             // The same slot's buffer sees frames from multiple queries
             // interleaved, generating gaps that materialize as descriptor
