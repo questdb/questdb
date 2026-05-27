@@ -443,20 +443,39 @@ public class CachedWindowLightRecordCursorFactory extends AbstractRecordCursorFa
             }
 
             // Pass1 for unordered functions, in base order.
+            // Fused row-outer loop: one positionRecordA() per row per direction.
             if (unorderedFunctions != null) {
-                for (int j = 0, n = unorderedFunctions.size(); j < n; j++) {
-                    final WindowFunction f = unorderedFunctions.getQuick(j);
-                    if (f.getPass1ScanDirection() == WindowFunction.Pass1ScanDirection.FORWARD) {
-                        for (long rIdx = 0; rIdx < size; rIdx++) {
-                            circuitBreaker.statefulThrowExceptionIfTripped();
-                            positionRecordA(rIdx);
-                            f.pass1(recordA, rIdx, lightSpi);
-                        }
+                final int funcCount = unorderedFunctions.size();
+                boolean hasForward = false;
+                boolean hasBackward = false;
+                for (int j = 0; j < funcCount; j++) {
+                    if (unorderedFunctions.getQuick(j).getPass1ScanDirection() == WindowFunction.Pass1ScanDirection.FORWARD) {
+                        hasForward = true;
                     } else {
-                        for (long rIdx = size - 1; rIdx >= 0; rIdx--) {
-                            circuitBreaker.statefulThrowExceptionIfTripped();
-                            positionRecordA(rIdx);
-                            f.pass1(recordA, rIdx, lightSpi);
+                        hasBackward = true;
+                    }
+                }
+                if (hasForward) {
+                    for (long rIdx = 0; rIdx < size; rIdx++) {
+                        circuitBreaker.statefulThrowExceptionIfTripped();
+                        positionRecordA(rIdx);
+                        for (int j = 0; j < funcCount; j++) {
+                            final WindowFunction f = unorderedFunctions.getQuick(j);
+                            if (f.getPass1ScanDirection() == WindowFunction.Pass1ScanDirection.FORWARD) {
+                                f.pass1(recordA, rIdx, lightSpi);
+                            }
+                        }
+                    }
+                }
+                if (hasBackward) {
+                    for (long rIdx = size - 1; rIdx >= 0; rIdx--) {
+                        circuitBreaker.statefulThrowExceptionIfTripped();
+                        positionRecordA(rIdx);
+                        for (int j = 0; j < funcCount; j++) {
+                            final WindowFunction f = unorderedFunctions.getQuick(j);
+                            if (f.getPass1ScanDirection() != WindowFunction.Pass1ScanDirection.FORWARD) {
+                                f.pass1(recordA, rIdx, lightSpi);
+                            }
                         }
                     }
                 }
@@ -501,14 +520,14 @@ public class CachedWindowLightRecordCursorFactory extends AbstractRecordCursorFa
                 }
             }
 
-            // Pass2 for unordered functions.
+            // Pass2 for unordered functions (fused row-outer loop).
             if (unordered2PassFunctions != null) {
-                for (int j = 0, n = unordered2PassFunctions.size(); j < n; j++) {
-                    final WindowFunction f = unordered2PassFunctions.getQuick(j);
-                    for (long rIdx = 0; rIdx < size; rIdx++) {
-                        circuitBreaker.statefulThrowExceptionIfTripped();
-                        positionRecordA(rIdx);
-                        f.pass2(recordA, rIdx, lightSpi);
+                final int funcCount = unordered2PassFunctions.size();
+                for (long rIdx = 0; rIdx < size; rIdx++) {
+                    circuitBreaker.statefulThrowExceptionIfTripped();
+                    positionRecordA(rIdx);
+                    for (int j = 0; j < funcCount; j++) {
+                        unordered2PassFunctions.getQuick(j).pass2(recordA, rIdx, lightSpi);
                     }
                 }
             }
