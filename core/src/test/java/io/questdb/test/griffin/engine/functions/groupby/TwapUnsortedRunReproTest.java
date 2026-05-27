@@ -233,6 +233,138 @@ public class TwapUnsortedRunReproTest extends AbstractCairoTest {
     }
 
     /**
+     * Duplicate-timestamp variant of {@link #testParallelTwapMatchesUnderContention}.
+     * The dataset is engineered so every {@code BLOCKS}-th pair of frames
+     * triggers a {@code firstKey} tie under out-of-order slot arrival:
+     * <ul>
+     *   <li>A "narrow" frame holds 50 rows of one timestamp (e.g.,
+     *       {@code ts = 1000}).</li>
+     *   <li>The following "wide" frame starts at the same timestamp and
+     *       ramps up through five distinct values 10 rows each (e.g.,
+     *       {@code ts in [1000, 2000, 3000, 4000, 5000]}).</li>
+     * </ul>
+     * If the wide frame lands in the slot before the narrow one, both
+     * batches end up with {@code firstKey = 1000} but different
+     * {@code lastKey}. A by-{@code firstKey}-only isAscending check
+     * false-positives on the tie and skips the compaction sort, leaving
+     * the buffer with a 5000 -> 1000 key drop that contaminates the
+     * step-function integration. The fix in
+     * {@link io.questdb.griffin.engine.groupby.SortedRunsMerge} must
+     * still sort here.
+     * <p>
+     * Each block also appends a second wide frame ({@code [5000..9000]})
+     * so successive blocks chain through ts-monotone boundaries
+     * ({@code F2_last_ts = next_block_F0_ts}). Ten blocks (30 frames,
+     * 1500 rows) give the scheduler plenty of out-of-order opportunities.
+     * With {@code price = ts}, identical-ts pairs contribute 0 and the
+     * 8M transitions deliver
+     * {@code weightedSum = 8M(8M+1)/2 * 1e6}, so TWAP = {@code (8M+1) * 500},
+     * which is 40500.0 for M=10 - exact in double.
+     */
+    @Test
+    public void testParallelTwapMatchesUnderContentionWithDuplicateTimestamps() throws Exception {
+        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 50);
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_ENABLED, "true");
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_WORK_STEALING_THRESHOLD, 1);
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_SHARDING_THRESHOLD, 1_000_000);
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_BATCH_SIZE, 8);
+
+        final int blocks = 10;
+        final double expected = (8L * blocks + 1) * 500.0; // 40500.0 for blocks=10
+
+        assertMemoryLeak(() -> {
+            try (WorkerPool pool = new WorkerPool(() -> 2)) {
+                TestUtils.execute(pool, (engine, compiler, sqlExecutionContext) -> {
+                    engine.execute(
+                            "CREATE TABLE tab (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR",
+                            sqlExecutionContext
+                    );
+                    engine.execute(buildDuplicateTsInsert(blocks), sqlExecutionContext);
+
+                    final CyclicBarrier barrier = new CyclicBarrier(NUM_THREADS);
+                    final SOCountDownLatch latch = new SOCountDownLatch(NUM_THREADS);
+                    final Map<Integer, Throwable> errors = new ConcurrentHashMap<>();
+                    final AtomicInteger mismatches = new AtomicInteger();
+                    final java.util.concurrent.atomic.AtomicReference<Double> sampleWrongValue =
+                            new java.util.concurrent.atomic.AtomicReference<>(null);
+
+                    for (int t = 0; t < NUM_THREADS; t++) {
+                        final int threadId = t;
+                        new Thread(() -> {
+                            try {
+                                TestUtils.await(barrier);
+                                for (int iter = 0; iter < NUM_ITERATIONS; iter++) {
+                                    double observed = runTwap(engine, sqlExecutionContext);
+                                    if (observed != expected) {
+                                        mismatches.incrementAndGet();
+                                        sampleWrongValue.compareAndSet(null, observed);
+                                    }
+                                }
+                            } catch (Throwable th) {
+                                errors.put(threadId, th);
+                            } finally {
+                                latch.countDown();
+                            }
+                        }, "twap-dup-ts-" + threadId).start();
+                    }
+                    latch.await();
+
+                    for (Map.Entry<Integer, Throwable> e : errors.entrySet()) {
+                        e.getValue().printStackTrace(System.out);
+                    }
+                    Assert.assertTrue("thread errors: " + errors, errors.isEmpty());
+                    Assert.assertEquals(
+                            "twap() must return exactly " + expected + " regardless of slot-arrival order. "
+                                    + "A deviation here means SortedRunsMerge failed to sort batches whose "
+                                    + "first keys collided across a page-frame duplicate-ts boundary. "
+                                    + "Wrong sample: " + sampleWrongValue.get() + ", " + mismatches.get()
+                                    + " mismatches over " + NUM_THREADS + " threads x "
+                                    + NUM_ITERATIONS + " iterations.",
+                            0, mismatches.get()
+                    );
+                }, configuration, LOG);
+            }
+        });
+    }
+
+    // Builds the duplicate-ts dataset described on
+    // testParallelTwapMatchesUnderContentionWithDuplicateTimestamps. Each block
+    // contributes one narrow frame (50 rows at blockStartTs) plus two wide
+    // frames (10 rows each at five ascending timestamps), chained so the
+    // closing ts of block k equals the opening ts of block k+1.
+    private static String buildDuplicateTsInsert(int blocks) {
+        StringBuilder sb = new StringBuilder("INSERT INTO tab VALUES\n");
+        boolean first = true;
+        for (int block = 0; block < blocks; block++) {
+            final long blockStartTs = 1000L + 8000L * block;
+            for (int i = 0; i < 50; i++) {
+                if (!first) sb.append(",\n");
+                first = false;
+                appendRow(sb, blockStartTs);
+            }
+            for (int step = 0; step < 5; step++) {
+                final long ts = blockStartTs + (long) step * 1000;
+                for (int j = 0; j < 10; j++) {
+                    sb.append(",\n");
+                    appendRow(sb, ts);
+                }
+            }
+            for (int step = 0; step < 5; step++) {
+                final long ts = blockStartTs + 4000L + (long) step * 1000;
+                for (int j = 0; j < 10; j++) {
+                    sb.append(",\n");
+                    appendRow(sb, ts);
+                }
+            }
+        }
+        return sb.toString();
+    }
+
+    private static void appendRow(StringBuilder sb, long ts) {
+        sb.append('(').append((double) ts).append(", ").append(ts).append(')');
+    }
+
+    /**
      * Regression guard for a separate but related bug: the owner
      * {@code TwapGroupByFunction}'s {@code cachedPtr}/{@code cachedValue}
      * memoization in {@code getDouble} must be reset by {@code clear()} so a

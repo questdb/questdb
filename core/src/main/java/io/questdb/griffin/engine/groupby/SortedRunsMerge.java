@@ -50,9 +50,12 @@ import io.questdb.std.Vect;
  * index) and records a batch boundary only when a frame is not the immediate
  * successor of the previous one - a gap or an out-of-order frame; consecutive
  * in-order frames extend the current batch. Each batch therefore spans a
- * contiguous interval of frame indices, and because page frames cover
- * disjoint, contiguous row-id ranges, distinct batches never overlap in key
- * range - the invariant the whole-batch permutation below depends on.
+ * contiguous interval of frame indices and is itself key-sorted. Because the
+ * base scan is key-ascending and page frames cover disjoint, contiguous
+ * row-id ranges, two distinct batches' key ranges may meet at a boundary
+ * (frame F's last key equals frame F+1's first key on a duplicate-key run)
+ * but never strictly overlap - the invariant the whole-batch permutation
+ * below depends on.
  *
  * <p>The boundaries live in a per-group <b>descriptor buffer</b>: a native array
  * of {@code descCount} ascending entry offsets, where descriptor {@code i} is
@@ -67,15 +70,23 @@ import io.questdb.std.Vect;
  * <p>With exact boundaries known, sorting a buffer is a permutation of whole
  * batches - no element-wise merge:
  * <ol>
- *   <li>Gather one {@code [firstKey, address, entryCount]} record per batch.</li>
- *   <li>Stable-sort the records by {@code firstKey} (a bottom-up merge sort
- *       over the small record array; {@code firstKey} is the batch's minimum
- *       key, since each batch is itself key-sorted).</li>
+ *   <li>Gather one {@code [firstKey, lastKey, address, entryCount]} record
+ *       per batch. {@code firstKey} and {@code lastKey} are the batch's
+ *       minimum and maximum keys, read directly from the first and last
+ *       entries since each batch is itself key-sorted.</li>
+ *   <li>Sort the records lexicographically by {@code (firstKey, lastKey)} via
+ *       a bottom-up merge sort. The {@code lastKey} tie-break orders two
+ *       batches that collide on {@code firstKey} (a duplicate-key run
+ *       spanning a page-frame boundary) by scan position: the narrower
+ *       all-{@code firstKey} batch came earlier in the scan and therefore
+ *       sorts ahead of the wider one - a {@code firstKey}-only sort would
+ *       leave them in arrival order and break the concatenation invariant.</li>
  *   <li>Emit the batches in sorted order with one bulk {@link Vect#memcpy} each.</li>
  * </ol>
  *
  * <p>{@link #compactInPlace} additionally returns early when the batches are
- * already in key order (the common, uncontended case), touching no memory.
+ * already non-overlapping in key order (the common, uncontended case),
+ * touching no memory beyond the gather step.
  */
 public final class SortedRunsMerge {
 
@@ -89,9 +100,14 @@ public final class SortedRunsMerge {
     // path in the high-cardinality scenario (see JFR profiling of the 1M-
     // groups twap benchmark).
     private static final int INSERTION_SORT_THRESHOLD = 16;
-    // Each gathered batch occupies 3 longs in the scratch list:
-    //   [firstKey, entriesAddress, entryCount]
-    private static final int RECORD_LONGS = 3;
+    // Each gathered batch occupies 4 longs in the scratch list:
+    //   [firstKey, lastKey, entriesAddress, entryCount]
+    // The lastKey tie-breaker on a (firstKey, lastKey) sort is what keeps a
+    // narrow all-{@code firstKey} batch ahead of a wider batch with the same
+    // firstKey when both arrived out of scan order at the same slot - the
+    // duplicate-key-across-frame-boundary case a firstKey-only sort would
+    // leave in arrival order.
+    private static final int RECORD_LONGS = 4;
 
     private SortedRunsMerge() {
     }
@@ -141,11 +157,12 @@ public final class SortedRunsMerge {
      * order, preserving the buffer pointer.
      *
      * <p>Returns immediately when the buffer is a single batch
-     * ({@code descPtr == 0}) or when the batches are already in key order - the
-     * common case under low contention - touching no memory. Otherwise sorts by
-     * permuting whole batches into a transient auxiliary buffer and copying the
-     * result back over the caller's buffer; the descriptor buffer is rewritten
-     * to match the new layout.
+     * ({@code descPtr == 0}) - touching no memory at all - or when the gather
+     * finds the batches already in non-overlapping key order (the common
+     * case under low contention), in which case no allocator memory is
+     * touched. Otherwise sorts by permuting whole batches into a transient
+     * auxiliary buffer and copying the result back over the caller's
+     * buffer; the descriptor buffer is rewritten to match the new layout.
      *
      * @param allocator   supplies the auxiliary buffer; freed before return
      * @param scratch     reusable scratch list for batch records; cleared on entry
@@ -187,11 +204,11 @@ public final class SortedRunsMerge {
      * {@code countA + countB} entries, sorted by key.
      *
      * <p>Each input is described by its own batch descriptors; the helper
-     * gathers the batches of both, sorts them by first key, and emits each with
-     * one bulk copy. Either count may be zero, in which case the matching
-     * pointers are ignored. The merged batch descriptors (ascending start
-     * offsets) are written to {@code dstDescPtr}; pass 0 when the merged result
-     * is a single batch.
+     * gathers the batches of both, sorts them by {@code (firstKey, lastKey)},
+     * and emits each with one bulk copy. Either count may be zero, in which
+     * case the matching pointers are ignored. The merged batch descriptors
+     * (ascending start offsets) are written to {@code dstDescPtr}; pass 0
+     * when the merged result is a single batch.
      *
      * @param scratch       reusable scratch list for batch records
      * @param dstEntriesPtr destination entry buffer, pre-allocated by the caller
@@ -222,11 +239,12 @@ public final class SortedRunsMerge {
         emit(scratch, sortedBase, n, dstEntriesPtr, dstDescPtr, entryStride);
     }
 
-    // Copies the 3-long batch record at long-offset `from` to long-offset `to`.
+    // Copies the 4-long batch record at long-offset `from` to long-offset `to`.
     private static void copyRecord(LongList scratch, int from, int to) {
         scratch.setQuick(to, scratch.getQuick(from));
         scratch.setQuick(to + 1, scratch.getQuick(from + 1));
         scratch.setQuick(to + 2, scratch.getQuick(from + 2));
+        scratch.setQuick(to + 3, scratch.getQuick(from + 3));
     }
 
     // Walks batches in sorted order, copying each into the destination buffer
@@ -236,8 +254,8 @@ public final class SortedRunsMerge {
         long outOffset = 0;
         for (int k = 0; k < n; k++) {
             final int rec = base + k * RECORD_LONGS;
-            final long srcAddr = scratch.getQuick(rec + 1);
-            final long entryCount = scratch.getQuick(rec + 2);
+            final long srcAddr = scratch.getQuick(rec + 2);
+            final long entryCount = scratch.getQuick(rec + 3);
             Vect.memcpy(dstEntriesPtr + outOffset * entryStride, srcAddr, entryCount * entryStride);
             if (dstDescPtr != 0) {
                 Unsafe.putLong(dstDescPtr + (long) k * Long.BYTES, outOffset);
@@ -246,15 +264,20 @@ public final class SortedRunsMerge {
         }
     }
 
-    // Appends one [firstKey, address, entryCount] record per batch. A buffer
-    // with descPtr == 0 is a single implicit batch covering [0, entryCount).
+    // Appends one [firstKey, lastKey, address, entryCount] record per batch.
+    // A buffer with descPtr == 0 is a single implicit batch covering
+    // [0, entryCount). Hot path (JFR's top SortedRunsMerge leaf at 439
+    // samples in the 1M-groups scenario), so it pre-grows the scratch list
+    // once via setPos and writes via setQuick - skipping the per-add
+    // capacity check that would otherwise fire four times per batch. The
+    // descriptor loop also carries the previous iteration's end forward as
+    // the next batch's start, halving the descriptor reads.
     //
-    // Hot path (JFR's top SortedRunsMerge leaf at 439 samples in the 1M-
-    // groups scenario), so it pre-grows the scratch list once via setPos
-    // and writes via setQuick - skipping the per-add capacity check that
-    // would otherwise fire three times per batch. The descriptor loop
-    // also carries the previous iteration's end forward as the next
-    // batch's start, halving the descriptor reads.
+    // The lastKey is read from the batch's last entry; it costs one extra
+    // memory access per batch (the last entry's cache line, distinct from
+    // the first entry's for any batch larger than a couple of entries).
+    // The cost is per-batch, not per-entry, and is dwarfed by the
+    // per-entry memcpy in emit on the cold (sort) path.
     private static void gatherBatches(
             LongList scratch,
             long entriesPtr,
@@ -270,8 +293,9 @@ public final class SortedRunsMerge {
         if (descPtr == 0) {
             scratch.setPos(base + RECORD_LONGS);
             scratch.setQuick(base, Unsafe.getLong(entriesPtr));
-            scratch.setQuick(base + 1, entriesPtr);
-            scratch.setQuick(base + 2, entryCount);
+            scratch.setQuick(base + 1, Unsafe.getLong(entriesPtr + (entryCount - 1) * entryStride));
+            scratch.setQuick(base + 2, entriesPtr);
+            scratch.setQuick(base + 3, entryCount);
             return;
         }
         final int n = (int) descCount;
@@ -281,43 +305,57 @@ public final class SortedRunsMerge {
         for (int i = 0; i < n; i++) {
             final long end = (i + 1 < n) ? Unsafe.getLong(descPtr + (long) (i + 1) * Long.BYTES) : entryCount;
             final long addr = entriesPtr + start * entryStride;
+            final long batchCount = end - start;
             scratch.setQuick(write, Unsafe.getLong(addr));
-            scratch.setQuick(write + 1, addr);
-            scratch.setQuick(write + 2, end - start);
+            scratch.setQuick(write + 1, Unsafe.getLong(addr + (batchCount - 1) * entryStride));
+            scratch.setQuick(write + 2, addr);
+            scratch.setQuick(write + 3, batchCount);
             write += RECORD_LONGS;
             start = end;
         }
     }
 
-    // True when the first keys of records [base, base + n) are non-decreasing.
-    // Since batches are key-disjoint and each is internally sorted, ascending
-    // first keys mean the buffer is already globally sorted.
+    // True when records [base, base + n) describe a globally key-sorted
+    // buffer: each batch's firstKey is >= the previous batch's lastKey, so
+    // concatenating the batches in their current order is non-decreasing.
+    // Stronger than a firstKey-only check, which incorrectly accepts two
+    // out-of-scan-order batches that tie on firstKey across a duplicate-key
+    // frame boundary.
     private static boolean isAscending(LongList scratch, int base, int n) {
         if (n <= 1) {
             return true;
         }
-        long prev = scratch.getQuick(base);
+        long prevLast = scratch.getQuick(base + 1);
         for (int k = 1; k < n; k++) {
-            final long firstKey = scratch.getQuick(base + k * RECORD_LONGS);
-            if (firstKey < prev) {
+            final int rec = base + k * RECORD_LONGS;
+            final long firstKey = scratch.getQuick(rec);
+            if (firstKey < prevLast) {
                 return false;
             }
-            prev = firstKey;
+            prevLast = scratch.getQuick(rec + 1);
         }
         return true;
     }
 
     // Stable merge of the record runs [lo, mid) and [mid, hi) from the srcBase
     // half of the scratch list into the dstBase half, starting at index lo.
-    // On equal keys the record from the left run is taken first.
+    // Records compare lexicographically by (firstKey, lastKey); on equal
+    // composite keys the record from the left run is taken first.
     private static void mergeRuns(LongList scratch, int srcBase, int dstBase, int lo, int mid, int hi) {
         int i = lo, j = mid, k = lo;
         while (i < mid && j < hi) {
-            if (scratch.getQuick(srcBase + i * RECORD_LONGS) <= scratch.getQuick(srcBase + j * RECORD_LONGS)) {
-                copyRecord(scratch, srcBase + i * RECORD_LONGS, dstBase + k * RECORD_LONGS);
+            final int recL = srcBase + i * RECORD_LONGS;
+            final int recR = srcBase + j * RECORD_LONGS;
+            final long firstL = scratch.getQuick(recL);
+            final long firstR = scratch.getQuick(recR);
+            final boolean takeLeft = firstL != firstR
+                    ? firstL < firstR
+                    : scratch.getQuick(recL + 1) <= scratch.getQuick(recR + 1);
+            if (takeLeft) {
+                copyRecord(scratch, recL, dstBase + k * RECORD_LONGS);
                 i++;
             } else {
-                copyRecord(scratch, srcBase + j * RECORD_LONGS, dstBase + k * RECORD_LONGS);
+                copyRecord(scratch, recR, dstBase + k * RECORD_LONGS);
                 j++;
             }
             k++;
@@ -334,9 +372,10 @@ public final class SortedRunsMerge {
         }
     }
 
-    // Stable bottom-up merge sort of the n batch records by first key. Uses the
-    // upper half of the scratch list as the ping-pong area. Returns the long
-    // base offset of the half holding the sorted records.
+    // Stable bottom-up merge sort of the n batch records by (firstKey,
+    // lastKey). Uses the upper half of the scratch list as the ping-pong
+    // area. Returns the long base offset of the half holding the sorted
+    // records.
     //
     // Small-N inputs (the common case under the merge-reduction path for many
     // small groups) take a separate insertion-sort branch. The bottom-up
@@ -344,8 +383,7 @@ public final class SortedRunsMerge {
     // the single digits, where JFR profiling of the 1M-group scenario showed
     // {@code mergeRuns} as the hottest leaf in the parallel GROUP BY reduce
     // path. Insertion sort runs in-place at base 0 and avoids the auxiliary
-    // half entirely; it is also stable for the (irrelevant here, since
-    // batches are key-disjoint by construction) equal-key case.
+    // half entirely.
     private static int sortByFirstKey(LongList scratch, int n) {
         if (n <= 1) {
             return 0;
@@ -371,34 +409,47 @@ public final class SortedRunsMerge {
         return srcBase;
     }
 
-    // In-place insertion sort by first key over the first n records of
-    // {@code scratch}. Each record occupies {@link #RECORD_LONGS} consecutive
-    // longs; the first long is the sort key. Strict {@code >} preserves
-    // original order on equal keys (stability), though in this caller's
-    // workloads batches are key-disjoint and ties cannot occur.
+    // In-place insertion sort by (firstKey, lastKey) over the first n records
+    // of {@code scratch}. Each record occupies {@link #RECORD_LONGS}
+    // consecutive longs; the first two longs are the composite sort key.
+    // The lastKey tie-break orders two batches that collide on firstKey
+    // (a duplicate-key run spanning a page-frame boundary): the narrower
+    // all-firstKey batch's lastKey equals its firstKey, so it sorts ahead
+    // of any wider batch that shares the firstKey.
     private static void insertionSortByFirstKey(LongList scratch, int n) {
         for (int i = 1; i < n; i++) {
             final int srcBase = i * RECORD_LONGS;
-            final long key = scratch.getQuick(srcBase);
-            // Skip already-in-place records: the prev key is <= ours.
-            if (scratch.getQuick(srcBase - RECORD_LONGS) <= key) {
+            final long firstKey = scratch.getQuick(srcBase);
+            final long lastKey = scratch.getQuick(srcBase + 1);
+            // Skip already-in-place records: prev record sorts <= ours.
+            final int prevBase = srcBase - RECORD_LONGS;
+            final long prevFirst = scratch.getQuick(prevBase);
+            if (prevFirst < firstKey
+                    || (prevFirst == firstKey && scratch.getQuick(prevBase + 1) <= lastKey)) {
                 continue;
             }
-            final long addr = scratch.getQuick(srcBase + 1);
-            final long cnt = scratch.getQuick(srcBase + 2);
+            final long addr = scratch.getQuick(srcBase + 2);
+            final long cnt = scratch.getQuick(srcBase + 3);
             int j = i;
-            while (j > 0 && scratch.getQuick((j - 1) * RECORD_LONGS) > key) {
-                final int prev = (j - 1) * RECORD_LONGS;
+            while (j > 0) {
+                final int p = (j - 1) * RECORD_LONGS;
+                final long pFirst = scratch.getQuick(p);
+                final long pLast = scratch.getQuick(p + 1);
+                if (pFirst < firstKey || (pFirst == firstKey && pLast <= lastKey)) {
+                    break;
+                }
                 final int cur = j * RECORD_LONGS;
-                scratch.setQuick(cur, scratch.getQuick(prev));
-                scratch.setQuick(cur + 1, scratch.getQuick(prev + 1));
-                scratch.setQuick(cur + 2, scratch.getQuick(prev + 2));
+                scratch.setQuick(cur, pFirst);
+                scratch.setQuick(cur + 1, pLast);
+                scratch.setQuick(cur + 2, scratch.getQuick(p + 2));
+                scratch.setQuick(cur + 3, scratch.getQuick(p + 3));
                 j--;
             }
             final int dst = j * RECORD_LONGS;
-            scratch.setQuick(dst, key);
-            scratch.setQuick(dst + 1, addr);
-            scratch.setQuick(dst + 2, cnt);
+            scratch.setQuick(dst, firstKey);
+            scratch.setQuick(dst + 1, lastKey);
+            scratch.setQuick(dst + 2, addr);
+            scratch.setQuick(dst + 3, cnt);
         }
     }
 }

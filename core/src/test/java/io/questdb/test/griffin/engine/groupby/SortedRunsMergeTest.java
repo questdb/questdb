@@ -102,6 +102,45 @@ public class SortedRunsMergeTest extends AbstractCairoTest {
         });
     }
 
+    /**
+     * Two batches share their first key because duplicate timestamps span a
+     * page-frame boundary: in a forward-ascending scan frame F's last ts can
+     * equal frame F+1's first ts. Under cross-query work-stealing the slot
+     * receives them out of order, so two batches land in the buffer with
+     * equal firstKey but different lastKey - the wide-range one arrived
+     * first, the all-duplicate one second, plus a forward frame third.
+     * <p>
+     * The arrival-order buffer is not globally key-monotonic: it falls
+     * from 5000 at the end of batch 0 to 1000 at the start of batch 1.
+     * compactInPlace must restore monotonicity by sorting by
+     * (firstKey, lastKey) - the narrower batch sorts ahead of the wider
+     * one, and the result concatenates into a non-decreasing key sequence.
+     */
+    @Test
+    public void testCompactInPlaceDuplicateFirstKeyAcrossBatches() throws Exception {
+        assertMemoryLeak(() -> {
+            try (GroupByAllocator allocator = GroupByAllocatorFactory.createAllocator(configuration)) {
+                LongList scratch = new LongList(16);
+                long entries = allocEntries(allocator,
+                        // batch 0 (arrival 1, scan position 1): wider range starting at 1000
+                        1000, 1000, 5000,
+                        // batch 1 (arrival 2, scan position 0): all-1000 narrow batch
+                        1000, 1000, 1000,
+                        // batch 2 (arrival 3, scan position 2): forward run from 5000
+                        5000, 5000, 9000
+                );
+                long desc = allocDescriptors(allocator, 0, 3, 6);
+                SortedRunsMerge.compactInPlace(allocator, scratch, entries, 9, desc, 3, ENTRY_STRIDE);
+                assertEntries(entries,
+                        1000, 1000, 1000,
+                        1000, 1000, 5000,
+                        5000, 5000, 9000
+                );
+                assertDescriptors(desc, 0, 3, 6);
+            }
+        });
+    }
+
     @Test
     public void testCompactInPlaceIdempotent() throws Exception {
         assertMemoryLeak(() -> {
@@ -155,6 +194,37 @@ public class SortedRunsMergeTest extends AbstractCairoTest {
                 SortedRunsMerge.compactInPlace(allocator, scratch, entries, 5, desc, 2, ENTRY_STRIDE);
                 assertEntries(entries, 10, 20, 30, 40, 50);
                 assertDescriptors(desc, 0, 2);
+            }
+        });
+    }
+
+    /**
+     * Two single-batch inputs share their first key (duplicate timestamp at
+     * the slot boundary). Input A's range is 1000..5000 and arrives first,
+     * input B's range is 1000..1000 and arrives second; the stable sort
+     * preserves arrival order on first-key ties, so the merge emits A then
+     * B and produces output that drops from 5000 to 1000 at the A/B
+     * boundary. The (firstKey, lastKey) tie-break must place B (narrower)
+     * before A so the concatenation remains non-decreasing.
+     */
+    @Test
+    public void testCompactIntoDuplicateFirstKey() throws Exception {
+        assertMemoryLeak(() -> {
+            try (GroupByAllocator allocator = GroupByAllocatorFactory.createAllocator(configuration)) {
+                LongList scratch = new LongList(16);
+                long a = allocEntries(allocator, 1000, 1000, 5000);
+                long b = allocEntries(allocator, 1000, 1000, 1000);
+                long dst = allocEntries(allocator, 0, 0, 0, 0, 0, 0);
+                long dstDesc = allocDescriptors(allocator, 0, 0);
+                SortedRunsMerge.compactInto(
+                        scratch,
+                        dst, dstDesc,
+                        a, 3, 0, 0,
+                        b, 3, 0, 0,
+                        ENTRY_STRIDE
+                );
+                assertEntries(dst, 1000, 1000, 1000, 1000, 1000, 5000);
+                assertDescriptors(dstDesc, 0, 3);
             }
         });
     }
