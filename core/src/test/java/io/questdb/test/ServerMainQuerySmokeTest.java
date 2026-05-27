@@ -386,8 +386,10 @@ public class ServerMainQuerySmokeTest extends AbstractBootstrapTest {
                 "SELECT min(quantity), max(quantity) FROM tab",
                 """
                         QUERY PLAN[VARCHAR]
-                        GroupBy vectorized: true workers: 4
+                        Async Group By workers: 4
+                          vectorized: true
                           values: [min(quantity),max(quantity)]
+                          filter: null
                             PageFrame
                                 Row forward scan
                                 Frame forward scan on: tab

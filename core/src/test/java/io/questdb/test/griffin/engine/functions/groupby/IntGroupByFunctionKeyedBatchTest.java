@@ -26,6 +26,7 @@ package io.questdb.test.griffin.engine.functions.groupby;
 
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.columns.IntColumn;
+import io.questdb.griffin.engine.functions.groupby.AvgIntGroupByFunction;
 import io.questdb.griffin.engine.functions.groupby.BitAndIntGroupByFunction;
 import io.questdb.griffin.engine.functions.groupby.BitOrIntGroupByFunction;
 import io.questdb.griffin.engine.functions.groupby.BitXorIntGroupByFunction;
@@ -58,6 +59,24 @@ public class IntGroupByFunctionKeyedBatchTest {
     private static final int[] ARG_VALUES = {
             100, Numbers.INT_NULL, -50, 200, 0, Numbers.INT_NULL, -1, 7
     };
+
+    @Test
+    public void testAvgIntFastPath() throws Exception {
+        TestUtils.assertMemoryLeak(() -> testEquivalence(
+                new AvgIntGroupByFunction(IntColumn.newInstance(ARG_COLUMN_INDEX)), true));
+    }
+
+    @Test
+    public void testAvgIntIndirectArg() throws Exception {
+        TestUtils.assertMemoryLeak(() -> testEquivalence(
+                new AvgIntGroupByFunction(new IndirectIntArg(ARG_COLUMN_INDEX)), false));
+    }
+
+    @Test
+    public void testAvgIntSlowPath() throws Exception {
+        TestUtils.assertMemoryLeak(() -> testEquivalence(
+                new AvgIntGroupByFunction(IntColumn.newInstance(ARG_COLUMN_INDEX)), false));
+    }
 
     @Test
     public void testBitAndIntFastPath() throws Exception {

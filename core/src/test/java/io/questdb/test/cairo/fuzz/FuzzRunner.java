@@ -67,6 +67,7 @@ import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
+import io.questdb.test.fuzz.FuzzAddCoveringIndexOperation;
 import io.questdb.test.fuzz.FuzzDropCreateTableOperation;
 import io.questdb.test.fuzz.FuzzTransaction;
 import io.questdb.test.fuzz.FuzzTransactionGenerator;
@@ -91,6 +92,7 @@ public class FuzzRunner {
     private final TableSequencerAPI.TableSequencerCallback checkNoSuspendedTablesRef;
     protected int initialRowCount;
     protected int partitionCount;
+    private double addCoveringIndexProb;
     private double cancelRowsProb;
     private double colAddProb;
     private double colRemoveProb;
@@ -285,6 +287,14 @@ public class FuzzRunner {
                         } else {
                             writer.commit();
                         }
+                        for (int opIdx = 0; opIdx < size; opIdx++) {
+                            if (transaction.operationList.getQuick(opIdx) instanceof FuzzAddCoveringIndexOperation coveringOp) {
+                                Misc.free(writer);
+                                writer = null;
+                                coveringOp.executePostDrain(engine, tableName);
+                                writer = TestUtils.getWriter(engine, tableName);
+                            }
+                        }
                     }
                 } catch (CairoException | CairoError e) {
                     boolean housekeeping = (e instanceof CairoException) && ((CairoException) e).isHousekeeping();
@@ -396,6 +406,8 @@ public class FuzzRunner {
         TableToken tableToken = engine.verifyTableName(tableName);
         applyToWal(transactions, tableName, walWriterCount, applyRnd);
         drainWalQueue(applyRnd, tableName);
+        executeCoveringIndexOps(transactions, tableName);
+        drainWalQueue(applyRnd, tableName);
         Assert.assertFalse("Table is suspended", engine.getTableSequencerAPI().isSuspended(tableToken));
     }
 
@@ -503,7 +515,8 @@ public class FuzzRunner {
                 strLen,
                 generateSymbols(rnd, rnd.nextInt(Math.max(1, symbolCountMax - 5)) + 5, symbolStrLenMax, tableName),
                 (int) sequencerMetadata.getMetadataVersion(),
-                setParquetEncodingProb
+                setParquetEncodingProb,
+                addCoveringIndexProb
         );
     }
 
@@ -704,6 +717,40 @@ public class FuzzRunner {
             double queryProb,
             double setParquetEncodingProb
     ) {
+        setFuzzProbabilities(
+                cancelRowsProb, notSetProb, nullSetProb, rollbackProb,
+                colAddProb, colRemoveProb, colRenameProb, colTypeChangeProb,
+                dataAddProb, equalTsRowsProb, partitionDropProb,
+                partitionToParquetProb, partitionToNativeProb,
+                truncateProb, tableDropProb, setTtlProb,
+                replaceInsertProb, symbolAccessValidationProb, queryProb,
+                setParquetEncodingProb, 0.0
+        );
+    }
+
+    public void setFuzzProbabilities(
+            double cancelRowsProb,
+            double notSetProb,
+            double nullSetProb,
+            double rollbackProb,
+            double colAddProb,
+            double colRemoveProb,
+            double colRenameProb,
+            double colTypeChangeProb,
+            double dataAddProb,
+            double equalTsRowsProb,
+            double partitionDropProb,
+            double partitionToParquetProb,
+            double partitionToNativeProb,
+            double truncateProb,
+            double tableDropProb,
+            double setTtlProb,
+            double replaceInsertProb,
+            double symbolAccessValidationProb,
+            double queryProb,
+            double setParquetEncodingProb,
+            double addCoveringIndexProb
+    ) {
         this.cancelRowsProb = cancelRowsProb;
         this.notSetProb = notSetProb;
         this.nullSetProb = nullSetProb;
@@ -724,6 +771,7 @@ public class FuzzRunner {
         this.symbolAccessValidationProb = symbolAccessValidationProb;
         this.queryProb = queryProb;
         this.setParquetEncodingProb = setParquetEncodingProb;
+        this.addCoveringIndexProb = addCoveringIndexProb;
     }
 
     public void withDb(CairoEngine engine, SqlExecutionContext sqlExecutionContext) {
@@ -760,6 +808,8 @@ public class FuzzRunner {
         ObjList<ObjList<FuzzTransaction>> tablesTransactions = new ObjList<>();
         tablesTransactions.add(transactions);
         applyManyWalParallel(tablesTransactions, applyRnd, tableName, false, true);
+        executeCoveringIndexOps(transactions, tableName);
+        drainWalQueue(applyRnd, tableName);
     }
 
     private void assertMinMaxTimestamp(SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, String tableName) throws SqlException {
@@ -1022,6 +1072,7 @@ public class FuzzRunner {
             int opIndex;
 
             try {
+                String updatedTableName = tableName;
                 Rnd tempRnd = new Rnd();
                 while (errors.isEmpty() && (opIndex = nextOperation.incrementAndGet()) < transactions.size() && errors.isEmpty()) {
                     FuzzTransaction transaction = transactions.getQuick(opIndex);
@@ -1057,6 +1108,15 @@ public class FuzzRunner {
                     }
 
                     boolean increment = false;
+
+                    if (transaction.reopenTable) {
+                        TableToken updatedTableToken = engine.getTableTokenByDirName(walWriter.getTableToken().getDirName());
+                        if (updatedTableToken == null) {
+                            throw new IllegalStateException("table is missing after reopen [table=" + tableName + "]");
+                        }
+                        updatedTableName = updatedTableToken.getTableName();
+                    }
+
                     for (int operationIndex = 0; operationIndex < transaction.operationList.size(); operationIndex++) {
                         FuzzTransactionOperation operation = transaction.operationList.getQuick(operationIndex);
                         increment |= operation.apply(tempRnd, engine, walWriter, -1, null);
@@ -1064,11 +1124,10 @@ public class FuzzRunner {
 
                     if (transaction.reopenTable) {
                         synchronized (writers) {
-                            // Table is dropped, reload all writers
                             for (int ii = 0; ii < writers.size(); ii++) {
-                                if (writers.get(ii).getTableToken().getTableName().equals(tableName)) {
+                                if (writers.get(ii).getTableToken().getTableName().equals(updatedTableName)) {
                                     writers.get(ii).close();
-                                    writers.setQuick(ii, (WalWriter) engine.getTableWriterAPI(tableName, "apply trans test"));
+                                    writers.setQuick(ii, (WalWriter) engine.getTableWriterAPI(updatedTableName, "apply trans test"));
                                 }
                             }
                         }
@@ -1104,6 +1163,13 @@ public class FuzzRunner {
             } catch (Throwable e) {
                 e.printStackTrace(System.out);
                 errors.add(e);
+                // Unblock peers waiting on a barrier this worker was supposed to advance.
+                // Without this, peers spin in the Os.sleep loop above because their wait
+                // condition (waitBarrierVersion < target) stays true; the errors check
+                // inside the loop relies on Os.sleep returning, which under heavy load
+                // can be delayed indefinitely. Overshooting to MAX guarantees the wait
+                // condition flips so peers reach the errors.isEmpty() check and return.
+                waitBarrierVersion.set(Long.MAX_VALUE);
             } finally {
                 Path.clearThreadLocals();
             }
@@ -1120,6 +1186,17 @@ public class FuzzRunner {
             while (walApplyJob.run(0) || checkWalTransactionsJob.run(0)) {
                 forceReleaseTableWriter(applyRnd);
                 purgeAndReloadReaders(applyRnd, rdr1, rdr2, purgeJob, 0.25);
+            }
+        }
+    }
+
+    private void executeCoveringIndexOps(ObjList<FuzzTransaction> transactions, String tableName) {
+        for (int i = 0, n = transactions.size(); i < n; i++) {
+            ObjList<FuzzTransactionOperation> ops = transactions.getQuick(i).operationList;
+            for (int j = 0, m = ops.size(); j < m; j++) {
+                if (ops.getQuick(j) instanceof FuzzAddCoveringIndexOperation coveringOp) {
+                    coveringOp.executePostDrain(engine, tableName);
+                }
             }
         }
     }

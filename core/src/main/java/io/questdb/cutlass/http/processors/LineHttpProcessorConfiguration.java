@@ -49,6 +49,8 @@ public interface LineHttpProcessorConfiguration {
 
     int getQwpMaxTablesPerConnection();
 
+    long getQwpMaxUncommittedRows();
+
     CharSequence getInfluxPingVersion();
 
     long getMaxRecvBufferSize();
