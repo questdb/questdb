@@ -7,7 +7,7 @@ steps:
       git config --global http.lowSpeedLimit 102400
       git config --global http.lowSpeedTime 30
     displayName: "Set git low-speed abort thresholds"
-    condition: startsWith(variables['poolName'], 'hetzner-')
+    condition: startsWith(variables['Agent.MachineName'], 'dedi-incus-')
   - checkout: self
     fetchDepth: 1
     lfs: false
