@@ -63,6 +63,9 @@ public class GroupByHistogram implements Mutable {
     private boolean autoResize = false;
     private int bucketCount;
     private int countsArrayLength;
+    private int defaultBucketCount;
+    private int defaultCountsArrayLength;
+    private long defaultHighestTrackableValue;
     private long highestTrackableValue;
     private int subBucketCount;
     private int leadingZeroCountBase;
@@ -76,6 +79,11 @@ public class GroupByHistogram implements Mutable {
 
     public GroupByHistogram(int numberOfSignificantValueDigits) {
         this(1, 2, numberOfSignificantValueDigits);
+        this.autoResize = true;
+    }
+
+    public GroupByHistogram(int numberOfSignificantValueDigits, long initialHighestTrackableValue) {
+        this(1, initialHighestTrackableValue, numberOfSignificantValueDigits);
         this.autoResize = true;
     }
 
@@ -113,6 +121,9 @@ public class GroupByHistogram implements Mutable {
             this.highestTrackableValue = Unsafe.getUnsafe().getLong(ptr + highestTrackableValuePosition);
             this.allocatedSize = headerSize + (countsArrayLength * 8L);
         } else {
+            this.countsArrayLength = defaultCountsArrayLength;
+            this.bucketCount = defaultBucketCount;
+            this.highestTrackableValue = defaultHighestTrackableValue;
             this.allocatedSize = 0;
         }
 
@@ -366,6 +377,10 @@ public class GroupByHistogram implements Mutable {
 
         recalculateDerivedFields();
         establishSize(highestTrackableValue);
+
+        this.defaultCountsArrayLength = countsArrayLength;
+        this.defaultBucketCount = bucketCount;
+        this.defaultHighestTrackableValue = highestTrackableValue;
     }
 
     private void recalculateDerivedFields() {
