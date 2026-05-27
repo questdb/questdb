@@ -574,7 +574,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "cairo.query.cache.event.queue.capacity\tQDB_CAIRO_QUERY_CACHE_EVENT_QUEUE_CAPACITY\t4\tdefault\tfalse\tfalse\n" +
                                     "cairo.reader.pool.max.segments\tQDB_CAIRO_READER_POOL_MAX_SEGMENTS\t10\tdefault\tfalse\tfalse\n" +
                                     "cairo.recent.write.tracker.capacity\tQDB_CAIRO_RECENT_WRITE_TRACKER_CAPACITY\t1000\tdefault\tfalse\tfalse\n" +
-                                    "cairo.repeat.migration.from.version\tQDB_CAIRO_REPEAT_MIGRATION_FROM_VERSION\t426\tdefault\tfalse\tfalse\n" +
+                                    "cairo.repeat.migration.from.version\tQDB_CAIRO_REPEAT_MIGRATION_FROM_VERSION\t-1\tdefault\tfalse\tfalse\n" +
                                     "cairo.rnd.memory.max.pages\tQDB_CAIRO_RND_MEMORY_MAX_PAGES\t128\tdefault\tfalse\tfalse\n" +
                                     "cairo.rnd.memory.page.size\tQDB_CAIRO_RND_MEMORY_PAGE_SIZE\t8192\tdefault\tfalse\tfalse\n" +
                                     "cairo.snapshot.instance.id\tQDB_CAIRO_SNAPSHOT_INSTANCE_ID\t\tdefault\tfalse\tfalse\n" +

@@ -60,6 +60,7 @@ import static io.questdb.cutlass.qwp.protocol.QwpConstants.HEADER_SIZE;
 
 public class QwpUdpReceiver extends SynchronizedJob implements Closeable {
     private static final Log LOG = LogFactory.getLog(QwpUdpReceiver.class);
+    protected static final int DATAGRAM_DROPPED = 4;
     protected static final int DATAGRAM_LEFT_UNCOMMITTED_ROWS = 1;
     protected static final int DATAGRAM_TRIGGERED_COMMIT = 2;
 
@@ -258,7 +259,9 @@ public class QwpUdpReceiver extends SynchronizedJob implements Closeable {
         while ((count = nf.recvRaw(fd, buf, bufLen)) > 0) {
             ran = true;
             int datagramState = processDatagram(buf, count);
-            processedCount++;
+            if ((datagramState & DATAGRAM_DROPPED) == 0) {
+                processedCount++;
+            }
             if ((datagramState & DATAGRAM_TRIGGERED_COMMIT) != 0) {
                 totalCount = 0;
             }
@@ -327,7 +330,7 @@ public class QwpUdpReceiver extends SynchronizedJob implements Closeable {
     protected int processDatagram(long address, int length) {
         if (length < HEADER_SIZE) {
             droppedTooShortCount++;
-            return 0;
+            return DATAGRAM_DROPPED;
         }
         try {
             messageHeader.parse(address, length);
@@ -338,14 +341,14 @@ public class QwpUdpReceiver extends SynchronizedJob implements Closeable {
                 default -> droppedParseErrorCount++;
             }
             LOG.error().$("header parse error: ").$(e.getFlyweightMessage()).$();
-            return 0;
+            return DATAGRAM_DROPPED;
         }
         long totalLength = HEADER_SIZE + messageHeader.getPayloadLength();
         if (totalLength > length) {
             droppedTruncatedCount++;
             LOG.error().$("payload extends beyond datagram [payloadLen=").$(messageHeader.getPayloadLength())
                     .$(", received=").$(length).$(']').$();
-            return 0;
+            return DATAGRAM_DROPPED;
         }
         int datagramState = 0;
         try {
@@ -377,7 +380,7 @@ public class QwpUdpReceiver extends SynchronizedJob implements Closeable {
         } catch (Throwable t) {
             droppedParseErrorCount++;
             LOG.error().$("datagram processing error: ").$(t.getMessage()).$();
-            return 0;
+            return DATAGRAM_DROPPED;
         }
         return datagramState;
     }
