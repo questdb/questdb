@@ -59,8 +59,8 @@ public class Mig941Test extends AbstractCairoTest {
     /// Committed parquet fixture: single designated-ts column, two row
     /// groups of 10 rows each, row values 0..19, no min/max stats on the ts
     /// column. Regenerate via
-    /// `cargo test emit_mig940_ts_no_stats_fixture -- --ignored`.
-    private static final String TS_NO_STATS_FIXTURE = "/mig940/ts_no_stats.parquet";
+    /// `cargo test emit_mig941_ts_no_stats_fixture -- --ignored`.
+    private static final String TS_NO_STATS_FIXTURE = "/mig941/ts_no_stats.parquet";
 
     @Test
     public void testMigrateAbortOnCorruptParquetFile() throws Exception {
@@ -876,8 +876,7 @@ public class Mig941Test extends AbstractCairoTest {
         // own because _upgrade.d already records MIGRATION_VERSION. The
         // documented recovery is cairo.repeat.migration.from.version, which
         // resets the recorded migration version (EngineMigration.java:110)
-        // so the dispatcher proceeds and Mig941 picks up the stale chain via
-        // isParquetMetadataStale() and regenerates _pm.
+        // so the dispatcher proceeds and Mig941 regenerates _pm.
         //
         // This test stages the rollback shape by performing an O3 merge
         // under the new build (which advances data.parquet, _pm, and _txn

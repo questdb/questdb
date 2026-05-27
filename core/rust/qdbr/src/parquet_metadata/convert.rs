@@ -2822,14 +2822,14 @@ mod tests {
 
     /// Regenerates the committed test fixture consumed by
     /// `Mig941Test#testMigrateBackfillsMissingTsStats`. Run with
-    /// `cargo test emit_mig940_ts_no_stats_fixture -- --ignored` after
+    /// `cargo test emit_mig941_ts_no_stats_fixture -- --ignored` after
     /// changing the parquet write path in a way that affects the fixture.
     #[test]
     #[ignore]
-    fn emit_mig940_ts_no_stats_fixture() {
+    fn emit_mig941_ts_no_stats_fixture() {
         let (bytes, _qdb_meta) = write_parquet_without_ts_stats(20, 10);
         let out = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../../src/test/resources/mig940/ts_no_stats.parquet");
+            .join("../../src/test/resources/mig941/ts_no_stats.parquet");
         std::fs::create_dir_all(out.parent().unwrap()).unwrap();
         std::fs::write(&out, &bytes).unwrap();
         eprintln!("wrote {} bytes to {}", bytes.len(), out.display());
