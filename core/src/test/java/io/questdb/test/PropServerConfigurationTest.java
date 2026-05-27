@@ -410,7 +410,7 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(500, configuration.getLineTcpReceiverConfiguration().getWriterIdleTimeout());
         Assert.assertEquals(0, configuration.getCairoConfiguration().getSampleByIndexSearchPageSize());
         Assert.assertTrue(configuration.getCairoConfiguration().getSampleByDefaultAlignmentCalendar());
-        Assert.assertEquals(32, configuration.getCairoConfiguration().getWriterCommandQueueCapacity());
+        Assert.assertEquals(256, configuration.getCairoConfiguration().getWriterCommandQueueCapacity());
         Assert.assertEquals(2048, configuration.getCairoConfiguration().getWriterCommandQueueSlotSize());
         Assert.assertEquals(500, configuration.getCairoConfiguration().getWriterAsyncCommandBusyWaitTimeout());
         Assert.assertEquals(30_000, configuration.getCairoConfiguration().getWriterAsyncCommandMaxTimeout());
@@ -1184,6 +1184,23 @@ public class PropServerConfigurationTest {
         } catch (ServerConfigurationException e) {
             TestUtils.assertEquals("Invalid log timezone: 'HKK'", e.getMessage());
         }
+    }
+
+    @Test(expected = ServerConfigurationException.class)
+    public void testInvalidWalMaxLagSizeNegative() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty("cairo.wal.max.lag.size", "-1");
+        newPropServerConfiguration(properties);
+    }
+
+    @Test
+    public void testWalMaxLagSizeZeroAccepted() throws Exception {
+        // 0 is the minimum accepted value (the guard rejects only negatives), so it must pass and
+        // round-trip unchanged. Guards against a > vs >= regression in getLongSize(..., minValue).
+        Properties properties = new Properties();
+        properties.setProperty("cairo.wal.max.lag.size", "0");
+        PropServerConfiguration configuration = newPropServerConfiguration(properties);
+        Assert.assertEquals(0, configuration.getCairoConfiguration().getWalMaxLagSize());
     }
 
     @Test
