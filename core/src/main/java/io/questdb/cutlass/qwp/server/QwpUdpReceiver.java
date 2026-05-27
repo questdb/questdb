@@ -466,6 +466,11 @@ public class QwpUdpReceiver extends SynchronizedJob implements Closeable {
         }
 
         @Override
+        public long getQwpMaxUncommittedRows() {
+            return QwpConstants.DEFAULT_MAX_UNCOMMITTED_ROWS;
+        }
+
+        @Override
         public long getSymbolCacheWaitUsBeforeReload() {
             return 0;
         }

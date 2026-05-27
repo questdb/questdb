@@ -855,6 +855,7 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
             Socket socket = context.getSocket();
             if (socket != null) {
                 socket.shutdown(Net.SHUT_WR);
+                context.drainRecvBuffer();
             }
         } catch (Throwable ignored) {
         }

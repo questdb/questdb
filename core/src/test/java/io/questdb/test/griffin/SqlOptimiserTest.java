@@ -195,8 +195,10 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertPlanNoLeakCheck(
                     query,
                     """
-                            GroupBy vectorized: true workers: 1
+                            Async Group By workers: 1
+                              vectorized: true
                               values: [sum(x1)]
+                              filter: null
                                 SelectedRecord
                                     PageFrame
                                         Row forward scan
@@ -888,8 +890,10 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertPlanNoLeakCheck(
                     query,
                     """
-                            GroupBy vectorized: true workers: 1
+                            Async Group By workers: 1
+                              vectorized: true
                               values: [max(x)]
+                              filter: null
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: y
@@ -928,8 +932,10 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertPlanNoLeakCheck(
                     query,
                     """
-                            GroupBy vectorized: true workers: 1
+                            Async Group By workers: 1
+                              vectorized: true
                               values: [min(x)]
+                              filter: null
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: y
@@ -2865,8 +2871,10 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertPlanNoLeakCheck(
                     query,
                     """
-                            GroupBy vectorized: true workers: 1
+                            Async Group By workers: 1
+                              vectorized: true
                               values: [max(x)]
+                              filter: null
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: y
@@ -2904,8 +2912,10 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertPlanNoLeakCheck(
                     query,
                     """
-                            GroupBy vectorized: true workers: 1
+                            Async Group By workers: 1
+                              vectorized: true
                               values: [min(x)]
+                              filter: null
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: y
