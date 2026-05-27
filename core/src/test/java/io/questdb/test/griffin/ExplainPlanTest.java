@@ -5600,7 +5600,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
             assertPlanNoLeakCheck(query, """
                     Filter filter: (rownum=1 and c=5)
-                        CachedWindowLight
+                        CachedWindow
                           orderedFunctions: [[b] => [row_number() over (partition by [a])]]
                             Union
                                 VirtualRecord
