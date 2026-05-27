@@ -45,6 +45,7 @@ import org.junit.rules.TemporaryFolder;
 
 import java.io.File;
 import java.io.FileReader;
+import java.io.FileWriter;
 import java.io.IOException;
 
 /**
@@ -513,6 +514,104 @@ public class WalToParquetIntegrationTest {
             // Two columns: ts (designated) and v.
             Assert.assertEquals(2, byVer.getAsJsonArray("0").size());
         }
+    }
+
+    @Test
+    public void testUnreadableEventRecordedAsPlaceholder() throws Exception {
+        // When _event cannot be opened (corrupt or truncated), the sql_log
+        // must record an UNKNOWN_EVENT_UNREADABLE placeholder pinpointing
+        // the affected segment rather than silently dropping the events.
+        engine.execute(
+                "CREATE TABLE unreadable_evt_test (ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL",
+                sqlExecutionContext
+        );
+        engine.execute(
+                "INSERT INTO unreadable_evt_test VALUES " +
+                        "('2026-09-01T00:00:00.000000Z', 1)",
+                sqlExecutionContext
+        );
+        engine.execute("UPDATE unreadable_evt_test SET v = 2 WHERE v = 1", sqlExecutionContext);
+        TableToken token = engine.verifyTableName("unreadable_evt_test");
+
+        // Truncate _event so WalEventReader.of() fails; the data-path tier-3
+        // fallback will still derive a row count, but our event walk must
+        // record an UNKNOWN_EVENT_UNREADABLE entry.
+        File eventFile = new File(dbRoot + File.separator + token.getDirName()
+                + File.separator + "wal1" + File.separator + "0" + File.separator + "_event");
+        if (eventFile.isFile()) {
+            try (FileWriter w = new FileWriter(eventFile)) {
+                // Truncate to zero bytes.
+            }
+        }
+
+        WalToParquet.main(new String[]{
+                "--db-root", dbRoot,
+                "--table-dir", token.getDirName(),
+                "--table-name", token.getTableName(),
+                "--table-id", String.valueOf(token.getTableId()),
+                "--output-dir", outputDir.getAbsolutePath()
+        });
+
+        // Three assertions:
+        //  - the sql_log records the unrecoverable event with full
+        //    (walId, segmentId) context (no fabricated segmentTxn).
+        //  - the manifest segment is marked unrecoverable; no Parquet was
+        //    written. WAL column files are mmap-preallocated, so deriving
+        //    a row count from file length would fabricate thousands of
+        //    bogus rows. With a V1 txnlog (the QuestDB default in this
+        //    test setup) we have no trustworthy fallback source, so the
+        //    only correct behaviour is to refuse the recovery.
+        //  - the output directory contains no Parquet file for the
+        //    affected segment.
+        File sqlLog = findFile(outputDir, "__sql_log.json");
+        Assert.assertNotNull("sql_log sidecar must exist", sqlLog);
+        Gson gson = new Gson();
+        boolean unknownFound = false;
+        try (FileReader fr = new FileReader(sqlLog)) {
+            JsonObject root = gson.fromJson(fr, JsonObject.class);
+            for (com.google.gson.JsonElement el : root.getAsJsonArray("statements")) {
+                JsonObject stmt = el.getAsJsonObject();
+                if ("UNKNOWN_EVENT_UNREADABLE".equals(stmt.get("type").getAsString())) {
+                    unknownFound = true;
+                    Assert.assertEquals(1, stmt.get("walId").getAsInt());
+                    Assert.assertEquals(0, stmt.get("segmentId").getAsInt());
+                    Assert.assertNotNull("error message expected", stmt.get("error"));
+                    Assert.assertFalse(stmt.get("error").getAsString().isEmpty());
+                    break;
+                }
+            }
+        }
+        Assert.assertTrue("expected an UNKNOWN_EVENT_UNREADABLE placeholder in sql_log", unknownFound);
+
+        File manifest = findFile(outputDir, "__manifest.json");
+        Assert.assertNotNull(manifest);
+        try (FileReader fr = new FileReader(manifest)) {
+            JsonObject root = gson.fromJson(fr, JsonObject.class);
+            boolean unrecoverableFound = false;
+            for (com.google.gson.JsonElement el : root.getAsJsonArray("segments")) {
+                JsonObject seg = el.getAsJsonObject();
+                String status = seg.get("status").getAsString();
+                if (status.startsWith("skipped_event_unreadable")) {
+                    unrecoverableFound = true;
+                    Assert.assertEquals(0L, seg.get("rowsWritten").getAsLong());
+                    // outputFile must be absent or null - no Parquet should
+                    // be written for a segment whose row count cannot be
+                    // trusted.
+                    Assert.assertTrue(
+                            "no outputFile expected when row count untrusted",
+                            seg.get("outputFile").isJsonNull()
+                    );
+                    break;
+                }
+            }
+            Assert.assertTrue("manifest must flag the segment unrecoverable", unrecoverableFound);
+        }
+
+        File parquet = findFile(outputDir, ".parquet");
+        Assert.assertNull(
+                "no Parquet file should be emitted when row count cannot be trusted",
+                parquet
+        );
     }
 
     @Test

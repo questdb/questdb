@@ -205,12 +205,37 @@ Three JSON sidecars sit next to the data files:
 - `<tableName>__sql_log.json` is emitted whenever the WAL contains non-DATA
   transactions stored as SQL events (UPDATE, ALTER TABLE, TRUNCATE,
   view/mat-view events). For each, it captures `(walId, segmentId,
-  segmentTxn, seqTxn, commitTimestamp, type, sql)`. These transactions do
-  not materialise as rows in the Parquet output (their effect would
-  require replay against a live table), so the sidecar is the only record.
-  Cross-reference the sidecar's `seqTxn` field against the `_txnSeq_`
-  shoulder column in the Parquet files to locate which data rows the
-  statement would have applied to.
+  segmentTxn, seqTxn, commitTimestamp, type, sql, error)`. These
+  transactions do not materialise as rows in the Parquet output (their
+  effect would require replay against a live table), so the sidecar is
+  the only record. Cross-reference the sidecar's `seqTxn` field against
+  the `_txnSeq_` shoulder column in the Parquet files to locate which
+  data rows the statement would have applied to.
+
+  Failure handling is per-event. There are two failure shapes:
+
+  - **Body parse failure with known type:** the header was valid and we
+    have type, walId, segmentId, segmentTxn, seqTxn, commitTimestamp.
+    The body (e.g., the SQL text for an `SQL` event) couldn't be parsed.
+    The entry preserves all the header context and carries the
+    underlying exception message in the `error` field. Iteration
+    continues; the cursor is still aligned.
+  - **Header/cursor failure or unknown type byte:** the cursor's
+    `hasNext()` reads the full record including dispatching on the type
+    byte, so a type the OSS build doesn't know about (a future or
+    Enterprise variant) throws inside cursor advance. The sidecar gets
+    one `type="UNKNOWN_EVENT_UNREADABLE"` entry pinpointing
+    `(walId, segmentId)`, the underlying exception in `error`, and
+    `segmentTxn=-1` (we don't have it). Event collection for the
+    segment stops here because the cursor's position is then undefined.
+    Data recovery for the segment still proceeds via the tier-3
+    fallback if applicable.
+
+  If Enterprise stores `GRANT`/`CREATE USER` as ordinary
+  `WalTxnType.SQL` events with the standard OSS framing, the SQL text
+  is captured verbatim and the operator can replay it in an Enterprise
+  build later. The fallback above only kicks in for genuinely new event
+  type bytes or incompatible framings.
 - `<tableName>__schemas.json` is emitted whenever the table has at least
   one segment with readable metadata. It records the column list at each
   distinct structureVersion observed across the table's WAL segments,
@@ -245,7 +270,7 @@ filename and manifest status reflect which fallback was needed:
 | Suffix | Trigger |
 |---|---|
 | (none) | Tier 1. Everything intact: `_txnlog`, `_event`, `_meta`, all column files. |
-| `__tier3.parquet` | Segment's `_event` is missing or corrupt. Row count is derived from the timestamp `.d` file size; new symbols added in the segment lost (only the base symbol-table snapshot recovers). |
+| `__tier3.parquet` | Segment's `_event` is missing or corrupt. Row count is derived from the txnlog's per-txn row counts (V2 sequencer format only). New symbols added in the segment are lost (only the base symbol-table snapshot recovers). For V1 sequencer format (the QuestDB default — `cairo.default.sequencer.part.txn.count=0`), the txnlog does not carry per-txn row counts and the segment is marked unrecoverable with status `skipped_event_unreadable_no_row_count` rather than fabricating row counts from WAL column file lengths (which are mmap-preallocated and report capacity, not committed appends). |
 | `__tier2.parquet` | Whole-table `_txnlog` is missing or corrupt. Filesystem scan of `wal*/N/` finds segments; cross-segment seqTxn ordering is unknown. |
 | `__tier2__tier3.parquet` | Both of the above. |
 

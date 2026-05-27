@@ -183,13 +183,25 @@ public class WalToParquet {
             info.lastCommitTs = commitTs;
             info.lastSegmentTxn = Math.max(info.lastSegmentTxn, segmentTxn);
             info.txnCount++;
-            // Park (seqTxn, commitTs) at array index = segmentTxn for O(1) lookup later.
+            // Pull per-txn row count if the cursor format supports it (V2);
+            // V1 throws UnsupportedOperationException, in which case we leave
+            // the slot at -1 and tier-3 will refuse to fabricate row counts
+            // from on-disk file lengths.
+            long txnRowCount = -1L;
+            try {
+                txnRowCount = cursor.getTxnRowCount();
+            } catch (Throwable ignored) {
+            }
+            // Park (seqTxn, commitTs, txnRowCount) at array index = segmentTxn
+            // for O(1) lookup later.
             while (info.seqTxns.size() <= segmentTxn) {
                 info.seqTxns.add(-1L);
                 info.commitTimestamps.add(-1L);
+                info.txnRowCounts.add(-1L);
             }
             info.seqTxns.set(segmentTxn, seqTxn);
             info.commitTimestamps.set(segmentTxn, commitTs);
+            info.txnRowCounts.set(segmentTxn, txnRowCount);
         }
         return segments;
     }
@@ -288,18 +300,62 @@ public class WalToParquet {
     // TRUNCATE, view definition, mat-view invalidate). Adds an entry per event
     // to the manifest's sqlStatements list, keyed back to wal/segment/segmentTxn
     // and (via SegmentInfo) the seqTxn / commitTimestamp from the txnlog.
+    //
+    // Failure handling is per-event rather than per-segment so a single corrupt
+    // or unrecognised event (e.g., Enterprise variants, future framings) does
+    // not silently abandon the rest of the segment's events. Note that WAL
+    // EventCursor.hasNext() reads the full record including dispatch on the
+    // type byte, so a type byte the OSS build doesn't know about throws from
+    // hasNext() itself - we never observe the type or the segmentTxn for that
+    // event:
+    //   - Body parse failure (type known, header valid, body unreadable):
+    //     the event is recorded with full header context plus the parse error
+    //     in the "error" field. Cursor position is intact; iteration continues.
+    //   - hasNext()/getType()/getTxn() failure (typically unknown type byte
+    //     or framing corruption): one UNKNOWN_EVENT_UNREADABLE entry is
+    //     recorded with segmentTxn=-1 and we stop. Cursor state is undefined
+    //     past this point.
+    //   - _event file unopenable: a single UNKNOWN_EVENT_UNREADABLE entry
+    //     scoped to the segment is recorded.
     private static void collectNonDataEvents(CairoConfiguration config, TableToken token, SegmentInfo info, Manifest manifest) {
         Path path = new Path();
         try {
             path.of(config.getDbRoot()).concat(token.getDirName()).concat(WalUtils.WAL_NAME_BASE).put(info.walId).slash().put(info.segmentId);
+            // Use a single try-with-resources so the WalEventReader is closed
+            // whether construction or er.of() throws. Going through the
+            // close-on-exception path of try-with-resources requires that the
+            // resource is bound before the throwing call, so we always assign
+            // er = new WalEventReader(...) first, then attempt of() under
+            // the resource scope.
             try (WalEventReader er = new WalEventReader(config)) {
-                WalEventCursor c = er.of(path, -1);
-                while (c.hasNext()) {
-                    long txn = c.getTxn();
+                WalEventCursor c;
+                try {
+                    c = er.of(path, -1);
+                } catch (Throwable e) {
+                    // _event isn't openable. The data-path already reports the
+                    // file-not-found / open failure in entry.reason - we just
+                    // record a single placeholder so the sql_log preserves the
+                    // fact that there may have been unrecoverable events here.
+                    recordUnreadableEvent(manifest, info, -1, "open _event failed: " + e.getMessage());
+                    return;
+                }
+                while (true) {
+                    long txn;
+                    byte type;
+                    try {
+                        if (!c.hasNext()) {
+                            break;
+                        }
+                        txn = c.getTxn();
+                        type = c.getType();
+                    } catch (Throwable headerErr) {
+                        // Cursor position is now untrusted; stop after one entry.
+                        recordUnreadableEvent(manifest, info, -1, "wal event header read failed: " + headerErr.getMessage());
+                        break;
+                    }
                     if (txn > info.lastSegmentTxn) {
                         break;
                     }
-                    byte type = c.getType();
                     if (WalTxnType.isDataType(type)) {
                         continue;
                     }
@@ -317,21 +373,45 @@ public class WalToParquet {
                             if (sql != null) {
                                 st.sql = sql.toString();
                             }
-                        } catch (Throwable ignored) {
-                            // Best-effort; some event variants don't expose getSqlInfo cleanly.
+                        } catch (Throwable bodyErr) {
+                            // Body unreadable but the header was valid, so the
+                            // cursor stays aligned and we keep iterating. The
+                            // entry preserves type + position + error context.
+                            st.error = "SQL body parse failed: " + bodyErr.getMessage();
                         }
                     }
                     manifest.sqlStatements.add(st);
                 }
             }
         } catch (Throwable e) {
-            // The data path already records why _event couldn't be opened; we
-            // don't want to double-log it. Silently skip the SQL collection.
+            recordUnreadableEvent(manifest, info, -1, "unexpected error during event walk: " + e.getMessage());
         } finally {
             Misc.free(path);
         }
     }
 
+    // Build a placeholder ManifestSqlStatement for an event we could not read
+    // far enough to identify properly. Keeps walId/segmentId so operators can
+    // narrow the loss to a specific segment.
+    private static void recordUnreadableEvent(Manifest manifest, SegmentInfo info, int segmentTxn, String error) {
+        ManifestSqlStatement st = new ManifestSqlStatement();
+        st.walId = info.walId;
+        st.segmentId = info.segmentId;
+        st.segmentTxn = segmentTxn;
+        st.seqTxn = -1L;
+        st.commitTimestamp = -1L;
+        st.type = "UNKNOWN_EVENT_UNREADABLE";
+        st.error = error;
+        manifest.sqlStatements.add(st);
+    }
+
+    // Map a WalTxnType byte to a human-readable name. Only types that the OSS
+    // WalEventCursor knows how to parse can actually surface here - the cursor
+    // throws inside hasNext() for an unknown type byte before we ever observe
+    // it - so the default branch is defensive in case the cursor learns to
+    // skip past unknowns in a future version. Today, genuinely unrecognised
+    // type bytes become UNKNOWN_EVENT_UNREADABLE via the catch in
+    // collectNonDataEvents.
     private static String walTxnTypeName(byte type) {
         return switch (type) {
             case WalTxnType.DATA -> "DATA";
@@ -362,23 +442,34 @@ public class WalToParquet {
         try {
             rowCount = readSegmentCommittedRowCount(config, token, info.walId, info.segmentId, info.lastSegmentTxn);
         } catch (Throwable e) {
-            // Tier 3: _event is missing or corrupt. Try to derive a rowCount from
-            // the designated timestamp column's .d file size (16B/row in WAL).
-            // The result may include un-committed tail rows.
-            long heuristic = readSegmentRowCountFromTsFile(config, token, info.walId, info.segmentId);
-            if (heuristic <= 0) {
-                entry.status = "skipped_event_unreadable";
-                entry.reason = e.getMessage();
+            // Tier 3: _event is missing or corrupt. The only trustworthy
+            // fallback row-count source is the txnlog's per-txn row count
+            // (V2 only). WAL column files are mmap-preallocated, so .d/.i
+            // lengths cannot be used - they would fabricate tens of
+            // thousands of bogus zero rows.
+            long fallback = sumTxnRowCounts(info);
+            if (fallback < 0) {
+                entry.status = "skipped_event_unreadable_no_row_count";
+                entry.reason = e.getMessage()
+                        + " (no trustworthy row count: txnlog format does not carry per-txn row counts, "
+                        + "and WAL column files are preallocated so file lengths cannot be used)";
                 System.out.println("  segment wal=" + info.walId + " seg=" + info.segmentId
                         + " seqTxnRange=[" + info.firstSeqTxn + "," + info.lastSeqTxn + "]"
-                        + " event read failed: " + e.getMessage());
+                        + " event read failed and no fallback row count: " + e.getMessage());
                 return entry;
             }
-            rowCount = heuristic;
+            if (fallback == 0) {
+                entry.status = "skipped_event_unreadable_zero_rows";
+                entry.reason = e.getMessage() + " (txnlog row count sum is 0)";
+                System.out.println("  segment wal=" + info.walId + " seg=" + info.segmentId
+                        + " _event unreadable, txnlog sum is 0 - nothing to recover");
+                return entry;
+            }
+            rowCount = fallback;
             tier3Fallback = true;
-            entry.reason = "tier-3 fallback: _event unreadable (" + e.getMessage() + "), rowCount derived from ts.d file size; tail may be torn";
+            entry.reason = "tier-3 fallback: _event unreadable (" + e.getMessage() + "), rowCount=" + rowCount + " from txnlog per-txn row counts";
             System.out.println("  segment wal=" + info.walId + " seg=" + info.segmentId
-                    + " _event unreadable, fell back to ts.d-based rowCount=" + rowCount);
+                    + " _event unreadable, fell back to txnlog-based rowCount=" + rowCount);
         }
         entry.rowsCommitted = rowCount;
 
@@ -1716,37 +1807,42 @@ public class WalToParquet {
         }
     }
 
-    // Tier-3 fallback: when _event is unreadable, derive a rowCount from the
-    // designated timestamp column's .d file size on disk. In WAL the designated
-    // timestamp is stored as 16 bytes per row (ts + rowID pair), so rowCount =
-    // fileSize / 16. The result may include un-committed tail rows because we
-    // don't have _event's commit boundary, so callers must mark the segment
-    // accordingly. Returns 0 if neither own nor peer _meta can be opened.
-    private static long readSegmentRowCountFromTsFile(CairoConfiguration config, TableToken token, int walId, int segmentId) {
-        SequencerMetadata meta = openSegmentMetaWithPeerFallback(config, token, walId, segmentId);
-        if (meta == null) {
-            return 0;
+    // Tier-3 fallback: when _event is unreadable, derive a rowCount by summing
+    // the per-txn row counts the txnlog already gave us. This is the ONLY
+    // trustworthy fallback source - WAL column files are mmap-preallocated,
+    // so .d/.i length reports capacity, not committed appends, which would
+    // fabricate tens of thousands of zero rows.
+    //
+    // Returns the summed row count or -1 if any segmentTxn lacks a valid row
+    // count (V1 txnlog format, which doesn't carry per-txn row counts; or
+    // tier-2 mode where the txnlog itself was unreadable). Callers must
+    // refuse to write Parquet and mark the segment unrecoverable when this
+    // returns -1.
+    private static long sumTxnRowCounts(SegmentInfo info) {
+        if (info.txnRowCounts.size() == 0) {
+            return -1;
         }
-        try {
-            int tsIdx = meta.getTimestampIndex();
-            if (tsIdx < 0) {
-                return 0;
+        long total = 0;
+        for (int i = 0; i < info.txnRowCounts.size(); i++) {
+            long c = info.txnRowCounts.getQuick(i);
+            // -1 markers are slots beyond what the txnlog walked (sparse
+            // population), OR an entire format with no row counts (V1).
+            // Either way, we cannot trust the sum. Distinguish "empty
+            // slot in sparse list" from "format doesn't support it" by
+            // looking at the matching seqTxn slot: a -1 seqTxn means
+            // "no txn referenced this segmentTxn", so skip; a non-negative
+            // seqTxn means "txn exists but row count is unknown", which
+            // is unrecoverable.
+            if (c < 0) {
+                long seqTxn = i < info.seqTxns.size() ? info.seqTxns.getQuick(i) : -1L;
+                if (seqTxn >= 0) {
+                    return -1;
+                }
+                continue;
             }
-            String tsName = meta.getColumnName(tsIdx);
-            File tsFile = new File(config.getDbRoot()
-                    + File.separator + token.getDirName()
-                    + File.separator + WalUtils.WAL_NAME_BASE + walId
-                    + File.separator + segmentId,
-                    tsName + ".d");
-            if (!tsFile.isFile()) {
-                return 0;
-            }
-            return tsFile.length() / 16L;
-        } catch (Throwable e) {
-            return 0;
-        } finally {
-            Misc.free(meta);
+            total += c;
         }
+        return total;
     }
 
     // Open SequencerMetadata for (walId, segmentId). If own _meta is unreadable
@@ -1994,6 +2090,12 @@ public class WalToParquet {
 
     private static final class ManifestSqlStatement {
         long commitTimestamp;
+        // Populated when an event was observed but its body or header
+        // couldn't be parsed (corrupt segment, unknown framing variant in
+        // a newer or Enterprise build, etc). Distinguishes "we don't have
+        // SQL text for this event" from "we couldn't read this event at
+        // all" - the latter shows up here as a message.
+        String error;
         int segmentId;
         int segmentTxn;
         long seqTxn;
@@ -2076,6 +2178,14 @@ public class WalToParquet {
         int segmentId;
         io.questdb.std.LongList seqTxns = new io.questdb.std.LongList();
         int txnCount;
+        // Row counts per segmentTxn pulled from the txnlog cursor. V2 format
+        // carries getTxnRowCount() so this is populated; V1 throws
+        // UnsupportedOperationException, in which case entries stay at -1.
+        // Used as the fallback row-count source when _event is unreadable.
+        // We deliberately do NOT trust column-file lengths because WAL columns
+        // are mmap-preallocated and length() reports capacity, not committed
+        // appends.
+        io.questdb.std.LongList txnRowCounts = new io.questdb.std.LongList();
         int walId;
 
         SegmentInfo(int walId, int segmentId) {
