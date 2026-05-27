@@ -344,7 +344,7 @@ public class WalToParquet {
         };
     }
 
-    private static ManifestSegment processSegment(CairoConfiguration config, TableToken token, SegmentInfo info, String outputDir, boolean withShoulder) {
+    private static ManifestSegment processSegment(CairoConfiguration config, TableToken token, SegmentInfo info, String outputDir, boolean withShoulder, long appliedSeqTxn) {
         ManifestSegment entry = new ManifestSegment();
         entry.walId = info.walId;
         entry.segmentId = info.segmentId;
@@ -410,7 +410,7 @@ public class WalToParquet {
                 System.out.println("      [" + i + "] " + reader.getColumnName(i) + " type=" + type);
             }
             if (outputDir != null) {
-                writeSegmentToParquet(config, token, reader, info, rowCount, outputDir, entry, withShoulder);
+                writeSegmentToParquet(config, token, reader, info, rowCount, outputDir, entry, withShoulder, appliedSeqTxn);
                 if (tier3Fallback && "written".equals(entry.status)) {
                     entry.status = "written_tier3_event_fallback";
                 }
@@ -424,7 +424,7 @@ public class WalToParquet {
                 // on-disk artefacts. New-in-WAL symbols (lived only in _event) are
                 // lost; everything within the base symbol-table snapshot is recovered.
                 System.out.println("    WalReader unavailable, trying tier-3 direct-mmap path");
-                writeSegmentToParquetTier3(config, token, info, rowCount, outputDir, entry, withShoulder);
+                writeSegmentToParquetTier3(config, token, info, rowCount, outputDir, entry, withShoulder, appliedSeqTxn);
             } else {
                 entry.status = "skipped_reader_open_failed";
                 entry.reason = (entry.reason == null ? "" : entry.reason + " | ") + e.getMessage();
@@ -442,7 +442,8 @@ public class WalToParquet {
             long rowCount,
             String outputDir,
             ManifestSegment entry,
-            boolean withShoulder
+            boolean withShoulder,
+            long appliedSeqTxn
     ) {
         String walName = WalUtils.WAL_NAME_BASE + info.walId;
         File outDirFile = new File(outputDir);
@@ -463,6 +464,7 @@ public class WalToParquet {
         io.questdb.std.LongList synthesizedSymbolValuesAddrs = new io.questdb.std.LongList();
         io.questdb.std.LongList synthesizedSymbolValuesSizes = new io.questdb.std.LongList();
         io.questdb.std.LongList synthesizedSymbolOffsetsAddrs = new io.questdb.std.LongList();
+        io.questdb.std.LongList synthesizedSymbolOffsetsSizes = new io.questdb.std.LongList();
         io.questdb.std.LongList synthesizedSymbolDataAddrs = new io.questdb.std.LongList();
         io.questdb.std.LongList synthesizedSymbolDataSizes = new io.questdb.std.LongList();
         long compactTimestampAddr = 0;
@@ -515,6 +517,7 @@ public class WalToParquet {
                     synthesizedSymbolValuesAddrs.add(valuesAddr);
                     synthesizedSymbolValuesSizes.add(valuesSize);
                     synthesizedSymbolOffsetsAddrs.add(offsetsAddr);
+                    synthesizedSymbolOffsetsSizes.add((long) dictSize * Long.BYTES);
 
                     descriptor.addColumn(
                             columnName,
@@ -595,6 +598,7 @@ public class WalToParquet {
                 shoulderSegmentTxnAddr = io.questdb.std.Unsafe.malloc(rowCount * intSize, io.questdb.std.MemoryTag.NATIVE_DEFAULT);
                 shoulderSeqTxnAddr = io.questdb.std.Unsafe.malloc(rowCount * longSize, io.questdb.std.MemoryTag.NATIVE_DEFAULT);
                 shoulderCommitTsAddr = io.questdb.std.Unsafe.malloc(rowCount * longSize, io.questdb.std.MemoryTag.NATIVE_DEFAULT);
+                int[] perRowStatus = new int[(int) rowCount];
                 for (long row = 0; row < rowCount; row++) {
                     int segTxn = perRowSegmentTxn[(int) row];
                     long seqTxn = -1L;
@@ -608,14 +612,37 @@ public class WalToParquet {
                     io.questdb.std.Unsafe.getUnsafe().putInt(shoulderSegmentTxnAddr + row * intSize, segTxn);
                     io.questdb.std.Unsafe.getUnsafe().putLong(shoulderSeqTxnAddr + row * longSize, seqTxn);
                     io.questdb.std.Unsafe.getUnsafe().putLong(shoulderCommitTsAddr + row * longSize, commitTs);
+                    perRowStatus[(int) row] = recoveryStatusForRow(seqTxn, appliedSeqTxn);
                 }
+                long[] statusAddrs = makeRecoveryStatusColumn(rowCount, perRowStatus);
+                // statusAddrs layout: { codesAddr, codesSize, valuesAddr, valuesSize, offsetsAddr, dictSize }
+                synthesizedSymbolDataAddrs.add(statusAddrs[0]);
+                synthesizedSymbolDataSizes.add(statusAddrs[1]);
+                synthesizedSymbolValuesAddrs.add(statusAddrs[2]);
+                synthesizedSymbolValuesSizes.add(statusAddrs[3]);
+                synthesizedSymbolOffsetsAddrs.add(statusAddrs[4]);
+                synthesizedSymbolOffsetsSizes.add((long) statusAddrs[5] * Long.BYTES);
+
                 int nextColumnId = reader.getColumnCount();
                 addShoulderColumn(descriptor, "_wal_id", ColumnType.INT, nextColumnId++, shoulderWalIdAddr, rowCount * intSize);
                 addShoulderColumn(descriptor, "_segment_id", ColumnType.INT, nextColumnId++, shoulderSegmentIdAddr, rowCount * intSize);
                 addShoulderColumn(descriptor, "_segment_txn", ColumnType.INT, nextColumnId++, shoulderSegmentTxnAddr, rowCount * intSize);
                 addShoulderColumn(descriptor, "_txnSeq_", ColumnType.LONG, nextColumnId++, shoulderSeqTxnAddr, rowCount * longSize);
-                addShoulderColumn(descriptor, "_commit_ts", ColumnType.TIMESTAMP_MICRO, nextColumnId, shoulderCommitTsAddr, rowCount * longSize);
-                writtenColumns += 5;
+                addShoulderColumn(descriptor, "_commit_ts", ColumnType.TIMESTAMP_MICRO, nextColumnId++, shoulderCommitTsAddr, rowCount * longSize);
+                descriptor.addColumn(
+                        "_recovery_status_",
+                        ColumnType.SYMBOL,
+                        nextColumnId,
+                        0,
+                        statusAddrs[0],
+                        statusAddrs[1],
+                        statusAddrs[2],
+                        statusAddrs[3],
+                        statusAddrs[4],
+                        (int) statusAddrs[5],
+                        0
+                );
+                writtenColumns += 6;
             }
 
             PartitionEncoder.encode(descriptor, destPath);
@@ -646,8 +673,9 @@ public class WalToParquet {
             }
             for (int i = 0; i < synthesizedSymbolOffsetsAddrs.size(); i++) {
                 long addr = synthesizedSymbolOffsetsAddrs.getQuick(i);
+                long size = synthesizedSymbolOffsetsSizes.getQuick(i);
                 if (addr != 0) {
-                    io.questdb.std.Unsafe.free(addr, 0, io.questdb.std.MemoryTag.NATIVE_DEFAULT);
+                    io.questdb.std.Unsafe.free(addr, size, io.questdb.std.MemoryTag.NATIVE_DEFAULT);
                 }
             }
             if (compactTimestampAddr != 0) {
@@ -914,6 +942,61 @@ public class WalToParquet {
         System.out.println("                    (_wal_id, _segment_id, _segment_txn, _txnSeq_, _commit_ts)");
     }
 
+    // Read the applied seqTxn watermark from _txn at the table root.
+    // _txn is double-buffered: a 64-byte base header at the start contains a
+    // version field and pointers into one of two record copies (A/B). The
+    // active record is selected by version parity, the same way TxReader.
+    // unsafeLoadBaseOffset() does it. Returns -1 when _txn is missing or
+    // unreadable so the recovery-status column collapses to "unknown".
+    private static long readAppliedSeqTxn(CairoConfiguration config, String tableDir) {
+        FilesFacade ff = config.getFilesFacade();
+        Path path = new Path();
+        try {
+            path.of(config.getDbRoot()).concat(tableDir).concat(TableUtils.TXN_FILE_NAME);
+            long fd = -1;
+            long buf = io.questdb.std.Unsafe.malloc(Long.BYTES, io.questdb.std.MemoryTag.NATIVE_DEFAULT);
+            try {
+                fd = TableUtils.openRO(ff, path.$(), LogFactory.getLog(WalToParquet.class));
+
+                // Determine active record by version parity.
+                long version = ff.readNonNegativeLong(fd, TableUtils.TX_BASE_OFFSET_VERSION_64);
+                if (version < 0) {
+                    return -1;
+                }
+                boolean isA = (version & 1) == 0;
+                long basePtrOffset = isA ? TableUtils.TX_BASE_OFFSET_A_32 : TableUtils.TX_BASE_OFFSET_B_32;
+                if (ff.read(fd, buf, Integer.BYTES, basePtrOffset) != Integer.BYTES) {
+                    return -1;
+                }
+                int baseOffset = io.questdb.std.Unsafe.getUnsafe().getInt(buf);
+                if (baseOffset < 0) {
+                    return -1;
+                }
+
+                long seqTxn = ff.readNonNegativeLong(fd, baseOffset + TableUtils.TX_OFFSET_SEQ_TXN_64);
+                if (seqTxn < 0) {
+                    return -1;
+                }
+                // lagTxnCount can be stored negative as an "unordered lag" flag;
+                // we want the count regardless of sign.
+                if (ff.read(fd, buf, Integer.BYTES, baseOffset + TableUtils.TX_OFFSET_LAG_TXN_COUNT_32) != Integer.BYTES) {
+                    return seqTxn;
+                }
+                int lagRaw = io.questdb.std.Unsafe.getUnsafe().getInt(buf);
+                return seqTxn + Math.abs(lagRaw);
+            } finally {
+                if (fd > -1) {
+                    ff.close(fd);
+                }
+                io.questdb.std.Unsafe.free(buf, Long.BYTES, io.questdb.std.MemoryTag.NATIVE_DEFAULT);
+            }
+        } catch (Throwable e) {
+            return -1;
+        } finally {
+            Misc.free(path);
+        }
+    }
+
     private static void processTable(CairoConfiguration config, TableInfo table, String outputDir, boolean withShoulder) {
         System.out.println();
         System.out.println("=== table=" + table.tableName + " tableDir=" + table.dirName + " tableId=" + table.tableId
@@ -928,6 +1011,7 @@ public class WalToParquet {
         manifest.tableDir = table.dirName;
         manifest.tableId = table.tableId;
         manifest.txnLog = new ManifestTxnLog();
+        manifest.appliedSeqTxn = readAppliedSeqTxn(config, table.dirName);
 
         Path seqDir = new Path();
         seqDir.of(config.getDbRoot()).concat(table.dirName).concat(WalUtils.SEQ_DIR);
@@ -950,7 +1034,7 @@ public class WalToParquet {
             System.out.println("  found " + segments.size() + " segment(s) referenced from _txnlog");
 
             for (SegmentInfo info : segments) {
-                ManifestSegment entry = processSegment(config, token, info, outputDir, withShoulder);
+                ManifestSegment entry = processSegment(config, token, info, outputDir, withShoulder, manifest.appliedSeqTxn);
                 manifest.segments.add(entry);
                 collectNonDataEvents(config, token, info, manifest);
             }
@@ -965,7 +1049,7 @@ public class WalToParquet {
             List<SegmentInfo> tier2 = scanWalDirsForSegments(config, table);
             System.out.println("  filesystem scan found " + tier2.size() + " segment(s)");
             for (SegmentInfo info : tier2) {
-                ManifestSegment entry = processSegment(config, token, info, outputDir, withShoulder);
+                ManifestSegment entry = processSegment(config, token, info, outputDir, withShoulder, manifest.appliedSeqTxn);
                 manifest.segments.add(entry);
             }
         } finally {
@@ -979,6 +1063,7 @@ public class WalToParquet {
         if (outputDir != null) {
             writeManifest(manifest, outputDir);
             writeSqlLog(manifest, outputDir);
+            writeSchemasFile(config, token, manifest, outputDir);
         }
     }
 
@@ -1067,6 +1152,176 @@ public class WalToParquet {
         }
     }
 
+    // Three recovery-status code constants used as the _recovery_status_
+    // shoulder column's dictionary indices.
+    private static final int RECOVERY_STATUS_APPLIED_UNPURGED = 1;
+    private static final int RECOVERY_STATUS_UNAPPLIED = 0;
+    private static final int RECOVERY_STATUS_UNKNOWN = 2;
+
+    // Build the per-row recovery status code given each row's seqTxn (from
+    // perRowSeqTxn) and the appliedSeqTxn watermark for the table. seqTxn = -1
+    // (tier-2 mode where _txnlog is unreadable) or appliedSeqTxn = -1 (no _txn
+    // readable) collapse to "unknown".
+    private static int recoveryStatusForRow(long rowSeqTxn, long appliedSeqTxn) {
+        if (appliedSeqTxn < 0 || rowSeqTxn < 0) {
+            return RECOVERY_STATUS_UNKNOWN;
+        }
+        return rowSeqTxn > appliedSeqTxn ? RECOVERY_STATUS_UNAPPLIED : RECOVERY_STATUS_APPLIED_UNPURGED;
+    }
+
+    // Allocate the native buffers for a fixed 3-entry SYMBOL column carrying
+    // the per-row recovery status. The dictionary order matches the constants
+    // above: 0 = "unapplied", 1 = "applied_unpurged", 2 = "unknown".
+    // Returns { codesAddr, codesSize, valuesAddr, valuesSize, offsetsAddr, dictSize=3 }.
+    private static long[] makeRecoveryStatusColumn(long rowCount, int[] perRowStatus) {
+        long codesSize = rowCount * Integer.BYTES;
+        long codesAddr = io.questdb.std.Unsafe.malloc(codesSize, io.questdb.std.MemoryTag.NATIVE_DEFAULT);
+        for (long r = 0; r < rowCount; r++) {
+            io.questdb.std.Unsafe.getUnsafe().putInt(codesAddr + r * Integer.BYTES, perRowStatus[(int) r]);
+        }
+        String[] strings = {"unapplied", "applied_unpurged", "unknown"};
+        long valuesSize = 0;
+        for (String s : strings) {
+            valuesSize += Integer.BYTES + 2L * s.length();
+        }
+        long valuesAddr = io.questdb.std.Unsafe.malloc(valuesSize, io.questdb.std.MemoryTag.NATIVE_DEFAULT);
+        long offsetsAddr = io.questdb.std.Unsafe.malloc((long) strings.length * Long.BYTES, io.questdb.std.MemoryTag.NATIVE_DEFAULT);
+        long cursor = 0;
+        for (int k = 0; k < strings.length; k++) {
+            io.questdb.std.Unsafe.getUnsafe().putLong(offsetsAddr + (long) k * Long.BYTES, cursor);
+            String s = strings[k];
+            io.questdb.std.Unsafe.getUnsafe().putInt(valuesAddr + cursor, s.length());
+            cursor += Integer.BYTES;
+            for (int i = 0, n = s.length(); i < n; i++) {
+                char ch = s.charAt(i);
+                io.questdb.std.Unsafe.getUnsafe().putByte(valuesAddr + cursor, (byte) (ch & 0xFF));
+                io.questdb.std.Unsafe.getUnsafe().putByte(valuesAddr + cursor + 1, (byte) ((ch >> 8) & 0xFF));
+                cursor += 2;
+            }
+        }
+        return new long[]{codesAddr, codesSize, valuesAddr, valuesSize, offsetsAddr, strings.length};
+    }
+
+    // Walk every segment under the table and collect the schema observed at
+    // each distinct structureVersion. Operators replaying a recovery dump need
+    // to know what columns existed at each version because structural changes
+    // (ADD COLUMN, DROP COLUMN, RENAME) reshape the Parquet files between
+    // segments. The metadata change operations themselves (the ALTER SQL that
+    // produced each version) are not extractable without booting CairoEngine,
+    // so we capture the resulting schemas instead - the operator can recreate
+    // the table at any version directly from this file.
+    private static java.util.LinkedHashMap<Long, java.util.List<ManifestSchemaColumn>> collectSchemasByStructureVersion(CairoConfiguration config, TableToken token) {
+        java.util.LinkedHashMap<Long, java.util.List<ManifestSchemaColumn>> byVersion = new java.util.LinkedHashMap<>();
+        File tableDirFile = new File(config.getDbRoot().toString(), token.getDirName());
+        File[] entries = tableDirFile.listFiles();
+        if (entries == null) {
+            return byVersion;
+        }
+        for (File walEntry : entries) {
+            if (!walEntry.isDirectory()) {
+                continue;
+            }
+            String walDirName = walEntry.getName();
+            if (!walDirName.startsWith(WalUtils.WAL_NAME_BASE) || walDirName.length() <= WalUtils.WAL_NAME_BASE.length()) {
+                continue;
+            }
+            int walId;
+            try {
+                walId = Numbers.parseInt(walDirName.substring(WalUtils.WAL_NAME_BASE.length()));
+            } catch (NumericException e) {
+                continue;
+            }
+            File[] segs = walEntry.listFiles();
+            if (segs == null) {
+                continue;
+            }
+            for (File seg : segs) {
+                if (!seg.isDirectory()) {
+                    continue;
+                }
+                int segId;
+                try {
+                    segId = Numbers.parseInt(seg.getName());
+                } catch (NumericException e) {
+                    continue;
+                }
+                SequencerMetadata meta = openSegmentMetaWithPeerFallback(config, token, walId, segId);
+                if (meta == null) {
+                    continue;
+                }
+                try {
+                    long structureVersion = meta.getMetadataVersion();
+                    if (byVersion.containsKey(structureVersion)) {
+                        continue; // already captured from another segment
+                    }
+                    java.util.List<ManifestSchemaColumn> columns = new java.util.ArrayList<>();
+                    int tsIdx = meta.getTimestampIndex();
+                    for (int i = 0; i < meta.getColumnCount(); i++) {
+                        int type = meta.getColumnType(i);
+                        if (type <= 0) {
+                            continue;
+                        }
+                        ManifestSchemaColumn col = new ManifestSchemaColumn();
+                        col.name = meta.getColumnName(i);
+                        col.type = ColumnType.nameOf(type);
+                        col.writerIndex = i;
+                        col.isDesignatedTimestamp = i == tsIdx;
+                        columns.add(col);
+                    }
+                    byVersion.put(structureVersion, columns);
+                } finally {
+                    Misc.free(meta);
+                }
+            }
+        }
+        return byVersion;
+    }
+
+    private static void writeSchemasFile(CairoConfiguration config, TableToken token, Manifest manifest, String outputDir) {
+        java.util.LinkedHashMap<Long, java.util.List<ManifestSchemaColumn>> byVersion = collectSchemasByStructureVersion(config, token);
+        if (byVersion.isEmpty()) {
+            return;
+        }
+        File dir = new File(outputDir);
+        if (!dir.exists() && !dir.mkdirs()) {
+            System.out.println("  schemas dir create failed: " + outputDir);
+            return;
+        }
+        File out = new File(dir, manifest.table + "__schemas.json");
+        Gson gson = new GsonBuilder().setPrettyPrinting().serializeNulls().disableHtmlEscaping().create();
+        try (FileWriter w = new FileWriter(out)) {
+            SchemasFile wrapper = new SchemasFile();
+            wrapper.table = manifest.table;
+            wrapper.tableDir = manifest.tableDir;
+            wrapper.generatedAt = manifest.generatedAt;
+            wrapper.note = "Schema observed at each distinct structureVersion across all the table's WAL segments. " +
+                    "Use this to recreate the table at the version a given Parquet file corresponds to before " +
+                    "loading its rows. The original ALTER SQL statements that produced each transition are not " +
+                    "currently extracted; the resulting schemas in this file are the authoritative source.";
+            // File.listFiles() order is filesystem-dependent. Sort entries by
+            // numeric structureVersion so the schemas file is deterministic
+            // and reflects schema evolution order.
+            wrapper.structureVersions = new java.util.LinkedHashMap<>();
+            java.util.List<Long> sortedKeys = new java.util.ArrayList<>(byVersion.keySet());
+            java.util.Collections.sort(sortedKeys);
+            for (Long v : sortedKeys) {
+                wrapper.structureVersions.put(v.toString(), byVersion.get(v));
+            }
+            gson.toJson(wrapper, w);
+            System.out.println("  wrote " + out.getName() + " (" + byVersion.size() + " structureVersion(s))");
+        } catch (IOException e) {
+            System.out.println("  schemas write failed: " + e.getMessage());
+        }
+    }
+
+    private static final class SchemasFile {
+        String generatedAt;
+        String note;
+        java.util.LinkedHashMap<String, java.util.List<ManifestSchemaColumn>> structureVersions;
+        String table;
+        String tableDir;
+    }
+
     // Tier-4 schema substitution: try every other wal*/N/ segment for this
     // table, attempt to open SequencerMetadata, and return the first one that
     // works. The schema may differ from what the corrupt segment had if columns
@@ -1138,7 +1393,8 @@ public class WalToParquet {
             long rowCount,
             String outputDir,
             ManifestSegment entry,
-            boolean withShoulder
+            boolean withShoulder,
+            long appliedSeqTxn
     ) {
         String walName = WalUtils.WAL_NAME_BASE + info.walId;
         File outDirFile = new File(outputDir);
@@ -1157,8 +1413,10 @@ public class WalToParquet {
         ObjList<SymbolMapReaderImpl> symbolReaders = new ObjList<>();
         long compactTimestampAddr = 0;
         long compactTimestampSize = 0;
-        long clampedCodesAddrBatch = 0;
-        long clampedCodesSizeBatch = 0;
+        // Per-SYMBOL-column clamped .d buffers, all tracked so multi-SYMBOL
+        // tier-3 segments don't leak the earlier columns' allocations.
+        io.questdb.std.LongList clampedCodesAddrs = new io.questdb.std.LongList();
+        io.questdb.std.LongList clampedCodesSizes = new io.questdb.std.LongList();
         // Shoulder buffers (handled at end).
         long shoulderWalIdAddr = 0;
         long shoulderSegmentIdAddr = 0;
@@ -1188,6 +1446,12 @@ public class WalToParquet {
             } finally {
                 Misc.free(segPath);
             }
+            // Record the structureVersion of whatever _meta we ended up using
+            // (own or peer-fallback). recordMissingColumnFiles() may have set
+            // this earlier when reading our own _meta succeeded; here we cover
+            // the case where the earlier pass left it at -1 and tier-3 just
+            // recovered the version via the peer.
+            entry.structureVersion = meta.getMetadataVersion();
 
             int columnCount = meta.getColumnCount();
             int tsIndex = meta.getTimestampIndex();
@@ -1258,8 +1522,8 @@ public class WalToParquet {
                     if (lostCodes > 0) {
                         entry.skippedColumns.add(columnName + " (tier-3 partial: " + lostCodes + " rows had symbol codes beyond base snapshot; emitted as null)");
                     }
-                    clampedCodesAddrBatch = clampedAddr; // tracked individually below
-                    clampedCodesSizeBatch = clampedSize;
+                    clampedCodesAddrs.add(clampedAddr);
+                    clampedCodesSizes.add(clampedSize);
 
                     int encodeColumnType = columnType;
                     if (!sr.containsNullValue()) {
@@ -1331,20 +1595,44 @@ public class WalToParquet {
                 int segTxnFallback = info.lastSegmentTxn;
                 long seqTxnFallback = segTxnFallback >= 0 && segTxnFallback < info.seqTxns.size() ? info.seqTxns.getQuick(segTxnFallback) : -1L;
                 long commitTsFallback = segTxnFallback >= 0 && segTxnFallback < info.commitTimestamps.size() ? info.commitTimestamps.getQuick(segTxnFallback) : -1L;
+                int statusFallback = recoveryStatusForRow(seqTxnFallback, appliedSeqTxn);
+                int[] perRowStatusT3 = new int[(int) rowCount];
                 for (long row = 0; row < rowCount; row++) {
                     io.questdb.std.Unsafe.getUnsafe().putInt(shoulderWalIdAddr + row * intSize, info.walId);
                     io.questdb.std.Unsafe.getUnsafe().putInt(shoulderSegmentIdAddr + row * intSize, info.segmentId);
                     io.questdb.std.Unsafe.getUnsafe().putInt(shoulderSegmentTxnAddr + row * intSize, segTxnFallback);
                     io.questdb.std.Unsafe.getUnsafe().putLong(shoulderSeqTxnAddr + row * longSize, seqTxnFallback);
                     io.questdb.std.Unsafe.getUnsafe().putLong(shoulderCommitTsAddr + row * longSize, commitTsFallback);
+                    perRowStatusT3[(int) row] = statusFallback;
                 }
+                long[] statusAddrs = makeRecoveryStatusColumn(rowCount, perRowStatusT3);
+                clampedCodesAddrs.add(statusAddrs[0]); // codes buffer (free with other clamped)
+                clampedCodesSizes.add(statusAddrs[1]);
+                clampedCodesAddrs.add(statusAddrs[2]); // values
+                clampedCodesSizes.add(statusAddrs[3]);
+                clampedCodesAddrs.add(statusAddrs[4]); // offsets
+                clampedCodesSizes.add((long) statusAddrs[5] * Long.BYTES);
+
                 int nextColumnId = columnCount;
                 addShoulderColumn(descriptor, "_wal_id", ColumnType.INT, nextColumnId++, shoulderWalIdAddr, rowCount * intSize);
                 addShoulderColumn(descriptor, "_segment_id", ColumnType.INT, nextColumnId++, shoulderSegmentIdAddr, rowCount * intSize);
                 addShoulderColumn(descriptor, "_segment_txn", ColumnType.INT, nextColumnId++, shoulderSegmentTxnAddr, rowCount * intSize);
                 addShoulderColumn(descriptor, "_txnSeq_", ColumnType.LONG, nextColumnId++, shoulderSeqTxnAddr, rowCount * longSize);
-                addShoulderColumn(descriptor, "_commit_ts", ColumnType.TIMESTAMP_MICRO, nextColumnId, shoulderCommitTsAddr, rowCount * longSize);
-                writtenColumns += 5;
+                addShoulderColumn(descriptor, "_commit_ts", ColumnType.TIMESTAMP_MICRO, nextColumnId++, shoulderCommitTsAddr, rowCount * longSize);
+                descriptor.addColumn(
+                        "_recovery_status_",
+                        ColumnType.SYMBOL,
+                        nextColumnId,
+                        0,
+                        statusAddrs[0],
+                        statusAddrs[1],
+                        statusAddrs[2],
+                        statusAddrs[3],
+                        statusAddrs[4],
+                        (int) statusAddrs[5],
+                        0
+                );
+                writtenColumns += 6;
             }
 
             PartitionEncoder.encode(descriptor, destPath);
@@ -1365,8 +1653,12 @@ public class WalToParquet {
             for (int i = 0; i < columnMemories.size(); i++) {
                 Misc.free(columnMemories.getQuick(i));
             }
-            if (clampedCodesAddrBatch != 0) {
-                io.questdb.std.Unsafe.free(clampedCodesAddrBatch, clampedCodesSizeBatch, io.questdb.std.MemoryTag.NATIVE_DEFAULT);
+            for (int i = 0; i < clampedCodesAddrs.size(); i++) {
+                long addr = clampedCodesAddrs.getQuick(i);
+                long size = clampedCodesSizes.getQuick(i);
+                if (addr != 0) {
+                    io.questdb.std.Unsafe.free(addr, size, io.questdb.std.MemoryTag.NATIVE_DEFAULT);
+                }
             }
             if (compactTimestampAddr != 0) {
                 io.questdb.std.Unsafe.free(compactTimestampAddr, compactTimestampSize, io.questdb.std.MemoryTag.NATIVE_DEFAULT);
@@ -1394,6 +1686,7 @@ public class WalToParquet {
             int rootLen = path.size();
             meta = new SequencerMetadata(config, true);
             meta.open(path, rootLen, token);
+            entry.structureVersion = meta.getMetadataVersion();
             String segDirPath = config.getDbRoot()
                     + File.separator + token.getDirName()
                     + File.separator + WalUtils.WAL_NAME_BASE + walId
@@ -1637,7 +1930,7 @@ public class WalToParquet {
             return;
         }
         File out = new File(dir, manifest.table + "__sql_log.json");
-        Gson gson = new GsonBuilder().setPrettyPrinting().serializeNulls().create();
+        Gson gson = new GsonBuilder().setPrettyPrinting().serializeNulls().disableHtmlEscaping().create();
         try (FileWriter w = new FileWriter(out)) {
             SqlLog wrapper = new SqlLog();
             wrapper.table = manifest.table;
@@ -1665,7 +1958,7 @@ public class WalToParquet {
             return;
         }
         File out = new File(dir, manifest.table + "__manifest.json");
-        Gson gson = new GsonBuilder().setPrettyPrinting().serializeNulls().create();
+        Gson gson = new GsonBuilder().setPrettyPrinting().serializeNulls().disableHtmlEscaping().create();
         try (FileWriter w = new FileWriter(out)) {
             gson.toJson(manifest, w);
             System.out.println("  wrote manifest " + out.getName());
@@ -1675,6 +1968,11 @@ public class WalToParquet {
     }
 
     private static final class Manifest {
+        // Applied seqTxn watermark read from _txn at the table root. Rows whose
+        // _txnSeq_ is <= this value were already applied to the committed
+        // partitions (but may not have been purged from the WAL yet). -1 means
+        // _txn was unreadable and applied status is unknown.
+        long appliedSeqTxn = -1;
         String dbRoot;
         String generatedAt;
         List<ManifestSegment> segments = new ArrayList<>();
@@ -1685,6 +1983,13 @@ public class WalToParquet {
         int tableId;
         String tool;
         ManifestTxnLog txnLog;
+    }
+
+    private static final class ManifestSchemaColumn {
+        boolean isDesignatedTimestamp;
+        String name;
+        String type;
+        int writerIndex;
     }
 
     private static final class ManifestSqlStatement {
@@ -1712,6 +2017,12 @@ public class WalToParquet {
         int segmentId;
         List<String> skippedColumns = new ArrayList<>();
         String status;
+        // structureVersion this segment was written under. Use it to look up
+        // the column list in <tableName>__schemas.json so operators can
+        // recreate the table at the correct schema before loading this
+        // segment's Parquet file. -1 means the segment's _meta could not be
+        // opened (peer-fallback also failed).
+        long structureVersion = -1;
         int txnCount;
         int walId;
     }

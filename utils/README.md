@@ -177,11 +177,15 @@ io.questdb.cliutil.WalToParquet --db-root <path> [options]
 - `--include-empty` Also report tables whose WALs are fully purged (off by
   default).
 - `--no-shoulder` Skip the per-row provenance columns
-  (`_wal_id`, `_segment_id`, `_segment_txn`, `_txnSeq_`, `_commit_ts`) that
-  are added by default to help downstream deduplication. `_txnSeq_` is the
-  global QuestDB sequencer transaction id (= seqTxn) that originally wrote
-  the row, and matches the `seqTxn` field in `<tableName>__sql_log.json` so
-  operators can align row provenance with non-data transactions.
+  (`_wal_id`, `_segment_id`, `_segment_txn`, `_txnSeq_`, `_commit_ts`,
+  `_recovery_status_`) that are added by default to help downstream
+  deduplication. `_txnSeq_` is the global QuestDB sequencer transaction id
+  (= seqTxn) that originally wrote the row, and matches the `seqTxn` field
+  in `<tableName>__sql_log.json` so operators can align row provenance with
+  non-data transactions. `_recovery_status_` is one of `unapplied` /
+  `applied_unpurged` / `unknown`, derived by comparing each row's
+  `_txnSeq_` against the table's `appliedSeqTxn` watermark read from `_txn`
+  at the table root.
 
 #### Output
 
@@ -191,20 +195,35 @@ Each WAL segment becomes one Parquet file:
 <output-dir>/<tableName>__wal<walId>__seg<segId>__seqTxn<lo>-<hi>.parquet
 ```
 
-Two JSON sidecars sit next to the data files:
+Three JSON sidecars sit next to the data files:
 
 - `<tableName>__manifest.json` lists every segment the tool considered
   (written, skipped, or partial), every structural-change transaction in
-  seqTxn order, the txnlog format version and applied/maxTxn watermarks, and
-  per-segment reasons when recovery was less than complete.
+  seqTxn order, the txnlog format version and applied/maxTxn watermarks,
+  the `appliedSeqTxn` watermark read from `_txn`, and per-segment reasons
+  when recovery was less than complete.
 - `<tableName>__sql_log.json` is emitted whenever the WAL contains non-DATA
-  transactions (UPDATE, ALTER TABLE, TRUNCATE, view/mat-view events). For
-  each, it captures `(walId, segmentId, segmentTxn, seqTxn, commitTimestamp,
-  type, sql)`. These transactions do not materialise as rows in the Parquet
-  output (their effect would require replay against a live table), so the
-  sidecar is the only record. Cross-reference the sidecar's `seqTxn` field
-  against the `_txnSeq_` shoulder column in the Parquet files to locate
-  which data rows the statement would have applied to.
+  transactions stored as SQL events (UPDATE, ALTER TABLE, TRUNCATE,
+  view/mat-view events). For each, it captures `(walId, segmentId,
+  segmentTxn, seqTxn, commitTimestamp, type, sql)`. These transactions do
+  not materialise as rows in the Parquet output (their effect would
+  require replay against a live table), so the sidecar is the only record.
+  Cross-reference the sidecar's `seqTxn` field against the `_txnSeq_`
+  shoulder column in the Parquet files to locate which data rows the
+  statement would have applied to.
+- `<tableName>__schemas.json` is emitted whenever the table has at least
+  one segment with readable metadata. It records the column list at each
+  distinct structureVersion observed across the table's WAL segments,
+  emitted in ascending numeric order so the file is deterministic across
+  runs. Each entry has `name`, `type`, `writerIndex`, and
+  `isDesignatedTimestamp`. To map a recovered Parquet file back to its
+  schema, look up the file's segment in `__manifest.json`, read the
+  segment's `structureVersion` field, and resolve that key in
+  `__schemas.json`. Structural-change transactions (ADD COLUMN / DROP
+  COLUMN / RENAME COLUMN) are recorded in `__manifest.json` as
+  `{seqTxn, commitTimestamp}` markers but the original ALTER SQL
+  statements are not currently extracted - the resulting schemas in this
+  file are the authoritative source.
 
 #### Per-txn SYMBOL handling
 

@@ -194,8 +194,9 @@ public class WalToParquetIntegrationTest {
             JsonObject seg = root.getAsJsonArray("segments").get(0).getAsJsonObject();
             Assert.assertEquals("written", seg.get("status").getAsString());
             Assert.assertEquals(4L, seg.get("rowsWritten").getAsLong());
-            // 5 logical columns + 5 shoulder columns.
-            Assert.assertEquals(10L, seg.get("columnsWritten").getAsLong());
+            // 5 logical columns + 6 shoulder columns (_wal_id, _segment_id,
+            // _segment_txn, _txnSeq_, _commit_ts, _recovery_status_).
+            Assert.assertEquals(11L, seg.get("columnsWritten").getAsLong());
         }
     }
 
@@ -359,6 +360,158 @@ public class WalToParquetIntegrationTest {
             String sql = stmt.get("sql").getAsString();
             Assert.assertTrue("captured SQL must reference UPDATE", sql.toLowerCase().contains("update"));
             Assert.assertTrue("captured SQL must reference v = 999", sql.contains("999"));
+        }
+    }
+
+    @Test
+    public void testRecoveryStatusColumn() throws Exception {
+        // Since ApplyWal2TableJob never runs in this test setup, every row
+        // should be flagged "unapplied". The status column is emitted as
+        // SYMBOL but parquet_scan exposes it as VARCHAR.
+        engine.execute(
+                "CREATE TABLE recovery_status_test (ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL",
+                sqlExecutionContext
+        );
+        engine.execute(
+                "INSERT INTO recovery_status_test VALUES " +
+                        "('2026-06-01T00:00:00.000000Z', 1), " +
+                        "('2026-06-01T00:00:01.000000Z', 2)",
+                sqlExecutionContext
+        );
+        TableToken token = engine.verifyTableName("recovery_status_test");
+
+        WalToParquet.main(new String[]{
+                "--db-root", dbRoot,
+                "--table-dir", token.getDirName(),
+                "--table-name", token.getTableName(),
+                "--table-id", String.valueOf(token.getTableId()),
+                "--output-dir", outputDir.getAbsolutePath()
+        });
+
+        File parquet = findFile(outputDir, ".parquet");
+        Assert.assertNotNull(parquet);
+
+        String sql = "select _recovery_status_, count(*) cnt from parquet_scan('" + parquet.getAbsolutePath() + "') group by _recovery_status_";
+        try (
+                RecordCursorFactory f = engine.select(sql, sqlExecutionContext);
+                RecordCursor c = f.getCursor(sqlExecutionContext)
+        ) {
+            Assert.assertTrue(c.hasNext());
+            Record r = c.getRecord();
+            String status = r.getStrA(0).toString();
+            long cnt = r.getLong(1);
+            Assert.assertEquals("unapplied", status);
+            Assert.assertEquals(2L, cnt);
+            Assert.assertFalse("only one status bucket expected", c.hasNext());
+        }
+    }
+
+    @Test
+    public void testSchemaEvolutionMapping() throws Exception {
+        // Verifies the operator workflow: insert at structureVersion 0,
+        // ALTER ADD COLUMN to bump to version 1, insert again, then assert
+        // both versions are in __schemas.json AND each manifest segment
+        // points at the correct version. WAL segments roll on structural
+        // changes, so we expect at least two segments with distinct
+        // structureVersion fields.
+        engine.execute(
+                "CREATE TABLE schema_evo_test (ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL",
+                sqlExecutionContext
+        );
+        engine.execute(
+                "INSERT INTO schema_evo_test VALUES " +
+                        "('2026-08-01T00:00:00.000000Z', 10), " +
+                        "('2026-08-01T00:00:01.000000Z', 20)",
+                sqlExecutionContext
+        );
+        engine.execute(
+                "ALTER TABLE schema_evo_test ADD COLUMN extra SYMBOL",
+                sqlExecutionContext
+        );
+        engine.execute(
+                "INSERT INTO schema_evo_test VALUES " +
+                        "('2026-08-02T00:00:00.000000Z', 30, 'A'), " +
+                        "('2026-08-02T00:00:01.000000Z', 40, 'B')",
+                sqlExecutionContext
+        );
+        TableToken token = engine.verifyTableName("schema_evo_test");
+
+        WalToParquet.main(new String[]{
+                "--db-root", dbRoot,
+                "--table-dir", token.getDirName(),
+                "--table-name", token.getTableName(),
+                "--table-id", String.valueOf(token.getTableId()),
+                "--output-dir", outputDir.getAbsolutePath()
+        });
+
+        // __schemas.json must list both structureVersions in ascending order.
+        File schemas = findFile(outputDir, "__schemas.json");
+        Assert.assertNotNull("schemas sidecar must exist", schemas);
+        Gson gson = new Gson();
+        java.util.Set<String> versions;
+        try (FileReader fr = new FileReader(schemas)) {
+            JsonObject root = gson.fromJson(fr, JsonObject.class);
+            JsonObject byVer = root.getAsJsonObject("structureVersions");
+            versions = byVer.keySet();
+            Assert.assertTrue("expected version 0 in schemas", versions.contains("0"));
+            Assert.assertTrue("expected version 1 in schemas", versions.contains("1"));
+            // Version 0 has 2 columns (ts, v); version 1 has 3 (ts, v, extra).
+            Assert.assertEquals(2, byVer.getAsJsonArray("0").size());
+            Assert.assertEquals(3, byVer.getAsJsonArray("1").size());
+        }
+
+        // Manifest segments must carry the same structureVersion as their data.
+        File manifest = findFile(outputDir, "__manifest.json");
+        Assert.assertNotNull(manifest);
+        java.util.Set<Long> manifestVersions = new java.util.HashSet<>();
+        try (FileReader fr = new FileReader(manifest)) {
+            JsonObject root = gson.fromJson(fr, JsonObject.class);
+            for (com.google.gson.JsonElement el : root.getAsJsonArray("segments")) {
+                JsonObject seg = el.getAsJsonObject();
+                long sv = seg.get("structureVersion").getAsLong();
+                String status = seg.get("status").getAsString();
+                if ("written".equals(status)) {
+                    manifestVersions.add(sv);
+                }
+            }
+        }
+        Assert.assertTrue("manifest must reference structureVersion 0", manifestVersions.contains(0L));
+        Assert.assertTrue("manifest must reference structureVersion 1", manifestVersions.contains(1L));
+    }
+
+    @Test
+    public void testSchemasSidecar() throws Exception {
+        engine.execute(
+                "CREATE TABLE schemas_test (ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL",
+                sqlExecutionContext
+        );
+        engine.execute(
+                "INSERT INTO schemas_test VALUES ('2026-07-01T00:00:00.000000Z', 1)",
+                sqlExecutionContext
+        );
+        TableToken token = engine.verifyTableName("schemas_test");
+
+        WalToParquet.main(new String[]{
+                "--db-root", dbRoot,
+                "--table-dir", token.getDirName(),
+                "--table-name", token.getTableName(),
+                "--table-id", String.valueOf(token.getTableId()),
+                "--output-dir", outputDir.getAbsolutePath()
+        });
+
+        File schemas = findFile(outputDir, "__schemas.json");
+        Assert.assertNotNull("schemas sidecar must exist", schemas);
+
+        Gson gson = new Gson();
+        try (FileReader fr = new FileReader(schemas)) {
+            JsonObject root = gson.fromJson(fr, JsonObject.class);
+            Assert.assertEquals("schemas_test", root.get("table").getAsString());
+            JsonObject byVer = root.getAsJsonObject("structureVersions");
+            // Single segment, single structureVersion (0).
+            Assert.assertEquals(1, byVer.entrySet().size());
+            Assert.assertTrue(byVer.has("0"));
+            // Two columns: ts (designated) and v.
+            Assert.assertEquals(2, byVer.getAsJsonArray("0").size());
         }
     }
 
