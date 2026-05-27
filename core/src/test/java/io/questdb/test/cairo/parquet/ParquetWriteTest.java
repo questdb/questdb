@@ -3216,6 +3216,188 @@ public class ParquetWriteTest extends AbstractCairoTest {
         Assert.fail("should find parquet partition");
     }
 
+    @Test
+    public void testRewriteTriggeredByUnusedBytesRatioThreshold() throws Exception {
+    // Verifies that the three O3 rewrite triggers described in the class
+    // Javadoc behave correctly:
+    //
+    //   (1) Single row group → always rewritten (dead space cannot be
+    //       compacted without a full rewrite, so ratio check is bypassed).
+    //   (2) unused_bytes / file_size > ratio threshold → REWRITE
+    //   (3) unused_bytes < absolute threshold → UPDATE (no rewrite needed)
+    //
+    // Strategy: row_group_size=4, ratio=0.3, absolute_max=Long.MAX_VALUE
+    // so that trigger (3) never fires.  We drive the unused_bytes/file_size
+    // ratio above and below 0.3 by controlling how many O3 rows we inject
+    // relative to file size, then assert the parquet file's unused_bytes
+    // metadata field drops to 0 (REWRITE happened) or stays > 0 (UPDATE).
+
+    node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 4);
+    // Ratio threshold: rewrite if unused > 30 % of file size.
+    node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_RATIO, "0.3");
+    // Disable absolute threshold so only the ratio drives rewrites.
+    node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_MAX_BYTES, Long.MAX_VALUE);
+
+    assertMemoryLeak(() -> {
+        execute(
+                """
+                CREATE TABLE x (x INT, ts TIMESTAMP)
+                TIMESTAMP(ts) PARTITION BY DAY WAL
+                """
+        );
+
+        // 8 in-order rows → 2 row groups of 4.
+        execute(
+                """
+                INSERT INTO x(x, ts) VALUES
+                (1, '2020-01-01T00:00:00.000Z'),
+                (2, '2020-01-01T01:00:00.000Z'),
+                (3, '2020-01-01T02:00:00.000Z'),
+                (4, '2020-01-01T03:00:00.000Z'),
+                (5, '2020-01-01T04:00:00.000Z'),
+                (6, '2020-01-01T05:00:00.000Z'),
+                (7, '2020-01-01T06:00:00.000Z'),
+                (8, '2020-01-01T07:00:00.000Z')
+                """
+        );
+        // Keep 2020-01-01 non-active.
+        execute("INSERT INTO x(x, ts) VALUES (999, '2020-01-02T00:00:00.000Z')");
+        drainWalQueue();
+
+        execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
+        drainWalQueue();
+
+        // ── Trigger (1): single-row-group partition is always rewritten ──────
+        // Create a fresh 1-row-group partition (4 rows) and do one O3 merge.
+        // Regardless of the ratio, unused_bytes must be 0 after the merge.
+        execute(
+                """
+                CREATE TABLE y (x INT, ts TIMESTAMP)
+                TIMESTAMP(ts) PARTITION BY DAY WAL
+                """
+        );
+        execute(
+                """
+                INSERT INTO y(x, ts) VALUES
+                (1, '2020-02-01T00:00:00.000Z'),
+                (2, '2020-02-01T01:00:00.000Z'),
+                (3, '2020-02-01T02:00:00.000Z'),
+                (4, '2020-02-01T03:00:00.000Z')
+                """
+        );
+        execute("INSERT INTO y(x, ts) VALUES (999, '2020-02-02T00:00:00.000Z')");
+        drainWalQueue();
+        execute("ALTER TABLE y CONVERT PARTITION TO PARQUET LIST '2020-02-01'");
+        drainWalQueue();
+
+        // O3 into the single row group.
+        execute("INSERT INTO y(x, ts) VALUES (50, '2020-02-01T00:30:00.000Z')");
+        drainWalQueue();
+
+        try (TableReader reader = getReader("y")) {
+            for (int i = 0, n = reader.getPartitionCount(); i < n; i++) {
+                if (reader.getPartitionFormat(i) != PartitionFormat.PARQUET) {
+                    continue;
+                }
+                reader.openPartition(i);
+                try (ParquetFileDecoder fd = new ParquetFileDecoder()) {
+                    fd.of(reader.getParquetAddr(i), reader.getParquetFileSize(i),
+                            MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
+                    Assert.assertEquals(
+                            "trigger(1): single-row-group O3 must always rewrite (unused_bytes == 0)",
+                            0,
+                            fd.metadata().getUnusedBytes()
+                    );
+                }
+            }
+        }
+
+        // ── Trigger (2): ratio threshold crossed → REWRITE ───────────────────
+        // Inject a large O3 batch into RG0 of table x (2 row groups).
+        // Replacing RG0 leaves ~50 % of the file as dead space → exceeds 0.3.
+        execute(
+                """
+                INSERT INTO x(x, ts) VALUES
+                (100, '2020-01-01T00:10:00.000Z'),
+                (101, '2020-01-01T00:20:00.000Z'),
+                (102, '2020-01-01T00:30:00.000Z'),
+                (103, '2020-01-01T00:40:00.000Z')
+                """
+        );
+        drainWalQueue();
+
+        long unusedAfterRatioTrigger = -1;
+        try (TableReader reader = getReader("x")) {
+            for (int i = 0, n = reader.getPartitionCount(); i < n; i++) {
+                if (reader.getPartitionFormat(i) != PartitionFormat.PARQUET) {
+                    continue;
+                }
+                reader.openPartition(i);
+                try (ParquetFileDecoder fd = new ParquetFileDecoder()) {
+                    fd.of(reader.getParquetAddr(i), reader.getParquetFileSize(i),
+                            MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
+                    unusedAfterRatioTrigger = fd.metadata().getUnusedBytes();
+                }
+            }
+        }
+        Assert.assertEquals(
+                "trigger(2): ratio threshold crossed → REWRITE must zero out unused_bytes",
+                0,
+                unusedAfterRatioTrigger
+        );
+
+        // ── Trigger (3): ratio below threshold → UPDATE (unused_bytes > 0) ──
+        // After the rewrite the file is compact.  A tiny O3 (1 row into RG1)
+        // replaces just one row group, leaving dead space, but the ratio of
+        // dead/total should stay well below 0.3 because the file is large
+        // relative to one replaced row group.
+        execute("INSERT INTO x(x, ts) VALUES (200, '2020-01-01T04:10:00.000Z')");
+        drainWalQueue();
+
+        long unusedAfterSmallO3 = -1;
+        try (TableReader reader = getReader("x")) {
+            for (int i = 0, n = reader.getPartitionCount(); i < n; i++) {
+                if (reader.getPartitionFormat(i) != PartitionFormat.PARQUET) {
+                    continue;
+                }
+                reader.openPartition(i);
+                try (ParquetFileDecoder fd = new ParquetFileDecoder()) {
+                    fd.of(reader.getParquetAddr(i), reader.getParquetFileSize(i),
+                            MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
+                    unusedAfterSmallO3 = fd.metadata().getUnusedBytes();
+                }
+            }
+        }
+        Assert.assertTrue(
+                "trigger(3): ratio below threshold → UPDATE must leave unused_bytes > 0, got: "
+                        + unusedAfterSmallO3,
+                unusedAfterSmallO3 > 0
+        );
+
+        // Sanity: final data is correct in all three cases.
+        assertSql(
+                """
+                x\tts
+                1\t2020-01-01T00:00:00.000000Z
+                100\t2020-01-01T00:10:00.000000Z
+                101\t2020-01-01T00:20:00.000000Z
+                102\t2020-01-01T00:30:00.000000Z
+                103\t2020-01-01T00:40:00.000000Z
+                2\t2020-01-01T01:00:00.000000Z
+                3\t2020-01-01T02:00:00.000000Z
+                4\t2020-01-01T03:00:00.000000Z
+                5\t2020-01-01T04:00:00.000000Z
+                200\t2020-01-01T04:10:00.000000Z
+                6\t2020-01-01T05:00:00.000000Z
+                7\t2020-01-01T06:00:00.000000Z
+                8\t2020-01-01T07:00:00.000000Z
+                999\t2020-01-02T00:00:00.000000Z
+                """,
+                "SELECT * FROM x ORDER BY ts"
+        );
+    });
+}
+
     private long getPartitionNameTxn(long partitionTimestamp) {
         try (TableReader reader = getReader("x")) {
             return reader.getTxFile().getPartitionNameTxnByPartitionTimestamp(partitionTimestamp);
