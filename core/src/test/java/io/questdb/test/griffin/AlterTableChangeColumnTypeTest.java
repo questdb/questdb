@@ -72,6 +72,38 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCannotChangeDecimalToInteger() throws Exception {
+        // DECIMAL -> {BYTE, SHORT, INT, LONG} are not supported.
+        // This is a problem to fix in the future
+        assertMemoryLeak(() -> {
+            for (String source : new String[]{
+                    "DECIMAL(2, 0)",
+                    "DECIMAL(4, 0)",
+                    "DECIMAL(9, 0)",
+                    "DECIMAL(18, 0)",
+                    "DECIMAL(38, 0)",
+                    "DECIMAL(76, 0)",
+            }) {
+                for (String target : new String[]{"BYTE", "SHORT", "INT", "LONG"}) {
+                    try {
+                        execute("CREATE TABLE x (col " + source + ", ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL",
+                                sqlExecutionContext);
+                        assertException(
+                                "alter table x alter column col type " + target,
+                                36,
+                                "incompatible column type change [existing=" + source.replace(" ", "")
+                                        + ", new=" + target + "]",
+                                sqlExecutionContext
+                        );
+                    } finally {
+                        execute("drop table if exists x;");
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
     public void testCannotConvertToSameType() throws Exception {
         assertFailure("alter table x alter column d type double", 34, "column 'd' type is already 'DOUBLE'");
     }

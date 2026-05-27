@@ -1075,10 +1075,20 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
             // Var→Fixed path: Rust decodes the source var type;
             // Java parses to fixed after decode.
             for (String source : new String[]{"STRING", "VARCHAR"}) {
+                // Both paths must agree on the ASCII case-fold of "true" and on
+                // returning false for any other input (numbers, empty, NULL).
                 assertConversion(source, "BOOLEAN", """
                         ('true', '2024-01-01T00:00:01.000000Z'),
-                        ('false', '2024-01-01T00:00:02.000000Z'),
-                        (NULL, '2024-01-01T00:00:03.000000Z')""");
+                        ('True', '2024-01-01T00:00:02.000000Z'),
+                        ('TRUE', '2024-01-01T00:00:03.000000Z'),
+                        ('TrUe', '2024-01-01T00:00:04.000000Z'),
+                        ('false', '2024-01-01T00:00:05.000000Z'),
+                        ('False', '2024-01-01T00:00:06.000000Z'),
+                        ('FALSE', '2024-01-01T00:00:07.000000Z'),
+                        ('1', '2024-01-01T00:00:08.000000Z'),
+                        ('0', '2024-01-01T00:00:09.000000Z'),
+                        ('', '2024-01-01T00:00:10.000000Z'),
+                        (NULL, '2024-01-01T00:00:11.000000Z')""");
 
                 assertConversion(source, "BYTE", """
                         ('42', '2024-01-01T00:00:01.000000Z'),
@@ -1136,11 +1146,52 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
                         ('z', '2024-01-01T00:00:02.000000Z'),
                         (NULL, '2024-01-01T00:00:03.000000Z')""");
 
+                // Sweep all six decimal widths (DECIMAL8/16/32/64/128/256, precisions
+                // 2/4/9/18/38/76). Each list includes an overflow input whose magnitude
+                // exceeds the target precision; both the lazy parquet read path and the
+                // CONVERT-PARTITION-TO-NATIVE materialized path must agree on NULL for
+                // that row (NumericException in decimal.ofString -> DECIMAL NULL).
+                assertConversion(source, "DECIMAL(2, 1)", """
+                        ('1.2', '2024-01-01T00:00:01.000000Z'),
+                        ('0', '2024-01-01T00:00:02.000000Z'),
+                        ('-1.5', '2024-01-01T00:00:03.000000Z'),
+                        ('999', '2024-01-01T00:00:04.000000Z'),
+                        (NULL, '2024-01-01T00:00:05.000000Z')""");
+
+                assertConversion(source, "DECIMAL(4, 2)", """
+                        ('12.34', '2024-01-01T00:00:01.000000Z'),
+                        ('0', '2024-01-01T00:00:02.000000Z'),
+                        ('-9.99', '2024-01-01T00:00:03.000000Z'),
+                        ('99999', '2024-01-01T00:00:04.000000Z'),
+                        (NULL, '2024-01-01T00:00:05.000000Z')""");
+
+                assertConversion(source, "DECIMAL(9, 3)", """
+                        ('123456.789', '2024-01-01T00:00:01.000000Z'),
+                        ('0', '2024-01-01T00:00:02.000000Z'),
+                        ('-999.999', '2024-01-01T00:00:03.000000Z'),
+                        ('9999999999', '2024-01-01T00:00:04.000000Z'),
+                        (NULL, '2024-01-01T00:00:05.000000Z')""");
+
                 assertConversion(source, "DECIMAL(18, 4)", """
                         ('12345.6789', '2024-01-01T00:00:01.000000Z'),
                         ('0', '2024-01-01T00:00:02.000000Z'),
                         ('-99.9999', '2024-01-01T00:00:03.000000Z'),
-                        (NULL, '2024-01-01T00:00:04.000000Z')""");
+                        ('99999999999999999999', '2024-01-01T00:00:04.000000Z'),
+                        (NULL, '2024-01-01T00:00:05.000000Z')""");
+
+                assertConversion(source, "DECIMAL(38, 4)", """
+                        ('1234567890123456789012345678901234.5678', '2024-01-01T00:00:01.000000Z'),
+                        ('0', '2024-01-01T00:00:02.000000Z'),
+                        ('-99.9999', '2024-01-01T00:00:03.000000Z'),
+                        ('999999999999999999999999999999999999999', '2024-01-01T00:00:04.000000Z'),
+                        (NULL, '2024-01-01T00:00:05.000000Z')""");
+
+                assertConversion(source, "DECIMAL(76, 4)", """
+                        ('123456789012345678901234567890123456789012345678901234567890123456789012.5678', '2024-01-01T00:00:01.000000Z'),
+                        ('0', '2024-01-01T00:00:02.000000Z'),
+                        ('-99.9999', '2024-01-01T00:00:03.000000Z'),
+                        ('99999999999999999999999999999999999999999999999999999999999999999999999999999', '2024-01-01T00:00:04.000000Z'),
+                        (NULL, '2024-01-01T00:00:05.000000Z')""");
 
                 assertConversion(source, "IPv4", """
                         ('192.168.1.1', '2024-01-01T00:00:01.000000Z'),
@@ -1171,6 +1222,45 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
                         ('a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11-extra', '2024-01-01T00:00:06.000000Z'),
                         ('zzzzzzzz-zzzz-zzzz-zzzz-zzzzzzzzzzzz', '2024-01-01T00:00:07.000000Z'),
                         (NULL, '2024-01-01T00:00:08.000000Z')""");
+            }
+        });
+    }
+
+    /**
+     * Pins parity between the lazy per-row parquet read path
+     * ({@code PageFrameMemoryRecord.convertVarToXxx}) and the eager native rewrite path
+     * ({@code ColumnTypeConverter}) for adversarial inputs that one path might silently
+     * normalize while the other rejects. Whitespace, empty strings, and non-numeric text
+     * must produce the same sentinel on both paths; date strings with timezone offsets
+     * or no time component must either both succeed (same UTC value) or both fail to NULL.
+     * If a future change adds a {@code .trim()} or pre-normalization on only one side,
+     * this test catches the drift.
+     */
+    @Test
+    public void testStringToFixedAdversarialInputs() throws Exception {
+        assertMemoryLeak(() -> {
+            for (String source : new String[]{"STRING", "VARCHAR"}) {
+                String numericValues = """
+                        (' 42 ', '2024-01-01T00:00:01.000000Z'),
+                        ('',     '2024-01-01T00:00:02.000000Z'),
+                        ('abc',  '2024-01-01T00:00:03.000000Z'),
+                        (NULL,   '2024-01-01T00:00:04.000000Z')""";
+                assertConversion(source, "BYTE", numericValues);
+                assertConversion(source, "SHORT", numericValues);
+                assertConversion(source, "INT", numericValues);
+                assertConversion(source, "LONG", numericValues);
+                assertConversion(source, "FLOAT", numericValues);
+                assertConversion(source, "DOUBLE", numericValues);
+
+                String dateValues = """
+                        ('2020-06-15T12:00:00+01:00', '2024-01-01T00:00:01.000000Z'),
+                        ('2020-06-15',                '2024-01-01T00:00:02.000000Z'),
+                        ('',                          '2024-01-01T00:00:03.000000Z'),
+                        ('abc',                       '2024-01-01T00:00:04.000000Z'),
+                        (NULL,                        '2024-01-01T00:00:05.000000Z')""";
+                assertConversion(source, "DATE", dateValues);
+                assertConversion(source, "TIMESTAMP", dateValues);
+                assertConversion(source, "TIMESTAMP_NS", dateValues);
             }
         });
     }
@@ -1333,6 +1423,73 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
                 ('emoji \ud83e\udd86 \ud83d\ude00 mixed', '2024-01-01T00:00:06.000000Z'),
                 ('ascii then é', '2024-01-01T00:00:07.000000Z'),
                 (NULL, '2024-01-01T00:00:08.000000Z')"""));
+    }
+
+    /**
+     * Pins the chained-conversion guard in ConvertOperatorImpl.isParquetStorageCompatible:
+     * TIMESTAMP -> TIMESTAMP_NS -> TIMESTAMP on a parquet partition where the parquet
+     * itself stays TIMESTAMP (us) throughout. After the second hop the metadata tag is
+     * TIMESTAMP again, matching the parquet tag, but a naive tag-only equality check
+     * would let the lazy decoder return raw us values as if they were ns (off by 1000x).
+     * The guard must instead notice the prior conversion on the column metadata and
+     * force a parquet -> native rewrite before the second hop, so the round-trip is
+     * lossless. The control table nt (no parquet) must agree with pt at every step.
+     */
+    @Test
+    public void testTimestampChainedThroughTimestampNanoOnParquetPartition() throws Exception {
+        assertMemoryLeak(() -> {
+            try {
+                execute("CREATE TABLE nt (val TIMESTAMP, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                execute("CREATE TABLE pt (val TIMESTAMP, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                String values = """
+                        INSERT INTO $T VALUES
+                        ('2020-06-15T12:30:00.123456Z', '2024-01-01T00:00:01.000000Z'),
+                        ('1970-01-01T00:00:00.000000Z', '2024-01-01T00:00:02.000000Z'),
+                        ('2020-06-15T12:30:00.999999Z', '2024-01-01T00:00:03.000000Z'),
+                        (NULL,                          '2024-01-01T00:00:04.000000Z')""";
+                execute(values.replace("$T", "nt"));
+                execute(values.replace("$T", "pt"));
+                drainWalQueue();
+
+                execute("ALTER TABLE pt CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+                drainWalQueue();
+
+                // Hop 1: TIMESTAMP -> TIMESTAMP_NS on both tables. On pt the parquet
+                // stays TIMESTAMP (us); the lazy decoder scales each read by 1000 via
+                // post_convert's date/timestamp branch.
+                execute("ALTER TABLE nt ALTER COLUMN val TYPE TIMESTAMP_NS");
+                execute("ALTER TABLE pt ALTER COLUMN val TYPE TIMESTAMP_NS");
+                drainWalQueue();
+                assertSqlCursors("SELECT * FROM nt ORDER BY ts", "SELECT * FROM pt ORDER BY ts");
+
+                // Hop 2: TIMESTAMP_NS -> TIMESTAMP on both tables. The pt metadata now
+                // says TIMESTAMP again while the parquet still stores TIMESTAMP (us),
+                // so the metadata tag matches the parquet tag. isParquetStorageCompatible
+                // must still detect that the column has a prior conversion recorded
+                // (getReplacingIndex() >= 0) and force a parquet -> native rewrite
+                // before the second hop; otherwise the lazy path would return raw us
+                // values as ns values (off by 1000x) or the table would suspend.
+                execute("ALTER TABLE nt ALTER COLUMN val TYPE TIMESTAMP");
+                execute("ALTER TABLE pt ALTER COLUMN val TYPE TIMESTAMP");
+                drainWalQueue();
+                assertSqlCursors("SELECT * FROM nt ORDER BY ts", "SELECT * FROM pt ORDER BY ts");
+
+                // Final state: original microsecond values, round-trip lossless.
+                assertSql(
+                        """
+                                val\tts
+                                2020-06-15T12:30:00.123456Z\t2024-01-01T00:00:01.000000Z
+                                1970-01-01T00:00:00.000000Z\t2024-01-01T00:00:02.000000Z
+                                2020-06-15T12:30:00.999999Z\t2024-01-01T00:00:03.000000Z
+                                \t2024-01-01T00:00:04.000000Z
+                                """,
+                        "SELECT val, ts FROM pt ORDER BY ts"
+                );
+            } finally {
+                tryDrop("nt");
+                tryDrop("pt");
+            }
+        });
     }
 
     @Test
