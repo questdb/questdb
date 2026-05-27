@@ -902,7 +902,7 @@ mod tests {
             .map(|j| QdbMeta::deserialize(j).unwrap());
 
         let (parquet_meta_bytes, parquet_meta_file_size) =
-            convert_from_parquet(&metadata, qdb_meta.as_ref(), 0, 0, None)?;
+            convert_from_parquet(&metadata, qdb_meta.as_ref(), 0, 0, None, None)?;
 
         Ok((parquet_buf, parquet_meta_bytes, parquet_meta_file_size))
     }

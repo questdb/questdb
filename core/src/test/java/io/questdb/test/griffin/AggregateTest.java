@@ -56,6 +56,7 @@ import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
+import org.junit.Assume;
 import org.junit.Before;
 import org.junit.Test;
 
@@ -1412,6 +1413,51 @@ public class AggregateTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testMinMaxDesignatedTimestampAsyncNonKeyed() throws Exception {
+        Assume.assumeTrue(enableParallelGroupBy);
+        assertMemoryLeak(() -> {
+            execute("create table tab (ts timestamp, ashort short) timestamp(ts) partition by DAY");
+            execute(
+                    "insert into tab values " +
+                            "(0::timestamp, 5::short), " +
+                            "(1::timestamp, -3::short), " +
+                            "(2::timestamp, 10::short), " +
+                            "(3::timestamp, -7::short), " +
+                            "(4::timestamp, 32_000::short)"
+            );
+
+            // first(short) has no vector aggregate equivalent, so SqlCodeGenerator routes
+            // the query to the async non-keyed factory. Both timestamp aggregates carry
+            // the designated flag there and skip the per-frame column scan via Unsafe
+            // loads of the first and last rows.
+            final String query = "SELECT min(ts), max(ts), first(ashort) FROM tab";
+            assertPlanNoLeakCheck(
+                    query,
+                    """
+                            Async Group By workers: 1
+                              vectorized: true
+                              values: [min_designated(ts),max_designated(ts),first(ashort)]
+                              filter: null
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: tab
+                            """
+            );
+
+            assertQueryNoLeakCheck(
+                    """
+                            min\tmax\tfirst
+                            1970-01-01T00:00:00.000000Z\t1970-01-01T00:00:00.000004Z\t5
+                            """,
+                    query,
+                    null,
+                    false,
+                    true
+            );
+        });
+    }
+
+    @Test
     public void testMinMaxDesignatedTimestampEmpty() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table tab (" +
@@ -1562,6 +1608,56 @@ public class AggregateTest extends AbstractCairoTest {
                     "select min(other_ts), max(other_ts) from tab",
                     null,
                     false,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testMinMaxShort() throws Exception {
+        Assume.assumeTrue(enableParallelGroupBy);
+        assertMemoryLeak(() -> {
+            execute("create table tab (skey string, ashort short, ts timestamp) timestamp(ts)");
+            execute(
+                    "insert into tab values " +
+                            "('a', 5::short, 0::timestamp), " +
+                            "('a', -3::short, 1::timestamp), " +
+                            "('b', 10::short, 2::timestamp), " +
+                            "('b', -7::short, 3::timestamp), " +
+                            "('c', 0::short, 4::timestamp), " +
+                            "('c', 32_000::short, 5::timestamp)"
+            );
+
+            // Multi-byte string key bypasses the vect path's INT/SYMBOL-only key check,
+            // so dispatch lands on the keyed Async factory. The new min(E)/max(E)
+            // signatures route SHORT args directly to MinShortGroupByFunction /
+            // MaxShortGroupByFunction without an implicit SHORT->INT cast.
+            final String query = "SELECT skey, min(ashort), max(ashort) FROM tab ORDER BY skey";
+            assertPlanNoLeakCheck(
+                    query,
+                    """
+                            Sort light
+                              keys: [skey]
+                                Async Group By workers: 1
+                                  keys: [skey]
+                                  values: [min(ashort),max(ashort)]
+                                  filter: null
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: tab
+                            """
+            );
+
+            assertQueryNoLeakCheck(
+                    """
+                            skey\tmin\tmax
+                            a\t-3\t5
+                            b\t-7\t10
+                            c\t0\t32000
+                            """,
+                    query,
+                    null,
+                    true,
                     true
             );
         });
@@ -2005,6 +2101,54 @@ public class AggregateTest extends AbstractCairoTest {
                                 "AND t < CAST(" + ((2 * count - 1) * step) + " AS TIMESTAMP)"
                 );
             }
+        });
+    }
+
+    @Test
+    public void testSumLong256() throws Exception {
+        Assume.assumeTrue(enableParallelGroupBy);
+        assertMemoryLeak(() -> {
+            execute("create table tab (skey string, along256 long256, ts timestamp) timestamp(ts)");
+            execute(
+                    "insert into tab values " +
+                            "('a', cast(1 as long256), 0::timestamp), " +
+                            "('a', cast(2 as long256), 1::timestamp), " +
+                            "('b', cast(10 as long256), 2::timestamp), " +
+                            "('b', cast(20 as long256), 3::timestamp), " +
+                            "('c', cast(null as long256), 4::timestamp), " +
+                            "('c', cast(5 as long256), 5::timestamp)"
+            );
+
+            // Multi-byte string key bypasses the vect path's INT/SYMBOL-only key check,
+            // so dispatch lands on the keyed Async factory once sum(long256) is parallel.
+            final String query = "SELECT skey, sum(along256) FROM tab ORDER BY skey";
+            assertPlanNoLeakCheck(
+                    query,
+                    """
+                            Sort light
+                              keys: [skey]
+                                Async Group By workers: 1
+                                  keys: [skey]
+                                  values: [sum(along256)]
+                                  filter: null
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: tab
+                            """
+            );
+
+            assertQueryNoLeakCheck(
+                    """
+                            skey\tsum
+                            a\t0x03
+                            b\t0x1e
+                            c\t0x05
+                            """,
+                    query,
+                    null,
+                    true,
+                    true
+            );
         });
     }
 
