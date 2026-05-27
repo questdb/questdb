@@ -435,12 +435,14 @@ public class SqlOptimiser implements Mutable {
         return false;
     }
 
-    private static boolean allColumnsPresentIn(IQueryModel src, IQueryModel target) {
+    private static boolean allOrderByColumnsPresentIn(IQueryModel src, IQueryModel target) {
         final LowerCaseCharSequenceObjHashMap<QueryColumn> targetMap = target.getAliasToColumnMap();
-        final ObjList<QueryColumn> srcColumns = src.getBottomUpColumns();
-        for (int i = 0, n = srcColumns.size(); i < n; i++) {
-            if (!targetMap.contains(srcColumns.getQuick(i).getAlias())) {
-                return false;
+        for (IQueryModel m = src; m != null; m = m.getNestedModel()) {
+            final ObjList<ExpressionNode> orderBy = m.getOrderBy();
+            for (int i = 0, n = orderBy.size(); i < n; i++) {
+                if (!targetMap.contains(orderBy.getQuick(i).token)) {
+                    return false;
+                }
             }
         }
         return true;
@@ -10391,8 +10393,8 @@ public class SqlOptimiser implements Mutable {
      * <p>
      * LIMIT interaction: when the outer VIRTUAL has a LIMIT and the nested GROUP BY does not,
      * push the LIMIT down so the group-by factory can report a bounded cursor size. The push
-     * is gated on the VIRTUAL exposing no columns beyond the GROUP BY's output; otherwise an
-     * ORDER BY resolving against a virtual-only alias (such as a folded constant after DISTINCT)
+     * is gated on every ORDER BY token resolving against the GROUP BY's output; otherwise an
+     * ORDER BY referencing a virtual-only alias (such as a folded constant after DISTINCT)
      * would attach to the limited GROUP BY and fail to resolve at code-generation time.
      */
     private void rewriteTrivialGroupByExpressions(IQueryModel model) throws SqlException {
@@ -10474,14 +10476,16 @@ public class SqlOptimiser implements Mutable {
                     }
                 }
 
-                // Push limit from virtual down to group by only if every virtual column has a
-                // matching group-by output. Otherwise, a later ORDER BY by a virtual-only alias
-                // (e.g. a folded constant after DISTINCT) attaches to the limited group-by and
-                // dangles.
+                // Push limit from virtual down to group by only if every ORDER BY token resolves
+                // against a group-by output. ORDER BY may sit anywhere in the nested chain
+                // below the VIRTUAL, so walk down and check them all. Otherwise the later
+                // rewriteOrderBy attaches the ORDER BY (e.g. a folded constant alias after
+                // DISTINCT) to the limited group-by where it cannot bind, and generateOrderBy
+                // crashes at code-generation time.
                 final ExpressionNode lo = model.getLimitLo();
                 final ExpressionNode hi = model.getLimitHi();
                 if (lo != null && nestedModel.getLimitLo() == null && nestedModel.getLimitHi() == null
-                        && allColumnsPresentIn(model, nestedModel)) {
+                        && allOrderByColumnsPresentIn(model, nestedModel)) {
                     nestedModel.setLimit(lo, hi);
                     model.setLimit(null, null);
                 }
