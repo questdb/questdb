@@ -33,15 +33,15 @@ package io.questdb.cairo.wal;
 @FunctionalInterface
 public interface WalCommitPreValidator {
     /**
-     * @param txnType        one of {@link WalTxnType} constants -- the validator
-     *                       typically only cares about {@link WalTxnType#DATA}.
-     * @param dedupMode      the WAL_DEDUP_MODE_* value the writer is committing
-     *                       with. Refresh-job writes carry REPLACE_RANGE; plain
-     *                       user INSERTs carry the default.
-     * @param txnMinTs       minimum row timestamp in the txn (driver units),
-     *                       Long.MAX_VALUE for an empty txn.
-     * @param txnMaxTs       maximum row timestamp in the txn (driver units),
-     *                       -1 for an empty txn.
+     * @param txnType   one of {@link WalTxnType} constants -- the validator
+     *                  typically only cares about {@link WalTxnType#DATA}.
+     * @param dedupMode the WAL_DEDUP_MODE_* value the writer is committing
+     *                  with. Refresh-job writes carry REPLACE_RANGE; plain
+     *                  user INSERTs carry the default.
+     * @param txnMinTs  minimum row timestamp in the txn (driver units),
+     *                  Long.MAX_VALUE for an empty txn.
+     * @param txnMaxTs  maximum row timestamp in the txn (driver units),
+     *                  -1 for an empty txn.
      */
     void validate(byte txnType, byte dedupMode, long txnMinTs, long txnMaxTs);
 }
