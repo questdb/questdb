@@ -78,10 +78,10 @@ public class RecordChain implements Closeable, RecordCursor, RecordSinkSPI, Wind
     }
 
     /**
-     * Sink may be null when the caller does not need {@link #put(Record)} —
-     * e.g. the Light window chain only allocates rows via {@link #beginRecord}
-     * and writes via {@link RecordSinkSPI} methods, never copying a full record.
-     * Calling {@code put(Record)} on a chain constructed without a sink throws NPE.
+     * Sink may be null when the caller does not need {@code put(Record)} - e.g. the
+     * Light window chain only allocates rows via {@link #beginRecord} and writes via
+     * {@link RecordSinkSPI} methods, never copying a full record. Calling
+     * {@code put(Record)} on a chain constructed without a sink throws NPE.
      */
     public RecordChain(
             @Transient @NotNull ColumnTypes columnTypes,
