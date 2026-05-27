@@ -82,6 +82,7 @@ fn generate(
         parquet_footer_offset,
         footer_length,
         None,
+        None,
     )
     .map_err(|e| format!("failed to convert: {}", e))?;
 
