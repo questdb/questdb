@@ -1412,6 +1412,18 @@ public class CairoEngine implements Closeable, WriterSource {
         return closing;
     }
 
+    /**
+     * Reports whether this engine currently refuses writes. Reads the LIVE state on every
+     * call so callers can re-check it per write batch rather than trusting a value captured
+     * earlier (for example, a SecurityContext cached at connection time). The base engine
+     * answers from the static isReadOnlyInstance() flag; enterprise subclasses override this
+     * to also report true while the node is acting as a read-only replica, a state an
+     * in-place role switch can toggle dynamically.
+     */
+    public boolean isReadOnlyMode() {
+        return configuration.isReadOnlyInstance();
+    }
+
     public boolean isTableDropped(TableToken tableToken) {
         return tableNameRegistry.isTableDropped(tableToken);
     }
