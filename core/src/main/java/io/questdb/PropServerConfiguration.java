@@ -543,6 +543,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int sqlTxnScoreboardEntryCount;
     private final int sqlUnorderedMapMaxEntrySize;
     private final int sqlViewLexerPoolCapacity;
+    private final boolean sqlWindowCachedLightEnabled;
     private final int sqlWindowColumnPoolCapacity;
     private final int sqlWindowInitialRangeBufferSize;
     private final int sqlWindowMaxRecursion;
@@ -1735,6 +1736,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.rndFunctionMemoryPageSize = Numbers.ceilPow2(getIntSize(properties, env, PropertyKey.CAIRO_RND_MEMORY_PAGE_SIZE, 8192));
             this.rndFunctionMemoryMaxPages = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_RND_MEMORY_MAX_PAGES, 128));
             this.sqlStrFunctionBufferMaxSize = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_SQL_STR_FUNCTION_BUFFER_MAX_SIZE, Numbers.SIZE_1MB));
+            this.sqlWindowCachedLightEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_WINDOW_CACHED_LIGHT_ENABLED, true);
             this.sqlWindowMaxRecursion = getInt(properties, env, PropertyKey.CAIRO_SQL_WINDOW_MAX_RECURSION, 128);
             int sqlWindowStorePageSize = Numbers.ceilPow2(getIntSize(properties, env, PropertyKey.CAIRO_SQL_ANALYTIC_STORE_PAGE_SIZE, Numbers.SIZE_1MB));
             this.sqlWindowStorePageSize = Numbers.ceilPow2(getIntSize(properties, env, PropertyKey.CAIRO_SQL_WINDOW_STORE_PAGE_SIZE, sqlWindowStorePageSize));
@@ -2352,6 +2354,27 @@ public class PropServerConfiguration implements ServerConfiguration {
         return httpContextWebConsole;
     }
 
+    private static void validateGroupByBatchSize(PropertyKey key, int value) throws ServerConfigurationException {
+        // A non-positive batch size would turn the reducer loop
+        // `for (long batchStart = 0; batchStart < rowCount; batchStart += batchSize)`
+        // into an infinite loop. Cap at the same 24-bit row index bound as
+        // page frames since the batch cannot exceed a single page frame.
+        final int maxBatchSize = io.questdb.cairo.map.Map.BATCH_ROW_INDEX_MASK + 1;
+        if (value < 1 || value > maxBatchSize) {
+            throw new ServerConfigurationException(key.getPropertyPath() + " must be between 1 and " + maxBatchSize);
+        }
+    }
+
+    private static void validatePageFrameRows(PropertyKey key, int value) throws ServerConfigurationException {
+        // Frame-relative row indexes are packed into the 24-bit slot of every
+        // batched GROUP BY entry, so a frame cannot exceed BATCH_ROW_INDEX_MASK + 1
+        // rows. Reject misconfigurations that would silently truncate.
+        final int maxRows = io.questdb.cairo.map.Map.BATCH_ROW_INDEX_MASK + 1;
+        if (value < 1 || value > maxRows) {
+            throw new ServerConfigurationException(key.getPropertyPath() + " must be between 1 and " + maxRows);
+        }
+    }
+
     private int configureSharedThreadPool(
             Properties properties,
             Map<String, String> env,
@@ -2412,26 +2435,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         };
     }
 
-    private int getSqlJitMode(Properties properties, @Nullable Map<String, String> env) {
-        final String jitMode = getString(properties, env, PropertyKey.CAIRO_SQL_JIT_MODE, "on");
-
-        assert jitMode != null;
-
-        if (Chars.equalsLowerCaseAscii(jitMode, "on")) {
-            return SqlJitMode.JIT_MODE_ENABLED;
-        }
-
-        if (Chars.equalsLowerCaseAscii(jitMode, "off")) {
-            return SqlJitMode.JIT_MODE_DISABLED;
-        }
-
-        if (Chars.equalsLowerCaseAscii(jitMode, "scalar")) {
-            return SqlJitMode.JIT_MODE_FORCE_SCALAR;
-        }
-
-        return SqlJitMode.JIT_MODE_ENABLED;
-    }
-
     private int getSampleByFillSortStrategy(Properties properties, @Nullable Map<String, String> env) throws ServerConfigurationException {
         final ConfigPropertyKey key = PropertyKey.CAIRO_SQL_SAMPLEBY_FILL_SORT_STRATEGY;
         final String strategy = getString(properties, env, key, "light_encoded");
@@ -2462,6 +2465,26 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         throw ServerConfigurationException.forInvalidKey(key.getPropertyPath(), strategy);
+    }
+
+    private int getSqlJitMode(Properties properties, @Nullable Map<String, String> env) {
+        final String jitMode = getString(properties, env, PropertyKey.CAIRO_SQL_JIT_MODE, "on");
+
+        assert jitMode != null;
+
+        if (Chars.equalsLowerCaseAscii(jitMode, "on")) {
+            return SqlJitMode.JIT_MODE_ENABLED;
+        }
+
+        if (Chars.equalsLowerCaseAscii(jitMode, "off")) {
+            return SqlJitMode.JIT_MODE_DISABLED;
+        }
+
+        if (Chars.equalsLowerCaseAscii(jitMode, "scalar")) {
+            return SqlJitMode.JIT_MODE_FORCE_SCALAR;
+        }
+
+        return SqlJitMode.JIT_MODE_ENABLED;
     }
 
     private int getWalWriterMadviseMode(Properties properties, @Nullable Map<String, String> env, ConfigPropertyKey key) throws ServerConfigurationException {
@@ -2565,27 +2588,6 @@ public class PropServerConfiguration implements ServerConfiguration {
                             + ((httpIlpConnectionLimit > 0) ? PropertyKey.HTTP_ILP_CONNECTION_LIMIT.getPropertyPath() + "=" + httpIlpConnectionLimit + ", " : "")
                             + ((httpExportConnectionLimit > 0) ? PropertyKey.HTTP_EXPORT_CONNECTION_LIMIT.getPropertyPath() + "=" + httpExportConnectionLimit + ", " : "")
                             + PropertyKey.HTTP_NET_CONNECTION_LIMIT.getPropertyPath() + "=" + httpNetConnectionLimit + ']');
-        }
-    }
-
-    private static void validateGroupByBatchSize(PropertyKey key, int value) throws ServerConfigurationException {
-        // A non-positive batch size would turn the reducer loop
-        // `for (long batchStart = 0; batchStart < rowCount; batchStart += batchSize)`
-        // into an infinite loop. Cap at the same 24-bit row index bound as
-        // page frames since the batch cannot exceed a single page frame.
-        final int maxBatchSize = io.questdb.cairo.map.Map.BATCH_ROW_INDEX_MASK + 1;
-        if (value < 1 || value > maxBatchSize) {
-            throw new ServerConfigurationException(key.getPropertyPath() + " must be between 1 and " + maxBatchSize);
-        }
-    }
-
-    private static void validatePageFrameRows(PropertyKey key, int value) throws ServerConfigurationException {
-        // Frame-relative row indexes are packed into the 24-bit slot of every
-        // batched GROUP BY entry, so a frame cannot exceed BATCH_ROW_INDEX_MASK + 1
-        // rows. Reject misconfigurations that would silently truncate.
-        final int maxRows = io.questdb.cairo.map.Map.BATCH_ROW_INDEX_MASK + 1;
-        if (value < 1 || value > maxRows) {
-            throw new ServerConfigurationException(key.getPropertyPath() + " must be between 1 and " + maxRows);
         }
     }
 
@@ -4199,8 +4201,8 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public long getPostingIndexerSpillBytesMax() {
-            return postingIndexerSpillBytesMax;
+        public int getPostingIndexAdaptiveDeltaAtOrAbove() {
+            return postingIndexAdaptiveDeltaAtOrAbove;
         }
 
         @Override
@@ -4209,8 +4211,8 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
-        public int getPostingIndexAdaptiveDeltaAtOrAbove() {
-            return postingIndexAdaptiveDeltaAtOrAbove;
+        public long getPostingIndexerSpillBytesMax() {
+            return postingIndexerSpillBytesMax;
         }
 
         @Override
@@ -5061,6 +5063,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean isSqlParquetRowGroupPruningEnabled() {
             return sqlParquetRowGroupPruningEnabled;
+        }
+
+        @Override
+        public boolean isSqlWindowCachedLightEnabled() {
+            return sqlWindowCachedLightEnabled;
         }
 
         @Override

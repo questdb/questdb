@@ -66,6 +66,7 @@ import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
+import io.questdb.std.Rnd;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.TestTimestampType;
@@ -75,6 +76,8 @@ import org.junit.Test;
 
 import java.util.Arrays;
 import java.util.List;
+
+import static io.questdb.test.tools.TestUtils.generateRandom;
 
 public class WindowFunctionTest extends AbstractCairoTest {
     private static final List<String> FRAME_FUNCTIONS;
@@ -136,10 +139,19 @@ public class WindowFunctionTest extends AbstractCairoTest {
     };
     private static final List<String> FRAME_TYPES = Arrays.asList("rows  ", "groups", "range ");
     private static final List<String> WINDOW_ONLY_FUNCTIONS;
+    private final boolean cacheLightWindowEnabled;
     private final TestTimestampType timestampType;
 
     public WindowFunctionTest() {
-        this.timestampType = TestUtils.getTimestampType();
+        Rnd rnd = generateRandom(LOG);
+        this.timestampType = TestUtils.getTimestampType(rnd);
+        this.cacheLightWindowEnabled = rnd.nextBoolean();
+    }
+
+    @Override
+    public void setUp() {
+        setProperty(PropertyKey.CAIRO_SQL_WINDOW_CACHED_LIGHT_ENABLED, Boolean.toString(this.cacheLightWindowEnabled));
+        super.setUp();
     }
 
     @Test
@@ -1427,45 +1439,45 @@ public class WindowFunctionTest extends AbstractCairoTest {
             // ORDER BY designated timestamp -> dismissOrder=true path.
             assertPlanNoLeakCheck(
                     "SELECT cume_dist() OVER (ORDER BY ts) FROM tab",
-                    """
-                            CachedWindow
-                              unorderedFunctions: [cume_dist() over (order by [ts])]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: tab
+                    (this.cacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") +
                             """
+                                      unorderedFunctions: [cume_dist() over (order by [ts])]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: tab
+                                    """
             );
             assertPlanNoLeakCheck(
                     "SELECT cume_dist() OVER (PARTITION BY i ORDER BY ts) FROM tab",
-                    """
-                            CachedWindow
-                              unorderedFunctions: [cume_dist() over (partition by [i] order by [ts])]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: tab
+                    (this.cacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") +
                             """
+                                      unorderedFunctions: [cume_dist() over (partition by [i] order by [ts])]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: tab
+                                    """
             );
 
             // ORDER BY non-timestamp column -> dismissOrder=false path (the previously-broken one).
             assertPlanNoLeakCheck(
                     "SELECT cume_dist() OVER (ORDER BY val) FROM tab",
-                    """
-                            CachedWindow
-                              orderedFunctions: [[val] => [cume_dist() over (order by [val])]]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: tab
+                    (this.cacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") +
                             """
+                                      orderedFunctions: [[val] => [cume_dist() over (order by [val])]]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: tab
+                                    """
             );
             assertPlanNoLeakCheck(
                     "SELECT cume_dist() OVER (PARTITION BY i ORDER BY val) FROM tab",
-                    """
-                            CachedWindow
-                              orderedFunctions: [[val] => [cume_dist() over (partition by [i] order by [val])]]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: tab
+                    (this.cacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") +
                             """
+                                      orderedFunctions: [[val] => [cume_dist() over (partition by [i] order by [val])]]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: tab
+                                    """
             );
         });
     }
@@ -6714,13 +6726,13 @@ public class WindowFunctionTest extends AbstractCairoTest {
             // still uses CachedWindow, but the unorderedFunctions slot means no sort.
             assertPlanNoLeakCheck(
                     "SELECT ts, x, LAG(x, 1) OVER (ORDER BY ts DESC) FROM tab",
-                    """
-                            CachedWindow
-                              unorderedFunctions: [lead(x, 1, NULL) over ()]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: tab
+                    (this.cacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") +
                             """
+                                      unorderedFunctions: [lead(x, 1, NULL) over ()]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: tab
+                                    """
             );
 
             // LEAD over DESC -> LAG over ASC. LAG is ZERO_PASS so dismissOrder=true
@@ -6739,13 +6751,13 @@ public class WindowFunctionTest extends AbstractCairoTest {
             // PARTITION BY + IGNORE NULLS rewrite.
             assertPlanNoLeakCheck(
                     "SELECT LAG(x, 1) IGNORE NULLS OVER (PARTITION BY sym ORDER BY ts DESC) FROM tab",
-                    """
-                            CachedWindow
-                              unorderedFunctions: [lead(x, 1, NULL) ignore nulls over (partition by [sym])]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: tab
+                    (this.cacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") +
                             """
+                                      unorderedFunctions: [lead(x, 1, NULL) ignore nulls over (partition by [sym])]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: tab
+                                    """
             );
 
             // Multiple LAG/LEAD on the same (ts, DESC) key are both rewritten:
@@ -6753,13 +6765,13 @@ public class WindowFunctionTest extends AbstractCairoTest {
             // siblings still pass the gate.
             assertPlanNoLeakCheck(
                     "SELECT LAG(x, 1) OVER (ORDER BY ts DESC), LEAD(y, 1) OVER (ORDER BY ts DESC) FROM tab",
-                    """
-                            CachedWindow
-                              unorderedFunctions: [lead(x, 1, NULL) over (),lag(y, 1, NULL) over ()]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: tab
+                    (this.cacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") +
                             """
+                                      unorderedFunctions: [lead(x, 1, NULL) over (),lag(y, 1, NULL) over ()]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: tab
+                                    """
             );
 
             // Gate: SUM cannot be swapped, so rewriting LAG alone would force it
@@ -6767,37 +6779,37 @@ public class WindowFunctionTest extends AbstractCairoTest {
             assertPlanNoLeakCheck(
                     "SELECT LAG(x, 1) OVER (ORDER BY ts DESC), " +
                             "SUM(x) OVER (ORDER BY ts DESC ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) FROM tab",
-                    """
-                            CachedWindow
-                              orderedFunctions: [[ts desc] => [lag(x, 1, NULL) over (),sum(x) over ( rows between 1 preceding and current row)]]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: tab
+                    (this.cacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") +
                             """
+                                      orderedFunctions: [[ts desc] => [lag(x, 1, NULL) over (),sum(x) over ( rows between 1 preceding and current row)]]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: tab
+                                    """
             );
 
             // Multi-column ORDER BY: rewrite requires osz == 1, falls through to sort.
             assertPlanNoLeakCheck(
                     "SELECT LAG(x, 1) OVER (ORDER BY ts DESC, y ASC) FROM tab",
-                    """
-                            CachedWindow
-                              orderedFunctions: [[ts desc, y] => [lag(x, 1, NULL) over ()]]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: tab
+                    (this.cacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") +
                             """
+                                      orderedFunctions: [[ts desc, y] => [lag(x, 1, NULL) over ()]]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: tab
+                                    """
             );
 
             // ORDER BY non-timestamp column: rewrite only fires for designated ts.
             assertPlanNoLeakCheck(
                     "SELECT LAG(x, 1) OVER (ORDER BY y DESC) FROM tab",
-                    """
-                            CachedWindow
-                              orderedFunctions: [[y desc] => [lag(x, 1, NULL) over ()]]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: tab
+                    (this.cacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") +
                             """
+                                      orderedFunctions: [[y desc] => [lag(x, 1, NULL) over ()]]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: tab
+                                    """
             );
 
             // Per-row correctness: LAG over DESC == LEAD over ASC and vice versa.
@@ -11060,55 +11072,55 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
             assertPlanNoLeakCheck(
                     "SELECT ts, ntile(3) OVER (ORDER BY ts) FROM tab",
-                    """
-                            CachedWindow
-                              unorderedFunctions: [ntile(3) over (order by [ts])]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: tab
+                    (this.cacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") +
                             """
+                                      unorderedFunctions: [ntile(3) over (order by [ts])]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: tab
+                                    """
             );
             assertPlanNoLeakCheck(
                     "SELECT ts, ntile(2) OVER (PARTITION BY i ORDER BY ts) FROM tab",
-                    """
-                            CachedWindow
-                              unorderedFunctions: [ntile(2) over (partition by [i] order by [ts])]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: tab
+                    (this.cacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") +
                             """
+                                      unorderedFunctions: [ntile(2) over (partition by [i] order by [ts])]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: tab
+                                    """
             );
 
             assertPlanNoLeakCheck(
                     "SELECT ts, cume_dist() OVER (ORDER BY ts) FROM tab",
-                    """
-                            CachedWindow
-                              unorderedFunctions: [cume_dist() over (order by [ts])]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: tab
+                    (this.cacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") +
                             """
+                                      unorderedFunctions: [cume_dist() over (order by [ts])]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: tab
+                                    """
             );
             assertPlanNoLeakCheck(
                     "SELECT ts, cume_dist() OVER (PARTITION BY i ORDER BY ts) FROM tab",
-                    """
-                            CachedWindow
-                              unorderedFunctions: [cume_dist() over (partition by [i] order by [ts])]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: tab
+                    (this.cacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") +
                             """
+                                      unorderedFunctions: [cume_dist() over (partition by [i] order by [ts])]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: tab
+                                    """
             );
 
             assertPlanNoLeakCheck(
                     "SELECT ts, nth_value(val, 2) OVER (PARTITION BY i) FROM tab",
-                    """
-                            CachedWindow
-                              unorderedFunctions: [nth_value(val,2) over (partition by [i])]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: tab
+                    (this.cacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") +
                             """
+                                      unorderedFunctions: [nth_value(val,2) over (partition by [i])]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: tab
+                                    """
             );
         });
     }
@@ -12735,13 +12747,13 @@ public class WindowFunctionTest extends AbstractCairoTest {
             );
             assertPlanNoLeakCheck(
                     "select ts, nth_value(val, 2) over () from tab",
-                    """
-                            CachedWindow
-                              unorderedFunctions: [nth_value(val,2) over ()]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: tab
+                    (this.cacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") +
                             """
+                                      unorderedFunctions: [nth_value(val,2) over ()]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: tab
+                                    """
             );
             assertPlanNoLeakCheck(
                     "select ts, nth_value(val, 2) over (order by ts) from tab",
@@ -12783,13 +12795,13 @@ public class WindowFunctionTest extends AbstractCairoTest {
             );
             assertPlanNoLeakCheck(
                     "select ts, i, nth_value(val, 2) over (partition by i) from tab",
-                    """
-                            CachedWindow
-                              unorderedFunctions: [nth_value(val,2) over (partition by [i])]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: tab
+                    (this.cacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") +
                             """
+                                      unorderedFunctions: [nth_value(val,2) over (partition by [i])]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: tab
+                                    """
             );
             assertPlanNoLeakCheck(
                     "select ts, i, nth_value(val, 2) over (partition by i order by ts) from tab",
@@ -16272,13 +16284,13 @@ public class WindowFunctionTest extends AbstractCairoTest {
             );
             assertPlanNoLeakCheck(
                     "select ts, nth_value(val, 2) over () from tab",
-                    """
-                            CachedWindow
-                              unorderedFunctions: [nth_value(val,2) over ()]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: tab
+                    (this.cacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") +
                             """
+                                      unorderedFunctions: [nth_value(val,2) over ()]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: tab
+                                    """
             );
             assertPlanNoLeakCheck(
                     "select ts, nth_value(val, 2) over (order by ts) from tab",
@@ -16320,13 +16332,13 @@ public class WindowFunctionTest extends AbstractCairoTest {
             );
             assertPlanNoLeakCheck(
                     "select ts, i, nth_value(val, 2) over (partition by i) from tab",
-                    """
-                            CachedWindow
-                              unorderedFunctions: [nth_value(val,2) over (partition by [i])]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: tab
+                    (this.cacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") +
                             """
+                                      unorderedFunctions: [nth_value(val,2) over (partition by [i])]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: tab
+                                    """
             );
             assertPlanNoLeakCheck(
                     "select ts, i, nth_value(val, 2) over (partition by i order by ts) from tab",
@@ -16542,13 +16554,13 @@ public class WindowFunctionTest extends AbstractCairoTest {
             // NthValueOverWholeResultSetFunction
             assertPlanNoLeakCheck(
                     "select ts, nth_value(val, 2) over () from tab",
-                    """
-                            CachedWindow
-                              unorderedFunctions: [nth_value(val,2) over ()]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: tab
+                    (this.cacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") +
                             """
+                                      unorderedFunctions: [nth_value(val,2) over ()]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: tab
+                                    """
             );
             // NthValueOverUnboundedRowsFrameFunction (default frame with order by)
             assertPlanNoLeakCheck(
@@ -16596,13 +16608,13 @@ public class WindowFunctionTest extends AbstractCairoTest {
             // NthValueOverPartitionFunction (whole partition)
             assertPlanNoLeakCheck(
                     "select ts, i, nth_value(val, 2) over (partition by i) from tab",
-                    """
-                            CachedWindow
-                              unorderedFunctions: [nth_value(val,2) over (partition by [i])]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: tab
+                    (this.cacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") +
                             """
+                                      unorderedFunctions: [nth_value(val,2) over (partition by [i])]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: tab
+                                    """
             );
             // NthValueOverUnboundedPartitionFrameFunction, RANGE variant -- default frame
             // for "partition by x order by y" is RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW.
@@ -17185,63 +17197,63 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
             assertPlanNoLeakCheck(
                     "SELECT ntile(3) OVER () FROM tab",
-                    """
-                            CachedWindow
-                              unorderedFunctions: [ntile(3) over ()]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: tab
+                    (this.cacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") +
                             """
+                                      unorderedFunctions: [ntile(3) over ()]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: tab
+                                    """
             );
             assertPlanNoLeakCheck(
                     "SELECT ntile(3) OVER (PARTITION BY i) FROM tab",
-                    """
-                            CachedWindow
-                              unorderedFunctions: [ntile(3) over (partition by [i])]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: tab
+                    (this.cacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") +
                             """
+                                      unorderedFunctions: [ntile(3) over (partition by [i])]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: tab
+                                    """
             );
             assertPlanNoLeakCheck(
                     "SELECT ntile(3) OVER (ORDER BY ts) FROM tab",
-                    """
-                            CachedWindow
-                              unorderedFunctions: [ntile(3) over (order by [ts])]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: tab
+                    (this.cacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") +
                             """
+                                      unorderedFunctions: [ntile(3) over (order by [ts])]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: tab
+                                    """
             );
             assertPlanNoLeakCheck(
                     "SELECT ntile(3) OVER (PARTITION BY i ORDER BY ts) FROM tab",
-                    """
-                            CachedWindow
-                              unorderedFunctions: [ntile(3) over (partition by [i] order by [ts])]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: tab
+                    (this.cacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") +
                             """
+                                      unorderedFunctions: [ntile(3) over (partition by [i] order by [ts])]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: tab
+                                    """
             );
             assertPlanNoLeakCheck(
                     "SELECT ntile(3) OVER (ORDER BY val) FROM tab",
-                    """
-                            CachedWindow
-                              orderedFunctions: [[val] => [ntile(3) over (order by [val])]]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: tab
+                    (this.cacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") +
                             """
+                                      orderedFunctions: [[val] => [ntile(3) over (order by [val])]]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: tab
+                                    """
             );
             assertPlanNoLeakCheck(
                     "SELECT ntile(3) OVER (PARTITION BY i ORDER BY val) FROM tab",
-                    """
-                            CachedWindow
-                              orderedFunctions: [[val] => [ntile(3) over (partition by [i] order by [val])]]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: tab
+                    (this.cacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") +
                             """
+                                      orderedFunctions: [[val] => [ntile(3) over (partition by [i] order by [val])]]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: tab
+                                    """
             );
         });
     }
@@ -17833,13 +17845,15 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "order by ts asc",
                     """
                             SelectedRecord
-                                CachedWindow
-                                  orderedFunctions: [[j desc] => [lead(j, 1, NULL) over (partition by [i]),lead(j, 1, NULL) ignore nulls over (partition by [i])],[ts desc] => [avg(j) over (partition by [i] rows between unbounded preceding and current row),sum(j) over (partition by [i] rows between unbounded preceding and current row),first_value(j) over (partition by [i] rows between unbounded preceding and current row),first_value(j) ignore nulls over (partition by [i] rows between unbounded preceding and current row),last_value(j) over (partition by [i] rows between unbounded preceding and current row),last_value(j) ignore nulls over (partition by [i] rows between unbounded preceding and current row),count(*) over (partition by [i] rows between unbounded preceding and current row),count(j) over (partition by [i] rows between unbounded preceding and current row),count(s) over (partition by [i] rows between unbounded preceding and current row),count(d) over (partition by [i] rows between unbounded preceding and current row),count(c) over (partition by [i] rows between unbounded preceding and current row),max(j) over (partition by [i] rows between unbounded preceding and current row),min(j) over (partition by [i] rows between unbounded preceding and current row)],[j] => [rank() over (partition by [i]),dense_rank() over (partition by [i]),lag(j, 1, NULL) over (partition by [i]),lag(j, 1, NULL) ignore nulls over (partition by [i])]]
-                                  unorderedFunctions: [row_number() over (partition by [i])]
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: tab
+                            """ +
+                            (this.cacheLightWindowEnabled ? "    CachedWindowLight\n" : "    CachedWindow\n") +
                             """
+                                          orderedFunctions: [[j desc] => [lead(j, 1, NULL) over (partition by [i]),lead(j, 1, NULL) ignore nulls over (partition by [i])],[ts desc] => [avg(j) over (partition by [i] rows between unbounded preceding and current row),sum(j) over (partition by [i] rows between unbounded preceding and current row),first_value(j) over (partition by [i] rows between unbounded preceding and current row),first_value(j) ignore nulls over (partition by [i] rows between unbounded preceding and current row),last_value(j) over (partition by [i] rows between unbounded preceding and current row),last_value(j) ignore nulls over (partition by [i] rows between unbounded preceding and current row),count(*) over (partition by [i] rows between unbounded preceding and current row),count(j) over (partition by [i] rows between unbounded preceding and current row),count(s) over (partition by [i] rows between unbounded preceding and current row),count(d) over (partition by [i] rows between unbounded preceding and current row),count(c) over (partition by [i] rows between unbounded preceding and current row),max(j) over (partition by [i] rows between unbounded preceding and current row),min(j) over (partition by [i] rows between unbounded preceding and current row)],[j] => [rank() over (partition by [i]),dense_rank() over (partition by [i]),lag(j, 1, NULL) over (partition by [i]),lag(j, 1, NULL) ignore nulls over (partition by [i])]]
+                                          unorderedFunctions: [row_number() over (partition by [i])]
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: tab
+                                    """
             );
 
             assertQueryNoLeakCheck(
@@ -18587,13 +18601,13 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "lead(ts) over (order by ts rows between 2 preceding and 4 preceding), " +
                             "lag(ts) over (order by ts rows between 2 preceding and 4 preceding), " +
                             "from tab",
-                    """
-                            CachedWindow
-                              unorderedFunctions: [avg(d) over ( range between 2 preceding and 4 preceding),sum(d) over ( rows between 2 preceding and 4 preceding),first_value(j) over ( rows between 2 preceding and 4 preceding),last_value(j) over ( rows between 2 preceding and 4 preceding),count(*) over ( rows between 2 preceding and 4 preceding),count(d) over ( rows between 2 preceding and 4 preceding),count(s) over ( rows between 2 preceding and 4 preceding),count(c) over ( rows between 2 preceding and 4 preceding),max(d) over ( rows between 2 preceding and 4 preceding),min(d) over ( rows between 2 preceding and 4 preceding),lead(ts, 1, NULL) over (),lag(ts, 1, NULL) over ()]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: tab
-                            """,
+                    (this.cacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") +
+                            """
+                                      unorderedFunctions: [avg(d) over ( range between 2 preceding and 4 preceding),sum(d) over ( rows between 2 preceding and 4 preceding),first_value(j) over ( rows between 2 preceding and 4 preceding),last_value(j) over ( rows between 2 preceding and 4 preceding),count(*) over ( rows between 2 preceding and 4 preceding),count(d) over ( rows between 2 preceding and 4 preceding),count(s) over ( rows between 2 preceding and 4 preceding),count(c) over ( rows between 2 preceding and 4 preceding),max(d) over ( rows between 2 preceding and 4 preceding),min(d) over ( rows between 2 preceding and 4 preceding),lead(ts, 1, NULL) over (),lag(ts, 1, NULL) over ()]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: tab
+                                    """,
                     replaceTimestampSuffix("""
                             ts\ti\tj\tavg\tsum\tfirst_value\tlast_value\tcount\tcount1\tcount2\tcount3\tmax\tmin\tlead\tlag
                             1970-01-01T00:00:00.000001Z\t0\t1\tnull\tnull\tnull\tnull\t0\t0\t0\t0\tnull\tnull\t1970-01-01T00:00:00.000002Z\t
@@ -18624,13 +18638,13 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "lead(ts) over (partition by s order by ts rows between 2 preceding and 4 preceding), " +
                             "lag(ts) over (partition by s order by ts rows between 2 preceding and 4 preceding), " +
                             "from tab",
-                    """
-                            CachedWindow
-                              unorderedFunctions: [avg(d) over (partition by [s] range between 2 preceding and 4 preceding),sum(d) over (partition by [s] rows between 2 preceding and 4 preceding),first_value(j) over (partition by [s] rows between 2 preceding and 4 preceding),last_value(j) over (partition by [s] rows between 2 preceding and 4 preceding),count(*) over (partition by [s] rows between 2 preceding and 4 preceding),count(d) over (partition by [s] rows between 2 preceding and 4 preceding),count(s) over (partition by [s] rows between 2 preceding and 4 preceding),count(c) over (partition by [s] rows between 2 preceding and 4 preceding),max(d) over (partition by [s] rows between 2 preceding and 4 preceding),min(d) over (partition by [s] rows between 2 preceding and 4 preceding),lead(ts, 1, NULL) over (partition by [s]),lag(ts, 1, NULL) over (partition by [s])]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: tab
-                            """,
+                    (this.cacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") +
+                            """
+                                      unorderedFunctions: [avg(d) over (partition by [s] range between 2 preceding and 4 preceding),sum(d) over (partition by [s] rows between 2 preceding and 4 preceding),first_value(j) over (partition by [s] rows between 2 preceding and 4 preceding),last_value(j) over (partition by [s] rows between 2 preceding and 4 preceding),count(*) over (partition by [s] rows between 2 preceding and 4 preceding),count(d) over (partition by [s] rows between 2 preceding and 4 preceding),count(s) over (partition by [s] rows between 2 preceding and 4 preceding),count(c) over (partition by [s] rows between 2 preceding and 4 preceding),max(d) over (partition by [s] rows between 2 preceding and 4 preceding),min(d) over (partition by [s] rows between 2 preceding and 4 preceding),lead(ts, 1, NULL) over (partition by [s]),lag(ts, 1, NULL) over (partition by [s])]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: tab
+                                    """,
                     replaceTimestampSuffix("""
                             ts\ti\tj\tavg\tsum\tfirst_value\tlast_value\tcount\tcount1\tcount2\tcount3\tmax\tmin\tlead\tlag
                             1970-01-01T00:00:00.000001Z\t0\t1\tnull\tnull\tnull\tnull\t0\t0\t0\t0\tnull\tnull\t1970-01-01T00:00:00.000006Z\t
@@ -20393,13 +20407,13 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "lag(j) ignore nulls over (), " +
                             "lead(j) ignore nulls over () " +
                             "from tab",
-                    replacePlanTimestamp("""
-                            CachedWindow
-                              unorderedFunctions: [first_value(j) over (),first_value(j) ignore nulls over (),last_value(j) over (),last_value(j) ignore nulls over (),avg(j) over (),sum(j) over (),count(j) over (),count(*) over (),count(c) over (),count(sym) over (),max(j) over (),min(j) over (),row_number(),rank() over (),dense_rank() over (),lag(j, 1, NULL) over (),lead(j, 1, NULL) over (),lag(j, 1, NULL) ignore nulls over (),lead(j, 1, NULL) ignore nulls over ()]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: tab
-                            """),
+                    replacePlanTimestamp((this.cacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") +
+                            """
+                                      unorderedFunctions: [first_value(j) over (),first_value(j) ignore nulls over (),last_value(j) over (),last_value(j) ignore nulls over (),avg(j) over (),sum(j) over (),count(j) over (),count(*) over (),count(c) over (),count(sym) over (),max(j) over (),min(j) over (),row_number(),rank() over (),dense_rank() over (),lag(j, 1, NULL) over (),lead(j, 1, NULL) over (),lag(j, 1, NULL) ignore nulls over (),lead(j, 1, NULL) ignore nulls over ()]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: tab
+                                    """),
                     "ts\ti\tj\tfirst_value\tfirst_value_ignore_nulls\tlast_value\tlast_value_ignore_nulls\tavg\tsum\tcount\tcount1\tcount2\tcount3\tmax\tmin\trow_number\trank\tdense_rank\tlag\tlead\tlag_ignore_nulls\tlead_ignore_nulls\n",
                     "ts",
                     true,
@@ -20409,13 +20423,13 @@ public class WindowFunctionTest extends AbstractCairoTest {
             assertQueryAndPlan(
                     "select ts, i, j, first_value(j) over(), first_value(j) ignore nulls over(), last_value(j) over(), last_value(j) ignore nulls over(), avg(j) over (), sum(j) over (), count(*) over (), count(j) over (), count(sym) over (), count(c) over (), " +
                             "max(j) over (), min(j) over () from tab order by ts desc",
-                    """
-                            CachedWindow
-                              unorderedFunctions: [first_value(j) over (),first_value(j) ignore nulls over (),last_value(j) over (),last_value(j) ignore nulls over (),avg(j) over (),sum(j) over (),count(*) over (),count(j) over (),count(sym) over (),count(c) over (),max(j) over (),min(j) over ()]
-                                PageFrame
-                                    Row backward scan
-                                    Frame backward scan on: tab
-                            """,
+                    (this.cacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") +
+                            """
+                                      unorderedFunctions: [first_value(j) over (),first_value(j) ignore nulls over (),last_value(j) over (),last_value(j) ignore nulls over (),avg(j) over (),sum(j) over (),count(*) over (),count(j) over (),count(sym) over (),count(c) over (),max(j) over (),min(j) over ()]
+                                        PageFrame
+                                            Row backward scan
+                                            Frame backward scan on: tab
+                                    """,
                     "ts\ti\tj\tfirst_value\tfirst_value_ignore_nulls\tlast_value\tlast_value_ignore_nulls\tavg\tsum\tcount\tcount1\tcount2\tcount3\tmax\tmin\n",
                     "ts###desc",
                     true,
@@ -20437,13 +20451,13 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "max(j) over (order by ts), " +
                             "min(j) over (order by ts) " +
                             "from tab",
-                    """
-                            CachedWindow
-                              unorderedFunctions: [first_value(j) over (),first_value(j) ignore nulls over (),last_value(j) over (range between unbounded preceding and current row),last_value(j) ignore nulls over (rows between unbounded preceding and current row),avg(j) over (rows between unbounded preceding and current row),sum(j) over (rows between unbounded preceding and current row),count(*) over (rows between unbounded preceding and current row),count(j) over (rows between unbounded preceding and current row),count(sym) over (rows between unbounded preceding and current row),count(c) over (rows between unbounded preceding and current row),max(j) over (rows between unbounded preceding and current row),min(j) over (rows between unbounded preceding and current row)]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: tab
-                            """,
+                    (this.cacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") +
+                            """
+                                      unorderedFunctions: [first_value(j) over (),first_value(j) ignore nulls over (),last_value(j) over (range between unbounded preceding and current row),last_value(j) ignore nulls over (rows between unbounded preceding and current row),avg(j) over (rows between unbounded preceding and current row),sum(j) over (rows between unbounded preceding and current row),count(*) over (rows between unbounded preceding and current row),count(j) over (rows between unbounded preceding and current row),count(sym) over (rows between unbounded preceding and current row),count(c) over (rows between unbounded preceding and current row),max(j) over (rows between unbounded preceding and current row),min(j) over (rows between unbounded preceding and current row)]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: tab
+                                    """,
                     "ts\ti\tj\tfirst_value\tfirst_value_ignore_nulls\tlast_value\tlast_value_ignore_nulls\tavg\tsum\tcount\tcount1\tcount2\tcount3\tmax\tmin\n",
                     "ts",
                     true,
@@ -20465,13 +20479,13 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "max(j) over (order by ts desc), " +
                             "min(j) over (order by ts desc) " +
                             "from tab order by ts desc",
-                    """
-                            CachedWindow
-                              unorderedFunctions: [first_value(j) over (),first_value(j) ignore nulls over (),last_value(j) over (range between unbounded preceding and current row),last_value(j) ignore nulls over (rows between unbounded preceding and current row),avg(j) over (rows between unbounded preceding and current row),sum(j) over (rows between unbounded preceding and current row),count(*) over (rows between unbounded preceding and current row),count(j) over (rows between unbounded preceding and current row),count(sym) over (rows between unbounded preceding and current row),count(c) over (rows between unbounded preceding and current row),max(j) over (rows between unbounded preceding and current row),min(j) over (rows between unbounded preceding and current row)]
-                                PageFrame
-                                    Row backward scan
-                                    Frame backward scan on: tab
-                            """,
+                    (this.cacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") +
+                            """
+                                      unorderedFunctions: [first_value(j) over (),first_value(j) ignore nulls over (),last_value(j) over (range between unbounded preceding and current row),last_value(j) ignore nulls over (rows between unbounded preceding and current row),avg(j) over (rows between unbounded preceding and current row),sum(j) over (rows between unbounded preceding and current row),count(*) over (rows between unbounded preceding and current row),count(j) over (rows between unbounded preceding and current row),count(sym) over (rows between unbounded preceding and current row),count(c) over (rows between unbounded preceding and current row),max(j) over (rows between unbounded preceding and current row),min(j) over (rows between unbounded preceding and current row)]
+                                        PageFrame
+                                            Row backward scan
+                                            Frame backward scan on: tab
+                                    """,
                     "ts\ti\tj\tfirst_value\tfirst_value_ignore_nulls\tlast_value\tlast_value_ignore_nulls\tavg\tsum\tcount\tcount1\tcount2\tcount3\tmax\tmin\n",
                     "ts###desc",
                     true,
@@ -20493,13 +20507,13 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "max(j) over (partition by i), " +
                             "min(j) over (partition by i) " +
                             "from tab",
-                    """
-                            CachedWindow
-                              unorderedFunctions: [first_value(j) over (partition by [i]),first_value(j) ignore nulls over (partition by [i]),last_value(j) over (partition by [i]),last_value(j) ignore nulls over (partition by [i]),avg(j) over (partition by [i]),sum(j) over (partition by [i]),count(*) over (partition by [i]),count(j) over (partition by [i]),count(sym) over (partition by [i]),count(c) over (partition by [i]),max(j) over (partition by [i]),min(j) over (partition by [i])]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: tab
-                            """,
+                    (this.cacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") +
+                            """
+                                      unorderedFunctions: [first_value(j) over (partition by [i]),first_value(j) ignore nulls over (partition by [i]),last_value(j) over (partition by [i]),last_value(j) ignore nulls over (partition by [i]),avg(j) over (partition by [i]),sum(j) over (partition by [i]),count(*) over (partition by [i]),count(j) over (partition by [i]),count(sym) over (partition by [i]),count(c) over (partition by [i]),max(j) over (partition by [i]),min(j) over (partition by [i])]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: tab
+                                    """,
                     "ts\ti\tj\tfirst_value\tfirst_value_ignore_nulls\tlast_value\tlast_value_ignore_nulls\tavg\tsum\tcount\tcount1\tcount2\tcount3\tmax\tmin\n",
                     "ts",
                     true,
@@ -20521,13 +20535,13 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "max(j) over (partition by i), " +
                             "min(j) over (partition by i) " +
                             "from tab order by ts desc",
-                    """
-                            CachedWindow
-                              unorderedFunctions: [first_value(j) over (partition by [i]),first_value(j) ignore nulls over (partition by [i]),last_value(j) over (partition by [i]),last_value(j) ignore nulls over (partition by [i]),avg(j) over (partition by [i]),sum(j) over (partition by [i]),count(*) over (partition by [i]),count(j) over (partition by [i]),count(sym) over (partition by [i]),count(c) over (partition by [i]),max(j) over (partition by [i]),min(j) over (partition by [i])]
-                                PageFrame
-                                    Row backward scan
-                                    Frame backward scan on: tab
-                            """,
+                    (this.cacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") +
+                            """
+                                      unorderedFunctions: [first_value(j) over (partition by [i]),first_value(j) ignore nulls over (partition by [i]),last_value(j) over (partition by [i]),last_value(j) ignore nulls over (partition by [i]),avg(j) over (partition by [i]),sum(j) over (partition by [i]),count(*) over (partition by [i]),count(j) over (partition by [i]),count(sym) over (partition by [i]),count(c) over (partition by [i]),max(j) over (partition by [i]),min(j) over (partition by [i])]
+                                        PageFrame
+                                            Row backward scan
+                                            Frame backward scan on: tab
+                                    """,
                     "ts\ti\tj\tfirst_value\tfirst_value_ignore_nulls\tlast_value\tlast_value_ignore_nulls\tavg\tsum\tcount\tcount1\tcount2\tcount3\tmax\tmin\n",
                     "ts###desc",
                     true,
@@ -20738,7 +20752,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     "select ts, i, j, lead(j) over(), lag(j) over (), lead(j) ignore nulls over(), lag(j) ignore nulls over (), lead(j) respect nulls over(), lag(j) respect nulls over () from tab where sym = 'X'",
                     """
                             SelectedRecord
-                                CachedWindow
+                            """ + (this.cacheLightWindowEnabled ? "    CachedWindowLight\n" : "    CachedWindow\n") + """
                                   unorderedFunctions: [lead(j, 1, NULL) over (),lag(j, 1, NULL) over (),lead(j, 1, NULL) ignore nulls over (),lag(j, 1, NULL) ignore nulls over ()]
                                     DeferredSingleSymbolFilterPageFrame
                                         Index forward scan on: sym deferred: true
@@ -20756,13 +20770,14 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     "select ts, i, j, lead(j) over(), lag(j) over (), lead(j) ignore nulls over(), lag(j) ignore nulls over (), lead(j) respect nulls over(), lag(j) respect nulls over () from tab where sym = 'X' order by ts desc",
                     """
                             SelectedRecord
-                                CachedWindow
-                                  unorderedFunctions: [lead(j, 1, NULL) over (),lag(j, 1, NULL) over (),lead(j, 1, NULL) ignore nulls over (),lag(j, 1, NULL) ignore nulls over ()]
-                                    DeferredSingleSymbolFilterPageFrame
-                                        Index backward scan on: sym deferred: true
-                                          filter: sym='X'
-                                        Frame backward scan on: tab
-                            """,
+                            """ + (this.cacheLightWindowEnabled ? "    CachedWindowLight\n" : "    CachedWindow\n") +
+                            """
+                                          unorderedFunctions: [lead(j, 1, NULL) over (),lag(j, 1, NULL) over (),lead(j, 1, NULL) ignore nulls over (),lag(j, 1, NULL) ignore nulls over ()]
+                                            DeferredSingleSymbolFilterPageFrame
+                                                Index backward scan on: sym deferred: true
+                                                  filter: sym='X'
+                                                Frame backward scan on: tab
+                                    """,
                     "ts\ti\tj\tlead\tlag\tlead_ignore_nulls\tlag_ignore_nulls\tlead1\tlag1\n",
                     "ts###desc",
                     true,
@@ -20776,16 +20791,17 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     """
                             SelectedRecord
                                 SelectedRecord
-                                    CachedWindow
-                                      unorderedFunctions: [lead(j, 1, NULL) over (),lag(j, 1, NULL) over (),lead(j, 1, NULL) ignore nulls over (),lag(j, 1, NULL) ignore nulls over ()]
-                                        FilterOnValues symbolOrder: asc
-                                            Cursor-order scan
-                                                Index forward scan on: sym deferred: true
-                                                  filter: sym='X'
-                                                Index forward scan on: sym deferred: true
-                                                  filter: sym='Y'
-                                            Frame forward scan on: tab
-                            """,
+                            """ + (this.cacheLightWindowEnabled ? "        CachedWindowLight\n" : "        CachedWindow\n") +
+                            """
+                                              unorderedFunctions: [lead(j, 1, NULL) over (),lag(j, 1, NULL) over (),lead(j, 1, NULL) ignore nulls over (),lag(j, 1, NULL) ignore nulls over ()]
+                                                FilterOnValues symbolOrder: asc
+                                                    Cursor-order scan
+                                                        Index forward scan on: sym deferred: true
+                                                          filter: sym='X'
+                                                        Index forward scan on: sym deferred: true
+                                                          filter: sym='Y'
+                                                    Frame forward scan on: tab
+                                    """,
                     "ts\ti\tj\tlead\tlag\tlead_ignore_nulls\tlag_ignore_nulls\tlead1\tlag1\n",
                     null,
                     true,
@@ -21344,7 +21360,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
                 assertPlanNoLeakCheck(
                         "select ts, i, j, #FUNCT_NAME over (partition by i order by ts desc rows between 1 preceding and current row) from tab".replace("#FUNCT_NAME", func).replace("#COLUMN", "1"),
-                        "CachedWindow\n" +
+                        (this.cacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") +
                                 "  orderedFunctions: [[ts desc] => [#FUNCT_NAME(1) over (partition by [i] rows between 1 preceding and current row)]]\n".replace("#FUNCT_NAME(1)", replace) +
                                 "    PageFrame\n" +
                                 "        Row forward scan\n" +
@@ -21353,7 +21369,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
                 assertPlanNoLeakCheck(
                         "select ts, i, j, #FUNCT_NAME over (partition by i order by ts asc rows between 1 preceding and current row)  from tab order by ts desc".replace("#FUNCT_NAME", func).replace("#COLUMN", "1"),
-                        "CachedWindow\n" +
+                        (this.cacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") +
                                 "  orderedFunctions: [[ts] => [#FUNCT_NAME(1) over (partition by [i] rows between 1 preceding and current row)]]\n".replace("#FUNCT_NAME(1)", replace) +
                                 "    PageFrame\n" +
                                 "        Row backward scan\n" +
@@ -21373,7 +21389,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                                 "              filter: sym='A'\n" +
                                 "        Frame forward scan on: tab\n"
                                 :
-                                "CachedWindow\n" +
+                                (this.cacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") +
                                         "  orderedFunctions: [[ts] => [#FUNCT_NAME(1) over (partition by [i] rows between 1 preceding and current row)]]\n".replace("#FUNCT_NAME(1)", replace) +
                                 "    FilterOnValues symbolOrder: desc\n" +
                                 "        Cursor-order scan\n" +
@@ -21387,7 +21403,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
                 assertPlanNoLeakCheck(
                         "select ts, i, j, #FUNCT_NAME over (partition by i order by ts desc rows between 1 preceding and current row)  from tab where sym = 'A'".replace("#FUNCT_NAME", func).replace("#COLUMN", "1"),
-                        "CachedWindow\n" +
+                        (this.cacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") +
                                 "  orderedFunctions: [[ts desc] => [#FUNCT_NAME(1) over (partition by [i] rows between 1 preceding and current row)]]\n".replace("#FUNCT_NAME(1)", replace) +
                                 "    DeferredSingleSymbolFilterPageFrame\n" +
                                 "        Index forward scan on: sym deferred: true\n" +

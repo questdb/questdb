@@ -327,6 +327,7 @@ import io.questdb.griffin.engine.union.IntersectRecordCursorFactory;
 import io.questdb.griffin.engine.union.SetRecordCursorFactoryConstructor;
 import io.questdb.griffin.engine.union.UnionAllRecordCursorFactory;
 import io.questdb.griffin.engine.union.UnionRecordCursorFactory;
+import io.questdb.griffin.engine.window.CachedWindowLightRecordCursorFactory;
 import io.questdb.griffin.engine.window.CachedWindowRecordCursorFactory;
 import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.griffin.engine.window.WindowRecordCursorFactory;
@@ -1370,8 +1371,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             if (hasNonLagLeadSiblingInSortGroup(columns, columnCount, i, orderByNode.token, direction)) {
                 continue;
             }
-            swapLagLeadToken(ast);
-            ac.getOrderByDirection().setQuick(0, 1 - direction);
+            if (swapLagLeadToken(ast)) {
+                ac.getOrderByDirection().setQuick(0, 1 - direction);
+            }
         }
     }
 
@@ -9816,6 +9818,36 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 windowComparators.add(comparator);
                 functionGroups.add(e.value);
                 keys.add(e.key);
+            }
+
+            if (configuration.isSqlWindowCachedLightEnabled() && base.recordCursorSupportsRandomAccess()) {
+                final IntList sourceMap = new IntList();
+                final ArrayColumnTypes narrowChainTypes = new ArrayColumnTypes();
+                narrowChainTypes.add(ColumnType.LONG);
+                int narrowIdx = 1;
+                for (int c = 0, chainColCount = chainTypes.getColumnCount(); c < chainColCount; c++) {
+                    final TableColumnMetadata m = deferredWindowMetadata.getQuiet(c);
+                    if (m != null) {
+                        sourceMap.add(-narrowIdx - 1);
+                        narrowChainTypes.add(m.getColumnType());
+                        narrowIdx++;
+                    } else {
+                        sourceMap.add(columnIndexes.getQuick(c));
+                    }
+                }
+                return new CachedWindowLightRecordCursorFactory(
+                        configuration,
+                        base,
+                        factoryMetadata,
+                        narrowChainTypes,
+                        windowComparators,
+                        functionGroups,
+                        naturalOrderFunctions,
+                        columnIndexes,
+                        keys,
+                        chainMetadata,
+                        sourceMap
+                );
             }
 
             final RecordSink recordSink = RecordSinkFactory.getInstance(

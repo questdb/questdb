@@ -24,13 +24,27 @@
 
 package io.questdb.test.griffin.engine.window;
 
+import io.questdb.PropertyKey;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
+
+import static io.questdb.test.tools.TestUtils.generateRandom;
 
 /**
  * Tests for Volume-Weighted Exponential Moving Average (VWEMA) window function.
  */
 public class VwemaWindowFunctionTest extends AbstractCairoTest {
+    private final boolean cacheLightWindowEnabled;
+
+    public VwemaWindowFunctionTest() {
+        this.cacheLightWindowEnabled = generateRandom(LOG).nextBoolean();
+    }
+
+    @Override
+    public void setUp() {
+        setProperty(PropertyKey.CAIRO_SQL_WINDOW_CACHED_LIGHT_ENABLED, Boolean.toString(this.cacheLightWindowEnabled));
+        super.setUp();
+    }
 
     @Test
     public void testVwemaAlphaEqualsOne() throws Exception {

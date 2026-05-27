@@ -49,7 +49,7 @@ public class PgAttributeFunctionFactoryTest extends AbstractCairoTest {
                             SelectedRecord
                                 Encode sort light
                                   keys: [b1]
-                                    CachedWindow
+                                    CachedWindowLight
                                       orderedFunctions: [[b desc] => [row_number() over (partition by [a1])]]
                                         SelectedRecord
                                             PageFrame

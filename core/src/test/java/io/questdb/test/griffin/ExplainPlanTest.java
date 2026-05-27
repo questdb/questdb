@@ -670,14 +670,14 @@ public class ExplainPlanTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCachedWindowRecordCursorFactoryWithLimit() throws Exception {
+    public void testCachedWindowLightRecordCursorFactoryWithLimit() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table x as ( " + "  select " + "    cast(x as int) i, " + "    rnd_symbol('a','b','c') sym, " + "    timestamp_sequence(0, 100000000) ts " + "   from long_sequence(100)" + ") timestamp(ts) partition by hour");
 
             String sql = "select i, " + "row_number() over (partition by sym), " + "avg(i) over (), " + "sum(i) over (), " + "first_value(i) over (), " + "from x limit 3";
             assertPlanNoLeakCheck(sql, """
                     Limit value: 3 skip-rows-max: 0 take-rows-max: 3
-                        CachedWindow
+                        CachedWindowLight
                           unorderedFunctions: [row_number() over (partition by [sym]),avg(i) over (),sum(i) over (),first_value(i) over ()]
                             PageFrame
                                 Row forward scan
@@ -1022,7 +1022,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
             assertPlanNoLeakCheck(query, """
                     Distinct
                       keys: avg
-                        CachedWindow
+                        CachedWindowLight
                           unorderedFunctions: [avg(event) over (partition by [1])]
                             PageFrame
                                 Row forward scan
@@ -5590,7 +5590,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
             assertPlanNoLeakCheck(query, """
                     Filter filter: (rownum=1 and c=5)
-                        CachedWindow
+                        CachedWindowLight
                           orderedFunctions: [[b] => [row_number() over (partition by [a])]]
                             Union
                                 VirtualRecord
@@ -9036,30 +9036,6 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 """);
     }
 
-    @Test // VirtualRecord over JIT filter: projection peel reaches leaf; outer SelectedRecord is added later
-    public void testSelectWhereOrderByLimit_virtualRecordPeel() throws Exception {
-        // ORDER BY str references a column absent from the SELECT list, forcing the
-        // optimizer to keep str inside VirtualRecord for the sort but project it away on top.
-        // The top-K gate fires while recordCursorFactory is the VirtualRecord wrapper:
-        // translateOrderByColumnToBase peels VirtualRecord -> JIT filter leaf in a single step.
-        // The outer SelectedRecord visible in the plan is added afterwards by generateSelectChoose
-        // and is not what the gate inspects.
-        assertPlan(
-                "create table xx ( x long, str varchar ) ",
-                "select x + 1 as xp, x from xx where str is not null order by str desc limit 10",
-                """
-                        SelectedRecord
-                            VirtualRecord
-                              functions: [x+1,x,str]
-                                Async JIT Top K lo: 10 workers: 1
-                                  filter: str is not null
-                                  keys: [str desc]
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: xx
-                        """);
-    }
-
     @Test // two-bound LIMIT is not a top-K candidate; Sort light handles it
     public void testSelectWhereOrderByLimit9() throws Exception {
         assertPlan("create table xx ( x long, str varchar ) ", "select x, * from xx where str is not null order by str desc limit 10, 20", """
@@ -9071,19 +9047,6 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             PageFrame
                                 Row forward scan
                                 Frame forward scan on: xx
-                """);
-    }
-
-    @Test // multi-key ORDER BY translates every key through a SelectedRecord wrapper
-    public void testSelectWhereOrderByLimit_multiKeyThroughSelectedRecord() throws Exception {
-        assertPlan("create table xx ( x long, str varchar ) ", "select x, * from xx where str is not null order by str desc, x asc limit 10", """
-                SelectedRecord
-                    Async JIT Top K lo: 10 workers: 1
-                      filter: str is not null
-                      keys: [str desc, x]
-                        PageFrame
-                            Row forward scan
-                            Frame forward scan on: xx
                 """);
     }
 
@@ -9110,6 +9073,19 @@ public class ExplainPlanTest extends AbstractCairoTest {
         );
     }
 
+    @Test // multi-key ORDER BY translates every key through a SelectedRecord wrapper
+    public void testSelectWhereOrderByLimit_multiKeyThroughSelectedRecord() throws Exception {
+        assertPlan("create table xx ( x long, str varchar ) ", "select x, * from xx where str is not null order by str desc, x asc limit 10", """
+                SelectedRecord
+                    Async JIT Top K lo: 10 workers: 1
+                      filter: str is not null
+                      keys: [str desc, x]
+                        PageFrame
+                            Row forward scan
+                            Frame forward scan on: xx
+                """);
+    }
+
     @Test // multi-key ORDER BY translates every key through a VirtualRecord wrapper
     public void testSelectWhereOrderByLimit_multiKeyThroughVirtualRecord() throws Exception {
         assertPlan("create table xx ( x long, str varchar ) ", "select x + 1 as xp, x from xx where str is not null order by str desc, x asc limit 10", """
@@ -9123,6 +9099,30 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                 Row forward scan
                                 Frame forward scan on: xx
                 """);
+    }
+
+    @Test // VirtualRecord over JIT filter: projection peel reaches leaf; outer SelectedRecord is added later
+    public void testSelectWhereOrderByLimit_virtualRecordPeel() throws Exception {
+        // ORDER BY str references a column absent from the SELECT list, forcing the
+        // optimizer to keep str inside VirtualRecord for the sort but project it away on top.
+        // The top-K gate fires while recordCursorFactory is the VirtualRecord wrapper:
+        // translateOrderByColumnToBase peels VirtualRecord -> JIT filter leaf in a single step.
+        // The outer SelectedRecord visible in the plan is added afterwards by generateSelectChoose
+        // and is not what the gate inspects.
+        assertPlan(
+                "create table xx ( x long, str varchar ) ",
+                "select x + 1 as xp, x from xx where str is not null order by str desc limit 10",
+                """
+                        SelectedRecord
+                            VirtualRecord
+                              functions: [x+1,x,str]
+                                Async JIT Top K lo: 10 workers: 1
+                                  filter: str is not null
+                                  keys: [str desc]
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: xx
+                        """);
     }
 
     @Test
@@ -10432,7 +10432,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testWindow0() throws Exception {
         assertPlan("create table t as ( select x l, x::string str, x::timestamp ts from long_sequence(100))", "select ts, str,  row_number() over (order by l), row_number() over (partition by l) from t", """
-                CachedWindow
+                CachedWindowLight
                   orderedFunctions: [[l] => [row_number()]]
                   unorderedFunctions: [row_number() over (partition by [l])]
                     PageFrame
@@ -10444,7 +10444,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testWindow1() throws Exception {
         assertPlan("create table t as ( select x l, x::string str, x::timestamp ts from long_sequence(100))", "select str, ts, l, 10, row_number() over ( partition by l order by ts) from t", """
-                CachedWindow
+                CachedWindowLight
                   orderedFunctions: [[ts] => [row_number() over (partition by [l])]]
                     VirtualRecord
                       functions: [str,ts,l,10]
@@ -10457,7 +10457,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testWindow2() throws Exception {
         assertPlan("create table t as ( select x l, x::string str, x::timestamp ts from long_sequence(100))", "select str, ts, l as l1, ts::long+l as tsum, row_number() over ( partition by l, ts order by str) from t", """
-                CachedWindow
+                CachedWindowLight
                   orderedFunctions: [[str] => [row_number() over (partition by [l1,ts])]]
                     VirtualRecord
                       functions: [str,ts,l1,ts::long+l1]
@@ -10474,7 +10474,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
             execute("create table tab (ts timestamp, i long, j long) timestamp(ts)");
 
             assertPlanNoLeakCheck("select ts, i, j, " + "avg(j) over (order by i, j rows unbounded preceding), " + "sum(j) over (order by i, j rows unbounded preceding), " + "first_value(j) over (order by i, j rows unbounded preceding), " + "from tab", """
-                    CachedWindow
+                    CachedWindowLight
                       orderedFunctions: [[i, j] => [avg(j) over (rows between unbounded preceding and current row),\
                     sum(j) over (rows between unbounded preceding and current row),first_value(j) over ()]]
                         PageFrame
@@ -10493,7 +10493,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
             assertPlanNoLeakCheck("select row_number() over (partition by i order by i desc, j asc), " + "avg(j) over (partition by i order by j, i desc rows unbounded preceding), " + "sum(j) over (partition by i order by j, i desc rows unbounded preceding), " + "first_value(j) over (partition by i order by j, i desc rows unbounded preceding) " + "from tab " + "order by ts desc", """
                     SelectedRecord
-                        CachedWindow
+                        CachedWindowLight
                           orderedFunctions: [[i desc, j] => [row_number() over (partition by [i])],\
                     [j, i desc] => [avg(j) over (partition by [i] rows between unbounded preceding and current row),\
                     sum(j) over (partition by [i] rows between unbounded preceding and current row),\
@@ -10505,7 +10505,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
             assertPlanNoLeakCheck("select row_number() over (partition by i order by i desc, j asc), " + "        avg(j) over (partition by i, j order by i desc, j asc rows unbounded preceding), " + "        sum(j) over (partition by i, j order by i desc, j asc rows unbounded preceding), " + "        first_value(j) over (partition by i, j order by i desc, j asc rows unbounded preceding), " + "        rank() over (partition by j, i) " + "from tab order by ts desc", """
                     SelectedRecord
-                        CachedWindow
+                        CachedWindowLight
                           orderedFunctions: [[i desc, j] => [row_number() over (partition by [i]),avg(j) over (partition by [i,j] rows between unbounded preceding and current row),\
                     sum(j) over (partition by [i,j] rows between unbounded preceding and current row),\
                     first_value(j) over (partition by [i,j] rows between unbounded preceding and current row)]]
@@ -10769,7 +10769,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                               keys: [sum desc]
                                 GroupBy vectorized: false
                                   values: [sum(avg),sum(sum),count(first_value)]
-                                    CachedWindow
+                                    CachedWindowLight
                                       orderedFunctions: [[ts desc] => [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row),sum(usage_system) over (partition by [hostname] rows between 100 preceding and current row),first_value(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]]
                                         PageFrame
                                             Row forward scan
@@ -10824,7 +10824,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     """);
 
             assertPlanNoLeakCheck("select * from " + "( " + "select ts, hostname, usage_system, " + "avg(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) avg, " + "sum(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) sum, " + "first_value(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) first_value " + "from (select * from cpu_ts order by ts desc) " + ") order by ts asc ", """
-                    CachedWindow
+                    CachedWindowLight
                       orderedFunctions: [[ts desc] => [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row),\
                     sum(usage_system) over (partition by [hostname] rows between 100 preceding and current row),\
                     first_value(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]]
@@ -10834,7 +10834,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     """);
 
             assertPlanNoLeakCheck("select * from " + "( " + "select ts, hostname, usage_system, " + "avg(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) avg, " + "sum(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) sum, " + "first_value(usage_system) over(partition by hostname order by ts asc rows between 100 preceding and current row) first_value " + "from (select * from cpu_ts order by ts asc) " + ") order by ts desc ", """
-                    CachedWindow
+                    CachedWindowLight
                       orderedFunctions: [[ts] => [avg(usage_system) over (partition by [hostname] rows between 100 preceding and current row),\
                     sum(usage_system) over (partition by [hostname] rows between 100 preceding and current row),\
                     first_value(usage_system) over (partition by [hostname] rows between 100 preceding and current row)]]

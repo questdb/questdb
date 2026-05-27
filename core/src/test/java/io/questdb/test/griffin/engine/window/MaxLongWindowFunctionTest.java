@@ -24,10 +24,26 @@
 
 package io.questdb.test.griffin.engine.window;
 
+import io.questdb.PropertyKey;
+import io.questdb.std.Rnd;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
+import static io.questdb.test.tools.TestUtils.generateRandom;
+
 public class MaxLongWindowFunctionTest extends AbstractCairoTest {
+    private final boolean cacheLightWindowEnabled;
+
+    public MaxLongWindowFunctionTest() {
+        Rnd rnd = generateRandom(LOG);
+        this.cacheLightWindowEnabled = rnd.nextBoolean();
+    }
+
+    @Override
+    public void setUp() {
+        setProperty(PropertyKey.CAIRO_SQL_WINDOW_CACHED_LIGHT_ENABLED, Boolean.toString(this.cacheLightWindowEnabled));
+        super.setUp();
+    }
 
     @Test
     public void testMaxLongLargeValues() throws Exception {

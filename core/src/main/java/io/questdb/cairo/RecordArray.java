@@ -36,22 +36,28 @@ import org.jetbrains.annotations.NotNull;
  * location instead of at the record header.
  * This enhances its random access capability, making it behave more like an array,
  * while sacrificing the ability to access records like a linked list.
+ * <p>
+ * When all columns are fixed-width ({@code varOffset == 0}), row N sits at
+ * offset {@code N * fixOffset} by construction, so the per-row aux index is
+ * redundant and not allocated.
  */
 public class RecordArray extends RecordChain {
-
-    // auxMem is used to store records startOffset in dataMem
     private final MemoryARW auxMem;
     private long nextRecordIndex = 0L;
     private long size = 0L;
 
-    public RecordArray(@NotNull ColumnTypes columnTypes, @NotNull RecordSink recordSink, long pageSize, int maxPages) {
+    public RecordArray(@NotNull ColumnTypes columnTypes, RecordSink recordSink, long pageSize, int maxPages) {
         super(columnTypes, recordSink, pageSize, maxPages);
-        this.auxMem = Vm.getCARWInstance(pageSize >> 4, maxPages, MemoryTag.NATIVE_RECORD_CHAIN);
+        this.auxMem = varOffset > 0
+                ? Vm.getCARWInstance(pageSize >> 4, maxPages, MemoryTag.NATIVE_RECORD_CHAIN)
+                : null;
     }
 
     public long beginRecord() {
         recordOffset = varAppendOffset;
-        auxMem.putLong(recordOffset);
+        if (auxMem != null) {
+            auxMem.putLong(recordOffset);
+        }
         size++;
         mem.jumpTo(recordOffset + varOffset);
         varAppendOffset = recordOffset + varOffset + fixOffset;
@@ -68,14 +74,25 @@ public class RecordArray extends RecordChain {
     public void clear() {
         super.clear();
         size = 0L;
-        auxMem.close();
+        if (auxMem != null) {
+            auxMem.close();
+        }
+    }
+
+    /**
+     * Returns the native address of {@code columnIndex} in the row stored
+     * under the given dense rowIndex, without disturbing any positioned record.
+     * Used by callers that need to write into a fixed column slot for a row
+     * referenced only by its rowIndex.
+     */
+    public long getAddressAtRowIndex(long rowIndex, int columnIndex) {
+        return getAddress(rowToOffset(rowIndex), columnIndex);
     }
 
     @Override
     public boolean hasNext() {
         if (nextRecordIndex < size) {
-            final long offset = auxMem.getLong(nextRecordIndex * 8);
-            recordA.of(offset);
+            recordA.of(rowToOffset(nextRecordIndex));
             nextRecordIndex++;
             return true;
         }
@@ -84,8 +101,7 @@ public class RecordArray extends RecordChain {
 
     public boolean hasPrev() {
         if (nextRecordIndex >= 0) {
-            final long offset = auxMem.getLong(nextRecordIndex * 8);
-            recordA.of(offset);
+            recordA.of(rowToOffset(nextRecordIndex));
             nextRecordIndex--;
             return true;
         }
@@ -96,6 +112,10 @@ public class RecordArray extends RecordChain {
         long offset = beginRecord();
         recordSink.copy(record, this);
         return offset;
+    }
+
+    public void recordAtRowIndex(Record record, long rowIndex) {
+        recordAt(record, rowToOffset(rowIndex));
     }
 
     @Override
@@ -110,6 +130,10 @@ public class RecordArray extends RecordChain {
     @Override
     public void toTop() {
         nextRecordIndex = 0;
+    }
+
+    private long rowToOffset(long rowIndex) {
+        return auxMem != null ? auxMem.getLong(rowIndex * 8) : rowIndex * fixOffset;
     }
 
     @Override

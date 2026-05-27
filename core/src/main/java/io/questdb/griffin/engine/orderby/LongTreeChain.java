@@ -88,8 +88,24 @@ public class LongTreeChain extends AbstractRedBlackTree implements Reopenable {
             Record rightRecord,
             RecordComparator comparator
     ) {
+        put(leftRecord, sourceCursor, rightRecord, comparator, leftRecord.getRowId());
+    }
+
+    /**
+     * Inserts a row whose stored rowId is provided explicitly, decoupled from
+     * {@code leftRecord.getRowId()}. Callers that index their records by a
+     * different key (e.g. a dense rowIndex, not the underlying base rowId)
+     * use this overload so {@code sourceCursor.recordAt} sees the right key.
+     */
+    public void put(
+            Record leftRecord,
+            RecordCursor sourceCursor,
+            Record rightRecord,
+            RecordComparator comparator,
+            long rowId
+    ) {
         if (root == -1) {
-            putParent(leftRecord.getRowId());
+            putParent(rowId);
             return;
         }
 
@@ -109,7 +125,7 @@ public class LongTreeChain extends AbstractRedBlackTree implements Reopenable {
                 offset = rightOf(offset);
             } else {
                 final int oldChainEnd = lastRefOf(offset);
-                final int newChainEnd = appendNewValue(leftRecord.getRowId());
+                final int newChainEnd = appendNewValue(rowId);
                 setNextValueOffset(oldChainEnd, newChainEnd);
                 setLastRef(offset, newChainEnd);
                 return;
@@ -119,7 +135,7 @@ public class LongTreeChain extends AbstractRedBlackTree implements Reopenable {
         offset = allocateBlock();
         setParent(offset, parent);
 
-        final int chainStart = appendNewValue(leftRecord.getRowId());
+        final int chainStart = appendNewValue(rowId);
         setRef(offset, chainStart);
         setLastRef(offset, chainStart);
 
