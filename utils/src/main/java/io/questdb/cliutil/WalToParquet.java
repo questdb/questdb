@@ -284,6 +284,66 @@ public class WalToParquet {
         return columnIndex * 2 + 2;
     }
 
+    // Walk the segment's _event file collecting every non-DATA event (UPDATE,
+    // TRUNCATE, view definition, mat-view invalidate). Adds an entry per event
+    // to the manifest's sqlStatements list, keyed back to wal/segment/segmentTxn
+    // and (via SegmentInfo) the seqTxn / commitTimestamp from the txnlog.
+    private static void collectNonDataEvents(CairoConfiguration config, TableToken token, SegmentInfo info, Manifest manifest) {
+        Path path = new Path();
+        try {
+            path.of(config.getDbRoot()).concat(token.getDirName()).concat(WalUtils.WAL_NAME_BASE).put(info.walId).slash().put(info.segmentId);
+            try (WalEventReader er = new WalEventReader(config)) {
+                WalEventCursor c = er.of(path, -1);
+                while (c.hasNext()) {
+                    long txn = c.getTxn();
+                    if (txn > info.lastSegmentTxn) {
+                        break;
+                    }
+                    byte type = c.getType();
+                    if (WalTxnType.isDataType(type)) {
+                        continue;
+                    }
+                    ManifestSqlStatement st = new ManifestSqlStatement();
+                    st.walId = info.walId;
+                    st.segmentId = info.segmentId;
+                    st.segmentTxn = (int) txn;
+                    int idx = (int) txn;
+                    st.seqTxn = idx >= 0 && idx < info.seqTxns.size() ? info.seqTxns.getQuick(idx) : -1L;
+                    st.commitTimestamp = idx >= 0 && idx < info.commitTimestamps.size() ? info.commitTimestamps.getQuick(idx) : -1L;
+                    st.type = walTxnTypeName(type);
+                    if (type == WalTxnType.SQL) {
+                        try {
+                            CharSequence sql = c.getSqlInfo().getSql();
+                            if (sql != null) {
+                                st.sql = sql.toString();
+                            }
+                        } catch (Throwable ignored) {
+                            // Best-effort; some event variants don't expose getSqlInfo cleanly.
+                        }
+                    }
+                    manifest.sqlStatements.add(st);
+                }
+            }
+        } catch (Throwable e) {
+            // The data path already records why _event couldn't be opened; we
+            // don't want to double-log it. Silently skip the SQL collection.
+        } finally {
+            Misc.free(path);
+        }
+    }
+
+    private static String walTxnTypeName(byte type) {
+        return switch (type) {
+            case WalTxnType.DATA -> "DATA";
+            case WalTxnType.SQL -> "SQL";
+            case WalTxnType.TRUNCATE -> "TRUNCATE";
+            case WalTxnType.MAT_VIEW_DATA -> "MAT_VIEW_DATA";
+            case WalTxnType.MAT_VIEW_INVALIDATE -> "MAT_VIEW_INVALIDATE";
+            case WalTxnType.VIEW_DEFINITION -> "VIEW_DEFINITION";
+            default -> "UNKNOWN_" + type;
+        };
+    }
+
     private static ManifestSegment processSegment(CairoConfiguration config, TableToken token, SegmentInfo info, String outputDir, boolean withShoulder) {
         ManifestSegment entry = new ManifestSegment();
         entry.walId = info.walId;
@@ -403,6 +463,8 @@ public class WalToParquet {
         io.questdb.std.LongList synthesizedSymbolValuesAddrs = new io.questdb.std.LongList();
         io.questdb.std.LongList synthesizedSymbolValuesSizes = new io.questdb.std.LongList();
         io.questdb.std.LongList synthesizedSymbolOffsetsAddrs = new io.questdb.std.LongList();
+        io.questdb.std.LongList synthesizedSymbolDataAddrs = new io.questdb.std.LongList();
+        io.questdb.std.LongList synthesizedSymbolDataSizes = new io.questdb.std.LongList();
         long compactTimestampAddr = 0;
         long compactTimestampSize = 0;
         // Shoulder columns: 5 native buffers, freed together.
@@ -414,6 +476,11 @@ public class WalToParquet {
         try {
             int timestampIndex = reader.getTimestampIndex();
             descriptor.of(token.getTableName(), rowCount, timestampIndex);
+
+            // Per-row segmentTxn is needed both by shoulder columns AND per-txn
+            // SYMBOL resolution, so we always compute it (cheap relative to
+            // everything else).
+            int[] perRowSegmentTxn = readPerRowSegmentTxn(config, token, info.walId, info.segmentId, info.lastSegmentTxn, rowCount);
 
             int columnCount = reader.getColumnCount();
             int writtenColumns = 0;
@@ -433,29 +500,33 @@ public class WalToParquet {
                 MemoryCR primaryMem = reader.getColumn(primaryIdx);
 
                 if (ColumnType.isSymbol(columnType)) {
-                    long[] addrs = synthesizeSymbolBuffers(reader, i, primaryMem, rowCount);
-                    if (addrs == null) {
-                        skippedColumns++;
-                        entry.skippedColumns.add(columnName + " (symbol: no resolvable values)");
-                        System.out.println("    SYMBOL column '" + columnName + "' had no resolvable values - skipped");
-                        continue;
-                    }
-                    synthesizedSymbolValuesAddrs.add(addrs[0]);
-                    synthesizedSymbolValuesSizes.add(addrs[1]);
-                    synthesizedSymbolOffsetsAddrs.add(addrs[2]);
-                    int symbolCount = (int) addrs[3];
+                    long[] addrs = synthesizeSymbolBuffersPerTxn(
+                            config, token, info, i, columnName.toString(), primaryMem, rowCount, perRowSegmentTxn
+                    );
+                    // Layout: { remappedDataAddr, remappedDataSize, valuesAddr, valuesSize, offsetsAddr, dictSize }
+                    long remappedDataAddr = addrs[0];
+                    long remappedDataSize = addrs[1];
+                    long valuesAddr = addrs[2];
+                    long valuesSize = addrs[3];
+                    long offsetsAddr = addrs[4];
+                    int dictSize = (int) addrs[5];
+                    synthesizedSymbolDataAddrs.add(remappedDataAddr);
+                    synthesizedSymbolDataSizes.add(remappedDataSize);
+                    synthesizedSymbolValuesAddrs.add(valuesAddr);
+                    synthesizedSymbolValuesSizes.add(valuesSize);
+                    synthesizedSymbolOffsetsAddrs.add(offsetsAddr);
 
                     descriptor.addColumn(
                             columnName,
                             columnType,
                             columnId,
                             colTop,
-                            primaryMem.addressOf(0),
-                            primaryMem.size(),
-                            addrs[0],
-                            addrs[1],
-                            addrs[2],
-                            symbolCount,
+                            remappedDataAddr,
+                            remappedDataSize,
+                            valuesAddr,
+                            valuesSize,
+                            offsetsAddr,
+                            dictSize,
                             parquetEncodingConfig
                     );
                 } else if (ColumnType.isVarSize(columnType)) {
@@ -517,8 +588,6 @@ public class WalToParquet {
             }
 
             if (withShoulder) {
-                // Build per-row segmentTxn map by replaying the segment's _event file.
-                int[] perRowSegmentTxn = readPerRowSegmentTxn(config, token, info.walId, info.segmentId, info.lastSegmentTxn, rowCount);
                 int intSize = Integer.BYTES;
                 int longSize = Long.BYTES;
                 shoulderWalIdAddr = io.questdb.std.Unsafe.malloc(rowCount * intSize, io.questdb.std.MemoryTag.NATIVE_DEFAULT);
@@ -544,7 +613,7 @@ public class WalToParquet {
                 addShoulderColumn(descriptor, "_wal_id", ColumnType.INT, nextColumnId++, shoulderWalIdAddr, rowCount * intSize);
                 addShoulderColumn(descriptor, "_segment_id", ColumnType.INT, nextColumnId++, shoulderSegmentIdAddr, rowCount * intSize);
                 addShoulderColumn(descriptor, "_segment_txn", ColumnType.INT, nextColumnId++, shoulderSegmentTxnAddr, rowCount * intSize);
-                addShoulderColumn(descriptor, "_seq_txn", ColumnType.LONG, nextColumnId++, shoulderSeqTxnAddr, rowCount * longSize);
+                addShoulderColumn(descriptor, "_txnSeq_", ColumnType.LONG, nextColumnId++, shoulderSeqTxnAddr, rowCount * longSize);
                 addShoulderColumn(descriptor, "_commit_ts", ColumnType.TIMESTAMP_MICRO, nextColumnId, shoulderCommitTsAddr, rowCount * longSize);
                 writtenColumns += 5;
             }
@@ -561,6 +630,13 @@ public class WalToParquet {
             entry.reason = e.getMessage();
             System.out.println("    parquet encode failed: " + e.getMessage());
         } finally {
+            for (int i = 0; i < synthesizedSymbolDataAddrs.size(); i++) {
+                long addr = synthesizedSymbolDataAddrs.getQuick(i);
+                long size = synthesizedSymbolDataSizes.getQuick(i);
+                if (addr != 0) {
+                    io.questdb.std.Unsafe.free(addr, size, io.questdb.std.MemoryTag.NATIVE_DEFAULT);
+                }
+            }
             for (int i = 0; i < synthesizedSymbolValuesAddrs.size(); i++) {
                 long addr = synthesizedSymbolValuesAddrs.getQuick(i);
                 long size = synthesizedSymbolValuesSizes.getQuick(i);
@@ -641,71 +717,184 @@ public class WalToParquet {
         return result;
     }
 
-    // Build a symbol dictionary in native memory for one SYMBOL column. Walks
-    // the column's .d file to find the maximum referenced key, then resolves
-    // each key via WalReader.getSymbolValue (which already merges the WAL's
-    // base snapshot with any new symbols added during this segment's commits).
+    // Build a symbol dictionary in native memory for one SYMBOL column, with
+    // correct per-txn resolution. WAL writers may reset their local symbol
+    // space between commits in the same segment (codes 0,1,2 in batch 1 ->
+    // BTC/ETH/XRP, then codes 0,1,2 in batch 2 -> NEW-AAA/BBB/CCC), so a
+    // single dictionary indexed by raw WAL code is ambiguous. We:
+    //   1. Walk _event to build a per-txn frozen snapshot: at the end of
+    //      each segmentTxn T, what does code -> string look like for this
+    //      column? (Each diff's entries are applied on top of the running
+    //      accumulator; we snapshot after each txn.)
+    //   2. For every row, resolve (rowTxn, rawCode) -> string using that
+    //      txn's snapshot.
+    //   3. Deduplicate strings into a global dictionary with newly assigned
+    //      dense codes, and write a remapped .d buffer.
     //
-    // Returns long[]{ valuesAddr, valuesSize, offsetsAddr, symbolCount }, or
-    // null if no non-null symbol codes are referenced in the column.
-    //
-    // Layout produced:
-    //   values: per symbol key, an int length (UTF-16 code units) followed by
-    //           that many UTF-16 LE code units. Length == -1 marks a null entry
-    //           (used when a key has no resolvable value).
-    //   offsets: long[symbolCount], offsets[k] = byte offset of symbol k's
-    //            length prefix in the values buffer.
-    private static long[] synthesizeSymbolBuffers(WalReader reader, int columnIndex, MemoryCR primaryMem, long rowCount) {
-        int maxKey = -1;
-        long codesAddr = primaryMem.addressOf(0);
-        for (long row = 0; row < rowCount; row++) {
-            int code = io.questdb.std.Unsafe.getUnsafe().getInt(codesAddr + row * Integer.BYTES);
-            if (code >= 0 && code > maxKey) {
-                maxKey = code;
-            }
-        }
-        if (maxKey < 0) {
-            // All rows are SYMBOL null. Still need to emit at least one dictionary
-            // entry so the encoder is happy; we synthesise an empty 1-entry dict.
-            maxKey = 0;
-        }
-        int symbolCount = maxKey + 1;
+    // Returns long[]{
+    //     remappedDataAddr, remappedDataSize,
+    //     valuesAddr, valuesSize,
+    //     offsetsAddr, dictSize
+    // } or null if no non-null codes were referenced.
+    private static long[] synthesizeSymbolBuffersPerTxn(
+            CairoConfiguration config,
+            TableToken token,
+            SegmentInfo info,
+            int columnIndex,
+            String columnName,
+            MemoryCR primaryMem,
+            long rowCount,
+            int[] perRowSegmentTxn
+    ) {
+        // 1. Build per-txn frozen snapshots for this column.
+        java.util.HashMap<Integer, java.util.HashMap<Integer, String>> perTxnSnapshot = new java.util.HashMap<>();
+        java.util.HashMap<Integer, String> accumulator = new java.util.HashMap<>();
+        boolean baseLoaded = false;
 
-        // First pass to compute total values buffer size.
-        long valuesSize = 0;
-        String[] resolved = new String[symbolCount];
-        for (int k = 0; k < symbolCount; k++) {
-            CharSequence cs = reader.getSymbolValue(columnIndex, k);
-            String s = cs == null ? null : cs.toString();
-            resolved[k] = s;
-            valuesSize += Integer.BYTES;
-            if (s != null) {
-                valuesSize += 2L * s.length();
+        Path path = new Path();
+        try {
+            path.of(config.getDbRoot()).concat(token.getDirName()).concat(WalUtils.WAL_NAME_BASE).put(info.walId).slash().put(info.segmentId);
+            try (WalEventReader er = new WalEventReader(config)) {
+                WalEventCursor c = er.of(path, -1);
+                while (c.hasNext()) {
+                    long txn = c.getTxn();
+                    if (txn > info.lastSegmentTxn) {
+                        break;
+                    }
+                    if (!WalTxnType.isDataType(c.getType())) {
+                        continue;
+                    }
+                    WalEventCursor.DataInfo di = c.getDataInfo();
+                    io.questdb.cairo.wal.SymbolMapDiff diff = di.nextSymbolMapDiff();
+                    while (diff != null) {
+                        if (diff.getColumnIndex() == columnIndex) {
+                            int cleanCount = diff.getCleanSymbolCount();
+                            if (!baseLoaded && cleanCount > 0) {
+                                loadBaseSymbols(config, token, info.walId, columnName, cleanCount, accumulator);
+                                baseLoaded = true;
+                            }
+                            io.questdb.cairo.wal.SymbolMapDiffEntry entry = diff.nextEntry();
+                            while (entry != null) {
+                                accumulator.put(entry.getKey(), entry.getSymbol().toString());
+                                entry = diff.nextEntry();
+                            }
+                        } else {
+                            // Drain entries to advance cursor to the next diff.
+                            while (diff.nextEntry() != null) {
+                                // no-op
+                            }
+                        }
+                        diff = di.nextSymbolMapDiff();
+                    }
+                    // Snapshot accumulator AFTER this txn's diff is applied.
+                    perTxnSnapshot.put((int) txn, new java.util.HashMap<>(accumulator));
+                }
             }
+        } finally {
+            Misc.free(path);
+        }
+
+        // 2. Resolve every row, build the global dictionary, write remapped codes.
+        long codesAddr = primaryMem.addressOf(0);
+        java.util.LinkedHashMap<String, Integer> globalDict = new java.util.LinkedHashMap<>();
+        long remappedDataSize = rowCount * Integer.BYTES;
+        long remappedDataAddr = io.questdb.std.Unsafe.malloc(remappedDataSize, io.questdb.std.MemoryTag.NATIVE_DEFAULT);
+        for (long row = 0; row < rowCount; row++) {
+            int oldCode = io.questdb.std.Unsafe.getUnsafe().getInt(codesAddr + row * Integer.BYTES);
+            int newCode;
+            if (oldCode < 0) {
+                newCode = io.questdb.std.Numbers.INT_NULL;
+            } else {
+                int rowTxn = perRowSegmentTxn[(int) row];
+                java.util.HashMap<Integer, String> txnMap = perTxnSnapshot.get(rowTxn);
+                String resolved = txnMap == null ? null : txnMap.get(oldCode);
+                if (resolved == null) {
+                    // Fallback: try latest accumulator. If still null, emit NULL.
+                    resolved = accumulator.get(oldCode);
+                }
+                if (resolved == null) {
+                    newCode = io.questdb.std.Numbers.INT_NULL;
+                } else {
+                    Integer cached = globalDict.get(resolved);
+                    if (cached == null) {
+                        newCode = globalDict.size();
+                        globalDict.put(resolved, newCode);
+                    } else {
+                        newCode = cached;
+                    }
+                }
+            }
+            io.questdb.std.Unsafe.getUnsafe().putInt(remappedDataAddr + row * Integer.BYTES, newCode);
+        }
+
+        int dictSize = globalDict.size();
+        if (dictSize == 0) {
+            // The encoder needs at least one entry; we synthesise a placeholder.
+            dictSize = 1;
+            globalDict.put("", 0);
+        }
+
+        // 3. Allocate chars+offsets buffers for the global dictionary.
+        long valuesSize = 0;
+        String[] orderedStrings = new String[dictSize];
+        for (java.util.Map.Entry<String, Integer> e : globalDict.entrySet()) {
+            String s = e.getKey();
+            int idx = e.getValue();
+            orderedStrings[idx] = s;
+            valuesSize += Integer.BYTES + 2L * s.length();
         }
 
         long valuesAddr = io.questdb.std.Unsafe.malloc(valuesSize, io.questdb.std.MemoryTag.NATIVE_DEFAULT);
-        long offsetsAddr = io.questdb.std.Unsafe.malloc((long) symbolCount * Long.BYTES, io.questdb.std.MemoryTag.NATIVE_DEFAULT);
+        long offsetsAddr = io.questdb.std.Unsafe.malloc((long) dictSize * Long.BYTES, io.questdb.std.MemoryTag.NATIVE_DEFAULT);
 
         long cursor = 0;
-        for (int k = 0; k < symbolCount; k++) {
+        for (int k = 0; k < dictSize; k++) {
             io.questdb.std.Unsafe.getUnsafe().putLong(offsetsAddr + (long) k * Long.BYTES, cursor);
-            String s = resolved[k];
-            if (s == null) {
-                io.questdb.std.Unsafe.getUnsafe().putInt(valuesAddr + cursor, -1);
-                cursor += Integer.BYTES;
-            } else {
-                io.questdb.std.Unsafe.getUnsafe().putInt(valuesAddr + cursor, s.length());
-                cursor += Integer.BYTES;
-                for (int i = 0, n = s.length(); i < n; i++) {
-                    char c = s.charAt(i);
-                    io.questdb.std.Unsafe.getUnsafe().putByte(valuesAddr + cursor, (byte) (c & 0xFF));
-                    io.questdb.std.Unsafe.getUnsafe().putByte(valuesAddr + cursor + 1, (byte) ((c >> 8) & 0xFF));
-                    cursor += 2;
-                }
+            String s = orderedStrings[k];
+            io.questdb.std.Unsafe.getUnsafe().putInt(valuesAddr + cursor, s.length());
+            cursor += Integer.BYTES;
+            for (int i = 0, n = s.length(); i < n; i++) {
+                char ch = s.charAt(i);
+                io.questdb.std.Unsafe.getUnsafe().putByte(valuesAddr + cursor, (byte) (ch & 0xFF));
+                io.questdb.std.Unsafe.getUnsafe().putByte(valuesAddr + cursor + 1, (byte) ((ch >> 8) & 0xFF));
+                cursor += 2;
             }
         }
-        return new long[]{valuesAddr, valuesSize, offsetsAddr, symbolCount};
+        return new long[]{remappedDataAddr, remappedDataSize, valuesAddr, valuesSize, offsetsAddr, dictSize};
+    }
+
+    // Load the first `count` entries from the WAL's per-column symbol files into
+    // `into`. Files may live at the WAL dir level (older layout) or at the
+    // table root (newer layout). Tries both.
+    private static void loadBaseSymbols(CairoConfiguration config, TableToken token, int walId, String columnName, int count, java.util.HashMap<Integer, String> into) {
+        String walDirPath = config.getDbRoot() + File.separator + token.getDirName() + File.separator + WalUtils.WAL_NAME_BASE + walId;
+        if (loadBaseSymbolsFrom(config, walDirPath, columnName, count, into)) {
+            return;
+        }
+        String tableDirPath = config.getDbRoot() + File.separator + token.getDirName();
+        loadBaseSymbolsFrom(config, tableDirPath, columnName, count, into);
+    }
+
+    private static boolean loadBaseSymbolsFrom(CairoConfiguration config, String dirPath, String columnName, int count, java.util.HashMap<Integer, String> into) {
+        File offsetFile = new File(dirPath, columnName + ".o");
+        if (!offsetFile.isFile()) {
+            return false;
+        }
+        SymbolMapReaderImpl reader = new SymbolMapReaderImpl();
+        try {
+            reader.of(config, new io.questdb.std.str.Utf8String(dirPath), columnName, COLUMN_NAME_TXN_NONE, count);
+            for (int k = 0; k < count; k++) {
+                CharSequence v = reader.valueOf(k);
+                if (v != null) {
+                    into.put(k, v.toString());
+                }
+            }
+            return true;
+        } catch (Throwable e) {
+            return false;
+        } finally {
+            Misc.free(reader);
+        }
     }
 
 
@@ -722,7 +911,7 @@ public class WalToParquet {
         System.out.println("  --include-system  also process sys.* tables (off by default)");
         System.out.println("  --include-empty   also report tables whose WALs are fully purged (off by default)");
         System.out.println("  --no-shoulder     do not emit per-row provenance columns");
-        System.out.println("                    (_wal_id, _segment_id, _segment_txn, _seq_txn, _commit_ts)");
+        System.out.println("                    (_wal_id, _segment_id, _segment_txn, _txnSeq_, _commit_ts)");
     }
 
     private static void processTable(CairoConfiguration config, TableInfo table, String outputDir, boolean withShoulder) {
@@ -763,6 +952,7 @@ public class WalToParquet {
             for (SegmentInfo info : segments) {
                 ManifestSegment entry = processSegment(config, token, info, outputDir, withShoulder);
                 manifest.segments.add(entry);
+                collectNonDataEvents(config, token, info, manifest);
             }
         } catch (Throwable e) {
             manifest.txnLog.status = "error";
@@ -788,6 +978,7 @@ public class WalToParquet {
 
         if (outputDir != null) {
             writeManifest(manifest, outputDir);
+            writeSqlLog(manifest, outputDir);
         }
     }
 
@@ -1151,7 +1342,7 @@ public class WalToParquet {
                 addShoulderColumn(descriptor, "_wal_id", ColumnType.INT, nextColumnId++, shoulderWalIdAddr, rowCount * intSize);
                 addShoulderColumn(descriptor, "_segment_id", ColumnType.INT, nextColumnId++, shoulderSegmentIdAddr, rowCount * intSize);
                 addShoulderColumn(descriptor, "_segment_txn", ColumnType.INT, nextColumnId++, shoulderSegmentTxnAddr, rowCount * intSize);
-                addShoulderColumn(descriptor, "_seq_txn", ColumnType.LONG, nextColumnId++, shoulderSeqTxnAddr, rowCount * longSize);
+                addShoulderColumn(descriptor, "_txnSeq_", ColumnType.LONG, nextColumnId++, shoulderSeqTxnAddr, rowCount * longSize);
                 addShoulderColumn(descriptor, "_commit_ts", ColumnType.TIMESTAMP_MICRO, nextColumnId, shoulderCommitTsAddr, rowCount * longSize);
                 writtenColumns += 5;
             }
@@ -1432,6 +1623,41 @@ public class WalToParquet {
         }
     }
 
+    // Write a focused sidecar with every non-DATA transaction (UPDATEs and
+    // other SQL statements, TRUNCATEs, view definitions, mat-view events)
+    // observed in the WAL. The data of these events doesn't materialise as
+    // rows in any Parquet file, so they'd otherwise be silently lost.
+    private static void writeSqlLog(Manifest manifest, String outputDir) {
+        if (manifest.sqlStatements.isEmpty()) {
+            return;
+        }
+        File dir = new File(outputDir);
+        if (!dir.exists() && !dir.mkdirs()) {
+            System.out.println("  sql-log dir create failed: " + outputDir);
+            return;
+        }
+        File out = new File(dir, manifest.table + "__sql_log.json");
+        Gson gson = new GsonBuilder().setPrettyPrinting().serializeNulls().create();
+        try (FileWriter w = new FileWriter(out)) {
+            SqlLog wrapper = new SqlLog();
+            wrapper.table = manifest.table;
+            wrapper.tableDir = manifest.tableDir;
+            wrapper.generatedAt = manifest.generatedAt;
+            wrapper.statements = manifest.sqlStatements;
+            gson.toJson(wrapper, w);
+            System.out.println("  wrote " + out.getName() + " (" + manifest.sqlStatements.size() + " statement(s))");
+        } catch (IOException e) {
+            System.out.println("  sql-log write failed: " + e.getMessage());
+        }
+    }
+
+    private static final class SqlLog {
+        String generatedAt;
+        List<ManifestSqlStatement> statements;
+        String table;
+        String tableDir;
+    }
+
     private static void writeManifest(Manifest manifest, String outputDir) {
         File dir = new File(outputDir);
         if (!dir.exists() && !dir.mkdirs()) {
@@ -1452,12 +1678,23 @@ public class WalToParquet {
         String dbRoot;
         String generatedAt;
         List<ManifestSegment> segments = new ArrayList<>();
+        List<ManifestSqlStatement> sqlStatements = new ArrayList<>();
         List<ManifestStructuralChange> structuralChanges = new ArrayList<>();
         String table;
         String tableDir;
         int tableId;
         String tool;
         ManifestTxnLog txnLog;
+    }
+
+    private static final class ManifestSqlStatement {
+        long commitTimestamp;
+        int segmentId;
+        int segmentTxn;
+        long seqTxn;
+        String sql;
+        String type;
+        int walId;
     }
 
     private static final class ManifestSegment {

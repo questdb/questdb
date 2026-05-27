@@ -117,6 +117,34 @@ java -cp utils.jar io.questdb.cliutil.RecoverVarIndex /questdb-root/db/trades-CO
 java -cp utils.jar io.questdb.cliutil.RecoverVarIndex /questdb-root/db/trades-COINBASE -p 2022-03-21 -c stringColumn
 ```
 
+### Copy table from one instance to another using Postgres wire to read and ILP to write
+
+Copies all the data from one QuestDB instance to another. Uses Postgres wire to select the data and ILP to insert it.
+Useful to migrate data to the running instance.
+
+#### Usage
+
+```
+io.questdb.cliutil.Table2Ilp -d <destination_table_name> -dc <destination_ilp_host_port> -s <source_select_query> -sc <source_pg_connection_string>
+                               [-sts <timestamp_column>] [-sym <symbol_columns>] [-dauth <ilp_auth_key:ilp_auth_token>] [-dtls]
+```
+
+- `-d` destination table name
+- `-dilp` destination ILP connection string, e.g. `https::addr=localhost:9000;username=admin;password=quest;`
+- `-s` source select query, e.g. `trades` or `trades WHERE timestamp in '2021-01'`
+- `-sc` source connection string, e.g. `jdbc:pgsql://localhost:8812/qdb`
+- `-sts` source designated timestamp column name, defaults to `timestamp`
+- `-sym` comma separated list of symbol columns, e.g. `symbol,exchange`
+
+#### Examples
+
+```bash
+java -cp utils.jar io.questdb.cliutil.Table2Ilp -d trades -dilp "https::addr=localhost:9000;username=admin;password=quest;" -s "trades WHERE start_time in '2022-06'" \ 
+     -sc "jdbc:postgresql://localhost:9812/qdb?user=account&password=secret&ssl=false" \
+     -sym "ticker,exchagne" -sts start_time
+
+```
+
 ### Export un-applied WAL data to Parquet (WalToParquet)
 
 Forensic recovery tool. Walks the WAL directories of every WAL table in a
@@ -149,8 +177,11 @@ io.questdb.cliutil.WalToParquet --db-root <path> [options]
 - `--include-empty` Also report tables whose WALs are fully purged (off by
   default).
 - `--no-shoulder` Skip the per-row provenance columns
-  (`_wal_id`, `_segment_id`, `_segment_txn`, `_seq_txn`, `_commit_ts`) that
-  are added by default to help downstream deduplication.
+  (`_wal_id`, `_segment_id`, `_segment_txn`, `_txnSeq_`, `_commit_ts`) that
+  are added by default to help downstream deduplication. `_txnSeq_` is the
+  global QuestDB sequencer transaction id (= seqTxn) that originally wrote
+  the row, and matches the `seqTxn` field in `<tableName>__sql_log.json` so
+  operators can align row provenance with non-data transactions.
 
 #### Output
 
@@ -160,16 +191,32 @@ Each WAL segment becomes one Parquet file:
 <output-dir>/<tableName>__wal<walId>__seg<segId>__seqTxn<lo>-<hi>.parquet
 ```
 
-A companion JSON manifest sits next to the data files:
+Two JSON sidecars sit next to the data files:
 
-```
-<output-dir>/<tableName>__manifest.json
-```
+- `<tableName>__manifest.json` lists every segment the tool considered
+  (written, skipped, or partial), every structural-change transaction in
+  seqTxn order, the txnlog format version and applied/maxTxn watermarks, and
+  per-segment reasons when recovery was less than complete.
+- `<tableName>__sql_log.json` is emitted whenever the WAL contains non-DATA
+  transactions (UPDATE, ALTER TABLE, TRUNCATE, view/mat-view events). For
+  each, it captures `(walId, segmentId, segmentTxn, seqTxn, commitTimestamp,
+  type, sql)`. These transactions do not materialise as rows in the Parquet
+  output (their effect would require replay against a live table), so the
+  sidecar is the only record. Cross-reference the sidecar's `seqTxn` field
+  against the `_txnSeq_` shoulder column in the Parquet files to locate
+  which data rows the statement would have applied to.
 
-The manifest lists every segment the tool considered (written, skipped, or
-partial), every structural-change transaction in seqTxn order, the txnlog
-format version and applied/maxTxn watermarks, and per-segment reasons when
-recovery was less than complete.
+#### Per-txn SYMBOL handling
+
+QuestDB's WAL writer may assign the same numeric symbol code to different
+strings across transactions inside one segment (for example after the table
+was suspended and resumed, the WAL writer's local symbol space can reset and
+code `0` in batch 2 means a different string than code `0` in batch 1). The
+tool walks `_event` to build per-txn snapshots of each SYMBOL column's
+dictionary, resolves every row using **its own transaction's** snapshot, then
+deduplicates strings into a single global dictionary with newly assigned
+codes for the Parquet output. Rows are correctly attributed regardless of
+code reuse.
 
 #### Tiered fallback (file-name suffixes)
 
@@ -231,32 +278,4 @@ cp /tmp/wal_recovery/mytable__wal4__seg0__seqTxn14-16.parquet \
    /questdb-root/import/recovered.parquet
 curl -G "http://localhost:9000/exec" \
     --data-urlencode "query=select count(*) from parquet_scan('recovered.parquet')"
-```
-
-### Copy table from one instance to another using Postgres wire to read and ILP to write
-
-Copies all the data from one QuestDB instance to another. Uses Postgres wire to select the data and ILP to insert it.
-Useful to migrate data to the running instance.
-
-#### Usage
-
-```
-io.questdb.cliutil.Table2Ilp -d <destination_table_name> -dc <destination_ilp_host_port> -s <source_select_query> -sc <source_pg_connection_string>
-                               [-sts <timestamp_column>] [-sym <symbol_columns>] [-dauth <ilp_auth_key:ilp_auth_token>] [-dtls]
-```
-
-- `-d` destination table name
-- `-dilp` destination ILP connection string, e.g. `https::addr=localhost:9000;username=admin;password=quest;`
-- `-s` source select query, e.g. `trades` or `trades WHERE timestamp in '2021-01'`
-- `-sc` source connection string, e.g. `jdbc:pgsql://localhost:8812/qdb`
-- `-sts` source designated timestamp column name, defaults to `timestamp`
-- `-sym` comma separated list of symbol columns, e.g. `symbol,exchange`
-
-#### Examples
-
-```bash
-java -cp utils.jar io.questdb.cliutil.Table2Ilp -d trades -dilp "https::addr=localhost:9000;username=admin;password=quest;" -s "trades WHERE start_time in '2022-06'" \ 
-     -sc "jdbc:postgresql://localhost:9812/qdb?user=account&password=secret&ssl=false" \
-     -sym "ticker,exchagne" -sts start_time
-
 ```
