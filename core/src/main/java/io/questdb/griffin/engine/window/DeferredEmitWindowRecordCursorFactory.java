@@ -63,7 +63,7 @@ import io.questdb.std.ObjList;
  *   [rowid:8][value_0:8][value_1:8]...[value_n-1:8]
  * </pre>
  * where {@code value_i} corresponds to the i-th window function in column order. LAG-style
- * (lookahead = 0) functions write their value at processBaseRow time via {@link Function#pass1}
+ * (lookahead = 0) functions write their value at processBaseRow time via {@link WindowFunction#pass1}
  * which delegates to {@link WindowSPI#getAddress} on this cursor; LEAD-style (lookahead &gt; 0)
  * functions defer via {@link WindowFunction#streamingBackfill} and have a one-bit-per-slot pending
  * marker. The slot is emittable when every LEAD function's bit is filled.
