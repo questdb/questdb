@@ -91,9 +91,6 @@ public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
     @Override
     public void close() {
         rowCursor = Misc.free(rowCursor);
-        // A throw inside rowCursorFactory.getCursor leaves the factory's singleton cursor
-        // holding open per-symbol index cursors but rowCursor unassigned; close it here.
-        Misc.free(rowCursorFactory);
         super.close();
     }
 
