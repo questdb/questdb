@@ -287,17 +287,12 @@ public class WindowLeadLagBenchmark {
     private String buildSql() {
         return switch (shape) {
             // -- Single-function shapes -----------------------------------------------------
-            case "S1_LEAD_NO_PARTITION" ->
-                    "SELECT x, ts, lead(x, 1) OVER () FROM t";
-            case "S2_LAG_DESC_NO_PARTITION" ->
-                    "SELECT x, ts, lag(x, 1) OVER (ORDER BY ts DESC) FROM t";
-            case "S3_LEAD_PARTITIONED" ->
-                    "SELECT x, ts, lead(x, 1) OVER (PARTITION BY sym) FROM t";
-            case "S4_LAG_DESC_PARTITIONED" ->
-                    "SELECT x, ts, lag(x, 1) OVER (PARTITION BY sym ORDER BY ts DESC) FROM t";
+            case "S1_LEAD_NO_PARTITION" -> "SELECT x, ts, lead(x, 1) OVER () FROM t";
+            case "S2_LAG_DESC_NO_PARTITION" -> "SELECT x, ts, lag(x, 1) OVER (ORDER BY ts DESC) FROM t";
+            case "S3_LEAD_PARTITIONED" -> "SELECT x, ts, lead(x, 1) OVER (PARTITION BY sym) FROM t";
+            case "S4_LAG_DESC_PARTITIONED" -> "SELECT x, ts, lag(x, 1) OVER (PARTITION BY sym ORDER BY ts DESC) FROM t";
             // -- Mixed-function shapes (Phase 6 candidates) ---------------------------------
-            case "Q1_MIXED_NO_ORDER" ->
-                    "SELECT x, ts, lag(x, 1) OVER (), lead(x, 1) OVER () FROM t";
+            case "Q1_MIXED_NO_ORDER" -> "SELECT x, ts, lag(x, 1) OVER (), lead(x, 1) OVER () FROM t";
             case "Q2_MIXED_ASC" ->
                     "SELECT x, ts, lag(x, 1) OVER (ORDER BY ts ASC), lead(x, 1) OVER (ORDER BY ts ASC) FROM t";
             case "Q3_MIXED_DESC" ->
@@ -340,8 +335,7 @@ public class WindowLeadLagBenchmark {
         return switch (shape) {
             // Single-function: S2/S4 normalise (LAG DESC -> LEAD ASC); S1/S3 are all-LEAD.
             case "S1_LEAD_NO_PARTITION", "S2_LAG_DESC_NO_PARTITION",
-                 "S3_LEAD_PARTITIONED", "S4_LAG_DESC_PARTITIONED" ->
-                    DeferredEmitWindowRecordCursorFactory.class;
+                 "S3_LEAD_PARTITIONED", "S4_LAG_DESC_PARTITIONED" -> DeferredEmitWindowRecordCursorFactory.class;
             // Mixed with DESC ORDER BY -> normalisation fires.
             case "Q3_MIXED_DESC", "Q6_MIXED_PARTITION_DESC",
                  "Q7_MIXED_INVERSE_NO_PARTITION", "Q8_MIXED_INVERSE_PARTITION" ->
@@ -353,8 +347,7 @@ public class WindowLeadLagBenchmark {
             // Q5 (partition + ASC), Q11 (outer DESC reverses base scan so OVER DESC matches).
             case "Q1_MIXED_NO_ORDER", "Q2_MIXED_ASC",
                  "Q4_MIXED_PARTITION_NO_ORDER", "Q5_MIXED_PARTITION_ASC",
-                 "Q11_MIXED_DESC_OUTER_DESC" ->
-                    CachedWindowRecordCursorFactory.class;
+                 "Q11_MIXED_DESC_OUTER_DESC" -> CachedWindowRecordCursorFactory.class;
             default -> throw new IllegalArgumentException("unknown shape: " + shape);
         };
     }
