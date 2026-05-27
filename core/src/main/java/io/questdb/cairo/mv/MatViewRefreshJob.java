@@ -74,6 +74,11 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
     private static final Log LOG = LogFactory.getLog(MatViewRefreshJob.class);
     private final ObjList<TableToken> childViewSink = new ObjList<>();
     private final ObjList<TableToken> childViewSink2 = new ObjList<>();
+    // Scratch list for the post-cluster working copy of refresh intervals.
+    // Decouples downstream cluster/period/limit mutations from the live
+    // viewState.refreshIntervals reference -- mutating the cache would persist
+    // lossy clusters on the next cache write and survive across restarts.
+    private final LongList clusteredIntervals = new LongList();
     private final EntityColumnFilter columnFilter = new EntityColumnFilter();
     private final CairoConfiguration configuration;
     private final CairoEngine engine;
@@ -145,6 +150,138 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         } catch (ArithmeticException ignore) {
             return Long.MAX_VALUE;
         }
+    }
+
+    /**
+     * Fills {@code out} with one step per cached interval (cluster): the
+     * smaller of {@code naturalStep} and the cluster's width in buckets.
+     * <p>
+     * Goes together with {@link #clusterIntervals}: each list entry is one
+     * cluster after auto-tuning. A per-cluster step lets the iterator fit
+     * each step-group inside a single cluster -- a narrow cluster does not
+     * shrink the step on wider clusters, and a wide cluster does not enlarge
+     * the step on narrow ones. The iterator's gap-skip then excises the gaps
+     * between clusters without dragging unchanged buckets into the cursor's
+     * scan range.
+     * <p>
+     * On overflow or malformed entries the per-cluster step falls back to
+     * {@code naturalStep} for that cluster.
+     */
+    // kept public for testing
+    public static void computePerClusterSteps(
+            @Nullable LongList intervals,
+            long approxBucketSize,
+            long naturalStep,
+            @NotNull LongList out
+    ) {
+        out.clear();
+        if (intervals == null || intervals.size() < 2) {
+            return;
+        }
+        for (int i = 0, n = intervals.size(); i < n; i += 2) {
+            if (approxBucketSize <= 0) {
+                out.add(naturalStep);
+                continue;
+            }
+            final long widthTsUnits;
+            try {
+                widthTsUnits = Math.subtractExact(intervals.getQuick(i + 1), intervals.getQuick(i));
+            } catch (ArithmeticException overflow) {
+                // Pathological interval spans almost the full long range; we
+                // can't say anything useful about its width, fall back to
+                // naturalStep so the iterator at least makes progress.
+                out.add(naturalStep);
+                continue;
+            }
+            if (widthTsUnits < 0) {
+                // Malformed (hi < lo) -- be defensive, fall back to naturalStep.
+                out.add(naturalStep);
+                continue;
+            }
+            final long widthBuckets = Math.max(1, widthTsUnits / approxBucketSize + 1);
+            out.add(Math.min(naturalStep, widthBuckets));
+        }
+    }
+
+    /**
+     * Copies {@code src} into {@code dst} and merges adjacent intervals when the
+     * timestamp gap between them is cheaper to scan than to pay for an extra
+     * REPLACE_RANGE commit. {@code gapThresholdTsUnits} comes from
+     * {@link MatViewState#getCommitGapThresholdTsUnits()} and represents the
+     * gap-width below which merging beats splitting; it is derived from the
+     * rolling commit and per-unit scan latencies the refresh job records on
+     * every iteration. The unit is the base table's timestamp resolution
+     * (microseconds for TIMESTAMP, nanoseconds for TIMESTAMP_NS) and is
+     * consistent with the cached interval values. A threshold of 0 means
+     * gap-based merging is disabled (the cost model has determined that a
+     * fresh commit is cheaper than scanning a single ts unit of gap); only
+     * the {@code maxClusters} safety cap can still fold intervals together.
+     * <p>
+     * {@code src} must be sorted and disjoint on entry (as produced by
+     * {@link IntervalUtils#unionInPlace}); on return {@code dst} is also sorted
+     * and disjoint with at most {@code maxClusters} entries. {@code src} is not
+     * mutated -- the separate destination is required so that the cached union
+     * of unprocessed WAL ranges (a live {@link MatViewState#getRefreshIntervals()}
+     * reference) stays loss-free across refresh retries and restarts.
+     *
+     * @return number of clusters in the final list (i.e. {@code dst.size() / 2}).
+     */
+    // kept public for testing
+    public static int clusterIntervals(
+            @NotNull LongList src,
+            @NotNull LongList dst,
+            long gapThresholdTsUnits,
+            int maxClusters
+    ) {
+        dst.clear();
+        dst.addAll(src);
+        final int initialSize = dst.size();
+        if (initialSize <= 2) {
+            return initialSize / 2;
+        }
+        assert (initialSize & 1) == 0 : "intervals must contain [lo, hi] pairs";
+        if (maxClusters < 1) {
+            maxClusters = 1;
+        }
+        if (gapThresholdTsUnits < 0) {
+            gapThresholdTsUnits = 0;
+        }
+        int write = 2;
+        long prevHi = dst.getQuick(1);
+        for (int read = 2; read < initialSize; read += 2) {
+            final long lo = dst.getQuick(read);
+            final long hi = dst.getQuick(read + 1);
+            assert lo >= prevHi : "intervals must be sorted and disjoint";
+            // Compute gap via subtractExact; a positive gap that overflows is
+            // by definition larger than any possible threshold, so we treat
+            // it as not mergeable.
+            boolean isMergeable;
+            try {
+                final long gapTsUnits = Math.subtractExact(lo, prevHi);
+                isMergeable = gapTsUnits < gapThresholdTsUnits;
+            } catch (ArithmeticException overflow) {
+                isMergeable = false;
+            }
+            // Force a merge if we've already produced maxClusters clusters --
+            // the safety cap prevents pathological refreshes from producing
+            // hundreds of tiny commits.
+            if (!isMergeable && (write / 2) >= maxClusters) {
+                isMergeable = true;
+            }
+            if (isMergeable) {
+                if (hi > prevHi) {
+                    dst.setQuick(write - 1, hi);
+                    prevHi = hi;
+                }
+            } else {
+                dst.setQuick(write, lo);
+                dst.setQuick(write + 1, hi);
+                write += 2;
+                prevHi = hi;
+            }
+        }
+        dst.setPos(write);
+        return write / 2;
     }
 
     /**
@@ -282,6 +419,16 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         );
     }
 
+    /**
+     * Builds the {@link RefreshContext} (interval iterator + commit txn) for an
+     * upcoming refresh of {@code viewState}.
+     * <p>
+     * Precondition: the caller must hold {@code viewState}'s refresh latch
+     * (acquired via {@link MatViewState#tryLock()}). The method reads and
+     * mutates view-state fields (cached intervals, EMA accessors via
+     * {@link MatViewState#getCommitGapThresholdTsUnits()}) that are protected
+     * by that latch.
+     */
     private RefreshContext findRefreshIntervals(
             @NotNull TableReader baseTableReader,
             @NotNull MatViewDefinition viewDefinition,
@@ -291,6 +438,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             long rangeFrom,
             long rangeTo
     ) throws SqlException {
+        assert viewState.isLocked();
         refreshContext.clear();
 
         final long lastTxn = baseTableReader.getSeqTxn();
@@ -311,9 +459,22 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             // Let's find min/max timestamps in the new WAL transactions.
             if (lastRefreshTxn > -1) {
                 // It's a subsequent incremental refresh, so WalPurgeJob must be aware of us.
-                refreshIntervals = updateRefreshIntervals0(lastTxn, baseTableToken, viewDefinition, viewState, walWriter);
-                if (refreshIntervals != null) {
-                    if (refreshIntervals.size() > 0) {
+                final LongList cachedIntervals = updateRefreshIntervals0(lastTxn, baseTableToken, viewDefinition, viewState, walWriter);
+                if (cachedIntervals != null) {
+                    if (cachedIntervals.size() > 0) {
+                        // Merge cached intervals into cost-aware clusters so a single far-back
+                        // O3 write does not drag a wide envelope of unchanged buckets into the
+                        // refresh. The iterator preserves the gap-skip between clusters; within
+                        // a cluster the existing single-cursor-per-step-group behaviour stays.
+                        // Threshold and intervals are both in the base table's timestamp unit
+                        // (us for TIMESTAMP, ns for TIMESTAMP_NS) -- the comparison is
+                        // unit-consistent so the clustering decision is correct on both.
+                        // Output goes into a job-owned scratch list so the cached union of
+                        // unprocessed WAL ranges stays pristine -- downstream period and
+                        // refresh-limit adjustments operate on the scratch, not the cache.
+                        final long gapThresholdTsUnits = viewState.getCommitGapThresholdTsUnits();
+                        clusterIntervals(cachedIntervals, clusteredIntervals, gapThresholdTsUnits, configuration.getMatViewRefreshMaxClusters());
+                        refreshIntervals = clusteredIntervals;
                         // BAU incremental refresh.
                         minTs = refreshIntervals.getQuick(0);
                         maxTs = refreshIntervals.getQuick(refreshIntervals.size() - 1);
@@ -452,6 +613,19 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 // that's to avoid overflows in the interval iterator
                 step = Math.max(1, step / 2);
             }
+            // Compute one step per cluster so a narrow cluster does not pin
+            // the step on wider clusters (and vice versa). The iterator's
+            // gap-skip then excises gaps between clusters cheaply, and each
+            // step-group's cursor filter is tight to one cluster.
+            //
+            // Note: refreshIntervals may have been mutated since clustering by
+            // the period-mat-view branch (unionIntervals/intersectIntervals
+            // above). We compute per-cluster steps from the current list,
+            // since that is what the iterator is about to receive.
+            refreshContext.approxBucketSize = approxBucketSize;
+            refreshContext.refreshIntervals = refreshIntervals;
+            refreshContext.naturalStep = step;
+            computePerClusterSteps(refreshIntervals, approxBucketSize, step, refreshContext.stepPerInterval);
 
             // there are no concurrent accesses to the sampler at this point as we've locked the state
             final SampleByIntervalIterator intervalIterator = intervalIterator(
@@ -463,7 +637,8 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                     refreshIntervals,
                     minTs,
                     maxTs,
-                    step
+                    step,
+                    refreshContext.stepPerInterval
             );
 
             final long iteratorMinTs = intervalIterator.getMinTimestamp();
@@ -681,7 +856,6 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             return false;
         }
 
-        long intervalStep = intervalIterator.getStep();
         try {
             factory = viewState.acquireRecordFactory();
             copier = viewState.getRecordToRowCopier();
@@ -729,8 +903,20 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
 
                     long commitTarget = batchSize;
                     long rowCount = 0;
+                    // Pending scan metrics accumulate across iterations and fold
+                    // into the EMA only after a successful REPLACE_RANGE commit.
+                    // Deferring keeps rolled-back work (retries on oversized
+                    // batches, OOM, commit failure) out of the cost model: the
+                    // EMA must reflect committed work, not wasted scans that
+                    // get discarded with walWriter.rollback().
+                    long pendingScanSampleNanos = 0L;
+                    long pendingScanRangeTsUnits = 0L;
 
-                    intervalIterator.toTop(intervalStep);
+                    if (refreshContext.stepPerInterval.size() > 0) {
+                        intervalIterator.toTop(refreshContext.stepPerInterval);
+                    } else {
+                        intervalIterator.toTop(refreshContext.naturalStep);
+                    }
                     long replacementTimestampLo = Long.MIN_VALUE;
                     long replacementTimestampHi = Long.MIN_VALUE;
 
@@ -744,11 +930,18 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                             if (replacementTimestampHi > replacementTimestampLo) {
                                 // Gap in the refresh intervals, commit the previous batch
                                 // so that the replacement interval does not span across the gap.
+                                final long commitStart = System.nanoTime();
                                 walWriter.commitWithParams(
                                         replacementTimestampLo,
                                         replacementTimestampHi,
                                         WAL_DEDUP_MODE_REPLACE_RANGE
                                 );
+                                viewState.recordCommitNanos(System.nanoTime() - commitStart);
+                                if (pendingScanRangeTsUnits > 0) {
+                                    viewState.recordScanMetrics(pendingScanSampleNanos, pendingScanRangeTsUnits);
+                                    pendingScanSampleNanos = 0L;
+                                    pendingScanRangeTsUnits = 0L;
+                                }
                                 commitTarget = rowCount + batchSize;
                             }
                             replacementTimestampLo = intervalIterator.getTimestampLo();
@@ -757,6 +950,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                         // Interval high and replace range high are both exclusive
                         replacementTimestampHi = intervalIterator.getTimestampHi();
 
+                        final long scanStart = System.nanoTime();
                         try (RecordCursor cursor = factory.getCursor(refreshSqlExecutionContext)) {
                             final Record record = cursor.getRecord();
                             final TimestampDriver driver = ColumnType.getTimestampDriver(timestampType);
@@ -775,23 +969,40 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                                 row.append();
                                 insertedRows++;
                             }
+                            final long scanNanos = System.nanoTime() - scanStart;
+                            final long scanRangeTsUnits = intervalIterator.getTimestampHi() - intervalIterator.getTimestampLo();
 
                             // Check if we've inserted a lot of rows in a single iteration.
-                            if (insertedRows > batchSize && i < maxRetries && intervalStep > 1) {
+                            if (insertedRows > batchSize && i < maxRetries && refreshContext.naturalStep > 1) {
                                 // Yes, the transaction is large, thus try once again with a proportionally smaller step.
                                 final double transactionRatio = (double) batchSize / insertedRows;
-                                intervalStep = Math.max((long) (transactionRatio * intervalStep) - 1, 1);
+                                refreshContext.naturalStep = Math.max((long) (transactionRatio * refreshContext.naturalStep) - 1, 1);
+                                computePerClusterSteps(
+                                        refreshContext.refreshIntervals,
+                                        refreshContext.approxBucketSize,
+                                        refreshContext.naturalStep,
+                                        refreshContext.stepPerInterval
+                                );
                                 walWriter.rollback();
                                 LOG.info().$("inserted too many rows in a single iteration, retrying with a reduced step [view=").$(viewTableToken)
                                         .$(", insertedRows=").$(insertedRows)
                                         .$(", batchSize=").$(batchSize)
-                                        .$(", intervalStep=").$(intervalStep)
+                                        .$(", intervalStep=").$(refreshContext.naturalStep)
                                         .I$();
                                 continue OUTER;
                             }
 
+                            // Iteration is past the retry gate -- accumulate its
+                            // scan metrics. They fold into the EMA only when the
+                            // next commit succeeds; any subsequent rollback (OOM,
+                            // commit failure) discards them via the for-loop
+                            // restart, which re-declares these locals at zero.
+                            pendingScanSampleNanos += scanNanos;
+                            pendingScanRangeTsUnits += scanRangeTsUnits;
+
                             rowCount += insertedRows;
                             if (rowCount >= commitTarget) {
+                                final long commitStart = System.nanoTime();
                                 if (intervalIterator.isLast()) {
                                     commitMatView(
                                             viewState,
@@ -810,6 +1021,10 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                                             WAL_DEDUP_MODE_REPLACE_RANGE
                                     );
                                 }
+                                viewState.recordCommitNanos(System.nanoTime() - commitStart);
+                                viewState.recordScanMetrics(pendingScanSampleNanos, pendingScanRangeTsUnits);
+                                pendingScanSampleNanos = 0L;
+                                pendingScanRangeTsUnits = 0L;
 
                                 replacementTimestampLo = replacementTimestampHi;
                                 commitTarget = rowCount + batchSize;
@@ -818,6 +1033,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                     }
 
                     if (replacementTimestampHi > replacementTimestampLo) {
+                        final long commitStart = System.nanoTime();
                         commitMatView(
                                 viewState,
                                 walWriter,
@@ -828,6 +1044,12 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                                 replacementTimestampLo,
                                 replacementTimestampHi
                         );
+                        viewState.recordCommitNanos(System.nanoTime() - commitStart);
+                        if (pendingScanRangeTsUnits > 0) {
+                            viewState.recordScanMetrics(pendingScanSampleNanos, pendingScanRangeTsUnits);
+                            pendingScanSampleNanos = 0L;
+                            pendingScanRangeTsUnits = 0L;
+                        }
                     }
                     break;
                 } catch (TableReferenceOutOfDateException e) {
@@ -844,10 +1066,16 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 } catch (Throwable th) {
                     factory = Misc.free(factory);
                     walWriter.rollback();
-                    if (th instanceof CairoException && CairoException.isCairoOomError(th) && i < maxRetries && intervalStep > 1) {
-                        intervalStep /= 2;
+                    if (th instanceof CairoException && CairoException.isCairoOomError(th) && i < maxRetries && refreshContext.naturalStep > 1) {
+                        refreshContext.naturalStep /= 2;
+                        computePerClusterSteps(
+                                refreshContext.refreshIntervals,
+                                refreshContext.approxBucketSize,
+                                refreshContext.naturalStep,
+                                refreshContext.stepPerInterval
+                        );
                         LOG.info().$("query failed with out-of-memory, retrying with a reduced step [view=").$(viewTableToken)
-                                .$(", intervalStep=").$(intervalStep)
+                                .$(", intervalStep=").$(refreshContext.naturalStep)
                                 .$(", error=").$safe(((CairoException) th).getFlyweightMessage())
                                 .I$();
                         Os.sleep(oomRetryTimeout);
@@ -896,17 +1124,32 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             @Nullable LongList refreshIntervals,
             long minTs,
             long maxTs,
-            long step
+            long naturalStep,
+            @NotNull LongList stepPerInterval
     ) {
+        // Per-cluster mode requires a non-null intervals list and a populated
+        // step list. When either is absent, fall back to the natural step --
+        // the iterator then walks a single envelope at one step.
+        final boolean perCluster = refreshIntervals != null && stepPerInterval.size() > 0;
         if (tzRules == null || tzRules.hasFixedOffset()) {
             long fixedTzOffset = tzRules != null ? tzRules.getOffset(0) : 0;
+            if (perCluster) {
+                return fixedOffsetIterator.of(
+                        sampler,
+                        fixedOffset - fixedTzOffset,
+                        refreshIntervals,
+                        minTs,
+                        maxTs,
+                        stepPerInterval
+                );
+            }
             return fixedOffsetIterator.of(
                     sampler,
                     fixedOffset - fixedTzOffset,
                     refreshIntervals,
                     minTs,
                     maxTs,
-                    step
+                    naturalStep
             );
         }
 
@@ -916,16 +1159,38 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         // boundaries must include the user offset so they align with bucket keys.
         if (CommonUtils.isSubDayUnit(samplingIntervalUnit)) {
             long stdOff = CommonUtils.getFloorUtcTzOffset(tzRules, 0, samplingIntervalUnit);
+            if (perCluster) {
+                return fixedOffsetIterator.of(
+                        sampler,
+                        fixedOffset - stdOff,
+                        refreshIntervals,
+                        minTs,
+                        maxTs,
+                        stepPerInterval
+                );
+            }
             return fixedOffsetIterator.of(
                     sampler,
                     fixedOffset - stdOff,
                     refreshIntervals,
                     minTs,
                     maxTs,
-                    step
+                    naturalStep
             );
         }
 
+        if (perCluster) {
+            return timeZoneIterator.of(
+                    driver,
+                    sampler,
+                    tzRules,
+                    fixedOffset,
+                    refreshIntervals,
+                    minTs,
+                    maxTs,
+                    stepPerInterval
+            );
+        }
         return timeZoneIterator.of(
                 driver,
                 sampler,
@@ -934,7 +1199,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 refreshIntervals,
                 minTs,
                 maxTs,
-                step
+                naturalStep
         );
     }
 
@@ -1542,14 +1807,26 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
     }
 
     private static class RefreshContext implements Mutable {
+        public final LongList stepPerInterval = new LongList();
+        public long approxBucketSize;
         public SampleByIntervalIterator intervalIterator;
+        public long naturalStep;
         public long periodHi = Numbers.LONG_NULL;
+        // Reference to the live refresh intervals list owned by the iterator.
+        // Held here so the retry path can recompute stepPerInterval after
+        // shrinking naturalStep, without needing to walk the iterator's
+        // internals.
+        public LongList refreshIntervals;
         public long toBaseTxn = -1;
 
         @Override
         public void clear() {
+            approxBucketSize = 0;
             intervalIterator = null;
+            naturalStep = 0;
             periodHi = Numbers.LONG_NULL;
+            refreshIntervals = null;
+            stepPerInterval.clear();
             toBaseTxn = -1;
         }
     }

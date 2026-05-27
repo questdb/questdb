@@ -77,6 +77,14 @@ public final class QwpConstants {
      * Default maximum number of distinct tables per connection or UDP receiver.
      */
     public static final int DEFAULT_MAX_TABLES_PER_CONNECTION = 10_000;
+    public static final long DEFAULT_MAX_UNCOMMITTED_ROWS = 1_000_000;
+    /**
+     * Flag bit: defer WAL commit. The server appends rows to WAL writers
+     * but does not commit them until a subsequent message without this flag.
+     * Allows clients to split a logical batch across multiple messages that
+     * individually fit within the WebSocket recv buffer.
+     */
+    public static final byte FLAG_DEFER_COMMIT = 0x01;
     /**
      * Flag bit: Delta symbol dictionary encoding enabled.
      * When set, symbol columns use global IDs and send only new dictionary entries.

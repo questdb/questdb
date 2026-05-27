@@ -55,6 +55,7 @@ import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.VacuumColumnVersions;
 import io.questdb.cairo.file.BlockFileWriter;
 import io.questdb.cairo.mv.MatViewDefinition;
+import io.questdb.cairo.mv.MatViewState;
 import io.questdb.cairo.mv.MatViewStateStore;
 import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.Function;
@@ -3436,8 +3437,12 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
         final TimestampDriver driver = matViewDefinition.getBaseTableTimestampDriver();
 
-        tok = expectToken(lexer, "'full' or 'incremental' or 'range'");
+        tok = expectToken(lexer, "'full' or 'incremental' or 'range' or 'stats'");
         final boolean fullRefresh = isFullKeyword(tok);
+        // STATS is a sentinel for "reset the cost-model EMA values" -- not a
+        // data refresh. Handled inline here rather than through the refresh
+        // queue because it's a synchronous metadata-only operation.
+        final boolean isStatsReset = SqlKeywords.isStatsKeyword(tok);
         long from = Numbers.LONG_NULL;
         long to = Numbers.LONG_NULL;
         if (isRangeKeyword(tok)) {
@@ -3458,8 +3463,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             if (from > to) {
                 throw SqlException.$(lexer.lastTokenPosition(), "TO timestamp must not be earlier than FROM timestamp");
             }
-        } else if (!fullRefresh && !isIncrementalKeyword(tok)) {
-            throw SqlException.$(lexer.lastTokenPosition(), "'full' or 'incremental' or 'range' expected");
+        } else if (!fullRefresh && !isStatsReset && !isIncrementalKeyword(tok)) {
+            throw SqlException.$(lexer.lastTokenPosition(), "'full', 'incremental', 'range' or 'stats' expected");
         }
 
         tok = SqlUtil.fetchNext(lexer);
@@ -3470,7 +3475,20 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         executionContext.getSecurityContext().authorizeMatViewRefresh(matViewToken);
         if (!executionContext.isValidationOnly()) {
             final MatViewStateStore matViewStateStore = engine.getMatViewStateStore();
-            if (fullRefresh) {
+            if (isStatsReset) {
+                final MatViewState viewState = matViewStateStore.getViewState(matViewToken);
+                if (viewState != null) {
+                    if (viewState.tryLock()) {
+                        try {
+                            viewState.refreshStats();
+                        } finally {
+                            viewState.unlock();
+                        }
+                    } else {
+                        throw SqlException.$(lexer.lastTokenPosition(), "materialized view is currently refreshing, retry stats reset later");
+                    }
+                }
+            } else if (fullRefresh) {
                 matViewStateStore.enqueueFullRefresh(matViewToken);
             } else if (from != Numbers.LONG_NULL) {
                 matViewStateStore.enqueueRangeRefresh(matViewToken, from, to);
