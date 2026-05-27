@@ -361,8 +361,9 @@ public final class TableUtils {
         assert ttl != 0 : "ttl cannot be 0, invalid value";
         // Storage policies measure age from the partition's own floor (its start), not its
         // ceiling like table TTL does. This shifts every threshold forward by one partition
-        // width: a partition becomes eligible as soon as the next (active) partition begins,
-        // provided the interval does not exceed the partition width.
+        // width relative to table TTL. For an interval up to one partition width, that means a
+        // partition becomes eligible as soon as the next (active) partition begins; for larger
+        // intervals it simply becomes eligible one partition width sooner than table TTL would.
         final long partitionFloor = txReader.getPartitionFloor(partitionTimestamp);
         return isOlderThanTtl(timestampDriver, partitionFloor, maxTimestamp, ttl);
     }
