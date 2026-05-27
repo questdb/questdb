@@ -2036,7 +2036,20 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             for (int i = 0, n = listColumnFilterA.getColumnCount(); i < n; i++) {
                 int index = listColumnFilterA.getColumnIndexFactored(i);
                 final TableColumnMetadata m = slaveMetadata.getColumnMetadata(index);
-                metadata.add(slaveAlias, m);
+                // Cross-type join key: slave SYMBOL paired with non-SYMBOL master. The
+                // full-fat join's SymbolWrapOverJoinRecord wraps slave-key reads over the
+                // master, but master has no symbol table here so SymbolColumn.init asserts.
+                // Expose the column as master's type so the planner picks StrColumn etc.
+                // and reads via getStrA() from the map (where the slave key is stored).
+                final int masterKeyColIdx = masterTableKeyColumns.getColumnIndexFactored(i);
+                final int masterKeyColType = masterMetadata.getColumnType(masterKeyColIdx);
+                if (ColumnType.tagOf(m.getColumnType()) == ColumnType.SYMBOL
+                        && ColumnType.tagOf(masterKeyColType) != ColumnType.SYMBOL) {
+                    metadata.add(slaveAlias, new TableColumnMetadata(
+                            m.getColumnName(), masterKeyColType, IndexType.NONE, 0, false, m.getMetadata()));
+                } else {
+                    metadata.add(slaveAlias, m);
+                }
                 slaveTypes.add(m.getColumnType());
                 columnIndex.add(index);
             }

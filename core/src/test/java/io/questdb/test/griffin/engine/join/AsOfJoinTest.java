@@ -350,6 +350,50 @@ public class AsOfJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAsOfJoinFullFatStringToSymbolKey() throws Exception {
+        // Regression: full-fat AsOf/Lt projection of a slave SYMBOL key tripped
+        // SymbolColumn.init when master's matching key was STRING.
+        assertMemoryLeak(() -> {
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                compiler.setFullFatJoins(true);
+                executeWithRewriteTimestamp(
+                        "CREATE TABLE master_str (s STRING, ts #TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY",
+                        leftTableTimestampType.getTypeName()
+                );
+                executeWithRewriteTimestamp(
+                        "CREATE TABLE slave_sym (sym SYMBOL, price DOUBLE, ts #TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY",
+                        rightTableTimestampType.getTypeName()
+                );
+                execute(compiler, """
+                        INSERT INTO master_str VALUES
+                            ('A', '2024-01-01T10:00:00.000000Z'),
+                            ('B', '2024-01-01T10:01:00.000000Z'),
+                            ('C', '2024-01-01T10:02:00.000000Z'),
+                            (NULL, '2024-01-01T10:03:00.000000Z')
+                        """);
+                execute(compiler, """
+                        INSERT INTO slave_sym VALUES
+                            ('A', 1.0, '2024-01-01T09:00:00.000000Z'),
+                            ('B', 2.0, '2024-01-01T09:30:00.000000Z'),
+                            (NULL, 9.0, '2024-01-01T09:45:00.000000Z')
+                        """);
+
+                final String expected = "s\tsym\tprice\n"
+                        + "A\tA\t1.0\n"
+                        + "B\tB\t2.0\n"
+                        + "C\t\tnull\n"
+                        + "\t\t9.0\n";
+                assertQueryNoLeakCheck(compiler, expected,
+                        "SELECT m.s, s.sym, s.price FROM master_str m ASOF JOIN slave_sym s ON m.s = s.sym",
+                        null, false, sqlExecutionContext, true);
+                assertQueryNoLeakCheck(compiler, expected,
+                        "SELECT m.s, s.sym, s.price FROM master_str m LT JOIN slave_sym s ON m.s = s.sym",
+                        null, false, sqlExecutionContext, true);
+            }
+        });
+    }
+
+    @Test
     public void testAsOfJoinHighCardinalityKeysAndTolerance() throws Exception {
         // this tests set low threshold for evacuation of full fat ASOF join map
         // and compares that Fast and FullFat results are the same
