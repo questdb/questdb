@@ -104,18 +104,17 @@ public class CachedWindowLightRecordCursorFactory extends AbstractRecordCursorFa
                         ));
                     }
                 }
+                this.cursor = new CachedWindowLightRecordCursor(
+                        columnIndexes,
+                        narrowChain,
+                        sortBuffers,
+                        sourceMap
+                );
             } catch (Throwable t) {
                 Misc.freeObjList(sortBuffers);
                 Misc.free(narrowChain);
                 throw t;
             }
-
-            this.cursor = new CachedWindowLightRecordCursor(
-                    columnIndexes,
-                    narrowChain,
-                    sortBuffers,
-                    sourceMap
-            );
             this.allFunctions = new ObjList<>();
 
             ObjList<ObjList<WindowFunction>> orderedTmp = null;
@@ -285,9 +284,9 @@ public class CachedWindowLightRecordCursorFactory extends AbstractRecordCursorFa
         private final IntList columnIndexes;
         private final LightWindowSPI lightSpi;
         private final RecordArray narrowChain;
-        private final ObjList<WindowSortBuffer> sortBuffers;
         private final WindowLightRecord recordA;
         private final WindowLightRecord recordB;
+        private final ObjList<WindowSortBuffer> sortBuffers;
         private RecordCursor baseCursor;
         private SqlExecutionCircuitBreaker circuitBreaker;
         private long currentRowIndex;
@@ -524,6 +523,7 @@ public class CachedWindowLightRecordCursorFactory extends AbstractRecordCursorFa
             currentRowIndex = 0;
             size = 0;
             circuitBreaker = executionContext.getCircuitBreaker();
+            narrowChain.clear();
             if (!isOpen) {
                 isOpen = true;
                 reopenSortBuffers();
