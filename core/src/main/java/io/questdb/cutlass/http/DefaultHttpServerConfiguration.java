@@ -265,6 +265,11 @@ public class DefaultHttpServerConfiguration extends DefaultIODispatcherConfigura
         }
 
         @Override
+        public long getQwpMaxUncommittedRows() {
+            return QwpConstants.DEFAULT_MAX_UNCOMMITTED_ROWS;
+        }
+
+        @Override
         public CharSequence getInfluxPingVersion() {
             return "v2.7.4";
         }

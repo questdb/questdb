@@ -217,6 +217,44 @@ public class QwpTudCache implements QuietCloseable {
         } while (droppedTableFound);
     }
 
+    public void commitIfMaxUncommittedRowsReached(CommittedTxnConsumer consumer) throws Throwable {
+        boolean droppedTableFound;
+        do {
+            droppedTableFound = false;
+            ObjList<Utf8Sequence> keys = tableUpdateDetails.keys();
+            for (int i = 0, n = keys.size(); i < n; i++) {
+                Utf8Sequence tableName = keys.get(i);
+                WalTableUpdateDetails tud = tableUpdateDetails.get(tableName);
+                try {
+                    if (!tud.isDropped() && !tud.isFirstRow()) {
+                        final long seqTxnBefore = tud.getLastSeqTxn();
+                        tud.commitIfMaxUncommittedRowsCountReached();
+                        if (consumer != null && tud.getLastSeqTxn() != seqTxnBefore && !tud.isDropped()) {
+                            consumer.accept(
+                                    tud.getTableToken().getTableName(),
+                                    tud.getTableToken().getDirName(),
+                                    tud.getLastSeqTxn()
+                            );
+                        }
+                    }
+                } catch (CommitFailedException e) {
+                    if (!e.isTableDropped()) {
+                        throw e.getReason();
+                    } else {
+                        tud.setIsDropped();
+                    }
+                }
+
+                if (tud.isDropped()) {
+                    tableUpdateDetails.remove(tableName);
+                    Misc.free(tud);
+                    droppedTableFound = true;
+                    break;
+                }
+            }
+        } while (droppedTableFound);
+    }
+
     /**
      * Commits all cached tables, continuing past per-table failures so that
      * one table's error does not prevent the remaining tables from being

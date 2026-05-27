@@ -653,6 +653,399 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testClearMessageStatePreservesWalState() throws Exception {
+        assertMemoryLeak(() -> {
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, lineConfig);
+            try {
+                state.of(1, AllowAllSecurityContext.INSTANCE);
+                FakeConsumerTudCache fake = installFakeTudCache(state, engine, lineConfig);
+
+                // clearMessageState() resets parsing buffers but preserves tudCache
+                state.clearMessageState();
+                Assert.assertTrue(state.isOk());
+
+                // tudCache survives: commit still works after clearMessageState()
+                fake.queueCommit(new String[]{"t"}, new String[]{"t~1"}, new long[]{10L});
+                state.setHighestProcessedSequence(0);
+                state.commit();
+                Assert.assertEquals(1, state.getPendingAckSeqTxns().size());
+                Assert.assertEquals(10L, state.getPendingAckSeqTxns().get("t"));
+            } finally {
+                state.onDisconnected();
+                state.close();
+            }
+        });
+    }
+
+    @Test
+    public void testClearMessageStateResetsBufferPosition() throws Exception {
+        assertMemoryLeak(() -> {
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, lineConfig);
+            try {
+                state.of(1, AllowAllSecurityContext.INSTANCE);
+
+                // Feed some data to advance bufferPosition
+                addNativeData(state, wrapQwpPayload(new byte[]{
+                        4, 't', 'e', 's', 't',
+                        0, 0, 0x00
+                }));
+
+                // clearMessageState() resets buffer for the next message
+                state.clearMessageState();
+                Assert.assertTrue(state.isOk());
+
+                // isDeferCommit() returns false when buffer is empty
+                Assert.assertFalse(state.isDeferCommit());
+            } finally {
+                state.onDisconnected();
+                state.close();
+            }
+        });
+    }
+
+    @Test
+    public void testDeferCommitFlagParsedFromHeader() throws Exception {
+        assertMemoryLeak(() -> {
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, lineConfig);
+            try {
+                state.of(1, AllowAllSecurityContext.INSTANCE);
+
+                // Message without FLAG_DEFER_COMMIT
+                addNativeData(state, wrapQwpPayload(new byte[]{
+                        4, 't', 'e', 's', 't',
+                        0, 0, 0x00
+                }, (byte) 0));
+                Assert.assertFalse(state.isDeferCommit());
+                state.clear();
+
+                // Message with FLAG_DEFER_COMMIT
+                addNativeData(state, wrapQwpPayload(new byte[]{
+                        4, 't', 'e', 's', 't',
+                        0, 0, 0x00
+                }, QwpConstants.FLAG_DEFER_COMMIT));
+                Assert.assertTrue(state.isDeferCommit());
+                state.clear();
+
+                // FLAG_DEFER_COMMIT combined with other flags
+                addNativeData(state, wrapQwpPayload(new byte[]{
+                        4, 't', 'e', 's', 't',
+                        0, 0, 0x00
+                }, (byte) (QwpConstants.FLAG_DEFER_COMMIT | QwpConstants.FLAG_DELTA_SYMBOL_DICT)));
+                Assert.assertTrue(state.isDeferCommit());
+            } finally {
+                state.onDisconnected();
+                state.close();
+            }
+        });
+    }
+
+    @Test
+    public void testDeferCommitReturnsFalseWhenBufferTooSmall() throws Exception {
+        assertMemoryLeak(() -> {
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, lineConfig);
+            try {
+                state.of(1, AllowAllSecurityContext.INSTANCE);
+
+                // No data at all: bufferPosition < HEADER_SIZE
+                Assert.assertFalse(state.isDeferCommit());
+
+                // Partial header (less than 12 bytes)
+                long ptr = Unsafe.malloc(6, MemoryTag.NATIVE_HTTP_CONN);
+                try {
+                    Unsafe.putByte(ptr, (byte) 'Q');
+                    Unsafe.putByte(ptr + 1, (byte) 'W');
+                    Unsafe.putByte(ptr + 2, (byte) 'P');
+                    Unsafe.putByte(ptr + 3, (byte) '1');
+                    Unsafe.putByte(ptr + 4, (byte) 1);
+                    Unsafe.putByte(ptr + 5, QwpConstants.FLAG_DEFER_COMMIT);
+                    state.addData(ptr, ptr + 6);
+                } finally {
+                    Unsafe.free(ptr, 6, MemoryTag.NATIVE_HTTP_CONN);
+                }
+                // Only 6 bytes — less than HEADER_SIZE (12), so isDeferCommit returns false
+                Assert.assertFalse(state.isDeferCommit());
+            } finally {
+                state.onDisconnected();
+                state.close();
+            }
+        });
+    }
+
+    @Test
+    public void testDeferredCommitAccumulatesAcrossMessages() throws Exception {
+        assertMemoryLeak(() -> {
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, lineConfig);
+            try {
+                state.of(1, AllowAllSecurityContext.INSTANCE);
+                FakeConsumerTudCache fake = installFakeTudCache(state, engine, lineConfig);
+
+                // Message 1: deferred — no commit, clearMessageState() preserves WAL state
+                addNativeData(state, wrapQwpPayload(new byte[]{
+                        4, 't', 'e', 's', 't',
+                        0, 0, 0x00
+                }, QwpConstants.FLAG_DEFER_COMMIT));
+                Assert.assertTrue(state.isDeferCommit());
+                Assert.assertTrue(state.isOk());
+                state.clearMessageState();
+
+                // Message 2: deferred — still no commit
+                addNativeData(state, wrapQwpPayload(new byte[]{
+                        4, 't', 'e', 's', 't',
+                        0, 0, 0x00
+                }, QwpConstants.FLAG_DEFER_COMMIT));
+                Assert.assertTrue(state.isDeferCommit());
+                Assert.assertTrue(state.isOk());
+                state.clearMessageState();
+
+                // Message 3: final message (no defer flag) — commit all accumulated rows
+                addNativeData(state, wrapQwpPayload(new byte[]{
+                        4, 't', 'e', 's', 't',
+                        0, 0, 0x00
+                }, (byte) 0));
+                Assert.assertFalse(state.isDeferCommit());
+
+                fake.queueCommit(new String[]{"test"}, new String[]{"test~1"}, new long[]{30L});
+                state.setHighestProcessedSequence(2);
+                state.commit();
+                Assert.assertTrue(state.isOk());
+                Assert.assertEquals(1, state.getPendingAckSeqTxns().size());
+                Assert.assertEquals(30L, state.getPendingAckSeqTxns().get("test"));
+            } finally {
+                state.onDisconnected();
+                state.close();
+            }
+        });
+    }
+
+    @Test
+    public void testDeferredCommitErrorCausesFullClear() throws Exception {
+        assertMemoryLeak(() -> {
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, lineConfig);
+            try {
+                state.of(1, AllowAllSecurityContext.INSTANCE);
+                FakeConsumerTudCache fake = installFakeTudCache(state, engine, lineConfig);
+
+                // Message 1: deferred — clearMessageState preserves WAL
+                addNativeData(state, wrapQwpPayload(new byte[]{
+                        4, 't', 'e', 's', 't',
+                        0, 0, 0x00
+                }, QwpConstants.FLAG_DEFER_COMMIT));
+                Assert.assertTrue(state.isOk());
+                state.clearMessageState();
+
+                // Now simulate an error on the next message by queuing a commit failure
+                fake.queueCommitThrow(new RuntimeException("simulated commit failure"));
+                state.setHighestProcessedSequence(1);
+                state.commit();
+
+                // After error, clear() rolls back all accumulated WAL state
+                Assert.assertFalse(state.isOk());
+                state.clear();
+                Assert.assertTrue(state.isOk());
+            } finally {
+                state.onDisconnected();
+                state.close();
+            }
+        });
+    }
+
+    @Test
+    public void testDeferredCommitOnDisconnectedRollsBackWalState() throws Exception {
+        assertMemoryLeak(() -> {
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, lineConfig);
+            try {
+                state.of(1, AllowAllSecurityContext.INSTANCE);
+                installFakeTudCache(state, engine, lineConfig);
+
+                // Message 1: deferred — clearMessageState preserves WAL
+                addNativeData(state, wrapQwpPayload(new byte[]{
+                        4, 't', 'e', 's', 't',
+                        0, 0, 0x00
+                }, QwpConstants.FLAG_DEFER_COMMIT));
+                Assert.assertTrue(state.isOk());
+                state.clearMessageState();
+
+                // Simulate connection drop mid-deferred-sequence
+                // onDisconnected() calls clear() which rolls back all WAL state
+                state.onDisconnected();
+
+                // After disconnect + close, no leaks
+            } finally {
+                state.close();
+            }
+        });
+    }
+
+    @Test
+    public void testDeferredCommitMaxUncommittedRowsTriggersCommit() throws Exception {
+        assertMemoryLeak(() -> {
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, lineConfig);
+            try {
+                state.of(1, AllowAllSecurityContext.INSTANCE);
+                FakeConsumerTudCache fake = installFakeTudCache(state, engine, lineConfig);
+
+                // Deferred message — processMessage then commitIfMaxUncommittedRowsReached
+                addNativeData(state, wrapQwpPayload(new byte[]{
+                        4, 't', 'e', 's', 't',
+                        0, 0, 0x00
+                }, QwpConstants.FLAG_DEFER_COMMIT));
+                Assert.assertTrue(state.isOk());
+
+                // Simulate the limit being reached: queue a commit callback
+                fake.queueMaxRowsCommit(new String[]{"test"}, new String[]{"test~1"}, new long[]{42L});
+                state.commitIfMaxUncommittedRowsReached();
+                Assert.assertTrue(state.isOk());
+
+                // The forced commit should have recorded the seqTxn in pendingAckSeqTxns
+                Assert.assertEquals(1, state.getPendingAckSeqTxns().size());
+                Assert.assertEquals(42L, state.getPendingAckSeqTxns().get("test"));
+                Assert.assertEquals(1, fake.getMaxRowsCommitCallCount());
+            } finally {
+                state.onDisconnected();
+                state.close();
+            }
+        });
+    }
+
+    @Test
+    public void testDeferredCommitMaxUncommittedRowsNoOpBelowLimit() throws Exception {
+        assertMemoryLeak(() -> {
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, lineConfig);
+            try {
+                state.of(1, AllowAllSecurityContext.INSTANCE);
+                FakeConsumerTudCache fake = installFakeTudCache(state, engine, lineConfig);
+
+                // Deferred message
+                addNativeData(state, wrapQwpPayload(new byte[]{
+                        4, 't', 'e', 's', 't',
+                        0, 0, 0x00
+                }, QwpConstants.FLAG_DEFER_COMMIT));
+                Assert.assertTrue(state.isOk());
+
+                // Don't queue any commit data — simulates rows below the limit
+                state.commitIfMaxUncommittedRowsReached();
+                Assert.assertTrue(state.isOk());
+
+                // No seqTxns should be recorded
+                Assert.assertEquals(0, state.getPendingAckSeqTxns().size());
+                Assert.assertEquals(1, fake.getMaxRowsCommitCallCount());
+            } finally {
+                state.onDisconnected();
+                state.close();
+            }
+        });
+    }
+
+    @Test
+    public void testDeferredCommitMaxUncommittedRowsErrorSetsDistressed() throws Exception {
+        assertMemoryLeak(() -> {
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, lineConfig);
+            try {
+                state.of(1, AllowAllSecurityContext.INSTANCE);
+                FakeConsumerTudCache fake = installFakeTudCache(state, engine, lineConfig);
+
+                // Deferred message
+                addNativeData(state, wrapQwpPayload(new byte[]{
+                        4, 't', 'e', 's', 't',
+                        0, 0, 0x00
+                }, QwpConstants.FLAG_DEFER_COMMIT));
+                Assert.assertTrue(state.isOk());
+
+                // Simulate a commit failure during the max-rows check
+                fake.queueMaxRowsCommitThrow(new RuntimeException("simulated WAL failure"));
+                state.commitIfMaxUncommittedRowsReached();
+
+                // Error should set the state to not-OK
+                Assert.assertFalse(state.isOk());
+            } finally {
+                state.onDisconnected();
+                state.close();
+            }
+        });
+    }
+
+    @Test
+    public void testDeferredCommitMaxUncommittedRowsUpdatesAckSeqTxns() throws Exception {
+        assertMemoryLeak(() -> {
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, lineConfig);
+            try {
+                state.of(1, AllowAllSecurityContext.INSTANCE);
+                FakeConsumerTudCache fake = installFakeTudCache(state, engine, lineConfig);
+
+                // Message 1: deferred
+                addNativeData(state, wrapQwpPayload(new byte[]{
+                        4, 't', 'e', 's', 't',
+                        0, 0, 0x00
+                }, QwpConstants.FLAG_DEFER_COMMIT));
+                Assert.assertTrue(state.isOk());
+
+                // Max-rows triggers a mid-batch commit with seqTxn=10
+                fake.queueMaxRowsCommit(new String[]{"test"}, new String[]{"test~1"}, new long[]{10L});
+                state.commitIfMaxUncommittedRowsReached();
+                Assert.assertTrue(state.isOk());
+                Assert.assertEquals(10L, state.getPendingAckSeqTxns().get("test"));
+
+                state.clearMessageState();
+
+                // Message 2: deferred
+                addNativeData(state, wrapQwpPayload(new byte[]{
+                        4, 't', 'e', 's', 't',
+                        0, 0, 0x00
+                }, QwpConstants.FLAG_DEFER_COMMIT));
+                Assert.assertTrue(state.isOk());
+
+                // Max-rows triggers another mid-batch commit with seqTxn=20
+                fake.queueMaxRowsCommit(new String[]{"test"}, new String[]{"test~1"}, new long[]{20L});
+                state.commitIfMaxUncommittedRowsReached();
+                Assert.assertTrue(state.isOk());
+
+                // The cumulative ACK should carry the latest seqTxn (20, not 10)
+                Assert.assertEquals(1, state.getPendingAckSeqTxns().size());
+                Assert.assertEquals(20L, state.getPendingAckSeqTxns().get("test"));
+
+                state.clearMessageState();
+
+                // Message 3: final (non-deferred) — commit remaining
+                addNativeData(state, wrapQwpPayload(new byte[]{
+                        4, 't', 'e', 's', 't',
+                        0, 0, 0x00
+                }, (byte) 0));
+                fake.queueCommit(new String[]{"test"}, new String[]{"test~1"}, new long[]{30L});
+                state.commit();
+                Assert.assertTrue(state.isOk());
+
+                // Final commit updates to seqTxn=30
+                Assert.assertEquals(30L, state.getPendingAckSeqTxns().get("test"));
+            } finally {
+                state.onDisconnected();
+                state.close();
+            }
+        });
+    }
+
+    @Test
     public void testCommitAllBestEffortHandlesDroppedTable() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE be_drop (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
@@ -2080,13 +2473,17 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
     }
 
     private static byte[] wrapQwpPayload(byte[] payload) {
+        return wrapQwpPayload(payload, (byte) 0);
+    }
+
+    private static byte[] wrapQwpPayload(byte[] payload, byte flags) {
         byte[] message = new byte[12 + payload.length];
         message[0] = 'Q';
         message[1] = 'W';
         message[2] = 'P';
         message[3] = '1';
         message[4] = 1; // version
-        message[5] = 0; // flags
+        message[5] = flags;
         message[6] = 1; // tableCount low byte
         message[7] = 0; // tableCount high byte
         message[8] = (byte) payload.length;
@@ -2102,6 +2499,11 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
         private long[] commitSeqTxns;
         private String[] commitTableNames;
         private Throwable commitThrow;
+        private String[] maxRowsCommitDirNames;
+        private long[] maxRowsCommitSeqTxns;
+        private String[] maxRowsCommitTableNames;
+        private Throwable maxRowsCommitThrow;
+        private int maxRowsCommitCallCount;
 
         FakeConsumerTudCache(io.questdb.cairo.CairoEngine engine, LineHttpProcessorConfiguration lineConfig) {
             super(engine, true, true, new DefaultColumnTypes(lineConfig), PartitionBy.DAY);
@@ -2124,6 +2526,24 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
             }
         }
 
+        @Override
+        public void commitIfMaxUncommittedRowsReached(CommittedTxnConsumer consumer) throws Throwable {
+            maxRowsCommitCallCount++;
+            if (consumer != null && maxRowsCommitTableNames != null) {
+                for (int i = 0; i < maxRowsCommitTableNames.length; i++) {
+                    consumer.accept(maxRowsCommitTableNames[i], maxRowsCommitDirNames[i], maxRowsCommitSeqTxns[i]);
+                }
+            }
+            maxRowsCommitTableNames = null;
+            maxRowsCommitDirNames = null;
+            maxRowsCommitSeqTxns = null;
+            if (maxRowsCommitThrow != null) {
+                Throwable t = maxRowsCommitThrow;
+                maxRowsCommitThrow = null;
+                throw t;
+            }
+        }
+
         void queueCommit(String[] tableNames, String[] dirNames, long[] seqTxns) {
             this.commitTableNames = tableNames;
             this.commitDirNames = dirNames;
@@ -2132,6 +2552,20 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
 
         void queueCommitThrow(Throwable t) {
             this.commitThrow = t;
+        }
+
+        void queueMaxRowsCommit(String[] tableNames, String[] dirNames, long[] seqTxns) {
+            this.maxRowsCommitTableNames = tableNames;
+            this.maxRowsCommitDirNames = dirNames;
+            this.maxRowsCommitSeqTxns = seqTxns;
+        }
+
+        void queueMaxRowsCommitThrow(Throwable t) {
+            this.maxRowsCommitThrow = t;
+        }
+
+        int getMaxRowsCommitCallCount() {
+            return maxRowsCommitCallCount;
         }
     }
 

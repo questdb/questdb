@@ -382,6 +382,23 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParallelAvgMergeFuzz() throws Exception {
+        // Verifies AvgIntGroupByFunction and AvgLongGroupByFunction merge() correctness
+        // by comparing single-threaded and parallel results across partitions of varying sizes.
+        testParallelNonKeyedMergeFuzz(
+                "create table tab as (" +
+                        "  select" +
+                        "    rnd_int(0, 1_000_000, 2) anint," +
+                        "    rnd_long(0, 1_000_000_000, 2) along," +
+                        "    timestamp_sequence(0, 86400000000) ts" +
+                        "  from long_sequence(1)" +
+                        ") timestamp(ts) partition by day",
+                "rnd_int(0, 1_000_000, 2), rnd_long(0, 1_000_000_000, 2)",
+                "SELECT round(avg(anint), 6) avg_int, round(avg(along), 6) avg_long FROM tab"
+        );
+    }
+
+    @Test
     public void testParallelBitwiseAggregates() throws Exception {
         // Exercises the new computeKeyedBatch overrides for bit_and / bit_or / bit_xor
         // across byte / short / int / long. The 'k0'..'k4' SYMBOL key routes through
@@ -1777,6 +1794,21 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParallelGroupByRegrR2() throws Exception {
+        // Anchors the parallel-merge result for regr_r2. regr_r2 is the only
+        // aggregate that reads the Syy state slot, so without this test the
+        // mergedSumY branch in AbstractRegressionGroupByFunction.merge() has
+        // no end-to-end coverage on a multi-worker path. Expected value
+        // captured from a single stable run; refresh if the rnd_*() seeds
+        // change.
+        Assume.assumeTrue(enableParallelGroupBy);
+        testParallelGroupByAllTypes("SELECT round(regr_r2(adouble, along), 14) FROM tab", """
+                round
+                2.2694313961E-4
+                """);
+    }
+
+    @Test
     public void testParallelGroupByStdDev() throws Exception {
         Assume.assumeTrue(enableParallelGroupBy);
         testParallelGroupByAllTypes(
@@ -1961,6 +1993,22 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParallelKSumNSumMergeFuzz() throws Exception {
+        // Verifies KSumDoubleGroupByFunction and NSumDoubleGroupByFunction merge() correctness
+        // by comparing single-threaded and parallel results across partitions of varying sizes.
+        testParallelNonKeyedMergeFuzz(
+                "create table tab as (" +
+                        "  select" +
+                        "    rnd_double(2) adouble," +
+                        "    timestamp_sequence(0, 86400000000) ts" +
+                        "  from long_sequence(1)" +
+                        ") timestamp(ts) partition by day",
+                "rnd_double(2)",
+                "SELECT round(ksum(adouble), 6) ksum_d, round(nsum(adouble), 6) nsum_d FROM tab"
+        );
+    }
+
+    @Test
     public void testParallelKeyedGroupByThrowsOnTimeoutUnorderedPath() throws Exception {
         testParallelGroupByThrowsOnTimeout("select id, vwap(price, quantity) from tab", 2);
     }
@@ -2105,6 +2153,20 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                 "SELECT varchar_key::long k, sum(value) FROM tab ORDER BY k DESC LIMIT 3",
                 expected,
                 "Long Top K lo: 3"
+        );
+    }
+
+    @Test
+    public void testParallelMinMaxShortMergeFuzz() throws Exception {
+        testParallelNonKeyedMergeFuzz(
+                "create table tab as (" +
+                        "  select" +
+                        "    rnd_short(-30000, 30000) ashort," +
+                        "    timestamp_sequence(0, 86400000000) ts" +
+                        "  from long_sequence(1)" +
+                        ") timestamp(ts) partition by day",
+                "rnd_short(-30000, 30000)",
+                "SELECT min(ashort) min_short, max(ashort) max_short FROM tab"
         );
     }
 
@@ -2772,6 +2834,80 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                         1.0\t4050.0\tnull\t4050.0\t51.0\t4050.0
                         """
         );
+    }
+
+    @Test
+    public void testParallelNonKeyedGroupByWithColumnTopsAndNewAggregates() throws Exception {
+        // Exercises the row-by-row column-top fallback inside AsyncGroupByNotKeyedRecordCursorFactory's
+        // aggregateVect reducer for aggregates whose computeBatch was added or whose parallelism flag
+        // was flipped: avg(int), avg(long), ksum(double), nsum(double), sum(long256). Frames covering
+        // pre-ALTER rows hit hasColumnTops() and must fall back to computeFirst/computeNext.
+        Assume.assumeTrue(enableParallelGroupBy);
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new WorkerPool(() -> 4);
+            TestUtils.execute(
+                    pool,
+                    (engine, compiler, sqlExecutionContext) -> {
+                        sqlExecutionContext.setJitMode(enableJitCompiler ? SqlJitMode.JIT_MODE_ENABLED : SqlJitMode.JIT_MODE_DISABLED);
+
+                        execute(
+                                compiler,
+                                "create table tab (ts timestamp, anchor int) timestamp(ts) partition by day",
+                                sqlExecutionContext
+                        );
+                        // First half: only the original columns exist. After ALTER, the rows below
+                        // present a column top for every new column.
+                        execute(
+                                compiler,
+                                "insert into tab select (x * 100000)::timestamp, x::int from long_sequence(" + ROW_COUNT + ")",
+                                sqlExecutionContext
+                        );
+                        execute(compiler, "alter table tab add column anint int", sqlExecutionContext);
+                        execute(compiler, "alter table tab add column along long", sqlExecutionContext);
+                        execute(compiler, "alter table tab add column adouble double", sqlExecutionContext);
+                        execute(compiler, "alter table tab add column along256 long256", sqlExecutionContext);
+                        execute(
+                                compiler,
+                                "insert into tab " +
+                                        "select ((" + ROW_COUNT + " + x) * 100000)::timestamp, x::int, " +
+                                        "rnd_int(0, 1_000_000, 2), rnd_long(0, 1_000_000_000, 2), rnd_double(2), rnd_long256() " +
+                                        "from long_sequence(" + ROW_COUNT + ")",
+                                sqlExecutionContext
+                        );
+
+                        if (convertToParquet) {
+                            execute(compiler, "alter table tab convert partition to parquet where ts >= 0", sqlExecutionContext);
+                        }
+
+                        final String query = "SELECT " +
+                                "round(avg(anint), 6) avg_int, " +
+                                "round(avg(along), 6) avg_long, " +
+                                "round(ksum(adouble), 6) ksum_d, " +
+                                "round(nsum(adouble), 6) nsum_d, " +
+                                "sum(along256) sum_long256 " +
+                                "FROM tab";
+
+                        sqlExecutionContext.setParallelGroupByEnabled(false);
+                        try {
+                            TestUtils.printSql(engine, sqlExecutionContext, query, sink);
+                        } finally {
+                            sqlExecutionContext.setParallelGroupByEnabled(engine.getConfiguration().isSqlParallelGroupByEnabled());
+                        }
+
+                        sqlExecutionContext.setParallelGroupByEnabled(true);
+                        final StringSink sinkB = new StringSink();
+                        try {
+                            TestUtils.printSql(engine, sqlExecutionContext, query, sinkB);
+                        } finally {
+                            sqlExecutionContext.setParallelGroupByEnabled(engine.getConfiguration().isSqlParallelGroupByEnabled());
+                        }
+
+                        TestUtils.assertEquals(sink, sinkB);
+                    },
+                    configuration,
+                    LOG
+            );
+        });
     }
 
     @Test
@@ -4193,6 +4329,36 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParallelSumLong256MergeFuzz() throws Exception {
+        // Verifies SumLong256GroupByFunction merge() correctness by comparing single-threaded
+        // and parallel results across partitions of varying sizes.
+        testParallelNonKeyedMergeFuzz(
+                "create table tab as (" +
+                        "  select" +
+                        "    rnd_long256() along256," +
+                        "    timestamp_sequence(0, 86400000000) ts" +
+                        "  from long_sequence(1)" +
+                        ") timestamp(ts) partition by day",
+                "rnd_long256()",
+                "SELECT sum(along256) sum_long256 FROM tab"
+        );
+    }
+
+    @Test
+    public void testParallelSumShortMergeFuzz() throws Exception {
+        testParallelNonKeyedMergeFuzz(
+                "create table tab as (" +
+                        "  select" +
+                        "    rnd_short(-30_000, 30_000) ashort," +
+                        "    timestamp_sequence(0, 86400000000) ts" +
+                        "  from long_sequence(1)" +
+                        ") timestamp(ts) partition by day",
+                "rnd_short(-30_000, 30_000)",
+                "SELECT sum(ashort) sum_short FROM tab"
+        );
+    }
+
+    @Test
     public void testParallelSymbolKeyGroupBy() throws Exception {
         testParallelSymbolKeyGroupBy(
                 "SELECT key, vwap(price, quantity), sum(colTop) FROM tab ORDER BY key",
@@ -5011,6 +5177,70 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
                             execute(compiler, "alter table tab convert partition to parquet where ts >= 0", sqlExecutionContext);
                         }
                         assertQueries(engine, sqlExecutionContext, queriesAndExpectedResults);
+                    },
+                    configuration,
+                    LOG
+            );
+        });
+    }
+
+    private void testParallelNonKeyedMergeFuzz(
+            String createTableSql,
+            String insertExprs,
+            String query
+    ) throws Exception {
+        Assume.assumeTrue(enableParallelGroupBy);
+        assertMemoryLeak(() -> {
+            final Rnd rnd = TestUtils.generateRandom(LOG);
+            final WorkerPool pool = new WorkerPool(() -> 4);
+            TestUtils.execute(
+                    pool,
+                    (engine, compiler, sqlExecutionContext) -> {
+                        sqlExecutionContext.setJitMode(enableJitCompiler ? SqlJitMode.JIT_MODE_ENABLED : SqlJitMode.JIT_MODE_DISABLED);
+
+                        execute(compiler, createTableSql, sqlExecutionContext);
+
+                        // Vary partition row counts to cover branches of the batched non-sharded reducer:
+                        // single-row, sub-frame, exactly one frame, and one row past the frame boundary.
+                        long timestamp = 86400000000L;
+                        for (int i = 0; i < 50; i++) {
+                            final int prob = rnd.nextInt(100);
+                            final String row = insertExprs + ", " + timestamp + "::timestamp";
+                            if (prob < 25) {
+                                execute(compiler, "insert into tab values(" + row + ")", sqlExecutionContext);
+                            } else if (prob < 50) {
+                                final int rows = rnd.nextInt(100) + 1;
+                                execute(compiler, "insert into tab select " + row + " from long_sequence(" + rows + ")", sqlExecutionContext);
+                            } else if (prob < 75) {
+                                execute(compiler, "insert into tab select " + row + " from long_sequence(" + MIN_PAGE_FRAME_MAX_ROWS + ")", sqlExecutionContext);
+                            } else {
+                                execute(compiler, "insert into tab select " + row + " from long_sequence(" + (MIN_PAGE_FRAME_MAX_ROWS + 1) + ")", sqlExecutionContext);
+                            }
+                            timestamp += 86400000000L;
+                        }
+
+                        if (convertToParquet) {
+                            execute(compiler, "alter table tab convert partition to parquet where ts >= 0", sqlExecutionContext);
+                        }
+
+                        // Run single-threaded reference.
+                        sqlExecutionContext.setParallelGroupByEnabled(false);
+                        try {
+                            TestUtils.printSql(engine, sqlExecutionContext, query, sink);
+                        } finally {
+                            sqlExecutionContext.setParallelGroupByEnabled(engine.getConfiguration().isSqlParallelGroupByEnabled());
+                        }
+
+                        // Run with parallel GROUP BY.
+                        sqlExecutionContext.setParallelGroupByEnabled(true);
+                        final StringSink sinkB = new StringSink();
+                        try {
+                            TestUtils.printSql(engine, sqlExecutionContext, query, sinkB);
+                        } finally {
+                            sqlExecutionContext.setParallelGroupByEnabled(engine.getConfiguration().isSqlParallelGroupByEnabled());
+                        }
+
+                        TestUtils.assertEquals(sink, sinkB);
                     },
                     configuration,
                     LOG
