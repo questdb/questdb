@@ -426,9 +426,12 @@ public class EmaWindowFunctionTest extends AbstractCairoTest {
             execute("insert into tab select x::timestamp, x%10, x::double from long_sequence(1000)");
 
             // Just verify it runs without error and returns expected row count
-            assertSql(
+            assertQueryNoLeakCheck(
                     "count\n1000\n",
-                    "select count(*) from (select ts, i, val, avg(val, 'alpha', 0.1) over (partition by i order by ts) from tab)"
+                    "select count(*) from (select ts, i, val, avg(val, 'alpha', 0.1) over (partition by i order by ts) from tab)",
+                    null,
+                    false,
+                    true
             );
         });
     }
@@ -1058,9 +1061,12 @@ public class EmaWindowFunctionTest extends AbstractCairoTest {
                     "from long_sequence(100)");
 
             // Verify it runs and returns expected row count
-            assertSql(
+            assertQueryNoLeakCheck(
                     "count\n100\n",
-                    "select count(*) from (select ts, i, val, avg(val, 'second', 1) over (partition by i order by ts) from tab)"
+                    "select count(*) from (select ts, i, val, avg(val, 'second', 1) over (partition by i order by ts) from tab)",
+                    null,
+                    false,
+                    true
             );
         });
     }

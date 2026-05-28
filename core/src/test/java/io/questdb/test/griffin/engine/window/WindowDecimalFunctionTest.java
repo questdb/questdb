@@ -2091,11 +2091,14 @@ public class WindowDecimalFunctionTest extends AbstractCairoTest {
                 };
                 // ZERO_PASS sibling (OverPartitionRangeFrame avg) + TWO_PASS sibling (OverPartition sum).
                 // The query becomes cached, pass1 of the ZERO_PASS function is called.
-                assertSql("ts\n2024-01-01T00:00:00.000000Z\n2024-01-01T00:01:00.000000Z\n2024-01-01T00:02:00.000000Z\n2024-01-01T00:03:00.000000Z\n2024-01-01T00:04:00.000000Z\n2024-01-01T00:05:00.000000Z\n",
+                assertQueryNoLeakCheck("ts\n2024-01-01T00:00:00.000000Z\n2024-01-01T00:01:00.000000Z\n2024-01-01T00:02:00.000000Z\n2024-01-01T00:03:00.000000Z\n2024-01-01T00:04:00.000000Z\n2024-01-01T00:05:00.000000Z\n",
                         "SELECT ts FROM (SELECT ts, " +
                                 "avg(" + col + ", " + scale + ") OVER (PARTITION BY grp ORDER BY ts RANGE BETWEEN 60 second PRECEDING AND CURRENT ROW) a, " +
                                 "sum(" + col + ") OVER (PARTITION BY grp) s " +
-                                "FROM t) ORDER BY ts");
+                                "FROM t) ORDER BY ts",
+                        "ts",
+                        false,
+                        true);
             }
         });
     }
@@ -2212,11 +2215,17 @@ public class WindowDecimalFunctionTest extends AbstractCairoTest {
                     default -> 16;
                 };
                 // OverPartitionRangeFrame
-                assertSql("ts\n2024-01-01T00:00:00.000000Z\n2024-01-01T00:01:00.000000Z\n",
-                        "SELECT ts FROM (SELECT ts, avg(" + col + ", " + defaultScale + ") OVER (PARTITION BY grp ORDER BY ts RANGE BETWEEN 60 second PRECEDING AND CURRENT ROW) av FROM t)");
+                assertQueryNoLeakCheck("ts\n2024-01-01T00:00:00.000000Z\n2024-01-01T00:01:00.000000Z\n",
+                        "SELECT ts FROM (SELECT ts, avg(" + col + ", " + defaultScale + ") OVER (PARTITION BY grp ORDER BY ts RANGE BETWEEN 60 second PRECEDING AND CURRENT ROW) av FROM t)",
+                        "ts",
+                        false,
+                        true);
                 // OverPartitionRowsFrame
-                assertSql("ts\n2024-01-01T00:00:00.000000Z\n2024-01-01T00:01:00.000000Z\n",
-                        "SELECT ts FROM (SELECT ts, avg(" + col + ", " + defaultScale + ") OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) av FROM t)");
+                assertQueryNoLeakCheck("ts\n2024-01-01T00:00:00.000000Z\n2024-01-01T00:01:00.000000Z\n",
+                        "SELECT ts FROM (SELECT ts, avg(" + col + ", " + defaultScale + ") OVER (PARTITION BY grp ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) av FROM t)",
+                        "ts",
+                        false,
+                        true);
             }
         });
     }
@@ -2293,7 +2302,13 @@ public class WindowDecimalFunctionTest extends AbstractCairoTest {
                 // Query with only ZERO_PASS function (avg in RANGE frame) — streaming path.
                 String query = "SELECT ts, avg(" + col + ", " + scale + ") OVER (ORDER BY ts RANGE BETWEEN 60 second PRECEDING AND CURRENT ROW) av FROM t";
                 // Just verify it runs (5 rows expected).
-                assertSql("ts\tav\n", "SELECT ts, av FROM (" + query + ") WHERE 1=0");
+                assertQueryNoLeakCheck(
+                        "ts\tav\n",
+                        "SELECT ts, av FROM (" + query + ") WHERE 1=0",
+                        "ts",
+                        true,
+                        true
+                );
             }
         });
     }

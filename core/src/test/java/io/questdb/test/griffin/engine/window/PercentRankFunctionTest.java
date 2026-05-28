@@ -256,12 +256,15 @@ public class PercentRankFunctionTest extends AbstractCairoTest {
             // First row: (1-1)/(1000-1) = 0.0
             // Last row: (1000-1)/(1000-1) = 1.0
             // Row 501: (501-1)/(1000-1) = 500/999 = 0.5005005005...
-            assertSql(
+            assertQueryNoLeakCheck(
                     """
                             min\tmax
                             0.0\t1.0
                             """,
-                    "select min(pr), max(pr) from (select percent_rank() over (order by v) as pr from tab)"
+                    "select min(pr), max(pr) from (select percent_rank() over (order by v) as pr from tab)",
+                    null,
+                    false,
+                    true
             );
         });
     }
