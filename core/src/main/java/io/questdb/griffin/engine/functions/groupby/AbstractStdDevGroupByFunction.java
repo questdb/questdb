@@ -100,13 +100,23 @@ public abstract class AbstractStdDevGroupByFunction extends DoubleFunction imple
     // Chan et al. [CGL82; CGL83]
     @Override
     public void merge(MapValue destValue, MapValue srcValue) {
+        long srcCount = srcValue.getLong(valueIndex + 2);
+        if (srcCount == 0) {
+            return;
+        }
+        long destCount = destValue.getLong(valueIndex + 2);
+        if (destCount == 0) {
+            destValue.putDouble(valueIndex, srcValue.getDouble(valueIndex));
+            destValue.putDouble(valueIndex + 1, srcValue.getDouble(valueIndex + 1));
+            destValue.putLong(valueIndex + 2, srcCount);
+            return;
+        }
+
         double srcMean = srcValue.getDouble(valueIndex);
         double srcSum = srcValue.getDouble(valueIndex + 1);
-        long srcCount = srcValue.getLong(valueIndex + 2);
 
         double destMean = destValue.getDouble(valueIndex);
         double destSum = destValue.getDouble(valueIndex + 1);
-        long destCount = destValue.getLong(valueIndex + 2);
 
         long mergedCount = srcCount + destCount;
         double delta = destMean - srcMean;
