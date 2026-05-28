@@ -122,6 +122,7 @@ import io.questdb.std.str.AbstractCharSequence;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8StringSink;
 import io.questdb.std.str.Utf8s;
 import io.questdb.tasks.TelemetryTask;
 import io.questdb.test.AbstractTest;
@@ -3749,8 +3750,8 @@ public class IODispatcherTest extends AbstractTest {
                     Content-Type: application/json; charset=utf-8\r
                     Keep-Alive: timeout=5, max=10000\r
                     \r
-                    0188\r
-                    {"query":"y","columns":[{"name":"j","type":"SYMBOL"}],"timestamp":-1,"dataset":[["ok\\u0000ok"],["ok\\u0000ok"],["ok\\u0000ok"],["ok\\u0000ok"],["ok\\u0000ok"],["ok\\u0000ok"],["ok\\u0000ok"],["ok\\u0000ok"],["ok\\u0000ok"],["ok\\u0000ok"],["ok\\u0000ok"],["ok\\u0000ok"],["ok\\u0000ok"],["ok\\u0000ok"],["ok\\u0000ok"],["ok\\u0000ok"],["ok\\u0000ok"],["ok\\u0000ok"],["ok\\u0000ok"],["ok\\u0000ok"]],"count":20}\r
+                    02aa\r
+                    {"query":"y","columns":[{"name":"j","type":"SYMBOL"},{"name":"v","type":"VARCHAR"}],"timestamp":-1,"dataset":[["ok\\u0000ok","ok\\u0000ok"],["ok\\u0000ok","ok\\u0000ok"],["ok\\u0000ok","ok\\u0000ok"],["ok\\u0000ok","ok\\u0000ok"],["ok\\u0000ok","ok\\u0000ok"],["ok\\u0000ok","ok\\u0000ok"],["ok\\u0000ok","ok\\u0000ok"],["ok\\u0000ok","ok\\u0000ok"],["ok\\u0000ok","ok\\u0000ok"],["ok\\u0000ok","ok\\u0000ok"],["ok\\u0000ok","ok\\u0000ok"],["ok\\u0000ok","ok\\u0000ok"],["ok\\u0000ok","ok\\u0000ok"],["ok\\u0000ok","ok\\u0000ok"],["ok\\u0000ok","ok\\u0000ok"],["ok\\u0000ok","ok\\u0000ok"],["ok\\u0000ok","ok\\u0000ok"],["ok\\u0000ok","ok\\u0000ok"],["ok\\u0000ok","ok\\u0000ok"],["ok\\u0000ok","ok\\u0000ok"]],"count":20}\r
                     00\r
                     \r
                     """, 100, 0, false);
@@ -7254,12 +7255,16 @@ public class IODispatcherTest extends AbstractTest {
     private static void createTestTable(CairoEngine engine) {
         TableModel model = new TableModel(engine.getConfiguration(), "y", PartitionBy.NONE);
         model.col("j", ColumnType.SYMBOL);
+        model.col("v", ColumnType.VARCHAR);
         TestUtils.createTable(engine, model);
 
+        Utf8StringSink sink = new Utf8StringSink();
+        sink.putAscii("ok").putAny((byte) 0).putAscii("ok");
         try (TableWriter writer = TestUtils.newOffPoolWriter(engine.getConfiguration(), engine.verifyTableName("y"), engine)) {
             for (int i = 0; i < 20; i++) {
                 TableWriter.Row row = writer.newRow();
                 row.putSym(0, "ok\0ok");
+                row.putVarchar(1, sink);
                 row.append();
             }
             writer.commit();
