@@ -38,6 +38,7 @@ import io.questdb.griffin.engine.groupby.SortedRunsMerge;
 import io.questdb.griffin.engine.groupby.GroupByAllocator;
 import io.questdb.std.LongList;
 import io.questdb.std.Numbers;
+import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 import org.jetbrains.annotations.NotNull;
@@ -105,6 +106,10 @@ public class TwapGroupByFunction extends DoubleFunction implements GroupByFuncti
     private GroupByAllocator allocator;
     private long cachedPtr;
     private double cachedValue;
+    // Populated on the primary instance by each shared dependent's initSharedFrom
+    // call. setAllocator iterates this list so shared instances reach getDouble
+    // with a non-null allocator for the in-place sort's transient aux buffer.
+    private ObjList<TwapGroupByFunction> sharedDependents;
     private int valueIndex;
 
     public TwapGroupByFunction(@NotNull Function priceFunc, @NotNull Function tsFunc) {
@@ -291,6 +296,20 @@ public class TwapGroupByFunction extends DoubleFunction implements GroupByFuncti
     }
 
     @Override
+    public void initSharedFrom(GroupByFunction primary) {
+        initValueIndex(primary.getValueIndex());
+        // Register with the primary so its setAllocator propagates the
+        // owner's allocator here. getDouble's compactInPlace allocates a
+        // transient aux buffer it frees before return, so sharing the
+        // owner's allocator is safe.
+        TwapGroupByFunction p = (TwapGroupByFunction) primary;
+        if (p.sharedDependents == null) {
+            p.sharedDependents = new ObjList<>();
+        }
+        p.sharedDependents.add(this);
+    }
+
+    @Override
     public void initValueIndex(int valueIndex) {
         this.valueIndex = valueIndex;
     }
@@ -389,6 +408,11 @@ public class TwapGroupByFunction extends DoubleFunction implements GroupByFuncti
     @Override
     public void setAllocator(GroupByAllocator allocator) {
         this.allocator = allocator;
+        if (sharedDependents != null) {
+            for (int i = 0, n = sharedDependents.size(); i < n; i++) {
+                sharedDependents.getQuick(i).allocator = allocator;
+            }
+        }
     }
 
     @Override

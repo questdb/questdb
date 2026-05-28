@@ -41,6 +41,7 @@ import io.questdb.griffin.engine.groupby.SortedRunsMerge;
 import io.questdb.griffin.engine.groupby.GroupByAllocator;
 import io.questdb.std.LongList;
 import io.questdb.std.Misc;
+import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.DirectUtf8String;
 import io.questdb.std.str.Utf8Sequence;
@@ -110,6 +111,11 @@ public class SparklineGroupByFunction extends VarcharFunction implements UnaryFu
     private long cachedRenderPtrA;
     private long cachedRenderPtrB;
     private long lastRenderPtr;
+    // Populated on the primary instance by each shared dependent's initSharedFrom
+    // call. setAllocator iterates this list so shared instances reach
+    // getVarcharA/B with a non-null allocator for the in-place sort's transient
+    // aux buffer and the rendered output.
+    private ObjList<SparklineGroupByFunction> sharedDependents;
     private int valueIndex;
 
     public SparklineGroupByFunction(
@@ -309,6 +315,21 @@ public class SparklineGroupByFunction extends VarcharFunction implements UnaryFu
     }
 
     @Override
+    public void initSharedFrom(GroupByFunction primary) {
+        initValueIndex(primary.getValueIndex());
+        // Register with the primary so its setAllocator propagates the
+        // owner's allocator here. getVarcharA/B's compactInPlace allocates a
+        // transient aux buffer it frees before return, and the rendered
+        // output is reclaimed when the cursor closes - sharing the owner's
+        // allocator is safe.
+        SparklineGroupByFunction p = (SparklineGroupByFunction) primary;
+        if (p.sharedDependents == null) {
+            p.sharedDependents = new ObjList<>();
+        }
+        p.sharedDependents.add(this);
+    }
+
+    @Override
     public void initValueIndex(int valueIndex) {
         this.valueIndex = valueIndex;
     }
@@ -407,6 +428,11 @@ public class SparklineGroupByFunction extends VarcharFunction implements UnaryFu
     @Override
     public void setAllocator(GroupByAllocator allocator) {
         this.allocator = allocator;
+        if (sharedDependents != null) {
+            for (int i = 0, n = sharedDependents.size(); i < n; i++) {
+                sharedDependents.getQuick(i).allocator = allocator;
+            }
+        }
     }
 
     @Override
