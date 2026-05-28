@@ -38,7 +38,7 @@ import java.io.Closeable;
  * {@link #close()} is invoked from {@code CairoEngine.close()} to drain the
  * pool and release every retained native block.
  */
-public interface MemoryTrackerProvider extends Closeable {
+public interface MemoryTrackerProvider extends Closeable, Mutable {
 
     /**
      * Returns a tracker bound to a single workload invocation. The caller owns
@@ -57,6 +57,17 @@ public interface MemoryTrackerProvider extends Closeable {
      */
     @NotNull
     MemoryTracker acquire(@NotNull SecurityContext securityContext, long queryId, @NotNull MemoryTrackerWorkload workload);
+
+    /**
+     * Drains any cached state without closing the provider. Used by
+     * {@code CairoEngine.clear()} so the leak-checker in test infrastructure
+     * does not flag the provider's retained native blocks as a residual after
+     * a test that exercised a workload boundary. The default implementation is
+     * a no-op so non-pooling providers (e.g., the enterprise shared-tracker
+     * provider, whose lifetimes follow refcount drops) need no change.
+     */
+    default void clear() {
+    }
 
     @Override
     void close();

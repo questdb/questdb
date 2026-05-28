@@ -576,6 +576,10 @@ public class CairoEngine implements Closeable, WriterSource {
         partitionOverwriteControl.clear();
         frameFactory.clear();
         copyExportContext.clear();
+        // Drain the per-workload memory-tracker pool so a tracker acquired in
+        // a previous test does not survive as a retained native block and
+        // trip the test infrastructure's leak checker.
+        Misc.clear(memoryTrackerProvider);
         return b1 & b2 & b3 & b4 & b5 & b6 & b7;
     }
 

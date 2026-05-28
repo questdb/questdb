@@ -87,13 +87,14 @@ public final class PerQueryMemoryTrackerProvider implements MemoryTrackerProvide
     }
 
     @Override
+    public void clear() {
+        drainPool();
+    }
+
+    @Override
     public void close() {
         closed = true;
-        PerQueryMemoryTracker tracker;
-        while ((tracker = pool.pop()) != null) {
-            pooled.decrementAndGet();
-            tracker.destroy();
-        }
+        drainPool();
     }
 
     @TestOnly
@@ -112,6 +113,14 @@ public final class PerQueryMemoryTrackerProvider implements MemoryTrackerProvide
         }
         pool.push(tracker);
         pooled.incrementAndGet();
+    }
+
+    private void drainPool() {
+        PerQueryMemoryTracker tracker;
+        while ((tracker = pool.pop()) != null) {
+            pooled.decrementAndGet();
+            tracker.destroy();
+        }
     }
 
     private long limitFor(MemoryTrackerWorkload workload) {

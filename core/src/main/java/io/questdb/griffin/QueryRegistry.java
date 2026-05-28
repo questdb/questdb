@@ -33,6 +33,9 @@ import io.questdb.mp.Worker;
 import io.questdb.std.Chars;
 import io.questdb.std.ConcurrentLongHashMap;
 import io.questdb.std.LongList;
+import io.questdb.std.MemoryTracker;
+import io.questdb.std.MemoryTrackerProvider;
+import io.questdb.std.MemoryTrackerWorkload;
 import io.questdb.std.Mutable;
 import io.questdb.std.ThreadLocal;
 import io.questdb.std.WeakMutableObjectPool;
@@ -152,6 +155,22 @@ public class QueryRegistry {
         }
         e.isWAL = executionContext.isWalApplication();
         e.principal = executionContext.getSecurityContext().getPrincipal();
+
+        // Acquire a per-workload memory tracker if no outer workload has already
+        // bound one on the execution context. Nested registrations (subquery
+        // recompiles, mat-view-refresh / WAL-apply paths once those land in
+        // Phase 4) inherit the outer tracker via SqlExecutionContext.
+        if (executionContext.getMemoryTracker() == null) {
+            final MemoryTrackerProvider provider = executionContext.getCairoEngine().getMemoryTrackerProvider();
+            final MemoryTracker tracker = provider.acquire(
+                    executionContext.getSecurityContext(),
+                    queryId,
+                    MemoryTrackerWorkload.QUERY
+            );
+            executionContext.setMemoryTracker(tracker);
+            e.memoryTracker = tracker;
+        }
+
         registry.put(queryId, e);
 
         Listener listener = this.listener;
@@ -185,6 +204,15 @@ public class QueryRegistry {
         executionContext.setCancelledFlag(null);
         final Entry e = registry.remove(queryId);
         if (e != null) {
+            // Release the per-workload memory tracker if this register() call
+            // acquired it. A null e.memoryTracker means the registration was
+            // nested under an outer workload that owns the tracker; in that
+            // case we must not touch the context's tracker reference.
+            if (e.memoryTracker != null) {
+                executionContext.setMemoryTracker(null);
+                e.memoryTracker.close();
+                e.memoryTracker = null;
+            }
             tlQueryPool.get().push(e);
         } else {
             // this might happen if query was cancelled
@@ -201,6 +229,10 @@ public class QueryRegistry {
         private final StringSink query = new StringSink();
         private long changedAtNs;
         private boolean isWAL;
+        // Non-null only when this register() call acquired the tracker. Nested
+        // registrations that inherit an outer tracker leave this null so that
+        // the matching unregister() does not touch the context's tracker.
+        private MemoryTracker memoryTracker;
         private CharSequence poolName;
         private CharSequence principal;
         private long registeredAtNs;
@@ -217,6 +249,7 @@ public class QueryRegistry {
             registeredAtNs = 0;
             changedAtNs = 0;
             cancelled.set(false);
+            memoryTracker = null;
             poolName = null;
             workerId = -1;
             principal = null;
