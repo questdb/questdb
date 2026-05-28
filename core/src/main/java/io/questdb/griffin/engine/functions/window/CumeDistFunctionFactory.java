@@ -193,6 +193,11 @@ public class CumeDistFunctionFactory extends AbstractWindowFunctionFactory {
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             super.init(symbolTableSource, executionContext);
+            // Bind the per-query tracker on the deferred-offsets buffer. The
+            // first pass2() write triggers the buffer's lazy malloc under
+            // this tracker; reset() at cursor close frees it against the
+            // same tracker, keeping the per-query counter balanced.
+            deferredOffsets.setMemoryTracker(executionContext.getMemoryTracker());
             SortKeyEncoder.buildRankMaps(symbolTableSource, rankMaps, recordComparator);
         }
 

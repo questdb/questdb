@@ -106,6 +106,10 @@ public abstract class AsOfJoinDenseRecordCursorFactoryBase extends AbstractJoinR
         TimeFrameCursor slaveCursor = null;
         try {
             slaveCursor = slaveFactory.getTimeFrameCursor(executionContext);
+            // Bind the per-query tracker before of(); the cursor's of()
+            // reopens its SingleRecordSinks (in the keyed variants), so the
+            // first malloc lands under the bound tracker.
+            cursor.setMemoryTracker(executionContext.getMemoryTracker());
             cursor.of(masterCursor, slaveCursor, executionContext.getCircuitBreaker());
             return cursor;
         } catch (Throwable e) {

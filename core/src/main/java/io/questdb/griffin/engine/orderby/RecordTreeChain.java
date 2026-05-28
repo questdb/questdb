@@ -33,10 +33,12 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.engine.RecordComparator;
 import io.questdb.std.MemoryPages;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
 import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
 
@@ -66,9 +68,26 @@ public class RecordTreeChain implements Closeable, Mutable, Reopenable {
             long valuePageSize,
             int valueMaxPages
     ) {
+        this(columnTypes, recordSink, comparator, keyPageSize, keyMaxPages, valuePageSize, valueMaxPages, true);
+    }
+
+    public RecordTreeChain(
+            @NotNull ColumnTypes columnTypes,
+            @NotNull RecordSink recordSink,
+            @NotNull RecordComparator comparator,
+            long keyPageSize,
+            int keyMaxPages,
+            long valuePageSize,
+            int valueMaxPages,
+            boolean openOnInit
+    ) {
         try {
             this.comparator = comparator;
-            this.mem = new MemoryPages(keyPageSize, keyMaxPages);
+            // Both children participate in the per-query lifetime:
+            // - MemoryPages is eager by default, so openOnInit threads through.
+            // - RecordChain's inner MemoryCARW is lazy by construction (no
+            //   native alloc until first write), so it does not need a knob.
+            this.mem = new MemoryPages(keyPageSize, keyMaxPages, openOnInit);
             this.recordChain = new RecordChain(columnTypes, recordSink, valuePageSize, valueMaxPages);
             this.recordChainRecord = this.recordChain.getRecordB();
         } catch (Throwable th) {
@@ -140,6 +159,11 @@ public class RecordTreeChain implements Closeable, Mutable, Reopenable {
     @Override
     public void reopen() {
         mem.reopen();
+    }
+
+    public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+        mem.setMemoryTracker(tracker);
+        recordChain.setMemoryTracker(tracker);
     }
 
     public long size() {

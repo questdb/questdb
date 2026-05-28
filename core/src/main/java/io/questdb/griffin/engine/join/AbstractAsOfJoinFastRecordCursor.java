@@ -32,8 +32,10 @@ import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.TimeFrame;
 import io.questdb.cairo.sql.TimeFrameCursor;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.Rows;
+import org.jetbrains.annotations.Nullable;
 
 /**
  * Abstract base class for ASOF join record cursors with fast path optimization.
@@ -178,6 +180,18 @@ public abstract class AbstractAsOfJoinFastRecordCursor implements NoRandomAccess
         slaveFrameRow = Long.MIN_VALUE;
         slaveFrameIndex = -1;
         toTop();
+    }
+
+    /**
+     * Binds the per-query native memory tracker for any native heap this cursor
+     * owns directly (for example, the master and slave {@code SingleRecordSink}
+     * targets in keyed ASOF variants). The factory calls this before
+     * {@link #of(RecordCursor, TimeFrameCursor)} so the first {@code reopen()}
+     * triggered inside {@code of()} allocates under the bound tracker.
+     * <p>
+     * Default no-op for cursors that do not own native heap state.
+     */
+    public void setMemoryTracker(@Nullable MemoryTracker tracker) {
     }
 
     @Override

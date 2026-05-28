@@ -42,6 +42,7 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.table.SymbolTranslatingRecord;
 import io.questdb.griffin.model.JoinContext;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.Transient;
 import org.jetbrains.annotations.Nullable;
@@ -169,6 +170,16 @@ public final class AsOfJoinDenseRecordCursorFactory extends AsOfJoinDenseRecordC
                 symbolTranslatingRecord.of(masterRecord);
                 masterKeyRecord = symbolTranslatingRecord;
             }
+        }
+
+        @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            // Factory binds the tracker just before of(); both sinks are then
+            // reopened lazily under it. Their close() in the cursor's close
+            // path frees against the same tracker, keeping the per-query
+            // counter balanced across cursor cycles.
+            masterSinkTarget.setMemoryTracker(tracker);
+            slaveSinkTarget.setMemoryTracker(tracker);
         }
 
         @Override

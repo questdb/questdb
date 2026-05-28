@@ -270,6 +270,11 @@ public class HashJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory
                 joinKeyMap.setMemoryTracker(executionContext.getMemoryTracker());
                 joinKeyMap.reopen();
             }
+            // Bind the tracker on every of(); the chain's inner MemoryCARW is
+            // lazy, so the first chain.put() inside buildMapOfSlaveRecords()
+            // triggers a malloc under the bound tracker. After the cursor's
+            // close(), the chain's backing is freed against the same tracker.
+            slaveChain.setMemoryTracker(executionContext.getMemoryTracker());
             this.masterCursor = masterCursor;
             this.slaveCursor = slaveCursor;
             this.circuitBreaker = executionContext.getCircuitBreaker();

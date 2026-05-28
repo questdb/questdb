@@ -147,6 +147,11 @@ public abstract class AbstractHashOuterJoinRecordCursor extends AbstractJoinCurs
             isOpen = true;
             joinKeyMap.reopen();
         }
+        // Bind the per-query tracker before any slaveChain write. The chain's
+        // inner MemoryCARW is lazy by construction, so the next chain.put()
+        // triggers a malloc that lands under this tracker. After the cursor's
+        // close(), the chain's backing is freed against the same tracker.
+        slaveChain.setMemoryTracker(sqlExecutionContext.getMemoryTracker());
         this.masterCursor = masterCursor;
         this.slaveCursor = slaveCursor;
         this.circuitBreaker = sqlExecutionContext.getCircuitBreaker();

@@ -28,6 +28,7 @@ import io.questdb.cairo.Reopenable;
 import io.questdb.griffin.engine.LimitOverflowException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
 
@@ -41,18 +42,31 @@ public class MemoryPages implements Closeable, Mutable, Reopenable {
     private final LongList pages = new LongList();
     private long cachePageHi;
     private long cachePageLo;
+    // Per-query native memory tracker bound by the owning factory at cursor
+    // start. Null when no per-query limit applies; all Unsafe.{malloc,free}
+    // calls degrade to the global-only overloads in that case.
+    @Nullable
+    private MemoryTracker memoryTracker;
 
     public MemoryPages(long pageSize, int maxPages) {
+        this(pageSize, maxPages, true);
+    }
+
+    public MemoryPages(long pageSize, int maxPages, boolean openOnInit) {
         this.pageSize = Numbers.ceilPow2(pageSize);
         this.bits = Numbers.msb(this.pageSize);
         this.mask = this.pageSize - 1;
         this.maxPages = maxPages;
-        try {
-            allocate0(0);
-        } catch (Throwable th) {
-            close();
-            throw th;
+        if (openOnInit) {
+            try {
+                allocate0(0);
+            } catch (Throwable th) {
+                close();
+                throw th;
+            }
         }
+        // else: first reopen() allocates the initial page under whatever
+        // MemoryTracker is bound at that time.
     }
 
     public long addressOf(long offset) {
@@ -81,7 +95,7 @@ public class MemoryPages implements Closeable, Mutable, Reopenable {
         for (int i = 0; i < pages.size(); i++) {
             long address = pages.getQuick(i);
             if (address != 0) {
-                Unsafe.free(address, pageSize, MemoryTag.NATIVE_TREE_CHAIN);
+                Unsafe.free(address, pageSize, MemoryTag.NATIVE_TREE_CHAIN, memoryTracker);
             }
         }
         pages.clear();
@@ -92,6 +106,10 @@ public class MemoryPages implements Closeable, Mutable, Reopenable {
     @Override
     public void reopen() {
         allocate0(0);
+    }
+
+    public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+        this.memoryTracker = tracker;
     }
 
     public long size() {
@@ -108,7 +126,7 @@ public class MemoryPages implements Closeable, Mutable, Reopenable {
         }
 
         if (index >= pages.size()) {
-            pages.extendAndSet((int) index, Unsafe.malloc(pageSize, MemoryTag.NATIVE_TREE_CHAIN));
+            pages.extendAndSet((int) index, Unsafe.malloc(pageSize, MemoryTag.NATIVE_TREE_CHAIN, memoryTracker));
             LOG.debug().$("new page [size=").$(pageSize).$(']').$();
         }
 

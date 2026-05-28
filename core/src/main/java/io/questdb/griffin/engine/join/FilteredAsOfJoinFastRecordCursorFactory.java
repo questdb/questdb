@@ -42,6 +42,7 @@ import io.questdb.griffin.engine.table.SelectedRecordCursorFactory;
 import io.questdb.griffin.engine.table.SymbolTranslatingRecord;
 import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.Rows;
@@ -139,6 +140,10 @@ public final class FilteredAsOfJoinFastRecordCursorFactory extends AbstractJoinR
             Record filterRecord = baseTimeFrameCursor.getRecordB();
             slaveRecordFilter.init(baseTimeFrameCursor, executionContext);
             slaveCursor = selectedTimeFrameCursor == null ? baseTimeFrameCursor : selectedTimeFrameCursor.of(baseTimeFrameCursor);
+            // Bind the per-query tracker before of(); the cursor's of()
+            // reopens its SingleRecordSinks, so the first malloc lands
+            // under the bound tracker.
+            cursor.setMemoryTracker(executionContext.getMemoryTracker());
             cursor.of(masterCursor, slaveCursor, filterRecord, executionContext.getCircuitBreaker());
             return cursor;
         } catch (Throwable e) {
@@ -331,6 +336,12 @@ public final class FilteredAsOfJoinFastRecordCursorFactory extends AbstractJoinR
         @Override
         public long preComputedStateSize() {
             return 0;
+        }
+
+        @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            masterSinkTarget.setMemoryTracker(tracker);
+            slaveSinkTarget.setMemoryTracker(tracker);
         }
 
         @Override
