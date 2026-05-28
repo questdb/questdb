@@ -369,19 +369,8 @@ public class ArrayAggDoubleArrayGroupByFunctionFactoryTest extends AbstractCairo
 
     @Test
     public void testMergeDeepCopyEmptyDest() throws Exception {
-        // White-box test for the destPtr==0 branch in
-        // AbstractArrayAggDoubleGroupByFunction.merge(). The parallel
-        // framework only reaches this branch when work-stealing assigns the
-        // destination accumulator a ptr=0 contribution before any real data
-        // lands; that ordering is not controllable from SQL, so
-        // testParallelMergeEmptyWorkerState above triggers it only
-        // probabilistically. To exercise the branch deterministically this
-        // test constructs the two MapValue inputs directly (one with the
-        // long slot at 0, the other pointing at a synthesized 3-element
-        // build buffer), bypasses the parallel dispatch path, and calls
-        // merge() directly. The branch must allocate a fresh buffer in
-        // dest's allocator and copy src's entries verbatim - a shallow
-        // copy of srcPtr would dangle once src's allocator was reclaimed.
+        // Deterministic counterpart to testParallelMergeEmptyWorkerState, which
+        // only hits the destPtr==0 branch probabilistically.
         assertMemoryLeak(() -> {
             try (
                     OrderedMap destMap = new OrderedMap(4 * 1024, new SingleColumnType(ColumnType.INT),
@@ -637,15 +626,8 @@ public class ArrayAggDoubleArrayGroupByFunctionFactoryTest extends AbstractCairo
 
     @Test
     public void testParallelDisjointMerge() throws Exception {
-        // When each worker accumulates rowIds from contiguous, non-overlapping
-        // page frames, the per-worker buffers form pairwise disjoint sorted
-        // runs (one worker's max rowId is below the next worker's min). In
-        // that arrangement SortedRunsMerge takes its bulk-memcpy fast path
-        // instead of the per-entry two-pointer merge.
-        //
-        // The layout below allocates exactly 4 page frames (one frame per
-        // worker, single group key) so each worker is guaranteed a contiguous
-        // single-frame rowId block.
+        // 4 frames x 1 group x 4 workers => one contiguous rowId block per
+        // worker. Exercises SortedRunsMerge's bulk-memcpy fast path.
         setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 100);
         assertMemoryLeak(() -> {
             final WorkerPool pool = new WorkerPool(() -> 4);
@@ -1057,12 +1039,6 @@ public class ArrayAggDoubleArrayGroupByFunctionFactoryTest extends AbstractCairo
 
     @Test
     public void testSampleByFillValueRejectedNonKeyed() throws Exception {
-        // Non-keyed SAMPLE BY FILL(value) is rewritten by SqlOptimiser into a base model
-        // with the fill list on baseModel.fillValues. SqlOptimiser.rewriteSelectClause0
-        // propagates that list to groupByModel.sampleByFill, and GroupByUtils
-        // .assembleGroupByFunctions checks each aggregate's getSampleByFlags() bitmask.
-        // array_agg omits SAMPLE_BY_FILL_VALUE, so the query is rejected at compile time
-        // rather than crashing when a gap is hit at runtime.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tab (ts TIMESTAMP, arr DOUBLE[]) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
@@ -1111,10 +1087,6 @@ public class ArrayAggDoubleArrayGroupByFunctionFactoryTest extends AbstractCairo
 
     @Test
     public void testSampleByFromToFillNull() throws Exception {
-        // FROM/TO + FILL(NULL) extends the result range beyond the data window, forcing
-        // the fill path to emit synthetic null buckets at the front and back. Pins that
-        // array_agg returns null in those synthetic buckets rather than an empty or stale
-        // array reached from the aggregate state.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tab (ts TIMESTAMP, arr DOUBLE[]) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""

@@ -49,6 +49,7 @@ public class ArrayAggDoubleArrayGroupByFunction extends AbstractArrayAggDoubleGr
 
     @Override
     public void computeFirst(MapValue mapValue, Record record, long rowId) {
+        assert primary == null : "computeFirst called on shared instance";
         ArrayView arr = arg.getArray(record);
         // NULL and empty inputs contribute zero elements (concat identity).
         if (arr.isNull()) {
@@ -71,6 +72,7 @@ public class ArrayAggDoubleArrayGroupByFunction extends AbstractArrayAggDoubleGr
 
     @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
+        assert primary == null : "computeNext called on shared instance";
         ArrayView arr = arg.getArray(record);
         if (arr.isNull()) {
             return;

@@ -274,6 +274,7 @@ public abstract class AbstractArrayAggDoubleGroupByFunction extends ArrayFunctio
      */
     @Override
     public void merge(MapValue destValue, MapValue srcValue) {
+        assert primary == null : "merge called on shared instance";
         long srcPtr = srcValue.getLong(valueIndex);
         if (srcPtr == 0) {
             return;
@@ -303,6 +304,7 @@ public abstract class AbstractArrayAggDoubleGroupByFunction extends ArrayFunctio
 
     @Override
     public void setAllocator(GroupByAllocator allocator) {
+        assert primary == null : "setAllocator called on shared instance";
         this.allocator = allocator;
     }
 

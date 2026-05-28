@@ -45,6 +45,7 @@ public class ArrayAggDoubleGroupByFunction extends AbstractArrayAggDoubleGroupBy
 
     @Override
     public void computeFirst(MapValue mapValue, Record record, long rowId) {
+        assert primary == null : "computeFirst called on shared instance";
         long ptr = allocator.malloc(HEADER_SIZE + INITIAL_CAPACITY * ENTRY_SIZE);
         Unsafe.putInt(ptr, 1);
         Unsafe.putInt(ptr + CAPACITY_OFFSET, INITIAL_CAPACITY);
@@ -55,6 +56,7 @@ public class ArrayAggDoubleGroupByFunction extends AbstractArrayAggDoubleGroupBy
 
     @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
+        assert primary == null : "computeNext called on shared instance";
         long ptr = mapValue.getLong(valueIndex);
         int count = Unsafe.getInt(ptr);
         checkCapacityLimit(count + 1);
