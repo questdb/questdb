@@ -618,13 +618,23 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     /**
      * Approximate REFRESH LIMIT duration in microseconds. Positive value means hours,
      * negative means months. Months are approximated as 30 days. Used only for ordering
-     * (warning emission), never for refresh boundary computation.
+     * (warning emission), never for refresh boundary computation. Uses
+     * {@link Math#multiplyExact} so a corrupted out-of-range input throws rather than
+     * silently overflowing and flipping the sign of the ordering comparison.
      */
     private static long approxRefreshLimitMicros(int hoursOrMonths) {
-        if (hoursOrMonths > 0) {
-            return hoursOrMonths * 3_600L * 1_000_000L;
+        try {
+            if (hoursOrMonths > 0) {
+                return Math.multiplyExact((long) hoursOrMonths, 3_600L * 1_000_000L);
+            }
+            return Math.multiplyExact((long) -hoursOrMonths, 30L * 86_400L * 1_000_000L);
+        } catch (ArithmeticException ignored) {
+            // Cap at Long.MAX_VALUE -- treat the extreme value as "very large" so
+            // any finite limit compares as smaller. SqlParser caps inputs well
+            // below the overflow threshold, so this is a defensive guard against
+            // corrupted state.
+            return Long.MAX_VALUE;
         }
-        return -hoursOrMonths * 30L * 86_400L * 1_000_000L;
     }
 
     // returns number of copied rows
@@ -1850,20 +1860,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
     }
 
-    private void checkMatViewModification(ExecutionModel executionModel) throws SqlException {
-        final CharSequence name = executionModel.getTableName();
-        final TableToken tableToken = engine.getTableTokenIfExists(name);
-        if (tableToken != null && tableToken.isMatView()) {
-            throw SqlException.position(executionModel.getTableNameExpr().position).put("cannot modify materialized view [view=").put(name).put(']');
-        }
-    }
-
-    private void checkMatViewModification(TableToken tableToken) throws SqlException {
-        if (tableToken != null && tableToken.isMatView()) {
-            throw SqlException.position(lexer.lastTokenPosition()).put("cannot modify materialized view [view=").put(tableToken.getTableName()).put(']');
-        }
-    }
-
     /**
      * INSERT/COPY-only variant of {@link #checkMatViewModification(ExecutionModel)} that
      * also accepts the model when the mat view has {@code REFRESH LIMIT} set, allowing
@@ -1875,6 +1871,20 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         final TableToken tableToken = engine.getTableTokenIfExists(name);
         if (tableToken != null && tableToken.isMatView() && !engine.isBackfillableMatView(tableToken)) {
             throw SqlException.position(executionModel.getTableNameExpr().position).put("cannot modify materialized view [view=").put(name).put(']');
+        }
+    }
+
+    private void checkMatViewModification(ExecutionModel executionModel) throws SqlException {
+        final CharSequence name = executionModel.getTableName();
+        final TableToken tableToken = engine.getTableTokenIfExists(name);
+        if (tableToken != null && tableToken.isMatView()) {
+            throw SqlException.position(executionModel.getTableNameExpr().position).put("cannot modify materialized view [view=").put(name).put(']');
+        }
+    }
+
+    private void checkMatViewModification(TableToken tableToken) throws SqlException {
+        if (tableToken != null && tableToken.isMatView()) {
+            throw SqlException.position(lexer.lastTokenPosition()).put("cannot modify materialized view [view=").put(tableToken.getTableName()).put(']');
         }
     }
 
@@ -2082,21 +2092,40 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                         // SET REFRESH LIMIT
                         executionContext.getSecurityContext().authorizeAlterMatViewSetRefreshLimit(matViewToken);
                         final int limitHoursOrMonths = SqlParser.parseTtlHoursOrMonths(lexer);
-                        // Warn when the new limit removes or shrinks the managed zone (boundary
-                        // shifts further into the past). Previously-managed buckets now turn
-                        // frozen and stop being refreshed -- their last-computed values stay
-                        // put, which may surprise users who assumed continuing refresh.
-                        // Removal (limitHoursOrMonths == 0) is the same warning plus the loss
-                        // of the frozen-zone semantics altogether (plain FULL reverts to
-                        // wipe-and-reinsert because there is no frozen zone left to preserve).
+                        // Warn whenever the new limit moves the managed/frozen split, in
+                        // either direction. Each direction has different user-visible
+                        // consequences and warrants its own message; without an explicit
+                        // warning a silent extend can overwrite previously-frozen
+                        // backfill on the next refresh.
                         final MatViewDefinition existing = engine.getMatViewGraph().getViewDefinition(matViewToken);
                         if (existing != null) {
                             final int oldLimit = existing.getRefreshLimitHoursOrMonths();
-                            if (oldLimit != 0 && (limitHoursOrMonths == 0 || approxRefreshLimitMicros(limitHoursOrMonths) < approxRefreshLimitMicros(oldLimit))) {
-                                LOG.advisory().$("REFRESH LIMIT shrink or remove on materialized view [view=").$(matViewToken)
-                                        .$(", from=").$(oldLimit)
-                                        .$(", to=").$(limitHoursOrMonths)
-                                        .$("]; previously-managed buckets are now frozen and will stop being refreshed").$();
+                            if (oldLimit != limitHoursOrMonths) {
+                                if (oldLimit == 0) {
+                                    // Adding a limit -- creates a frozen zone where there was none.
+                                    LOG.advisory().$("REFRESH LIMIT added on materialized view [view=").$(matViewToken)
+                                            .$(", to=").$(limitHoursOrMonths)
+                                            .$("]; buckets older than the new boundary become frozen and will no longer be refreshed").$();
+                                } else if (limitHoursOrMonths == 0) {
+                                    // Removing the limit -- the next FULL refresh wipes all buckets.
+                                    LOG.advisory().$("REFRESH LIMIT removed on materialized view [view=").$(matViewToken)
+                                            .$(", from=").$(oldLimit)
+                                            .$("]; the frozen zone disappears and the next FULL refresh will wipe and rebuild every bucket, including any user backfill").$();
+                                } else if (approxRefreshLimitMicros(limitHoursOrMonths) < approxRefreshLimitMicros(oldLimit)) {
+                                    // Shrink -- managed zone narrows, frozen zone grows.
+                                    LOG.advisory().$("REFRESH LIMIT shrunk on materialized view [view=").$(matViewToken)
+                                            .$(", from=").$(oldLimit)
+                                            .$(", to=").$(limitHoursOrMonths)
+                                            .$("]; previously-managed buckets become frozen and stop being refreshed").$();
+                                } else {
+                                    // Extend -- managed zone widens, frozen zone shrinks. Any rows the
+                                    // user backfilled into what used to be the frozen zone may be
+                                    // overwritten by the next refresh's REPLACE_RANGE.
+                                    LOG.advisory().$("REFRESH LIMIT extended on materialized view [view=").$(matViewToken)
+                                            .$(", from=").$(oldLimit)
+                                            .$(", to=").$(limitHoursOrMonths)
+                                            .$("]; previously-frozen buckets become managed and any backfill in the newly-managed range may be overwritten on the next refresh").$();
+                                }
                             }
                         }
                         final AlterOperationBuilder setRefreshLimit = alterOperationBuilder.ofSetMatViewRefreshLimit(

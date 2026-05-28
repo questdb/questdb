@@ -604,6 +604,13 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                     // Empty base table reports Long.MIN_VALUE; fall back to now to avoid underflow.
                     boundaryAnchor = maxBaseTs == Long.MIN_VALUE ? now : Math.min(maxBaseTs, now);
                 }
+                // Publish the anchor before any REPLACE_RANGE commit lands. The backfill
+                // validator and materialized_views().backfill_max_ts read this snapshot
+                // and clamp their own boundary anchor to min(own, published). That bounds
+                // any user backfill commit (which may run with a later, higher own anchor)
+                // below this tick's REPLACE_RANGE lo, so refresh never overwrites a row
+                // the validator just accepted.
+                viewState.setLastRefreshFrozenBoundaryAnchor(boundaryAnchor);
                 // The interval iterators snap minTs down to the containing bucket floor
                 // (FixedOffsetIntervalIterator.ofCommon and TimeZoneIntervalIterator.of),
                 // so refresh always processes whole buckets even when the boundary lands

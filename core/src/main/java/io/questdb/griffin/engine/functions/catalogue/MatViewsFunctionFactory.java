@@ -48,6 +48,7 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.CursorFunction;
+import io.questdb.griffin.engine.groupby.TimestampSampler;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.IntList;
@@ -161,6 +162,13 @@ public class MatViewsFunctionFactory implements FunctionFactory {
             private final BlockFileReader viewStateFileReader;
             private final MatViewStateReader viewStateReader = new MatViewStateReader();
             private final ObjList<TableToken> viewTokens = new ObjList<>();
+            // Sampler reused across rows when the sampling interval/unit
+            // matches the last view we saw. Avoids one TimestampSampler
+            // allocation per view per row in the common case where views
+            // on the same base table share a sampling interval.
+            private TimestampSampler cachedSampler;
+            private long cachedSamplerInterval = Long.MIN_VALUE;
+            private char cachedSamplerUnit;
             private int viewIndex = 0;
 
             public ViewsListCursor(CairoEngine engine) {
@@ -247,8 +255,20 @@ public class MatViewsFunctionFactory implements FunctionFactory {
 
                         // backfill_max_ts is a snapshot of the frozen-zone cutoff in
                         // the base table's timestamp units; convert to micros for the
-                        // column. LONG_NULL stays LONG_NULL.
-                        final long backfillBucketFloor = MatViewBackfillValidator.computeFrozenBoundaryBucketFloor(engine, viewDefinition);
+                        // column. LONG_NULL stays LONG_NULL. The helper takes the loaded
+                        // mat-view state (may be null when the engine has not hydrated
+                        // it) so its bound clamps to the last refresh tick's anchor.
+                        // Reuse the sampler across rows whose sampling matches.
+                        if (cachedSampler == null
+                                || cachedSamplerInterval != viewDefinition.getSamplingInterval()
+                                || cachedSamplerUnit != viewDefinition.getSamplingIntervalUnit()) {
+                            cachedSampler = MatViewBackfillValidator.createSampler(viewDefinition);
+                            cachedSamplerInterval = viewDefinition.getSamplingInterval();
+                            cachedSamplerUnit = viewDefinition.getSamplingIntervalUnit();
+                        }
+                        final long backfillBucketFloor = cachedSampler == null
+                                ? Numbers.LONG_NULL
+                                : MatViewBackfillValidator.computeFrozenBoundaryBucketFloor(engine, viewDefinition, state, cachedSampler);
                         final long backfillMaxTs = backfillBucketFloor == Numbers.LONG_NULL
                                 ? Numbers.LONG_NULL
                                 : viewDefinition.getBaseTableTimestampDriver().toMicros(backfillBucketFloor);

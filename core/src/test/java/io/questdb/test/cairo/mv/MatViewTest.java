@@ -7009,15 +7009,20 @@ public class MatViewTest extends AbstractCairoTest {
 
     @Test
     public void testMatViewBackfillInsertAcceptedWithRefreshLimit() throws Exception {
-        // With REFRESH LIMIT set, the SQL INSERT entry-point gate accepts the statement.
-        // Per-row bucket-whole validation is deferred to write/apply time (step 5);
-        // for now any timestamp lands successfully, which is what this test exercises.
+        // With REFRESH LIMIT set, the SQL INSERT entry-point gate accepts the
+        // statement and the WAL commit-time validator accepts the row because
+        // its bucket sits strictly below the boundary's bucket floor.
+        // Pin currentMicros so the validator's anchor is deterministic; without
+        // it the test would compare a ts in 2024 against the JVM wall clock and
+        // accept trivially.
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp(
                     "create table base_price (" +
                             "  sym symbol, price double, ts #TIMESTAMP" +
                             ") timestamp(ts) partition by DAY WAL"
             );
+            execute("insert into base_price values('gbpusd', 2.0, '2024-09-10T11:00')");
+            drainWalQueue();
             execute(
                     "create materialized view price_1h refresh manual deferred as " +
                             "select sym, last(price) as price, ts from base_price sample by 1h;"
@@ -7025,14 +7030,18 @@ public class MatViewTest extends AbstractCairoTest {
             execute("alter materialized view price_1h set refresh limit 1 hour;");
             drainQueues();
 
-            // Direct INSERT into the mat view, which the strict gate would have rejected.
-            execute("insert into price_1h values('gbpusd', 1.5, '2024-09-10T10:00:00.000000Z')");
+            // Wall clock 12:30: anchor = min(11:00, 12:30) = 11:00; boundary = 10:00.
+            // Snapped boundary bucket floor = 10:00 (1h sampling). Row at 09:00
+            // sits in bucket [09:00, 10:00) -> bucketEnd = 10:00 == boundary
+            // floor, accepted by the bucket-whole rule.
+            currentMicros = parseFloorPartialTimestamp("2024-09-10T12:30:00.000000Z");
+            execute("insert into price_1h values('gbpusd', 1.5, '2024-09-10T09:00:00.000000Z')");
             drainQueues();
 
             assertQueryNoLeakCheck(
                     replaceExpectedTimestamp("""
                             sym\tprice\tts
-                            gbpusd\t1.5\t2024-09-10T10:00:00.000000Z
+                            gbpusd\t1.5\t2024-09-10T09:00:00.000000Z
                             """),
                     "price_1h order by ts",
                     "ts",
@@ -7140,6 +7149,288 @@ public class MatViewTest extends AbstractCairoTest {
                             a\t9.0\t2024-09-10T12:00:00.000000Z
                             """),
                     "price_1h order by ts",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testMatViewBackfillMultiRowAllFrozenAccepted() throws Exception {
+        // Multi-row insert where every row sits in the frozen zone is accepted.
+        // The validator gates on the txn's max-row timestamp.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table base_price (" +
+                            "  sym symbol, price double, ts #TIMESTAMP" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            execute("insert into base_price values('a', 9.0, '2024-09-10T12:00')");
+            drainWalQueue();
+            execute(
+                    "create materialized view price_1h refresh manual deferred as " +
+                            "select sym, last(price) as price, ts from base_price sample by 1h;"
+            );
+            execute("alter materialized view price_1h set refresh limit 1 hour;");
+            drainQueues();
+
+            // Boundary 11:00, snapped 11:00. Buckets [08:00,09:00) and [09:00,10:00)
+            // both end at-or-before 11:00 -> accepted. Direct INSERT into a mat view
+            // is row-by-row (it does not re-aggregate through the SAMPLE BY), so all
+            // three inserted rows land verbatim.
+            currentMicros = parseFloorPartialTimestamp("2024-09-10T12:30:00.000000Z");
+            execute(
+                    "insert into price_1h values" +
+                            "('a', 1.0, '2024-09-10T08:00')" +
+                            ",('a', 2.0, '2024-09-10T09:00')" +
+                            ",('a', 3.0, '2024-09-10T09:30')"
+            );
+            drainQueues();
+
+            assertQueryNoLeakCheck(
+                    replaceExpectedTimestamp("""
+                            sym\tprice\tts
+                            a\t1.0\t2024-09-10T08:00:00.000000Z
+                            a\t2.0\t2024-09-10T09:00:00.000000Z
+                            a\t3.0\t2024-09-10T09:30:00.000000Z
+                            """),
+                    "price_1h order by ts",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testMatViewBackfillMultiRowStraddlingBoundaryRejected() throws Exception {
+        // Multi-row insert where the min row is in the frozen zone but the max
+        // row straddles the boundary. The whole txn must be rejected because
+        // the validator inspects the max-row's bucket.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table base_price (" +
+                            "  sym symbol, price double, ts #TIMESTAMP" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            execute("insert into base_price values('a', 9.0, '2024-09-10T12:00')");
+            drainWalQueue();
+            execute(
+                    "create materialized view price_1h refresh manual deferred as " +
+                            "select sym, last(price) as price, ts from base_price sample by 1h;"
+            );
+            execute("alter materialized view price_1h set refresh limit 1 hour;");
+            drainQueues();
+
+            currentMicros = parseFloorPartialTimestamp("2024-09-10T12:30:00.000000Z");
+            try {
+                execute(
+                        "insert into price_1h values" +
+                                "('a', 1.0, '2024-09-10T08:00')" +
+                                ",('a', 2.0, '2024-09-10T11:30')"
+                );
+                Assert.fail("expected bucket-whole rejection on straddling txn");
+            } catch (CairoException e) {
+                assertContains(e.getFlyweightMessage(), "backfill row falls in or past the managed zone");
+            }
+
+            // Mat view stays empty -- the whole txn was rolled back, including the frozen row.
+            assertQueryNoLeakCheck(
+                    "sym\tprice\tts\n",
+                    "price_1h order by sym, ts"
+            );
+        });
+    }
+
+    @Test
+    public void testMatViewBackfillRefreshDoesNotOverwriteAcceptedRow() throws Exception {
+        // C1 regression: the validator and refresh must agree on a boundary so
+        // the next refresh's REPLACE_RANGE never wipes a row that the
+        // commit-time validator just accepted. The fix publishes the refresh
+        // tick's anchor on MatViewState and the validator clamps to it.
+        //
+        // Sequence: refresh ticks at wall 11:30 with max(base_ts) = 11:00,
+        // boundary = 10:00. Wall advances, more base ingest brings
+        // max(base_ts) = 13:00. User backfills a row at 10:30 (bucket
+        // [10:00, 11:00), end = 11:00). Without the published-anchor clamp,
+        // the validator would compute boundary = 12:00 and accept the row.
+        // The next refresh's REPLACE_RANGE covers [10:00, ...) and would wipe
+        // it. With the clamp, the validator clamps the anchor to the published
+        // 11:00, boundary stays at 10:00, the row is rejected and never
+        // reaches the mat view in the first place.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table base_price (" +
+                            "  sym symbol, price double, ts #TIMESTAMP" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            execute("insert into base_price values('a', 9.0, '2024-09-10T11:00')");
+            drainWalQueue();
+            execute(
+                    "create materialized view price_1h refresh manual deferred as " +
+                            "select sym, last(price) as price, ts from base_price sample by 1h;"
+            );
+            execute("alter materialized view price_1h set refresh limit 1 hour;");
+            drainQueues();
+
+            // Refresh tick 1: anchor = min(11:00, 11:30) = 11:00, boundary = 10:00.
+            currentMicros = parseFloorPartialTimestamp("2024-09-10T11:30:00.000000Z");
+            execute("refresh materialized view price_1h full;");
+            drainQueues();
+
+            // Base table advances. Wall clock advances. The validator's own
+            // boundary would now move to 12:00 (anchor = min(13:00, 13:30) = 13:00).
+            // The published anchor from the last refresh tick is still 11:00, so
+            // the validator clamps to it -- boundary stays 10:00.
+            execute("insert into base_price values('a', 9.0, '2024-09-10T13:00')");
+            drainWalQueue();
+            currentMicros = parseFloorPartialTimestamp("2024-09-10T13:30:00.000000Z");
+            try {
+                execute("insert into price_1h values('a', 1.0, '2024-09-10T10:30')");
+                Assert.fail("expected rejection clamped by published anchor");
+            } catch (CairoException e) {
+                assertContains(e.getFlyweightMessage(), "backfill row falls in or past the managed zone");
+            }
+
+            // Frozen-zone row strictly below the published boundary is accepted.
+            execute("insert into price_1h values('a', 5.0, '2024-09-10T08:00')");
+            drainQueues();
+
+            assertQueryNoLeakCheck(
+                    replaceExpectedTimestamp("""
+                            sym\tprice\tts
+                            a\t5.0\t2024-09-10T08:00:00.000000Z
+                            a\t9.0\t2024-09-10T11:00:00.000000Z
+                            """),
+                    "price_1h order by ts",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testRefreshFullEscapeHatchWipesFrozenZone() throws Exception {
+        // With the wall-clock escape hatch on, FULL falls back to the pre-feature
+        // wipe-and-reinsert: truncateSoft runs and any user backfill that landed
+        // in the frozen zone disappears.
+        setProperty(PropertyKey.CAIRO_MAT_VIEW_REFRESH_LIMIT_WALL_CLOCK_ENABLED, "true");
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table base_price (" +
+                            "  sym symbol, price double, ts #TIMESTAMP" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            execute("insert into base_price values('a', 9.0, '2024-09-10T12:00')");
+            drainWalQueue();
+            execute(
+                    "create materialized view price_1h refresh manual deferred as " +
+                            "select sym, last(price) as price, ts from base_price sample by 1h;"
+            );
+            execute("alter materialized view price_1h set refresh limit 1 hour;");
+            drainQueues();
+
+            // Toggle the escape hatch off briefly to backfill (the entry gate
+            // would otherwise reject). Reinstate it before FULL.
+            node1.setProperty(PropertyKey.CAIRO_MAT_VIEW_REFRESH_LIMIT_WALL_CLOCK_ENABLED, "false");
+            currentMicros = parseFloorPartialTimestamp("2024-09-10T12:30:00.000000Z");
+            execute("insert into price_1h values('a', 1.0, '2024-09-10T09:00')");
+            drainQueues();
+
+            node1.setProperty(PropertyKey.CAIRO_MAT_VIEW_REFRESH_LIMIT_WALL_CLOCK_ENABLED, "true");
+            execute("refresh materialized view price_1h full;");
+            drainQueues();
+
+            // Escape hatch on: FULL wiped everything and refreshed from base.
+            // Boundary = 11:30 (wall - 1h), so only the 12:00 bucket survives.
+            assertQueryNoLeakCheck(
+                    replaceExpectedTimestamp("""
+                            sym\tprice\tts
+                            a\t9.0\t2024-09-10T12:00:00.000000Z
+                            """),
+                    "price_1h order by ts",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testMaterializedViewsBackfillMaxTsMonthsLimit() throws Exception {
+        // Months-based REFRESH LIMIT exercises the addMonths arithmetic path
+        // (driver.addMonths) instead of fromHours.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table base_price (" +
+                            "  sym symbol, price double, ts #TIMESTAMP" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            execute("insert into base_price values('a', 1.0, '2024-12-01T00:00')");
+            drainWalQueue();
+            execute(
+                    "create materialized view price_1d refresh manual deferred as " +
+                            "select sym, last(price) as price, ts from base_price sample by 1d;"
+            );
+            execute("alter materialized view price_1d set refresh limit 2 months;");
+            drainQueues();
+
+            currentMicros = parseFloorPartialTimestamp("2024-12-15T00:00:00.000000Z");
+
+            // Anchor = min(2024-12-01, 2024-12-15) = 2024-12-01. addMonths(2024-12-01, -2)
+            // = 2024-10-01. Sampling by 1d, so the bucket floor is 2024-10-01.
+            assertQueryNoLeakCheck(
+                    "view_name\tbackfill_max_ts\n" +
+                            "price_1d\t2024-10-01T00:00:00.000000Z\n",
+                    "select view_name, backfill_max_ts from materialized_views()",
+                    null
+            );
+        });
+    }
+
+    @Test
+    public void testMatViewBackfillFiveMinuteSampling() throws Exception {
+        // Validator behaviour with sub-hour sampling. Bucket width = 5m, so
+        // the bucket floor sits on 5-minute multiples and the validator's
+        // rejection threshold shifts by the same granularity.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table base_price (" +
+                            "  sym symbol, price double, ts #TIMESTAMP" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            execute("insert into base_price values('a', 9.0, '2024-09-10T12:00')");
+            drainWalQueue();
+            execute(
+                    "create materialized view price_5m refresh manual deferred as " +
+                            "select sym, last(price) as price, ts from base_price sample by 5m;"
+            );
+            execute("alter materialized view price_5m set refresh limit 1 hour;");
+            drainQueues();
+
+            // Wall 12:30, anchor 12:00, boundary 11:00, snapped 11:00 (5m-aligned).
+            currentMicros = parseFloorPartialTimestamp("2024-09-10T12:30:00.000000Z");
+
+            // Bucket [10:55, 11:00) ends at 11:00 == boundary -> accepted.
+            execute("insert into price_5m values('a', 1.0, '2024-09-10T10:55')");
+            drainQueues();
+
+            // Bucket [11:00, 11:05) ends at 11:05 > 11:00 -> rejected.
+            try {
+                execute("insert into price_5m values('a', 2.0, '2024-09-10T11:00')");
+                Assert.fail("expected rejection at 5-minute boundary");
+            } catch (CairoException e) {
+                assertContains(e.getFlyweightMessage(), "backfill row falls in or past the managed zone");
+            }
+
+            assertQueryNoLeakCheck(
+                    replaceExpectedTimestamp("""
+                            sym\tprice\tts
+                            a\t1.0\t2024-09-10T10:55:00.000000Z
+                            """),
+                    "price_5m order by ts",
                     "ts",
                     true,
                     true

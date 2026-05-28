@@ -118,6 +118,14 @@ public class MatViewState implements QuietCloseable {
     // Increases monotonically as long as mat view stays valid.
     private volatile long lastRefreshBaseTxn = -1;
     private volatile long lastRefreshFinishTimestampUs = Numbers.LONG_NULL;
+    // Snapshot of the boundary anchor (min(max(base_ts), wallClock)) used by the
+    // most recent REFRESH LIMIT-bounded refresh tick. The backfill validator and
+    // materialized_views().backfill_max_ts read this so their accepted frozen
+    // zone never overlaps an in-flight refresh's REPLACE_RANGE coverage. Stays
+    // at LONG_NULL until the first refresh tick that runs under a non-zero
+    // REFRESH LIMIT publishes its anchor; from then on it advances monotonically
+    // with refresh ticks. Driver units (base table's timestamp driver).
+    private volatile long lastRefreshFrozenBoundaryAnchor = Numbers.LONG_NULL;
     private volatile long lastRefreshStartTimestampUs = Numbers.LONG_NULL;
     private volatile boolean pendingInvalidation;
     // Protected by this.latch.
@@ -398,6 +406,10 @@ public class MatViewState implements QuietCloseable {
         return lastRefreshFinishTimestampUs;
     }
 
+    public long getLastRefreshFrozenBoundaryAnchor() {
+        return lastRefreshFrozenBoundaryAnchor;
+    }
+
     public long getLastRefreshStartTimestampUs() {
         return lastRefreshStartTimestampUs;
     }
@@ -630,6 +642,10 @@ public class MatViewState implements QuietCloseable {
 
     public void setLastRefreshBaseTableTxn(long txn) {
         lastRefreshBaseTxn = txn;
+    }
+
+    public void setLastRefreshFrozenBoundaryAnchor(long anchor) {
+        lastRefreshFrozenBoundaryAnchor = anchor;
     }
 
     public void setLastRefreshStartTimestampUs(long timestampUs) {

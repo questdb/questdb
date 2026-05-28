@@ -156,7 +156,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
     private long lastReplaceRangeLowTs = 0;
     private long lastTxnMaxTimestamp = -1;
     private byte lastTxnType = WalTxnType.DATA;
-    private @Nullable WalCommitPreValidator preCommitValidator;
+    private @Nullable WalPreCommitValidator preCommitValidator;
     private long segmentRowCount = -1;
     private long totalSegmentsRowCount;
     private long totalSegmentsSize;
@@ -538,7 +538,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
      * <p>
      * The WAL pool wires this up once per tenant when the table is a mat view.
      */
-    public void setPreCommitValidator(@Nullable WalCommitPreValidator validator) {
+    public void setPreCommitValidator(@Nullable WalPreCommitValidator validator) {
         this.preCommitValidator = validator;
     }
 
@@ -917,11 +917,25 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
         // user-initiated rollback. Mat-view writers carry one to enforce the
         // bucket-whole rule on user backfill; everyone else has preCommitValidator
         // == null and pays no cost.
+        //
+        // Validator throwing anything other than CairoException is treated as an
+        // internal validator fault: the writer is marked distressed before the
+        // throwable propagates, so the pool expels this tenant and the next
+        // acquisition starts from a clean state. Either way we attempt rollback;
+        // if rollback itself throws, the original cause is preserved via
+        // addSuppressed so the validator's rejection is not lost in diagnostics.
         if (preCommitValidator != null) {
             try {
                 preCommitValidator.validate(txnType, dedupMode, txnMinTimestamp, txnMaxTimestamp);
-            } catch (CairoException ex) {
-                rollback0();
+            } catch (Throwable ex) {
+                if (!(ex instanceof CairoException)) {
+                    distressed = true;
+                }
+                try {
+                    rollback0();
+                } catch (Throwable rollbackEx) {
+                    ex.addSuppressed(rollbackEx);
+                }
                 throw ex;
             }
         }
