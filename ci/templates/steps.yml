@@ -1,11 +1,10 @@
 steps:
   - bash: |
-      # Agent.MachineName is set on the agent at runtime, but YAML step
-      # conditions are evaluated server-side before dispatch, so a
-      # condition referencing it always sees an empty string. Check the
-      # agent-side env var from inside the script instead.
-      if [[ "${AGENT_MACHINENAME:-}" != dedi-incus-* ]]; then
-        echo "Skipping on ${AGENT_MACHINENAME:-unknown}; only applied to dedi-incus-* hosts"
+      # Apply only to Hetzner self-hosted agents. AGENT_MACHINENAME is the
+      # agent's self-configured name (e.g. "hetzner-incus-12"), distinct
+      # from the OS hostname and from the timeline's workerName.
+      if [[ "${AGENT_MACHINENAME:-}" != hetzner-incus-* ]]; then
+        echo "Skipping on ${AGENT_MACHINENAME:-unknown}; only applied to hetzner-incus-* agents"
         exit 0
       fi
       # Abort any git HTTP transfer that averages below 100 KiB/s for 30s
