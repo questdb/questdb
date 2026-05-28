@@ -31,6 +31,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.Reopenable;
+import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.MapRecord;
@@ -49,11 +50,18 @@ import io.questdb.cairo.vm.api.MemoryARW;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.std.IntList;
+import io.questdb.std.BinarySequence;
+import io.questdb.std.Decimal128;
+import io.questdb.std.Decimal256;
+import io.questdb.std.Interval;
+import io.questdb.std.Long256;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
+import io.questdb.std.Unsafe;
+import io.questdb.std.str.CharSink;
+import io.questdb.std.str.Utf8Sequence;
 
 import java.util.Arrays;
 
@@ -114,7 +122,7 @@ public class DeferredEmitWindowRecordCursorFactory extends AbstractRecordCursorF
     private final int ringCapacity;
     // Per-slot bytes = ROWID_BYTES + FUNC_VALUE_BYTES * windowFunctions.size().
     private final int slotBytes;
-    private boolean closed;
+    private boolean isClosed;
 
     public DeferredEmitWindowRecordCursorFactory(
             RecordCursorFactory base,
@@ -148,10 +156,6 @@ public class DeferredEmitWindowRecordCursorFactory extends AbstractRecordCursorF
             final ObjList<WindowFunction> leadFns = new ObjList<>();
             final int[] colToSlot = new int[columnCount];
             Arrays.fill(colToSlot, -1);
-            // We need leadColumnIndices in the same order as leadFns; build them in lock-step.
-            // Same for lagColumnIndices. Use primitive list types so we don't autobox into Integer/Long.
-            final IntList lagColIdxTmp = new IntList();
-            final IntList leadColIdxTmp = new IntList();
             final LongList leadOffsetsTmp = new LongList();
             int windowFnIndex = 0;
             int maxLA = 0;
@@ -169,14 +173,12 @@ public class DeferredEmitWindowRecordCursorFactory extends AbstractRecordCursorF
                     int la = wf.getLookahead();
                     if (la > 0) {
                         leadFns.add(wf);
-                        leadColIdxTmp.add(i);
                         leadOffsetsTmp.add(la);
                         if (la > maxLA) {
                             maxLA = la;
                         }
                     } else {
                         lagFns.add(wf);
-                        lagColIdxTmp.add(i);
                     }
                 }
             }
@@ -299,7 +301,7 @@ public class DeferredEmitWindowRecordCursorFactory extends AbstractRecordCursorF
 
     @Override
     protected void _close() {
-        if (closed) {
+        if (isClosed) {
             return;
         }
         Misc.free(base);
@@ -309,7 +311,7 @@ public class DeferredEmitWindowRecordCursorFactory extends AbstractRecordCursorF
         // parsed when building this factory; VirtualRecord.close() cascades to free them.
         Misc.free(partitionByRecord);
         Misc.freeObjList(functions);
-        closed = true;
+        isClosed = true;
     }
 
     private static boolean isFixed8ByteType(int type) {
@@ -342,13 +344,16 @@ public class DeferredEmitWindowRecordCursorFactory extends AbstractRecordCursorF
         private SqlExecutionCircuitBreaker circuitBreaker;
         private MapRecordCursor flushMapCursor;
         private long flushPartitionFilled;
-        private boolean flushPartitionOpen;
+        private boolean isFlushPartitionOpen;
         private long flushPartitionRingCount;
         private long flushPartitionRingHead;
         private long flushPartitionSlotsOff;
-        private boolean flushPhase;
+        private boolean isFlushPhase;
         private boolean isOpen;
         private long nextFreeSlotOffset;
+        // Cached pendingMem.getPageAddress(0) so per-row getAddress() avoids an interface dispatch.
+        // Refreshed wherever pendingMem may have been re-allocated or extended (of(), allocatePartitionSlice()).
+        private long pendingBaseAddr;
         private long pendingEmitSlotOffset = -1L;
         private MemoryARW pendingMem;
 
@@ -365,6 +370,7 @@ public class DeferredEmitWindowRecordCursorFactory extends AbstractRecordCursorF
             baseCursor = Misc.free(baseCursor);
             baseRecordForEmit = null;
             pendingMem = Misc.free(pendingMem);
+            pendingBaseAddr = 0;
             flushMapCursor = null;
             resetFunctions();
             if (partitionMap != null) {
@@ -377,7 +383,7 @@ public class DeferredEmitWindowRecordCursorFactory extends AbstractRecordCursorF
         public long getAddress(long pendingSlot, int columnIndex) {
             // Map output column index to slot offset. Called by window functions via pass1 (LAG)
             // and streamingBackfill (LEAD). columnIndex is the function's setColumnIndex value.
-            return pendingMem.getPageAddress(0) + pendingSlot + columnToSlotOffset[columnIndex];
+            return pendingBaseAddr + pendingSlot + columnToSlotOffset[columnIndex];
         }
 
         @Override
@@ -414,12 +420,12 @@ public class DeferredEmitWindowRecordCursorFactory extends AbstractRecordCursorF
                     pendingEmitSlotOffset = -1L;
                     return true;
                 }
-                if (!flushPhase) {
+                if (!isFlushPhase) {
                     if (baseCursor.hasNext()) {
                         processBaseRow(baseCursor.getRecord());
                         continue;
                     }
-                    flushPhase = true;
+                    isFlushPhase = true;
                     beginFlush();
                     continue;
                 }
@@ -433,35 +439,41 @@ public class DeferredEmitWindowRecordCursorFactory extends AbstractRecordCursorF
         }
 
         public void of(RecordCursor baseCursor, SqlExecutionContext executionContext) throws SqlException {
-            this.baseCursor = baseCursor;
-            this.baseRecordForEmit = baseCursor.getRecordB();
-            this.circuitBreaker = executionContext.getCircuitBreaker();
-            if (!isOpen) {
-                isOpen = true;
-                try {
+            // The outer caller (getCursor) owns baseCursor and frees it on exception. Don't take
+            // ownership in this.baseCursor until initialization is fully complete, otherwise close()
+            // unwound from a failure path would double-free a cursor the caller is already freeing.
+            boolean ownershipTaken = false;
+            try {
+                this.baseRecordForEmit = baseCursor.getRecordB();
+                this.circuitBreaker = executionContext.getCircuitBreaker();
+                if (!isOpen) {
+                    isOpen = true;
                     reopenFunctions();
-                } catch (Throwable t) {
-                    close();
-                    throw t;
+                }
+                if (pendingMem == null) {
+                    pendingMem = Vm.getCARWInstance(
+                            Math.max(16L, (long) slotBytes * ringCapacity),
+                            Integer.MAX_VALUE,
+                            MemoryTag.NATIVE_WINDOW_PENDING
+                    );
+                }
+                if (partitionMap != null) {
+                    partitionMap.clear();
+                }
+                clearState();
+                resetSinglePartitionStateIfNonPartitioned();
+                isFlushPhase = false;
+                pendingEmitSlotOffset = -1L;
+                flushMapCursor = null;
+                isFlushPartitionOpen = false;
+                Function.init(functions, baseCursor, executionContext, null);
+                this.baseCursor = baseCursor;
+                ownershipTaken = true;
+            } finally {
+                if (!ownershipTaken) {
+                    this.baseRecordForEmit = null;
                 }
             }
-            if (pendingMem == null) {
-                pendingMem = Vm.getCARWInstance(
-                        Math.max(16L, (long) slotBytes * ringCapacity),
-                        Integer.MAX_VALUE,
-                        MemoryTag.NATIVE_WINDOW_PENDING
-                );
-            }
-            if (partitionMap != null) {
-                partitionMap.clear();
-            }
-            clearState();
-            resetSinglePartitionStateIfNonPartitioned();
-            flushPhase = false;
-            pendingEmitSlotOffset = -1L;
-            flushMapCursor = null;
-            flushPartitionOpen = false;
-            Function.init(functions, baseCursor, executionContext, null);
         }
 
         @Override
@@ -483,10 +495,17 @@ public class DeferredEmitWindowRecordCursorFactory extends AbstractRecordCursorF
                 partitionMap.clear();
             }
             clearState();
-            flushPhase = false;
+            // Match the partition-state reset done by of() and toTop(). pendingMem may be null at
+            // this point (close freed it), so cannot jumpTo() here; the of() call that follows
+            // re-allocates pendingMem and jumps to the correct offset before any reads.
+            if (partitionByRecord == null) {
+                nextFreeSlotOffset = (long) slotBytes * ringCapacity;
+                Arrays.fill(singlePartitionState, 0L);
+            }
+            isFlushPhase = false;
             pendingEmitSlotOffset = -1L;
             flushMapCursor = null;
-            flushPartitionOpen = false;
+            isFlushPartitionOpen = false;
         }
 
         @Override
@@ -507,10 +526,10 @@ public class DeferredEmitWindowRecordCursorFactory extends AbstractRecordCursorF
             }
             clearState();
             resetSinglePartitionStateIfNonPartitioned();
-            flushPhase = false;
+            isFlushPhase = false;
             pendingEmitSlotOffset = -1L;
             flushMapCursor = null;
-            flushPartitionOpen = false;
+            isFlushPartitionOpen = false;
             for (int i = 0, n = functions.size(); i < n; i++) {
                 functions.getQuick(i).toTop();
             }
@@ -521,12 +540,14 @@ public class DeferredEmitWindowRecordCursorFactory extends AbstractRecordCursorF
             final long off = nextFreeSlotOffset;
             nextFreeSlotOffset += sliceBytes;
             pendingMem.jumpTo(nextFreeSlotOffset);
+            // jumpTo may have triggered a realloc moving the contiguous region; refresh the cache.
+            pendingBaseAddr = pendingMem.getPageAddress(0);
             return off;
         }
 
         private void beginFlush() {
             if (partitionByRecord == null) {
-                flushPartitionOpen = true;
+                isFlushPartitionOpen = true;
                 flushPartitionSlotsOff = singlePartitionState[0];
                 flushPartitionRingHead = singlePartitionState[1];
                 flushPartitionRingCount = singlePartitionState[3];
@@ -534,11 +555,11 @@ public class DeferredEmitWindowRecordCursorFactory extends AbstractRecordCursorF
                 return;
             }
             flushMapCursor = partitionMap.getCursor();
-            flushPartitionOpen = false;
+            isFlushPartitionOpen = false;
         }
 
         private void bindOutputToSlot(OutputRecord rec, long slotOff) {
-            final long rowid = pendingMem.getLong(slotOff + ROWID_OFFSET);
+            final long rowid = Unsafe.getUnsafe().getLong(pendingBaseAddr + slotOff + ROWID_OFFSET);
             baseCursor.recordAt(baseRecordForEmit, rowid);
             rec.of(baseRecordForEmit, slotOff);
         }
@@ -549,7 +570,7 @@ public class DeferredEmitWindowRecordCursorFactory extends AbstractRecordCursorF
 
         private long nextFlushSlot() {
             while (true) {
-                if (!flushPartitionOpen) {
+                if (!isFlushPartitionOpen) {
                     if (flushMapCursor == null) {
                         return -1L;
                     }
@@ -561,10 +582,10 @@ public class DeferredEmitWindowRecordCursorFactory extends AbstractRecordCursorF
                     flushPartitionRingHead = rec.getLong(1);
                     flushPartitionRingCount = rec.getLong(3);
                     flushPartitionFilled = rec.getLong(4);
-                    flushPartitionOpen = true;
+                    isFlushPartitionOpen = true;
                 }
                 if (flushPartitionRingCount == 0) {
-                    flushPartitionOpen = false;
+                    isFlushPartitionOpen = false;
                     if (flushMapCursor == null) {
                         return -1L;
                     }
@@ -582,7 +603,10 @@ public class DeferredEmitWindowRecordCursorFactory extends AbstractRecordCursorF
                         leadFunctions.getQuick(i).streamingFlushDefault(headSlot, this);
                     }
                 }
-                flushPartitionRingHead = (flushPartitionRingHead + 1) % ringCapacity;
+                flushPartitionRingHead++;
+                if (flushPartitionRingHead == ringCapacity) {
+                    flushPartitionRingHead = 0;
+                }
                 flushPartitionRingCount--;
                 return headSlot;
             }
@@ -632,11 +656,15 @@ public class DeferredEmitWindowRecordCursorFactory extends AbstractRecordCursorF
             // 1) Back-fill: for each LEAD function with offset k_i, find the entry at age k_i
             //    (i.e., enqueued k_i partition-local rows ago) and write LEAD's value into its slot.
             //    The target ring index = (ringHead + (ringCount - k_i)) % ringCapacity, valid only
-            //    when ringCount >= k_i.
+            //    when ringCount >= k_i. The sum is bounded by 2*ringCapacity-2, so a single
+            //    conditional subtract is enough.
             for (int i = 0; i < leadCount; i++) {
                 long k = leadOffsets[i];
                 if (ringCount >= k) {
-                    long targetRingIdx = (ringHead + (ringCount - k)) % ringCapacity;
+                    long targetRingIdx = ringHead + (ringCount - k);
+                    if (targetRingIdx >= ringCapacity) {
+                        targetRingIdx -= ringCapacity;
+                    }
                     long bit = 1L << (targetRingIdx * leadCount + i);
                     if ((pendingFilled & bit) == 0L) {
                         long targetSlotOff = slotsOff + targetRingIdx * slotBytes;
@@ -653,7 +681,10 @@ public class DeferredEmitWindowRecordCursorFactory extends AbstractRecordCursorF
             if (ringCount > 0 && (pendingFilled & headSlotMask) == headSlotMask) {
                 pendingEmitSlotOffset = slotsOff + ringHead * slotBytes;
                 pendingFilled &= ~headSlotMask;
-                ringHead = (ringHead + 1) % ringCapacity;
+                ringHead++;
+                if (ringHead == ringCapacity) {
+                    ringHead = 0;
+                }
                 ringCount--;
             }
 
@@ -661,7 +692,7 @@ public class DeferredEmitWindowRecordCursorFactory extends AbstractRecordCursorF
             //    their values into R's slot. LEAD functions are not invoked here; their values are
             //    deferred to back-fill / flush.
             final long newSlot = slotsOff + ringTail * slotBytes;
-            pendingMem.putLong(newSlot + ROWID_OFFSET, baseRow.getRowId());
+            Unsafe.getUnsafe().putLong(pendingBaseAddr + newSlot + ROWID_OFFSET, baseRow.getRowId());
             // Clear LEAD pending bits for the new slot (defensive — should already be 0 from prior
             // emit or initial state).
             long newSlotMask = perSlotLeadMask << (ringTail * leadCount);
@@ -670,7 +701,10 @@ public class DeferredEmitWindowRecordCursorFactory extends AbstractRecordCursorF
             for (int i = 0, n = lagFunctions.size(); i < n; i++) {
                 lagFunctions.getQuick(i).pass1(baseRow, newSlot, this);
             }
-            ringTail = (ringTail + 1) % ringCapacity;
+            ringTail++;
+            if (ringTail == ringCapacity) {
+                ringTail = 0;
+            }
             ringCount++;
 
             // 4) Persist state.
@@ -701,6 +735,8 @@ public class DeferredEmitWindowRecordCursorFactory extends AbstractRecordCursorF
             if (partitionByRecord == null) {
                 nextFreeSlotOffset = (long) slotBytes * ringCapacity;
                 pendingMem.jumpTo(nextFreeSlotOffset);
+                // jumpTo may have triggered the first allocation; refresh the cached base address.
+                pendingBaseAddr = pendingMem.getPageAddress(0);
                 singlePartitionState[0] = 0L;
                 singlePartitionState[1] = 0L;
                 singlePartitionState[2] = 0L;
@@ -724,10 +760,31 @@ public class DeferredEmitWindowRecordCursorFactory extends AbstractRecordCursorF
          * Output record dispatching column accesses to either the slot (for window-function columns)
          * or the base record (for everything else). The slot holds 8-byte raw values; type-specific
          * decode happens in the accessor based on which getX method the caller invoked.
+         * <p>
+         * The window-function type allowlist enforced by the planner restricts slot-dispatched
+         * columns to LONG / DOUBLE / DATE / TIMESTAMP (with INT / FLOAT widening to LONG / DOUBLE at
+         * parse time). All other Record getters can therefore delegate straight to the base record
+         * for non-window columns; the {@code columnToSlotOffset[col] == -1} check is unnecessary
+         * for those types.
          */
         final class OutputRecord implements Record {
             private Record baseRec;
             private long slotOff;
+
+            @Override
+            public ArrayView getArray(int col, int columnType) {
+                return baseRec.getArray(col, columnType);
+            }
+
+            @Override
+            public BinarySequence getBin(int col) {
+                return baseRec.getBin(col);
+            }
+
+            @Override
+            public long getBinLen(int col) {
+                return baseRec.getBinLen(col);
+            }
 
             @Override
             public boolean getBool(int col) {
@@ -748,16 +805,46 @@ public class DeferredEmitWindowRecordCursorFactory extends AbstractRecordCursorF
             public long getDate(int col) {
                 int off = columnToSlotOffset[col];
                 if (off != -1) {
-                    return pendingMem.getLong(slotOff + off);
+                    return Unsafe.getUnsafe().getLong(pendingBaseAddr + slotOff + off);
                 }
                 return baseRec.getDate(col);
+            }
+
+            @Override
+            public void getDecimal128(int col, Decimal128 sink) {
+                baseRec.getDecimal128(col, sink);
+            }
+
+            @Override
+            public short getDecimal16(int col) {
+                return baseRec.getDecimal16(col);
+            }
+
+            @Override
+            public void getDecimal256(int col, Decimal256 sink) {
+                baseRec.getDecimal256(col, sink);
+            }
+
+            @Override
+            public int getDecimal32(int col) {
+                return baseRec.getDecimal32(col);
+            }
+
+            @Override
+            public long getDecimal64(int col) {
+                return baseRec.getDecimal64(col);
+            }
+
+            @Override
+            public byte getDecimal8(int col) {
+                return baseRec.getDecimal8(col);
             }
 
             @Override
             public double getDouble(int col) {
                 int off = columnToSlotOffset[col];
                 if (off != -1) {
-                    return Double.longBitsToDouble(pendingMem.getLong(slotOff + off));
+                    return Double.longBitsToDouble(Unsafe.getUnsafe().getLong(pendingBaseAddr + slotOff + off));
                 }
                 return baseRec.getDouble(col);
             }
@@ -766,27 +853,92 @@ public class DeferredEmitWindowRecordCursorFactory extends AbstractRecordCursorF
             public float getFloat(int col) {
                 int off = columnToSlotOffset[col];
                 if (off != -1) {
-                    return Float.intBitsToFloat((int) pendingMem.getLong(slotOff + off));
+                    return Float.intBitsToFloat((int) Unsafe.getUnsafe().getLong(pendingBaseAddr + slotOff + off));
                 }
                 return baseRec.getFloat(col);
+            }
+
+            @Override
+            public byte getGeoByte(int col) {
+                return baseRec.getGeoByte(col);
+            }
+
+            @Override
+            public int getGeoInt(int col) {
+                return baseRec.getGeoInt(col);
+            }
+
+            @Override
+            public long getGeoLong(int col) {
+                return baseRec.getGeoLong(col);
+            }
+
+            @Override
+            public short getGeoShort(int col) {
+                return baseRec.getGeoShort(col);
+            }
+
+            @Override
+            public int getIPv4(int col) {
+                return baseRec.getIPv4(col);
             }
 
             @Override
             public int getInt(int col) {
                 int off = columnToSlotOffset[col];
                 if (off != -1) {
-                    return (int) pendingMem.getLong(slotOff + off);
+                    return (int) Unsafe.getUnsafe().getLong(pendingBaseAddr + slotOff + off);
                 }
                 return baseRec.getInt(col);
+            }
+
+            @Override
+            public Interval getInterval(int col) {
+                return baseRec.getInterval(col);
             }
 
             @Override
             public long getLong(int col) {
                 int off = columnToSlotOffset[col];
                 if (off != -1) {
-                    return pendingMem.getLong(slotOff + off);
+                    return Unsafe.getUnsafe().getLong(pendingBaseAddr + slotOff + off);
                 }
                 return baseRec.getLong(col);
+            }
+
+            @Override
+            public long getLong128Hi(int col) {
+                return baseRec.getLong128Hi(col);
+            }
+
+            @Override
+            public long getLong128Lo(int col) {
+                return baseRec.getLong128Lo(col);
+            }
+
+            @Override
+            public void getLong256(int col, CharSink<?> sink) {
+                baseRec.getLong256(col, sink);
+            }
+
+            @Override
+            public Long256 getLong256A(int col) {
+                return baseRec.getLong256A(col);
+            }
+
+            @Override
+            public Long256 getLong256B(int col) {
+                return baseRec.getLong256B(col);
+            }
+
+            @Override
+            public Record getRecord(int col) {
+                return baseRec.getRecord(col);
+            }
+
+            @Override
+            public long getRowId() {
+                return baseRec.getRowId();
             }
 
             @Override
@@ -823,9 +975,29 @@ public class DeferredEmitWindowRecordCursorFactory extends AbstractRecordCursorF
             public long getTimestamp(int col) {
                 int off = columnToSlotOffset[col];
                 if (off != -1) {
-                    return pendingMem.getLong(slotOff + off);
+                    return Unsafe.getUnsafe().getLong(pendingBaseAddr + slotOff + off);
                 }
                 return baseRec.getTimestamp(col);
+            }
+
+            @Override
+            public long getUpdateRowId() {
+                return baseRec.getUpdateRowId();
+            }
+
+            @Override
+            public Utf8Sequence getVarcharA(int col) {
+                return baseRec.getVarcharA(col);
+            }
+
+            @Override
+            public Utf8Sequence getVarcharB(int col) {
+                return baseRec.getVarcharB(col);
+            }
+
+            @Override
+            public int getVarcharSize(int col) {
+                return baseRec.getVarcharSize(col);
             }
 
             void of(Record baseRec, long slotOff) {

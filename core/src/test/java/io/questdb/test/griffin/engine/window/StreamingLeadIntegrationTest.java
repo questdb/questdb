@@ -554,4 +554,268 @@ public class StreamingLeadIntegrationTest extends AbstractCairoTest {
             );
         });
     }
+
+    @Test
+    public void testProjectedArrayColumnDoesNotCrash() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t (x long, arr double[], ts timestamp) timestamp(ts) partition by day");
+            execute(
+                    "insert into t values " +
+                            "(10, ARRAY[1.0, 2.0], 0), " +
+                            "(20, ARRAY[3.0, 4.0], 1000), " +
+                            "(30, ARRAY[5.0, 6.0], 2000)"
+            );
+
+            assertQueryNoLeakCheck(
+                    """
+                            x\tarr\tlx
+                            10\t[1.0,2.0]\t20
+                            20\t[3.0,4.0]\t30
+                            30\t[5.0,6.0]\tnull
+                            """,
+                    "select x, arr, lead(x, 1) over () as lx from t",
+                    null, false, true
+            );
+        });
+    }
+
+    @Test
+    public void testProjectedBinaryColumnDoesNotCrash() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t (x long, b binary, ts timestamp) timestamp(ts) partition by day");
+            execute(
+                    """
+                            insert into t
+                              select x, rnd_bin(4, 4, 0), x::timestamp
+                              from long_sequence(3)
+                            """
+            );
+
+            assertQueryNoLeakCheck(
+                    """
+                            x\tb\tlx
+                            1\t00000000 ee 41 1d 15\t2
+                            2\t00000000 8a 17 fa d8\t3
+                            3\t00000000 14 ce f1 59\tnull
+                            """,
+                    "select x, b, lead(x, 1) over () as lx from t",
+                    null, false, true
+            );
+        });
+    }
+
+    @Test
+    public void testProjectedBooleanByteShortCharColumnsDoNotCrash() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t (x long, bo boolean, by byte, sh short, ch char, ts timestamp) timestamp(ts) partition by day");
+            execute(
+                    "insert into t values " +
+                            "(10, true,  cast(1 as byte), cast(100 as short), 'a', 0), " +
+                            "(20, false, cast(2 as byte), cast(200 as short), 'b', 1000), " +
+                            "(30, true,  cast(3 as byte), cast(300 as short), 'c', 2000)"
+            );
+
+            assertQueryNoLeakCheck(
+                    """
+                            x\tbo\tby\tsh\tch\tlx
+                            10\ttrue\t1\t100\ta\t20
+                            20\tfalse\t2\t200\tb\t30
+                            30\ttrue\t3\t300\tc\tnull
+                            """,
+                    "select x, bo, by, sh, ch, lead(x, 1) over () as lx from t",
+                    null, false, true
+            );
+        });
+    }
+
+    @Test
+    public void testProjectedDecimalColumnDoesNotCrash() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t (x long, d decimal(10, 2), ts timestamp) timestamp(ts) partition by day");
+            execute(
+                    "insert into t values " +
+                            "(10, 1.25::decimal(10,2), 0), " +
+                            "(20, 2.50::decimal(10,2), 1000), " +
+                            "(30, 3.75::decimal(10,2), 2000)"
+            );
+
+            assertQueryNoLeakCheck(
+                    """
+                            x\td\tlx
+                            10\t1.25\t20
+                            20\t2.50\t30
+                            30\t3.75\tnull
+                            """,
+                    "select x, d, lead(x, 1) over () as lx from t",
+                    null, false, true
+            );
+        });
+    }
+
+    @Test
+    public void testProjectedGeoHashColumnsDoNotCrash() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(
+                    "create table t (x long, g_b geohash(4b), g_s geohash(2c), g_i geohash(4c), g_l geohash(8c), ts timestamp) " +
+                            "timestamp(ts) partition by day"
+            );
+            execute(
+                    "insert into t values " +
+                            "(10, #s, #s2, #s2dr, #s2drv7nu, 0), " +
+                            "(20, #t, #t1, #t1c5, #t1c5kvqj, 1000), " +
+                            "(30, #u, #u2, #u2dc, #u2dcsfh8, 2000)"
+            );
+
+            assertQueryNoLeakCheck(
+                    """
+                            x\tg_b\tg_s\tg_i\tg_l\tlx
+                            10\t1100\ts2\ts2dr\ts2drv7nu\t20
+                            20\t1100\tt1\tt1c5\tt1c5kvqj\t30
+                            30\t1101\tu2\tu2dc\tu2dcsfh8\tnull
+                            """,
+                    "select x, g_b, g_s, g_i, g_l, lead(x, 1) over () as lx from t",
+                    null, false, true
+            );
+        });
+    }
+
+    @Test
+    public void testProjectedIntervalColumnDoesNotCrash() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t (x long, ts timestamp) timestamp(ts) partition by day");
+            execute("insert into t values (10, 0), (20, 1000), (30, 2000)");
+
+            // INTERVAL is a synthesised type, projected via a function expression.
+            assertQueryNoLeakCheck(
+                    """
+                            x\tiv\tlx
+                            10\t('1970-01-01T00:00:00.000Z', '1970-01-01T00:00:00.001Z')\t20
+                            20\t('1970-01-01T00:00:00.000Z', '1970-01-01T00:00:00.001Z')\t30
+                            30\t('1970-01-01T00:00:00.000Z', '1970-01-01T00:00:00.001Z')\tnull
+                            """,
+                    "select x, interval(0, 1000) as iv, lead(x, 1) over () as lx from t",
+                    null, false, true
+            );
+        });
+    }
+
+    @Test
+    public void testProjectedIpv4ColumnDoesNotCrash() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t (x long, ip ipv4, ts timestamp) timestamp(ts) partition by day");
+            execute(
+                    "insert into t values " +
+                            "(10, '10.0.0.1', 0), " +
+                            "(20, '10.0.0.2', 1000), " +
+                            "(30, '10.0.0.3', 2000)"
+            );
+
+            assertQueryNoLeakCheck(
+                    """
+                            x\tip\tlx
+                            10\t10.0.0.1\t20
+                            20\t10.0.0.2\t30
+                            30\t10.0.0.3\tnull
+                            """,
+                    "select x, ip, lead(x, 1) over () as lx from t",
+                    null, false, true
+            );
+        });
+    }
+
+    @Test
+    public void testProjectedLong256ColumnDoesNotCrash() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t (x long, l256 long256, ts timestamp) timestamp(ts) partition by day");
+            execute(
+                    "insert into t values " +
+                            "(10, 0x01, 0), " +
+                            "(20, 0x02, 1000), " +
+                            "(30, 0x03, 2000)"
+            );
+
+            assertQueryNoLeakCheck(
+                    """
+                            x\tl256\tlx
+                            10\t0x01\t20
+                            20\t0x02\t30
+                            30\t0x03\tnull
+                            """,
+                    "select x, l256, lead(x, 1) over () as lx from t",
+                    null, false, true
+            );
+        });
+    }
+
+    @Test
+    public void testProjectedStringAndSymbolColumnsDoNotCrash() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t (x long, s string, sym symbol, ts timestamp) timestamp(ts) partition by day");
+            execute(
+                    "insert into t values " +
+                            "(10, 'one',   'A', 0), " +
+                            "(20, 'two',   'B', 1000), " +
+                            "(30, 'three', 'A', 2000)"
+            );
+
+            assertQueryNoLeakCheck(
+                    """
+                            x\ts\tsym\tlx
+                            10\tone\tA\t20
+                            20\ttwo\tB\t30
+                            30\tthree\tA\tnull
+                            """,
+                    "select x, s, sym, lead(x, 1) over () as lx from t",
+                    null, false, true
+            );
+        });
+    }
+
+    @Test
+    public void testProjectedUuidColumnDoesNotCrash() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t (x long, u uuid, ts timestamp) timestamp(ts) partition by day");
+            execute(
+                    "insert into t values " +
+                            "(10, '11111111-1111-1111-1111-111111111111', 0), " +
+                            "(20, '22222222-2222-2222-2222-222222222222', 1000), " +
+                            "(30, '33333333-3333-3333-3333-333333333333', 2000)"
+            );
+
+            assertQueryNoLeakCheck(
+                    """
+                            x\tu\tlx
+                            10\t11111111-1111-1111-1111-111111111111\t20
+                            20\t22222222-2222-2222-2222-222222222222\t30
+                            30\t33333333-3333-3333-3333-333333333333\tnull
+                            """,
+                    "select x, u, lead(x, 1) over () as lx from t",
+                    null, false, true
+            );
+        });
+    }
+
+    @Test
+    public void testProjectedVarcharColumnDoesNotCrash() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t (x long, v varchar, ts timestamp) timestamp(ts) partition by day");
+            execute(
+                    "insert into t values " +
+                            "(10, 'alpha',   0), " +
+                            "(20, 'beta',    1000), " +
+                            "(30, 'gamma',   2000)"
+            );
+
+            assertQueryNoLeakCheck(
+                    """
+                            x\tv\tlx
+                            10\talpha\t20
+                            20\tbeta\t30
+                            30\tgamma\tnull
+                            """,
+                    "select x, v, lead(x, 1) over () as lx from t",
+                    null, false, true
+            );
+        });
+    }
 }

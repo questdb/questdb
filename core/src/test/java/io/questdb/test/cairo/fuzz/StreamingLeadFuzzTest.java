@@ -224,6 +224,78 @@ public class StreamingLeadFuzzTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testEdgeCaseDiverseProjectedColumnTypes() throws Exception {
+        // Project every non-trivial Record column type alongside a LEAD window function. The
+        // OutputRecord wrapper must override every Record getter so callers (REST CSV/JSON, PGWire,
+        // CursorPrinter, etc.) never hit the interface's default UnsupportedOperationException.
+        assertMemoryLeak(() -> {
+            execute(
+                    "create table t (" +
+                            "x long, " +
+                            "bo boolean, " +
+                            "by byte, " +
+                            "sh short, " +
+                            "ch char, " +
+                            "i int, " +
+                            "fl float, " +
+                            "db double, " +
+                            "dt date, " +
+                            "v varchar, " +
+                            "s string, " +
+                            "sym symbol, " +
+                            "ip ipv4, " +
+                            "u uuid, " +
+                            "l256 long256, " +
+                            "bn binary, " +
+                            "gb geohash(8b), " +
+                            "gs geohash(2c), " +
+                            "gi geohash(4c), " +
+                            "gl geohash(8c), " +
+                            "arr double[], " +
+                            "d decimal(10,2), " +
+                            "ts timestamp" +
+                            ") timestamp(ts) partition by day"
+            );
+            execute(
+                    "insert into t select " +
+                            "x, " +
+                            "x % 2 = 0, " +
+                            "(x % 100)::byte, " +
+                            "(x * 100)::short, " +
+                            "'a', " +
+                            "x::int, " +
+                            "x::float, " +
+                            "x::double, " +
+                            "(1700_000_000_000L + x)::date, " +
+                            "('v' || x)::varchar, " +
+                            "'s' || x, " +
+                            "('S' || (x % 3))::symbol, " +
+                            "rnd_ipv4(), " +
+                            "rnd_uuid4(), " +
+                            "rnd_long256(), " +
+                            "rnd_bin(4, 4, 0), " +
+                            "rnd_geohash(8), " +
+                            "rnd_geohash(10), " +
+                            "rnd_geohash(20), " +
+                            "rnd_geohash(40), " +
+                            "ARRAY[x::double, (x + 1)::double], " +
+                            "((x % 100) / 4.0)::decimal(10,2), " +
+                            "(1000_000L * x)::timestamp " +
+                            "from long_sequence(30)"
+            );
+
+            String sql = "select x, bo, by, sh, ch, i, fl, db, dt, v, s, sym, ip, u, l256, bn, " +
+                    "gb, gs, gi, gl, arr, d, ts, lead(x, 1) over () as lx from t";
+            StreamingLeadEquivalence.assertEquivalent(engine, sqlExecutionContext, sql, "diverse-projected-types");
+
+            String sqlPartitioned = "select x, bo, by, sh, ch, i, fl, db, dt, v, s, sym, ip, u, l256, bn, " +
+                    "gb, gs, gi, gl, arr, d, ts, lead(x, 1) over (partition by sym) as lx from t";
+            StreamingLeadEquivalence.assertEquivalent(engine, sqlExecutionContext, sqlPartitioned,
+                    "diverse-projected-types-partitioned");
+        });
+    }
+
+    @Test
     public void testEdgeCaseNullsInInput() throws Exception {
         // Source data contains NULL x values. LEAD/LAG must propagate NULLs through to the output
         // identically in both paths (this is RESPECT NULLS — the default).
