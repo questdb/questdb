@@ -118,9 +118,9 @@ public class DeferredEmitWindowRecordCursorFactory extends AbstractRecordCursorF
     private final long[] leadOffsets;
     private final int maxLookahead;
     private final int maxPartitions;
-    private final Map partitionMap;
-    private final RecordSink partitionBySink;
     private final VirtualRecord partitionByRecord;
+    private final RecordSink partitionBySink;
+    private final Map partitionMap;
     // Mask of leadCount bits, representing one slot's LEAD pending bits.
     private final long perSlotLeadMask;
     private final int ringCapacity;
@@ -387,11 +387,6 @@ public class DeferredEmitWindowRecordCursorFactory extends AbstractRecordCursorF
         }
 
         @Override
-        public SymbolTable getSymbolTable(int columnIndex) {
-            return baseCursor.getSymbolTable(columnIndex);
-        }
-
-        @Override
         public Record getRecordAt(long recordOffset) {
             throw new UnsupportedOperationException("DeferredEmitWindowRecordCursor does not back two-pass window functions");
         }
@@ -402,8 +397,8 @@ public class DeferredEmitWindowRecordCursorFactory extends AbstractRecordCursorF
         }
 
         @Override
-        public SymbolTable newSymbolTable(int columnIndex) {
-            return baseCursor.newSymbolTable(columnIndex);
+        public SymbolTable getSymbolTable(int columnIndex) {
+            return baseCursor.getSymbolTable(columnIndex);
         }
 
         @Override
@@ -431,6 +426,11 @@ public class DeferredEmitWindowRecordCursorFactory extends AbstractRecordCursorF
                 }
                 return false;
             }
+        }
+
+        @Override
+        public SymbolTable newSymbolTable(int columnIndex) {
+            return baseCursor.newSymbolTable(columnIndex);
         }
 
         public void of(RecordCursor baseCursor, SqlExecutionContext executionContext) throws SqlException {
@@ -625,12 +625,18 @@ public class DeferredEmitWindowRecordCursorFactory extends AbstractRecordCursorF
                 partitionByRecord.of(baseRow);
                 MapKey key = partitionMap.withKey();
                 key.put(partitionByRecord, partitionBySink);
-                mapValue = key.createValue();
-                if (mapValue.isNew()) {
-                    if (partitionMap.size() > maxPartitions) {
+                // Below the cap, insert freely. At the cap, refuse to insert a new key so the map
+                // never exceeds maxPartitions entries (existing keys still resolve normally).
+                if (partitionMap.size() < maxPartitions) {
+                    mapValue = key.createValue();
+                } else {
+                    mapValue = key.findValue();
+                    if (mapValue == null) {
                         throw CairoException.critical(0)
                                 .put("DeferredEmitWindowRecordCursor partition cap exceeded: maxPartitions=").put(maxPartitions);
                     }
+                }
+                if (mapValue.isNew()) {
                     slotsOff = allocatePartitionSlice();
                     mapValue.putLong(0, slotsOff);
                     mapValue.putLong(1, 0L);
@@ -749,6 +755,15 @@ public class DeferredEmitWindowRecordCursorFactory extends AbstractRecordCursorF
             }
         }
 
+        private void resetFunctions() {
+            for (int i = 0, n = functions.size(); i < n; i++) {
+                Function f = functions.getQuick(i);
+                if (f instanceof WindowFunction wf) {
+                    wf.reset();
+                }
+            }
+        }
+
         private void resetSinglePartitionStateIfNonPartitioned() {
             if (partitionByRecord == null) {
                 nextFreeSlotOffset = (long) slotBytes * ringCapacity;
@@ -762,15 +777,6 @@ public class DeferredEmitWindowRecordCursorFactory extends AbstractRecordCursorF
                 singlePartitionState[4] = 0L;
             } else {
                 nextFreeSlotOffset = 0L;
-            }
-        }
-
-        private void resetFunctions() {
-            for (int i = 0, n = functions.size(); i < n; i++) {
-                Function f = functions.getQuick(i);
-                if (f instanceof WindowFunction) {
-                    ((WindowFunction) f).reset();
-                }
             }
         }
 

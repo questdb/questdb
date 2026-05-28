@@ -9491,8 +9491,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 int lookaheadColumnIndex = -1;
                 for (int i = 0, size = functions.size(); i < size; i++) {
                     Function func = functions.getQuick(i);
-                    if (func instanceof WindowFunction) {
-                        WindowFunction wf = (WindowFunction) func;
+                    if (func instanceof WindowFunction wf) {
                         windowFunctionCount++;
                         int la = wf.getLookahead();
                         if (la > maxLookahead) {

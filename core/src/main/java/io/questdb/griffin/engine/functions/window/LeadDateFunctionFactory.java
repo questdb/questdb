@@ -29,6 +29,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.Reopenable;
 import io.questdb.cairo.map.Map;
+import io.questdb.cairo.map.MapFactory;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.VirtualRecord;
@@ -37,6 +38,7 @@ import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryARW;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.window.WindowContext;
 import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
@@ -91,7 +93,7 @@ public class LeadDateFunctionFactory extends AbstractWindowFunctionFactory {
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
         if (!configuration.getSqlWindowStreamingLeadEnabled()) return null;
-        final io.questdb.griffin.engine.window.WindowContext wc = sqlExecutionContext.getWindowContext();
+        final WindowContext wc = sqlExecutionContext.getWindowContext();
         if (wc.isEmpty()) return null;
         if (wc.isIgnoreNulls()) return null;
         if (args.size() > 3) return null;
@@ -119,10 +121,10 @@ public class LeadDateFunctionFactory extends AbstractWindowFunctionFactory {
         }
 
         if (wc.getPartitionByRecord() != null) {
-            io.questdb.cairo.map.Map cachedMap = null;
+            Map cachedMap = null;
             MemoryARW cachedMem = null;
             try {
-                cachedMap = io.questdb.cairo.map.MapFactory.createUnorderedMap(
+                cachedMap = MapFactory.createUnorderedMap(
                         configuration,
                         wc.getPartitionByKeyTypes(),
                         LeadLagWindowFunctionFactoryHelper.LAG_COLUMN_TYPES
@@ -190,7 +192,7 @@ public class LeadDateFunctionFactory extends AbstractWindowFunctionFactory {
         private final long defaultDateValue;
 
         StreamingLeadOverPartitionFunction(
-                io.questdb.cairo.map.Map map,
+                Map map,
                 VirtualRecord partitionByRecord,
                 RecordSink partitionBySink,
                 MemoryARW memory,

@@ -820,8 +820,15 @@ public interface CairoConfiguration {
         return false;
     }
 
+    /**
+     * Upper bound on the number of distinct PARTITION BY keys a single streaming-LEAD cursor will
+     * track. Each key reserves one Map entry plus a {@code (maxLookahead+1) * (8 + 8 * funcCount)}
+     * byte slice in native pending memory on first use. With the default 65_536 cap and a typical
+     * 1-LEAD query at {@code ringCap=64}, a runaway high-cardinality query is bounded to roughly
+     * 64 MiB of pending memory before the cap throws.
+     */
     default int getSqlWindowStreamingMaxPartitions() {
-        return 1_048_576;
+        return 65_536;
     }
 
     int getSqlWindowTreeKeyMaxPages();

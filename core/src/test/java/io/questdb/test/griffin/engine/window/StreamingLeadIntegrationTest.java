@@ -443,7 +443,7 @@ public class StreamingLeadIntegrationTest extends AbstractCairoTest {
         });
         // Restore to default for subsequent tests in this class (matters because @Before re-applies
         // the streaming flag but not this cap; explicit reset keeps the run order independent).
-        setProperty(PropertyKey.CAIRO_SQL_WINDOW_STREAMING_MAX_PARTITIONS, "1048576");
+        setProperty(PropertyKey.CAIRO_SQL_WINDOW_STREAMING_MAX_PARTITIONS, "65536");
     }
 
     @Test

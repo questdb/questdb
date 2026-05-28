@@ -38,6 +38,7 @@ import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryARW;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.window.WindowContext;
 import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
@@ -109,7 +110,7 @@ public class LeadLongFunctionFactory extends AbstractWindowFunctionFactory {
         if (!configuration.getSqlWindowStreamingLeadEnabled()) {
             return null;
         }
-        final io.questdb.griffin.engine.window.WindowContext wc = sqlExecutionContext.getWindowContext();
+        final WindowContext wc = sqlExecutionContext.getWindowContext();
         if (wc.isEmpty()) {
             return null;
         }
