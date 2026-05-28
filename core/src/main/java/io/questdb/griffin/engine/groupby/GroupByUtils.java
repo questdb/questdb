@@ -64,6 +64,7 @@ import io.questdb.griffin.engine.functions.columns.StrColumn;
 import io.questdb.griffin.engine.functions.columns.TimestampColumn;
 import io.questdb.griffin.engine.functions.columns.UuidColumn;
 import io.questdb.griffin.engine.functions.columns.VarcharColumn;
+import io.questdb.griffin.engine.functions.groupby.SparklineGroupByFunction;
 import io.questdb.griffin.engine.functions.groupby.TwapGroupByFunction;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.IQueryModel;
@@ -230,6 +231,8 @@ public class GroupByUtils {
                         outGroupByFunctionPositions.add(node.position);
                         if (groupByFunc instanceof TwapGroupByFunction twapFunc) {
                             twapFunc.validateTimestampArg(timestampIndex, isBaseTimestampAscending, node.position);
+                        } else if (groupByFunc instanceof SparklineGroupByFunction sparklineFunc) {
+                            sparklineFunc.validateScanDirection(isBaseTimestampAscending, node.position);
                         }
                         if (fillCount > 0) {
                             // index of the function relative to the list of fill values

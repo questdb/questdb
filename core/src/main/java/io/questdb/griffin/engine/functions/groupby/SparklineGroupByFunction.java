@@ -450,6 +450,21 @@ public class SparklineGroupByFunction extends VarcharFunction implements UnaryFu
         }
     }
 
+    /**
+     * Rejects the query at compile time unless the base scan delivers rows
+     * in ascending designated timestamp order. The aggregate appends rows
+     * into a per-group buffer with rowId as the sort key and treats each
+     * per-frame batch as internally key-sorted, so the SortedRunsMerge sort
+     * later only permutes whole batches. A backward scan delivers within-
+     * frame rows in reverse rowId order, breaking the per-batch invariant
+     * and producing wrong output silently.
+     */
+    public void validateScanDirection(boolean isBaseTimestampAscending, int position) throws SqlException {
+        if (!isBaseTimestampAscending) {
+            throw SqlException.$(position, name).put("() requires the base query to provide ascending designated timestamp order");
+        }
+    }
+
     private char charForValue(double value, double min, double range) {
         if (range == 0.0) {
             return chars[chars.length - 1];

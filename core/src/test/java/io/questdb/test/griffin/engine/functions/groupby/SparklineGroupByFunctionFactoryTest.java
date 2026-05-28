@@ -686,6 +686,38 @@ public class SparklineGroupByFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRejectsDescendingScan() throws Exception {
+        // The aggregate appends rows in scan order using rowId as the sort
+        // key and treats each per-frame batch as already key-sorted. A
+        // backward scan delivers rows in reverse rowId order within a page
+        // frame, breaking that invariant and producing wrong output
+        // silently. The compiler must reject such queries.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (val DOUBLE, grp SYMBOL, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("""
+                    INSERT INTO t VALUES
+                    (1.0, 'a', '2024-01-01T00:00:00.000000Z'),
+                    (2.0, 'a', '2024-01-01T01:00:00.000000Z')
+                    """);
+            // ORDER BY ts DESC inside the inner SELECT compiles to a backward
+            // page-frame scan when paired with LIMIT - the inner SELECT
+            // without LIMIT is dropped by the optimiser.
+            assertExceptionNoLeakCheck(
+                    "SELECT sparkline(val) FROM (SELECT * FROM t ORDER BY ts DESC LIMIT 10)",
+                    7,
+                    "sparkline() requires the base query to provide ascending designated timestamp order",
+                    false
+            );
+            assertExceptionNoLeakCheck(
+                    "SELECT grp, sparkline(val) FROM (SELECT * FROM t ORDER BY ts DESC LIMIT 10) GROUP BY grp",
+                    12,
+                    "sparkline() requires the base query to provide ascending designated timestamp order",
+                    false
+            );
+        });
+    }
+
+    @Test
     public void testMaxValuesBoundary() throws Exception {
         // Set buffer to 30 bytes -> maxValues = 30 / 3 = 10.
         // Inserting 10 values must succeed; inserting 11 must throw.
