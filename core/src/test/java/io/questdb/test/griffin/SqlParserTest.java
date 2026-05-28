@@ -1361,7 +1361,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testAtAsTableNameAndExpr() throws Exception {
         assertQuery(
-                "select-virtual at1 + at column from (select-choose [at, at at1] at, at at1 from (select [at] from at timestamp (ts)))",
+                "select-virtual at + at column from (select [at] from at timestamp (ts))",
                 "select (at.at + at) from at",
                 modelOf("at").col("at", ColumnType.INT).timestamp("ts")
         );
@@ -8646,7 +8646,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testMoveOrderByFlat() throws Exception {
         assertQuery(
-                "select-choose transaction_id from (select-virtual [transactionid::varchar::bigint transaction_id, pg_catalog.age(transactionid1) age] transactionid::varchar::bigint transaction_id, pg_catalog.age(transactionid1) age from (select-choose [transactionid, transactionid transactionid1] transactionid, transactionid transactionid1 from (select [transactionid] from pg_catalog.pg_locks() L where transactionid != null) L) L order by age desc limit 1)",
+                "select-choose transaction_id from (select-virtual [transactionid::varchar::bigint transaction_id, pg_catalog.age(transactionid) age] transactionid::varchar::bigint transaction_id, pg_catalog.age(transactionid) age from (select [transactionid] from pg_catalog.pg_locks() L where transactionid != null) L order by age desc limit 1)",
                 """
                         select L.transactionid::varchar::bigint as transaction_id
                         from pg_catalog.pg_locks L
@@ -8712,7 +8712,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         " granted," +
                         " fastpath," +
                         " waitstart," +
-                        " pg_catalog.age(transactionid1) age]" +
+                        " pg_catalog.age(transactionid) age]" +
                         " locktype," +
                         " database," +
                         " relation," +
@@ -8729,8 +8729,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         " granted," +
                         " fastpath," +
                         " waitstart," +
-                        " pg_catalog.age(transactionid1) age " +
-                        "from (select-choose [locktype, database, relation, page, tuple, virtualxid, transactionid, classid, objid, objsubid, virtualtransaction, pid, mode, granted, fastpath, waitstart, transactionid transactionid1] locktype, database, relation, page, tuple, virtualxid, transactionid, classid, objid, objsubid, virtualtransaction, pid, mode, granted, fastpath, waitstart, transactionid transactionid1 from (select [locktype, database, relation, page, tuple, virtualxid, transactionid, classid, objid, objsubid, virtualtransaction, pid, mode, granted, fastpath, waitstart] from pg_catalog.pg_locks() L where transactionid != null) L) L" +
+                        " pg_catalog.age(transactionid) age " +
+                        "from (select [locktype, database, relation, page, tuple, virtualxid, transactionid, classid, objid, objsubid, virtualtransaction, pid, mode, granted, fastpath, waitstart] from pg_catalog.pg_locks() L where transactionid != null) L" +
                         " order by age desc limit 1" +
                         ")",
                 """
@@ -8745,7 +8745,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testMoveOrderBySubQuery() throws Exception {
         assertQuery(
-                "select-virtual transaction_id + 1 column from (select-choose [transaction_id] transaction_id from (select-virtual [transactionid::varchar::bigint transaction_id, pg_catalog.age(transactionid1) age] transactionid::varchar::bigint transaction_id, pg_catalog.age(transactionid1) age from (select-choose [transactionid, transactionid transactionid1] transactionid, transactionid transactionid1 from (select [transactionid] from pg_catalog.pg_locks() L where transactionid != null) L) L order by age desc limit 1))",
+                "select-virtual transaction_id + 1 column from (select-choose [transaction_id] transaction_id from (select-virtual [transactionid::varchar::bigint transaction_id, pg_catalog.age(transactionid) age] transactionid::varchar::bigint transaction_id, pg_catalog.age(transactionid) age from (select [transactionid] from pg_catalog.pg_locks() L where transactionid != null) L order by age desc limit 1))",
                 """
                         select transaction_id + 1 from (select L.transactionid::varchar::bigint as transaction_id
                         from pg_catalog.pg_locks L
@@ -8977,9 +8977,9 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testOneWindowColumnPrefixed() throws Exception {
-        // extra model in the middle is because we reference "b" as both "b" and "z.b"
+        // Single-table: qualified "z.b" resolves to bare "b", no rename needed.
         assertQuery(
-                "select-window a, b, row_number() row_number over (partition by b1 order by ts) from (select-choose [a, b, b b1, ts] a, b, b b1, ts from (select [a, b, ts] from xyz z timestamp (ts)) z) z",
+                "select-window a, b, row_number() row_number over (partition by b order by ts) from (select-choose [a, b, ts] a, b, ts from (select [a, b, ts] from xyz z timestamp (ts)) z) z",
                 "select a,b, row_number() over (partition by z.b order by z.ts) from xyz z",
                 modelOf("xyz")
                         .col("a", ColumnType.INT)
@@ -14562,7 +14562,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testWindowFunctionReferencesSameColumnAsVirtual() throws Exception {
         assertQuery(
-                "select-window a, b1, f(c) f over (partition by b11 order by ts) from (select-virtual [a, concat(b, 'abc') b1, c, b1 b11, ts] a, concat(b, 'abc') b1, c, b1 b11, ts from (select-choose [a, b, c, b b1, ts] a, b, c, b b1, b1 b11, ts from (select [a, b, c, ts] from xyz k timestamp (ts)) k) k) k",
+                "select-window a, b1, f(c) f over (partition by b order by ts) from (select-virtual [a, concat(b, 'abc') b1, c, b, ts] a, concat(b, 'abc') b1, c, b, ts from (select-choose [a, b, c, ts] a, b, c, ts from (select [a, b, c, ts] from xyz k timestamp (ts)) k) k) k",
                 "select a, concat(k.b, 'abc') b1, f(c) over (partition by k.b order by k.ts) from xyz k",
                 modelOf("xyz")
                         .col("c", ColumnType.INT)
@@ -14735,7 +14735,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testWindowLiteralAfterFunction() throws Exception {
         assertQuery(
-                "select-window a, b1, f(c) f over (partition by b11 order by ts), b from (select-virtual [a, concat(b, 'abc') b1, c, b1 b11, ts, b] a, concat(b, 'abc') b1, c, b, b1 b11, ts from (select-choose [a, b, c, b b1, ts] a, b, c, b b1, b1 b11, ts from (select [a, b, c, ts] from xyz k timestamp (ts)) k) k) k",
+                "select-window a, b1, f(c) f over (partition by b order by ts), b from (select-virtual [a, concat(b, 'abc') b1, c, b, ts] a, concat(b, 'abc') b1, c, b, ts from (select-choose [a, b, c, ts] a, b, c, ts from (select [a, b, c, ts] from xyz k timestamp (ts)) k) k) k",
                 "select a, concat(k.b, 'abc') b1, f(c) over (partition by k.b order by k.ts), b from xyz k",
                 modelOf("xyz")
                         .col("c", ColumnType.INT)

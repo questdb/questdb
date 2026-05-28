@@ -262,6 +262,26 @@ public class DistinctTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDistinctQualifiedColumnInExpressionFromFuzzer() throws Exception {
+        // Qualified t0.x inside the expression must resolve to the same column as the bare
+        // t0.x projection above; otherwise the expression's literal misses the translating
+        // entry, overwrites the columnNameToAlias mapping with a duplicate, and the parent
+        // virtual model raises Invalid column.
+        assertQuery(
+                "e0\te1\te2\te3\te4\n" +
+                        "-614\t1\t786\t-716\t278444\n" +
+                        "-614\t2\t786\t-716\t556888\n",
+                "SELECT DISTINCT -614 AS e0, t0.x AS e1, 786 AS e2, -716 AS e3," +
+                        " (278444 * t0.x) AS e4" +
+                        " FROM long_sequence(2) t0" +
+                        " ORDER BY e1",
+                null,
+                true,
+                true
+        );
+    }
+
+    @Test
     public void testDuplicateColumnInWhereClauseSubQuery() throws Exception {
         assertQuery(
                 """

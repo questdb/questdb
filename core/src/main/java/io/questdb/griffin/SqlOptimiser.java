@@ -3309,6 +3309,21 @@ public class SqlOptimiser implements Mutable {
                     }
                     return nextLiteral(map.valueAtQuick(index), node.position);
                 }
+            } else {
+                // Single base model: addColumnToTranslatingModel stripped the table
+                // prefix, so a previously registered column must still resolve when
+                // the literal arrives qualified.
+                final int dot = Chars.indexOfLastUnquoted(node.token, '.');
+                if (dot != -1) {
+                    final CharSequence stripped = node.token.subSequence(dot + 1, node.token.length());
+                    final int strippedIdx = map.keyIndex(stripped);
+                    if (strippedIdx < 0) {
+                        if (preserveQualifiedNames) {
+                            return node;
+                        }
+                        return nextLiteral(map.valueAtQuick(strippedIdx), node.position);
+                    }
+                }
             }
 
             // also search the virtual model and do not register the literal with the
