@@ -154,12 +154,12 @@ steps:
       mavenPomFile: "pom.xml"
       mavenOptions: "-Xlog:gc -Dfile.encoding=UTF-8 $(MAVEN_OPTS)"
       goals: "clean test"
-      options: "--batch-mode --quiet -Dtest.include=$(includeTests)
+      options: "--batch-mode --quiet $(TEST_REACTOR_ARGS) -Dtest.include=$(includeTests)
         -Dtest.exclude=$(excludeTests)
         -Dout=$(Build.SourcesDirectory)/ci/qlog.conf
         -DfailIfNoTests=false
         -Dsurefire.failIfNoSpecifiedTests=false
-        -P build-web-console
+        $(WEB_CONSOLE_PROFILE)
         $(CLIENT_PROFILE) $(MAVEN_RUN_OPTS)"
       jdkVersionOption: $(jdk)
     env:

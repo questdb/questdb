@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.IndexType;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableToken;
@@ -103,8 +104,6 @@ public class SqlParser {
     private static final LowerCaseAsciiCharSequenceHashSet pivotForStop = new LowerCaseAsciiCharSequenceHashSet();
     private static final LowerCaseAsciiCharSequenceHashSet setOperations = new LowerCaseAsciiCharSequenceHashSet();
     private static final LowerCaseAsciiCharSequenceHashSet tableAliasStop = new LowerCaseAsciiCharSequenceHashSet();
-    private static final IntList tableNamePositions = new IntList();
-    private static final LowerCaseCharSequenceHashSet tableNames = new LowerCaseCharSequenceHashSet();
     private final IntList accumulatedColumnPositions = new IntList();
     private final ObjList<QueryColumn> accumulatedColumns = new ObjList<>();
     private final LowerCaseCharSequenceHashSet aliasMap = new LowerCaseCharSequenceHashSet();
@@ -139,6 +138,8 @@ public class SqlParser {
     private final PostOrderTreeTraversalAlgo.Visitor rewritePgCastRef = this::rewritePgCast;
     private final PostOrderTreeTraversalAlgo.Visitor rewritePgNumericRef = this::rewritePgNumeric;
     private final ArrayDeque<ExpressionNode> sqlNodeStack = new ArrayDeque<>();
+    private final IntList tableNamePositions = new IntList();
+    private final LowerCaseCharSequenceHashSet tableNames = new LowerCaseCharSequenceHashSet();
     private final CharSequenceHashSet tempCharSequenceSet = new CharSequenceHashSet();
     private final ObjList<ExpressionNode> tempExprNodes = new ObjList<>();
     private final PostOrderTreeTraversalAlgo.Visitor rewriteCaseRef = this::rewriteCase;
@@ -480,6 +481,12 @@ public class SqlParser {
         };
     }
 
+    private static boolean isZeroOffsetToken(CharSequence token) {
+        return Chars.equals(token, ZERO_OFFSET.token)
+                || Chars.equals(token, "'+00:00'")
+                || Chars.equals(token, "'-00:00'");
+    }
+
     private static CreateMatViewOperationBuilder parseCreateMatViewExt(
             GenericLexer lexer,
             SqlExecutionContext executionContext,
@@ -488,7 +495,7 @@ public class SqlParser {
             CreateMatViewOperationBuilder builder
     ) throws SqlException {
         CharSequence nextToken = (tok == null || Chars.equals(tok, ';')) ? null : tok;
-        return sqlParserCallback.parseCreateMatViewExt(lexer, executionContext.getSecurityContext(), builder, nextToken);
+        return sqlParserCallback.parseCreateMatViewExt(lexer, executionContext, builder, nextToken);
     }
 
     private static CreateTableOperationBuilder parseCreateTableExt(
@@ -499,7 +506,7 @@ public class SqlParser {
             CreateTableOperationBuilder builder
     ) throws SqlException {
         CharSequence nextToken = (tok == null || Chars.equals(tok, ';')) ? null : tok;
-        return sqlParserCallback.parseCreateTableExt(lexer, executionContext.getSecurityContext(), builder, nextToken);
+        return sqlParserCallback.parseCreateTableExt(lexer, executionContext, builder, nextToken);
     }
 
     private static CreateViewOperationBuilder parseCreateViewExt(
@@ -510,7 +517,7 @@ public class SqlParser {
             CreateViewOperationBuilder builder
     ) throws SqlException {
         CharSequence nextToken = (tok == null || Chars.equals(tok, ';')) ? null : tok;
-        return sqlParserCallback.parseCreateViewExt(lexer, executionContext.getSecurityContext(), builder, nextToken);
+        return sqlParserCallback.parseCreateViewExt(lexer, executionContext, builder, nextToken);
     }
 
     private static void validateShowTransactions(GenericLexer lexer) throws SqlException {
@@ -2018,17 +2025,46 @@ public class SqlParser {
                     .put(']');
         }
 
-        int indexValueBlockSize;
-        if (isCapacityKeyword(tok(lexer, "'capacity'"))) {
+        // Parse optional index type and/or capacity: INDEX(col TYPE POSTING) or INDEX(col CAPACITY n)
+        byte indexType = configuration.getDefaultSymbolIndexType();
+        boolean typeExplicit = false;
+        int indexValueBlockSize = configuration.getIndexValueBlockSize();
+        CharSequence tok = tok(lexer, "'type', 'capacity' or ')'");
+        if (isTypeKeyword(tok)) {
+            typeExplicit = true;
+            tok = tok(lexer, "index type name");
+            int typePosition = lexer.lastTokenPosition();
+            indexType = IndexType.valueOf(tok);
+            if (indexType == IndexType.NONE) {
+                throw SqlException.position(typePosition).put("unknown index type: ").put(tok);
+            }
+            if (indexType == IndexType.POSTING) {
+                tok = tok(lexer, "'delta', 'ef' or ')'");
+                if (SqlKeywords.isDeltaKeyword(tok)) {
+                    indexType = IndexType.POSTING_DELTA;
+                } else if (SqlKeywords.isEfKeyword(tok)) {
+                    indexType = IndexType.POSTING_EF;
+                } else {
+                    lexer.unparseLast();
+                }
+            }
+            tok = tok(lexer, IndexType.isPosting(indexType) ? "')'" : "'capacity' or ')'");
+        }
+        if (isCapacityKeyword(tok)) {
+            if (!typeExplicit) {
+                indexType = IndexType.BITMAP;
+            } else if (indexType != IndexType.BITMAP) {
+                throw SqlException.position(lexer.lastTokenPosition())
+                        .put("CAPACITY is only supported for BITMAP index type");
+            }
             int errorPosition = lexer.getPosition();
             indexValueBlockSize = expectInt(lexer);
             TableUtils.validateIndexValueBlockSize(errorPosition, indexValueBlockSize);
             indexValueBlockSize = Numbers.ceilPow2(indexValueBlockSize);
         } else {
-            indexValueBlockSize = configuration.getIndexValueBlockSize();
             lexer.unparseLast();
         }
-        model.setIndexed(true, columnNamePosition, indexValueBlockSize);
+        model.setIndexType(indexType, columnNamePosition, indexValueBlockSize);
         expectTok(lexer, ')');
     }
 
@@ -2036,7 +2072,7 @@ public class SqlParser {
         CharSequence tok = tok(lexer, "')', 'index' or 'parquet'");
 
         if (isFieldTerm(tok) || isParquetKeyword(tok)) {
-            model.setIndexed(false, -1, configuration.getIndexValueBlockSize());
+            model.setIndexType(IndexType.NONE, -1, configuration.getIndexValueBlockSize());
             return tok;
         }
 
@@ -2044,16 +2080,76 @@ public class SqlParser {
         int indexColumnPosition = lexer.lastTokenPosition();
 
         if (isFieldTerm(tok = tok(lexer, ") | , expected")) || isParquetKeyword(tok)) {
-            model.setIndexed(true, indexColumnPosition, configuration.getIndexValueBlockSize());
+            model.setIndexType(configuration.getDefaultSymbolIndexType(), indexColumnPosition, configuration.getIndexValueBlockSize());
             return tok;
         }
 
+        // Parse optional index type: INDEX TYPE POSTING
+        byte indexType = configuration.getDefaultSymbolIndexType();
+        boolean typeExplicit = false;
+        if (isTypeKeyword(tok)) {
+            typeExplicit = true;
+            tok = tok(lexer, "index type name");
+            int typePosition = lexer.lastTokenPosition();
+            indexType = IndexType.valueOf(tok);
+            if (indexType == IndexType.NONE) {
+                throw SqlException.position(typePosition).put("unknown index type: ").put(tok);
+            }
+            if (indexType == IndexType.POSTING) {
+                tok = tok(lexer, ") | , expected");
+                if (SqlKeywords.isDeltaKeyword(tok)) {
+                    indexType = IndexType.POSTING_DELTA;
+                } else if (SqlKeywords.isEfKeyword(tok)) {
+                    indexType = IndexType.POSTING_EF;
+                } else {
+                    lexer.unparseLast();
+                }
+            }
+            tok = tok(lexer, ") | , expected");
+            if (isFieldTerm(tok) || isParquetKeyword(tok)) {
+                model.setIndexType(indexType, indexColumnPosition, configuration.getIndexValueBlockSize());
+                return tok;
+            }
+        }
+
+        if (SqlKeywords.isIncludeKeyword(tok)) {
+            if (!typeExplicit) {
+                indexType = IndexType.POSTING;
+            } else if (!IndexType.isPosting(indexType)) {
+                throw SqlException.position(lexer.lastTokenPosition())
+                        .put("INCLUDE is only supported for POSTING index type");
+            }
+            expectTok(lexer, '(');
+            tok = tok(lexer, "column name");
+            if (Chars.equals(tok, ')')) {
+                throw SqlException.$(lexer.lastTokenPosition(), "at least one column name expected in INCLUDE");
+            }
+            do {
+                model.addCoveringColumnName(GenericLexer.immutableOf(unquote(tok)), lexer.lastTokenPosition());
+                tok = tok(lexer, "',' or ')'");
+                if (Chars.equals(tok, ',')) {
+                    tok = tok(lexer, "column name");
+                }
+            } while (!Chars.equals(tok, ')'));
+            model.setIndexType(indexType, indexColumnPosition, configuration.getIndexValueBlockSize());
+            tok = optTok(lexer);
+            if (tok == null || isFieldTerm(tok) || isParquetKeyword(tok)) {
+                return tok;
+            }
+        }
+
         expectTok(lexer, tok, "capacity");
+        if (!typeExplicit) {
+            indexType = IndexType.BITMAP;
+        } else if (indexType != IndexType.BITMAP) {
+            throw SqlException.position(lexer.lastTokenPosition())
+                    .put("CAPACITY is only supported for BITMAP index type");
+        }
 
         int errorPosition = lexer.getPosition();
         int indexValueBlockSize = expectInt(lexer);
         TableUtils.validateIndexValueBlockSize(errorPosition, indexValueBlockSize);
-        model.setIndexed(true, indexColumnPosition, Numbers.ceilPow2(indexValueBlockSize));
+        model.setIndexType(indexType, indexColumnPosition, Numbers.ceilPow2(indexValueBlockSize));
         return null;
     }
 
@@ -3412,7 +3508,7 @@ public class SqlParser {
                             throw SqlException.$(lexer.lastTokenPosition(), "Expression expected");
                         case 1:
                             expr = expressionTreeBuilder.poll();
-
+                            assert expr != null;
                             if (expr.type == ExpressionNode.LITERAL) {
                                 do {
                                     joinModel.addJoinColumn(expr);
@@ -4571,7 +4667,10 @@ public class SqlParser {
     private CharSequence parseWithOffset(GenericLexer lexer, IQueryModel model, SqlParserCallback sqlParserCallback) throws SqlException {
         CharSequence tok;
         expectOffset(lexer);
-        model.setSampleByOffset(expectExpr(lexer, sqlParserCallback, model.getDecls()));
+        ExpressionNode offsetExpr = expectExpr(lexer, sqlParserCallback, model.getDecls());
+        // Normalize explicit zero offsets ('00:00', '+00:00', '-00:00') to the canonical
+        // ZERO_OFFSET singleton so that identity checks against ZERO_OFFSET work consistently in the optimizer.
+        model.setSampleByOffset(isZeroOffsetToken(offsetExpr.token) ? ZERO_OFFSET : offsetExpr);
         tok = optTok(lexer);
         return tok;
     }

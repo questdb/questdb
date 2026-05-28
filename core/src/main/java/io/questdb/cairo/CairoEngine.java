@@ -94,6 +94,7 @@ import io.questdb.cairo.wal.WalWriter;
 import io.questdb.cairo.wal.seq.SeqTxnTracker;
 import io.questdb.cairo.wal.seq.SequencerMetadata;
 import io.questdb.cairo.wal.seq.TableSequencerAPI;
+import io.questdb.cutlass.qwp.codec.QwpServerInfoProvider;
 import io.questdb.cutlass.text.CopyExportContext;
 import io.questdb.cutlass.text.CopyImportContext;
 import io.questdb.griffin.CompiledQuery;
@@ -733,7 +734,7 @@ public class CairoEngine implements Closeable, WriterSource {
                     path.of(configuration.getDbRoot()).concat(tableToken).$();
                     if (!configuration.getFilesFacade().unlinkOrRemove(path, LOG)) {
                         throw CairoException.critical(configuration.getFilesFacade().errno())
-                                .put("could not remove table [table=").put(tableToken).put(", thread=").put(Thread.currentThread().getId()).put(']');
+                                .put("could not remove table [table=").put(tableToken).put(", thread=").put(Thread.currentThread().threadId()).put(']');
                     }
 
                     tableNameRegistry.dropTable(tableToken);
@@ -836,6 +837,10 @@ public class CairoEngine implements Closeable, WriterSource {
         return tableFlagResolver.isSystem(tableName) ? DefaultDdlListener.INSTANCE : ddlListener;
     }
 
+    public @NotNull DurableAckRegistry getDurableAckRegistry() {
+        return durableAckRegistry;
+    }
+
     public FrameFactory getFrameFactory() {
         return frameFactory;
     }
@@ -902,6 +907,10 @@ public class CairoEngine implements Closeable, WriterSource {
 
     public QueryRegistry getQueryRegistry() {
         return queryRegistry;
+    }
+
+    public @NotNull QwpServerInfoProvider getQwpServerInfoProvider() {
+        return configuration.getQwpServerInfoProvider();
     }
 
     public TableReader getReader(CharSequence tableName) {
@@ -1211,10 +1220,6 @@ public class CairoEngine implements Closeable, WriterSource {
         }
     }
 
-    public @NotNull DurableAckRegistry getDurableAckRegistry() {
-        return durableAckRegistry;
-    }
-
     public @NotNull WalDirectoryPolicy getWalDirectoryPolicy() {
         return walDirectoryPolicy;
     }
@@ -1397,7 +1402,7 @@ public class CairoEngine implements Closeable, WriterSource {
                     // not locked
                     if (readerPool.lock(tableToken)) {
                         LOG.info().$("locked [table=").$(tableToken)
-                                .$(", thread=").$(Thread.currentThread().getId())
+                                .$(", thread=").$(Thread.currentThread().threadId())
                                 .I$();
                         return null;
                     }
@@ -1612,7 +1617,7 @@ public class CairoEngine implements Closeable, WriterSource {
         if (listener != null) {
             listener.onEvent(
                     PoolListener.SRC_TABLE_REGISTRY,
-                    Thread.currentThread().getId(),
+                    Thread.currentThread().threadId(),
                     tableToken,
                     PoolListener.EV_REMOVE_TOKEN,
                     (short) 0,
@@ -1764,6 +1769,10 @@ public class CairoEngine implements Closeable, WriterSource {
         this.ddlListener = ddlListener;
     }
 
+    public void setDurableAckRegistry(@NotNull DurableAckRegistry durableAckRegistry) {
+        this.durableAckRegistry = durableAckRegistry;
+    }
+
     @TestOnly
     public void setPoolListener(PoolListener poolListener) {
         this.tableMetadataPool.setPoolListener(poolListener);
@@ -1792,10 +1801,6 @@ public class CairoEngine implements Closeable, WriterSource {
 
     @TestOnly
     public void setUp() {
-    }
-
-    public void setDurableAckRegistry(@NotNull DurableAckRegistry durableAckRegistry) {
-        this.durableAckRegistry = durableAckRegistry;
     }
 
     public void setWalDirectoryPolicy(@NotNull WalDirectoryPolicy walDirectoryPolicy) {

@@ -343,6 +343,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public byte getDefaultSymbolIndexType() {
+        return IndexType.BITMAP;
+    }
+
+    @Override
     public int getDetachedMkDirMode() {
         return 509;
     }
@@ -553,6 +558,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public long getMatViewRefreshIntervalsUpdatePeriod() {
         return 15_000;
+    }
+
+    @Override
+    public int getMatViewRefreshMaxClusters() {
+        return 32;
     }
 
     @Override
@@ -815,6 +825,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getPostingSealGenThreshold() {
+        return 16;
+    }
+
+    @Override
     public int getPreferencesStringPoolCapacity() {
         return 64;
     }
@@ -867,6 +882,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public boolean getSampleByDefaultAlignmentCalendar() {
         return true;
+    }
+
+    @Override
+    public int getSampleByFillSortStrategy() {
+        return SampleBySortStrategy.LIGHT_ENCODED;
     }
 
     @Override
@@ -1526,6 +1546,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public boolean isMatViewCoveringIndexEnabled() {
+        return false;
+    }
+
+    @Override
     public boolean isMatViewEnabled() {
         return true;
     }
@@ -1578,6 +1603,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public boolean isPartitionO3OverwriteControlEnabled() {
         return false;
+    }
+
+    @Override
+    public boolean isPostingIndexAutoIncludeTimestamp() {
+        return true;
     }
 
     @Override

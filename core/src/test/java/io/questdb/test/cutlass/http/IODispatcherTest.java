@@ -440,13 +440,13 @@ public class IODispatcherTest extends AbstractTest {
                     }
 
                     @Override
-                    public HttpRequestProcessor select(HttpRequestHeader requestHeader) {
-                        return null;
+                    public HttpRequestProcessor resolveProcessorById(int handlerId, HttpRequestHeader header) {
+                        return select(header);
                     }
 
                     @Override
-                    public HttpRequestProcessor resolveProcessorById(int handlerId, HttpRequestHeader header) {
-                        return select(header);
+                    public HttpRequestProcessor select(HttpRequestHeader requestHeader) {
+                        return null;
                     }
                 };
 
@@ -3076,6 +3076,55 @@ public class IODispatcherTest extends AbstractTest {
     }
 
     @Test
+    public void testJsonQueryCharBackslashIsJsonEscaped() throws Exception {
+        getSimpleTester().run((engine, _) -> {
+            engine.execute("create table x (c char)");
+            engine.execute("insert into x values ('\\')");
+            testHttpClient.assertGet(
+                    "{\"query\":\"select c from x\",\"columns\":[{\"name\":\"c\",\"type\":\"CHAR\"}],\"timestamp\":-1,\"dataset\":[[\"\\\\\"]],\"count\":1}",
+                    "select c from x"
+            );
+        });
+    }
+
+    @Test
+    public void testJsonQueryCharControlCharIsJsonEscaped() throws Exception {
+        getSimpleTester().run((engine, _) -> {
+            engine.execute("create table x (c char)");
+            // cast(1 as char) yields the C0 control character at codepoint 1.
+            engine.execute("insert into x values (cast(1 as char))");
+            testHttpClient.assertGet(
+                    "{\"query\":\"select c from x\",\"columns\":[{\"name\":\"c\",\"type\":\"CHAR\"}],\"timestamp\":-1,\"dataset\":[[\"\\u0001\"]],\"count\":1}",
+                    "select c from x"
+            );
+        });
+    }
+
+    @Test
+    public void testJsonQueryCharDoubleQuoteIsJsonEscaped() throws Exception {
+        getSimpleTester().run((engine, _) -> {
+            engine.execute("create table x (c char)");
+            engine.execute("insert into x values ('\"')");
+            testHttpClient.assertGet(
+                    "{\"query\":\"select c from x\",\"columns\":[{\"name\":\"c\",\"type\":\"CHAR\"}],\"timestamp\":-1,\"dataset\":[[\"\\\"\"]],\"count\":1}",
+                    "select c from x"
+            );
+        });
+    }
+
+    @Test
+    public void testJsonQueryCharNullIsEmptyString() throws Exception {
+        getSimpleTester().run((engine, _) -> {
+            engine.execute("create table x (c char)");
+            engine.execute("insert into x values (null)");
+            testHttpClient.assertGet(
+                    "{\"query\":\"select c from x\",\"columns\":[{\"name\":\"c\",\"type\":\"CHAR\"}],\"timestamp\":-1,\"dataset\":[[\"\"]],\"count\":1}",
+                    "select c from x"
+            );
+        });
+    }
+
+    @Test
     public void testJsonQueryCommentOnlyMultiline_apiV2() throws Exception {
         String expectedErrorResponse = """
                 HTTP/1.1 200 OK\r
@@ -4999,13 +5048,13 @@ public class IODispatcherTest extends AbstractTest {
                     }
 
                     @Override
-                    public HttpRequestProcessor select(HttpRequestHeader requestHeader) {
-                        return null;
+                    public HttpRequestProcessor resolveProcessorById(int handlerId, HttpRequestHeader header) {
+                        return select(header);
                     }
 
                     @Override
-                    public HttpRequestProcessor resolveProcessorById(int handlerId, HttpRequestHeader header) {
-                        return select(header);
+                    public HttpRequestProcessor select(HttpRequestHeader requestHeader) {
+                        return null;
                     }
                 }) {
 
@@ -5795,6 +5844,11 @@ public class IODispatcherTest extends AbstractTest {
                     }
 
                     @Override
+                    public HttpRequestProcessor resolveProcessorById(int handlerId, HttpRequestHeader header) {
+                        return select(header);
+                    }
+
+                    @Override
                     public HttpRequestProcessor select(HttpRequestHeader requestHeader) {
                         return new HttpRequestProcessor() {
                             @Override
@@ -5812,11 +5866,6 @@ public class IODispatcherTest extends AbstractTest {
                                 requestReceivedLatch.countDown();
                             }
                         };
-                    }
-
-                    @Override
-                    public HttpRequestProcessor resolveProcessorById(int handlerId, HttpRequestHeader header) {
-                        return select(header);
                     }
                 };
 
@@ -5967,6 +6016,11 @@ public class IODispatcherTest extends AbstractTest {
                     }
 
                     @Override
+                    public HttpRequestProcessor resolveProcessorById(int handlerId, HttpRequestHeader header) {
+                        return select(header);
+                    }
+
+                    @Override
                     public HttpRequestProcessor select(HttpRequestHeader requestHeader) {
                         return new HttpRequestProcessor() {
                             @Override
@@ -5988,11 +6042,6 @@ public class IODispatcherTest extends AbstractTest {
                                 context.simpleResponse().sendStatusTextContent(200);
                             }
                         };
-                    }
-
-                    @Override
-                    public HttpRequestProcessor resolveProcessorById(int handlerId, HttpRequestHeader header) {
-                        return select(header);
                     }
                 };
 
@@ -6125,6 +6174,11 @@ public class IODispatcherTest extends AbstractTest {
                     }
 
                     @Override
+                    public HttpRequestProcessor resolveProcessorById(int handlerId, HttpRequestHeader header) {
+                        return select(header);
+                    }
+
+                    @Override
                     public HttpRequestProcessor select(HttpRequestHeader requestHeader) {
                         return new HttpRequestProcessor() {
                             @Override
@@ -6141,11 +6195,6 @@ public class IODispatcherTest extends AbstractTest {
                                 sink.put("\r\n");
                             }
                         };
-                    }
-
-                    @Override
-                    public HttpRequestProcessor resolveProcessorById(int handlerId, HttpRequestHeader header) {
-                        return select(header);
                     }
                 };
 
@@ -6514,8 +6563,8 @@ public class IODispatcherTest extends AbstractTest {
                     Content-Type: application/json; charset=utf-8\r
                     Keep-Alive: timeout=5, max=10000\r
                     \r
-                    0242\r
-                    {"query":"show columns from balances","columns":[{"name":"column","type":"STRING"},{"name":"type","type":"STRING"},{"name":"indexed","type":"BOOLEAN"},{"name":"indexBlockCapacity","type":"INT"},{"name":"symbolCached","type":"BOOLEAN"},{"name":"symbolCapacity","type":"INT"},{"name":"symbolTableSize","type":"INT"},{"name":"designated","type":"BOOLEAN"},{"name":"upsertKey","type":"BOOLEAN"}],"timestamp":-1,"dataset":[["cust_id","INT",false,0,false,0,0,false,false],["ccy","SYMBOL",false,256,true,128,0,false,false],["balance","DOUBLE",false,0,false,0,0,false,false]],"count":3}\r
+                    02a1\r
+                    {"query":"show columns from balances","columns":[{"name":"column","type":"STRING"},{"name":"type","type":"STRING"},{"name":"indexed","type":"BOOLEAN"},{"name":"indexBlockCapacity","type":"INT"},{"name":"symbolCached","type":"BOOLEAN"},{"name":"symbolCapacity","type":"INT"},{"name":"symbolTableSize","type":"INT"},{"name":"designated","type":"BOOLEAN"},{"name":"upsertKey","type":"BOOLEAN"},{"name":"indexType","type":"STRING"},{"name":"indexInclude","type":"STRING"}],"timestamp":-1,"dataset":[["cust_id","INT",false,0,false,0,0,false,false,"",""],["ccy","SYMBOL",false,256,true,128,0,false,false,"",""],["balance","DOUBLE",false,0,false,0,0,false,false,"",""]],"count":3}\r
                     00\r
                     \r
                     """, 1, 0, false);
@@ -6832,12 +6881,12 @@ public class IODispatcherTest extends AbstractTest {
                                 }
 
                                 @Override
-                                public HttpRequestProcessor select(HttpRequestHeader requestHeader) {
+                                public HttpRequestProcessor resolveProcessorById(int handlerId, HttpRequestHeader header) {
                                     return processor;
                                 }
 
                                 @Override
-                                public HttpRequestProcessor resolveProcessorById(int handlerId, HttpRequestHeader header) {
+                                public HttpRequestProcessor select(HttpRequestHeader requestHeader) {
                                     return processor;
                                 }
                             }) {

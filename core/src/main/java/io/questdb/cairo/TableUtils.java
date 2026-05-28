@@ -115,6 +115,7 @@ public final class TableUtils {
     public static final long META_COLUMN_DATA_SIZE = 32;
     public static final String META_FILE_NAME = "_meta";
     public static final short META_FORMAT_MINOR_VERSION_LATEST = 1;
+    public static final short META_FORMAT_MINOR_VERSION_PARQUET_ENCODING_CONFIG = 1;
     public static final long META_OFFSET_COLUMN_TYPES = 128;
     public static final long META_OFFSET_COUNT = 0;
     public static final long META_OFFSET_MAX_UNCOMMITTED_ROWS = 20; // INT
@@ -135,6 +136,7 @@ public final class TableUtils {
     // 24-byte header left empty for possible future use
     // in case we decide to support ALTER MAT VIEW, and modify mat view metadata
     public static final int NULL_LEN = -1;
+    public static final String PARQUET_METADATA_FILE_NAME = "_pm";
     public static final String PARQUET_PARTITION_NAME = "data.parquet";
     public static final String PARTITION_LAST_SQUASH_TIMESTAMP_FILE = ".squash_ts";
     public static final String RESTORE_FROM_CHECKPOINT_TRIGGER_FILE_NAME = "_restore";
@@ -206,9 +208,34 @@ public final class TableUtils {
     public static final String WAL_2_TABLE_RESUME_REASON = "Resume WAL Data Application";
     public static final String WAL_2_TABLE_WRITE_REASON = "WAL Data Application";
     static final int COLUMN_VERSION_FILE_HEADER_SIZE = 40;
+    // Column flag bit layout (on-disk in _meta).
+    // Bits 0, 2, 3 match the pre-posting-index layout, so tables written by
+    // older versions keep meaning when read by new binaries, and tables
+    // written by this version that have no POSTING/COVERING columns are
+    // bit-identical to the old layout (downgrade-safe when no new features
+    // are used).
+    //
+    //   bit 0: INDEXED                 (legacy META_FLAG_BIT_INDEXED)
+    //   bit 1: IS_POSTING              (0 = BITMAP, 1 = posting variant)
+    //   bit 2: SYMBOL_CACHE            (legacy)
+    //   bit 3: DEDUP_KEY               (legacy)
+    //   bit 4: POSTING_VARIANT low     (2-bit variant selector, bits 4-5)
+    //   bit 5: POSTING_VARIANT high
+    //   bit 6: COVERING
+    //
+    // Posting variant encoding (bits 4-5, valid only when IS_POSTING=1):
+    //   00 = POSTING (adaptive)
+    //   01 = POSTING_DELTA
+    //   10 = POSTING_EF
+    //   11 = reserved
     static final int META_FLAG_BIT_INDEXED = 1;
+    static final int META_FLAG_BIT_IS_POSTING = 1 << 1;
     static final int META_FLAG_BIT_SYMBOL_CACHE = 1 << 2;
-    static final int META_FLAG_BIT_DEDUP_KEY = META_FLAG_BIT_SYMBOL_CACHE << 1;
+    static final int META_FLAG_BIT_DEDUP_KEY = 1 << 3;
+    static final int META_FLAG_BIT_POSTING_VARIANT_LO = 1 << 4;
+    static final int META_FLAG_BIT_POSTING_VARIANT_HI = 1 << 5;
+    static final int META_FLAG_BIT_COVERING = 1 << 6;
+    static final int META_FLAG_POSTING_VARIANT_MASK = META_FLAG_BIT_POSTING_VARIANT_LO | META_FLAG_BIT_POSTING_VARIANT_HI;
     static final byte TODO_RESTORE_META = 2;
     static final byte TODO_TRUNCATE = 1;
     private static final int EMPTY_TABLE_LAG_CHECKSUM = calculateTxnLagChecksum(0, 0, 0, Long.MAX_VALUE, Long.MIN_VALUE, 0);
@@ -217,11 +244,11 @@ public final class TableUtils {
     private static final int MAX_SYMBOL_CAPACITY = Numbers.ceilPow2(Integer.MAX_VALUE);
     private static final int MAX_SYMBOL_CAPACITY_CACHED = Numbers.ceilPow2(30_000_000);
     private static final int MIN_SYMBOL_CAPACITY = 2;
-    private static final int PARQUET_CONFIG_COMPRESSION_MASK = 0xFF;
-    private static final int PARQUET_CONFIG_COMPRESSION_SHIFT = 8;
     // Bit layout for the packed per-column parquet encoding config (32-bit integer).
     // Must stay in sync with the Rust constants in parquet_write/schema.rs.
     private static final int PARQUET_CONFIG_BLOOM_FILTER_FLAG = 1 << 25;
+    private static final int PARQUET_CONFIG_COMPRESSION_MASK = 0xFF;
+    private static final int PARQUET_CONFIG_COMPRESSION_SHIFT = 8;
     private static final int PARQUET_CONFIG_ENCODING_MASK = 0xFF;
     private static final int PARQUET_CONFIG_EXPLICIT_FLAG = 1 << 24;
     private static final int PARQUET_CONFIG_LEVEL_MASK = 0xFF;
@@ -277,7 +304,7 @@ public final class TableUtils {
             int columnType,
             int symbolCapacity,
             boolean symbolCacheFlag,
-            boolean isIndexed,
+            byte indexType,
             int indexValueBlockCapacity,
             LowerCaseCharSequenceIntHashMap columnNameIndexMap,
             ObjList<TableColumnMetadata> columnMetadata
@@ -292,7 +319,7 @@ public final class TableUtils {
                 new TableColumnMetadata(
                         columnNameStr,
                         columnType,
-                        isIndexed,
+                        indexType,
                         indexValueBlockCapacity,
                         false,
                         null,
@@ -319,7 +346,7 @@ public final class TableUtils {
     public static long checkMemSize(MemoryMR metaMem, long minSize) {
         final long memSize = metaMem.size();
         if (memSize < minSize) {
-            throw CairoException.critical(0).put("File is too small, size=").put(memSize).put(", required=").put(minSize);
+            throw CairoException.fileTooSmall(memSize, minSize);
         }
         return memSize;
     }
@@ -810,7 +837,7 @@ public final class TableUtils {
 
     public static int getInt(MemoryR metaMem, long memSize, long offset) {
         if (memSize < offset + Integer.BYTES) {
-            throw CairoException.critical(0).put("File is too small, size=").put(memSize).put(", required=").put(offset + Integer.BYTES);
+            throw CairoException.fileTooSmall(memSize, offset + Integer.BYTES);
         }
         return metaMem.getInt(offset);
     }
@@ -1036,6 +1063,18 @@ public final class TableUtils {
         }
     }
 
+    /**
+     * Returns true when the meta file's minor version is at least
+     * {@link #META_FORMAT_MINOR_VERSION_PARQUET_ENCODING_CONFIG}, i.e. the per-column parquet
+     * encoding config field at column-entry offset 20 can be read without picking up stale
+     * bytes from older meta layouts. Spelled separately from {@link #isMetaFormatUpToDate}
+     * because a future bump of {@code META_FORMAT_MINOR_VERSION_LATEST} must not silently
+     * invalidate this field for 9.3.4 / 9.3.5 tables that legitimately have it set.
+     */
+    public static boolean hasParquetEncodingConfig(MemoryR metaMem) {
+        return isMetaFormatAtLeast(metaMem, META_FORMAT_MINOR_VERSION_PARQUET_ENCODING_CONFIG);
+    }
+
     public static LPSZ iFile(Path path, CharSequence columnName, long columnTxn) {
         path.concat(columnName).put(FILE_SUFFIX_I);
         if (columnTxn > COLUMN_NAME_TXN_NONE) {
@@ -1087,14 +1126,7 @@ public final class TableUtils {
      * Table storage itself is forward- and backward-compatible, so it's safe to read regardless of this version.
      */
     public static boolean isMetaFormatUpToDate(MemoryR metaMem) {
-        int metaFormatMinorVersionField = metaMem.getInt(META_OFFSET_META_FORMAT_MINOR_VERSION);
-        short savedChecksum = Numbers.decodeLowShort(metaFormatMinorVersionField);
-        short actualChecksum = checksumForMetaFormatMinorVersionField(
-                metaMem.getLong(TableUtils.META_OFFSET_METADATA_VERSION),
-                metaMem.getInt(TableUtils.META_OFFSET_COUNT)
-        );
-        short savedMetaFormatMinorVersion = Numbers.decodeHighShort(metaFormatMinorVersionField);
-        return savedChecksum == actualChecksum && savedMetaFormatMinorVersion >= META_FORMAT_MINOR_VERSION_LATEST;
+        return isMetaFormatAtLeast(metaMem, META_FORMAT_MINOR_VERSION_LATEST);
     }
 
     /**
@@ -1730,6 +1762,7 @@ public final class TableUtils {
 
         LOG.info().$("producing parquet for native partition [path=").$substr(pathRootSize, path).I$();
         final int memoryTag = MemoryTag.MMAP_PARQUET_PARTITION_CONVERTER;
+        long parquetMetaFd = -1;
         try {
             try (PartitionDescriptor partitionDescriptor = new MappedMemoryPartitionDescriptor(ff)) {
                 final int readerTimestampIndex = metadata.getTimestampIndex();
@@ -1876,6 +1909,10 @@ public final class TableUtils {
                 int bloomFilterColumnCount = 0;
                 double fpp = Double.isNaN(bloomFilterFpp) ? configuration.getPartitionEncoderParquetBloomFilterFpp() : bloomFilterFpp;
 
+                // Open _pm file for the Rust encoder to write simultaneously.
+                setPathForParquetPartitionMetadata(other.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, parquetNameTxn);
+                parquetMetaFd = TableUtils.openRW(ff, other.$(), LOG, configuration.getWriterFileOpenOpts());
+
                 bloomFilterIndexes.clear();
                 if (useMetadataBloomFilters) {
                     // Derive bloom filter columns from per-column metadata flags
@@ -1899,6 +1936,9 @@ public final class TableUtils {
                     bloomFilterColumnCount = (int) bloomFilterIndexes.size();
                 }
 
+                // Restore parquet file path for encoding.
+                setPathForParquetPartition(other.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, parquetNameTxn);
+
                 PartitionEncoder.encodeWithOptions(
                         partitionDescriptor,
                         other,
@@ -1912,8 +1952,27 @@ public final class TableUtils {
                         bloomFilterColumnCount,
                         fpp,
                         minCompressionRatio,
+                        Files.toOsFd(parquetMetaFd),
                         squashTracker
                 );
+                // Persist _pm before the caller commits _txn. _txn field 3 will reference
+                // a parquet_meta_file_size that resolves only if the _pm bytes survive a
+                // crash. fsync the parent dir too because _pm is a brand-new file in a
+                // brand-new partition directory.
+                final int commitMode = configuration.getCommitMode();
+                if (commitMode != CommitMode.NOSYNC) {
+                    ff.fsync(parquetMetaFd);
+                    if (!Os.isWindows()) {
+                        setPathForParquetPartitionMetadata(other.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, parquetNameTxn);
+                        // Drop the trailing /_pm component to fsync the partition dir itself.
+                        other.parent();
+                        final long dirFd = TableUtils.openRONoCache(ff, other.$(), LOG);
+                        if (dirFd != -1) {
+                            ff.fsyncAndClose(dirFd);
+                        }
+                    }
+                }
+                setPathForParquetPartition(other.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, parquetNameTxn);
                 return ff.length(other.$());
             }
         } catch (CairoException e) {
@@ -1931,6 +1990,9 @@ public final class TableUtils {
         } finally {
             path.trimTo(pathSize);
             other.trimTo(pathSize);
+            if (parquetMetaFd > -1) {
+                ff.close(parquetMetaFd);
+            }
         }
     }
 
@@ -2273,6 +2335,21 @@ public final class TableUtils {
     }
 
     /**
+     * Sets the path to the metadata file of a Parquet partition taking into account the timestamp, the partitioning
+     * scheme and the partition version.
+     *
+     * @param path          Set to the root directory for a table, this will be updated to the metadata file of the partition
+     * @param timestampType type (resolution) of the timestamp column
+     * @param partitionBy   Partitioning scheme
+     * @param timestamp     A timestamp in the partition
+     * @param nameTxn       Partition txn suffix
+     */
+    public static void setPathForParquetPartitionMetadata(Path path, int timestampType, int partitionBy, long timestamp, long nameTxn) {
+        setSinkForNativePartition(path.slash(), timestampType, partitionBy, timestamp, nameTxn);
+        path.concat(PARQUET_METADATA_FILE_NAME);
+    }
+
+    /**
      * Sets the sink to the directory of a native partition taking into account the timestamp, the partitioning scheme
      * and the partition version.
      *
@@ -2396,11 +2473,7 @@ public final class TableUtils {
     public static void validateMetaVersion(Utf8Sequence metaPath, MemoryMR metaMem, long metaVersionOffset, int expectedVersion) {
         final int metaVersion = metaMem.getInt(metaVersionOffset);
         if (expectedVersion != metaVersion) {
-            throw validationException()
-                    .put("metadata version does not match runtime version [path=").put(metaPath)
-                    .put(", expectedVersion=").put(expectedVersion)
-                    .put(", actualVersion=").put(metaVersion)
-                    .put(']');
+            throw CairoException.metadataVersionMismatch(metaPath, expectedVersion, metaVersion);
         }
     }
 
@@ -2477,10 +2550,7 @@ public final class TableUtils {
 
         for (int i = 0; i < count; i++) {
             mem.putInt(tableStruct.getColumnType(i));
-            long flags = 0;
-            if (tableStruct.isIndexed(i)) {
-                flags |= META_FLAG_BIT_INDEXED;
-            }
+            long flags = encodeIndexTypeFlags(tableStruct.getIndexType(i));
 
             if (tableStruct.getSymbolCacheFlag(i)) {
                 flags |= META_FLAG_BIT_SYMBOL_CACHE;
@@ -2488,6 +2558,10 @@ public final class TableUtils {
 
             if (tableStruct.isDedupKey(i)) {
                 flags |= META_FLAG_BIT_DEDUP_KEY;
+            }
+
+            if (tableStruct.isCovering(i)) {
+                flags |= META_FLAG_BIT_COVERING;
             }
 
             mem.putLong(flags);
@@ -2500,6 +2574,16 @@ public final class TableUtils {
 
         for (int i = 0; i < count; i++) {
             mem.putStr(tableStruct.getColumnName(i));
+        }
+
+        for (int i = 0; i < count; i++) {
+            IntList coveringIndices = tableStruct.getCoveringColumnIndices(i);
+            if (coveringIndices != null && coveringIndices.size() > 0) {
+                mem.putInt(coveringIndices.size());
+                for (int ci = 0, cn = coveringIndices.size(); ci < cn; ci++) {
+                    mem.putInt(coveringIndices.getQuick(ci));
+                }
+            }
         }
     }
 
@@ -2522,9 +2606,20 @@ public final class TableUtils {
         }
         final long storageLength = Vm.getStorageLength(strLength);
         if (offset + storageLength > memSize) {
-            throw CairoException.critical(0).put("File is too small, size=").put(memSize).put(", required=").put(offset + storageLength);
+            throw CairoException.fileTooSmall(memSize, offset + storageLength);
         }
         return metaMem.getStrA(offset);
+    }
+
+    private static boolean isMetaFormatAtLeast(MemoryR metaMem, short minorVersion) {
+        int metaFormatMinorVersionField = metaMem.getInt(META_OFFSET_META_FORMAT_MINOR_VERSION);
+        short savedChecksum = Numbers.decodeLowShort(metaFormatMinorVersionField);
+        short actualChecksum = checksumForMetaFormatMinorVersionField(
+                metaMem.getLong(TableUtils.META_OFFSET_METADATA_VERSION),
+                metaMem.getInt(TableUtils.META_OFFSET_COUNT)
+        );
+        short savedMetaFormatMinorVersion = Numbers.decodeHighShort(metaFormatMinorVersionField);
+        return savedChecksum == actualChecksum && savedMetaFormatMinorVersion >= minorVersion;
     }
 
     // Utility method for debugging. This method is not used in production.
@@ -2603,8 +2698,53 @@ public final class TableUtils {
         }
     }
 
+    /**
+     * Decodes the index type from the column flags long. See the comment on
+     * META_FLAG_BIT_INDEXED for the bit layout.
+     */
+    static byte decodeIndexTypeFlags(long flags) {
+        if ((flags & META_FLAG_BIT_INDEXED) == 0) {
+            return IndexType.NONE;
+        }
+        if ((flags & META_FLAG_BIT_IS_POSTING) == 0) {
+            return IndexType.BITMAP;
+        }
+        long variant = flags & META_FLAG_POSTING_VARIANT_MASK;
+        if (variant == 0) {
+            return IndexType.POSTING;
+        }
+        if (variant == META_FLAG_BIT_POSTING_VARIANT_LO) {
+            return IndexType.POSTING_DELTA;
+        }
+        if (variant == META_FLAG_BIT_POSTING_VARIANT_HI) {
+            return IndexType.POSTING_EF;
+        }
+        throw CairoException.critical(0).put("unknown posting index variant in column metadata [flags=").put(flags).put(']');
+    }
+
+    /**
+     * Encodes the index type into flag bits for storage. See the comment on
+     * META_FLAG_BIT_INDEXED for the bit layout.
+     */
+    static long encodeIndexTypeFlags(byte indexType) {
+        return switch (indexType) {
+            case IndexType.NONE -> 0;
+            case IndexType.BITMAP -> META_FLAG_BIT_INDEXED;
+            case IndexType.POSTING -> META_FLAG_BIT_INDEXED | META_FLAG_BIT_IS_POSTING;
+            case IndexType.POSTING_DELTA ->
+                    META_FLAG_BIT_INDEXED | META_FLAG_BIT_IS_POSTING | META_FLAG_BIT_POSTING_VARIANT_LO;
+            case IndexType.POSTING_EF ->
+                    META_FLAG_BIT_INDEXED | META_FLAG_BIT_IS_POSTING | META_FLAG_BIT_POSTING_VARIANT_HI;
+            default -> throw CairoException.critical(0).put("unknown index type [type=").put(indexType).put(']');
+        };
+    }
+
     static long getColumnFlags(MemoryR metaMem, int columnIndex) {
         return metaMem.getLong(META_OFFSET_COLUMN_TYPES + columnIndex * META_COLUMN_DATA_SIZE + 4);
+    }
+
+    static byte getColumnIndexType(MemoryR metaMem, int columnIndex) {
+        return decodeIndexTypeFlags(getColumnFlags(metaMem, columnIndex));
     }
 
     static int getIndexBlockCapacity(MemoryR metaMem, int columnIndex) {
@@ -2615,12 +2755,16 @@ public final class TableUtils {
         return isMetaFormatUpToDate(metaMem) ? metaMem.getInt(TableUtils.META_OFFSET_TTL_HOURS_OR_MONTHS) : 0;
     }
 
+    static boolean isColumnCovering(MemoryR metaMem, int columnIndex) {
+        return (getColumnFlags(metaMem, columnIndex) & META_FLAG_BIT_COVERING) != 0;
+    }
+
     static boolean isColumnDedupKey(MemoryR metaMem, int columnIndex) {
         return (getColumnFlags(metaMem, columnIndex) & META_FLAG_BIT_DEDUP_KEY) != 0;
     }
 
     static boolean isColumnIndexed(MemoryR metaMem, int columnIndex) {
-        return (getColumnFlags(metaMem, columnIndex) & META_FLAG_BIT_INDEXED) != 0;
+        return getColumnIndexType(metaMem, columnIndex) != IndexType.NONE;
     }
 
     static int openMetaSwapFile(FilesFacade ff, MemoryMA mem, Path path, int rootLen, int retryCount) {

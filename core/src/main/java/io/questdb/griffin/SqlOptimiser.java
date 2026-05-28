@@ -121,6 +121,24 @@ public class SqlOptimiser implements Mutable {
     public static final int REWRITE_STATUS_USE_OUTER_MODEL = 8;
     public static final int REWRITE_STATUS_USE_WINDOW_JOIN_MODE = 128;
     public static final int REWRITE_STATUS_USE_WINDOW_MODEL = 2;
+    // Rewriters that break the 1:1 relationship between baseModel rows and
+    // the rows the outer LIMIT counts: DISTINCT and GROUP BY drop rows
+    // (SAMPLE BY is encoded as GROUP BY); WINDOW preserves the count but
+    // depends on seeing the full input frame to compute its functions;
+    // HORIZON JOIN runs as a keyed GROUP BY ("GROUP BY with keys" per
+    // HorizonJoinRecordCursorFactory) so it also drops rows. When any of
+    // them sits between the outer LIMIT and baseModel, pushDownLimitAdvice
+    // must not propagate the limit to baseModel, because a row-count
+    // limit at the base cursor produces fewer post-rewrite rows than the
+    // outer LIMIT requested. WINDOW JOIN is intentionally excluded: it
+    // preserves the master side's row count and order, and the rewrite
+    // path enforces translationIsRedundant for it (see the assertion on
+    // the WINDOW_JOIN branch below), so it never reaches this push-down.
+    private static final int LIMIT_PUSH_DOWN_ROW_COUNT_BLOCKERS =
+            REWRITE_STATUS_USE_DISTINCT_MODEL
+                    | REWRITE_STATUS_USE_GROUP_BY_MODEL
+                    | REWRITE_STATUS_USE_HORIZON_JOIN_MODE
+                    | REWRITE_STATUS_USE_WINDOW_MODEL;
     private static final int JOIN_OP_AND = 2;
     private static final int JOIN_OP_EQUAL = 1;
     private static final int JOIN_OP_OR = 3;
@@ -454,6 +472,15 @@ public class SqlOptimiser implements Mutable {
         }
     }
 
+    private static boolean hasLinearFill(ObjList<ExpressionNode> fill) {
+        for (int i = 0, n = fill.size(); i < n; i++) {
+            if (isLinearKeyword(fill.getQuick(i).token)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     // Returns true when every leaf in the expression tree is a literal constant
     // (no function calls, bind variables, or column references). Used to decide
     // whether a constWhereClause can be evaluated at compile time by the code
@@ -765,8 +792,8 @@ public class SqlOptimiser implements Mutable {
         }
     }
 
-    private static void pushDownLimitAdvice(IQueryModel model, IQueryModel nestedModel, boolean useDistinctModel) {
-        if ((nestedModel.getOrderBy().size() == 0 || isOrderedByDesignatedTimestamp(nestedModel)) && !useDistinctModel) {
+    private static void pushDownLimitAdvice(IQueryModel model, IQueryModel nestedModel, boolean rowCountChanges) {
+        if ((nestedModel.getOrderBy().size() == 0 || isOrderedByDesignatedTimestamp(nestedModel)) && !rowCountChanges) {
             nestedModel.setLimitAdvice(model.getLimitLo(), model.getLimitHi());
         }
     }
@@ -797,6 +824,20 @@ public class SqlOptimiser implements Mutable {
             }
         }
         return false;
+    }
+
+    private static boolean shouldPropagateFillOffset(
+            ExpressionNode sampleByTimezoneName,
+            boolean hasSubDayTimezoneWrap,
+            ExpressionNode sampleByFrom,
+            boolean hasFillFastPathTz,
+            ExpressionNode sampleByOffset
+    ) {
+        return (sampleByTimezoneName == null
+                || (hasSubDayTimezoneWrap && sampleByFrom != null)
+                || hasFillFastPathTz)
+                && sampleByOffset != null
+                && sampleByOffset != SqlParser.ZERO_OFFSET;
     }
 
     private static void unlinkDependencies(IQueryModel model, int parent, int child) {
@@ -1566,8 +1607,14 @@ public class SqlOptimiser implements Mutable {
                             } else {
                                 addWhereNode(parent, lhi, node);
                             }
-                            return;
+                        } else {
+                            // For an outer/asof barrier, both sides reference the same
+                            // table so there's no equi-join to extract; route the predicate
+                            // to the join's outer-join expression clause to keep its
+                            // filtering effect (mirror of the bSize == 0 branch below).
+                            addOuterJoinExpression(parent, joinModel, joinIndex, node);
                         }
+                        return;
                     } else if (lhi < rhi) {
                         // we must align "a" nodes with slave index
                         // compiler will always be checking "a" columns
@@ -4604,14 +4651,23 @@ public class SqlOptimiser implements Mutable {
     private boolean isEffectivelyConstantExpression(ExpressionNode node) {
         sqlNodeStack.clear();
         while (node != null) {
+            // Cast over a constant or bind variable is itself constant per query,
+            // so accept BIND_VARIABLE leaves and the "cast" FUNCTION token. The
+            // recursive walk verifies every child resolves to a constant /
+            // bind / runtime-constant function, so cast over a column is still
+            // correctly rejected.
             if (node.type != OPERATION
                     && node.type != CONSTANT
-                    && !(node.type == FUNCTION && functionParser.getFunctionFactoryCache().isRuntimeConstant(node.token))) {
+                    && node.type != BIND_VARIABLE
+                    && !(node.type == FUNCTION && (functionParser.getFunctionFactoryCache().isRuntimeConstant(node.token) || SqlKeywords.isCastKeyword(node.token)))) {
                 return false;
             }
 
             if (node.lhs != null) {
                 sqlNodeStack.push(node.lhs);
+            }
+            for (int i = 0, n = node.args.size(); i < n; i++) {
+                sqlNodeStack.push(node.args.getQuick(i));
             }
 
             if (node.rhs != null) {
@@ -4775,17 +4831,6 @@ public class SqlOptimiser implements Mutable {
             return Chars.equalsIgnoreCase(suffix, columnName);
         }
         return false;
-    }
-
-    @SuppressWarnings("BooleanMethodIsAlwaysInverted")
-    private boolean matchesWithOrWithoutTablePrefix(@NotNull CharSequence name, @NotNull CharSequence table, CharSequence target) {
-        if (target == null) {
-            return false;
-        }
-        final int dotIndex = Chars.indexOfLastUnquoted(name, '.');
-        return dotIndex > 0
-                ? Chars.equalsIgnoreCase(table, name, 0, dotIndex) && Chars.equalsIgnoreCase(target, name, dotIndex + 1, name.length())
-                : Chars.equalsIgnoreCase(name, target);
     }
 
     private void mergeConstIntoPostJoinWhereClause(IQueryModel model) {
@@ -5519,8 +5564,8 @@ public class SqlOptimiser implements Mutable {
             optimiseBooleanNot(joinModels.getQuick(i));
         }
 
-        if (model.getUnionModel() != null && model.getNestedModel() != null) {
-            optimiseBooleanNot(model.getNestedModel());
+        if (model.getUnionModel() != null) {
+            optimiseBooleanNot(model.getUnionModel());
         }
     }
 
@@ -8014,7 +8059,11 @@ public class SqlOptimiser implements Mutable {
         ObjList<ExpressionNode> orderByNodes = base.getOrderBy();
         int sz = orderByNodes.size();
         if (sz > 0) {
-            final ObjList<QueryColumn> columns = baseParent.getBottomUpColumns();
+            // Positional ORDER BY refers to the outermost SELECT projection,
+            // not the deepest GROUP BY. The two diverge when an optimisation
+            // (e.g. rewriteCountDistinct) lifts an expression into an inner
+            // model under a synthetic alias.
+            final ObjList<QueryColumn> columns = model.getColumns();
             final int columnCount = columns.size();
             for (int i = 0; i < sz; i++) {
                 final ExpressionNode orderBy = orderByNodes.getQuick(i);
@@ -8182,7 +8231,9 @@ public class SqlOptimiser implements Mutable {
     /**
      * Recursive. Replaces SAMPLE BY models with GROUP BY + ORDER BY. For now, the rewrite
      * avoids the following:
-     * - linear and prev fills
+     * - linear fills
+     * - ALIGN TO FIRST OBSERVATION
+     * - FROM as a bind variable / function / operation.
      * <p>
      * When "timestamp" column is not explicitly selected, this method has to do
      * a trick to add artificial timestamp to the original model and then wrap the original
@@ -8228,12 +8279,30 @@ public class SqlOptimiser implements Mutable {
                 throw SqlException.$(sampleBy.position, "SAMPLE BY cannot be used with HORIZON JOIN");
             }
 
+            // Day-or-larger stride + non-UTC TIME ZONE: DST makes UTC bucket widths
+            // vary (e.g. Berlin "1d" spans 23h on spring-forward, 25h on fall-back),
+            // so the fill sampler must walk local-calendar boundaries to match
+            // timestamp_floor_utc. setFillTimezoneName below tells generateFill to
+            // wrap the UTC sampler in TimezoneFloorTimestampSampler.
+            final boolean isSampleBySuperDay = sampleBy != null
+                    && !sampleBy.token.isEmpty()
+                    && !CommonUtils.isSubDayUnit(sampleBy.token.charAt(sampleBy.token.length() - 1));
+            boolean hasFillFastPathTz = false;
+            if (sampleByTimezoneName != null && isSampleBySuperDay) {
+                for (int i = 0, n = sampleByFill.size(); i < n; i++) {
+                    if (!isNoneKeyword(sampleByFill.getQuick(i).token)) {
+                        hasFillFastPathTz = true;
+                        break;
+                    }
+                }
+            }
+
             if (
                     sampleBy != null
                             && timestamp != null
                             // null offset means ALIGN TO FIRST OBSERVATION, and we only support ALIGN TO CALENDAR
                             && sampleByOffset != null
-                            && (sampleByFillSize == 0 || (sampleByFillSize == 1 && !isPrevKeyword(sampleByFill.getQuick(0).token) && !isLinearKeyword(sampleByFill.getQuick(0).token)))
+                            && !hasLinearFill(sampleByFill)
                             && sampleByUnit == null
                             && (sampleByFrom == null || ((sampleByFrom.type != BIND_VARIABLE) && (sampleByFrom.type != FUNCTION) && (sampleByFrom.type != OPERATION)))
             ) {
@@ -8325,52 +8394,13 @@ public class SqlOptimiser implements Mutable {
                     timestampColumn = e.toImmutable();
                 }
 
-                if (maybeKeyed.size() > 0 &&
-                        ((sampleByFrom != null || sampleByTo != null) || (sampleByFillSize > 0 && !isNoneKeyword(sampleByFill.getQuick(0).token)))) {
-                    boolean isKeyed = false;
-
-                    final CharSequence tableName = nested.getTableName();
-                    // down-sampling of sub-queries will yield a null table name
-                    if (tableName == null) {
-                        return replaceAndTransferDependents(originalSbModel, model);
-                    }
-                    for (int i = 0, n = maybeKeyed.size(); i < n; i++) {
-                        final ExpressionNode expr = maybeKeyed.getQuick(i);
-                        switch (expr.type) {
-                            case LITERAL:
-                                if (!matchesWithOrWithoutTablePrefix(expr.token, tableName, timestamp.token)
-                                        && !matchesWithOrWithoutTablePrefix(expr.token, tableName, timestampAlias)) {
-                                    isKeyed = true;
-                                }
-                                break;
-                            case OPERATION:
-                                isKeyed = true;
-                                break;
-                            case FUNCTION:
-                                if (!functionParser.getFunctionFactoryCache().isGroupBy(expr.token)) {
-                                    isKeyed = true;
-                                }
-                                break;
-                        }
-                    }
-
-                    if (isKeyed) {
-                        // drop out early, since we don't handle keyed
-                        IQueryModel oldSbNested = nested.getNestedModel();
-                        nested.setNestedModel(rewriteSampleBy(oldSbNested, sqlExecutionContext));
-
-                        // join models
-                        for (int j = 1, m = nested.getJoinModels().size(); j < m; j++) {
-                            IQueryModel joinModel = nested.getJoinModels().getQuick(j);
-                            IQueryModel oldSbJmNested = joinModel.getNestedModel();
-                            joinModel.setNestedModel(rewriteSampleBy(oldSbJmNested, sqlExecutionContext));
-                        }
-
-                        // unions
-                        IQueryModel oldSbUnion = model.getUnionModel();
-                        model.setUnionModel(rewriteSampleBy(oldSbUnion, sqlExecutionContext));
-                        return replaceAndTransferDependents(originalSbModel, model);
-                    }
+                if (maybeKeyed.size() > 0
+                        && nested.getTableName() == null
+                        && ((sampleByFrom != null || sampleByTo != null) || (sampleByFillSize > 0 && !isNoneKeyword(sampleByFill.getQuick(0).token)))) {
+                    // Down-sampling of sub-queries yields a null table name; the nested
+                    // rewrite happens through replaceAndTransferDependents and the outer
+                    // SAMPLE BY code path is not applicable here.
+                    return replaceAndTransferDependents(originalSbModel, model);
                 }
 
                 // These lists collect timestamp copies that we remove from the group-by model.
@@ -8521,10 +8551,34 @@ public class SqlOptimiser implements Mutable {
                     nested.addGroupBy(tsFloorFunc);
                 }
 
-                nested.setFillFrom(sampleByFrom);
-                nested.setFillTo(sampleByTo);
+                // Sub-day SAMPLE BY with a TIME ZONE: tsFloor's FROM argument is
+                // shifted via to_utc(FROM, tz) above, so wrap fillFrom/fillTo with
+                // the same call to keep the fill grid aligned.
+                final boolean hasSubDayTimezoneWrap = isSubDay && sampleByTimezoneName != null;
+                nested.setFillFrom(hasSubDayTimezoneWrap && sampleByFrom != null
+                        ? createToUtcCall(sampleByFrom, sampleByTimezoneName) : sampleByFrom);
+                nested.setFillTo(hasSubDayTimezoneWrap && sampleByTo != null
+                        ? createToUtcCall(sampleByTo, sampleByTimezoneName) : sampleByTo);
                 nested.setFillStride(sampleBy);
+                nested.setFillTimezoneName(hasFillFastPathTz ? sampleByTimezoneName : null);
                 nested.setFillValues(sampleByFill);
+                // Propagate offset to the fill cursor only when the sampler grid
+                // can match timestamp_floor_utc's effectiveOffset = (fromTs + offset)
+                // mod bucket: no timezone, sub-day + timezone + FROM (covered by the
+                // to_utc wrap above), or day-or-larger + timezone + FILL (covered by
+                // TimezoneFloorTimestampSampler). Other timezone cases anchor on the
+                // already-floored firstTs and must not re-apply the offset.
+                // ZERO_OFFSET is the parser's '00:00' singleton; the code generator
+                // already defaults calendarOffset to 0 when fillOffset is null.
+                if (shouldPropagateFillOffset(
+                        sampleByTimezoneName,
+                        hasSubDayTimezoneWrap,
+                        sampleByFrom,
+                        hasFillFastPathTz,
+                        sampleByOffset
+                )) {
+                    nested.setFillOffset(sampleByOffset);
+                }
 
                 // clear sample by (but keep FILL and FROM-TO)
                 nested.setSampleBy(null);
@@ -8689,15 +8743,18 @@ public class SqlOptimiser implements Mutable {
                 // this is to handle cases where we use system tables, which are prefixed
                 // downstream code cannot handle `"sys.telemetry.wal".created`
                 // it will break in `where` optimization and later metadata lookups
-                CharacterStoreEntry e = characterStore.newEntry();
-                if (Chars.indexOf(toAddWhereClause.getTableName(), '.') != -1) {
-                    // Table name has . in the name, quote it
-                    e.putAscii('\"').put(toAddWhereClause.getTableName()).putAscii("\".").put(timestamp.token);
-                } else {
-                    e.put(toAddWhereClause.getTableName()).put('.').put(timestamp.token);
+                final CharSequence tableName = toAddWhereClause.getTableName();
+                if (tableName != null) {
+                    CharacterStoreEntry e = characterStore.newEntry();
+                    if (Chars.indexOf(tableName, '.') != -1) {
+                        // Table name has . in the name, quote it
+                        e.putAscii('\"').put(tableName).putAscii("\".").put(timestamp.token);
+                    } else {
+                        e.put(tableName).put('.').put(timestamp.token);
+                    }
+                    CharSequence prefixedTimestamp = e.toImmutable();
+                    timestamp = expressionNodePool.next().of(LITERAL, prefixedTimestamp, timestamp.precedence, timestamp.position);
                 }
-                CharSequence prefixedTimestamp = e.toImmutable();
-                timestamp = expressionNodePool.next().of(LITERAL, prefixedTimestamp, timestamp.precedence, timestamp.position);
             }
 
             // construct an appropriate where clause
@@ -9400,6 +9457,8 @@ public class SqlOptimiser implements Mutable {
                 addMissingTablePrefixesForGroupByQueries(node, baseModel, innerVirtualModel);
                 // ignore duplicates in group by
                 if (findColumnByAst(groupByNodes, groupByAliases, node) != null) {
+                    groupBy.remove(i--);
+                    n--;
                     continue;
                 }
 
@@ -9436,6 +9495,13 @@ public class SqlOptimiser implements Mutable {
                     groupByNodes.add(deepClone(expressionNodePool, node));
                     groupByAliases.add(qc.getAlias());
                     emitLiterals(qc.getAst(), translatingModel, innerVirtualModel, baseModel, false, false, false);
+                } else {
+                    // The constant is redundant when at least one other group by column will remain.
+                    // Drop it from the group by list so that downstream validation and the
+                    // tempBoolList/nonAggSelectCount accounting only see entries that the inner
+                    // model actually keys on.
+                    groupBy.remove(i--);
+                    n--;
                 }
             }
         }
@@ -9568,7 +9634,12 @@ public class SqlOptimiser implements Mutable {
                     }
                     break;
                 case BIND_VARIABLE:
-                    if (explicitGroupBy) {
+                    // A bind variable is constant per query, so it has no place
+                    // in the inner GROUP BY model's key set. Lift it to the
+                    // outer projection both when the user wrote GROUP BY
+                    // explicitly and when an aggregate elsewhere in the SELECT
+                    // forces a GROUP BY model implicitly.
+                    if (explicitGroupBy || (rewriteStatus & REWRITE_STATUS_USE_GROUP_BY_MODEL) != 0) {
                         rewriteStatus |= REWRITE_STATUS_USE_OUTER_MODEL;
                         rewriteStatus &= ~REWRITE_STATUS_OUTER_VIRTUAL_IS_SELECT_CHOOSE;
                         outerVirtualModel.addBottomUpColumn(qc);
@@ -9831,7 +9902,7 @@ public class SqlOptimiser implements Mutable {
             // when parent model is order by or join.
             // The only exception is when order by is by designated timestamp because
             // it'll be implemented as forward or backward scan (no sorting required).
-            pushDownLimitAdvice(model, baseModel, (rewriteStatus & REWRITE_STATUS_USE_DISTINCT_MODEL) != 0);
+            pushDownLimitAdvice(model, baseModel, (rewriteStatus & LIMIT_PUSH_DOWN_ROW_COUNT_BLOCKERS) != 0);
 
             translatingModel.moveLimitFrom(model);
             translatingModel.moveJoinAliasFrom(model);
@@ -9846,7 +9917,7 @@ public class SqlOptimiser implements Mutable {
             innerVirtualModel.copyHints(model.getHints());
 
             // Set limit hint if applicable.
-            pushDownLimitAdvice(innerVirtualModel, root, (rewriteStatus & REWRITE_STATUS_USE_DISTINCT_MODEL) != 0);
+            pushDownLimitAdvice(innerVirtualModel, root, (rewriteStatus & LIMIT_PUSH_DOWN_ROW_COUNT_BLOCKERS) != 0);
 
             root = innerVirtualModel;
             limitSource = innerVirtualModel;
@@ -11655,9 +11726,7 @@ public class SqlOptimiser implements Mutable {
             propagateTopDownColumns(rewrittenModel, rewrittenModel.allowsColumnsChange());
             rewriteMultipleTermLimitedOrderByPart2(rewrittenModel);
             rewrittenModel.recordViews(model.getReferencedViews());
-            if (!sqlExecutionContext.isValidationOnly()) {
-                authorizeColumnAccess(sqlExecutionContext, rewrittenModel);
-            }
+            authorizeColumnAccess(sqlExecutionContext, rewrittenModel);
             if (ALLOW_FUNCTION_MEMOIZATION) {
                 collectColumnRefCount(null, rewrittenModel);
             }

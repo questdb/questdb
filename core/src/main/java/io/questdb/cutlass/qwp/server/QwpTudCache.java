@@ -49,7 +49,6 @@ import io.questdb.cutlass.qwp.protocol.QwpConstants;
 import io.questdb.cutlass.qwp.protocol.QwpTableBlockCursor;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.Decimals;
 import io.questdb.std.IntList;
 import io.questdb.std.LowerCaseUtf8SequenceObjHashMap;
 import io.questdb.std.Misc;
@@ -193,6 +192,44 @@ public class QwpTudCache implements QuietCloseable {
                         final boolean willAdvance = consumer != null && !tud.isFirstRow();
                         tud.commit(false);
                         if (willAdvance && !tud.isDropped()) {
+                            consumer.accept(
+                                    tud.getTableToken().getTableName(),
+                                    tud.getTableToken().getDirName(),
+                                    tud.getLastSeqTxn()
+                            );
+                        }
+                    }
+                } catch (CommitFailedException e) {
+                    if (!e.isTableDropped()) {
+                        throw e.getReason();
+                    } else {
+                        tud.setIsDropped();
+                    }
+                }
+
+                if (tud.isDropped()) {
+                    tableUpdateDetails.remove(tableName);
+                    Misc.free(tud);
+                    droppedTableFound = true;
+                    break;
+                }
+            }
+        } while (droppedTableFound);
+    }
+
+    public void commitIfMaxUncommittedRowsReached(CommittedTxnConsumer consumer) throws Throwable {
+        boolean droppedTableFound;
+        do {
+            droppedTableFound = false;
+            ObjList<Utf8Sequence> keys = tableUpdateDetails.keys();
+            for (int i = 0, n = keys.size(); i < n; i++) {
+                Utf8Sequence tableName = keys.get(i);
+                WalTableUpdateDetails tud = tableUpdateDetails.get(tableName);
+                try {
+                    if (!tud.isDropped() && !tud.isFirstRow()) {
+                        final long seqTxnBefore = tud.getLastSeqTxn();
+                        tud.commitIfMaxUncommittedRowsCountReached();
+                        if (consumer != null && tud.getLastSeqTxn() != seqTxnBefore && !tud.isDropped()) {
                             consumer.accept(
                                     tud.getTableToken().getTableName(),
                                     tud.getTableToken().getDirName(),
@@ -510,6 +547,11 @@ public class QwpTudCache implements QuietCloseable {
         }
 
         @Override
+        public byte getIndexType(int columnIndex) {
+            return 0;
+        }
+
+        @Override
         public int getMaxUncommittedRows() {
             return configuration.getMaxUncommittedRows();
         }
@@ -593,14 +635,6 @@ public class QwpTudCache implements QuietCloseable {
 
         private int getSchemaColumnType(int schemaIndex) {
             final byte typeCode = schema.getQuick(schemaIndex).getTypeCode();
-            if (typeCode == QwpConstants.TYPE_DECIMAL64 ||
-                    typeCode == QwpConstants.TYPE_DECIMAL128 ||
-                    typeCode == QwpConstants.TYPE_DECIMAL256) {
-                final int scale = cursor.getDecimalColumn(schemaIndex).getScale() & 0xFF;
-                final int tag = QwpWalAppender.mapQwpTypeToQuestDB(typeCode);
-                final int precision = Decimals.getDecimalTagPrecision(tag);
-                return ColumnType.getDecimalType(tag, precision, scale);
-            }
             if (typeCode == QwpConstants.TYPE_DOUBLE_ARRAY) {
                 final int nDims = getArrayBatchDimensionality(
                         cursor.getArrayColumn(schemaIndex),
@@ -612,7 +646,7 @@ public class QwpTudCache implements QuietCloseable {
                 }
                 return ColumnType.encodeArrayType(ColumnType.DOUBLE, nDims);
             }
-            return QwpWalAppender.mapQwpTypeToQuestDB(typeCode);
+            return QwpWalAppender.mapQwpTypeToQuestDB(typeCode, cursor, schemaIndex);
         }
     }
 }

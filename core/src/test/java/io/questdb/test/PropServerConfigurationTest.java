@@ -34,6 +34,7 @@ import io.questdb.cairo.CairoConfigurationWrapper;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.SampleBySortStrategy;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.TableUtils;
@@ -208,6 +209,7 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(5, configuration.getCairoConfiguration().getCreateAsSelectRetryCount());
         Assert.assertEquals(8, configuration.getCairoConfiguration().getViewLexerPoolCapacity());
         Assert.assertTrue(configuration.getCairoConfiguration().isMatViewEnabled());
+        Assert.assertFalse(configuration.getCairoConfiguration().isMatViewCoveringIndexEnabled());
         Assert.assertEquals(10, configuration.getCairoConfiguration().getMatViewMaxRefreshRetries());
         Assert.assertEquals(200, configuration.getCairoConfiguration().getMatViewRefreshOomRetryTimeout());
         Assert.assertEquals(1_000_000, configuration.getCairoConfiguration().getMatViewInsertAsSelectBatchSize());
@@ -408,7 +410,7 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(500, configuration.getLineTcpReceiverConfiguration().getWriterIdleTimeout());
         Assert.assertEquals(0, configuration.getCairoConfiguration().getSampleByIndexSearchPageSize());
         Assert.assertTrue(configuration.getCairoConfiguration().getSampleByDefaultAlignmentCalendar());
-        Assert.assertEquals(32, configuration.getCairoConfiguration().getWriterCommandQueueCapacity());
+        Assert.assertEquals(256, configuration.getCairoConfiguration().getWriterCommandQueueCapacity());
         Assert.assertEquals(2048, configuration.getCairoConfiguration().getWriterCommandQueueSlotSize());
         Assert.assertEquals(500, configuration.getCairoConfiguration().getWriterAsyncCommandBusyWaitTimeout());
         Assert.assertEquals(30_000, configuration.getCairoConfiguration().getWriterAsyncCommandMaxTimeout());
@@ -1186,6 +1188,23 @@ public class PropServerConfigurationTest {
         }
     }
 
+    @Test(expected = ServerConfigurationException.class)
+    public void testInvalidWalMaxLagSizeNegative() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty("cairo.wal.max.lag.size", "-1");
+        newPropServerConfiguration(properties);
+    }
+
+    @Test
+    public void testWalMaxLagSizeZeroAccepted() throws Exception {
+        // 0 is the minimum accepted value (the guard rejects only negatives), so it must pass and
+        // round-trip unchanged. Guards against a > vs >= regression in getLongSize(..., minValue).
+        Properties properties = new Properties();
+        properties.setProperty("cairo.wal.max.lag.size", "0");
+        PropServerConfiguration configuration = newPropServerConfiguration(properties);
+        Assert.assertEquals(0, configuration.getCairoConfiguration().getWalMaxLagSize());
+    }
+
     @Test
     public void testInvalidValidationResult() {
         Properties properties = new Properties();
@@ -1581,6 +1600,18 @@ public class PropServerConfigurationTest {
     }
 
     @Test
+    public void testRepeatMigrationFromVersionDefault() throws Exception {
+        // The default must never equal ColumnType.VERSION. When it does, EngineMigration
+        // resets currentMigrationVersion to the table version (EngineMigration.java:110) and
+        // never short-circuits, so every forward-compatible migration registered above VERSION
+        // re-runs on every startup instead of once. -1 disables forced repeats by default.
+        Properties properties = new Properties();
+        PropServerConfiguration configuration = newPropServerConfiguration(properties);
+        Assert.assertEquals(-1, configuration.getCairoConfiguration().getRepeatMigrationsFromVersion());
+        Assert.assertNotEquals(ColumnType.VERSION, configuration.getCairoConfiguration().getRepeatMigrationsFromVersion());
+    }
+
+    @Test
     public void testSetAllFromFile() throws Exception {
         try (InputStream is = PropServerConfigurationTest.class.getResourceAsStream("/server.conf")) {
             Properties properties = new Properties();
@@ -1727,6 +1758,7 @@ public class PropServerConfigurationTest {
             Assert.assertEquals(1000, configuration.getCairoConfiguration().getMatViewInsertAsSelectBatchSize());
             Assert.assertEquals(10000, configuration.getCairoConfiguration().getMatViewRowsPerQueryEstimate());
             Assert.assertFalse(configuration.getCairoConfiguration().isMatViewParallelSqlEnabled());
+            Assert.assertTrue(configuration.getCairoConfiguration().isMatViewCoveringIndexEnabled());
             Assert.assertEquals(10, configuration.getCairoConfiguration().getMatViewMaxRefreshIntervals());
             Assert.assertEquals(4200, configuration.getCairoConfiguration().getMatViewRefreshIntervalsUpdatePeriod());
             Assert.assertEquals(1_000_000, configuration.getCairoConfiguration().getMatViewMaxRefreshStepUs());
@@ -1860,6 +1892,61 @@ public class PropServerConfigurationTest {
 
             PropServerConfiguration configuration = newPropServerConfiguration(properties);
             Assert.assertNull(configuration.getHttpServerConfiguration().getStaticContentProcessorConfiguration().getKeepAliveHeader());
+        }
+    }
+
+    @Test
+    public void testSampleByFillSortStrategy() throws Exception {
+        // Absent property falls back to the default (separate code path
+        // from the empty-string fallback below).
+        {
+            PropServerConfiguration cfg = newPropServerConfiguration(new Properties());
+            Assert.assertEquals(SampleBySortStrategy.LIGHT_ENCODED,
+                    cfg.getCairoConfiguration().getSampleByFillSortStrategy());
+        }
+
+        Properties properties = new Properties();
+
+        // Empty value falls back to the LIGHT_ENCODED default.
+        properties.setProperty("cairo.sql.sampleby.fill.sort.strategy", "");
+        PropServerConfiguration configuration = newPropServerConfiguration(properties);
+        Assert.assertEquals(SampleBySortStrategy.LIGHT_ENCODED, configuration.getCairoConfiguration().getSampleByFillSortStrategy());
+
+        properties.setProperty("cairo.sql.sampleby.fill.sort.strategy", "light_encoded");
+        configuration = newPropServerConfiguration(properties);
+        Assert.assertEquals(SampleBySortStrategy.LIGHT_ENCODED, configuration.getCairoConfiguration().getSampleByFillSortStrategy());
+
+        properties.setProperty("cairo.sql.sampleby.fill.sort.strategy", "full_encoded");
+        configuration = newPropServerConfiguration(properties);
+        Assert.assertEquals(SampleBySortStrategy.FULL_ENCODED, configuration.getCairoConfiguration().getSampleByFillSortStrategy());
+
+        properties.setProperty("cairo.sql.sampleby.fill.sort.strategy", "light_recordchain");
+        configuration = newPropServerConfiguration(properties);
+        Assert.assertEquals(SampleBySortStrategy.LIGHT_RECORDCHAIN, configuration.getCairoConfiguration().getSampleByFillSortStrategy());
+
+        properties.setProperty("cairo.sql.sampleby.fill.sort.strategy", "full_recordchain");
+        configuration = newPropServerConfiguration(properties);
+        Assert.assertEquals(SampleBySortStrategy.FULL_RECORDCHAIN, configuration.getCairoConfiguration().getSampleByFillSortStrategy());
+
+        // Case-insensitivity: the parser lowercases both operands via
+        // Chars.equalsLowerCaseAscii, so user-facing config files can use
+        // mixed-case values.
+        properties.setProperty("cairo.sql.sampleby.fill.sort.strategy", "FULL_ENCODED");
+        configuration = newPropServerConfiguration(properties);
+        Assert.assertEquals(SampleBySortStrategy.FULL_ENCODED, configuration.getCairoConfiguration().getSampleByFillSortStrategy());
+
+        properties.setProperty("cairo.sql.sampleby.fill.sort.strategy", "Light_RecordChain");
+        configuration = newPropServerConfiguration(properties);
+        Assert.assertEquals(SampleBySortStrategy.LIGHT_RECORDCHAIN, configuration.getCairoConfiguration().getSampleByFillSortStrategy());
+
+        // Strict validation: any unknown value fails fast.
+        properties.setProperty("cairo.sql.sampleby.fill.sort.strategy", "bogus");
+        try {
+            newPropServerConfiguration(properties);
+            Assert.fail("Expected ServerConfigurationException for invalid strategy");
+        } catch (ServerConfigurationException e) {
+            TestUtils.assertContains(e.getMessage(), "cairo.sql.sampleby.fill.sort.strategy");
+            TestUtils.assertContains(e.getMessage(), "bogus");
         }
     }
 

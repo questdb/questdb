@@ -26,6 +26,7 @@ package io.questdb.cutlass.line.tcp;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.IndexType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableStructure;
 import io.questdb.cairo.TableUtils;
@@ -155,12 +156,12 @@ public class TableStructureAdapter implements TableStructure {
     }
 
     @Override
-    public boolean isDedupKey(int columnIndex) {
-        return false;
+    public byte getIndexType(int columnIndex) {
+        return IndexType.NONE;
     }
 
     @Override
-    public boolean isIndexed(int columnIndex) {
+    public boolean isDedupKey(int columnIndex) {
         return false;
     }
 

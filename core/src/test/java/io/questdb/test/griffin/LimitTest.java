@@ -40,7 +40,6 @@ import org.junit.Assert;
 import org.junit.Test;
 
 public class LimitTest extends AbstractCairoTest {
-
     private static final String createTableDdl = "create table y as (" +
             "select" +
             " cast(x as int) i," +
@@ -282,7 +281,11 @@ public class LimitTest extends AbstractCairoTest {
     @Test
     public void testInvalidNegativeLimitJitDisabled() throws Exception {
         sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
-        testInvalidNegativeLimit();
+        try {
+            testInvalidNegativeLimit();
+        } finally {
+            sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_ENABLED);
+        }
     }
 
     @Test
@@ -450,12 +453,212 @@ public class LimitTest extends AbstractCairoTest {
     @Test
     public void testLimitMinusOneJitDisabled() throws Exception {
         sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
-        testLimitMinusOne();
+        try {
+            testLimitMinusOne();
+        } finally {
+            sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_ENABLED);
+        }
     }
 
     @Test
     public void testLimitMinusOneJitEnabled() throws Exception {
         testLimitMinusOne();
+    }
+
+    // DISTINCT collapses duplicates, so an outer LIMIT N pushed into the
+    // inner Async Filter would yield fewer than N post-DISTINCT rows.
+    // The (t0.k + t0.k) key and disabled parallel GROUP BY keep the
+    // filter and GROUP BY in separate factories -- the shape that
+    // exposes the bug.
+    @Test
+    public void testLimitNotPushedBelowDistinct() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (k INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            // 40 distinct keys, > LIMIT 30
+            execute("""
+                    INSERT INTO tab
+                    SELECT (x % 40 + 1)::INT, timestamp_sequence(0, 1_000_000)
+                    FROM long_sequence(100)
+                    """);
+            String query = "SELECT DISTINCT (t0.k + t0.k) AS kk FROM tab t0 WHERE t0.k > 0 LIMIT 30";
+            sqlExecutionContext.setParallelGroupByEnabled(false);
+            assertPlanNoLeakCheck(query, """
+                    Limit value: 30 skip-rows-max: 0 take-rows-max: 30
+                        GroupBy vectorized: false
+                          keys: [kk]
+                            SelectedRecord
+                                Async JIT Filter workers: 1
+                                  filter: 0<k
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: tab
+                    """);
+            try (
+                    RecordCursorFactory factory = engine.select(query, sqlExecutionContext);
+                    RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+            ) {
+                int rows = 0;
+                while (cursor.hasNext()) {
+                    rows++;
+                }
+                Assert.assertEquals(30, rows);
+            }
+        });
+    }
+
+    // Locks in the original query-fuzzer divergence: an outer LIMIT N
+    // pushed into the inner Async Filter under a GROUP BY collapses
+    // those N rows into fewer than N groups, breaking LIMIT semantics.
+    // The query mirrors the shape of the failing fuzz query (computed
+    // key and constant projection); disabled parallel GROUP BY keeps
+    // the filter and GROUP BY in separate factories.
+    @Test
+    public void testLimitNotPushedBelowGroupBy() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (k INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            // 40 distinct keys, > LIMIT 30
+            execute("""
+                    INSERT INTO tab
+                    SELECT (x % 40 + 1)::INT, timestamp_sequence(0, 1_000_000)
+                    FROM long_sequence(100)
+                    """);
+            String query = "SELECT (t0.k + t0.k) AS kk, -1.0::DECIMAL(38, 5) AS lit, first(true) AS a0 FROM tab t0 WHERE t0.k > 0 LIMIT 30";
+            sqlExecutionContext.setParallelGroupByEnabled(false);
+            assertPlanNoLeakCheck(query, """
+                    Limit value: 30 skip-rows-max: 0 take-rows-max: 30
+                        VirtualRecord
+                          functions: [kk,-1.00000,a0]
+                            GroupBy vectorized: false
+                              keys: [kk]
+                              values: [first(true)]
+                                SelectedRecord
+                                    Async JIT Filter workers: 1
+                                      filter: 0<k
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: tab
+                    """);
+            try (
+                    RecordCursorFactory factory = engine.select(query, sqlExecutionContext);
+                    RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+            ) {
+                int rows = 0;
+                while (cursor.hasNext()) {
+                    rows++;
+                }
+                Assert.assertEquals(30, rows);
+            }
+        });
+    }
+
+    // HORIZON JOIN runs as a keyed GROUP BY (see
+    // HorizonJoinRecordCursorFactory), so it drops rows. The current
+    // optimizer absorbs the filter into the join factory in
+    // single-worker mode, so the row-count check is a forward guard for
+    // future rewrites that might re-introduce a separate inner filter.
+    @Test
+    public void testLimitNotPushedBelowHorizonJoin() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (ts TIMESTAMP, sym SYMBOL, qty DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE prices (ts TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            // 100 trades with 40 distinct sym values; > 30 surviving keys
+            // so the LIMIT 30 only matches if applied above the HORIZON
+            // aggregation.
+            execute("""
+                    INSERT INTO trades
+                    SELECT timestamp_sequence(0, 1_000_000) ts,
+                           ('s' || (x % 40))::SYMBOL,
+                           x::DOUBLE
+                    FROM long_sequence(100)
+                    """);
+            execute("""
+                    INSERT INTO prices
+                    SELECT timestamp_sequence(0, 1_000_000) ts,
+                           ('s' || (x % 40))::SYMBOL,
+                           x::DOUBLE
+                    FROM long_sequence(100)
+                    """);
+            String query = "SELECT t.sym, avg(p.price) "
+                    + "FROM trades AS t "
+                    + "HORIZON JOIN prices AS p ON (t.sym = p.sym) "
+                    + "RANGE FROM 0s TO 0s STEP 1s AS h "
+                    + "LIMIT 30";
+            try (
+                    RecordCursorFactory factory = engine.select(query, sqlExecutionContext);
+                    RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+            ) {
+                int rows = 0;
+                while (cursor.hasNext()) {
+                    rows++;
+                }
+                Assert.assertEquals(30, rows);
+            }
+        });
+    }
+
+    // SAMPLE BY is encoded as GROUP BY (USE_GROUP_BY_MODEL), so the same
+    // push-down rule applies. The Top-K-driving ORDER BY ts absorbs the
+    // Limit at the top, so the row-count check is a forward guard
+    // rather than a direct catch of the original bug shape.
+    @Test
+    public void testLimitNotPushedBelowSampleBy() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (k INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            // 100 rows over 100 minutes -> 100 distinct minute buckets
+            execute("""
+                    INSERT INTO tab
+                    SELECT x::INT, timestamp_sequence(0, 60_000_000)
+                    FROM long_sequence(100)
+                    """);
+            String query = "SELECT ts, count() AS c FROM tab WHERE k > 0 SAMPLE BY 1m LIMIT 30";
+            sqlExecutionContext.setParallelGroupByEnabled(false);
+            try (
+                    RecordCursorFactory factory = engine.select(query, sqlExecutionContext);
+                    RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+            ) {
+                int rows = 0;
+                while (cursor.hasNext()) {
+                    rows++;
+                }
+                Assert.assertEquals(30, rows);
+            }
+        });
+    }
+
+    // Window functions are 1:1 in row count, but their values depend on
+    // the entire input frame (row_number assigns 1..N over all rows), so
+    // pushing the LIMIT into the inner filter changes the window output.
+    @Test
+    public void testLimitNotPushedBelowWindow() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (k INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO tab
+                    SELECT (x % 40 + 1)::INT, timestamp_sequence(0, 1_000_000)
+                    FROM long_sequence(100)
+                    """);
+            String query = "SELECT k, row_number() OVER (ORDER BY ts) AS rn FROM tab WHERE k > 0 LIMIT 30";
+            assertPlanNoLeakCheck(query, """
+                    Limit value: 30 skip-rows-max: 0 take-rows-max: 30
+                        Window
+                          functions: [row_number()]
+                            Async JIT Filter workers: 1
+                              filter: 0<k
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: tab
+                    """);
+            try (
+                    RecordCursorFactory factory = engine.select(query, sqlExecutionContext);
+                    RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+            ) {
+                int rows = 0;
+                while (cursor.hasNext()) {
+                    rows++;
+                }
+                Assert.assertEquals(30, rows);
+            }
+        });
     }
 
     @Test
@@ -1383,6 +1586,157 @@ public class LimitTest extends AbstractCairoTest {
 
         String query = "select * from y limit 4,-6";
         testLimit(expected, expected2, query);
+    }
+
+    @Test
+    public void testTopKDoesNotPeelExtraNullColumnSplice() throws Exception {
+        // WINDOW JOIN with always-false ON wraps the master in an ExtraNullColumnCursorFactory
+        // that splices in NULL columns for every aggregate from the (vacant) right side. The
+        // unified parallel top-K gate must not peel that wrapper; without canPeelForTopK guarding
+        // the splice, top-K iterates the master directly and silently drops the window aggregate.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (ts TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE prices (ts TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO trades VALUES " +
+                    "('2023-01-01T09:10:00.000000Z', 'AAA', 100.0)," +
+                    "('2023-01-01T09:11:00.000000Z', 'BBB', 200.0)," +
+                    "('2023-01-01T09:12:00.000000Z', 'CCC', 300.0)," +
+                    "('2023-01-01T09:13:00.000000Z', 'DDD', 400.0)");
+            execute("INSERT INTO prices VALUES ('2023-01-01T09:00:00.000000Z', 'AAA', 1.0)");
+
+            // ORDER BY a real master column. Pre-fix the gate peeled the splice and produced
+            // three columns; post-fix the splice is preserved and window_price is present (NULL).
+            assertQueryNoLeakCheck(
+                    "sym\tprice\tts\twindow_price\n" +
+                            "DDD\t400.0\t2023-01-01T09:13:00.000000Z\tnull\n" +
+                            "CCC\t300.0\t2023-01-01T09:12:00.000000Z\tnull\n" +
+                            "BBB\t200.0\t2023-01-01T09:11:00.000000Z\tnull\n",
+                    "SELECT t.sym, t.price, t.ts, sum(p.price) AS window_price " +
+                            "FROM trades t " +
+                            "WINDOW JOIN prices p ON (0 = 1) " +
+                            "RANGE BETWEEN 1 MINUTE PRECEDING AND 1 MINUTE FOLLOWING " +
+                            "ORDER BY t.sym DESC LIMIT 3",
+                    null,
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testTopKDoesNotPeelExtraNullColumnSpliceOrderByNullColumn() throws Exception {
+        // ORDER BY a column that exists only in the spliced layer. Pre-fix this hit
+        // AssertionError: index out of bounds, 3 >= 3 from buildAsyncTopKOverStolenFilter
+        // because the gate translated the projected index against the unwrapped master metadata.
+        // Post-fix the splice is the page-frame leaf, baseMetadata covers the null column, and
+        // top-K runs to completion (all rows tie on NULL — comparator stability picks any 3).
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (ts TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE prices (ts TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO trades VALUES " +
+                    "('2023-01-01T09:10:00.000000Z', 'AAA', 100.0)," +
+                    "('2023-01-01T09:11:00.000000Z', 'BBB', 200.0)," +
+                    "('2023-01-01T09:12:00.000000Z', 'CCC', 300.0)," +
+                    "('2023-01-01T09:13:00.000000Z', 'DDD', 400.0)");
+            execute("INSERT INTO prices VALUES ('2023-01-01T09:00:00.000000Z', 'AAA', 1.0)");
+
+            // We assert column count and that window_price is NULL on every returned row;
+            // exact row order on a degenerate all-NULL key is implementation defined.
+            try (
+                    RecordCursorFactory factory = select(
+                            "SELECT t.sym, t.price, t.ts, sum(p.price) AS window_price " +
+                                    "FROM trades t " +
+                                    "WINDOW JOIN prices p ON (0 = 1) " +
+                                    "RANGE BETWEEN 1 MINUTE PRECEDING AND 1 MINUTE FOLLOWING " +
+                                    "ORDER BY window_price DESC LIMIT 3");
+                    RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+            ) {
+                Assert.assertEquals(4, factory.getMetadata().getColumnCount());
+                int rows = 0;
+                while (cursor.hasNext()) {
+                    Assert.assertTrue(Double.isNaN(cursor.getRecord().getDouble(3)));
+                    rows++;
+                }
+                Assert.assertEquals(3, rows);
+            }
+        });
+    }
+
+    @Test
+    public void testTopKThroughProjection() throws Exception {
+        // ts2 is reversed relative to ts: x=1 -> ts2=1000us, x=1000 -> ts2=1us.
+        // A regression that mistranslated ORDER BY ts2 to the designated
+        // timestamp ts would return the x=1000..996 rows instead of x=1..5.
+        assertMemoryLeak(() -> {
+            execute("create table tab as (" +
+                    "  select x, x::timestamp as ts, (1_001 - x)::timestamp as ts2" +
+                    "  from long_sequence(1_000)" +
+                    ") timestamp (ts) partition by hour wal");
+            drainWalQueue();
+
+            String expected = """
+                    x\tx1\tts\tts2
+                    1\t1\t1970-01-01T00:00:00.000001Z\t1970-01-01T00:00:00.001000Z
+                    2\t2\t1970-01-01T00:00:00.000002Z\t1970-01-01T00:00:00.000999Z
+                    3\t3\t1970-01-01T00:00:00.000003Z\t1970-01-01T00:00:00.000998Z
+                    4\t4\t1970-01-01T00:00:00.000004Z\t1970-01-01T00:00:00.000997Z
+                    5\t5\t1970-01-01T00:00:00.000005Z\t1970-01-01T00:00:00.000996Z
+                    """;
+            assertQueryNoLeakCheck(
+                    expected,
+                    "select x, * from tab where ts2 in '1970' order by ts2 desc limit 5",
+                    "ts2###desc",
+                    true,
+                    true
+            );
+
+            assertQueryNoLeakCheck(
+                    "x\tx1\tts\tts2\n",
+                    "select x, * from tab where ts2 in '2099' order by ts2 desc limit 5",
+                    "ts2###desc",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testTopKThroughVirtualProjection() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table tab as (" +
+                    "  select x, x::timestamp as ts, (1_001 - x)::timestamp as ts2" +
+                    "  from long_sequence(1_000)" +
+                    ") timestamp (ts) partition by hour wal");
+            drainWalQueue();
+
+            String expected = """
+                    x_plus
+                    2
+                    3
+                    4
+                    5
+                    6
+                    """;
+            assertQueryNoLeakCheck(
+                    expected,
+                    "select x + 1 as x_plus from tab where ts2 in '1970' order by ts2 desc limit 5",
+                    null,
+                    true,
+                    true
+            );
+
+            // repeated execution must not leak filter, function, page-frame or
+            // comparator state across the steal/halfClose/transfer boundary.
+            for (int i = 0; i < 5; i++) {
+                assertQueryNoLeakCheck(
+                        "x_plus\n2\n",
+                        "select x + 1 as x_plus from tab where ts2 in '1970' order by ts2 desc limit 1",
+                        null,
+                        true,
+                        true
+                );
+            }
+        });
     }
 
     @Test

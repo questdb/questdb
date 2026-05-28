@@ -624,8 +624,8 @@ public class KSumDoubleWindowFunctionFactory extends AbstractWindowFunctionFacto
 
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
-            // pass1 is never called when getPassCount() returns ZERO_PASS
-            throw new UnsupportedOperationException();
+            computeNext(record);
+            Unsafe.putDouble(spi.getAddress(recordOffset, columnIndex), sum);
         }
 
         @Override
@@ -1016,8 +1016,8 @@ public class KSumDoubleWindowFunctionFactory extends AbstractWindowFunctionFacto
 
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
-            // pass1 is never called when getPassCount() returns ZERO_PASS
-            throw new UnsupportedOperationException();
+            computeNext(record);
+            Unsafe.putDouble(spi.getAddress(recordOffset, columnIndex), externalSum);
         }
 
         @Override

@@ -25,7 +25,6 @@
 package io.questdb.test.cairo;
 
 import io.questdb.PropertyKey;
-import io.questdb.cairo.BitmapIndexReader;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoError;
 import io.questdb.cairo.CairoException;
@@ -35,6 +34,7 @@ import io.questdb.cairo.DefaultCairoConfiguration;
 import io.questdb.cairo.EntryUnavailableException;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.ImplicitCastException;
+import io.questdb.cairo.IndexType;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.SymbolMapReader;
@@ -44,6 +44,7 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.TxWriter;
+import io.questdb.cairo.idx.IndexReader;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordMetadata;
@@ -53,9 +54,12 @@ import io.questdb.cairo.vm.api.MemoryARW;
 import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.cairo.vm.api.MemoryMA;
 import io.questdb.cairo.vm.api.MemoryMARW;
+import io.questdb.cairo.wal.TableWriterPressureControl;
+import io.questdb.cairo.wal.WalTxnDetails;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.seq.TableTransactionLogFile;
 import io.questdb.cairo.wal.seq.TableTransactionLogV1;
+import io.questdb.cairo.wal.seq.TransactionLogCursor;
 import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.griffin.engine.ops.AlterOperationBuilder;
 import io.questdb.log.Log;
@@ -75,6 +79,7 @@ import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.DateLocaleFactory;
+import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Sinkable;
@@ -108,6 +113,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
     @Before
     public void setUp() {
+        setProperty(PropertyKey.CAIRO_DEFAULT_SYMBOL_INDEX_TYPE, TestUtils.randomSymbolIndexTypeName(rnd));
         super.setUp();
         PRODUCT_FS = PRODUCT;
         if (configuration.mangleTableDirNames()) {
@@ -115,6 +121,7 @@ public class TableWriterTest extends AbstractCairoTest {
         }
         timestampType = rnd.nextBoolean() ? ColumnType.TIMESTAMP_MICRO : ColumnType.TIMESTAMP_NANO;
         this.timestampDriver = ColumnType.getTimestampDriver(timestampType);
+        super.setUp();
     }
 
     @Test
@@ -287,7 +294,7 @@ public class TableWriterTest extends AbstractCairoTest {
                         String columnName = "col" + i;
                         alterOperationBuilder
                                 .ofAddColumn(0, token, tableId)
-                                .ofAddColumn(columnName, 5, ColumnType.INT, 0, false, false, 0);
+                                .ofAddColumn(columnName, 5, ColumnType.INT, 0, false, IndexType.NONE, 0);
                         AlterOperation alterOp = alterOperationBuilder.build();
                         alterOp.withSecurityContext(AllowAllSecurityContext.INSTANCE);
                         try (TableWriter writer = engine.getWriterOrPublishCommand(token, alterOp)) {
@@ -713,7 +720,7 @@ public class TableWriterTest extends AbstractCairoTest {
                 writer.commit();
 
                 try {
-                    writer.addColumn("c", ColumnType.STRING, 0, false, true, 1024, false, AllowAllSecurityContext.INSTANCE);
+                    writer.addColumn("c", ColumnType.STRING, 0, false, IndexType.BITMAP, 1024, false, AllowAllSecurityContext.INSTANCE);
                     Assert.fail();
                 } catch (CairoException e) {
                     TestUtils.assertContains(e.getFlyweightMessage(), "only supported");
@@ -728,7 +735,7 @@ public class TableWriterTest extends AbstractCairoTest {
                 writer.commit();
 
                 // re-add column  with index flag switched off
-                writer.addColumn("c", ColumnType.STRING, 0, false, false, 0, false, AllowAllSecurityContext.INSTANCE);
+                writer.addColumn("c", ColumnType.STRING, 0, false, IndexType.NONE, 0, false, AllowAllSecurityContext.INSTANCE);
             }
         });
     }
@@ -754,7 +761,7 @@ public class TableWriterTest extends AbstractCairoTest {
                 writer.commit();
 
                 try {
-                    writer.addColumn("c", ColumnType.SYMBOL, 0, false, true, 0, false, AllowAllSecurityContext.INSTANCE);
+                    writer.addColumn("c", ColumnType.SYMBOL, 0, false, IndexType.BITMAP, 0, false, AllowAllSecurityContext.INSTANCE);
                     Assert.fail();
                 } catch (CairoException e) {
                     TestUtils.assertContains(e.getFlyweightMessage(), "invalid index value block capacity");
@@ -769,7 +776,7 @@ public class TableWriterTest extends AbstractCairoTest {
                 writer.commit();
 
                 // re-add column  with index flag switched off
-                writer.addColumn("c", ColumnType.STRING, 0, false, false, 0, false, AllowAllSecurityContext.INSTANCE);
+                writer.addColumn("c", ColumnType.STRING, 0, false, IndexType.NONE, 0, false, AllowAllSecurityContext.INSTANCE);
             }
         });
     }
@@ -1945,6 +1952,235 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNonWalCommitDoesNotDrainAsyncCommandQueue() throws Exception {
+        // commit() must NOT drain the async command queue. A non-WAL writer is drained by its
+        // ingestion tick() and on pool return (with structure changes allowed); draining at commit
+        // time would prematurely reject an async structural ALTER published to a busy writer instead
+        // of applying it when the writer becomes idle. This test asserts the command stays queued
+        // across a commit and is only applied by an explicit tick().
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tbl (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY");
+            TableToken token = engine.verifyTableName("tbl");
+            // A non-WAL table may legitimately carry a structural ALTER on its async queue.
+            Assert.assertFalse(token.isWal());
+
+            try (TableWriter writer = getWriter(token)) {
+                // Publish an ADD COLUMN command to the writer's own queue without ticking it.
+                AlterOperationBuilder builder = new AlterOperationBuilder();
+                builder.ofAddColumn(0, token, token.getTableId())
+                        .ofAddColumn("y", 0, ColumnType.INT, 0, false, IndexType.NONE, 0);
+                AlterOperation alterOp = builder.build();
+                alterOp.withSecurityContext(AllowAllSecurityContext.INSTANCE);
+                writer.publishAsyncWriterCommand(alterOp);
+
+                // The command is queued, not yet applied.
+                Assert.assertEquals(2, writer.getMetadata().getColumnCount());
+
+                // Commit some data. commit() must NOT drain the queue: the queued ADD COLUMN
+                // stays unapplied.
+                TableWriter.Row row = writer.newRow(0L);
+                row.putInt(1, 42);
+                row.append();
+                writer.commit();
+                Assert.assertEquals(2, writer.getMetadata().getColumnCount());
+
+                // An explicit tick() (as performed by ingestion and on pool return) drains the
+                // queue and applies the ADD COLUMN.
+                writer.tick();
+                Assert.assertEquals(3, writer.getMetadata().getColumnCount());
+                Assert.assertTrue(writer.getColumnIndex("y") >= 0);
+            }
+        });
+    }
+
+    @Test
+    public void testTickStopsAtDeadlineAndLeavesRemainingCommandsQueued() throws Exception {
+        // tick(deadline) must bound the drain so a backlog of commands cannot monopolize the apply
+        // worker: it processes at least one command (forward progress), then stops once the deadline
+        // has passed, leaving the rest queued for the next tick. Two ADD COLUMN commands are queued
+        // and a deadline already in the past is supplied, so the first tick applies exactly one and
+        // the second tick drains the other.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tbl (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY");
+            TableToken token = engine.verifyTableName("tbl");
+            Assert.assertFalse(token.isWal());
+
+            try (TableWriter writer = getWriter(token)) {
+                for (String col : new String[]{"y", "z"}) {
+                    AlterOperationBuilder builder = new AlterOperationBuilder();
+                    builder.ofAddColumn(0, token, token.getTableId())
+                            .ofAddColumn(col, 0, ColumnType.INT, 0, false, IndexType.NONE, 0);
+                    AlterOperation alterOp = builder.build();
+                    alterOp.withSecurityContext(AllowAllSecurityContext.INSTANCE);
+                    writer.publishAsyncWriterCommand(alterOp);
+                }
+                Assert.assertEquals(2, writer.getMetadata().getColumnCount());
+
+                // Deadline already in the past: the drain stops after the first command.
+                final long pastDeadline = configuration.getMicrosecondClock().getTicks() - 1;
+                writer.tick(false, pastDeadline);
+                Assert.assertEquals(3, writer.getMetadata().getColumnCount());
+
+                // The next unbounded tick drains the command left queued.
+                writer.tick();
+                Assert.assertEquals(4, writer.getMetadata().getColumnCount());
+                Assert.assertTrue(writer.getColumnIndex("y") >= 0);
+                Assert.assertTrue(writer.getColumnIndex("z") >= 0);
+            }
+        });
+    }
+
+    @Test
+    public void testWalApplyTickDrainsAsyncCommandQueue() throws Exception {
+        // Regression test for the async command-queue drain on the WAL apply path. The WAL apply
+        // loop holds the writer across a batch of transactions and never ticks the command queue
+        // itself; ApplyWal2TableJob ticks it once after the batch. A command published while the
+        // writer is busy (e.g. a storage policy command published to a writer held by a hot apply
+        // loop) must be applied by that tick, rather than sitting unprocessed until the writer is
+        // returned to the pool. This test holds the writer and replicates the apply job's
+        // commit-then-tick sequence, so the pool-return tick cannot mask the bug. A WAL table's
+        // structural ALTERs route through the sequencer and never reach its async queue
+        // (publishAsyncWriterCommand rejects them), so a non-structural SET PARAM command stands
+        // in for the storage policy commands that genuinely land there.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tbl (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO tbl VALUES ('2022-02-24T00:00:00.000000Z', 1)");
+            drainWalQueue();
+
+            // Queue a second WAL transaction but do not apply it through the pool yet.
+            execute("INSERT INTO tbl VALUES ('2022-02-25T00:00:00.000000Z', 2)");
+
+            TableToken token = engine.verifyTableName("tbl");
+            Assert.assertTrue(token.isWal());
+            try (TableWriter writer = getWriter(token)) {
+                final int newMaxUncommittedRows = writer.getMetadata().getMaxUncommittedRows() + 12_345;
+                // Publish a non-structural SET PARAM command to the held writer's queue without
+                // ticking it, mimicking a command published while the apply loop owns the writer.
+                AlterOperationBuilder builder = new AlterOperationBuilder();
+                builder.ofSetParamUncommittedRows(0, token, token.getTableId(), newMaxUncommittedRows);
+                AlterOperation alterOp = builder.build();
+                alterOp.withSecurityContext(AllowAllSecurityContext.INSTANCE);
+                writer.publishAsyncWriterCommand(alterOp);
+                Assert.assertNotEquals(newMaxUncommittedRows, writer.getMetadata().getMaxUncommittedRows());
+
+                // Apply the pending WAL transaction on the held writer, then tick -- the same
+                // sequence ApplyWal2TableJob performs after its transaction-cursor loop.
+                final long seqTxn = writer.getAppliedSeqTxn() + 1;
+                try (TransactionLogCursor cursor = engine.getTableSequencerAPI().getCursor(token, writer.getAppliedSeqTxn())) {
+                    writer.readWalTxnDetails(cursor);
+                }
+                final WalTxnDetails details = writer.getWalTnxDetails();
+                final int walId = details.getWalId(seqTxn);
+                final int segmentId = details.getSegmentId(seqTxn);
+                try (Path walPath = new Path()) {
+                    walPath.of(configuration.getDbRoot()).concat(token).slash()
+                            .putAscii(WalUtils.WAL_NAME_BASE).put(walId).slash().put(segmentId);
+                    writer.commitWalInsertTransactions(walPath, seqTxn, TableWriterPressureControl.EMPTY);
+                }
+                writer.tick();
+
+                // The tick drained the queued SET PARAM command.
+                Assert.assertEquals(newMaxUncommittedRows, writer.getMetadata().getMaxUncommittedRows());
+                // The WAL transaction itself was applied.
+                Assert.assertEquals(seqTxn, writer.getAppliedSeqTxn());
+            }
+        });
+    }
+
+    @Test
+    public void testWalApplyTickIsolatesFailingAsyncCommand() throws Exception {
+        // A drained async command that fails during apply must not abort the WAL commit or distress
+        // the writer: processAsyncWriterCommand catches the failure per-command and reports it on the
+        // command's correlation channel, then calls sequence.done() in finally. This guards against a
+        // regression that lets such a failure escape tick() into ApplyWal2TableJob, which would
+        // suspend the table. The command is a non-structural DROP PARTITION for a partition that does
+        // not exist, so applyDropPartition throws a CairoException.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tbl (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO tbl VALUES ('2022-02-24T00:00:00.000000Z', 1)");
+            drainWalQueue();
+
+            // Queue a second WAL transaction but do not apply it through the pool yet.
+            execute("INSERT INTO tbl VALUES ('2022-02-25T00:00:00.000000Z', 2)");
+
+            TableToken token = engine.verifyTableName("tbl");
+            Assert.assertTrue(token.isWal());
+            try (TableWriter writer = getWriter(token)) {
+                final int partitionCountBefore = writer.getPartitionCount();
+                // A partition timestamp far past every existing partition: removePartition cannot
+                // find it, so the DROP PARTITION command fails when drained.
+                final long missingPartitionTs = writer.getTxWriter().getPartitionTimestampByIndex(0) + 100_000L * Micros.DAY_MICROS;
+                AlterOperationBuilder builder = new AlterOperationBuilder();
+                builder.ofDropPartition(0, token, token.getTableId());
+                builder.addPartitionToList(missingPartitionTs, 0);
+                AlterOperation alterOp = builder.build();
+                alterOp.withSecurityContext(AllowAllSecurityContext.INSTANCE);
+                writer.publishAsyncWriterCommand(alterOp);
+
+                // Apply the pending WAL transaction on the held writer, then tick -- the same
+                // sequence ApplyWal2TableJob performs after its transaction-cursor loop. The tick
+                // drains the failing command, whose error must stay contained.
+                final long seqTxn = writer.getAppliedSeqTxn() + 1;
+                try (TransactionLogCursor cursor = engine.getTableSequencerAPI().getCursor(token, writer.getAppliedSeqTxn())) {
+                    writer.readWalTxnDetails(cursor);
+                }
+                final WalTxnDetails details = writer.getWalTnxDetails();
+                final int walId = details.getWalId(seqTxn);
+                final int segmentId = details.getSegmentId(seqTxn);
+                try (Path walPath = new Path()) {
+                    walPath.of(configuration.getDbRoot()).concat(token).slash()
+                            .putAscii(WalUtils.WAL_NAME_BASE).put(walId).slash().put(segmentId);
+                    writer.commitWalInsertTransactions(walPath, seqTxn, TableWriterPressureControl.EMPTY);
+                }
+                writer.tick();
+
+                // The WAL transaction was applied despite the failing command...
+                Assert.assertEquals(seqTxn, writer.getAppliedSeqTxn());
+                // ...the writer is not distressed...
+                Assert.assertFalse(writer.isDistressed());
+                // ...and no partition was removed (the failed DROP left the table unchanged).
+                Assert.assertEquals(partitionCountBefore + 1, writer.getPartitionCount());
+            }
+        });
+    }
+
+    @Test
+    public void testWalStructuralAsyncCommandRejectedAtPublish() throws Exception {
+        // A WAL table's structural ALTERs route through the sequencer and must never reach its
+        // async command queue: the WAL apply job drains that queue via tick() after each batch,
+        // so a structural command slipping in would mutate the writer's metadata out of band with
+        // the sequencer and corrupt subsequent WAL transactions. publishAsyncWriterCommand()
+        // rejects such a command up front, before it lands on the queue, so the guard holds in
+        // production builds where the consumer-side assertion is disabled.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tbl (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            TableToken token = engine.verifyTableName("tbl");
+            Assert.assertTrue(token.isWal());
+
+            try (TableWriter writer = getWriter(token)) {
+                AlterOperationBuilder builder = new AlterOperationBuilder();
+                builder.ofAddColumn(0, token, token.getTableId())
+                        .ofAddColumn("y", 0, ColumnType.INT, 0, false, IndexType.NONE, 0);
+                AlterOperation alterOp = builder.build();
+                alterOp.withSecurityContext(AllowAllSecurityContext.INSTANCE);
+                Assert.assertTrue(alterOp.isStructural());
+
+                try {
+                    writer.publishAsyncWriterCommand(alterOp);
+                    Assert.fail("expected structural command to be rejected");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(),
+                            "structural command must not reach a WAL table's async command queue [table=tbl");
+                }
+
+                // The command never landed on the queue, so a tick() applies nothing.
+                writer.tick();
+                Assert.assertEquals(2, writer.getMetadata().getColumnCount());
+            }
+        });
+    }
+
+    @Test
     public void testIncorrectTodoCode() throws Exception {
         assertMemoryLeak(() -> {
             CreateTableTestUtils.createAllTable(engine, PartitionBy.NONE, ColumnType.TIMESTAMP_MICRO);
@@ -1996,8 +2232,8 @@ public class TableWriterTest extends AbstractCairoTest {
             w.truncate();
 
             // add a couple of indexes
-            w.addIndex("sym1", 1024);
-            w.addIndex("sym2", 1024);
+            w.addIndex("sym1", 1024, IndexType.BITMAP);
+            w.addIndex("sym2", 1024, IndexType.BITMAP);
 
             Assert.assertTrue(w.getMetadata().isColumnIndexed(0));
             Assert.assertTrue(w.getMetadata().isColumnIndexed(1));
@@ -2702,7 +2938,7 @@ public class TableWriterTest extends AbstractCairoTest {
                 mem.sync(false);
                 mem.setTruncateSize(TableTransactionLogFile.HEADER_SIZE + TableTransactionLogV1.RECORD_SIZE + TableTransactionLogFile.TX_LOG_STRUCTURE_VERSION_OFFSET + Long.BYTES);
             }
-            assertException("alter table " + PRODUCT + " add column abc INT;", 0, "possible corruption in transaction metadata [table=product~1, offset=24, newVersion=1]");
+            assertException("alter table " + PRODUCT + " add column abc INT;", 12, "expected to read table structure changes but there is none saved in the sequencer");
         });
     }
 
@@ -2841,6 +3077,134 @@ public class TableWriterTest extends AbstractCairoTest {
                 );
                 Assert.assertFalse("Active partition should not be converted to parquet",
                         txWriter.isPartitionParquet(partitionIndex));
+            }
+        });
+    }
+
+    @Test
+    public void testSwitchNativePartitionWithParquetLinksPmSidecar() throws Exception {
+        assertMemoryLeak(() -> {
+            int N = 10000;
+            create(FF, PartitionBy.DAY, N);
+
+            Rnd rnd = new Rnd();
+            long ts = timestampDriver.parseFloorLiteral("2013-03-04T00:00:00.000Z");
+            long interval = 60000L * 1000L;
+
+            try (TableWriter writer = newOffPoolWriter(configuration, PRODUCT)) {
+                populateProducts(writer, rnd, ts, N, interval);
+                writer.commit();
+            }
+
+            final TableToken token;
+            try (TableWriter writer = newOffPoolWriter(configuration, PRODUCT)) {
+                token = writer.getTableToken();
+                TxWriter tx = writer.getTxWriter();
+
+                long partitionTs = tx.getPartitionTimestampByIndex(0);
+                int partitionIndex = tx.getPartitionIndex(partitionTs);
+                long partitionNameTxn = tx.getPartitionNameTxn(partitionIndex);
+
+                // Stamp data.parquet and _pm stubs into the non-active partition dir.
+                // switchNativePartitionWithParquet only checks existence and hard-links,
+                // so empty stubs exercise the code path without needing a real encode.
+                try (Path p = new Path()) {
+                    p.of(configuration.getDbRoot()).concat(token);
+                    TableUtils.setPathForParquetPartition(p, timestampType, PartitionBy.DAY, partitionTs, partitionNameTxn);
+                    Assert.assertTrue("failed to touch data.parquet", FF.touch(p.$()));
+
+                    p.of(configuration.getDbRoot()).concat(token);
+                    TableUtils.setPathForParquetPartitionMetadata(p, timestampType, PartitionBy.DAY, partitionTs, partitionNameTxn);
+                    Assert.assertTrue("failed to touch _pm", FF.touch(p.$()));
+                }
+
+                // Bump writer.txn past partition.nameTxn so the switch creates a
+                // distinct destination dir.
+                populateRow(writer, rnd, tx.getMaxTimestamp(), timestampDriver.fromMicros(interval));
+                writer.commit();
+
+                // Mark the partition as parquet-generated so the switch passes the
+                // isPartitionParquetGenerated guard.
+                tx.setPartitionParquetGenerated(partitionIndex, true);
+
+                int rc = writer.switchNativePartitionWithParquet(partitionTs, 0L);
+                Assert.assertEquals(TableWriter.SWITCH_OK, rc);
+            }
+
+            try (TableReader reader = engine.getReader(token)) {
+                long partitionTs = reader.getTxFile().getPartitionTimestampByIndex(0);
+                long newNameTxn = reader.getTxFile().getPartitionNameTxn(0);
+                try (Path p = new Path()) {
+                    p.of(configuration.getDbRoot()).concat(token);
+                    TableUtils.setPathForParquetPartitionMetadata(p, timestampType, PartitionBy.DAY, partitionTs, newNameTxn);
+                    Assert.assertTrue("_pm must survive switchNativePartitionWithParquet", FF.exists(p.$()));
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testSwitchNativePartitionWithParquetMissingPmDoesNotOrphanNewDir() throws Exception {
+        assertMemoryLeak(() -> {
+            int N = 10000;
+            create(FF, PartitionBy.DAY, N);
+
+            Rnd rnd = new Rnd();
+            long ts = timestampDriver.parseFloorLiteral("2013-03-04T00:00:00.000Z");
+            long interval = 60000L * 1000L;
+
+            try (TableWriter writer = newOffPoolWriter(configuration, PRODUCT)) {
+                populateProducts(writer, rnd, ts, N, interval);
+                writer.commit();
+            }
+
+            final TableToken token;
+            long partitionTs;
+            long destTxn;
+            try (TableWriter writer = newOffPoolWriter(configuration, PRODUCT)) {
+                token = writer.getTableToken();
+                TxWriter tx = writer.getTxWriter();
+
+                partitionTs = tx.getPartitionTimestampByIndex(0);
+                int partitionIndex = tx.getPartitionIndex(partitionTs);
+                long partitionNameTxn = tx.getPartitionNameTxn(partitionIndex);
+
+                // Stamp data.parquet but NOT _pm in the source partition dir to
+                // simulate a partition predating Mig941 or one whose _pm was
+                // manually removed. The switch must abort and leave nothing on
+                // disk for the destination version.
+                try (Path p = new Path()) {
+                    p.of(configuration.getDbRoot()).concat(token);
+                    TableUtils.setPathForParquetPartition(p, timestampType, PartitionBy.DAY, partitionTs, partitionNameTxn);
+                    Assert.assertTrue("failed to touch data.parquet", FF.touch(p.$()));
+                }
+
+                // Bump writer.txn past partition.nameTxn so the switch creates
+                // a distinct destination dir.
+                populateRow(writer, rnd, tx.getMaxTimestamp(), timestampDriver.fromMicros(interval));
+                writer.commit();
+
+                // Mark the partition as parquet-generated so the switch passes
+                // the isPartitionParquetGenerated guard and reaches the _pm
+                // existence check.
+                tx.setPartitionParquetGenerated(partitionIndex, true);
+
+                destTxn = writer.getTxn();
+                int rc = writer.switchNativePartitionWithParquet(partitionTs, 0L);
+                Assert.assertEquals(TableWriter.SWITCH_NO_PARQUET, rc);
+            }
+
+            // The switch must clean up the destination dir it created before
+            // it discovered _pm was missing. Otherwise the hard-linked
+            // data.parquet remains on disk in a directory _txn never
+            // references.
+            try (Path p = new Path()) {
+                p.of(configuration.getDbRoot()).concat(token);
+                TableUtils.setPathForNativePartition(p, timestampType, PartitionBy.DAY, partitionTs, destTxn);
+                Assert.assertFalse(
+                        "orphan partition dir [path=" + p + "]",
+                        FF.exists(p.$())
+                );
             }
         });
     }
@@ -3340,18 +3704,19 @@ public class TableWriterTest extends AbstractCairoTest {
     private void assertIndex(TableReader reader, TestTableReaderRecord record, int columnIndex) {
         final int partitionIndex = 0;
         reader.openPartition(partitionIndex);
-        final BitmapIndexReader indexReader = reader.getBitmapIndexReader(partitionIndex, columnIndex, BitmapIndexReader.DIR_FORWARD);
+        final IndexReader indexReader = reader.getIndexReader(partitionIndex, columnIndex, IndexReader.DIR_FORWARD);
         final SymbolMapReader r = reader.getSymbolMapReader(columnIndex);
         final int symbolCount = r.getSymbolCount();
 
         long calculatedRowCount = 0;
         for (int i = 0; i < symbolCount; i++) {
-            final RowCursor rowCursor = indexReader.getCursor(true, i + 1, 0, Long.MAX_VALUE);
+            final RowCursor rowCursor = indexReader.getCursor(i + 1, 0, Long.MAX_VALUE);
             while (rowCursor.hasNext()) {
                 record.setRecordIndex(Rows.toRowID(partitionIndex, rowCursor.next()));
                 Assert.assertEquals(i, record.getInt(columnIndex));
                 calculatedRowCount++;
             }
+            Misc.free(rowCursor);
         }
         Assert.assertEquals(reader.size(), calculatedRowCount);
     }
@@ -3379,7 +3744,7 @@ public class TableWriterTest extends AbstractCairoTest {
     private int getDirCount() {
         AtomicInteger count = new AtomicInteger();
         try (Path path = new Path()) {
-            FF.iterateDir(path.of(root).concat(PRODUCT_FS).$(), (pUtf8NameZ, type) -> {
+            FF.iterateDir(path.of(root).concat(PRODUCT_FS).$(), (_, type) -> {
                 if (type == Files.DT_DIR) {
                     count.incrementAndGet();
                 }
@@ -3683,7 +4048,7 @@ public class TableWriterTest extends AbstractCairoTest {
             }
 
             try (TableWriter writer = newOffPoolWriter(configuration, PRODUCT)) {
-                writer.addIndex("supplier", configuration.getIndexValueBlockSize());
+                writer.addIndex("supplier", configuration.getIndexValueBlockSize(), IndexType.BITMAP);
                 Assert.fail();
             } catch (CairoException ignored) {
             }
@@ -3704,7 +4069,7 @@ public class TableWriterTest extends AbstractCairoTest {
 
             // another attempt to create index
             try (TableWriter writer = newOffPoolWriter(configuration, PRODUCT)) {
-                writer.addIndex("supplier", configuration.getIndexValueBlockSize());
+                writer.addIndex("supplier", configuration.getIndexValueBlockSize(), IndexType.BITMAP);
             }
         });
     }
@@ -4162,8 +4527,8 @@ public class TableWriterTest extends AbstractCairoTest {
             w.truncate();
 
             // add a couple of indexes
-            w.addIndex("sym1", 1024);
-            w.addIndex("sym2", 1024);
+            w.addIndex("sym1", 1024, IndexType.BITMAP);
+            w.addIndex("sym2", 1024, IndexType.BITMAP);
 
             Assert.assertTrue(w.getMetadata().isColumnIndexed(0));
             Assert.assertTrue(w.getMetadata().isColumnIndexed(1));

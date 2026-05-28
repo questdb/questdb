@@ -91,6 +91,29 @@ offending character, not the start of the expression.
 
 ## Git & PR Conventions
 
+- **PRs are squash-merged. Commit history on a PR branch is throwaway** — only
+  the squashed commit message that lands on `master` is preserved. Do not
+  spend effort tidying the branch's history: no soft resets to "commit all at
+  once", no rewording prior commits, no force pushes to clean up. Adding a
+  fix-up commit on top is always fine. The squash flow folds the lot at merge
+  time anyway.
+- **Do not create worktrees or `pr-*` checkout branches when reviewing or
+  iterating on a PR.** All work belongs on `vi_api`. Even when a PR exists on a
+  separate branch (e.g. `pr-7128`), the canonical state to review and modify is
+  whatever is currently merged into `vi_api` — follow-up fixes routinely land
+  there directly, so `pr-*` branches lag and reviewing them in isolation gives
+  a misleading picture. If a `gh pr` command needs to fetch a PR's diff, fetch
+  the diff only (`gh pr diff`); do not check the branch out.
+
+## Investigating failures
+
+- **Never dismiss a failure as "pre-existing", "flaky", "unrelated", or "a
+  known issue" without actually proving it.** That label is a hypothesis,
+  not a conclusion. Treat any red test, red CI job, or surprising log line
+  as a live bug to investigate until the evidence — git log, reproduction
+  on master, a real timing constraint, an upstream report — forces a
+  different conclusion. Only after that proof can the issue be set aside,
+  and the proof itself should be reported back so it can be verified.
 - **`java-questdb-client/` is a separate git repo** (a git submodule). Always
   `cd` into it and commit there independently. Never commit it from the parent
   repo as a submodule pointer update without also committing inside it first.
@@ -186,6 +209,35 @@ mkdir <root_directory>
 java -p core/target/questdb-<version>-SNAPSHOT.jar -m io.questdb/io.questdb.ServerMain -d <root_directory>
 # Web console at http://localhost:9000
 ```
+
+### Building and Validating Rust Code
+
+The Rust crate lives in `core/rust/qdbr/`. Before considering any Rust task
+complete, run all four checks from that directory:
+
+```bash
+cd core/rust/qdbr
+cargo fmt        # Fix formatting
+cargo check --all-targets  # Compile all targets including tests
+cargo clippy --all-targets  # Lint — zero warnings required
+cargo test --lib  # Run unit tests
+```
+
+All four must pass with zero errors and zero warnings.
+
+After writing or modifying tests, check coverage with:
+
+```bash
+cargo llvm-cov --lib --text -- <module_name>
+```
+
+For every uncovered line, either write a test that reaches it or prove it is
+unreachable and mark it with `expect()` / `debug_assert!`.
+
+A panic in Rust code called via JNI aborts the entire JVM with no recovery.
+Never use `unwrap()` or `expect()` on data derived from file contents or
+external input. Use `Result` / `Option` with proper error propagation (`?`)
+instead.
 
 ### Building Native C/C++ Libraries
 

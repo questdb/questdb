@@ -24,23 +24,73 @@
 
 package io.questdb.cairo;
 
+import io.questdb.MessageBus;
+import io.questdb.cairo.idx.IndexWriter;
 import io.questdb.cairo.vm.api.MemoryMA;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.IntList;
+import io.questdb.std.LongList;
+import io.questdb.std.ObjList;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.str.Path;
 
 
 public interface ColumnIndexer extends QuietCloseable {
 
+    default void clearCovering() {
+        // no-op by default
+    }
+
+    /**
+     * Configure covering with column names so the writer can open its own
+     * read-only mmaps. Used for both active and historic partitions.
+     */
+    default void configureCovering(
+            ObjList<CharSequence> coveredColumnNames,
+            LongList coveredColumnNameTxns,
+            LongList coveredColumnTops,
+            IntList coveredColumnShifts,
+            IntList coveredColumnIndices,
+            IntList coveredColumnTypes,
+            int timestampColumnIndex
+    ) {
+        // no-op by default
+    }
+
+    default void configureCovering(
+            LongList coveredColumnAddrs,
+            LongList coveredColumnAuxAddrs,
+            LongList coveredColumnTops,
+            IntList coveredColumnShifts,
+            IntList coveredColumnIndices,
+            IntList coveredColumnTypes,
+            int coverCount,
+            int timestampColumnIndex
+    ) {
+    }
+
     void configureFollowerAndWriter(
             Path path,
             CharSequence name,
             long columnNameTxn,
             MemoryMA columnMem,
-            long columnTop
+            long columnTop,
+            long partitionTimestamp,
+            long partitionNameTxn
     );
 
-    void configureWriter(Path path, CharSequence name, long columnNameTxn, long columnTop);
+    void configureWriter(
+            Path path,
+            CharSequence name,
+            long columnNameTxn,
+            long columnTop,
+            long partitionTimestamp,
+            long partitionNameTxn
+    );
+
+    default void discardAndClose() {
+        close();
+    }
 
     void distress();
 
@@ -48,19 +98,52 @@ public interface ColumnIndexer extends QuietCloseable {
 
     long getSequence();
 
-    BitmapIndexWriter getWriter();
+    IndexWriter getWriter();
 
     void index(FilesFacade ff, long dataColumnFd, long loRow, long hiRow);
 
     boolean isDistressed();
 
+    /**
+     * See {@link IndexWriter#mergeTentativeIntoActiveIfAny()}.
+     */
+    default void mergeTentativeIntoActiveIfAny() {
+    }
+
+    default void publishPendingPurges(
+            MessageBus messageBus,
+            TableToken tableToken,
+            int partitionBy,
+            int timestampType,
+            long currentTableTxn
+    ) {
+    }
+
+    default void rebuildSidecars() {
+    }
+
     void refreshSourceAndIndex(long loRow, long hiRow);
+
+    /**
+     * Drop the read-side state set up for the most recent seal but keep
+     * the covering schema intact, so a subsequent commit() still publishes
+     * a chain entry with a correct cover footer. See
+     * {@link io.questdb.cairo.idx.PostingIndexWriter#releaseCoveredColumnReadMappings()}.
+     */
+    default void releaseCoveredColumnReadMappings() {
+    }
 
     void releaseIndexWriter();
 
     void resetColumnTop();
 
     void rollback(long maxRow);
+
+    default void seal() {
+    }
+
+    default void setCoveredColumnNameTxns(LongList txns) {
+    }
 
     void sync(boolean async);
 

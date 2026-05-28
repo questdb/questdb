@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.ops;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.IndexType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
@@ -90,6 +91,7 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
             SqlExecutionContext sqlExecutionContext,
             CharSequence sqlText
     ) throws SqlException {
+        boolean autoIncludeTs = compiler.getEngine().getConfiguration().isPostingIndexAutoIncludeTimestamp();
         if (selectText != null) {
             return new CreateTableOperationImpl(
                     Chars.toString(sqlText),
@@ -113,7 +115,8 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
                     columnModels,
                     batchSize,
                     batchO3MaxLag,
-                    tableKind
+                    tableKind,
+                    autoIncludeTs
             );
         }
 
@@ -152,7 +155,8 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
                 maxUncommittedRows,
                 ttlHoursOrMonths,
                 ttlPosition,
-                walEnabled
+                walEnabled,
+                autoIncludeTs
         );
     }
 
@@ -447,8 +451,15 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
             sink.putAscii(" nocache");
         }
         if (model.isIndexed()) {
-            sink.putAscii(" index capacity ");
-            sink.put(model.getIndexValueBlockSize());
+            sink.putAscii(" index");
+            byte indexType = model.getIndexType();
+            if (indexType != IndexType.BITMAP) {
+                sink.putAscii(" type ");
+                IndexType.putName(sink, indexType);
+            } else {
+                sink.putAscii(" capacity ");
+                sink.put(model.getIndexValueBlockSize());
+            }
         }
     }
 

@@ -32,6 +32,7 @@ import io.questdb.Metrics;
 import io.questdb.TelemetryConfiguration;
 import io.questdb.VolumeDefinitions;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
+import io.questdb.cutlass.qwp.codec.QwpServerInfoProvider;
 import io.questdb.cutlass.text.TextConfiguration;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.ObjObjHashMap;
@@ -322,6 +323,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public byte getDefaultSymbolIndexType() {
+        return getDelegate().getDefaultSymbolIndexType();
+    }
+
+    @Override
     public int getDetachedMkDirMode() {
         return getDelegate().getDetachedMkDirMode();
     }
@@ -529,6 +535,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public long getMatViewRefreshIntervalsUpdatePeriod() {
         return getDelegate().getMatViewRefreshIntervalsUpdatePeriod();
+    }
+
+    @Override
+    public int getMatViewRefreshMaxClusters() {
+        return getDelegate().getMatViewRefreshMaxClusters();
     }
 
     @Override
@@ -797,6 +808,26 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getPostingIndexAdaptiveDeltaAtOrAbove() {
+        return getDelegate().getPostingIndexAdaptiveDeltaAtOrAbove();
+    }
+
+    @Override
+    public long getPostingIndexerSpillBytesMax() {
+        return getDelegate().getPostingIndexerSpillBytesMax();
+    }
+
+    @Override
+    public int getPostingSealGenThreshold() {
+        return getDelegate().getPostingSealGenThreshold();
+    }
+
+    @Override
+    public int getPostingSealPurgeOutboxMax() {
+        return getDelegate().getPostingSealPurgeOutboxMax();
+    }
+
+    @Override
     public int getPreferencesStringPoolCapacity() {
         return getDelegate().getPreferencesStringPoolCapacity();
     }
@@ -812,7 +843,12 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
-    public io.questdb.cutlass.qwp.codec.@NotNull QwpServerInfoProvider getQwpServerInfoProvider() {
+    public int getQwpEgressForcedZstdLevel() {
+        return getDelegate().getQwpEgressForcedZstdLevel();
+    }
+
+    @Override
+    public @NotNull QwpServerInfoProvider getQwpServerInfoProvider() {
         return getDelegate().getQwpServerInfoProvider();
     }
 
@@ -854,6 +890,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public boolean getSampleByDefaultAlignmentCalendar() {
         return getDelegate().getSampleByDefaultAlignmentCalendar();
+    }
+
+    @Override
+    public int getSampleByFillSortStrategy() {
+        return getDelegate().getSampleByFillSortStrategy();
     }
 
     @Override
@@ -1512,6 +1553,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public boolean isMatViewCoveringIndexEnabled() {
+        return getDelegate().isMatViewCoveringIndexEnabled();
+    }
+
+    @Override
     public boolean isMatViewEnabled() {
         return getDelegate().isMatViewEnabled();
     }
@@ -1564,6 +1610,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public boolean isPartitionO3OverwriteControlEnabled() {
         return getDelegate().isPartitionO3OverwriteControlEnabled();
+    }
+
+    @Override
+    public boolean isPostingIndexAutoIncludeTimestamp() {
+        return getDelegate().isPostingIndexAutoIncludeTimestamp();
     }
 
     @Override

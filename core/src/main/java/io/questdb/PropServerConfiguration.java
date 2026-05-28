@@ -29,11 +29,14 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.CommitMode;
+import io.questdb.cairo.IndexType;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.SampleBySortStrategy;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.idx.PostingIndexUtils;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.cutlass.auth.AuthUtils;
 import io.questdb.cutlass.http.HttpContextConfiguration;
@@ -324,6 +327,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final DateLocale logTimestampLocale;
     private final String logTimestampTimezone;
     private final TimeZoneRules logTimestampTimezoneRules;
+    private final boolean matViewCoveringIndexEnabled;
     private final boolean matViewEnabled;
     private final long matViewInsertAsSelectBatchSize;
     private final int matViewMaxRefreshIntervals;
@@ -331,6 +335,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final long matViewMaxRefreshStepUs;
     private final boolean matViewParallelExecutionEnabled;
     private final long matViewRefreshIntervalsUpdatePeriod;
+    private final int matViewRefreshMaxClusters;
     private final boolean matViewRefreshMissingWalFilesFatal;
     private final long matViewRefreshOomRetryTimeout;
     private final WorkerPoolConfiguration matViewRefreshPoolConfiguration = new PropMatViewsRefreshPoolConfiguration();
@@ -403,14 +408,22 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int poolSegmentSize;
     private final String posthogApiKey;
     private final boolean posthogEnabled;
+    private final int postingIndexAdaptiveDeltaAtOrAbove;
+    private final boolean postingIndexAutoIncludeTimestamp;
+    private final byte postingIndexRowIdEncoding;
+    private final long postingIndexerSpillBytesMax;
+    private final int postingSealGenThreshold;
+    private final int postingSealPurgeOutboxMax;
     private final int preferencesStringPoolCapacity;
     private final String publicDirectory;
     private final PublicPassthroughConfiguration publicPassthroughConfiguration = new PropPublicPassthroughConfiguration();
     private final int queryCacheEventQueueCapacity;
     private final boolean queryWithinLatestByOptimisationEnabled;
+    private final int qwpEgressForcedZstdLevel;
     private final int qwpMaxRowsPerTable;
     private final int qwpMaxSchemasPerConnection;
     private final int qwpMaxTablesPerConnection;
+    private final long qwpMaxUncommittedRows;
     private final long qwpUdpCommitInterval;
     private final boolean qwpUdpEnabled;
     private final int qwpUdpGroupIPv4Address;
@@ -515,6 +528,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int sqlQueryRegistryPoolSize;
     private final int sqlRenameTableModelPoolCapacity;
     private final boolean sqlSampleByDefaultAlignment;
+    private final int sqlSampleByFillSortStrategy;
     private final int sqlSampleByIndexSearchPageSize;
     private final boolean sqlSampleByValidateFillType;
     private final int sqlSmallMapKeyCapacity;
@@ -620,6 +634,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     protected long walSegmentRolloverSize;
     private int cairoSqlColumnAliasGeneratedMaxSize;
     private long cairoSqlCopyMaxIndexChunkSize;
+    private byte defaultSymbolIndexType;
     private FactoryProvider factoryProvider;
     private short floatDefaultColumnType;
     private int httpMinBindIPv4Address;
@@ -756,7 +771,7 @@ public class PropServerConfiguration implements ServerConfiguration {
                 buildInformation,
                 FilesFacadeImpl.INSTANCE,
                 MicrosecondClockImpl.INSTANCE,
-                (configuration, engine, freeOnExitList) -> DefaultFactoryProvider.INSTANCE,
+                (_, _, _) -> DefaultFactoryProvider.INSTANCE,
                 true
         );
     }
@@ -867,7 +882,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         this.cairoTableRegistryAutoReloadFrequency = getMillis(properties, env, PropertyKey.CAIRO_TABLE_REGISTRY_AUTO_RELOAD_FREQUENCY, 500);
         this.cairoTableRegistryCompactionThreshold = getInt(properties, env, PropertyKey.CAIRO_TABLE_REGISTRY_COMPACTION_THRESHOLD, 30);
         this.cairoWriteBackOffTimeoutOnMemPressureMs = getMillis(properties, env, PropertyKey.CAIRO_WRITE_BACK_OFF_TIMEOUT_ON_MEM_PRESSURE, 4000);
-        this.repeatMigrationFromVersion = getInt(properties, env, PropertyKey.CAIRO_REPEAT_MIGRATION_FROM_VERSION, 426);
+        this.repeatMigrationFromVersion = getInt(properties, env, PropertyKey.CAIRO_REPEAT_MIGRATION_FROM_VERSION, -1);
         this.mkdirMode = getInt(properties, env, PropertyKey.CAIRO_MKDIR_MODE, 509);
         this.maxFileNameLength = getInt(properties, env, PropertyKey.CAIRO_MAX_FILE_NAME_LENGTH, 127);
         // changing the default value of walEnabledDefault to true would mean that QuestDB instances upgraded from
@@ -895,7 +910,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         this.walSquashUncommittedRowsMultiplier = getDouble(properties, env, PropertyKey.CAIRO_WAL_SQUASH_UNCOMMITTED_ROWS_MULTIPLIER, "20.0");
         this.walMaxLagTxnCount = getInt(properties, env, PropertyKey.CAIRO_WAL_MAX_LAG_TXN_COUNT, -1);
         this.debugWalApplyBlockFailureNoRetry = getBoolean(properties, env, PropertyKey.DEBUG_WAL_APPLY_BLOCK_FAILURE_NO_RETRY, false);
-        this.walMaxLagSize = getLongSize(properties, env, PropertyKey.CAIRO_WAL_MAX_LAG_SIZE, 75 * Numbers.SIZE_1MB);
+        this.walMaxLagSize = getLongSize(properties, env, PropertyKey.CAIRO_WAL_MAX_LAG_SIZE, 75 * Numbers.SIZE_1MB, 0);
         this.walMaxSegmentFileDescriptorsCache = getInt(properties, env, PropertyKey.CAIRO_WAL_MAX_SEGMENT_FILE_DESCRIPTORS_CACHE, 30);
         this.walApplyTableTimeQuota = getMillis(properties, env, PropertyKey.CAIRO_WAL_APPLY_TABLE_TIME_QUOTA, 1000);
         this.walApplyLookAheadTransactionCount = getInt(properties, env, PropertyKey.CAIRO_WAL_APPLY_LOOK_AHEAD_TXN_COUNT, 200);
@@ -1495,6 +1510,13 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.createAsSelectRetryCount = getInt(properties, env, PropertyKey.CAIRO_CREATE_AS_SELECT_RETRY_COUNT, 5);
             this.defaultSymbolCacheFlag = getBoolean(properties, env, PropertyKey.CAIRO_DEFAULT_SYMBOL_CACHE_FLAG, true);
             this.defaultSymbolCapacity = getInt(properties, env, PropertyKey.CAIRO_DEFAULT_SYMBOL_CAPACITY, 256);
+            String defaultSymbolIndexTypeName = getString(properties, env, PropertyKey.CAIRO_DEFAULT_SYMBOL_INDEX_TYPE, "BITMAP");
+            this.defaultSymbolIndexType = IndexType.valueOf(defaultSymbolIndexTypeName);
+            if (defaultSymbolIndexType == IndexType.NONE) {
+                log.info().$("invalid ").$(PropertyKey.CAIRO_DEFAULT_SYMBOL_INDEX_TYPE.getPropertyPath())
+                        .$(" value '").$safe(defaultSymbolIndexTypeName).$("', will use BITMAP").$();
+                this.defaultSymbolIndexType = IndexType.BITMAP;
+            }
             this.fileOperationRetryCount = getInt(properties, env, PropertyKey.CAIRO_FILE_OPERATION_RETRY_COUNT, 30);
             this.idleCheckInterval = getMillis(properties, env, PropertyKey.CAIRO_IDLE_CHECK_INTERVAL, 5 * 60 * 1000L);
             this.idGenerateBatchStep = getInt(properties, env, PropertyKey.CAIRO_ID_GENERATE_STEP, 512);
@@ -1556,6 +1578,16 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.sqlSortValueMaxPages = getIntSize(properties, env, PropertyKey.CAIRO_SQL_SORT_VALUE_MAX_PAGES, Integer.MAX_VALUE);
             this.workStealTimeoutNanos = getNanos(properties, env, PropertyKey.CAIRO_WORK_STEAL_TIMEOUT_NANOS, 10_000);
             this.parallelIndexingEnabled = getBoolean(properties, env, PropertyKey.CAIRO_PARALLEL_INDEXING_ENABLED, true);
+            this.postingIndexAutoIncludeTimestamp = getBoolean(properties, env, PropertyKey.CAIRO_POSTING_INDEX_AUTO_INCLUDE_TIMESTAMP, true);
+            this.postingIndexRowIdEncoding = switch (getString(properties, env, PropertyKey.CAIRO_POSTING_INDEX_ROW_ID_ENCODING, "adaptive")) {
+                case "ef" -> PostingIndexUtils.ENCODING_EF;
+                case "delta" -> PostingIndexUtils.ENCODING_DELTA;
+                default -> PostingIndexUtils.ENCODING_ADAPTIVE;
+            };
+            this.postingIndexAdaptiveDeltaAtOrAbove = getInt(properties, env, PropertyKey.CAIRO_POSTING_INDEX_ADAPTIVE_DELTA_AT_OR_ABOVE, 2000);
+            this.postingIndexerSpillBytesMax = getLongSize(properties, env, PropertyKey.CAIRO_POSTING_INDEX_INDEXER_SPILL_BYTES_MAX, 256L << 20);
+            this.postingSealGenThreshold = getInt(properties, env, PropertyKey.CAIRO_POSTING_SEAL_GEN_THRESHOLD, 16);
+            this.postingSealPurgeOutboxMax = getInt(properties, env, PropertyKey.CAIRO_POSTING_SEAL_PURGE_OUTBOX_MAX, 8192);
             this.sqlJoinMetadataPageSize = getIntSize(properties, env, PropertyKey.CAIRO_SQL_JOIN_METADATA_PAGE_SIZE, 16384);
             this.sqlJoinMetadataMaxResizes = getIntSize(properties, env, PropertyKey.CAIRO_SQL_JOIN_METADATA_MAX_RESIZES, Integer.MAX_VALUE);
             int sqlWindowColumnPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_ANALYTIC_COLUMN_POOL_CAPACITY, 64);
@@ -1571,6 +1603,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.matViewInsertAsSelectBatchSize = getLong(properties, env, PropertyKey.CAIRO_MAT_VIEW_INSERT_AS_SELECT_BATCH_SIZE, sqlInsertModelBatchSize);
             this.matViewRowsPerQueryEstimate = getLong(properties, env, PropertyKey.CAIRO_MAT_VIEW_ROWS_PER_QUERY_ESTIMATE, 1_000_000L);
             this.matViewMaxRefreshIntervals = getInt(properties, env, PropertyKey.CAIRO_MAT_VIEW_MAX_REFRESH_INTERVALS, 100);
+            this.matViewRefreshMaxClusters = getInt(properties, env, PropertyKey.CAIRO_MAT_VIEW_REFRESH_MAX_CLUSTERS, 32);
             this.sqlCompileViewModelPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_COMPILE_VIEW_MODEL_POOL_CAPACITY, 8);
             this.sqlCopyBufferSize = getIntSize(properties, env, PropertyKey.CAIRO_SQL_COPY_BUFFER_SIZE, 2 * Numbers.SIZE_1MB);
             this.columnPurgeQueueCapacity = getQueueCapacity(properties, env, PropertyKey.CAIRO_SQL_COLUMN_PURGE_QUEUE_CAPACITY, 128);
@@ -1608,6 +1641,7 @@ public class PropServerConfiguration implements ServerConfiguration {
 
             this.sqlSampleByIndexSearchPageSize = getIntSize(properties, env, PropertyKey.CAIRO_SQL_SAMPLEBY_PAGE_SIZE, 0);
             this.sqlSampleByDefaultAlignment = getBoolean(properties, env, PropertyKey.CAIRO_SQL_SAMPLEBY_DEFAULT_ALIGNMENT_CALENDAR, true);
+            this.sqlSampleByFillSortStrategy = getSampleByFillSortStrategy(properties, env);
             this.sqlGroupByMapCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_GROUPBY_MAP_CAPACITY, 1024);
             this.sqlGroupByAllocatorChunkSize = getLongSize(properties, env, PropertyKey.CAIRO_SQL_GROUPBY_ALLOCATOR_DEFAULT_CHUNK_SIZE, 128 * 1024);
             this.sqlGroupByAllocatorMaxChunkSize = getLongSize(properties, env, PropertyKey.CAIRO_SQL_GROUPBY_ALLOCATOR_MAX_CHUNK_SIZE, 4 * Numbers.SIZE_1GB);
@@ -1800,6 +1834,22 @@ public class PropServerConfiguration implements ServerConfiguration {
                                 + " must be at least 1"
                 );
             }
+            this.qwpEgressForcedZstdLevel = getInt(
+                    properties,
+                    env,
+                    PropertyKey.QWP_EGRESS_COMPRESSION_FORCE_LEVEL,
+                    0
+            );
+            if (qwpEgressForcedZstdLevel != 0
+                    && (qwpEgressForcedZstdLevel < QwpConstants.COMPRESSION_ZSTD_MIN_LEVEL
+                    || qwpEgressForcedZstdLevel > QwpConstants.COMPRESSION_ZSTD_MAX_LEVEL)) {
+                throw new ServerConfigurationException(
+                        PropertyKey.QWP_EGRESS_COMPRESSION_FORCE_LEVEL.getPropertyPath()
+                                + " must be 0 (off) or in ["
+                                + QwpConstants.COMPRESSION_ZSTD_MIN_LEVEL + ", "
+                                + QwpConstants.COMPRESSION_ZSTD_MAX_LEVEL + "]"
+                );
+            }
             this.qwpMaxRowsPerTable = getInt(properties, env, PropertyKey.QWP_MAX_ROWS_PER_TABLE, QwpConstants.DEFAULT_MAX_ROWS_PER_TABLE);
             if (qwpMaxRowsPerTable < 1 || qwpMaxRowsPerTable > QwpConstants.DEFAULT_MAX_ROWS_PER_TABLE) {
                 throw new ServerConfigurationException(
@@ -1812,6 +1862,13 @@ public class PropServerConfiguration implements ServerConfiguration {
             if (qwpMaxTablesPerConnection < 1) {
                 throw new ServerConfigurationException(
                         PropertyKey.QWP_MAX_TABLES_PER_CONNECTION.getPropertyPath()
+                                + " must be at least 1"
+                );
+            }
+            this.qwpMaxUncommittedRows = getLong(properties, env, PropertyKey.QWP_MAX_UNCOMMITTED_ROWS, QwpConstants.DEFAULT_MAX_UNCOMMITTED_ROWS);
+            if (qwpMaxUncommittedRows < 1) {
+                throw new ServerConfigurationException(
+                        PropertyKey.QWP_MAX_UNCOMMITTED_ROWS.getPropertyPath()
                                 + " must be at least 1"
                 );
             }
@@ -2094,6 +2151,7 @@ public class PropServerConfiguration implements ServerConfiguration {
 
             this.walParallelExecutionEnabled = getBoolean(properties, env, PropertyKey.CAIRO_WAL_APPLY_PARALLEL_SQL_ENABLED, true);
             this.matViewParallelExecutionEnabled = getBoolean(properties, env, PropertyKey.CAIRO_MAT_VIEW_PARALLEL_SQL_ENABLED, cpuAvailable >= 4);
+            this.matViewCoveringIndexEnabled = getBoolean(properties, env, PropertyKey.CAIRO_MAT_VIEW_COVERING_INDEX_ENABLED, false);
             this.sqlParallelWorkStealingThreshold = getInt(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_WORK_STEALING_THRESHOLD, 16);
             this.sqlParallelWorkStealingSpinTimeout = getNanos(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_WORK_STEALING_SPIN_TIMEOUT, 50_000);
             this.sqlParquetFrameCacheCapacity = Math.max(getInt(properties, env, PropertyKey.CAIRO_SQL_PARQUET_FRAME_CACHE_CAPACITY, 8), 8);
@@ -2104,7 +2162,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.writerAsyncCommandBusyWaitTimeout = getMillis(properties, env, PropertyKey.CAIRO_WRITER_ALTER_BUSY_WAIT_TIMEOUT, 500);
             this.writerAsyncCommandMaxWaitTimeout = getMillis(properties, env, PropertyKey.CAIRO_WRITER_ALTER_MAX_WAIT_TIMEOUT, 30_000);
             this.writerTickRowsCountMod = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_WRITER_TICK_ROWS_COUNT, 1024)) - 1;
-            this.writerAsyncCommandQueueCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_WRITER_COMMAND_QUEUE_CAPACITY, 32));
+            this.writerAsyncCommandQueueCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_WRITER_COMMAND_QUEUE_CAPACITY, 256));
             this.writerAsyncCommandQueueSlotSize = Numbers.ceilPow2(getLongSize(properties, env, PropertyKey.CAIRO_WRITER_COMMAND_QUEUE_SLOT_SIZE, 2048));
 
             this.buildInformation = buildInformation;
@@ -2424,6 +2482,38 @@ public class PropServerConfiguration implements ServerConfiguration {
         return SqlJitMode.JIT_MODE_ENABLED;
     }
 
+    private int getSampleByFillSortStrategy(Properties properties, @Nullable Map<String, String> env) throws ServerConfigurationException {
+        final ConfigPropertyKey key = PropertyKey.CAIRO_SQL_SAMPLEBY_FILL_SORT_STRATEGY;
+        final String strategy = getString(properties, env, key, "light_encoded");
+
+        // must not be null because we provided non-null default value
+        assert strategy != null;
+
+        // Empty value falls back to the default. Strict validation still
+        // applies to non-empty unknown values below.
+        if (strategy.isEmpty()) {
+            return SampleBySortStrategy.LIGHT_ENCODED;
+        }
+
+        if (Chars.equalsLowerCaseAscii(strategy, "light_encoded")) {
+            return SampleBySortStrategy.LIGHT_ENCODED;
+        }
+
+        if (Chars.equalsLowerCaseAscii(strategy, "full_encoded")) {
+            return SampleBySortStrategy.FULL_ENCODED;
+        }
+
+        if (Chars.equalsLowerCaseAscii(strategy, "light_recordchain")) {
+            return SampleBySortStrategy.LIGHT_RECORDCHAIN;
+        }
+
+        if (Chars.equalsLowerCaseAscii(strategy, "full_recordchain")) {
+            return SampleBySortStrategy.FULL_RECORDCHAIN;
+        }
+
+        throw ServerConfigurationException.forInvalidKey(key.getPropertyPath(), strategy);
+    }
+
     private int getWalWriterMadviseMode(Properties properties, @Nullable Map<String, String> env, ConfigPropertyKey key) throws ServerConfigurationException {
         final String mode = getString(properties, env, key, "none");
 
@@ -2643,6 +2733,14 @@ public class PropServerConfiguration implements ServerConfiguration {
         } catch (NumericException e) {
             throw ServerConfigurationException.forInvalidKey(key.getPropertyPath(), value);
         }
+    }
+
+    protected long getLongSize(Properties properties, @Nullable Map<String, String> env, ConfigPropertyKey key, long defaultValue, long minValue) throws ServerConfigurationException {
+        final long size = getLongSize(properties, env, key, defaultValue);
+        if (size < minValue) {
+            throw ServerConfigurationException.forInvalidKey(key.getPropertyPath(), Long.toString(size));
+        }
+        return size;
     }
 
     protected long getMicros(
@@ -3658,6 +3756,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public byte getDefaultSymbolIndexType() {
+            return defaultSymbolIndexType;
+        }
+
+        @Override
         public int getDetachedMkDirMode() {
             return detachedMkdirMode;
         }
@@ -3865,6 +3968,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public long getMatViewRefreshIntervalsUpdatePeriod() {
             return matViewRefreshIntervalsUpdatePeriod;
+        }
+
+        @Override
+        public int getMatViewRefreshMaxClusters() {
+            return matViewRefreshMaxClusters;
         }
 
         @Override
@@ -4128,6 +4236,31 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public long getPostingIndexerSpillBytesMax() {
+            return postingIndexerSpillBytesMax;
+        }
+
+        @Override
+        public byte getPostingIndexRowIdEncoding() {
+            return postingIndexRowIdEncoding;
+        }
+
+        @Override
+        public int getPostingIndexAdaptiveDeltaAtOrAbove() {
+            return postingIndexAdaptiveDeltaAtOrAbove;
+        }
+
+        @Override
+        public int getPostingSealGenThreshold() {
+            return postingSealGenThreshold;
+        }
+
+        @Override
+        public int getPostingSealPurgeOutboxMax() {
+            return postingSealPurgeOutboxMax;
+        }
+
+        @Override
         public int getPreferencesStringPoolCapacity() {
             return preferencesStringPoolCapacity;
         }
@@ -4140,6 +4273,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getQueryRegistryPoolSize() {
             return sqlQueryRegistryPoolSize;
+        }
+
+        @Override
+        public int getQwpEgressForcedZstdLevel() {
+            return qwpEgressForcedZstdLevel;
         }
 
         @Override
@@ -4180,6 +4318,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean getSampleByDefaultAlignmentCalendar() {
             return sqlSampleByDefaultAlignment;
+        }
+
+        @Override
+        public int getSampleByFillSortStrategy() {
+            return sqlSampleByFillSortStrategy;
         }
 
         @Override
@@ -4838,6 +4981,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public boolean isMatViewCoveringIndexEnabled() {
+            return matViewCoveringIndexEnabled;
+        }
+
+        @Override
         public boolean isMatViewEnabled() {
             return matViewEnabled;
         }
@@ -4890,6 +5038,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean isPartitionO3OverwriteControlEnabled() {
             return o3PartitionOverwriteControlEnabled;
+        }
+
+        @Override
+        public boolean isPostingIndexAutoIncludeTimestamp() {
+            return postingIndexAutoIncludeTimestamp;
         }
 
         @Override
@@ -5664,6 +5817,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getQwpMaxTablesPerConnection() {
             return qwpMaxTablesPerConnection;
+        }
+
+        @Override
+        public long getQwpMaxUncommittedRows() {
+            return qwpMaxUncommittedRows;
         }
 
         @Override

@@ -32,6 +32,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.CursorPrinter;
+import io.questdb.cairo.IndexType;
 import io.questdb.cairo.MetadataCacheWriter;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.NanosTimestampDriver;
@@ -1044,7 +1045,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
 
     protected static void addColumn(TableWriterAPI writer, String columnName, int columnType) {
         AlterOperationBuilder addColumnBuilder = new AlterOperationBuilder().ofAddColumn(0, writer.getTableToken(), 0);
-        addColumnBuilder.ofAddColumn(columnName, 1, columnType, 0, false, false, 0);
+        addColumnBuilder.ofAddColumn(columnName, 1, columnType, 0, false, IndexType.NONE, 0);
         AlterOperation addColumnOp = addColumnBuilder.build();
         addColumnOp.withSecurityContext(AllowAllSecurityContext.INSTANCE);
         writer.apply(addColumnOp, true);

@@ -36,11 +36,11 @@ public class ViewsFunctionTest extends AbstractViewTest {
             createView("test", query, TABLE1);
             assertQueryNoLeakCheck(
                     """
-                            column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey
-                            ts\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\tfalse
-                            k\tSYMBOL\tfalse\t0\tfalse\t0\t0\tfalse\tfalse
-                            doubleV\tLONG\tfalse\t0\tfalse\t0\t0\tfalse\tfalse
-                            avg\tDOUBLE\tfalse\t0\tfalse\t0\t0\tfalse\tfalse
+                            column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude
+                            ts\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\tfalse\t\t
+                            k\tSYMBOL\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
+                            doubleV\tLONG\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
+                            avg\tDOUBLE\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
                             """,
                     "show columns from test",
                     null,
@@ -144,13 +144,24 @@ public class ViewsFunctionTest extends AbstractViewTest {
                             """
             );
 
+            // The refresh_avg_commit_nanos / refresh_avg_scan_sample_nanos /
+            // refresh_avg_scan_range_ts_units / refresh_gap_threshold_ts_units
+            // columns hold timing-derived EMA values populated by the
+            // immediate refresh that happens in this test setup, so they
+            // are not stable across runs. Project the deterministic columns
+            // only.
             assertQueryAndPlan(
                     """
                             view_name\trefresh_type\tbase_table_name\tlast_refresh_start_timestamp\tlast_refresh_finish_timestamp\tview_sql\tview_table_dir_name\tinvalidation_reason\tview_status\trefresh_period_hi\trefresh_base_table_txn\tbase_table_txn\trefresh_limit\trefresh_limit_unit\ttimer_time_zone\ttimer_start\ttimer_interval\ttimer_interval_unit\tperiod_length\tperiod_length_unit\tperiod_delay\tperiod_delay_unit
                             view3\timmediate\ttable1\t2025-06-19T15:00:00.000000Z\t2025-06-19T15:00:00.000000Z\tselect ts, k, max(v) as v_max from table1 sample by 1m\tview3~5\t\tvalid\t\t9\t9\t0\t\t\t\t0\t\t0\t\t0\t
                             view4\timmediate\ttable2\t2025-06-19T15:00:00.000000Z\t2025-06-19T15:00:00.000000Z\tselect ts, avg(v) as v_avg from table2 sample by 15m\tview4~6\t\tvalid\t\t9\t9\t0\t\t\t\t0\t\t0\t\t0\t
                             """,
-                    "materialized_views() order by 1",
+                    "select view_name, refresh_type, base_table_name, last_refresh_start_timestamp, " +
+                            "last_refresh_finish_timestamp, view_sql, view_table_dir_name, invalidation_reason, " +
+                            "view_status, refresh_period_hi, refresh_base_table_txn, base_table_txn, " +
+                            "refresh_limit, refresh_limit_unit, timer_time_zone, timer_start, " +
+                            "timer_interval, timer_interval_unit, period_length, period_length_unit, " +
+                            "period_delay, period_delay_unit from materialized_views() order by 1",
                     null,
                     true,
                     false,
@@ -158,7 +169,8 @@ public class ViewsFunctionTest extends AbstractViewTest {
                             QUERY PLAN
                             Sort
                               keys: [view_name]
-                                materialized_views()
+                                SelectedRecord
+                                    materialized_views()
                             """
             );
 

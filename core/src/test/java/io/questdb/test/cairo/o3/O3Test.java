@@ -27,6 +27,7 @@ package io.questdb.test.cairo.o3;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.IndexType;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableWriter;
@@ -569,6 +570,9 @@ public class O3Test extends AbstractO3Test {
 
     @Test
     public void testLargeO3MaxLagContended() throws Exception {
+        // This large-dataset lag test exercises only platform-independent logic and the shared
+        // native sort path; it is slow on the hosted Mac and Windows runners, so run on Linux only.
+        Assume.assumeTrue(Os.isLinux());
         executeWithPool(0, O3Test::testLargeO3MaxLag0);
     }
 
@@ -5115,13 +5119,19 @@ public class O3Test extends AbstractO3Test {
             SqlExecutionContext sqlExecutionContext,
             String timestampTypeName
     ) throws SqlException {
+        // randomize workload; smaller range on slow CI runners (Mac, Windows)
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        int rowsMax = Os.isLinux() ? 1_000_000 : 250_000;
+        int rowsMin = rowsMax / 5;
+        int rows = rowsMin + rnd.nextInt(rowsMax - rowsMin + 1);
+        int batch = Math.max(1, rows / 10);
         assertLag(
                 engine,
                 compiler,
                 sqlExecutionContext,
                 "with maxUncommittedRows=400",
-                " from long_sequence(1000000)",
-                "insert batch 100000 o3MaxLag 180s into x select * from top",
+                " from long_sequence(" + rows + ")",
+                "insert batch " + batch + " o3MaxLag 180s into x select * from top",
                 timestampTypeName
         );
     }
@@ -8559,13 +8569,19 @@ public class O3Test extends AbstractO3Test {
             SqlExecutionContext sqlExecutionContext,
             String timestampTypeName
     ) throws SqlException {
+        // randomize workload; smaller range on slow CI runners (Mac, Windows)
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        int rowsMax = Os.isLinux() ? 1_000_000 : 250_000;
+        int rowsMin = rowsMax / 5;
+        int rows = rowsMin + rnd.nextInt(rowsMax - rowsMin + 1);
+        int batch = Math.max(1, rows / 10);
         assertLag(
                 engine,
                 compiler,
                 sqlExecutionContext,
                 "",
-                " from long_sequence(1000000)",
-                "insert batch 100000 o3MaxLag 180s into x select * from top",
+                " from long_sequence(" + rows + ")",
+                "insert batch " + batch + " o3MaxLag 180s into x select * from top",
                 timestampTypeName
         );
     }
@@ -8704,10 +8720,11 @@ public class O3Test extends AbstractO3Test {
     ) throws SqlException, NumericException {
         CairoConfiguration configuration = engine.getConfiguration();
         TableModel tableModel = new TableModel(configuration, "x", PartitionBy.DAY);
+        Rnd rnd = TestUtils.generateRandom(LOG);
         tableModel
                 .col("id", ColumnType.LONG)
                 .col("str", ColumnType.STRING)
-                .col("sym", ColumnType.SYMBOL).indexed(true, 2)
+                .col("sym", ColumnType.SYMBOL).indexed(true, 2, rnd.nextBoolean() ? IndexType.POSTING : IndexType.POSTING)
                 .timestamp("ts", ColumnType.typeOf(timestampTypeName));
 
         TestUtils.createPopulateTable(

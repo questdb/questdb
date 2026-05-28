@@ -24,6 +24,10 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.idx.BitmapIndexUtils;
+import io.questdb.cairo.idx.IndexFactory;
+import io.questdb.cairo.idx.IndexWriter;
+import io.questdb.cairo.idx.PostingIndexUtils;
 import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.mv.MatViewState;
 import io.questdb.cairo.sql.RecordMetadata;
@@ -33,7 +37,8 @@ import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.seq.TableTransactionLogFile;
-import io.questdb.griffin.engine.table.parquet.PartitionDecoder;
+import io.questdb.griffin.engine.table.parquet.ParquetMetadataWriter;
+import io.questdb.griffin.engine.table.parquet.ParquetPartitionDecoder;
 import io.questdb.griffin.engine.table.parquet.RowGroupBuffers;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -41,11 +46,14 @@ import io.questdb.std.DirectIntList;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FindVisitor;
+import io.questdb.std.IntList;
+import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
+import io.questdb.std.Os;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.DateFormat;
@@ -95,6 +103,27 @@ public class TableSnapshotRestore implements QuietCloseable {
                 Math.min(configuration.getCheckpointRecoveryThreadpoolMax(), Runtime.getRuntime().availableProcessors())
         );
         this.executor = Executors.newFixedThreadPool(threadCount);
+    }
+
+    public static void removeIndexFiles(FilesFacade ff, Path path, int partitionPathLen, CharSequence columnName, long columnNameTxn, byte indexType) {
+        if (IndexType.isPosting(indexType)) {
+            // POSTING leaves multiple sealed .pv.{txn} generations, plus a
+            // .pci and one or more .pc<N>.*.* covering sidecars per index
+            // instance. removeAllSealedFiles enumerates and removes every
+            // such file across all sealTxn values. Without this, snapshot
+            // restore leaves stale sidecars on disk that shadow the freshly
+            // re-created .pk/.pv pair.
+            PostingIndexUtils.removeAllSealedFiles(ff, path, partitionPathLen, columnName, columnNameTxn);
+            // Remove .pk last — the helper above relies on its presence to
+            // discover the sealTxn range.
+            path.trimTo(partitionPathLen);
+            removeFile(ff, IndexFactory.keyFileName(indexType, path, columnName, columnNameTxn));
+            return;
+        }
+
+        // BITMAP keeps a single .v at columnVersion; no sealTxn axis.
+        removeFile(ff, IndexFactory.keyFileName(indexType, path.trimTo(partitionPathLen), columnName, columnNameTxn));
+        removeFile(ff, IndexFactory.valueFileName(indexType, path.trimTo(partitionPathLen), columnName, columnNameTxn, columnNameTxn));
     }
 
     public void abortParallelTasks() {
@@ -157,7 +186,6 @@ public class TableSnapshotRestore implements QuietCloseable {
             dstPath.trimTo(dstPathLen);
         }
     }
-
 
     public void finalizeParallelTasks() {
         if (futures.size() > 0) {
@@ -294,6 +322,11 @@ public class TableSnapshotRestore implements QuietCloseable {
             columnVersionReader.ofRO(configuration.getFilesFacade(), tablePath.$());
             columnVersionReader.readUnsafe();
 
+            // Generate _pm sidecar files for parquet partitions restored from
+            // old backups that predate the _pm format. This must run before
+            // rebuildBitmapIndexes, which mmaps _pm to rebuild bitmap indexes.
+            generateMissingParquetMetaFiles(tablePath.trimTo(pathTableLen));
+
             // Symbols are not append-only data structures, they can be corrupt
             // when symbol files are copied while written to. We need to rebuild them.
             rebuildSymbolFiles(tablePath, recoveredSymbolFiles, pathTableLen);
@@ -428,7 +461,7 @@ public class TableSnapshotRestore implements QuietCloseable {
      */
     private static int getIndexedParquetColumnIndex(
             RecordMetadata metadata,
-            PartitionDecoder.Metadata parquetMetadata,
+            ParquetMetaFileReader parquetMetadata,
             ColumnVersionReader columnVersionReader,
             int columnIndex,
             long partitionTimestamp,
@@ -493,6 +526,95 @@ public class TableSnapshotRestore implements QuietCloseable {
         }
     }
 
+    private void generateMissingParquetMetaFiles(Path tablePath) {
+        int partitionBy = tableMetadata.getPartitionBy();
+        if (!PartitionBy.isPartitioned(partitionBy)) {
+            return;
+        }
+        int timestampType = tableMetadata.getTimestampType();
+        int plen = tablePath.size();
+        int partitionCount = txWriter.getPartitionCount();
+
+        for (int i = 0; i < partitionCount; i++) {
+            if (!txWriter.isPartitionParquet(i)) {
+                continue;
+            }
+            long partitionTs = txWriter.getPartitionTimestampByIndex(i);
+            long nameTxn = txWriter.getPartitionNameTxnByPartitionTimestamp(partitionTs);
+
+            TableUtils.setPathForNativePartition(
+                    tablePath.trimTo(plen), timestampType, partitionBy, partitionTs, nameTxn
+            );
+            int partitionDirLen = tablePath.size();
+
+            tablePath.concat(TableUtils.PARQUET_METADATA_FILE_NAME).$();
+            if (ff.exists(tablePath.$())) {
+                tablePath.trimTo(plen);
+                continue;
+            }
+
+            // Use the committed parquet file size from _txn, not the on-disk size.
+            // A snapshot may capture data.parquet mid-append; bytes past the committed
+            // size are not part of the MVCC-visible state and must not be published.
+            long parquetFileSize = txWriter.getPartitionParquetFileSize(i);
+
+            // Open data.parquet to generate _pm from it.
+            tablePath.trimTo(partitionDirLen).concat(TableUtils.PARQUET_PARTITION_NAME).$();
+            long parquetFd = ff.openRO(tablePath.$());
+            if (parquetFd < 0) {
+                int errno = ff.errno();
+                tablePath.trimTo(plen);
+                throw CairoException.critical(errno).put("cannot open parquet file for _pm generation [path=").put(tablePath).put(']');
+            }
+            long onDiskSize = ff.length(parquetFd);
+            if (onDiskSize < parquetFileSize) {
+                ff.close(parquetFd);
+                tablePath.trimTo(plen);
+                throw CairoException.critical(0)
+                        .put("restored parquet file is shorter than committed size [path=").put(tablePath)
+                        .put(", committed=").put(parquetFileSize)
+                        .put(", onDisk=").put(onDiskSize)
+                        .put(']');
+            }
+
+            tablePath.trimTo(partitionDirLen).concat(TableUtils.PARQUET_METADATA_FILE_NAME).$();
+            long parquetMetaFd = ff.openRW(tablePath.$(), CairoConfiguration.O_NONE);
+            if (parquetMetaFd < 0) {
+                int errno = ff.errno();
+                ff.close(parquetFd);
+                tablePath.trimTo(plen);
+                throw CairoException.critical(errno).put("cannot create _pm file [path=").put(tablePath).put(']');
+            }
+
+            try {
+                long parquetMetaAllocator = Unsafe.getNativeAllocator(MemoryTag.NATIVE_DEFAULT);
+                long parquetMetaFileSize = ParquetMetadataWriter.generate(parquetMetaAllocator, Files.toOsFd(parquetFd), parquetFileSize, Files.toOsFd(parquetMetaFd));
+                // Persist the brand-new _pm before snapshot restore returns. Otherwise
+                // a power loss after restore but before the engine syncs would leave
+                // the partition referenced by _txn but with no usable _pm sidecar.
+                ff.fsync(parquetMetaFd);
+                LOG.info().$("generated missing _pm for restored parquet partition [ts=").$(partitionTs).$(", parquetMetaSize=").$(parquetMetaFileSize).I$();
+            } catch (Throwable t) {
+                // Remove partially written _pm file so a retry regenerates it.
+                tablePath.trimTo(partitionDirLen).concat(TableUtils.PARQUET_METADATA_FILE_NAME).$();
+                ff.remove(tablePath.$());
+                throw t;
+            } finally {
+                ff.close(parquetFd);
+                ff.close(parquetMetaFd);
+                if (!Os.isWindows()) {
+                    tablePath.trimTo(partitionDirLen).$();
+                    final long dirFd = TableUtils.openRONoCache(ff, tablePath.$(), LOG);
+                    if (dirFd != -1) {
+                        ff.fsyncAndClose(dirFd);
+                    }
+                }
+            }
+            tablePath.trimTo(plen);
+        }
+        tablePath.trimTo(plen);
+    }
+
     private void rebuildBitmapIndexForNativePartition(int pathTableLen, int columnCount, long partitionTimestamp, long partitionRowCount, long partitionNameTxn, String tablePathStr, int partitionBy, int timestampType) {
         for (int colIdx = 0; colIdx < columnCount; colIdx++) {
             // Skip non-indexed columns and non-symbol columns (deleted columns may still have indexed flag set)
@@ -511,6 +633,7 @@ public class TableSnapshotRestore implements QuietCloseable {
 
             final String columnName = tableMetadata.getColumnName(colIdx);
             final int indexBlockCapacity = tableMetadata.getIndexBlockCapacity(colIdx);
+            final byte indexType = tableMetadata.getColumnIndexType(colIdx);
 
             futures.add(executor.submit(() -> rebuildBitmapIndexForNativePartitionColumn(
                     tablePathStr,
@@ -518,6 +641,7 @@ public class TableSnapshotRestore implements QuietCloseable {
                     columnName,
                     columnNameTxn,
                     indexBlockCapacity,
+                    indexType,
                     partitionTimestamp,
                     partitionNameTxn,
                     partitionRowCount,
@@ -534,6 +658,7 @@ public class TableSnapshotRestore implements QuietCloseable {
             String columnName,
             long columnNameTxn,
             int indexBlockCapacity,
+            byte indexType,
             long partitionTimestamp,
             long partitionNameTxn,
             long partitionRowCount,
@@ -546,9 +671,11 @@ public class TableSnapshotRestore implements QuietCloseable {
         }
 
         // Since we're using an executor, we can't use Path thread locals.
+        // POSTING seal internally uses Path.getThreadLocal — clear them in
+        // finally so the executor thread does not retain native paths.
         try (
                 Path path = new Path().put(tablePathStr);
-                SymbolColumnIndexer indexer = new SymbolColumnIndexer(configuration)
+                SymbolColumnIndexer indexer = new SymbolColumnIndexer(configuration, indexType)
         ) {
             path.trimTo(pathTableLen);
 
@@ -565,17 +692,34 @@ public class TableSnapshotRestore implements QuietCloseable {
             LOG.info().$("rebuilding bitmap index [path=").$(path).$(", column=").$(columnName).I$();
 
             // Remove existing index files if they exist
-            removeIndexFiles(ff, path, partitionPathLen, columnName, columnNameTxn);
+            removeIndexFiles(ff, path, partitionPathLen, columnName, columnNameTxn, indexType);
 
             // Create new index files
-            createIndexFiles(ff, path, partitionPathLen, columnName, columnNameTxn, indexBlockCapacity);
+            createIndexFiles(ff, path, partitionPathLen, columnName, columnNameTxn, indexBlockCapacity, indexType);
 
             // Open the .d file and rebuild the index
             TableUtils.dFile(path.trimTo(partitionPathLen), columnName, columnNameTxn);
             long columnDataFd = TableUtils.openRO(ff, path.$(), LOG);
             try {
-                indexer.configureWriter(path.trimTo(partitionPathLen), columnName, columnNameTxn, columnTop);
+                indexer.configureWriter(path.trimTo(partitionPathLen), columnName, columnNameTxn, columnTop, partitionTimestamp, partitionNameTxn);
+                if (IndexType.isPosting(indexType)) {
+                    // POSTING indexes need INCLUDE columns wired before index() so
+                    // seal() can build covering sidecars. BITMAP has no covering
+                    // and configureCoveringForPosting is a no-op for it.
+                    configureCoveringForPosting(indexer.getWriter(), columnName, tableMetadata, columnVersionReader, partitionTimestamp);
+                    // The restored data is at the snapshot's committed _txn;
+                    // tag the seal's chain entry with that so a subsequent
+                    // recovery walk does not mis-classify the rebuilt index
+                    // as abandoned.
+                    indexer.getWriter().setNextTxnAtSeal(txWriter.getTxn());
+                }
                 indexer.index(ff, columnDataFd, columnTop, partitionRowCount);
+                if (IndexType.isPosting(indexType)) {
+                    // BITMAP is sealed-by-default; POSTING needs an explicit
+                    // seal so the .pv.<sealTxn> sealed value file and the
+                    // .pci/.pc<N> covering sidecars exist after restore.
+                    indexer.seal();
+                }
             } catch (CairoException e) {
                 LOG.error().$("could not rebuild bitmap index [path=").$(path.trimTo(partitionPathLen))
                         .$(", column=").$(columnName)
@@ -591,6 +735,8 @@ public class TableSnapshotRestore implements QuietCloseable {
                     .$(", column=").$(columnName)
                     .$(", rowCount=").$(partitionRowCount - columnTop)
                     .I$();
+        } finally {
+            Path.clearThreadLocals();
         }
     }
 
@@ -600,7 +746,7 @@ public class TableSnapshotRestore implements QuietCloseable {
             long partitionTimestamp,
             long partitionRowCount,
             long partitionNameTxn,
-            long parquetSize,
+            long parquetFileSize,
             int partitionBy,
             int timestampType
     ) {
@@ -608,55 +754,92 @@ public class TableSnapshotRestore implements QuietCloseable {
             return;
         }
 
+        // POSTING seal() uses Path.getThreadLocal() internally; mirror the
+        // native partition rebuild path and clear thread-locals so this
+        // executor thread does not retain native paths across tasks.
         try (
                 Path path = new Path().put(tablePathStr);
-                PartitionDecoder partitionDecoder = new PartitionDecoder();
                 RowGroupBuffers rowGroupBuffers = new RowGroupBuffers(MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
                 DirectIntList parquetColumns = new DirectIntList(32, MemoryTag.NATIVE_DEFAULT)
         ) {
-            ObjList<BitmapIndexWriter> indexWriters = new ObjList<>();
+            ObjList<IndexWriter> indexWriters = new ObjList<>();
             path.trimTo(pathTableLen);
 
-            // Set path to parquet partition and mmap
-            TableUtils.setPathForParquetPartition(path, timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
+            // Set path to partition dir
+            TableUtils.setPathForNativePartition(path, timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
+            int partitionDirLen = path.size();
 
-            if (!ff.exists(path.$())) {
-                LOG.info().$("parquet partition does not exist, skipping bitmap index rebuild [path=").$(path).I$();
-                return;
-            }
-
-            long parquetAddr = TableUtils.mapRO(ff, path.$(), LOG, parquetSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
+            // mmap _pm metadata to read parquet file size and provide metadata to the decoder.
+            path.concat(TableUtils.PARQUET_METADATA_FILE_NAME).$();
+            long parquetMetaAddr = 0;
+            long parquetMetaFileSize = 0;
             try {
-                partitionDecoder.of(parquetAddr, parquetSize, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
+                final long parquetSize;
+                final ParquetMetaFileReader parquetMetaReader = new ParquetMetaFileReader();
+                parquetMetaAddr = ParquetMetaFileReader.openAndMapRO(ff, path.$(), parquetMetaReader);
+                parquetMetaFileSize = parquetMetaReader.getFileSize();
+                try {
+                    if (parquetMetaAddr == 0 || !parquetMetaReader.resolveFooter(parquetFileSize)) {
+                        throw CairoException.critical(0).put("missing or invalid _pm [path=").put(path).put(']');
+                    }
+                    parquetSize = parquetMetaReader.getParquetFileSize();
+                } finally {
+                    parquetMetaReader.clear();
+                }
 
-                // Set path to native partition directory (where index files go)
-                path.trimTo(pathTableLen);
-                TableUtils.setPathForNativePartition(path, timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
-                int partitionPathLen = path.size();
+                // mmap data.parquet
+                path.trimTo(partitionDirLen).concat(TableUtils.PARQUET_PARTITION_NAME).$();
+                if (!ff.exists(path.$())) {
+                    LOG.info().$("parquet partition does not exist, skipping bitmap index rebuild [path=").$(path).I$();
+                    return;
+                }
 
-                rebuildParquetPartitionIndexes(
-                        ff,
-                        configuration,
-                        path,
-                        partitionPathLen,
-                        partitionDecoder,
-                        rowGroupBuffers,
-                        parquetColumns,
-                        indexWriters,
-                        tableMetadata,
-                        columnVersionReader,
-                        partitionTimestamp,
-                        partitionRowCount
-                );
-            } catch (CairoException e) {
-                LOG.error().$("could not rebuild bitmap indexes for parquet partition [path=").$(path)
-                        .$(", errno=").$(e.getErrno())
-                        .$(", msg=").$safe(e.getFlyweightMessage())
-                        .I$();
-                throw e;
+                long parquetAddr = TableUtils.mapRO(ff, path.$(), LOG, parquetSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
+                try {
+                    // Decoder lives strictly inside the parquet/_pm mmaps. Closing it
+                    // before either munmap honors the documented clear-then-munmap
+                    // contract of ParquetPartitionDecoder.
+                    try (ParquetPartitionDecoder partitionDecoder = new ParquetPartitionDecoder()) {
+                        partitionDecoder.of(parquetMetaAddr, parquetMetaFileSize, parquetAddr, parquetSize, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
+
+                        // Set path to native partition directory (where index files go)
+                        path.trimTo(pathTableLen);
+                        TableUtils.setPathForNativePartition(path, timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
+                        int partitionPathLen = path.size();
+
+                        rebuildParquetPartitionIndexes(
+                                ff,
+                                configuration,
+                                path,
+                                partitionPathLen,
+                                partitionDecoder,
+                                rowGroupBuffers,
+                                parquetColumns,
+                                indexWriters,
+                                tableMetadata,
+                                columnVersionReader,
+                                partitionTimestamp,
+                                partitionNameTxn,
+                                partitionRowCount,
+                                txWriter.getTxn()
+                        );
+                    }
+                } catch (CairoException e) {
+                    LOG.error().$("could not rebuild bitmap indexes for parquet partition [path=").$(path)
+                            .$(", errno=").$(e.getErrno())
+                            .$(", msg=").$safe(e.getFlyweightMessage())
+                            .I$();
+                    throw e;
+                } finally {
+                    ff.munmap(parquetAddr, parquetSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
+                }
             } finally {
-                ff.munmap(parquetAddr, parquetSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
+                if (parquetMetaAddr != 0) {
+                    ff.munmap(parquetMetaAddr, parquetMetaFileSize, MemoryTag.MMAP_PARQUET_METADATA_READER);
+                }
             }
+        } finally {
+            Path.clearThreadLocals();
         }
     }
 
@@ -692,7 +875,7 @@ public class TableSnapshotRestore implements QuietCloseable {
             }
 
             if (isPartitioned && txWriter.isPartitionParquet(partitionIndex)) {
-                final long parquetSize = txWriter.getPartitionParquetFileSize(partitionIndex);
+                final long parquetFileSize = txWriter.getPartitionParquetFileSize(partitionIndex);
 
                 futures.add(executor.submit(() -> rebuildBitmapIndexForParquetPartition(
                         tablePathStr,
@@ -700,7 +883,7 @@ public class TableSnapshotRestore implements QuietCloseable {
                         partitionTimestamp,
                         partitionRowCount,
                         partitionNameTxn,
-                        parquetSize,
+                        parquetFileSize,
                         partitionBy,
                         timestampType
                 )));
@@ -807,19 +990,101 @@ public class TableSnapshotRestore implements QuietCloseable {
         }
     }
 
-    static void createIndexFiles(FilesFacade ff, Path path, int partitionPathLen, CharSequence columnName, long columnNameTxn, int indexBlockCapacity) {
+    /**
+     * Mirrors TableWriter.configureCoveringIfNeeded for POSTING indexes during
+     * snapshot restore. Pulls covering column names, txns, tops, and types
+     * from metadata + columnVersionReader so the writer can open the
+     * covered .d files and produce .pci / .pc&lt;N&gt; sidecars on seal. Shared
+     * by the native and parquet rebuild paths.
+     */
+    static void configureCoveringForPosting(
+            IndexWriter indexWriter,
+            String columnName,
+            RecordMetadata metadata,
+            ColumnVersionReader columnVersionReader,
+            long partitionTimestamp
+    ) {
+        int idxDenseIdx = metadata.getColumnIndexQuiet(columnName);
+        if (idxDenseIdx < 0) {
+            return;
+        }
+        IntList coveringCols = metadata.getColumnMetadata(idxDenseIdx).getCoveringColumnIndices();
+        if (coveringCols == null || coveringCols.size() == 0) {
+            return;
+        }
+        ObjList<CharSequence> names = new ObjList<>();
+        LongList nameTxns = new LongList();
+        LongList tops = new LongList();
+        IntList shifts = new IntList();
+        IntList indices = new IntList();
+        IntList types = new IntList();
+        int coverCount = coveringCols.size();
+        int columnCount = metadata.getColumnCount();
+        for (int i = 0; i < coverCount; i++) {
+            int covWriterIdx = coveringCols.getQuick(i);
+            if (covWriterIdx < 0) {
+                names.add(null);
+                nameTxns.add(TableUtils.COLUMN_NAME_TXN_NONE);
+                tops.add(0);
+                shifts.add(0);
+                indices.add(-1);
+                types.add(-1);
+                continue;
+            }
+            // coveringCols stores writer indices, but metadata's
+            // getColumnType / getColumnName accessors are dense-keyed. After
+            // DROP COLUMN, dense and writer indices diverge for columns past
+            // the dropped slot, so resolve writer -> dense before any
+            // dense-keyed lookup. Mirrors IndexBuilder.configureCovering.
+            int covDenseIdx = -1;
+            for (int k = 0; k < columnCount; k++) {
+                if (metadata.getWriterIndex(k) == covWriterIdx) {
+                    covDenseIdx = k;
+                    break;
+                }
+            }
+            if (covDenseIdx < 0) {
+                names.add(null);
+                nameTxns.add(TableUtils.COLUMN_NAME_TXN_NONE);
+                tops.add(0);
+                shifts.add(0);
+                indices.add(-1);
+                types.add(-1);
+                continue;
+            }
+            int covType = metadata.getColumnType(covDenseIdx);
+            names.add(metadata.getColumnName(covDenseIdx));
+            nameTxns.add(columnVersionReader.getColumnNameTxn(partitionTimestamp, covWriterIdx));
+            tops.add(Math.max(0, columnVersionReader.getColumnTop(partitionTimestamp, covWriterIdx)));
+            shifts.add(ColumnType.pow2SizeOf(covType));
+            indices.add(covWriterIdx);
+            types.add(covType);
+        }
+        // PostingIndexWriter compares the timestamp parameter against
+        // the writer-space coveredColumnIndices we just built, so
+        // translate metadata.getTimestampIndex() (dense) to writer
+        // space. After DROP COLUMN before the timestamp the two index
+        // spaces diverge and the comparison would otherwise hit the
+        // wrong column.
+        int tsDense = metadata.getTimestampIndex();
+        int tsWriter = tsDense >= 0 ? metadata.getWriterIndex(tsDense) : -1;
+        indexWriter.configureCovering(names, nameTxns, tops, shifts, indices, types, tsWriter);
+    }
+
+    static void createIndexFiles(FilesFacade ff, Path path, int partitionPathLen, CharSequence columnName, long columnNameTxn, int indexBlockCapacity, byte indexType) {
         // Create .k file with proper header
         try (MemoryCMARW mem = Vm.getCMARWInstance()) {
-            LPSZ keyFileName = BitmapIndexUtils.keyFileName(path.trimTo(partitionPathLen), columnName, columnNameTxn);
+            LPSZ keyFileName = IndexFactory.keyFileName(indexType, path.trimTo(partitionPathLen), columnName, columnNameTxn);
             mem.smallFile(ff, keyFileName, MemoryTag.MMAP_INDEX_WRITER);
-            BitmapIndexWriter.initKeyMemory(mem, indexBlockCapacity);
+            IndexFactory.initKeyMemory(indexType, mem, indexBlockCapacity);
         } catch (CairoException e) {
             LOG.error().$("could not create index key file [path=").$(path).$(", column=").$(columnName).$(", errno=").$(e.getErrno()).I$();
             throw e;
         }
 
-        // Create empty .v file
-        LPSZ valueFileName = BitmapIndexUtils.valueFileName(path.trimTo(partitionPathLen), columnName, columnNameTxn);
+        // Create empty .v file. Fresh index: POSTING sealTxn starts at 0
+        // (pre-seal state); BITMAP ignores the sealTxn arg.
+        LPSZ valueFileName = IndexFactory.valueFileName(indexType, path.trimTo(partitionPathLen), columnName, columnNameTxn, 0L);
         if (!ff.touch(valueFileName)) {
             int errno = ff.errno();
             LOG.error().$("could not create index value file [path=").$(path).$(", column=").$(columnName).$(", errno=").$(errno).I$();
@@ -837,16 +1102,18 @@ public class TableSnapshotRestore implements QuietCloseable {
             CairoConfiguration configuration,
             Path path,
             int partitionPathLen,
-            PartitionDecoder partitionDecoder,
+            ParquetPartitionDecoder partitionDecoder,
             RowGroupBuffers rowGroupBuffers,
             DirectIntList parquetColumns,
-            ObjList<BitmapIndexWriter> indexWriters,
+            ObjList<IndexWriter> indexWriters,
             RecordMetadata metadata,
             ColumnVersionReader columnVersionReader,
             long partitionTimestamp,
-            long partitionRowCount
+            long partitionNameTxn,
+            long partitionRowCount,
+            long currentTableTxn
     ) {
-        final PartitionDecoder.Metadata parquetMetadata = partitionDecoder.metadata();
+        final ParquetMetaFileReader parquetMetadata = partitionDecoder.metadata();
         final int columnCount = metadata.getColumnCount();
         final StringSink columnNamesSink = new StringSink();
 
@@ -876,46 +1143,56 @@ public class TableSnapshotRestore implements QuietCloseable {
 
         // Second pass: create index files, open writers, build parquetColumns list
         int indexedColumnCount = 0;
-        for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
-            int parquetColumnIndex = getIndexedParquetColumnIndex(metadata, parquetMetadata, columnVersionReader, columnIndex, partitionTimestamp, partitionRowCount);
-            if (parquetColumnIndex == -1) {
-                continue;
-            }
-
-            final int writerIndex = metadata.getWriterIndex(columnIndex);
-            final CharSequence columnName = metadata.getColumnName(columnIndex);
-            final long columnNameTxn = columnVersionReader.getColumnNameTxn(partitionTimestamp, writerIndex);
-            final int indexBlockCapacity = metadata.getIndexValueBlockCapacity(columnIndex);
-
-            // Remove existing index files
-            removeIndexFiles(ff, path, partitionPathLen, columnName, columnNameTxn);
-
-            // Create new index files
-            createIndexFiles(ff, path, partitionPathLen, columnName, columnNameTxn, indexBlockCapacity);
-
-            // Open BitmapIndexWriter
-            BitmapIndexWriter indexWriter = new BitmapIndexWriter(configuration);
-            try {
-                indexWriter.of(path.trimTo(partitionPathLen), columnName, columnNameTxn);
-            } catch (CairoException e) {
-                LOG.error().$("could not open bitmap index writer [path=").$(path.trimTo(partitionPathLen))
-                        .$(", column=").$(columnName)
-                        .$(", errno=").$(e.getErrno())
-                        .I$();
-                Misc.free(indexWriter);
-                throw e;
-            }
-            indexWriters.add(indexWriter);
-
-            // Add to parquet columns list for decoding
-            parquetColumns.add(parquetColumnIndex);
-            parquetColumns.add(ColumnType.SYMBOL);
-
-            indexedColumnCount++;
-        }
-
-        // Third pass: decode row groups and populate all indexes together
         try {
+            for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
+                int parquetColumnIndex = getIndexedParquetColumnIndex(metadata, parquetMetadata, columnVersionReader, columnIndex, partitionTimestamp, partitionRowCount);
+                if (parquetColumnIndex == -1) {
+                    continue;
+                }
+
+                final int writerIndex = metadata.getWriterIndex(columnIndex);
+                final String columnName = metadata.getColumnName(columnIndex);
+                final long columnNameTxn = columnVersionReader.getColumnNameTxn(partitionTimestamp, writerIndex);
+                final int indexBlockCapacity = metadata.getIndexValueBlockCapacity(columnIndex);
+                final byte indexType = metadata.getColumnIndexType(columnIndex);
+
+                // Remove existing index files
+                removeIndexFiles(ff, path, partitionPathLen, columnName, columnNameTxn, indexType);
+
+                // Create new index files
+                createIndexFiles(ff, path, partitionPathLen, columnName, columnNameTxn, indexBlockCapacity, indexType);
+
+                // Open IndexWriter. POSTING needs partitionTimestamp/partitionNameTxn
+                // wired so seal() can produce .pv.<sealTxn> and .pc<N>.*.<sealTxn>
+                // sidecars. BITMAP ignores those parameters.
+                IndexWriter indexWriter = IndexFactory.createWriter(indexType, configuration);
+                try {
+                    indexWriter.of(path.trimTo(partitionPathLen), columnName, columnNameTxn, partitionTimestamp, partitionNameTxn);
+                    if (IndexType.isPosting(indexType)) {
+                        // Configure INCLUDE columns before any add() so seal() can
+                        // build .pci/.pc<N> sidecars. Symmetric to the native
+                        // partition rebuild path. removeIndexFiles above already
+                        // wiped any existing sidecars.
+                        configureCoveringForPosting(indexWriter, columnName, metadata, columnVersionReader, partitionTimestamp);
+                    }
+                } catch (CairoException e) {
+                    LOG.error().$("could not open index writer [path=").$(path.trimTo(partitionPathLen))
+                            .$(", column=").$(columnName)
+                            .$(", errno=").$(e.getErrno())
+                            .I$();
+                    Misc.free(indexWriter);
+                    throw e;
+                }
+                indexWriters.add(indexWriter);
+
+                // Add to parquet columns list for decoding
+                parquetColumns.add(parquetColumnIndex);
+                parquetColumns.add(ColumnType.SYMBOL);
+
+                indexedColumnCount++;
+            }
+
+            // Third pass: decode row groups and populate all indexes together
             final int rowGroupCount = parquetMetadata.getRowGroupCount();
 
             // We need to track columnTop per indexed column - re-iterate to get them
@@ -932,7 +1209,7 @@ public class TableSnapshotRestore implements QuietCloseable {
 
             long rowCount = 0;
             for (int rowGroupIndex = 0; rowGroupIndex < rowGroupCount; rowGroupIndex++) {
-                final int rowGroupSize = parquetMetadata.getRowGroupSize(rowGroupIndex);
+                final long rowGroupSize = parquetMetadata.getRowGroupSize(rowGroupIndex);
 
                 // Check if any column needs data from this row group
                 boolean needsDecode = false;
@@ -949,8 +1226,9 @@ public class TableSnapshotRestore implements QuietCloseable {
                 }
 
                 // Decode all indexed columns for this row group
+                assert rowGroupSize <= Integer.MAX_VALUE;
                 try {
-                    partitionDecoder.decodeRowGroup(rowGroupBuffers, parquetColumns, rowGroupIndex, 0, rowGroupSize);
+                    partitionDecoder.decodeRowGroup(rowGroupBuffers, parquetColumns, rowGroupIndex, 0, (int) rowGroupSize);
                 } catch (CairoException e) {
                     LOG.error().$("could not decode parquet row group [path=").$(path.trimTo(partitionPathLen))
                             .$(", rowGroupIndex=").$(rowGroupIndex)
@@ -967,24 +1245,40 @@ public class TableSnapshotRestore implements QuietCloseable {
                         continue; // This column doesn't have data in this row group yet
                     }
 
-                    final BitmapIndexWriter indexWriter = indexWriters.get(i);
+                    final IndexWriter indexWriter = indexWriters.get(i);
                     final long startOffset = Math.max(0, columnTop - rowCount);
                     long rowId = Math.max(rowCount, columnTop);
 
                     final long addr = rowGroupBuffers.getChunkDataPtr(i);
                     final long size = rowGroupBuffers.getChunkDataSize(i);
-                    for (long p = addr + startOffset * 4, lim = addr + size; p < lim; p += 4, rowId++) {
-                        indexWriter.add(TableUtils.toIndexKey(Unsafe.getInt(p)), rowId);
+                    if (size == 0) {
+                        BitmapIndexUtils.addNullEntries(indexWriter, rowId, rowCount + rowGroupSize);
+                    } else {
+                        for (long p = addr + startOffset * 4, lim = addr + size; p < lim; p += 4, rowId++) {
+                            indexWriter.add(TableUtils.toIndexKey(Unsafe.getInt(p)), rowId);
+                        }
                     }
                 }
 
                 rowCount += rowGroupSize;
             }
 
-            // Commit all writers and set max values
+            // Finalize each writer. POSTING calls seal() to produce sealed
+            // .pv.<sealTxn> and .pci/.pc<N> covering sidecars (symmetric to
+            // the native partition path); BITMAP keeps setMaxValue + commit.
             for (int i = 0; i < indexedColumnCount; i++) {
-                indexWriters.get(i).setMaxValue(partitionRowCount - 1);
-                indexWriters.get(i).commit();
+                final IndexWriter w = indexWriters.get(i);
+                if (IndexType.isPosting(w.getIndexType())) {
+                    // The restored data is at the snapshot's committed _txn;
+                    // tag the seal's chain entry with that so a subsequent
+                    // recovery walk does not mis-classify the rebuilt index
+                    // as abandoned.
+                    w.setNextTxnAtSeal(currentTableTxn);
+                    w.seal();
+                } else {
+                    w.setMaxValue(partitionRowCount - 1);
+                    w.commit();
+                }
             }
 
             LOG.info().$("rebuilt bitmap indexes for parquet partition [path=").$(path.trimTo(partitionPathLen))
@@ -1008,13 +1302,5 @@ public class TableSnapshotRestore implements QuietCloseable {
             }
             // File didn't exist - proceed silently
         }
-    }
-
-    static void removeIndexFiles(FilesFacade ff, Path path, int partitionPathLen, CharSequence columnName, long columnNameTxn) {
-        // Remove .k file
-        removeFile(ff, BitmapIndexUtils.keyFileName(path.trimTo(partitionPathLen), columnName, columnNameTxn));
-
-        // Remove .v file
-        removeFile(ff, BitmapIndexUtils.valueFileName(path.trimTo(partitionPathLen), columnName, columnNameTxn));
     }
 }

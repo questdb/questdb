@@ -32,7 +32,7 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
-import io.questdb.griffin.engine.functions.constants.BooleanConstant;
+import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.Utf8Sequence;
@@ -63,18 +63,61 @@ public class LtVarcharFunctionFactory implements FunctionFactory {
         if (a.isConstant() && !b.isConstant()) {
             Utf8Sequence constValue = a.getVarcharA(null);
             if (constValue == null) {
-                return BooleanConstant.FALSE;
+                return new VarcharNullSideFunc(b, true);
             }
             return new LtStrVarcharFunctionFactory.ConstOnLeftFunc(constValue, b);
         }
         if (!a.isConstant() && b.isConstant()) {
             Utf8Sequence constValue = b.getVarcharA(null);
             if (constValue == null) {
-                return BooleanConstant.FALSE;
+                return new VarcharNullSideFunc(a, false);
             }
             return new LtVarcharStrFunctionFactory.ConstOnRightFunc(a, constValue);
         }
         return new Func(a, b);
+    }
+
+    /**
+     * Short-circuit used when one operand is a constant NULL and the other side is a
+     * VARCHAR-typed Function. See {@link LtStrFunctionFactory.StrNullSideFunc} for
+     * the full rationale; this variant differs only in checking
+     * {@link Function#getVarcharA(Record)} for null instead of
+     * {@link Function#getStrA(Record)}.
+     */
+    static final class VarcharNullSideFunc extends NegatableBooleanFunction implements UnaryFunction {
+        private final Function arg;
+        private final boolean nullOnLeft;
+
+        VarcharNullSideFunc(Function arg, boolean nullOnLeft) {
+            this.arg = arg;
+            this.nullOnLeft = nullOnLeft;
+        }
+
+        @Override
+        public Function getArg() {
+            return arg;
+        }
+
+        @Override
+        public boolean getBool(Record rec) {
+            return negated && arg.getVarcharA(rec) == null;
+        }
+
+        @Override
+        public String getName() {
+            return negated ? ">=" : "<";
+        }
+
+        // See StrNullSideFunc.toPlan for the swap-form caveat -- EXPLAIN can
+        // read `null >= s` for a user-written `s <= null`.
+        @Override
+        public void toPlan(PlanSink sink) {
+            if (nullOnLeft) {
+                sink.val("null").val(getName()).val(arg);
+            } else {
+                sink.val(arg).val(getName()).val("null");
+            }
+        }
     }
 
     static class Func extends NegatableBooleanFunction implements BinaryFunction {

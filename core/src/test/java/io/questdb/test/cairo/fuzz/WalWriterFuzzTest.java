@@ -188,6 +188,165 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
         runFuzz(rnd);
     }
 
+    // Regression for the O3 Parquet-rewrite covering-index bug where an indexed
+    // SYMBOL column added after the partition was first converted to Parquet
+    // could end up with no index entries at all. The rewrite's
+    // updateParquetIndexes walked the decoded chunk buffer to emit index
+    // entries, but the _pm-backed Rust decoder skips materialising the buffer
+    // when chunk stats report null_count == num_values (size=0, per the
+    // RowGroupBuffers javadoc). The walk iterated zero bytes and
+    // zeroColumnTopsAfterParquetRewrite then dropped columnTop to 0, so the
+    // PostingIndexFwdReader's implicit-null synthesis was disabled and
+    // WHERE col = null returned no rows on the WAL table while the non-WAL
+    // twin returned them correctly. Seeds captured from a CI failure of
+    // testConvertPartitionToParquet; the shared worker pool adds residual
+    // non-determinism, so this is not a fully deterministic reproducer; on
+    // master it fails reliably with these seeds and on the fix branch it
+    // passes consistently.
+    @Test
+    public void testConvertPartitionToParquetAllNullChunkIndex() throws Exception {
+        Rnd rnd = generateRandom(LOG, 8_858_563_550_353_991L, 1_779_599_486_943L);
+        setTestParams(rnd);
+
+        setFuzzProbabilities(
+                0.01,
+                0.01,
+                0.01,
+                0.1,
+                0.05,
+                0.05,
+                0.1,
+                0.0,
+                1.0,
+                0.01,
+                0.01,
+                0.5,
+                0.5,
+                0.1,
+                0.0,
+                0.8,
+                0.00,
+                0,
+                0.01,
+                0.1
+        );
+        setFuzzCounts(rnd.nextBoolean(), 10_000, 300, 20, 10, 1000, 100, 3);
+        runFuzz(rnd);
+    }
+
+    @Test
+    public void testConvertPartitionToParquetWithCoveringIndex() throws Exception {
+        Rnd rnd = generateRandom(LOG);
+        setTestParams(rnd);
+
+        setFuzzProbabilities(
+                0.01,
+                0.01,
+                0.01,
+                0.1,
+                0.05,
+                0.05,
+                0.1,
+                0.0,
+                1.0,
+                0.01,
+                0.01,
+                0.5,
+                0.5,
+                0.1,
+                0.0,
+                0.8,
+                0.00,
+                0,
+                0.01,
+                0.1,
+                0.5
+        );
+        setFuzzCounts(rnd.nextBoolean(), 10_000, 300, 20, 10, 1000, 100, 3);
+        runFuzz(rnd);
+    }
+
+    // Regression for the non-WAL partition-squash + POSTING-index correctness bug
+    // where squashSplitPartitions failed to reseal the target partition's chain,
+    // causing indexed WHERE predicates to drop rows for columns whose columnTop
+    // sat at or above the pre-squash target size but below the post-squash size.
+    // Seeds captured from a CI failure of testConvertPartitionToParquet. The
+    // shared worker pool adds residual non-determinism, so this is not a fully
+    // deterministic reproducer; on master it failed roughly 80% of runs with
+    // these seeds, on the fix branch it passes consistently.
+    @Test
+    public void testConvertPartitionToParquetPostingSquashReseal() throws Exception {
+        Rnd rnd = generateRandom(LOG, 7_873_130_690_938_663L, 1_778_548_286_078L);
+        setTestParams(rnd);
+
+        setFuzzProbabilities(
+                0.01,
+                0.01,
+                0.01,
+                0.1,
+                0.05,
+                0.05,
+                0.1,
+                0.0,
+                1.0,
+                0.01,
+                0.01,
+                0.5,
+                0.5,
+                0.1,
+                0.0,
+                0.8,
+                0.00,
+                0,
+                0.01,
+                0.1
+        );
+        setFuzzCounts(rnd.nextBoolean(), 10_000, 300, 20, 10, 1000, 100, 3);
+        runFuzz(rnd);
+    }
+
+    // Regression for the non-WAL POSTING column rename bug where
+    // linkPostingIndexAuxFiles silently fell through when readSealTxnFromKeyFile
+    // returned -1, leaving the renamed column with .d + .pk but no .pv linked.
+    // A later indexed predicate on the renamed column then resolved sealTxn
+    // from the linked .pk's chain entry and failed opening the never-linked
+    // .pv.<columnNameTxn>.<sealTxn>. Seeds captured from a CI failure of
+    // testConvertPartitionToParquet. The fuzz harness's FailureFileFacade
+    // injects the .pk read failure that the silent-skip code path used to
+    // swallow; the strict reader's tri-state retry now re-opens the .pk on
+    // the second attempt, sees the real chain head, and links the matching
+    // .pv before the rename commits.
+    @Test
+    public void testConvertPartitionToParquetRenameMissingPostingValue() throws Exception {
+        Rnd rnd = generateRandom(LOG, 7_759_823_511_215_046L, 1_778_689_403_692L);
+        setTestParams(rnd);
+
+        setFuzzProbabilities(
+                0.01,
+                0.01,
+                0.01,
+                0.1,
+                0.05,
+                0.05,
+                0.1,
+                0.0,
+                1.0,
+                0.01,
+                0.01,
+                0.5,
+                0.5,
+                0.1,
+                0.0,
+                0.8,
+                0.00,
+                0,
+                0.01,
+                0.1
+        );
+        setFuzzCounts(rnd.nextBoolean(), 10_000, 300, 20, 10, 1000, 100, 3);
+        runFuzz(rnd);
+    }
+
     @Test
     public void testChunkedSequencerWriting() throws Exception {
         Rnd rnd = generateRandom(LOG);

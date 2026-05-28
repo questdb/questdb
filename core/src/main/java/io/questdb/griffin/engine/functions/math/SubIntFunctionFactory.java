@@ -31,26 +31,49 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.IntFunction;
+import io.questdb.griffin.engine.functions.constants.IntConstant;
 import io.questdb.std.IntList;
+import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
+import io.questdb.std.Transient;
 
 public class SubIntFunctionFactory implements FunctionFactory {
+
     @Override
     public String getSignature() {
         return "-(II)";
     }
 
     @Override
-    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return new SubtractIntVVFunc(args.getQuick(0), args.getQuick(1));
+    public Function newInstance(
+            int position,
+            @Transient ObjList<Function> args,
+            @Transient IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) {
+        final Function left = args.getQuick(0);
+        final Function right = args.getQuick(1);
+        // null - x and x - null always evaluate to null. Fold at construction time so the
+        // non-null operand (potentially a column reference) is never evaluated with a null
+        // record via FunctionParser.functionToConstant().
+        if (left.isNullConstant()) {
+            Misc.free(right);
+            return IntConstant.NULL;
+        }
+        if (right.isNullConstant()) {
+            Misc.free(left);
+            return IntConstant.NULL;
+        }
+        return new SubIntFunc(left, right);
     }
 
-    private static class SubtractIntVVFunc extends IntFunction implements ArithmeticBinaryFunction {
-        final Function left;
-        final Function right;
+    private static class SubIntFunc extends IntFunction implements ArithmeticBinaryFunction {
+        private final Function left;
+        private final Function right;
 
-        public SubtractIntVVFunc(Function left, Function right) {
+        public SubIntFunc(Function left, Function right) {
             super();
             this.left = left;
             this.right = right;
@@ -60,11 +83,9 @@ public class SubIntFunctionFactory implements FunctionFactory {
         public int getInt(Record rec) {
             int l = left.getInt(rec);
             int r = right.getInt(rec);
-
             if (l != Numbers.INT_NULL && r != Numbers.INT_NULL) {
                 return l - r;
             }
-
             return Numbers.INT_NULL;
         }
 
@@ -75,14 +96,16 @@ public class SubIntFunctionFactory implements FunctionFactory {
 
         @Override
         public long getLong(Record rec) {
-            int l = left.getInt(rec);
-            int r = right.getInt(rec);
-
-            if (l != Numbers.INT_NULL && r != Numbers.INT_NULL) {
-                return ((long) l) - r;
+            // Widen subtree operands to long so nested INT arithmetic stays
+            // at long width here too; calling getInt() recursively would let
+            // an inner INT*INT product wrap mod 2^32 before the outer
+            // promotion, diverging from the JIT widening path.
+            long l = left.getLong(rec);
+            long r = right.getLong(rec);
+            if (l != Numbers.LONG_NULL && r != Numbers.LONG_NULL) {
+                return l - r;
             }
-
-            return Numbers.INT_NULL;
+            return Numbers.LONG_NULL;
         }
 
         @Override

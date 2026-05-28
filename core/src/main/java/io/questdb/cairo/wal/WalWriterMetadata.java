@@ -25,6 +25,7 @@
 package io.questdb.cairo.wal;
 
 import io.questdb.cairo.AbstractRecordMetadata;
+import io.questdb.cairo.IndexType;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
@@ -44,10 +45,13 @@ import io.questdb.std.str.Path;
 import static io.questdb.cairo.TableUtils.META_FILE_NAME;
 import static io.questdb.cairo.TableUtils.openSmallFile;
 import static io.questdb.cairo.wal.WalUtils.WAL_FORMAT_VERSION;
+import static io.questdb.cairo.wal.WalUtils.writeSequencerMetadataOptionalSections;
 
 public class WalWriterMetadata extends AbstractRecordMetadata implements TableRecordMetadata, TableRecordMetadataSink {
     private final FilesFacade ff;
+    private final boolean fullSequencerMetadata;
     private final MemoryMARW metaMem;
+    private final IntList readColumnOrder = new IntList();
     private final MemoryMR roMetaMem;
     private long structureVersion = -1;
     private int tableId;
@@ -58,13 +62,23 @@ public class WalWriterMetadata extends AbstractRecordMetadata implements TableRe
     }
 
     public WalWriterMetadata(FilesFacade ff, boolean readonly) {
+        this(ff, readonly, false);
+    }
+
+    private WalWriterMetadata(FilesFacade ff, boolean readonly, boolean fullSequencerMetadata) {
         this.ff = ff;
+        this.fullSequencerMetadata = fullSequencerMetadata;
         if (!readonly) {
             roMetaMem = metaMem = Vm.getCMARWInstance();
         } else {
             metaMem = null;
             roMetaMem = Vm.getCMRInstance();
         }
+    }
+
+    public static WalWriterMetadata newSequencerMetadataSink(FilesFacade ff) {
+        // Checkpointing writes txn_seq/_meta, so preserve the sequencer-only optional sections.
+        return new WalWriterMetadata(ff, false, true);
     }
 
     public static void syncToMetaFile(
@@ -75,63 +89,45 @@ public class WalWriterMetadata extends AbstractRecordMetadata implements TableRe
             int tableId,
             RecordMetadata metadata
     ) {
-        final boolean firstWrite = metaMem.getAppendOffset() == 0;
-        metaMem.jumpTo(0);
-        // Size of metadata
-        if (firstWrite) {
-            metaMem.putInt(0);
-        } else {
-            // When overwriting the file, don't "blip" the size to zero
-            // in case there are concurrent readers.
-            metaMem.skip(Integer.BYTES);
-        }
-        metaMem.putInt(WAL_FORMAT_VERSION);
-        metaMem.putLong(structureVersion);
-        final long columnCountOffset = metaMem.getAppendOffset();
-        if (firstWrite) {
-            metaMem.putInt(0);
-        } else {
-            // Same as for the file-size, keep the old size until
-            // a new col count is patched at the end.
-            metaMem.skip(Integer.BYTES);
-        }
-        metaMem.putInt(timestampIndex);
-        metaMem.putInt(tableId);
-        // we do not persist suspended flag anymore, suspended flag is in SeqTxnTracker
-        // field is kept for backwards compatibility only, the value is irrelevant
-        metaMem.putBool(false);
-        for (int i = 0; i < columnCount; i++) {
-            final int columnType = metadata.getColumnType(i);
-            metaMem.putInt(columnType);
-            metaMem.putStr(metadata.getColumnName(i));
-        }
-
-        // To avoid consistency issues with concurrent readers,
-        // update the column count and file size last.
-        final long size = metaMem.getAppendOffset();
-        metaMem.putInt(0, (int) size);
-        metaMem.putInt(columnCountOffset, columnCount);
+        syncToMetaFile(metaMem, structureVersion, columnCount, timestampIndex, tableId, metadata, null, false);
     }
 
     @Override
     public void addColumn(
             String columnName,
             int columnType,
-            boolean columnIndexed,
+            byte indexType,
             int indexValueBlockCapacity,
             boolean symbolTableStatic,
             int writerIndex,
             boolean isDedupKey,
             boolean symbolIsCached,
-            int symbolCapacity
+            int symbolCapacity,
+            @Transient IntList coveringColumnIndices
     ) {
-        addColumn0(
-                columnName,
-                columnType,
-                symbolCapacity,
-                symbolIsCached,
-                isDedupKey
-        );
+        if (fullSequencerMetadata) {
+            addFullSequencerColumn(
+                    columnName,
+                    columnType,
+                    indexType,
+                    indexValueBlockCapacity,
+                    symbolTableStatic,
+                    writerIndex,
+                    isDedupKey,
+                    symbolIsCached,
+                    symbolCapacity,
+                    coveringColumnIndices
+            );
+        } else {
+            // WAL segment _meta stays lightweight; checkpointed txn_seq/_meta uses fullSequencerMetadata.
+            addColumn0(
+                    columnName,
+                    columnType,
+                    symbolCapacity,
+                    symbolIsCached,
+                    isDedupKey
+            );
+        }
     }
 
     public void addColumn(
@@ -156,7 +152,7 @@ public class WalWriterMetadata extends AbstractRecordMetadata implements TableRe
             int columnType,
             int symbolCapacity,
             boolean symbolCacheFlag,
-            boolean isIndexed,
+            byte indexType,
             int indexValueBlockCapacity
     ) {
         TableUtils.changeColumnTypeInMetadata(
@@ -164,13 +160,18 @@ public class WalWriterMetadata extends AbstractRecordMetadata implements TableRe
                 columnType,
                 symbolCapacity,
                 symbolCacheFlag,
-                isIndexed,
+                indexType,
                 indexValueBlockCapacity,
                 columnNameIndexMap,
                 columnMetadata
         );
         columnCount++;
         structureVersion++;
+    }
+
+    @Override
+    public void clear() {
+        reset();
     }
 
     @Override
@@ -216,6 +217,11 @@ public class WalWriterMetadata extends AbstractRecordMetadata implements TableRe
     }
 
     @Override
+    public boolean requiresFullReadColumnOrder() {
+        return fullSequencerMetadata;
+    }
+
+    @Override
     public void of(
             TableToken tableToken,
             int tableId,
@@ -229,6 +235,10 @@ public class WalWriterMetadata extends AbstractRecordMetadata implements TableRe
         this.tableId = tableId;
         this.timestampIndex = timestampIndex;
         this.structureVersion = structureVersion;
+        this.readColumnOrder.clear();
+        if (fullSequencerMetadata && readColumnOrder != null) {
+            this.readColumnOrder.addAll(readColumnOrder);
+        }
     }
 
     public void removeColumn(CharSequence columnName) {
@@ -252,7 +262,74 @@ public class WalWriterMetadata extends AbstractRecordMetadata implements TableRe
             metaMem.close(truncate, Vm.TRUNCATE_TO_POINTER);
         }
         openSmallFile(ff, path, pathLen, metaMem, META_FILE_NAME, MemoryTag.MMAP_SEQUENCER_METADATA);
-        syncToMetaFile(metaMem, structureVersion, columnCount, timestampIndex, tableId, this);
+        syncToMetaFile(
+                metaMem,
+                structureVersion,
+                columnCount,
+                timestampIndex,
+                tableId,
+                this,
+                readColumnOrder,
+                fullSequencerMetadata
+        );
+    }
+
+    private static void syncToMetaFile(
+            MemoryMARW metaMem,
+            long structureVersion,
+            int columnCount,
+            int timestampIndex,
+            int tableId,
+            RecordMetadata metadata,
+            IntList readColumnOrder,
+            boolean fullSequencerMetadata
+    ) {
+        final boolean firstWrite = metaMem.getAppendOffset() == 0;
+        metaMem.jumpTo(0);
+        // Size of metadata
+        if (firstWrite) {
+            metaMem.putInt(0);
+        } else {
+            // When overwriting the file, don't "blip" the size to zero
+            // in case there are concurrent readers.
+            metaMem.skip(Integer.BYTES);
+        }
+        metaMem.putInt(WAL_FORMAT_VERSION);
+        metaMem.putLong(structureVersion);
+        final long columnCountOffset = metaMem.getAppendOffset();
+        if (firstWrite) {
+            metaMem.putInt(0);
+        } else {
+            // Same as for the file-size, keep the old size until
+            // a new col count is patched at the end.
+            metaMem.skip(Integer.BYTES);
+        }
+        metaMem.putInt(timestampIndex);
+        metaMem.putInt(tableId);
+        // we do not persist suspended flag anymore, suspended flag is in SeqTxnTracker
+        // field is kept for backwards compatibility only, the value is irrelevant
+        metaMem.putBool(false);
+        for (int i = 0; i < columnCount; i++) {
+            final int columnType = metadata.getColumnType(i);
+            metaMem.putInt(columnType);
+            metaMem.putStr(metadata.getColumnName(i));
+        }
+
+        if (fullSequencerMetadata) {
+            long checkSum = columnCount;
+            for (int i = 0; i < columnCount; i++) {
+                final int columnType = metadata.getColumnType(i);
+                checkSum = checkSum * 31 + columnType;
+                checkSum = checkSum * 31 + metadata.getColumnName(i).hashCode();
+            }
+            writeSequencerMetadataOptionalSections(metaMem, columnCount, checkSum, metadata, readColumnOrder);
+        }
+
+        // To avoid consistency issues with concurrent readers,
+        // update the column count and file size last.
+        final long size = metaMem.getAppendOffset();
+        metaMem.putInt(0, (int) size);
+        metaMem.putInt(columnCountOffset, columnCount);
     }
 
     private void addColumn0(
@@ -273,7 +350,7 @@ public class WalWriterMetadata extends AbstractRecordMetadata implements TableRe
                 new TableColumnMetadata(
                         name,
                         columnType,
-                        false,
+                        IndexType.NONE,
                         0,
                         false,
                         null,
@@ -287,9 +364,46 @@ public class WalWriterMetadata extends AbstractRecordMetadata implements TableRe
         columnCount++;
     }
 
+    private void addFullSequencerColumn(
+            CharSequence columnName,
+            int columnType,
+            byte indexType,
+            int indexValueBlockCapacity,
+            boolean symbolTableStatic,
+            int writerIndex,
+            boolean isDedupKey,
+            boolean symbolCacheFlag,
+            int symbolCapacity,
+            @Transient IntList coveringColumnIndices
+    ) {
+        final String name = columnName.toString();
+        if (columnType > 0) {
+            columnNameIndexMap.put(name, columnMetadata.size());
+        }
+        TableColumnMetadata columnMetadata = new TableColumnMetadata(
+                name,
+                columnType,
+                indexType,
+                indexValueBlockCapacity,
+                symbolTableStatic,
+                null,
+                writerIndex,
+                isDedupKey,
+                0,
+                symbolCacheFlag,
+                symbolCapacity
+        );
+        if (coveringColumnIndices != null) {
+            columnMetadata.setCoveringColumnIndices(new IntList(coveringColumnIndices));
+        }
+        this.columnMetadata.add(columnMetadata);
+        columnCount++;
+    }
+
     private void reset() {
         columnMetadata.clear();
         columnNameIndexMap.clear();
+        readColumnOrder.clear();
         columnCount = 0;
         timestampIndex = -1;
         tableToken = null;
