@@ -282,6 +282,29 @@ public class DistinctTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDistinctQualifiedColumnInExprWithBindVariableFromFuzzer() throws Exception {
+        // Bind-form of the prior fuzzer query. The bind cast steals the early aliases
+        // ("cast", "cast1") so the bare t0.x projection keeps its user alias "x". The
+        // earlier qualified emit for (t0.x)::CHAR had already registered "x" in the
+        // translating model under the stripped key, and createSelectColumn needed the
+        // same qualified-vs-stripped retry as doReplaceLiteral0 to reuse that entry
+        // instead of renaming the bare projection to "x1" and breaking the DISTINCT
+        // wrapper's lookup.
+        assertMemoryLeak(() -> {
+            bindVariableService.clear();
+            bindVariableService.setStr("b0", "Y");
+            assertSql(
+                    "cast\tcast1\tx\n" +
+                            "Y\t\t1\n" +
+                            "Y\t\t2\n" +
+                            "Y\t\t3\n",
+                    "SELECT DISTINCT :b0::CHAR, (t0.x)::CHAR, t0.x" +
+                            " FROM long_sequence(3) t0"
+            );
+        });
+    }
+
+    @Test
     public void testDuplicateColumnInWhereClauseSubQuery() throws Exception {
         assertQuery(
                 """

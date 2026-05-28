@@ -2651,7 +2651,17 @@ public class SqlOptimiser implements Mutable {
         // taking into account that column is pre-aliased, e.g.
         // "col, col" will look like "col, col col1"
 
-        final CharSequence translatedColumnName = translatingModel.getColumnNameToAliasMap().get(columnAst.token);
+        CharSequence translatedColumnName = translatingModel.getColumnNameToAliasMap().get(columnAst.token);
+        if (translatedColumnName == null && baseModel != null && baseModel.getJoinModels().size() == 1) {
+            // Single base model: addColumnToTranslatingModel stripped the prefix on an
+            // earlier qualified emit, so retry under the stripped key to reuse it rather
+            // than synthesising a new alias that breaks outer-model lookups.
+            final int dot = Chars.indexOfLastUnquoted(columnAst.token, '.');
+            if (dot != -1) {
+                translatedColumnName = translatingModel.getColumnNameToAliasMap()
+                        .get(columnAst.token, dot + 1, columnAst.token.length());
+            }
+        }
         if (translatedColumnName != null) {
             // the column is already being referenced by the translating model
             final CharSequence groupByColumnName = groupByModel.getColumnNameToAliasMap().get(translatedColumnName);
