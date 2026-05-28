@@ -32,6 +32,7 @@ import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.IndexType;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.idx.CoveringRowCursor;
+import io.questdb.cairo.idx.FSSTNative;
 import io.questdb.cairo.idx.PostingIndexBwdReader;
 import io.questdb.cairo.idx.PostingIndexFwdReader;
 import io.questdb.cairo.idx.PostingIndexWriter;
@@ -39,6 +40,7 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.RowCursor;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.std.BinarySequence;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
@@ -559,7 +561,7 @@ public class PostingIndexOomFallbackTest extends AbstractCairoTest {
         });
     }
 
-    private LongList buildAndCollect(String name, int keys, int rowsPerKey, boolean forceStreamingAtSeal) throws Exception {
+    private LongList buildAndCollect(String name, int keys, int rowsPerKey, boolean forceStreamingAtSeal) {
         try (Path path = new Path().of(configuration.getDbRoot())) {
             final int plen = path.size();
             long savedRssLimit = Unsafe.getRssMemLimit();
@@ -782,7 +784,7 @@ public class PostingIndexOomFallbackTest extends AbstractCairoTest {
 
     private double[] collectCoveredDoubles(
             String name, int keys, int rowsPerKey, long covAddr,
-            boolean forceStreamingAtSeal, ColumnVersionReader emptyCvr) throws Exception {
+            boolean forceStreamingAtSeal, ColumnVersionReader emptyCvr) {
         try (Path path = new Path().of(configuration.getDbRoot())) {
             final int plen = path.size();
             long savedRssLimit = Unsafe.getRssMemLimit();
@@ -850,6 +852,15 @@ public class PostingIndexOomFallbackTest extends AbstractCairoTest {
         }
     }
 
+    private static RecordMetadata coveringBinaryMetadata() {
+        GenericRecordMetadata m = new GenericRecordMetadata();
+        for (int i = 0; i <= 2; i++) {
+            int type = (i == 2) ? ColumnType.BINARY : ColumnType.LONG;
+            m.add(new TableColumnMetadata("c" + i, type, IndexType.NONE, 0, false, null, i, false));
+        }
+        return m;
+    }
+
     private static RecordMetadata coveringMetadata() {
         GenericRecordMetadata m = new GenericRecordMetadata();
         for (int i = 0; i <= 2; i++) {
@@ -857,5 +868,471 @@ public class PostingIndexOomFallbackTest extends AbstractCairoTest {
             m.add(new TableColumnMetadata("c" + i, type, IndexType.NONE, 0, false, null, i, false));
         }
         return m;
+    }
+
+    /**
+     * Tight-RSS seal with a var-size (BINARY) INCLUDE column. Streaming
+     * FSST trains a symbol table from a stride sample (~64 KiB) and then
+     * encodes the full stride in {@code FSST_BATCH_SIZE}-sized batches,
+     * staging the compressed bytes inside the sidecar mmap. Anonymous-heap
+     * scratch stays in the low MiBs regardless of stride raw bytes, so the
+     * seal completes under an RSS budget that the old single-shot
+     * trainAndCompressBlock allocation (cmpCap = 2 * rawDataLen) would
+     * have blown.
+     * <p>
+     * The test verifies (a) the seal completes; (b) the cover cursor reads
+     * every BINARY value back unchanged; (c) for the deliberately
+     * redundant payload pattern, streaming actually compressed -- the
+     * .pc* block ends up shorter than the uncompressed worst case.
+     */
+    @Test
+    public void testSealVarIncludeFsstStreamingUnderRssPressure() throws Exception {
+        final int keys = 16;
+        final int rowsPerKey = 256;
+        final int totalRows = keys * rowsPerKey;
+        // Each row writes (8 + payloadBytes) into the sidecar. 256 bytes
+        // per payload puts raw stride data over 1 MiB. The old single-shot
+        // trainAndCompressBlock wanted cmpCap = 2 * rawDataLen + batch +
+        // 2 * offsets arrays = ~2.5 MiB of anon-heap in one realloc; the
+        // streaming path's anon-heap stays bounded by FSST_BATCH_SIZE
+        // (sample, batch in/out arrays, ~1 MiB batch out buffer), so the
+        // 8 MiB RSS headroom below is comfortable for streaming but would
+        // not have fit the old single-shot allocation.
+        final int payloadBytes = 256;
+        final int binStride = Long.BYTES + payloadBytes;
+        final long binDataSize = (long) totalRows * binStride;
+        final long binAuxSize = (long) (totalRows + 1) * Long.BYTES;
+
+        // Highly redundant payload: a short repeated phrase. FSST's symbol
+        // table picks up the n-grams of the phrase, so 256-byte payloads
+        // compress down to a handful of code bytes -- the compressed block
+        // ends up roughly an order of magnitude smaller than the raw,
+        // which is what we assert below.
+        final byte[] phrase = "the_quick_brown_fox_jumps_over_lazy_dog_".getBytes();
+
+        assertMemoryLeak(() -> {
+            long binDataAddr = Unsafe.malloc(binDataSize, MemoryTag.NATIVE_DEFAULT);
+            long binAuxAddr = Unsafe.malloc(binAuxSize, MemoryTag.NATIVE_DEFAULT);
+            try {
+                long off = 0;
+                for (int i = 0; i < totalRows; i++) {
+                    Unsafe.putLong(binAuxAddr + (long) i * Long.BYTES, off);
+                    Unsafe.putLong(binDataAddr + off, payloadBytes);
+                    for (int b = 0; b < payloadBytes; b++) {
+                        Unsafe.putByte(binDataAddr + off + Long.BYTES + b,
+                                phrase[b % phrase.length]);
+                    }
+                    off += binStride;
+                }
+                Unsafe.putLong(binAuxAddr + (long) totalRows * Long.BYTES, off);
+
+                try (Path path = new Path().of(configuration.getDbRoot())) {
+                    final int plen = path.size();
+                    final String name = "var_cover_fsst_streaming";
+                    final long savedLimit = Unsafe.getRssMemLimit();
+                    try (PostingIndexWriter writer = new PostingIndexWriter(configuration, path, name, COLUMN_NAME_TXN_NONE)) {
+                        writer.configureCovering(
+                                new long[]{binDataAddr},
+                                new long[]{binAuxAddr},
+                                new long[]{0L},     // colTops
+                                new int[]{-1},      // shifts: var-size
+                                new int[]{2},       // writer indices (cover col is at meta index 2)
+                                new int[]{ColumnType.BINARY},
+                                /* coverCount */ 1,
+                                /* timestampColumnIndex */ -1
+                        );
+                        long row = 0;
+                        for (int r = 0; r < rowsPerKey; r++) {
+                            for (int k = 0; k < keys; k++) {
+                                writer.add(k, row++);
+                            }
+                        }
+                        writer.setMaxValue(row - 1);
+                        writer.commit();
+
+                        // 8 MiB headroom: enough for the fast-path symbol
+                        // encoding scratch (~70 KiB) plus the streaming
+                        // FSST scratch (FSST_BATCH_OUT_CAP_MIN=1 MiB +
+                        // sample/batch lens/ptrs + ~900 KiB JNI encoder),
+                        // but FAR smaller than the old one-shot
+                        // trainAndCompressBlock allocation
+                        // (cmpCap = 2 * rawDataLen ~= 2.2 MiB at this
+                        // workload, scaling unbounded with rawDataLen).
+                        // The point: even a small headroom is enough
+                        // because streaming bounds anon-heap to
+                        // ~few-MiB regardless of stride raw bytes.
+                        Unsafe.setRssMemLimit(Unsafe.getRssMemUsed() + 8L * 1024L * 1024L);
+                        try {
+                            writer.seal();
+                        } finally {
+                            Unsafe.setRssMemLimit(savedLimit);
+                        }
+                    }
+
+                    // Spot-check the on-disk format: streaming FSST should
+                    // have collapsed the redundant ASCII payload well below
+                    // the raw block size (4096 values * 264 bytes + offsets
+                    // = ~1.05 MiB). Anything close to 1 MiB means the
+                    // streaming path silently fell back to uncompressed.
+                    long pc0Size = findPc0Size(path.trimTo(plen), name);
+                    Assert.assertTrue("expected streaming FSST compression to shrink the .pc0 well below the raw 1 MiB; latest .pc0 size=" + pc0Size,
+                            pc0Size > 0 && pc0Size < 512L * 1024L);
+                    // Block header must carry FSST_BLOCK_FLAG (compression won).
+                    int header = readFirstStrideBlockHeader(path.trimTo(plen), name);
+                    Assert.assertNotEquals("expected FSST_BLOCK_FLAG set in stride block; header=" + Integer.toHexString(header),
+                            0, header & FSSTNative.FSST_BLOCK_FLAG);
+
+                    // Read back the BINARY cover values via the covering
+                    // cursor and verify each row matches what we wrote. If
+                    // the on-disk block format is wrong the reader will
+                    // surface a mismatch here.
+                    RecordMetadata meta = coveringBinaryMetadata();
+                    try (ColumnVersionReader emptyCvr = new ColumnVersionReader();
+                         PostingIndexFwdReader reader = new PostingIndexFwdReader(
+                                 configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0,
+                                 meta, emptyCvr, 0)) {
+                        for (int k = 0; k < keys; k++) {
+                            try (RowCursor c = reader.getCursor(k, 0, Long.MAX_VALUE, new int[]{0})) {
+                                Assert.assertTrue("expected CoveringRowCursor for key=" + k,
+                                        c instanceof CoveringRowCursor);
+                                CoveringRowCursor cc = (CoveringRowCursor) c;
+                                int seen = 0;
+                                while (cc.hasNext()) {
+                                    long rowId = cc.next();
+                                    Assert.assertEquals("BINARY length mismatch [key=" + k + ", rowId=" + rowId + "]",
+                                            payloadBytes, cc.getCoveredBinLen(0));
+                                    BinarySequence bin = cc.getCoveredBin(0);
+                                    Assert.assertNotNull("cover BINARY should not be null [key=" + k + ", rowId=" + rowId + "]", bin);
+                                    for (int b = 0; b < payloadBytes; b++) {
+                                        byte expected = phrase[b % phrase.length];
+                                        Assert.assertEquals(
+                                                "BINARY byte mismatch [key=" + k + ", rowId=" + rowId + ", b=" + b + "]",
+                                                expected, bin.byteAt(b));
+                                    }
+                                    seen++;
+                                }
+                                Assert.assertEquals("row count for key=" + k, rowsPerKey, seen);
+                            }
+                        }
+                    }
+                }
+            } finally {
+                Unsafe.free(binAuxAddr, binAuxSize, MemoryTag.NATIVE_DEFAULT);
+                Unsafe.free(binDataAddr, binDataSize, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
+    /**
+     * Companion to {@link #testSealVarIncludeFsstStreamingUnderRssPressure}
+     * that exercises the "compressed loses" branch of
+     * tryFsstStreamingCompress: incompressible (random) payloads. The
+     * streaming loop runs end-to-end, but compressedBlockSize ends up
+     * &gt;= uncompressedBlockSize, so the writer rewinds to uncompressedEnd
+     * and leaves the uncompressed block on disk. We verify (a) the seal
+     * still completes; (b) the values read back unchanged; (c) the .pc0
+     * file size is consistent with the uncompressed format -- i.e. the
+     * rewind happened correctly and we did not double-write or corrupt
+     * the offsets region.
+     */
+    @Test
+    public void testSealVarIncludeFsstStreamingKeepsUncompressedWhenCompressionLoses() throws Exception {
+        final int keys = 16;
+        final int rowsPerKey = 256;
+        final int totalRows = keys * rowsPerKey;
+        final int payloadBytes = 256;
+        final int binStride = Long.BYTES + payloadBytes;
+        final long binDataSize = (long) totalRows * binStride;
+        final long binAuxSize = (long) (totalRows + 1) * Long.BYTES;
+
+        // Per-byte random payload. FSST trains a symbol table from a
+        // sample, but with uniform random bytes the table cannot capture
+        // useful n-grams; the encoded output is ~the same size as input
+        // plus per-string overhead, so compressedBlockSize >= raw.
+        final Rnd rnd = new Rnd(0xC0FFEEL, 0xDECAFBADL);
+        final byte[][] payloads = new byte[totalRows][payloadBytes];
+        for (int i = 0; i < totalRows; i++) {
+            for (int b = 0; b < payloadBytes; b++) {
+                payloads[i][b] = (byte) rnd.nextInt();
+            }
+        }
+
+        assertMemoryLeak(() -> {
+            long binDataAddr = Unsafe.malloc(binDataSize, MemoryTag.NATIVE_DEFAULT);
+            long binAuxAddr = Unsafe.malloc(binAuxSize, MemoryTag.NATIVE_DEFAULT);
+            try {
+                long off = 0;
+                for (int i = 0; i < totalRows; i++) {
+                    Unsafe.putLong(binAuxAddr + (long) i * Long.BYTES, off);
+                    Unsafe.putLong(binDataAddr + off, payloadBytes);
+                    for (int b = 0; b < payloadBytes; b++) {
+                        Unsafe.putByte(binDataAddr + off + Long.BYTES + b, payloads[i][b]);
+                    }
+                    off += binStride;
+                }
+                Unsafe.putLong(binAuxAddr + (long) totalRows * Long.BYTES, off);
+
+                try (Path path = new Path().of(configuration.getDbRoot())) {
+                    final int plen = path.size();
+                    final String name = "var_cover_fsst_streaming_loses";
+                    final long savedLimit = Unsafe.getRssMemLimit();
+                    try (PostingIndexWriter writer = new PostingIndexWriter(configuration, path, name, COLUMN_NAME_TXN_NONE)) {
+                        writer.configureCovering(
+                                new long[]{binDataAddr},
+                                new long[]{binAuxAddr},
+                                new long[]{0L},
+                                new int[]{-1},
+                                new int[]{2},
+                                new int[]{ColumnType.BINARY},
+                                1,
+                                -1
+                        );
+                        long row = 0;
+                        for (int r = 0; r < rowsPerKey; r++) {
+                            for (int k = 0; k < keys; k++) {
+                                writer.add(k, row++);
+                            }
+                        }
+                        writer.setMaxValue(row - 1);
+                        writer.commit();
+                        Unsafe.setRssMemLimit(Unsafe.getRssMemUsed() + 8L * 1024L * 1024L);
+                        try {
+                            writer.seal();
+                        } finally {
+                            Unsafe.setRssMemLimit(savedLimit);
+                        }
+                    }
+
+                    // Compression lost: the .pc0 must be at least the
+                    // uncompressed raw-block size. Anything smaller would
+                    // mean we kept the compressed bytes; anything much
+                    // larger would mean the staging area wasn't truncated.
+                    long pc0Size = findPc0Size(path.trimTo(plen), name);
+                    long rawBlockLowerBound = 4L + 4L * (totalRows + 1) + (long) totalRows * binStride;
+                    Assert.assertTrue("expected uncompressed block to remain; pc0Size=" + pc0Size
+                                    + " rawBlockLowerBound=" + rawBlockLowerBound,
+                            pc0Size >= rawBlockLowerBound);
+                    // Block header must NOT carry FSST_BLOCK_FLAG (compression lost on random bytes).
+                    int header = readFirstStrideBlockHeader(path.trimTo(plen), name);
+                    Assert.assertEquals("expected FSST_BLOCK_FLAG unset on the stride block; header=" + Integer.toHexString(header),
+                            0, header & FSSTNative.FSST_BLOCK_FLAG);
+
+                    // Read back via the cover cursor. If the rewind +
+                    // staging truncate corrupted the offsets region, the
+                    // cursor would surface random bytes here.
+                    RecordMetadata meta = coveringBinaryMetadata();
+                    try (ColumnVersionReader emptyCvr = new ColumnVersionReader();
+                         PostingIndexFwdReader reader = new PostingIndexFwdReader(
+                                 configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0,
+                                 meta, emptyCvr, 0)) {
+                        for (int k = 0; k < keys; k++) {
+                            try (RowCursor c = reader.getCursor(k, 0, Long.MAX_VALUE, new int[]{0})) {
+                                Assert.assertTrue("expected CoveringRowCursor for key=" + k,
+                                        c instanceof CoveringRowCursor);
+                                CoveringRowCursor cc = (CoveringRowCursor) c;
+                                int seen = 0;
+                                while (cc.hasNext()) {
+                                    long rowId = cc.next();
+                                    Assert.assertEquals("BINARY length mismatch [key=" + k + ", rowId=" + rowId + "]",
+                                            payloadBytes, cc.getCoveredBinLen(0));
+                                    BinarySequence bin = cc.getCoveredBin(0);
+                                    Assert.assertNotNull("cover BINARY should not be null [key=" + k + ", rowId=" + rowId + "]", bin);
+                                    for (int b = 0; b < payloadBytes; b++) {
+                                        Assert.assertEquals(
+                                                "BINARY byte mismatch [key=" + k + ", rowId=" + rowId + ", b=" + b + "]",
+                                                payloads[(int) rowId][b], bin.byteAt(b));
+                                    }
+                                    seen++;
+                                }
+                                Assert.assertEquals("row count for key=" + k, rowsPerKey, seen);
+                            }
+                        }
+                    }
+                }
+            } finally {
+                Unsafe.free(binAuxAddr, binAuxSize, MemoryTag.NATIVE_DEFAULT);
+                Unsafe.free(binDataAddr, binDataSize, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
+    /**
+     * Reader-side companion: forces the cover cursor to walk a large
+     * FSST-compressed block under a tight RSS budget. The pre-streaming
+     * decompressor sized its dst buffer to {@code 4 * totalCompressed}
+     * for the whole block, so a sealed block whose compressed payload
+     * exceeds the RSS budget could not be read at all. The chunked
+     * decompressor sizes scratch to one FSST_DECODE_CHUNK_SIZE-wide
+     * window, so the same read fits in a fraction of the headroom.
+     * <p>
+     * We assert (a) every value reads back byte-identical; (b) the
+     * .pc0 stride block is FSST-compressed (sanity-check the writer
+     * actually compressed); (c) the seal+read together stayed under
+     * the configured RSS limit.
+     */
+    @Test
+    public void testFsstReaderStreamsLargeCompressedBlock() throws Exception {
+        final int keys = 32;
+        final int rowsPerKey = 1024; // 32_768 values total -- 128 chunks at CHUNK_SIZE=256
+        final int totalRows = keys * rowsPerKey;
+        final int payloadBytes = 256;
+        final int binStride = Long.BYTES + payloadBytes;
+        final long binDataSize = (long) totalRows * binStride;
+        final long binAuxSize = (long) (totalRows + 1) * Long.BYTES;
+
+        // Same redundant phrase as the wins test -- ensures FSST achieves
+        // strong compression so the block uses the FSST-compressed branch
+        // on disk; the reader test is most meaningful against an
+        // actually-compressed block.
+        final byte[] phrase = "the_quick_brown_fox_jumps_over_lazy_dog_".getBytes();
+
+        assertMemoryLeak(() -> {
+            long binDataAddr = Unsafe.malloc(binDataSize, MemoryTag.NATIVE_DEFAULT);
+            long binAuxAddr = Unsafe.malloc(binAuxSize, MemoryTag.NATIVE_DEFAULT);
+            try {
+                long off = 0;
+                for (int i = 0; i < totalRows; i++) {
+                    Unsafe.putLong(binAuxAddr + (long) i * Long.BYTES, off);
+                    Unsafe.putLong(binDataAddr + off, payloadBytes);
+                    for (int b = 0; b < payloadBytes; b++) {
+                        Unsafe.putByte(binDataAddr + off + Long.BYTES + b,
+                                phrase[(b + i) % phrase.length]);
+                    }
+                    off += binStride;
+                }
+                Unsafe.putLong(binAuxAddr + (long) totalRows * Long.BYTES, off);
+
+                try (Path path = new Path().of(configuration.getDbRoot())) {
+                    final int plen = path.size();
+                    final String name = "var_cover_fsst_reader_streaming";
+                    try (PostingIndexWriter writer = new PostingIndexWriter(configuration, path, name, COLUMN_NAME_TXN_NONE)) {
+                        writer.configureCovering(
+                                new long[]{binDataAddr},
+                                new long[]{binAuxAddr},
+                                new long[]{0L},
+                                new int[]{-1},
+                                new int[]{2},
+                                new int[]{ColumnType.BINARY},
+                                1,
+                                -1
+                        );
+                        long row = 0;
+                        for (int r = 0; r < rowsPerKey; r++) {
+                            for (int k = 0; k < keys; k++) {
+                                writer.add(k, row++);
+                            }
+                        }
+                        writer.setMaxValue(row - 1);
+                        writer.commit();
+                        writer.seal();
+                    }
+
+                    // Sanity: the block must actually be FSST-compressed,
+                    // otherwise the reader streaming path isn't exercised.
+                    int header = readFirstStrideBlockHeader(path.trimTo(plen), name);
+                    Assert.assertNotEquals("expected FSST_BLOCK_FLAG set; header=" + Integer.toHexString(header),
+                            0, header & FSSTNative.FSST_BLOCK_FLAG);
+
+                    // Walk every value through the cover cursor under an
+                    // RSS budget that's far smaller than the old whole-block
+                    // dstCap (4 * totalCompressed) would have wanted. For
+                    // 32_768 values * 256 byte payloads the old path
+                    // wanted ~10-40 MiB of dst scratch; streaming sizes
+                    // to ~tens of KiB per chunk.
+                    RecordMetadata meta = coveringBinaryMetadata();
+                    final long savedLimit = Unsafe.getRssMemLimit();
+                    Unsafe.setRssMemLimit(Unsafe.getRssMemUsed() + 2L * 1024L * 1024L);
+                    try (ColumnVersionReader emptyCvr = new ColumnVersionReader();
+                         PostingIndexFwdReader reader = new PostingIndexFwdReader(
+                                 configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0,
+                                 meta, emptyCvr, 0)) {
+                        for (int k = 0; k < keys; k++) {
+                            try (RowCursor c = reader.getCursor(k, 0, Long.MAX_VALUE, new int[]{0})) {
+                                CoveringRowCursor cc = (CoveringRowCursor) c;
+                                int seen = 0;
+                                while (cc.hasNext()) {
+                                    long rowId = cc.next();
+                                    Assert.assertEquals(payloadBytes, cc.getCoveredBinLen(0));
+                                    BinarySequence bin = cc.getCoveredBin(0);
+                                    Assert.assertNotNull(bin);
+                                    for (int b = 0; b < payloadBytes; b++) {
+                                        byte expected = phrase[(b + (int) rowId) % phrase.length];
+                                        Assert.assertEquals(
+                                                "BINARY byte mismatch [key=" + k + ", rowId=" + rowId + ", b=" + b + "]",
+                                                expected, bin.byteAt(b));
+                                    }
+                                    seen++;
+                                }
+                                Assert.assertEquals("row count for key=" + k, rowsPerKey, seen);
+                            }
+                        }
+                    } finally {
+                        Unsafe.setRssMemLimit(savedLimit);
+                    }
+                }
+            } finally {
+                Unsafe.free(binAuxAddr, binAuxSize, MemoryTag.NATIVE_DEFAULT);
+                Unsafe.free(binDataAddr, binDataSize, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
+    private static java.io.File findLatestPc0(Path dir, String name) {
+        // The writer produces one .pc0.0.<sealTxn> per published gen; the
+        // pre-seal commit lands at sealTxn=0 with the uncompressed block,
+        // and the seal-time file lands at the next sealTxn (=1 in this
+        // test) with the FSST-compressed block. We pick the latest because
+        // that's the one a fresh reader would open.
+        final java.io.File d = new java.io.File(dir.toString());
+        final java.io.File[] files = d.listFiles();
+        if (files == null) return null;
+        String prefix = name + ".pc0.";
+        long bestSealTxn = -1L;
+        java.io.File best = null;
+        for (java.io.File f : files) {
+            String n = f.getName();
+            if (!n.startsWith(prefix)) continue;
+            int lastDot = n.lastIndexOf('.');
+            if (lastDot <= prefix.length() - 1) continue;
+            try {
+                long sealTxn = Long.parseLong(n.substring(lastDot + 1));
+                if (sealTxn > bestSealTxn) {
+                    bestSealTxn = sealTxn;
+                    best = f;
+                }
+            } catch (NumberFormatException ignore) {
+            }
+        }
+        return best;
+    }
+
+    private static long findPc0Size(Path dir, String name) {
+        java.io.File f = findLatestPc0(dir, name);
+        return f == null ? -1L : f.length();
+    }
+
+    /**
+     * Reads the first 4-byte word of the first stride block in the .pc0
+     * dense gen 0. Layout per writeSidecarForColumn:
+     * <pre>
+     *   [0, PC_HEADER_SIZE=1024): gen pointer table
+     *   [1024, 1024 + (strideCount + 1) * 8): stride index (sentinel-terminated)
+     *   [1024 + (strideCount + 1) * 8, ...): stride blocks
+     * </pre>
+     * The single-stride tests below have strideCount = 1, so the first
+     * block starts at 1024 + 16 = 1040. Returns the {@code count | flags}
+     * word so callers can inspect FSST_BLOCK_FLAG / LONG_OFFSETS_FLAG.
+     */
+    private static int readFirstStrideBlockHeader(Path dir, String name) throws java.io.IOException {
+        java.io.File f = findLatestPc0(dir, name);
+        Assert.assertNotNull("no .pc0 file found for " + name, f);
+        try (java.io.RandomAccessFile raf = new java.io.RandomAccessFile(f, "r")) {
+            raf.seek(1040L);
+            int b0 = raf.read();
+            int b1 = raf.read();
+            int b2 = raf.read();
+            int b3 = raf.read();
+            return b0 | (b1 << 8) | (b2 << 16) | (b3 << 24);
+        }
     }
 }

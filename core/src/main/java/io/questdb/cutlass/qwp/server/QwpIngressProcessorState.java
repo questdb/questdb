@@ -149,7 +149,9 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
                     configuration.autoCreateNewColumns(),
                     configuration.autoCreateNewTables(),
                     defaultColumnTypes,
-                    configuration.getDefaultPartitionBy()
+                    configuration.getDefaultPartitionBy(),
+                    -1,
+                    configuration.getQwpMaxUncommittedRows()
             );
 
             this.bufferSize = initBufferSize;
@@ -186,6 +188,18 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
         streamingDecoder.reset();
         handshakeFlushPending = false;
         pendingHandshakeBytes = 0;
+    }
+
+    /**
+     * Resets per-message parsing buffers without rolling back WAL state.
+     * Used between deferred-commit messages where the accumulated WAL
+     * rows must survive until the final commit.
+     */
+    public void clearMessageState() {
+        error.clear();
+        currentStatus = Status.OK;
+        bufferPosition = 0;
+        streamingDecoder.reset();
     }
 
     @Override
@@ -234,6 +248,16 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
         } catch (Throwable th) {
             tudCache.setDistressed();
             LOG.error().$('[').$(fd).$("] commit error: ").$(th).$();
+            rejectCommitError(th);
+        }
+    }
+
+    public void commitIfMaxUncommittedRowsReached() {
+        try {
+            tudCache.commitIfMaxUncommittedRowsReached(committedTxnConsumer);
+        } catch (Throwable th) {
+            tudCache.setDistressed();
+            LOG.error().$('[').$(fd).$("] deferred commit error: ").$(th).$();
             rejectCommitError(th);
         }
     }
@@ -314,6 +338,14 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
      */
     public boolean hasPendingAck() {
         return sendState == SEND_STATE_READY && highestProcessedSequence > lastAckedSequence;
+    }
+
+    public boolean isDeferCommit() {
+        if (bufferPosition >= QwpConstants.HEADER_SIZE) {
+            byte flags = Unsafe.getByte(bufferAddress + QwpConstants.HEADER_OFFSET_FLAGS);
+            return (flags & QwpConstants.FLAG_DEFER_COMMIT) != 0;
+        }
+        return false;
     }
 
     public boolean isDurableAckEnabled() {

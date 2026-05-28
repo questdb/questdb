@@ -81,7 +81,9 @@ public class LinuxMMQwpUdpReceiver extends QwpUdpReceiver {
             long p = msgVec;
             for (int i = 0; i < count; i++) {
                 int datagramState = processDatagram(nf.getMMsgBuf(p), (int) nf.getMMsgBufLen(p));
-                processedCount++;
+                if ((datagramState & DATAGRAM_DROPPED) == 0) {
+                    processedCount++;
+                }
                 if ((datagramState & DATAGRAM_TRIGGERED_COMMIT) != 0) {
                     totalCount = 0;
                 }

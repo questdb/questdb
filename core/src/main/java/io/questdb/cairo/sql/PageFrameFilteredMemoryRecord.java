@@ -65,6 +65,10 @@ import org.jetbrains.annotations.Nullable;
  * {@link UnsupportedOperationException}: the absolute index alone is not enough to position a
  * filtered record, so callers must use {@link #setFilteredRowIndex(long, long)}.
  * <p>
+ * Inherited {@link #getPageAddress(int)} is also overridden to throw: filter and non-filter
+ * columns use different indices, so a single raw page address has no consistent meaning here.
+ * Callers must read column data through the record's typed getters.
+ * <p>
  * For scenarios requiring full random access over an unfiltered frame, use
  * {@link PageFrameMemoryRecord} instead.
  *
@@ -357,6 +361,18 @@ public class PageFrameFilteredMemoryRecord extends PageFrameMemoryRecord {
             return;
         }
         NullMemoryCMR.INSTANCE.getLong256(0, sink);
+    }
+
+    /**
+     * @throws UnsupportedOperationException always. A filtered record has no single page address per column with
+     *                                       consistent indexing: filter columns hold full unfiltered data addressed
+     *                                       by the absolute row index, while non-filter columns hold compacted data
+     *                                       addressed by the compacted index. Read column data via the record's
+     *                                       typed getters instead.
+     */
+    @Override
+    public long getPageAddress(int columnIndex) {
+        throw new UnsupportedOperationException("PageFrameFilteredMemoryRecord cannot expose a single page address");
     }
 
     @Override
