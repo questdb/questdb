@@ -2040,16 +2040,21 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 // master, but master has no symbol table here so SymbolColumn.init asserts.
                 // Expose the column as master's type so the planner picks StrColumn etc.
                 // and reads via getStrA() from the map (where the slave key is stored).
+                // slaveTypes must follow the rewritten type as well: it feeds
+                // NullRecordFactory, and a SymbolConstant.NULL slot would throw from
+                // getVarcharSize / getVarcharB on the outer-join no-match path when
+                // master is VARCHAR.
                 final int masterKeyColIdx = masterTableKeyColumns.getColumnIndexFactored(i);
                 final int masterKeyColType = masterMetadata.getColumnType(masterKeyColIdx);
                 if (ColumnType.tagOf(m.getColumnType()) == ColumnType.SYMBOL
                         && ColumnType.tagOf(masterKeyColType) != ColumnType.SYMBOL) {
                     metadata.add(slaveAlias, new TableColumnMetadata(
                             m.getColumnName(), masterKeyColType, IndexType.NONE, 0, false, m.getMetadata()));
+                    slaveTypes.add(masterKeyColType);
                 } else {
                     metadata.add(slaveAlias, m);
+                    slaveTypes.add(m.getColumnType());
                 }
-                slaveTypes.add(m.getColumnType());
                 columnIndex.add(index);
             }
 

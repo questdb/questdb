@@ -395,6 +395,14 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         if (len == 0) {
             return UNDEFINED_CODE;
         }
+        // Reserved literal keywords (true / false) embed an 'e' that would
+        // otherwise trip the float scan below. Bail out before the numeric
+        // shape checks; null is rejected here too for symmetry with
+        // longConstantTypeCode, even though its shape would not match this
+        // detector.
+        if (isReservedConstantKeyword(token)) {
+            return UNDEFINED_CODE;
+        }
         char first = token.charAt(0);
         if (first == '\'' || first == '"' || first == '`' || first == '#' || first == ':') {
             return UNDEFINED_CODE;
@@ -435,6 +443,12 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                  ColumnType.DOUBLE, ColumnType.LONG128 -> true;
             default -> false;
         };
+    }
+
+    private static boolean isReservedConstantKeyword(CharSequence token) {
+        return SqlKeywords.isNullKeyword(token)
+                || SqlKeywords.isTrueKeyword(token)
+                || SqlKeywords.isFalseKeyword(token);
     }
 
     private static boolean isTopLevelOperation(ExpressionNode node) {
@@ -483,6 +497,14 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     private static int longConstantTypeCode(CharSequence token) {
         int len = token.length();
         if (len == 0) {
+            return UNDEFINED_CODE;
+        }
+        // Reserved literal keywords (null / NULL, true, false) end in
+        // 'l' / 'e' and would otherwise be folded into a bogus I8
+        // observation by the suffix check below. They have their own
+        // dedicated emission paths in serializeConstant and must not
+        // influence the narrow-widen pre-pass.
+        if (isReservedConstantKeyword(token)) {
             return UNDEFINED_CODE;
         }
         char first = token.charAt(0);

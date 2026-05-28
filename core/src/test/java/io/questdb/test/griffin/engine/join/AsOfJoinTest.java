@@ -394,6 +394,52 @@ public class AsOfJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAsOfJoinFullFatVarcharToSymbolKey() throws Exception {
+        // VARCHAR master + SYMBOL slave: createFullFatJoin must override
+        // both the output metadata AND slaveTypes to the master's type.
+        // Without the slaveTypes override the no-match null record holds
+        // a SymbolConstant.NULL slot whose getVarcharSize throws.
+        assertMemoryLeak(() -> {
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                compiler.setFullFatJoins(true);
+                executeWithRewriteTimestamp(
+                        "CREATE TABLE master_vch (v VARCHAR, ts #TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY",
+                        leftTableTimestampType.getTypeName()
+                );
+                executeWithRewriteTimestamp(
+                        "CREATE TABLE slave_sym (sym SYMBOL, price DOUBLE, ts #TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY",
+                        rightTableTimestampType.getTypeName()
+                );
+                execute(compiler, """
+                        INSERT INTO master_vch VALUES
+                            ('A', '2024-01-01T10:00:00.000000Z'),
+                            ('B', '2024-01-01T10:01:00.000000Z'),
+                            ('C', '2024-01-01T10:02:00.000000Z'),
+                            (NULL, '2024-01-01T10:03:00.000000Z')
+                        """);
+                execute(compiler, """
+                        INSERT INTO slave_sym VALUES
+                            ('A', 1.0, '2024-01-01T09:00:00.000000Z'),
+                            ('B', 2.0, '2024-01-01T09:30:00.000000Z'),
+                            (NULL, 9.0, '2024-01-01T09:45:00.000000Z')
+                        """);
+
+                final String expected = "v\tsym\tprice\n"
+                        + "A\tA\t1.0\n"
+                        + "B\tB\t2.0\n"
+                        + "C\t\tnull\n"
+                        + "\t\t9.0\n";
+                assertQueryNoLeakCheck(compiler, expected,
+                        "SELECT m.v, s.sym, s.price FROM master_vch m ASOF JOIN slave_sym s ON m.v = s.sym",
+                        null, false, sqlExecutionContext, true);
+                assertQueryNoLeakCheck(compiler, expected,
+                        "SELECT m.v, s.sym, s.price FROM master_vch m LT JOIN slave_sym s ON m.v = s.sym",
+                        null, false, sqlExecutionContext, true);
+            }
+        });
+    }
+
+    @Test
     public void testAsOfJoinHighCardinalityKeysAndTolerance() throws Exception {
         // this tests set low threshold for evacuation of full fat ASOF join map
         // and compares that Fast and FullFat results are the same

@@ -1035,6 +1035,59 @@ public class CompiledFilterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNullTokenDoesNotForceNarrowI64Widening() throws Exception {
+        assertMemoryLeak(() -> {
+            // null / true / false end in 'l' / 'e' and were folded into
+            // a bogus I8 / F8 observation by longConstantTypeCode /
+            // floatConstantTypeCode. In a predicate with narrow-int
+            // arithmetic the spurious I8 flipped needsNarrowI64Widening,
+            // emitted SX_I64 around the column read, and the JIT then
+            // computed at long width while the Java filter wrapped at int
+            // width.
+            execute("CREATE TABLE x (c4 INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO x VALUES " +
+                    "( 1, '2024-01-01T00:00:00.000000Z')," +
+                    "( 0, '2024-01-01T00:00:00.000001Z')," +
+                    "(-1, '2024-01-01T00:00:00.000002Z')");
+
+            // c4=1: sum overflows int and wraps to INT_NULL, so the row
+            // is null in the Java path; the long-widened path stays at
+            // 2_147_483_648 and is never null.
+            String neqSql = "SELECT count(*) FROM x WHERE c4 + 2_147_483_647 != null";
+            sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
+            assertSql("count\n2\n", neqSql);
+            sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_ENABLED);
+            assertSql("count\n2\n", neqSql);
+
+            try (RecordCursorFactory factory = select(neqSql)) {
+                Assert.assertTrue("predicate must remain JIT-compiled after the fix",
+                        factory.usesCompiledFilter());
+            }
+
+            // Same shape with =: only the wrap-to-null row matches.
+            String eqSql = "SELECT count(*) FROM x WHERE c4 + 2_147_483_647 = null";
+            sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
+            assertSql("count\n1\n", eqSql);
+            sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_ENABLED);
+            assertSql("count\n1\n", eqSql);
+
+            // Cover true / false in the same JIT'd filter as wrapping
+            // int arithmetic to guard floatConstantTypeCode too.
+            execute("CREATE TABLE y (c4 INT, b BOOLEAN, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO y VALUES " +
+                    "( 1, true,  '2024-01-01T00:00:00.000000Z')," +
+                    "( 0, true,  '2024-01-01T00:00:00.000001Z')," +
+                    "(-1, false, '2024-01-01T00:00:00.000002Z')");
+
+            String orSql = "SELECT count(*) FROM y WHERE (c4 + 2_147_483_647 != 0) OR (b = true)";
+            sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
+            assertSql("count\n3\n", orSql);
+            sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_ENABLED);
+            assertSql("count\n3\n", orSql);
+        });
+    }
+
+    @Test
     public void testNonEqualityNullCompareWithVarSizeColumnRejectedByJit() throws Exception {
         assertMemoryLeak(() -> {
             // The fuzzer surfaced JIT-vs-Java divergences on queries like
