@@ -7600,6 +7600,9 @@ public class MatViewTest extends AbstractCairoTest {
             } catch (CairoException e) {
                 assertContains(e.getFlyweightMessage(), "backfill row falls in or past the managed zone");
             }
+            // Drain any pending invalidation/refresh work scheduled by the drop+recreate
+            // before this test exits so the next test starts from a clean engine state.
+            drainQueues();
         });
     }
 
