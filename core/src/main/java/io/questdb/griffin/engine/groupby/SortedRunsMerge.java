@@ -315,6 +315,50 @@ public final class SortedRunsMerge {
         }
     }
 
+    // In-place insertion sort by (firstKey, lastKey) over the first n records
+    // of {@code scratch}. Each record occupies {@link #RECORD_LONGS}
+    // consecutive longs; the first two longs are the composite sort key.
+    // The lastKey tie-break orders two batches that collide on firstKey
+    // (a duplicate-key run spanning a page-frame boundary): the narrower
+    // all-firstKey batch's lastKey equals its firstKey, so it sorts ahead
+    // of any wider batch that shares the firstKey.
+    private static void insertionSortByFirstKey(LongList scratch, int n) {
+        for (int i = 1; i < n; i++) {
+            final int srcBase = i * RECORD_LONGS;
+            final long firstKey = scratch.getQuick(srcBase);
+            final long lastKey = scratch.getQuick(srcBase + 1);
+            // Skip already-in-place records: prev record sorts <= ours.
+            final int prevBase = srcBase - RECORD_LONGS;
+            final long prevFirst = scratch.getQuick(prevBase);
+            if (prevFirst < firstKey
+                    || (prevFirst == firstKey && scratch.getQuick(prevBase + 1) <= lastKey)) {
+                continue;
+            }
+            final long addr = scratch.getQuick(srcBase + 2);
+            final long cnt = scratch.getQuick(srcBase + 3);
+            int j = i;
+            while (j > 0) {
+                final int p = (j - 1) * RECORD_LONGS;
+                final long pFirst = scratch.getQuick(p);
+                final long pLast = scratch.getQuick(p + 1);
+                if (pFirst < firstKey || (pFirst == firstKey && pLast <= lastKey)) {
+                    break;
+                }
+                final int cur = j * RECORD_LONGS;
+                scratch.setQuick(cur, pFirst);
+                scratch.setQuick(cur + 1, pLast);
+                scratch.setQuick(cur + 2, scratch.getQuick(p + 2));
+                scratch.setQuick(cur + 3, scratch.getQuick(p + 3));
+                j--;
+            }
+            final int dst = j * RECORD_LONGS;
+            scratch.setQuick(dst, firstKey);
+            scratch.setQuick(dst + 1, lastKey);
+            scratch.setQuick(dst + 2, addr);
+            scratch.setQuick(dst + 3, cnt);
+        }
+    }
+
     // True when records [base, base + n) describe a globally key-sorted
     // buffer: each batch's firstKey is >= the previous batch's lastKey, so
     // concatenating the batches in their current order is non-decreasing.
@@ -407,49 +451,5 @@ public final class SortedRunsMerge {
             dstBase = tmp;
         }
         return srcBase;
-    }
-
-    // In-place insertion sort by (firstKey, lastKey) over the first n records
-    // of {@code scratch}. Each record occupies {@link #RECORD_LONGS}
-    // consecutive longs; the first two longs are the composite sort key.
-    // The lastKey tie-break orders two batches that collide on firstKey
-    // (a duplicate-key run spanning a page-frame boundary): the narrower
-    // all-firstKey batch's lastKey equals its firstKey, so it sorts ahead
-    // of any wider batch that shares the firstKey.
-    private static void insertionSortByFirstKey(LongList scratch, int n) {
-        for (int i = 1; i < n; i++) {
-            final int srcBase = i * RECORD_LONGS;
-            final long firstKey = scratch.getQuick(srcBase);
-            final long lastKey = scratch.getQuick(srcBase + 1);
-            // Skip already-in-place records: prev record sorts <= ours.
-            final int prevBase = srcBase - RECORD_LONGS;
-            final long prevFirst = scratch.getQuick(prevBase);
-            if (prevFirst < firstKey
-                    || (prevFirst == firstKey && scratch.getQuick(prevBase + 1) <= lastKey)) {
-                continue;
-            }
-            final long addr = scratch.getQuick(srcBase + 2);
-            final long cnt = scratch.getQuick(srcBase + 3);
-            int j = i;
-            while (j > 0) {
-                final int p = (j - 1) * RECORD_LONGS;
-                final long pFirst = scratch.getQuick(p);
-                final long pLast = scratch.getQuick(p + 1);
-                if (pFirst < firstKey || (pFirst == firstKey && pLast <= lastKey)) {
-                    break;
-                }
-                final int cur = j * RECORD_LONGS;
-                scratch.setQuick(cur, pFirst);
-                scratch.setQuick(cur + 1, pLast);
-                scratch.setQuick(cur + 2, scratch.getQuick(p + 2));
-                scratch.setQuick(cur + 3, scratch.getQuick(p + 3));
-                j--;
-            }
-            final int dst = j * RECORD_LONGS;
-            scratch.setQuick(dst, firstKey);
-            scratch.setQuick(dst + 1, lastKey);
-            scratch.setQuick(dst + 2, addr);
-            scratch.setQuick(dst + 3, cnt);
-        }
     }
 }

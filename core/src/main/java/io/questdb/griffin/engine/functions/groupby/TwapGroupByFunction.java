@@ -100,7 +100,7 @@ public class TwapGroupByFunction extends DoubleFunction implements GroupByFuncti
     private final Function priceFunc;
     // Scratch list for batch records used by SortedRunsMerge. Not
     // thread-safe; each per-slot function instance owns its own.
-    private final LongList runScratch = new LongList(16);
+    private final LongList scratch = new LongList(16);
     private final Function tsFunc;
     private GroupByAllocator allocator;
     private long cachedPtr;
@@ -228,7 +228,7 @@ public class TwapGroupByFunction extends DoubleFunction implements GroupByFuncti
             return cachedValue;
         }
         SortedRunsMerge.compactInPlace(
-                allocator, runScratch, ptr, count,
+                allocator, scratch, ptr, count,
                 rec.getLong(valueIndex + 3), rec.getLong(valueIndex + 4),
                 ENTRY_SIZE
         );
@@ -366,7 +366,7 @@ public class TwapGroupByFunction extends DoubleFunction implements GroupByFuncti
         long mergedPtr = allocator.malloc(entryBytes + descBytes);
         long mergedDescPtr = descBytes > 0 ? mergedPtr + entryBytes : 0;
         SortedRunsMerge.compactInto(
-                runScratch,
+                scratch,
                 mergedPtr, mergedDescPtr,
                 destPtr, destCount, destDescPtr, destDescCount,
                 srcPtr, srcCount, srcDescPtr, srcDescCount,

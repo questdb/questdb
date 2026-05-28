@@ -98,29 +98,6 @@ public class TwapGroupByFunctionFactoryTest extends AbstractCairoTest {
         });
     }
 
-    @Ignore("non-designated timestamp not currently supported for TWAP")
-    @Test
-    public void testTwapNullTimestamp() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE tbl (price DOUBLE, ts TIMESTAMP)");
-            execute("""
-                    INSERT INTO tbl VALUES
-                    (10.0, null),
-                    (20.0, '2024-01-01T00:00:10.000000Z'),
-                    (30.0, null),
-                    (40.0, '2024-01-01T00:00:30.000000Z')
-                    """);
-            // only rows with ts 10s and 30s are considered
-            // weighted_sum = 20 * 20_000_000 = 400_000_000
-            // total_duration = 20_000_000
-            // twap = 400_000_000 / 20_000_000 = 20.0
-            assertSql(
-                    "twap\n20.0\n",
-                    "SELECT twap(price, ts) FROM tbl"
-            );
-        });
-    }
-
     @Test
     public void testTwapParallelAllNullPrices() throws Exception {
         assertMemoryLeak((TestUtils.LeakProneCode) () -> {

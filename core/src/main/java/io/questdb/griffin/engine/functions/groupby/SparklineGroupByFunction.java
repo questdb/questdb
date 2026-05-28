@@ -94,7 +94,7 @@ public class SparklineGroupByFunction extends VarcharFunction implements UnaryFu
     private final String name;
     // Scratch list for batch records used by SortedRunsMerge. Not
     // thread-safe; each per-slot function instance owns its own.
-    private final LongList runScratch = new LongList(16);
+    private final LongList scratch = new LongList(16);
     // A and B need independent flyweights because sort's comparator
     // fetches both sides from this same Function and expects neither to
     // clobber the other.
@@ -384,7 +384,7 @@ public class SparklineGroupByFunction extends VarcharFunction implements UnaryFu
         long mergedPtr = allocator.malloc(entryBytes + descBytes);
         long mergedDescPtr = descBytes > 0 ? mergedPtr + entryBytes : 0;
         SortedRunsMerge.compactInto(
-                runScratch,
+                scratch,
                 mergedPtr, mergedDescPtr,
                 destPtr, destCount, destDescPtr, destDescCount,
                 srcPtr, srcCount, srcDescPtr, srcDescCount,
@@ -486,6 +486,19 @@ public class SparklineGroupByFunction extends VarcharFunction implements UnaryFu
         return valueCount;
     }
 
+    // All chars used by sparkline/bar live in the BMP and encode as three
+    // UTF-8 bytes: 1110xxxx 10yyyyyy 10zzzzzz. Pack the trio into a single
+    // little-endian int and emit with one putInt; the caller overallocates
+    // one trailing byte so the last character's sloppy 4th byte is safe.
+    // Assumes little-endian host (x86, ARM64 default) - matches the rest
+    // of QuestDB's native storage.
+    private void putChar(long out, int pos, char c) {
+        int packed = (0xE0 | ((c >> 12) & 0x0F))
+                | ((0x80 | ((c >> 6) & 0x3F)) << 8)
+                | ((0x80 | (c & 0x3F)) << 16);
+        Unsafe.putInt(out + pos * 3L, packed);
+    }
+
     // Renders the pair buffer at `ptr` into a fresh allocator-backed
     // output buffer. Writes the output pointer into {@link #lastRenderPtr}
     // and returns the byte length.
@@ -495,7 +508,7 @@ public class SparklineGroupByFunction extends VarcharFunction implements UnaryFu
         // the value sequence walked below reflects rowId order, not
         // slot-acquisition order. The pointer is preserved across compaction,
         // so the caller's cache key stays valid.
-        SortedRunsMerge.compactInPlace(allocator, runScratch, ptr, size, descPtr, descCount, ENTRY_SIZE);
+        SortedRunsMerge.compactInPlace(allocator, scratch, ptr, size, descPtr, descCount, ENTRY_SIZE);
         // Single-pass min+max when either is auto. Halves the pre-render
         // scan cost vs two separate full walks.
         double userMin = minFunc != null ? minFunc.getDouble(null) : Double.NaN;
@@ -549,19 +562,6 @@ public class SparklineGroupByFunction extends VarcharFunction implements UnaryFu
         }
         lastRenderPtr = out;
         return outBytes;
-    }
-
-    // All chars used by sparkline/bar live in the BMP and encode as three
-    // UTF-8 bytes: 1110xxxx 10yyyyyy 10zzzzzz. Pack the trio into a single
-    // little-endian int and emit with one putInt; the caller overallocates
-    // one trailing byte so the last character's sloppy 4th byte is safe.
-    // Assumes little-endian host (x86, ARM64 default) - matches the rest
-    // of QuestDB's native storage.
-    private void putChar(long out, int pos, char c) {
-        int packed = (0xE0 | ((c >> 12) & 0x0F))
-                | ((0x80 | ((c >> 6) & 0x3F)) << 8)
-                | ((0x80 | (c & 0x3F)) << 16);
-        Unsafe.putInt(out + pos * 3L, packed);
     }
 
     private void renderSubsampled(long out, long ptr, int size, int width, double min, double max) {
