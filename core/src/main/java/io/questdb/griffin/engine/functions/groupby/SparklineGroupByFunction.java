@@ -218,6 +218,7 @@ public class SparklineGroupByFunction extends VarcharFunction implements UnaryFu
         // frame starts a new batch.
         long frameId = rowId >>> 44;
         long lastFrameId = mapValue.getLong(valueIndex + 6);
+        assert lastFrameId >= 0 : "computeNext on a post-merge MapValue";
         if (frameId != lastFrameId) {
             if (frameId != lastFrameId + 1) {
                 SortedRunsMerge.appendBatchStart(allocator, mapValue, valueIndex + 3, count);
@@ -396,6 +397,11 @@ public class SparklineGroupByFunction extends VarcharFunction implements UnaryFu
         destValue.putLong(valueIndex + 3, mergedDescPtr);
         destValue.putLong(valueIndex + 4, mergedDescPtr != 0 ? mergedBatches : 0);
         destValue.putLong(valueIndex + 5, mergedDescPtr != 0 ? mergedBatches : 0);
+        // The descriptor buffer is sized exactly to fit the merge result, so
+        // the first appendBatchStart on this value would silently trigger a
+        // realloc. No current path adds rows after merge; assert that contract
+        // by stamping a negative sentinel that computeNext picks up.
+        destValue.putLong(valueIndex + 6, -1L);
     }
 
     @Override
