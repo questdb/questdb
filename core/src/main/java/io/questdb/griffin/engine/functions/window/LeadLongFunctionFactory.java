@@ -25,11 +25,14 @@
 package io.questdb.griffin.engine.functions.window;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.Reopenable;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapFactory;
+import io.questdb.cairo.map.MapKey;
+import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.VirtualRecord;
@@ -155,46 +158,22 @@ public class LeadLongFunctionFactory extends AbstractWindowFunctionFactory {
         }
 
         if (wc.getPartitionByRecord() != null) {
-            // Partition mode: construct the partitioned streaming variant. The cached-fallback Map and
-            // MemoryARW are allocated even though the streaming path uses the cursor's own per-partition
-            // ring; they are exercised only if the planner subsequently picks CachedWindow.
-            Map cachedMap = null;
-            MemoryARW cachedMem = null;
-            try {
-                cachedMap = MapFactory.createUnorderedMap(
-                        configuration,
-                        wc.getPartitionByKeyTypes(),
-                        LeadLagWindowFunctionFactoryHelper.LAG_COLUMN_TYPES
-                );
-                cachedMem = Vm.getCARWInstance(
-                        configuration.getSqlWindowStorePageSize(),
-                        configuration.getSqlWindowStoreMaxPages(),
-                        MemoryTag.NATIVE_CIRCULAR_BUFFER
-                );
-                return new StreamingLeadOverPartitionFunction(
-                        cachedMap, wc.getPartitionByRecord(), wc.getPartitionBySink(), cachedMem,
-                        args.get(0), defaultValue, offset
-                );
-            } catch (Throwable th) {
-                Misc.free(cachedMap);
-                Misc.free(cachedMem);
-                throw th;
-            }
+            // Partition mode: pass configuration + key types to the streaming variant. The cached-
+            // fallback Map and MemoryARW are NOT allocated up front; the streaming variant's pass1
+            // override allocates them on first invocation, which only happens if the planner ends
+            // up routing this query through CachedWindow.
+            return new StreamingLeadOverPartitionFunction(
+                    configuration,
+                    wc.getPartitionByKeyTypes(),
+                    wc.getPartitionByRecord(),
+                    wc.getPartitionBySink(),
+                    args.get(0), defaultValue, offset
+            );
         }
 
-        // No partition by: simple ring buffer variant.
-        MemoryARW mem = null;
-        try {
-            mem = Vm.getCARWInstance(
-                    configuration.getSqlWindowStorePageSize(),
-                    configuration.getSqlWindowStoreMaxPages(),
-                    MemoryTag.NATIVE_CIRCULAR_BUFFER
-            );
-            return new StreamingLeadFunction(args.get(0), defaultValue, offset, mem);
-        } catch (Throwable th) {
-            Misc.free(mem);
-            throw th;
-        }
+        // No partition by: simple ring buffer variant. Same lazy-allocation pattern — buffer is
+        // populated by the streaming variant's pass1 override on first cached-path call.
+        return new StreamingLeadFunction(configuration, args.get(0), defaultValue, offset);
     }
 
     /**
@@ -211,10 +190,12 @@ public class LeadLongFunctionFactory extends AbstractWindowFunctionFactory {
      * default expressions.
      */
     static final class StreamingLeadFunction extends LeadFunction {
+        private final CairoConfiguration configuration;
         private final long defaultLongValue;
 
-        StreamingLeadFunction(Function arg, Function defaultValueFunc, long offset, MemoryARW memory) {
-            super(arg, defaultValueFunc, offset, memory, false);
+        StreamingLeadFunction(CairoConfiguration configuration, Function arg, Function defaultValueFunc, long offset) {
+            super(arg, defaultValueFunc, offset, null, false);
+            this.configuration = configuration;
             // Pre-resolve defaultValue at construction so streamingFlushDefault doesn't need a record.
             // defaultValueFunc, when non-null, was validated as constant by the dispatch site.
             this.defaultLongValue = defaultValueFunc == null ? Numbers.LONG_NULL : defaultValueFunc.getLong(null);
@@ -228,6 +209,20 @@ public class LeadLongFunctionFactory extends AbstractWindowFunctionFactory {
         @Override
         public int getPassCount() {
             return ZERO_PASS;
+        }
+
+        @Override
+        public void pass1(Record record, long recordOffset, WindowSPI spi) {
+            if (buffer == null) {
+                // Cached path won: lazy-allocate the ring buffer on first invocation. Streaming
+                // dispatches never call pass1, so this stays null when the streaming cursor wins.
+                buffer = Vm.getCARWInstance(
+                        configuration.getSqlWindowStorePageSize(),
+                        configuration.getSqlWindowStoreMaxPages(),
+                        MemoryTag.NATIVE_CIRCULAR_BUFFER
+                );
+            }
+            super.pass1(record, recordOffset, spi);
         }
 
         @Override
@@ -247,18 +242,22 @@ public class LeadLongFunctionFactory extends AbstractWindowFunctionFactory {
      * the cursor-owned slot via the supplied {@link WindowSPI}.
      */
     static final class StreamingLeadOverPartitionFunction extends LeadOverPartitionFunction {
+        private final CairoConfiguration configuration;
         private final long defaultLongValue;
+        private final ColumnTypes keyTypes;
 
         StreamingLeadOverPartitionFunction(
-                Map map,
+                CairoConfiguration configuration,
+                ColumnTypes keyTypes,
                 VirtualRecord partitionByRecord,
                 RecordSink partitionBySink,
-                MemoryARW memory,
                 Function arg,
                 Function defaultValue,
                 long offset
         ) {
-            super(map, partitionByRecord, partitionBySink, memory, arg, false, defaultValue, offset);
+            super(null, partitionByRecord, partitionBySink, null, arg, false, defaultValue, offset);
+            this.configuration = configuration;
+            this.keyTypes = keyTypes;
             this.defaultLongValue = defaultValue == null ? Numbers.LONG_NULL : defaultValue.getLong(null);
         }
 
@@ -270,6 +269,25 @@ public class LeadLongFunctionFactory extends AbstractWindowFunctionFactory {
         @Override
         public int getPassCount() {
             return ZERO_PASS;
+        }
+
+        @Override
+        public void pass1(Record record, long recordOffset, WindowSPI spi) {
+            if (map == null) {
+                // Cached path won: lazy-allocate the map and ring buffer on first invocation.
+                // Streaming dispatches never call pass1, so these stay null when streaming wins.
+                map = MapFactory.createUnorderedMap(
+                        configuration,
+                        keyTypes,
+                        LeadLagWindowFunctionFactoryHelper.LAG_COLUMN_TYPES
+                );
+                memory = Vm.getCARWInstance(
+                        configuration.getSqlWindowStorePageSize(),
+                        configuration.getSqlWindowStoreMaxPages(),
+                        MemoryTag.NATIVE_CIRCULAR_BUFFER
+                );
+            }
+            super.pass1(record, recordOffset, spi);
         }
 
         @Override

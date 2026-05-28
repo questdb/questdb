@@ -179,6 +179,8 @@ public class LeadLagWindowFunctionFactoryHelper {
         protected long count = 0;
         protected int loIdx = 0;
 
+        // Eagerly-allocated buffer; LAG does not have a streaming variant in Phase 6 so lazy init
+        // is not required here. Kept final to preserve the cached-path invariants.
         public BaseLagFunction(Function arg, Function defaultValueFunc, long offset, MemoryARW memory, boolean ignoreNulls) {
             super(arg);
             this.offset = offset;
@@ -383,7 +385,10 @@ public class LeadLagWindowFunctionFactoryHelper {
     }
 
     static abstract class BaseLeadFunction extends BaseWindowFunction implements Reopenable {
-        protected final MemoryARW buffer;
+        // Non-final to allow streaming-LEAD subclasses to lazy-allocate the cached-fallback ring
+        // buffer on first pass1 invocation. close() and reset() use Misc.free so a null buffer
+        // (streaming path never reaches pass1) does not NPE.
+        protected MemoryARW buffer;
         protected final Function defaultValue;
         protected final boolean ignoreNulls;
         protected final long offset;
@@ -401,7 +406,7 @@ public class LeadLagWindowFunctionFactoryHelper {
         @Override
         public void close() {
             super.close();
-            buffer.close();
+            Misc.free(buffer);
             Misc.free(defaultValue);
         }
 
@@ -440,7 +445,7 @@ public class LeadLagWindowFunctionFactoryHelper {
         @Override
         public void reset() {
             super.reset();
-            buffer.close();
+            Misc.free(buffer);
             loIdx = 0;
             count = 0;
         }
@@ -516,7 +521,9 @@ public class LeadLagWindowFunctionFactoryHelper {
     abstract static class BaseLeadOverPartitionFunction extends BasePartitionedWindowFunction {
         protected final Function defaultValue;
         protected final boolean ignoreNulls;
-        protected final MemoryARW memory;
+        // Non-final to allow StreamingLeadOverPartitionFunction subclasses to lazy-allocate the
+        // cached-fallback ring buffer on first pass1 invocation.
+        protected MemoryARW memory;
         protected final long offset;
 
         public BaseLeadOverPartitionFunction(Map map,
@@ -616,7 +623,9 @@ public class LeadLagWindowFunctionFactoryHelper {
         @Override
         public void toTop() {
             super.toTop();
-            memory.truncate();
+            if (memory != null) {
+                memory.truncate();
+            }
         }
 
         protected abstract boolean doPass1(long count,

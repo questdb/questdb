@@ -36,7 +36,11 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Misc;
 
 public abstract class BasePartitionedWindowFunction extends BaseWindowFunction implements Reopenable {
-    protected final Map map;
+    // Non-final to allow streaming-LEAD variants to lazy-allocate the cached-fallback map on
+    // first pass1 invocation. Subclasses that need eager allocation continue to assign in the
+    // constructor; null at construction means "lazy", and every lifecycle method below is
+    // null-safe.
+    protected Map map;
     protected final VirtualRecord partitionByRecord;
     protected final RecordSink partitionBySink;
 

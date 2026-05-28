@@ -98,6 +98,11 @@ public class DeferredEmitWindowRecordCursorFactory extends AbstractRecordCursorF
 
     public static final ArrayColumnTypes PARTITION_VALUE_TYPES;
     private static final int FUNC_VALUE_BYTES = 8;       // each window function's value is 8 bytes
+    // Upfront partition slices to pre-allocate when a partitioned cursor first opens. Trades a small
+    // amount of overcommit (most queries materialise under this many partitions) for elimination of
+    // doubling reallocs in the typical case. Capped by maxPartitions inside of() so a deliberately
+    // low cap is honoured.
+    private static final long PENDING_MEM_PREALLOC_PARTITIONS = 256L;
     private static final int ROWID_OFFSET = 0;
     private static final int ROWID_BYTES = 8;
     private final RecordCursorFactory base;
@@ -115,6 +120,10 @@ public class DeferredEmitWindowRecordCursorFactory extends AbstractRecordCursorF
     private final int leadCount;
     // LEAD (deferred-emit) functions in column order. leadOffsets[i] is the lookahead of leadFunctions[i].
     private final ObjList<WindowFunction> leadFunctions;
+    // Mirrors leadFunctions as a final array so HotSpot can apply array-bound range analysis to the
+    // per-row backfill and flush loops below. ObjList.getQuick hides the array load from the JIT's
+    // range analyzer because the size field is read indirectly.
+    private final WindowFunction[] leadFunctionsArr;
     private final long[] leadOffsets;
     private final int maxLookahead;
     private final int maxPartitions;
@@ -216,8 +225,10 @@ public class DeferredEmitWindowRecordCursorFactory extends AbstractRecordCursorF
         this.columnToSlotOffset = colToSlot;
 
         this.leadOffsets = new long[lCount];
+        this.leadFunctionsArr = new WindowFunction[lCount];
         for (int i = 0; i < lCount; i++) {
             this.leadOffsets[i] = leadOffsetsTmp.getQuick(i);
+            this.leadFunctionsArr[i] = leadFns.getQuick(i);
         }
         this.soleLeadFunction = isSingleLead ? leadFns.getQuick(0) : null;
         this.soleLeadOffset = isSingleLead ? leadOffsetsTmp.getQuick(0) : 0L;
@@ -449,11 +460,20 @@ public class DeferredEmitWindowRecordCursorFactory extends AbstractRecordCursorF
                 reopenFunctions();
             }
             if (pendingMem == null) {
-                pendingMem = Vm.getCARWInstance(
-                        Math.max(16L, (long) slotBytes * ringCapacity),
-                        Integer.MAX_VALUE,
-                        MemoryTag.NATIVE_WINDOW_PENDING
-                );
+                // Page size = one partition's slice. In non-partitioned mode there is exactly one
+                // page; in partitioned mode each new partition extends pendingMem by one page via
+                // jumpTo(), which triggers Unsafe.realloc and memcpys the existing region. To bound
+                // the cumulative memcpy traffic on high-cardinality partition workloads, pre-extend
+                // the region up to a budget of PENDING_MEM_PREALLOC_PARTITIONS partitions on first
+                // allocation. The budget is capped at maxPartitions so a query with maxPartitions=1
+                // does not allocate beyond what the cap permits.
+                final long pageBytes = Math.max(16L, (long) slotBytes * ringCapacity);
+                pendingMem = Vm.getCARWInstance(pageBytes, Integer.MAX_VALUE, MemoryTag.NATIVE_WINDOW_PENDING);
+                if (partitionByRecord != null && maxPartitions > 1) {
+                    final long prealloc = Math.min(PENDING_MEM_PREALLOC_PARTITIONS, maxPartitions) * pageBytes;
+                    pendingMem.jumpTo(prealloc);
+                    pendingMem.jumpTo(0);
+                }
             }
             if (partitionMap != null) {
                 partitionMap.clear();
@@ -597,7 +617,7 @@ public class DeferredEmitWindowRecordCursorFactory extends AbstractRecordCursorF
                     for (int i = 0; i < leadCount; i++) {
                         long bit = 1L << (headSlotPendingShift + i);
                         if ((flushPartitionFilled & bit) == 0L) {
-                            leadFunctions.getQuick(i).streamingFlushDefault(headSlot, this);
+                            leadFunctionsArr[i].streamingFlushDefault(headSlot, this);
                         }
                     }
                 }
@@ -692,7 +712,7 @@ public class DeferredEmitWindowRecordCursorFactory extends AbstractRecordCursorF
                         long bit = 1L << (targetRingIdx * leadCount + i);
                         if ((pendingFilled & bit) == 0L) {
                             long targetSlotOff = slotsOff + targetRingIdx * slotBytes;
-                            leadFunctions.getQuick(i).streamingBackfill(baseRow, targetSlotOff, this);
+                            leadFunctionsArr[i].streamingBackfill(baseRow, targetSlotOff, this);
                             pendingFilled |= bit;
                         }
                     }

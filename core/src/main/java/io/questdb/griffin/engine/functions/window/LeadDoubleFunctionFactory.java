@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.functions.window;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.Reopenable;
 import io.questdb.cairo.map.Map;
@@ -121,49 +122,25 @@ public class LeadDoubleFunctionFactory extends AbstractWindowFunctionFactory {
         }
 
         if (wc.getPartitionByRecord() != null) {
-            Map cachedMap = null;
-            MemoryARW cachedMem = null;
-            try {
-                cachedMap = MapFactory.createUnorderedMap(
-                        configuration,
-                        wc.getPartitionByKeyTypes(),
-                        LeadLagWindowFunctionFactoryHelper.LAG_COLUMN_TYPES
-                );
-                cachedMem = Vm.getCARWInstance(
-                        configuration.getSqlWindowStorePageSize(),
-                        configuration.getSqlWindowStoreMaxPages(),
-                        MemoryTag.NATIVE_CIRCULAR_BUFFER
-                );
-                return new StreamingLeadOverPartitionFunction(
-                        cachedMap, wc.getPartitionByRecord(), wc.getPartitionBySink(), cachedMem,
-                        args.get(0), defaultValue, offset
-                );
-            } catch (Throwable th) {
-                Misc.free(cachedMap);
-                Misc.free(cachedMem);
-                throw th;
-            }
+            return new StreamingLeadOverPartitionFunction(
+                    configuration,
+                    wc.getPartitionByKeyTypes(),
+                    wc.getPartitionByRecord(),
+                    wc.getPartitionBySink(),
+                    args.get(0), defaultValue, offset
+            );
         }
 
-        MemoryARW mem = null;
-        try {
-            mem = Vm.getCARWInstance(
-                    configuration.getSqlWindowStorePageSize(),
-                    configuration.getSqlWindowStoreMaxPages(),
-                    MemoryTag.NATIVE_CIRCULAR_BUFFER
-            );
-            return new StreamingLeadFunction(args.get(0), defaultValue, offset, mem);
-        } catch (Throwable th) {
-            Misc.free(mem);
-            throw th;
-        }
+        return new StreamingLeadFunction(configuration, args.get(0), defaultValue, offset);
     }
 
     static final class StreamingLeadFunction extends LeadFunction {
+        private final CairoConfiguration configuration;
         private final double defaultDoubleValue;
 
-        StreamingLeadFunction(Function arg, Function defaultValueFunc, long offset, MemoryARW memory) {
-            super(arg, defaultValueFunc, offset, memory, false);
+        StreamingLeadFunction(CairoConfiguration configuration, Function arg, Function defaultValueFunc, long offset) {
+            super(arg, defaultValueFunc, offset, null, false);
+            this.configuration = configuration;
             this.defaultDoubleValue = defaultValueFunc == null ? Double.NaN : defaultValueFunc.getDouble(null);
         }
 
@@ -178,6 +155,18 @@ public class LeadDoubleFunctionFactory extends AbstractWindowFunctionFactory {
         }
 
         @Override
+        public void pass1(Record record, long recordOffset, WindowSPI spi) {
+            if (buffer == null) {
+                buffer = Vm.getCARWInstance(
+                        configuration.getSqlWindowStorePageSize(),
+                        configuration.getSqlWindowStoreMaxPages(),
+                        MemoryTag.NATIVE_CIRCULAR_BUFFER
+                );
+            }
+            super.pass1(record, recordOffset, spi);
+        }
+
+        @Override
         public void streamingBackfill(Record source, long pendingSlot, WindowSPI spi) {
             Unsafe.putDouble(spi.getAddress(pendingSlot, columnIndex), arg.getDouble(source));
         }
@@ -189,18 +178,22 @@ public class LeadDoubleFunctionFactory extends AbstractWindowFunctionFactory {
     }
 
     static final class StreamingLeadOverPartitionFunction extends LeadOverPartitionFunction {
+        private final CairoConfiguration configuration;
         private final double defaultDoubleValue;
+        private final ColumnTypes keyTypes;
 
         StreamingLeadOverPartitionFunction(
-                Map map,
+                CairoConfiguration configuration,
+                ColumnTypes keyTypes,
                 VirtualRecord partitionByRecord,
                 RecordSink partitionBySink,
-                MemoryARW memory,
                 Function arg,
                 Function defaultValue,
                 long offset
         ) {
-            super(map, partitionByRecord, partitionBySink, memory, arg, false, defaultValue, offset);
+            super(null, partitionByRecord, partitionBySink, null, arg, false, defaultValue, offset);
+            this.configuration = configuration;
+            this.keyTypes = keyTypes;
             this.defaultDoubleValue = defaultValue == null ? Double.NaN : defaultValue.getDouble(null);
         }
 
@@ -212,6 +205,23 @@ public class LeadDoubleFunctionFactory extends AbstractWindowFunctionFactory {
         @Override
         public int getPassCount() {
             return ZERO_PASS;
+        }
+
+        @Override
+        public void pass1(Record record, long recordOffset, WindowSPI spi) {
+            if (map == null) {
+                map = MapFactory.createUnorderedMap(
+                        configuration,
+                        keyTypes,
+                        LeadLagWindowFunctionFactoryHelper.LAG_COLUMN_TYPES
+                );
+                memory = Vm.getCARWInstance(
+                        configuration.getSqlWindowStorePageSize(),
+                        configuration.getSqlWindowStoreMaxPages(),
+                        MemoryTag.NATIVE_CIRCULAR_BUFFER
+                );
+            }
+            super.pass1(record, recordOffset, spi);
         }
 
         @Override
