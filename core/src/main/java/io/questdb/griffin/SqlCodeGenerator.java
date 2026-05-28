@@ -9604,12 +9604,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     int maxPartitions = configuration.getSqlWindowStreamingMaxPartitions();
                     final WindowExpression leadCol = (WindowExpression) columns.getQuick(lookaheadColumnIndex);
                     final int psz = leadCol.getPartitionBy().size();
-                    if (psz > 0) {
-                        final Function lookaheadFunc = functions.getQuick(lookaheadColumnIndex);
-                        if (!(lookaheadFunc instanceof BasePartitionedWindowFunction sharedSrc)) {
-                            throw SqlException.$(0, "expected partitioned window function for streaming dispatch");
-                        }
-                        try {
+                    try {
+                        if (psz > 0) {
+                            final Function lookaheadFunc = functions.getQuick(lookaheadColumnIndex);
+                            if (!(lookaheadFunc instanceof BasePartitionedWindowFunction sharedSrc)) {
+                                throw SqlException.$(0, "expected partitioned window function for streaming dispatch");
+                            }
                             final VirtualRecord sharedPartitionRecord = sharedSrc.getPartitionByRecord();
                             cursorPartitionByRecord = new VirtualRecord(sharedPartitionRecord.getFunctions());
                             cursorPartitionBySink = sharedSrc.getPartitionBySink();
@@ -9622,18 +9622,19 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     leadKeyTypes,
                                     DeferredEmitWindowRecordCursorFactory.PARTITION_VALUE_TYPES
                             );
-                        } catch (Throwable t) {
-                            // cursorPartitionByRecord wraps a list owned by sharedSrc; do not free it
-                            // here or sharedSrc.close() would later double-free.
-                            Misc.free(cursorPartitionMap);
-                            throw t;
                         }
+                        return new DeferredEmitWindowRecordCursorFactory(
+                                base, factoryMetadata, functions,
+                                cursorPartitionByRecord, cursorPartitionBySink, cursorPartitionMap,
+                                maxPartitions
+                        );
+                    } catch (Throwable t) {
+                        // cursorPartitionByRecord wraps a list owned by sharedSrc; do not free it
+                        // here or sharedSrc.close() would later double-free. base and functions
+                        // are freed by the outer catch in this method.
+                        Misc.free(cursorPartitionMap);
+                        throw t;
                     }
-                    return new DeferredEmitWindowRecordCursorFactory(
-                            base, factoryMetadata, functions,
-                            cursorPartitionByRecord, cursorPartitionBySink, cursorPartitionMap,
-                            maxPartitions
-                    );
                 }
 
                 isFastPath = false;

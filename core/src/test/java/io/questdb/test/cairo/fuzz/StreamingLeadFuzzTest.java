@@ -151,17 +151,19 @@ public class StreamingLeadFuzzTest extends AbstractCairoTest {
 
     @Test
     public void testEdgeCaseLargeLookahead() throws Exception {
-        // Lookahead 30 with a single LEAD function -> ringCapacity 31. Single-function so
-        // ringCap * leadCount = 31 <= 64. Validates the pending-bit-mask layout near its upper
-        // bound (each slot consumes one bit).
+        // Single-function LEAD exercising the pending-bit-mask layout at and below its upper bound:
+        // k=63 gives ringCapacity=64 (each slot consumes one of the 64 bits), the maximum supported.
+        // Row count must exceed ringCapacity so the bitmask actually fills.
         assertMemoryLeak(() -> {
             execute("create table t (x long, sym symbol, ts timestamp) timestamp(ts) partition by day");
             execute(
-                    "insert into t select x, 'A' as sym, (1000_000L * x)::timestamp from long_sequence(50)"
+                    "insert into t select x, 'A' as sym, (1000_000L * x)::timestamp from long_sequence(150)"
             );
 
-            // Single LEAD with various large lookaheads.
-            for (int k : new int[]{2, 5, 10, 15, 20, 30}) {
+            // Single LEAD with various large lookaheads. k=63 is the maximum for a single LEAD
+            // (ringCap=64, ringCap*leadCount<=64), exercising the pendingFilled bitmask at full
+            // capacity where an off-by-one would corrupt data.
+            for (int k : new int[]{2, 5, 10, 15, 20, 30, 63}) {
                 String sql = "select x, ts, lead(x, " + k + ") over () as lx from t";
                 StreamingLeadEquivalence.assertEquivalent(engine, sqlExecutionContext, sql,
                         "large-lookahead=" + k);
@@ -292,6 +294,33 @@ public class StreamingLeadFuzzTest extends AbstractCairoTest {
                     "gb, gs, gi, gl, arr, d, ts, lead(x, 1) over (partition by sym) as lx from t";
             StreamingLeadEquivalence.assertEquivalent(engine, sqlExecutionContext, sqlPartitioned,
                     "diverse-projected-types-partitioned");
+        });
+    }
+
+    @Test
+    public void testEdgeCaseNullPartitionKeys() throws Exception {
+        // Source data contains rows whose PARTITION BY symbol key is NULL. The Map treats NULL as
+        // a distinct partition; the streaming path must agree with the cached path on which rows
+        // share a partition and how their LEAD values resolve.
+        assertMemoryLeak(() -> {
+            execute("create table t (x long, sym symbol, ts timestamp) timestamp(ts) partition by day");
+            execute(
+                    "insert into t select " +
+                            "x, " +
+                            "case when x % 3 = 0 then cast(null as symbol) else case when x % 2 = 0 then 'A' else 'B' end end, " +
+                            "(1000_000L * x)::timestamp " +
+                            "from long_sequence(40)"
+            );
+
+            String[] queries = {
+                    "select x, sym, lead(x, 1) over (partition by sym) as lx from t",
+                    "select x, sym, lead(x, 2) over (partition by sym) as lx from t",
+                    "select x, sym, lag(x, 1) over (partition by sym order by ts desc) as lx from t",
+                    "select x, sym, lead(x, 1) over (partition by sym) as ld, lag(x, 1) over (partition by sym) as lg from t",
+            };
+            for (String sql : queries) {
+                StreamingLeadEquivalence.assertEquivalent(engine, sqlExecutionContext, sql, "null-partition-key");
+            }
         });
     }
 

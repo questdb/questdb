@@ -143,104 +143,90 @@ public class DeferredEmitWindowRecordCursorFactory extends AbstractRecordCursorF
     ) {
         super(metadata);
 
-        // Inputs become factory-owned the moment we enter this constructor. If any of the
-        // validation checks below throws, the caller cannot free them (they'd need to keep
-        // references and a separate cleanup path), so the constructor body wraps its work and
-        // releases everything on failure. The fields are final but Java allows referencing them
-        // in the catch block because they were never assigned.
-        boolean ownershipTaken = false;
-        try {
-            if (!base.recordCursorSupportsRandomAccess()) {
-                throw CairoException.critical(0)
-                        .put("DeferredEmitWindowRecordCursorFactory requires a base cursor that supports random access");
-            }
+        // The caller (SqlCodeGenerator.generateSelectWindow) is responsible for releasing base,
+        // functions, and partitionMap if any validation below throws. partitionByRecord is shared
+        // with the lookahead window function and must not be freed on construction failure.
+        if (!base.recordCursorSupportsRandomAccess()) {
+            throw CairoException.critical(0)
+                    .put("DeferredEmitWindowRecordCursorFactory requires a base cursor that supports random access");
+        }
 
-            // Inventory all window functions; bucket into LAG (lookahead=0) and LEAD (lookahead>0).
-            // Each function's value occupies 8 bytes in the slot. The function's column index is its
-            // position i in the functions list (consistent with how SqlCodeGenerator wires
-            // setColumnIndex).
-            final int columnCount = metadata.getColumnCount();
-            final ObjList<WindowFunction> lagFns = new ObjList<>();
-            final ObjList<WindowFunction> leadFns = new ObjList<>();
-            final int[] colToSlot = new int[columnCount];
-            Arrays.fill(colToSlot, -1);
-            final LongList leadOffsetsTmp = new LongList();
-            int windowFnIndex = 0;
-            int maxLA = 0;
-            for (int i = 0, n = functions.size(); i < n; i++) {
-                Function f = functions.getQuick(i);
-                if (f instanceof WindowFunction wf) {
-                    int t = wf.getType();
-                    if (!isFixed8ByteType(t)) {
-                        throw CairoException.critical(0)
-                                .put("DeferredEmitWindowRecordCursorFactory cannot stream window function of type ")
-                                .put(ColumnType.nameOf(t));
+        // Inventory all window functions; bucket into LAG (lookahead=0) and LEAD (lookahead>0).
+        // Each function's value occupies 8 bytes in the slot. The function's column index is its
+        // position i in the functions list (consistent with how SqlCodeGenerator wires
+        // setColumnIndex).
+        final int columnCount = metadata.getColumnCount();
+        final ObjList<WindowFunction> lagFns = new ObjList<>();
+        final ObjList<WindowFunction> leadFns = new ObjList<>();
+        final int[] colToSlot = new int[columnCount];
+        Arrays.fill(colToSlot, -1);
+        final LongList leadOffsetsTmp = new LongList();
+        int windowFnIndex = 0;
+        int maxLA = 0;
+        for (int i = 0, n = functions.size(); i < n; i++) {
+            Function f = functions.getQuick(i);
+            if (f instanceof WindowFunction wf) {
+                int t = wf.getType();
+                if (!isFixed8ByteType(t)) {
+                    throw CairoException.critical(0)
+                            .put("DeferredEmitWindowRecordCursorFactory cannot stream window function of type ")
+                            .put(ColumnType.nameOf(t));
+                }
+                colToSlot[i] = ROWID_BYTES + windowFnIndex * FUNC_VALUE_BYTES;
+                windowFnIndex++;
+                int la = wf.getLookahead();
+                if (la > 0) {
+                    leadFns.add(wf);
+                    leadOffsetsTmp.add(la);
+                    if (la > maxLA) {
+                        maxLA = la;
                     }
-                    colToSlot[i] = ROWID_BYTES + windowFnIndex * FUNC_VALUE_BYTES;
-                    windowFnIndex++;
-                    int la = wf.getLookahead();
-                    if (la > 0) {
-                        leadFns.add(wf);
-                        leadOffsetsTmp.add(la);
-                        if (la > maxLA) {
-                            maxLA = la;
-                        }
-                    } else {
-                        lagFns.add(wf);
-                    }
+                } else {
+                    lagFns.add(wf);
                 }
             }
-            if (leadFns.size() == 0) {
-                throw CairoException.critical(0)
-                        .put("DeferredEmitWindowRecordCursorFactory requires at least one positive-lookahead window function");
-            }
-
-            final int ringCap = maxLA + 1;
-            final int lCount = leadFns.size();
-            if ((long) ringCap * lCount > 64) {
-                throw CairoException.critical(0)
-                        .put("DeferredEmitWindowRecordCursorFactory: (lookahead+1)*leadCount must be <= 64 (got ")
-                        .put(ringCap).put('x').put(lCount).put(')');
-            }
-            if ((partitionByRecord == null) != (partitionBySink == null) || (partitionByRecord == null) != (partitionMap == null)) {
-                throw CairoException.critical(0)
-                        .put("DeferredEmitWindowRecordCursorFactory: partitionByRecord, partitionBySink and partitionMap must all be null or all non-null");
-            }
-
-            this.base = base;
-            this.functions = functions;
-            this.lagFunctions = lagFns;
-            this.leadFunctions = leadFns;
-            this.maxLookahead = maxLA;
-            this.ringCapacity = ringCap;
-            this.leadCount = lCount;
-            this.isSingleLead = lCount == 1;
-            this.perSlotLeadMask = (1L << lCount) - 1;
-            this.slotBytes = ROWID_BYTES + (lagFns.size() + leadFns.size()) * FUNC_VALUE_BYTES;
-            this.columnToSlotOffset = colToSlot;
-
-            this.leadOffsets = new long[lCount];
-            for (int i = 0; i < lCount; i++) {
-                this.leadOffsets[i] = leadOffsetsTmp.getQuick(i);
-            }
-            this.soleLeadFunction = isSingleLead ? leadFns.getQuick(0) : null;
-            this.soleLeadOffset = isSingleLead ? leadOffsetsTmp.getQuick(0) : 0L;
-            // Release the temp lists to GC; we've copied into primitive arrays.
-
-            this.partitionByRecord = partitionByRecord;
-            this.partitionBySink = partitionBySink;
-            this.partitionMap = partitionMap;
-            this.maxPartitions = maxPartitions;
-            this.cursor = new DeferredEmitWindowRecordCursor();
-            ownershipTaken = true;
-        } finally {
-            if (!ownershipTaken) {
-                Misc.free(base);
-                Misc.free(partitionMap);
-                Misc.free(partitionByRecord);
-                Misc.freeObjList(functions);
-            }
         }
+        if (leadFns.size() == 0) {
+            throw CairoException.critical(0)
+                    .put("DeferredEmitWindowRecordCursorFactory requires at least one positive-lookahead window function");
+        }
+
+        final int ringCap = maxLA + 1;
+        final int lCount = leadFns.size();
+        if ((long) ringCap * lCount > 64) {
+            throw CairoException.critical(0)
+                    .put("DeferredEmitWindowRecordCursorFactory: (lookahead+1)*leadCount must be <= 64 (got ")
+                    .put(ringCap).put('x').put(lCount).put(')');
+        }
+        if ((partitionByRecord == null) != (partitionBySink == null) || (partitionByRecord == null) != (partitionMap == null)) {
+            throw CairoException.critical(0)
+                    .put("DeferredEmitWindowRecordCursorFactory: partitionByRecord, partitionBySink and partitionMap must all be null or all non-null");
+        }
+
+        this.base = base;
+        this.functions = functions;
+        this.lagFunctions = lagFns;
+        this.leadFunctions = leadFns;
+        this.maxLookahead = maxLA;
+        this.ringCapacity = ringCap;
+        this.leadCount = lCount;
+        this.isSingleLead = lCount == 1;
+        this.perSlotLeadMask = (1L << lCount) - 1;
+        this.slotBytes = ROWID_BYTES + (lagFns.size() + leadFns.size()) * FUNC_VALUE_BYTES;
+        this.columnToSlotOffset = colToSlot;
+
+        this.leadOffsets = new long[lCount];
+        for (int i = 0; i < lCount; i++) {
+            this.leadOffsets[i] = leadOffsetsTmp.getQuick(i);
+        }
+        this.soleLeadFunction = isSingleLead ? leadFns.getQuick(0) : null;
+        this.soleLeadOffset = isSingleLead ? leadOffsetsTmp.getQuick(0) : 0L;
+
+        this.partitionByRecord = partitionByRecord;
+        this.partitionBySink = partitionBySink;
+        this.partitionMap = partitionMap;
+        this.maxPartitions = maxPartitions;
+        this.cursor = new DeferredEmitWindowRecordCursor();
     }
 
     @Override
@@ -255,13 +241,10 @@ public class DeferredEmitWindowRecordCursorFactory extends AbstractRecordCursorF
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
-        final RecordCursor baseCursor = base.getCursor(executionContext);
-        try {
-            cursor.of(baseCursor, executionContext);
-        } catch (Throwable t) {
-            Misc.free(baseCursor);
-            throw t;
-        }
+        // cursor.of() assigns baseCursor before doing any work that can throw, so any failure
+        // mid-init leaves the cursor owning the reference; _close() -> cursor.close() handles
+        // cleanup via the normal path.
+        cursor.of(base.getCursor(executionContext), executionContext);
         return cursor;
     }
 
@@ -451,41 +434,33 @@ public class DeferredEmitWindowRecordCursorFactory extends AbstractRecordCursorF
         }
 
         public void of(RecordCursor baseCursor, SqlExecutionContext executionContext) throws SqlException {
-            // The outer caller (getCursor) owns baseCursor and frees it on exception. Don't take
-            // ownership in this.baseCursor until initialization is fully complete, otherwise close()
-            // unwound from a failure path would double-free a cursor the caller is already freeing.
-            boolean ownershipTaken = false;
-            try {
-                this.baseRecordForEmit = baseCursor.getRecordB();
-                this.circuitBreaker = executionContext.getCircuitBreaker();
-                if (!isOpen) {
-                    isOpen = true;
-                    reopenFunctions();
-                }
-                if (pendingMem == null) {
-                    pendingMem = Vm.getCARWInstance(
-                            Math.max(16L, (long) slotBytes * ringCapacity),
-                            Integer.MAX_VALUE,
-                            MemoryTag.NATIVE_WINDOW_PENDING
-                    );
-                }
-                if (partitionMap != null) {
-                    partitionMap.clear();
-                }
-                clearState();
-                resetSinglePartitionStateIfNonPartitioned();
-                isFlushPhase = false;
-                pendingEmitSlotOffset = -1L;
-                flushMapCursor = null;
-                isFlushPartitionOpen = false;
-                Function.init(functions, baseCursor, executionContext, null);
-                this.baseCursor = baseCursor;
-                ownershipTaken = true;
-            } finally {
-                if (!ownershipTaken) {
-                    this.baseRecordForEmit = null;
-                }
+            // Take ownership of baseCursor immediately so that close() handles cleanup if any
+            // initialization step below throws. The caller (factory.getCursor) does not free
+            // baseCursor on its own.
+            this.baseCursor = baseCursor;
+            this.baseRecordForEmit = baseCursor.getRecordB();
+            this.circuitBreaker = executionContext.getCircuitBreaker();
+            if (!isOpen) {
+                isOpen = true;
+                reopenFunctions();
             }
+            if (pendingMem == null) {
+                pendingMem = Vm.getCARWInstance(
+                        Math.max(16L, (long) slotBytes * ringCapacity),
+                        Integer.MAX_VALUE,
+                        MemoryTag.NATIVE_WINDOW_PENDING
+                );
+            }
+            if (partitionMap != null) {
+                partitionMap.clear();
+            }
+            clearState();
+            resetSinglePartitionStateIfNonPartitioned();
+            isFlushPhase = false;
+            pendingEmitSlotOffset = -1L;
+            flushMapCursor = null;
+            isFlushPartitionOpen = false;
+            Function.init(functions, baseCursor, executionContext, null);
         }
 
         @Override
