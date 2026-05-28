@@ -47,6 +47,7 @@ import io.questdb.network.PeerIsSlowToWriteException;
 import io.questdb.network.ServerDisconnectException;
 import io.questdb.network.Socket;
 import io.questdb.std.CharSequenceLongHashMap;
+import io.questdb.std.Mutable;
 import io.questdb.std.Numbers;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.Utf8Sequence;
@@ -65,23 +66,56 @@ import static io.questdb.cutlass.qwp.protocol.QwpConstants.*;
  * 3. Switches to WebSocket protocol for subsequent communication
  * 4. Parses WebSocket frames and processes QWP v1 messages
  * <p>
- * Per-connection state is stored in {@link QwpProcessorState} via {@link LocalValue},
+ * Per-connection state is stored in {@link QwpIngressProcessorState} via {@link LocalValue},
  * so a single processor instance can safely be shared across connections on the same worker.
  */
-public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
+public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
     // Cumulative ACK batch size
     private static final int ACK_BATCH_SIZE = 8;
+    // HTTP response templates
+    private static final byte[] BAD_REQUEST_PREFIX =
+            "HTTP/1.1 400 Bad Request\r\nContent-Type: text/plain\r\nContent-Length: ".getBytes(StandardCharsets.US_ASCII);
+    // HTTP_HEADER_END is declared out of alphabetical order on purpose: the
+    // BAD_REQUEST_RESPONSE_* initializers below read it via
+    // precomputeBadRequestResponse, and Java initializes static fields in
+    // textual order. Moving HTTP_HEADER_END below the BAD_REQUEST_RESPONSE_*
+    // block would leave it null at the time the precomputation runs.
+    private static final byte[] HTTP_HEADER_END = "\r\n\r\n".getBytes(StandardCharsets.US_ASCII);
+    // Precomputed full 400 Bad Request responses for each handshake validation
+    // error. validateHandshake returns one of the ERROR_ singletons by reference,
+    // and the reject path memcpys the matching response directly into the send
+    // buffer. Replaces a per-reject triple-allocation (reason.getBytes +
+    // Integer.toString + contentLength.getBytes) with a zero-GC lookup so
+    // probe / attack traffic does not produce GC pressure on the connect path.
+    private static final byte[] BAD_REQUEST_RESPONSE_CONNECTION_MUST_CONTAIN_UPGRADE =
+            precomputeBadRequestResponse(QwpIngressHttpProcessor.ERROR_CONNECTION_MUST_CONTAIN_UPGRADE);
+    private static final byte[] BAD_REQUEST_RESPONSE_INVALID_SEC_WEBSOCKET_KEY =
+            precomputeBadRequestResponse(QwpIngressHttpProcessor.ERROR_INVALID_SEC_WEBSOCKET_KEY);
+    private static final byte[] BAD_REQUEST_RESPONSE_INVALID_UPGRADE_HEADER_VALUE =
+            precomputeBadRequestResponse(QwpIngressHttpProcessor.ERROR_INVALID_UPGRADE_HEADER_VALUE);
+    private static final byte[] BAD_REQUEST_RESPONSE_MISSING_CONNECTION_HEADER =
+            precomputeBadRequestResponse(QwpIngressHttpProcessor.ERROR_MISSING_CONNECTION_HEADER);
+    private static final byte[] BAD_REQUEST_RESPONSE_MISSING_SEC_WEBSOCKET_KEY_HEADER =
+            precomputeBadRequestResponse(QwpIngressHttpProcessor.ERROR_MISSING_SEC_WEBSOCKET_KEY_HEADER);
+    private static final byte[] BAD_REQUEST_RESPONSE_MISSING_UPGRADE_HEADER =
+            precomputeBadRequestResponse(QwpIngressHttpProcessor.ERROR_MISSING_UPGRADE_HEADER);
+    private static final byte[] BAD_REQUEST_RESPONSE_ORIGIN_HEADER_NOT_ALLOWED =
+            precomputeBadRequestResponse(QwpIngressHttpProcessor.ERROR_ORIGIN_HEADER_NOT_ALLOWED);
+    private static final Log LOG = LogFactory.getLog(QwpIngressUpgradeProcessor.class);
+    private static final LocalValue<QwpIngressProcessorState> LV = new LocalValue<>();
     // Worst-case WebSocket frame header size (2-byte base + 8-byte 64-bit
     // extended length + 4-byte mask for client->server frames). Subtracted
     // from the recv buffer when computing the effective batch cap so the
     // advertised value still leaves room for the frame header on the wire.
     private static final int MAX_WS_FRAME_HEADER_BYTES = 14;
-    // HTTP response templates
-    private static final byte[] BAD_REQUEST_PREFIX =
-            "HTTP/1.1 400 Bad Request\r\nContent-Type: text/plain\r\nContent-Length: ".getBytes(StandardCharsets.US_ASCII);
-    private static final byte[] HTTP_HEADER_END = "\r\n\r\n".getBytes(StandardCharsets.US_ASCII);
-    private static final Log LOG = LogFactory.getLog(QwpWebSocketUpgradeProcessor.class);
-    private static final LocalValue<QwpProcessorState> LV = new LocalValue<>();
+    // Carries the byte count of a 4xx upgrade rejection staged in the raw
+    // response buffer by onHeadersReady, to be flushed by onRequestComplete
+    // (which is allowed to propagate PeerIsSlowToReadException to the
+    // framework's park-on-write path). Sized for the rare case of a
+    // malformed or role-misrouted upgrade -- successful upgrades use the
+    // handshake flush flags on QwpProcessorState instead and never touch
+    // this LocalValue.
+    private static final LocalValue<RejectFlushTracker> REJECT_FLUSH = new LocalValue<>();
     private static final byte[] UPGRADE_REQUIRED_RESPONSE =
             ("""
                     HTTP/1.1 426 Upgrade Required\r
@@ -106,7 +140,7 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
     private final int maxResponseContentLength;
     private final int recvBufferSize;
 
-    public QwpWebSocketUpgradeProcessor(CairoEngine engine, HttpFullFatServerConfiguration httpConfiguration) {
+    public QwpIngressUpgradeProcessor(CairoEngine engine, HttpFullFatServerConfiguration httpConfiguration) {
         this.engine = engine;
         this.forceRecvFragmentationChunkSize = httpConfiguration.getHttpContextConfiguration()
                 .getForceRecvFragmentationChunkSize();
@@ -136,6 +170,19 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
      * @return the number of bytes written, or -1 if buffer too small
      */
     public static int writeBadRequestResponse(long buffer, int bufferSize, String reason) {
+        // Fast path: validateHandshake returns one of the ERROR_ singletons, so
+        // the connect path always hits this lookup and avoids any allocation.
+        byte[] precomputed = precomputedBadRequestResponse(reason);
+        if (precomputed != null) {
+            if (precomputed.length > bufferSize) {
+                return -1;
+            }
+            Unsafe.copyMemory(precomputed, Unsafe.BYTE_OFFSET, null, buffer, precomputed.length);
+            return precomputed.length;
+        }
+
+        // Slow path: arbitrary reason text (tests, future callers). Builds the
+        // response with the customary getBytes / Integer.toString allocations.
         byte[] reasonBytes = reason.getBytes(StandardCharsets.UTF_8);
         String contentLength = String.valueOf(reasonBytes.length);
         byte[] contentLengthBytes = contentLength.getBytes(StandardCharsets.US_ASCII);
@@ -180,14 +227,14 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
      * @return the number of bytes written, or -1 if buffer too small
      */
     public static int writeHandshakeResponse(long buffer, int bufferSize, Utf8Sequence key, int qwpVersion) {
-        String acceptKey = QwpWebSocketHttpProcessor.computeAcceptKey(key);
-        int requiredSize = QwpWebSocketHttpProcessor.responseSize(acceptKey, qwpVersion);
+        byte[] acceptKey = QwpIngressHttpProcessor.computeAcceptKey(key);
+        int requiredSize = QwpIngressHttpProcessor.responseSize(acceptKey, qwpVersion);
 
         if (requiredSize > bufferSize) {
             return -1;
         }
 
-        return QwpWebSocketHttpProcessor.writeResponse(buffer, acceptKey, qwpVersion);
+        return QwpIngressHttpProcessor.writeResponse(buffer, acceptKey, qwpVersion);
     }
 
     /**
@@ -212,7 +259,7 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
     @Override
     public void onConnectionClosed(HttpConnectionContext context) {
         LOG.info().$("WebSocket connection closed [fd=").$(context.getFd()).I$();
-        QwpProcessorState state = LV.get(context);
+        QwpIngressProcessorState state = LV.get(context);
         if (state == null) {
             return;
         }
@@ -224,14 +271,16 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
         } catch (PeerDisconnectedException | PeerIsSlowToReadException e) {
             // Connection is closing anyway, ignore
         } finally {
-            try {
-                state.onDisconnected();
-            } finally {
-                // Free native resources (bufferAddress, ddlMem, path, symbolCachePool).
-                // set(null) calls Misc.freeIfCloseable(state) → state.close() and removes
-                // the entry so that localValueMap.disconnect() won't call onDisconnected() again.
-                LV.set(context, null);
-            }
+            // Leave the state instance in the LocalValueMap slot. onDisconnected
+            // resets the per-connection scoreboard (recv buffer length, sequence
+            // counters, ACK / durable maps, send state, symbol cache) so the
+            // next connection that lands on this context starts clean; the
+            // connection-scoped native scaffolding (bufferAddress and the
+            // pre-allocated decoder / appender / tudCache sub-objects) is sized
+            // to the HttpConnectionContext and gets reused without paying the
+            // re-allocation cost on every reconnect. LocalValueMap.close()
+            // invokes state.close() at HTTP context teardown.
+            state.onDisconnected();
         }
     }
 
@@ -245,11 +294,11 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
         long bufferAddr = rawSocket.getBufferAddress();
         int bufferSize = rawSocket.getBufferSize();
 
-        String validationError = QwpWebSocketHttpProcessor.validateHandshake(context.getRequestHeader());
+        String validationError = QwpIngressHttpProcessor.validateHandshake(context.getRequestHeader());
         if (validationError != null) {
             LOG.error().$("WebSocket handshake validation failed [fd=").$(context.getFd())
                     .$(", error=").$(validationError).I$();
-            final boolean versionError = QwpWebSocketHttpProcessor.isVersionValidationError(validationError);
+            final boolean versionError = QwpIngressHttpProcessor.isVersionValidationError(validationError);
             final int requiredSize = versionError ? UPGRADE_REQUIRED_RESPONSE.length : badRequestResponseSize(validationError);
             final CharSequence responseType = versionError ? "426 upgrade response" : "400 bad request response";
             if (requiredSize > bufferSize) {
@@ -262,13 +311,13 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
             if (bytesWritten <= 0) {
                 throw responseDoesNotFitSendBuffer(context.getFd(), responseType, bufferSize, requiredSize);
             }
-            try {
-                rawSocket.send(bytesWritten);
-            } catch (PeerIsSlowToReadException e) {
-                // Send buffer full right after receiving headers with invalid handshake, that's weird error response cannot be delivered.
-                // Throw HttpException so handleClientRecv disconnects the connection
-                throw HttpException.instance("WebSocket handshake rejected: ").put(validationError);
-            }
+            // Defer rawSocket.send to onRequestComplete for the same reason
+            // the 101 success path defers: onHeadersReady is forbidden from
+            // throwing PeerIsSlowToReadException, so a small send-fragmentation
+            // cap that splits the reject body across two sends would otherwise
+            // discard the residual fragment and disconnect the client before
+            // it could see the full 400 / 426 response.
+            stageReject(context, bytesWritten);
             // PeerDisconnectedException propagates to handleClientRecv → disconnectHttp()
             return;
         }
@@ -276,31 +325,31 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
         byte role = engine.getQwpServerInfoProvider().role();
         byte[] roleBytes = QwpEgressMsgKind.roleNameBytes(role);
         if (role == QwpEgressMsgKind.ROLE_REPLICA || role == QwpEgressMsgKind.ROLE_PRIMARY_CATCHUP) {
-            int rejectSize = QwpWebSocketHttpProcessor.misdirectedRequestWithRoleSize(roleBytes);
+            int rejectSize = QwpIngressHttpProcessor.misdirectedRequestWithRoleSize(roleBytes);
             if (rejectSize > bufferSize) {
                 throw responseDoesNotFitSendBuffer(context.getFd(), "421 ingress role-reject response", bufferSize, rejectSize);
             }
-            int rejectBytes = QwpWebSocketHttpProcessor.writeMisdirectedRequestWithRole(bufferAddr, bufferSize, roleBytes);
+            int rejectBytes = QwpIngressHttpProcessor.writeMisdirectedRequestWithRole(bufferAddr, bufferSize, roleBytes);
             if (rejectBytes <= 0) {
                 throw responseDoesNotFitSendBuffer(context.getFd(), "421 ingress role-reject response", bufferSize, rejectSize);
             }
-            try {
-                rawSocket.send(rejectBytes);
-            } catch (PeerIsSlowToReadException e) {
-                throw HttpException.instance("WebSocket ingress role-reject 421 blocked");
-            }
+            // Same deferral rationale as the 400 / 426 paths above: a small
+            // send-fragmentation cap would otherwise drop the second-fragment
+            // send of the 421 body and disconnect the client before it could
+            // see the X-QuestDB-Role header that tells it where to retry.
+            stageReject(context, rejectBytes);
             LOG.info().$("ingress upgrade rejected by role [fd=").$(context.getFd())
                     .$(", role=").$(QwpEgressMsgKind.roleName(role)).I$();
             return;
         }
 
         HttpRequestHeader requestHeader = context.getRequestHeader();
-        Utf8Sequence wsKey = QwpWebSocketHttpProcessor.getWebSocketKey(requestHeader);
+        Utf8Sequence wsKey = QwpIngressHttpProcessor.getWebSocketKey(requestHeader);
 
         // Read QWP version negotiation headers
         int negotiatedVersion = negotiateQwpVersion(requestHeader, context.getFd());
 
-        String acceptKey = QwpWebSocketHttpProcessor.computeAcceptKey(wsKey);
+        byte[] acceptKey = QwpIngressHttpProcessor.computeAcceptKey(wsKey);
 
         // Resolve durable-ack opt-in before sizing the 101 response, since
         // the X-QWP-Durable-Ack confirmation header affects the response size.
@@ -309,12 +358,12 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
         // opted-in clients on such servers receive a 101 without confirmation
         // and fail at the client side.
         Utf8Sequence durableAckHeader = requestHeader.getHeader(
-                QwpWebSocketHttpProcessor.HEADER_X_QWP_REQUEST_DURABLE_ACK);
+                QwpIngressHttpProcessor.HEADER_X_QWP_REQUEST_DURABLE_ACK);
         boolean durableAckRequested = durableAckHeader != null
-                && Utf8s.equalsIgnoreCaseAscii(durableAckHeader, QwpWebSocketHttpProcessor.HEADER_VALUE_DURABLE_ACK_ENABLED);
+                && Utf8s.equalsIgnoreCaseAscii(durableAckHeader, QwpIngressHttpProcessor.HEADER_VALUE_DURABLE_ACK_ENABLED);
         boolean durableAckEnabled = durableAckRequested && engine.getDurableAckRegistry().isEnabled();
 
-        int requiredHandshakeSize = QwpWebSocketHttpProcessor.responseSize(
+        int requiredHandshakeSize = QwpIngressHttpProcessor.responseSize(
                 acceptKey, negotiatedVersion, null, durableAckEnabled, roleBytes,
                 effectiveMaxBatchSizeBytes);
         if (requiredHandshakeSize > bufferSize) {
@@ -323,9 +372,9 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
 
         // Initialize or get the ILP processor state for this connection only after
         // confirming the 101 response fits in the raw HTTP send buffer.
-        QwpProcessorState state = LV.get(context);
+        QwpIngressProcessorState state = LV.get(context);
         if (state == null) {
-            state = new QwpProcessorState(
+            state = new QwpIngressProcessorState(
                     recvBufferSize,
                     maxResponseContentLength,
                     engine,
@@ -340,38 +389,62 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
         state.setDurableAckEnabled(durableAckEnabled);
 
         // Write the 101 Switching Protocols response (reuse the pre-computed accept key)
-        int bytesWritten = QwpWebSocketHttpProcessor.writeResponse(
+        int bytesWritten = QwpIngressHttpProcessor.writeResponse(
                 bufferAddr, acceptKey, negotiatedVersion, null, durableAckEnabled, roleBytes,
                 effectiveMaxBatchSizeBytes);
         if (bytesWritten <= 0) {
             throw responseDoesNotFitSendBuffer(context.getFd(), "101 handshake response", bufferSize, requiredHandshakeSize);
         }
-        try {
-            rawSocket.send(bytesWritten);
-        } catch (PeerIsSlowToReadException e) {
-            // Handshake blocked — shouldn't happen on a fresh connection.
-            // Throw HttpException so handleClientRecv disconnects the connection
-            // rather than leaving the buffer in an inconsistent state.
-            throw HttpException.instance("WebSocket 101 handshake blocked");
-        }
-        // PeerDisconnectedException propagates to handleClientRecv → disconnectHttp()
-        state.setWsHandshakeSent(true);
-        LOG.info().$("WebSocket handshake sent [fd=").$(context.getFd()).I$();
-
-        // Switch to WebSocket protocol - this tells the framework to bypass HTTP parsing
-        context.switchProtocol();
+        // The HttpRequestProcessor contract forbids PeerIsSlowToReadException
+        // from onHeadersReady, so we defer the raw-socket send to
+        // onRequestComplete where PISR propagates cleanly into the framework's
+        // park-on-write path. State carries the byte count across the two
+        // calls (the framework invokes them back-to-back in handleClientRecv).
+        // Without this deferral a small send-fragmentation cap (e.g.
+        // DEBUG_HTTP_FORCE_SEND_FRAGMENTATION_CHUNK_SIZE=125 with a ~220-byte
+        // response) would partial-send and silently drop the rest, leaving
+        // the client waiting on a handshake that never completes.
+        state.setPendingHandshakeBytes(bytesWritten);
+        state.setHandshakeFlushPending(true);
     }
 
     @Override
-    public void onRequestComplete(HttpConnectionContext context) {
-        // For WebSocket, after the handshake is sent, we just return normally.
-        // The framework will call reset() and then loop back to handleClientRecv().
-        // Since we called switchProtocol() in onHeadersReady, the framework will
-        // delegate to resumeRecv instead of parsing more HTTP requests.
-        QwpProcessorState state = LV.get(context);
-        if (state != null && state.isWsHandshakeSent()) {
-            LOG.debug().$("WebSocket handshake complete, ready for frames [fd=").$(context.getFd()).I$();
+    public void onRequestComplete(HttpConnectionContext context)
+            throws PeerDisconnectedException, PeerIsSlowToReadException {
+        RejectFlushTracker rejectTracker = REJECT_FLUSH.get(context);
+        if (rejectTracker != null && rejectTracker.pendingBytes > 0) {
+            // Flush the deferred 400 / 426 / 421 reject body. PISR propagates
+            // into the framework's park-on-write path; resumeSend picks the
+            // residual flush back up and disconnects after the last byte.
+            // pendingBytes stays non-zero until the send returns normally so
+            // resumeSend can recognise that it is still in the reject path.
+            HttpRawSocket rawSocket = context.getRawResponseSocket();
+            rawSocket.send(rejectTracker.pendingBytes);
+            rejectTracker.pendingBytes = 0;
+            // Send completed in a single call. Throw HttpException so
+            // handleClientRecv tears the connection down after the reject body
+            // has fully landed on the wire.
+            throw HttpException.instance("WebSocket upgrade rejected");
         }
+        QwpIngressProcessorState state = LV.get(context);
+        if (state == null || !state.isHandshakeFlushPending()) {
+            // Either we're already past the handshake (post-protocol-switch
+            // onRequestComplete after a recv cycle) or onHeadersReady
+            // short-circuited (validation error / role reject) without
+            // setting the deferred flush.
+            if (state != null && state.isWsHandshakeSent()) {
+                LOG.debug().$("WebSocket handshake complete, ready for frames [fd=").$(context.getFd()).I$();
+            }
+            return;
+        }
+        HttpRawSocket rawSocket = context.getRawResponseSocket();
+        // rawSocket.send may park us when send fragmentation forces a
+        // multi-fragment write. PISR propagates to handleClientRecv which
+        // parks the connection for write and schedules resumeSend; resumeSend
+        // finalises the protocol switch after the rest of the handshake
+        // bytes flush.
+        rawSocket.send(state.getPendingHandshakeBytes());
+        finalizeHandshake(context, state);
     }
 
     @Override
@@ -385,7 +458,7 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
     @Override
     public void resumeRecv(HttpConnectionContext context) throws PeerIsSlowToWriteException, ServerDisconnectException, PeerIsSlowToReadException {
         // Ensure state is available
-        QwpProcessorState state = LV.get(context);
+        QwpIngressProcessorState state = LV.get(context);
         if (state == null) {
             LOG.error().$("WebSocket resumeRecv but no state available [fd=").$(context.getFd()).I$();
             throw ServerDisconnectException.INSTANCE;
@@ -453,15 +526,37 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
 
     @Override
     public void resumeSend(HttpConnectionContext context) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
-        QwpProcessorState state = LV.get(context);
+        RejectFlushTracker rejectTracker = REJECT_FLUSH.get(context);
+        if (rejectTracker != null && rejectTracker.pendingBytes > 0) {
+            // Residual bytes of a 4xx upgrade reject were parked mid-write.
+            // Flush the rest (PISR re-parks until the kernel takes the last
+            // byte) and then close the connection -- there is no protocol to
+            // switch to on a reject.
+            context.resumeResponseSend();
+            rejectTracker.pendingBytes = 0;
+            throw ServerDisconnectException.INSTANCE;
+        }
+
+        QwpIngressProcessorState state = LV.get(context);
         if (state == null) {
             throw ServerDisconnectException.INSTANCE;
         }
 
+        // If the 101 handshake response was parked mid-write (small send
+        // fragmentation cap), flush the residual bytes first and finalise
+        // the protocol switch. The connection is still in HTTP mode at this
+        // point; finalizeHandshake() flips to WebSocket so the next recv
+        // parses frames rather than HTTP.
+        if (state.isHandshakeFlushPending()) {
+            context.resumeResponseSend();
+            finalizeHandshake(context, state);
+            return;
+        }
+
         switch (state.getSendState()) {
-            case QwpProcessorState.SEND_STATE_READY -> {
+            case QwpIngressProcessorState.SEND_STATE_READY -> {
             }
-            case QwpProcessorState.SEND_STATE_RESUME_ACK -> {
+            case QwpIngressProcessorState.SEND_STATE_RESUME_ACK -> {
                 context.resumeResponseSend();
                 state.onResumeAckComplete();
                 LOG.debug().$("Resumed ACK sent successfully [fd=").$(context.getFd())
@@ -473,47 +568,52 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
                     trySendDurableAck(context, state);
                 }
             }
-            case QwpProcessorState.SEND_STATE_RESUME_DURABLE_ACK -> {
+            case QwpIngressProcessorState.SEND_STATE_RESUME_DURABLE_ACK -> {
                 context.resumeResponseSend();
                 state.onResumeDurableAckComplete();
                 LOG.debug().$("Resumed durable ACK sent successfully [fd=").$(context.getFd()).I$();
                 trySendDurableAck(context, state);
             }
-            case QwpProcessorState.SEND_STATE_RESUME_ERROR -> {
+            case QwpIngressProcessorState.SEND_STATE_RESUME_ERROR -> {
                 context.resumeResponseSend();
                 LOG.debug().$("Resumed error response sent successfully [fd=").$(context.getFd()).I$();
                 state.onResumeErrorComplete();
             }
-            case QwpProcessorState.SEND_STATE_RESUME_ACK_THEN_ERROR -> {
+            case QwpIngressProcessorState.SEND_STATE_RESUME_ACK_THEN_ERROR -> {
                 context.resumeResponseSend();
                 state.onResumeAckComplete();
                 LOG.debug().$("Resumed ACK sent successfully [fd=").$(context.getFd())
                         .$(", upTo=").$(state.getLastAckedSequence()).I$();
                 sendDeferredErrorResponse(context, state);
             }
-            case QwpProcessorState.SEND_STATE_RESUME_DURABLE_ACK_THEN_ERROR -> {
+            case QwpIngressProcessorState.SEND_STATE_RESUME_DURABLE_ACK_THEN_ERROR -> {
                 context.resumeResponseSend();
                 state.onResumeDurableAckComplete();
                 LOG.debug().$("Resumed durable ACK sent successfully [fd=").$(context.getFd()).I$();
                 sendDeferredErrorResponse(context, state);
             }
-            case QwpProcessorState.SEND_STATE_RESUME_ACK_THEN_CLOSE -> {
+            case QwpIngressProcessorState.SEND_STATE_RESUME_ACK_THEN_CLOSE -> {
                 context.resumeResponseSend();
                 state.onResumeAckComplete();
                 LOG.debug().$("Resumed ACK sent before fatal close [fd=").$(context.getFd())
                         .$(", upTo=").$(state.getLastAckedSequence()).I$();
                 sendDeferredFatalClose(context, state);
             }
-            case QwpProcessorState.SEND_STATE_RESUME_DURABLE_ACK_THEN_CLOSE -> {
+            case QwpIngressProcessorState.SEND_STATE_RESUME_DURABLE_ACK_THEN_CLOSE -> {
                 context.resumeResponseSend();
                 state.onResumeDurableAckComplete();
                 LOG.debug().$("Resumed durable ACK sent before fatal close [fd=").$(context.getFd()).I$();
                 sendDeferredFatalClose(context, state);
             }
-            case QwpProcessorState.SEND_STATE_RESUME_CLOSE -> {
+            case QwpIngressProcessorState.SEND_STATE_RESUME_CLOSE -> {
                 context.resumeResponseSend();
                 LOG.debug().$("Resumed CLOSE frame sent [fd=").$(context.getFd()).I$();
                 gracefulCloseAndDisconnect(context);
+            }
+            case QwpIngressProcessorState.SEND_STATE_RESUME_PONG -> {
+                context.resumeResponseSend();
+                state.onResumePongComplete();
+                LOG.debug().$("Resumed pong frame sent [fd=").$(context.getFd()).I$();
             }
             default -> {
                 LOG.critical().$("Invalid WebSocket send state [fd=").$(context.getFd())
@@ -521,9 +621,14 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
                 throw ServerDisconnectException.INSTANCE;
             }
         }
+        drainBufferedFrames(context, state);
     }
 
     private static int badRequestResponseSize(String reason) {
+        byte[] precomputed = precomputedBadRequestResponse(reason);
+        if (precomputed != null) {
+            return precomputed.length;
+        }
         return badRequestResponseSize(reason.getBytes(StandardCharsets.UTF_8).length);
     }
 
@@ -532,6 +637,59 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
                 + Integer.toString(reasonByteCount).length()
                 + HTTP_HEADER_END.length
                 + reasonByteCount;
+    }
+
+    private static void finalizeHandshake(HttpConnectionContext context, QwpIngressProcessorState state) {
+        state.setWsHandshakeSent(true);
+        state.setHandshakeFlushPending(false);
+        state.setPendingHandshakeBytes(0);
+        LOG.info().$("WebSocket handshake sent [fd=").$(context.getFd()).I$();
+        // Switch to WebSocket protocol -- the framework now routes recvs to
+        // resumeRecv (frame parser) instead of HTTP request parsing.
+        context.switchProtocol();
+    }
+
+    private static byte[] precomputeBadRequestResponse(String reason) {
+        byte[] reasonBytes = reason.getBytes(StandardCharsets.US_ASCII);
+        byte[] contentLengthBytes = Integer.toString(reasonBytes.length).getBytes(StandardCharsets.US_ASCII);
+        byte[] result = new byte[BAD_REQUEST_PREFIX.length + contentLengthBytes.length
+                + HTTP_HEADER_END.length + reasonBytes.length];
+        int offset = 0;
+        System.arraycopy(BAD_REQUEST_PREFIX, 0, result, offset, BAD_REQUEST_PREFIX.length);
+        offset += BAD_REQUEST_PREFIX.length;
+        System.arraycopy(contentLengthBytes, 0, result, offset, contentLengthBytes.length);
+        offset += contentLengthBytes.length;
+        System.arraycopy(HTTP_HEADER_END, 0, result, offset, HTTP_HEADER_END.length);
+        offset += HTTP_HEADER_END.length;
+        System.arraycopy(reasonBytes, 0, result, offset, reasonBytes.length);
+        return result;
+    }
+
+    // Reference-identity switch on the singleton ERROR_ String constants
+    // returned by QwpWebSocketHttpProcessor.validateHandshake. Returns the
+    // pre-built 400 response for known errors, null for arbitrary text. The
+    // returned byte[] is shared and read-only -- copy bytes into the response
+    // buffer, do not mutate.
+    private static byte[] precomputedBadRequestResponse(String validationError) {
+        if (validationError == null) {
+            return null;
+        }
+        return switch (validationError) {
+            case QwpIngressHttpProcessor.ERROR_CONNECTION_MUST_CONTAIN_UPGRADE ->
+                    BAD_REQUEST_RESPONSE_CONNECTION_MUST_CONTAIN_UPGRADE;
+            case QwpIngressHttpProcessor.ERROR_INVALID_SEC_WEBSOCKET_KEY ->
+                    BAD_REQUEST_RESPONSE_INVALID_SEC_WEBSOCKET_KEY;
+            case QwpIngressHttpProcessor.ERROR_INVALID_UPGRADE_HEADER_VALUE ->
+                    BAD_REQUEST_RESPONSE_INVALID_UPGRADE_HEADER_VALUE;
+            case QwpIngressHttpProcessor.ERROR_MISSING_CONNECTION_HEADER ->
+                    BAD_REQUEST_RESPONSE_MISSING_CONNECTION_HEADER;
+            case QwpIngressHttpProcessor.ERROR_MISSING_SEC_WEBSOCKET_KEY_HEADER ->
+                    BAD_REQUEST_RESPONSE_MISSING_SEC_WEBSOCKET_KEY_HEADER;
+            case QwpIngressHttpProcessor.ERROR_MISSING_UPGRADE_HEADER -> BAD_REQUEST_RESPONSE_MISSING_UPGRADE_HEADER;
+            case QwpIngressHttpProcessor.ERROR_ORIGIN_HEADER_NOT_ALLOWED ->
+                    BAD_REQUEST_RESPONSE_ORIGIN_HEADER_NOT_ALLOWED;
+            default -> null;
+        };
     }
 
     private static HttpException responseDoesNotFitSendBuffer(long fd, CharSequence responseType, int bufferSize, int requiredSize) {
@@ -544,41 +702,61 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
                 .put(']');
     }
 
-    private void drainPendingResponse(HttpConnectionContext context, QwpProcessorState state)
+    private static void stageReject(HttpConnectionContext context, int bytesWritten) {
+        RejectFlushTracker tracker = REJECT_FLUSH.get(context);
+        if (tracker == null) {
+            tracker = new RejectFlushTracker();
+            REJECT_FLUSH.set(context, tracker);
+        }
+        tracker.pendingBytes = bytesWritten;
+    }
+
+    private void drainBufferedFrames(HttpConnectionContext context, QwpIngressProcessorState state)
+            throws ServerDisconnectException, PeerDisconnectedException, PeerIsSlowToReadException {
+        if (state.isSendReady() && state.getRecvBufferLen() > 0) {
+            processWebSocketFrames(context, state, context.getRecvBuffer(), state.getRecvBufferLen());
+        }
+    }
+
+    private void drainPendingResponse(HttpConnectionContext context, QwpIngressProcessorState state)
             throws PeerDisconnectedException, PeerIsSlowToReadException {
         switch (state.getSendState()) {
-            case QwpProcessorState.SEND_STATE_READY -> {
+            case QwpIngressProcessorState.SEND_STATE_READY -> {
             }
-            case QwpProcessorState.SEND_STATE_RESUME_ACK -> {
+            case QwpIngressProcessorState.SEND_STATE_RESUME_ACK -> {
                 context.resumeResponseSend();
                 state.onResumeAckComplete();
             }
-            case QwpProcessorState.SEND_STATE_RESUME_DURABLE_ACK -> {
+            case QwpIngressProcessorState.SEND_STATE_RESUME_DURABLE_ACK -> {
                 context.resumeResponseSend();
                 state.onResumeDurableAckComplete();
             }
-            case QwpProcessorState.SEND_STATE_RESUME_ERROR -> {
+            case QwpIngressProcessorState.SEND_STATE_RESUME_ERROR -> {
                 context.resumeResponseSend();
                 state.onResumeErrorComplete();
             }
-            case QwpProcessorState.SEND_STATE_RESUME_ACK_THEN_ERROR -> {
+            case QwpIngressProcessorState.SEND_STATE_RESUME_ACK_THEN_ERROR -> {
                 context.resumeResponseSend();
                 state.onResumeAckComplete();
                 sendDeferredErrorResponse(context, state);
             }
-            case QwpProcessorState.SEND_STATE_RESUME_DURABLE_ACK_THEN_ERROR -> {
+            case QwpIngressProcessorState.SEND_STATE_RESUME_DURABLE_ACK_THEN_ERROR -> {
                 context.resumeResponseSend();
                 state.onResumeDurableAckComplete();
                 sendDeferredErrorResponse(context, state);
             }
-            case QwpProcessorState.SEND_STATE_RESUME_ACK_THEN_CLOSE,
-                 QwpProcessorState.SEND_STATE_RESUME_DURABLE_ACK_THEN_CLOSE,
-                 QwpProcessorState.SEND_STATE_RESUME_CLOSE -> // The peer is voluntarily closing, but we have a fatal CLOSE
+            case QwpIngressProcessorState.SEND_STATE_RESUME_ACK_THEN_CLOSE,
+                 QwpIngressProcessorState.SEND_STATE_RESUME_DURABLE_ACK_THEN_CLOSE,
+                 QwpIngressProcessorState.SEND_STATE_RESUME_CLOSE -> // The peer is voluntarily closing, but we have a fatal CLOSE
                 // queued. The pending response will be torn down anyway, so
                 // there is no value in attempting to flush the deferred CLOSE
                 // frame on top of an in-flight ACK. Let the caller proceed.
                     LOG.debug().$("Pending fatal close superseded by peer close [fd=").$(context.getFd())
                             .$(", state=").$(state.getSendState()).I$();
+            case QwpIngressProcessorState.SEND_STATE_RESUME_PONG -> {
+                context.resumeResponseSend();
+                state.onResumePongComplete();
+            }
             default -> {
                 LOG.critical().$("Invalid WebSocket send state during close [fd=").$(context.getFd())
                         .$(", state=").$(state.getSendState()).I$();
@@ -587,7 +765,7 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
         }
     }
 
-    private void flushPendingAck(HttpConnectionContext context, QwpProcessorState state)
+    private void flushPendingAck(HttpConnectionContext context, QwpIngressProcessorState state)
             throws PeerDisconnectedException, PeerIsSlowToReadException {
         if (state.hasPendingAck()) {
             trySendAck(context, state);
@@ -610,13 +788,14 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
             Socket socket = context.getSocket();
             if (socket != null) {
                 socket.shutdown(Net.SHUT_WR);
+                context.drainRecvBuffer();
             }
         } catch (Throwable ignored) {
         }
         throw ServerDisconnectException.INSTANCE;
     }
 
-    private void handleBinaryMessage(HttpConnectionContext context, QwpProcessorState state, long payload, int length)
+    private void handleBinaryMessage(HttpConnectionContext context, QwpIngressProcessorState state, long payload, int length)
             throws PeerDisconnectedException, PeerIsSlowToReadException {
         long seq = state.nextMessageSequence();
         LOG.debug().$("WebSocket binary message [fd=").$(context.getFd())
@@ -632,20 +811,31 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
         byte responseStatus = STATUS_OK;
         String errorMessage = null;
 
+        boolean deferCommit = false;
         try {
             // Add the binary data to the state buffer
             state.addData(payload, payload + length);
 
+            deferCommit = state.isDeferCommit();
+
             // Process the QWP v1 message
             state.processMessage();
 
-            if (state.isOk()) {
+            if (state.isOk() && !deferCommit) {
                 state.commit();
+            }
+            if (state.isOk() && deferCommit) {
+                state.commitIfMaxUncommittedRowsReached();
             }
             // commit() swallows exceptions internally
             if (state.isOk()) {
-                LOG.debug().$("WebSocket message committed [fd=").$(context.getFd())
-                        .$(", seq=").$(seq).I$();
+                if (deferCommit) {
+                    LOG.debug().$("WebSocket deferred commit [fd=").$(context.getFd())
+                            .$(", seq=").$(seq).I$();
+                } else {
+                    LOG.debug().$("WebSocket message committed [fd=").$(context.getFd())
+                            .$(", seq=").$(seq).I$();
+                }
             } else {
                 errorMessage = state.getErrorText();
                 LOG.error().$("WebSocket message processing failed [fd=").$(context.getFd())
@@ -666,8 +856,13 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
             responseStatus = STATUS_INTERNAL_ERROR;
             errorMessage = e.getMessage();
         } finally {
-            // Reset state for next message (but preserve connectionSymbolDict for delta encoding)
-            state.clear();
+            if (deferCommit && state.isOk()) {
+                // Preserve WAL state for the next message in the deferred batch
+                state.clearMessageState();
+            } else {
+                // Reset state for next message (but preserve connectionSymbolDict for delta encoding)
+                state.clear();
+            }
         }
 
         // Send response using cumulative ACK strategy
@@ -691,7 +886,8 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
         }
     }
 
-    private void handleClose(HttpConnectionContext context, QwpProcessorState state, long payload, int length) {
+    private void handleClose(HttpConnectionContext context, QwpIngressProcessorState state, long payload, int length)
+            throws PeerIsSlowToReadException {
         int closeCode = -1;
         if (length >= 2) {
             int high = Unsafe.getByte(payload) & 0xFF;
@@ -741,50 +937,80 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
 
             int written = WebSocketFrameWriter.writeCloseFrame(bufferAddr, bufferSize, responseCode, null);
             if (written > 0) {
-                rawSocket.send(written);
+                try {
+                    rawSocket.send(written);
+                } catch (PeerIsSlowToReadException e) {
+                    // CLOSE frame was partially written under a small send
+                    // fragmentation cap. The framework holds the residual
+                    // bytes; resumeSend's SEND_STATE_RESUME_CLOSE branch
+                    // finishes the flush and gracefulCloseAndDisconnect.
+                    // Swallowing PISR here -- as the original code did --
+                    // tears the connection down before the rest of the
+                    // CLOSE frame leaves the box, so the client sees EOF
+                    // mid-frame instead of the close code we promised.
+                    state.onFatalCloseSendBlocked();
+                    throw e;
+                }
             }
-        } catch (PeerDisconnectedException | PeerIsSlowToReadException e) {
-            // Ignore, we're closing anyway
+        } catch (PeerDisconnectedException e) {
+            // Peer is gone, nothing more to do.
         }
     }
 
-    private void handlePing(HttpConnectionContext context, QwpProcessorState state, long payload, int length) {
+    private void handlePing(HttpConnectionContext context, QwpIngressProcessorState state, long payload, int length)
+            throws PeerDisconnectedException, PeerIsSlowToReadException {
         // PING is a documented flush point for pending ACK/durable-ACK frames.
         // A client may send PING specifically to prod the server into emitting
         // acks for commits whose uploads have completed since the last message.
-        try {
-            flushPendingAck(context, state);
-        } catch (PeerDisconnectedException | PeerIsSlowToReadException e) {
-            // Best effort — if the ACK/durable-ACK can't be sent, proceed
-            // without throwing so the caller doesn't abort ping handling.
-            // PeerIsSlowToReadException transitions into a resume state,
-            // so the isSendReady() check below skips the pong. The client
-            // may retry ping or the ACK will flush on the next drain.
-        }
+        // flushPendingAck either drains everything or transitions the send
+        // state machine to RESUME_ACK and rethrows PISR; the latter must
+        // propagate so the framework parks the connection for write. Without
+        // that, the parked ACK bytes would sit unsent in the response sink
+        // until the next unrelated write.
+        flushPendingAck(context, state);
 
-        // Can only send pong when buffer is clear
+        // Can only send pong when the response sink is clear. If a prior ACK
+        // is still draining we skip the pong rather than interleave bytes;
+        // the client either retries the ping or relies on the next ACK send
+        // cycle to flush.
         if (!state.isSendReady()) {
             LOG.debug().$("Skipping pong, buffer busy [fd=").$(context.getFd()).I$();
             return;
         }
 
-        try {
-            HttpRawSocket rawSocket = context.getRawResponseSocket();
-            long bufferAddr = rawSocket.getBufferAddress();
-            int bufferSize = rawSocket.getBufferSize();
+        HttpRawSocket rawSocket = context.getRawResponseSocket();
+        long bufferAddr = rawSocket.getBufferAddress();
+        int bufferSize = rawSocket.getBufferSize();
 
-            int frameSize = WebSocketFrameWriter.headerSize(length, false) + length;
-            if (frameSize <= bufferSize) {
-                int written = WebSocketFrameWriter.writePongFrame(bufferAddr, payload, length);
-                rawSocket.send(written);
-                LOG.debug().$("WebSocket pong sent [fd=").$(context.getFd()).I$();
-            }
-        } catch (PeerDisconnectedException | PeerIsSlowToReadException e) {
-            LOG.debug().$("Failed to send pong [fd=").$(context.getFd()).I$();
+        int frameSize = WebSocketFrameWriter.headerSize(length, false) + length;
+        if (frameSize > bufferSize) {
+            // Pong larger than the response sink buffer: drop quietly, same
+            // as the previous behaviour. PING payloads are capped at 125
+            // bytes by the RFC, so a real client cannot trigger this.
+            LOG.error().$("Pong frame exceeds response buffer [fd=").$(context.getFd())
+                    .$(", frameSize=").$(frameSize)
+                    .$(", bufferSize=").$(bufferSize).I$();
+            return;
+        }
+        int written = WebSocketFrameWriter.writePongFrame(bufferAddr, payload, length);
+        try {
+            rawSocket.send(written);
+            LOG.debug().$("WebSocket pong sent [fd=").$(context.getFd()).I$();
+        } catch (PeerIsSlowToReadException e) {
+            // The send-fragmentation path can park mid-write when the chunk
+            // cap is smaller than the pong frame. Transition into
+            // RESUME_PONG and let the exception propagate so the framework
+            // schedules a write and resumeSend can drain the residual bytes
+            // via context.resumeResponseSend(). Swallowing the exception
+            // here would leak the parked tail and the client would never
+            // see the pong.
+            state.onPongBlocked();
+            LOG.debug().$("Pong send blocked, deferring to resume [fd=").$(context.getFd()).I$();
+            throw e;
         }
     }
 
-    private void handleWebSocketFrame(HttpConnectionContext context, QwpProcessorState state, int opcode, boolean fin, long payload, int length)
+    private void handleWebSocketFrame(HttpConnectionContext context, QwpIngressProcessorState state, int opcode, boolean fin, long payload, int length)
             throws ServerDisconnectException, PeerDisconnectedException, PeerIsSlowToReadException {
         switch (opcode) {
             case WebSocketOpcode.BINARY -> {
@@ -814,7 +1040,7 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
 
     private int negotiateQwpVersion(HttpRequestHeader requestHeader, long fd) {
         int clientMaxVersion = QwpConstants.VERSION_1; // default if header absent
-        Utf8Sequence maxVersionHeader = requestHeader.getHeader(QwpWebSocketHttpProcessor.HEADER_X_QWP_MAX_VERSION);
+        Utf8Sequence maxVersionHeader = requestHeader.getHeader(QwpIngressHttpProcessor.HEADER_X_QWP_MAX_VERSION);
         if (maxVersionHeader != null) {
             int parsed = Numbers.parseNonNegativeIntQuiet(maxVersionHeader);
             if (parsed >= QwpConstants.VERSION_1) {
@@ -824,7 +1050,7 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
 
         int negotiated = Math.min(clientMaxVersion, QwpConstants.MAX_SUPPORTED_INGEST_VERSION);
 
-        Utf8Sequence clientId = requestHeader.getHeader(QwpWebSocketHttpProcessor.HEADER_X_QWP_CLIENT_ID);
+        Utf8Sequence clientId = requestHeader.getHeader(QwpIngressHttpProcessor.HEADER_X_QWP_CLIENT_ID);
         if (clientId != null) {
             LOG.info().$("QWP version negotiated [fd=").$(fd)
                     .$(", clientId=").$(clientId)
@@ -839,7 +1065,7 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
         return negotiated;
     }
 
-    private void processWebSocketFrames(HttpConnectionContext context, QwpProcessorState state, long buffer, int bufferLen)
+    private void processWebSocketFrames(HttpConnectionContext context, QwpIngressProcessorState state, long buffer, int bufferLen)
             throws ServerDisconnectException, PeerDisconnectedException, PeerIsSlowToReadException {
         long bufferEnd = buffer + bufferLen;
         long pos = buffer;
@@ -912,7 +1138,7 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
 
     }
 
-    private void rejectFragmentedFrame(HttpConnectionContext context, QwpProcessorState state, int opcode)
+    private void rejectFragmentedFrame(HttpConnectionContext context, QwpIngressProcessorState state, int opcode)
             throws PeerIsSlowToReadException, ServerDisconnectException {
         LOG.error()
                 .$("WebSocket fragmented frame rejected, QWP requires unfragmented messages [fd=").$(context.getFd())
@@ -927,7 +1153,7 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
                 "fragmented WebSocket frames are not supported");
     }
 
-    private void rejectTextFrame(HttpConnectionContext context, QwpProcessorState state)
+    private void rejectTextFrame(HttpConnectionContext context, QwpIngressProcessorState state)
             throws PeerIsSlowToReadException, ServerDisconnectException {
         LOG.error()
                 .$("WebSocket text frame rejected, QWP accepts only binary frames [fd=").$(context.getFd())
@@ -944,7 +1170,7 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
      * Used after a blocked ACK resumes and the original failure response must
      * be delivered before any later ACK activity can overtake it.
      */
-    private void sendDeferredErrorResponse(HttpConnectionContext context, QwpProcessorState state)
+    private void sendDeferredErrorResponse(HttpConnectionContext context, QwpIngressProcessorState state)
             throws PeerDisconnectedException, PeerIsSlowToReadException {
         sendErrorResponse(
                 context,
@@ -962,7 +1188,7 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
      * partial flush of the CLOSE frame itself, transitions to RESUME_CLOSE so
      * the next dispatcher tick finishes the flush.
      */
-    private void sendDeferredFatalClose(HttpConnectionContext context, QwpProcessorState state)
+    private void sendDeferredFatalClose(HttpConnectionContext context, QwpIngressProcessorState state)
             throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
         assert state.isSendReady() : "sendDeferredFatalClose called in wrong state";
 
@@ -993,7 +1219,7 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
 
     private void sendErrorResponse(
             HttpConnectionContext context,
-            QwpProcessorState state,
+            QwpIngressProcessorState state,
             long sequence,
             byte status,
             CharSequence errorMessage
@@ -1069,7 +1295,7 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
      */
     private void sendFatalClose(
             HttpConnectionContext context,
-            QwpProcessorState state,
+            QwpIngressProcessorState state,
             int closeCode,
             CharSequence reason
     ) throws PeerIsSlowToReadException, ServerDisconnectException {
@@ -1120,7 +1346,7 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
     /**
      * Attempts to send a cumulative ACK for the highest processed sequence.
      * <p>
-     * State transitions (managed by {@link QwpProcessorState}):
+     * State transitions (managed by {@link QwpIngressProcessorState}):
      * <ul>
      *   <li>READY + success → stays READY, updates lastAckedSequence</li>
      *   <li>READY + PeerIsSlowToReadException → transitions to SEND_STATE_RESUME_ACK, throws</li>
@@ -1131,7 +1357,7 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
      * @throws PeerIsSlowToReadException if the client's receive buffer is full (transitions to SEND_STATE_RESUME_ACK)
      * @throws PeerDisconnectedException if the client disconnected
      */
-    private void trySendAck(HttpConnectionContext context, QwpProcessorState state)
+    private void trySendAck(HttpConnectionContext context, QwpIngressProcessorState state)
             throws PeerDisconnectedException, PeerIsSlowToReadException {
         assert state.isSendReady() : "trySendAck called in wrong state";
 
@@ -1155,7 +1381,7 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
         long writeAddr = bufferAddr + headerLen;
         Unsafe.putByte(writeAddr, STATUS_OK);
         Unsafe.putLong(writeAddr + 1, sequence);
-        QwpProcessorState.writeTableSeqTxnEntries(writeAddr + 9, state.getPendingAckSeqTxns());
+        QwpIngressProcessorState.writeTableSeqTxnEntries(writeAddr + 9, state.getPendingAckSeqTxns());
 
         try {
             rawSocket.send(headerLen + payloadLen);
@@ -1170,7 +1396,7 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
         }
     }
 
-    private void trySendDurableAck(HttpConnectionContext context, QwpProcessorState state)
+    private void trySendDurableAck(HttpConnectionContext context, QwpIngressProcessorState state)
             throws PeerDisconnectedException, PeerIsSlowToReadException {
         assert state.isSendReady() : "trySendDurableAck called in wrong state";
 
@@ -1196,7 +1422,7 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
         int headerLen = WebSocketFrameWriter.writeBinaryFrameHeader(bufferAddr, payloadLen);
         long writeAddr = bufferAddr + headerLen;
         Unsafe.putByte(writeAddr, STATUS_DURABLE_ACK);
-        QwpProcessorState.writeTableSeqTxnEntries(writeAddr + 1, progress);
+        QwpIngressProcessorState.writeTableSeqTxnEntries(writeAddr + 1, progress);
 
         try {
             rawSocket.send(headerLen + payloadLen);
@@ -1207,6 +1433,29 @@ public class QwpWebSocketUpgradeProcessor implements HttpRequestProcessor {
             state.onDurableAckBlocked();
             LOG.debug().$("Durable ACK blocked [fd=").$(context.getFd()).I$();
             throw e;
+        }
+    }
+
+    // Per-connection holder for the byte count of a 4xx upgrade rejection
+    // deferred from onHeadersReady to onRequestComplete. Lazily allocated;
+    // only connections that actually trigger a reject pay the single-object
+    // cost.
+    //
+    // Implements Mutable so LocalValueMap.clear() (invoked by
+    // HttpConnectionContext.reset() on every request boundary AND
+    // HttpConnectionContext.clear() on pool-return via super.clear()) resets
+    // pendingBytes to 0. Without this, a PeerDisconnectedException thrown by
+    // the staged send in onRequestComplete (which skips the
+    // pendingBytes = 0 reset) would leave a stale value on the context; the
+    // next pool reuse of that context would land a legitimate upgrade on a
+    // tracker whose pendingBytes > 0 still drives the reject branch and
+    // throws HttpException instead of finalising the 101 handshake.
+    private static final class RejectFlushTracker implements Mutable {
+        int pendingBytes;
+
+        @Override
+        public void clear() {
+            pendingBytes = 0;
         }
     }
 

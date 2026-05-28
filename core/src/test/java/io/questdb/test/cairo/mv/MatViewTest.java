@@ -29,6 +29,7 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.MicrosTimestampDriver;
+import io.questdb.cairo.NanosTimestampDriver;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
@@ -41,6 +42,7 @@ import io.questdb.cairo.mv.MatViewState;
 import io.questdb.cairo.mv.MatViewStateStoreImpl;
 import io.questdb.cairo.mv.MatViewTimerJob;
 import io.questdb.cairo.mv.WalTxnRangeLoader;
+import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.wal.WalUtils;
@@ -1282,7 +1284,7 @@ public class MatViewTest extends AbstractCairoTest {
             assertExceptionNoLeakCheck(
                     "alter materialized view price_1h set ttl 1 hour;",
                     41,
-                    "TTL value must be an integer multiple of partition size"
+                    "TTL value must be an integer multiple of the partition size (its time interval)"
             );
 
             assertQueryNoLeakCheck(
@@ -3144,6 +3146,69 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testIncrementalPeriodRefreshCommitsWatermarkWhenBaseTxnAdvances() throws Exception {
+        // A period mat view consuming a new base txn whose rows all fall in an incomplete period
+        // produces no rows, but the no-rows path in insertAsSelect must still commit the advanced
+        // base txn watermark. Pins the "legit advance still commits" direction of the watermark
+        // guard (commitBaseTxn > lastRefreshBaseTxn); without it the view would re-examine the same
+        // txns indefinitely.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table base_price (" +
+                            "sym varchar, price double, ts #TIMESTAMP" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            currentMicros = parseFloorPartialTimestamp("2000-01-01T00:00:00.000000Z");
+            execute(
+                    "create materialized view price_1h refresh immediate period (length 1d) as " +
+                            "select sym, last(price) as price, ts from base_price sample by 1d"
+            );
+            // Complete period (1999-12-31) plus a row in the still-incomplete 2000-01-01 period.
+            execute(
+                    "insert into base_price(sym, price, ts) values ('gbpusd', 1.320, '1999-12-31T09:01')" +
+                            ",('gbpusd', 1.321, '2000-01-01T13:02')"
+            );
+            drainWalQueue();
+            currentMicros = parseFloorPartialTimestamp("2000-01-01T00:00:00.000000Z");
+            drainQueues();
+
+            // First refresh consumed base txn 1 and completed the 1999-12-31 period.
+            assertQueryNoLeakCheck(
+                    "refresh_base_table_txn\n1\n",
+                    "select refresh_base_table_txn from materialized_views where view_name = 'price_1h'",
+                    null
+            );
+
+            // New row, still inside the incomplete 2000-01-01 period: a new base txn, but no newly
+            // complete period and no rows for the view.
+            execute("insert into base_price(sym, price, ts) values ('gbpusd', 1.322, '2000-01-01T14:00')");
+            drainWalQueue();
+            currentMicros = parseFloorPartialTimestamp("2000-01-01T23:59:59.999999Z");
+            execute("refresh materialized view price_1h incremental");
+            drainQueues();
+
+            // No rows were added to the view...
+            assertQueryNoLeakCheck(
+                    replaceExpectedTimestamp(
+                            """
+                                    sym\tprice\tts
+                                    gbpusd\t1.32\t1999-12-31T00:00:00.000000Z
+                                    """),
+                    "price_1h order by sym"
+            );
+            // ...but the base txn watermark advanced to 2, committed via the no-rows path.
+            assertQueryNoLeakCheck(
+                    """
+                            view_status\trefresh_base_table_txn
+                            valid\t2
+                            """,
+                    "select view_status, refresh_base_table_txn from materialized_views where view_name = 'price_1h'",
+                    null
+            );
+        });
+    }
+
+    @Test
     public void testIncrementalRefreshOnExistingTable() throws Exception {
         setProperty(PropertyKey.CAIRO_WAL_SEGMENT_ROLLOVER_ROW_COUNT, 10);
         assertMemoryLeak(() -> {
@@ -4632,6 +4697,148 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNoOpIncrementalPeriodRefreshDoesNotCommitWal() throws Exception {
+        // A period mat view bypasses the "non-period view is up-to-date" early-out, so an
+        // incremental refresh that finds no new data and no newly complete period still reaches
+        // the no-rows commit path. It must not write a no-op replace-range WAL transaction when
+        // neither the base txn watermark nor the period hi advances - otherwise a base table apply
+        // backlog can make the refresh loop emit millions of such transactions.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table base_price (" +
+                            "sym varchar, price double, ts #TIMESTAMP" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            currentMicros = parseFloorPartialTimestamp("2000-01-01T00:00:00.000000Z");
+            execute(
+                    "create materialized view price_1h refresh immediate period (length 1d) as " +
+                            "select sym, last(price) as price, ts from base_price sample by 1d"
+            );
+            execute(
+                    "insert into base_price(sym, price, ts) values ('gbpusd', 1.320, '1999-12-31T09:01')" +
+                            ",('gbpusd', 1.321, '2000-01-01T13:02')"
+            );
+            drainWalQueue();
+
+            // First refresh: the 1999-12-31 period is complete, so the view refreshes and its
+            // watermark (base txn + period hi) advances.
+            currentMicros = parseFloorPartialTimestamp("2000-01-01T00:00:00.000000Z");
+            drainQueues();
+            assertQueryNoLeakCheck(
+                    replaceExpectedTimestamp(
+                            """
+                                    sym\tprice\tts
+                                    gbpusd\t1.32\t1999-12-31T00:00:00.000000Z
+                                    """),
+                    "price_1h order by sym"
+            );
+
+            // Snapshot the view's WAL transactions. We only look at sequencerTxn to stay
+            // independent of the randomized base table timestamp type and rows-per-query estimate.
+            final String walTxnsSql = "select sequencerTxn from wal_transactions('price_1h')";
+            printSql(walTxnsSql);
+            final String walTxnsBefore = sink.toString();
+
+            // No new base data and the second period (2000-01-01) hasn't completed yet, so this
+            // incremental refresh advances neither the base txn watermark nor the period hi.
+            currentMicros = parseFloorPartialTimestamp("2000-01-01T23:59:59.999999Z");
+            execute("refresh materialized view price_1h incremental");
+            drainQueues();
+
+            // The view data is unchanged...
+            assertQueryNoLeakCheck(
+                    replaceExpectedTimestamp(
+                            """
+                                    sym\tprice\tts
+                                    gbpusd\t1.32\t1999-12-31T00:00:00.000000Z
+                                    """),
+                    "price_1h order by sym"
+            );
+            assertQueryNoLeakCheck(
+                    """
+                            view_status\trefresh_finished
+                            valid\ttrue
+                            """,
+                    "select view_status, last_refresh_start_timestamp <= last_refresh_finish_timestamp as refresh_finished " +
+                            "from materialized_views where view_name = 'price_1h'",
+                    null
+            );
+            // ...and, crucially, no new (no-op) WAL transaction was committed.
+            assertSql(walTxnsBefore, walTxnsSql);
+        });
+    }
+
+    @Test
+    public void testNoOpIncrementalRefreshDoesNotCommitWal() throws Exception {
+        // A non-period no-op incremental refresh must write no WAL transaction. Today the
+        // refreshIncremental0 early-out (getPeriodLength() == 0 && fromBaseTxn == toBaseTxn)
+        // short-circuits before insertAsSelect, so this pins the observable behavior rather than the
+        // guard itself: a future refactor removing the early-out can't silently reintroduce no-op WAL
+        // commits for non-period views (see testNoOpIncrementalPeriodRefreshDoesNotCommitWal for the
+        // period path that does reach the guard).
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table base_price (" +
+                            "sym varchar, price double, ts #TIMESTAMP" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            currentMicros = parseFloorPartialTimestamp("2000-01-01T00:00:00.000000Z");
+            execute(
+                    "create materialized view price_1h refresh immediate as " +
+                            "select sym, last(price) as price, ts from base_price sample by 1d"
+            );
+            execute(
+                    "insert into base_price(sym, price, ts) values ('gbpusd', 1.320, '1999-12-31T09:01')" +
+                            ",('eurusd', 1.100, '2000-01-01T13:02')"
+            );
+
+            // First refresh: picks up both rows, watermark advances.
+            drainQueues();
+            assertQueryNoLeakCheck(
+                    replaceExpectedTimestamp(
+                            """
+                                    sym\tprice\tts
+                                    eurusd\t1.1\t2000-01-01T00:00:00.000000Z
+                                    gbpusd\t1.32\t1999-12-31T00:00:00.000000Z
+                                    """),
+                    "price_1h order by sym"
+            );
+
+            // Snapshot the view's WAL transactions. Project only sequencerTxn to stay independent of
+            // the randomized base table timestamp type and rows-per-query estimate.
+            final String walTxnsSql = "select sequencerTxn from wal_transactions('price_1h')";
+            printSql(walTxnsSql);
+            final String walTxnsBefore = sink.toString();
+
+            // No new base data, so this incremental refresh is a no-op.
+            execute("refresh materialized view price_1h incremental");
+            drainQueues();
+
+            // The view data is unchanged...
+            assertQueryNoLeakCheck(
+                    replaceExpectedTimestamp(
+                            """
+                                    sym\tprice\tts
+                                    eurusd\t1.1\t2000-01-01T00:00:00.000000Z
+                                    gbpusd\t1.32\t1999-12-31T00:00:00.000000Z
+                                    """),
+                    "price_1h order by sym"
+            );
+            assertQueryNoLeakCheck(
+                    """
+                            view_status\trefresh_finished
+                            valid\ttrue
+                            """,
+                    "select view_status, last_refresh_start_timestamp <= last_refresh_finish_timestamp as refresh_finished " +
+                            "from materialized_views where view_name = 'price_1h'",
+                    null
+            );
+            // ...and no new WAL transaction was committed.
+            assertSql(walTxnsBefore, walTxnsSql);
+        });
+    }
+
+    @Test
     public void testPeriodMatViewSmoke() throws Exception {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp(
@@ -5790,6 +5997,733 @@ public class MatViewTest extends AbstractCairoTest {
                                     """),
                     "price_1h order by sym"
             );
+        });
+    }
+
+    @Test
+    public void testRefreshIntervalsO3PeriodMatView() throws Exception {
+        // Verify clustering + step-cap also fire correctly on the period mat
+        // view code path, which has its own union/intersect of the cached
+        // refresh-intervals list (period extension + refresh limit clipping).
+        // The clustering happens BEFORE those period mutations, but the
+        // step-cap operates on the post-mutation list. This test checks the
+        // combined behaviour: an O3 write into an already-refreshed period
+        // gets only its own buckets recomputed.
+        setProperty(PropertyKey.CAIRO_MAT_VIEW_ROWS_PER_QUERY_ESTIMATE, 1_000_000);
+        setProperty(PropertyKey.CAIRO_MAT_VIEW_REFRESH_INTERVALS_UPDATE_PERIOD, "5s");
+        assertMemoryLeak(() -> {
+            TestTimestampCounterFactory.COUNTER.set(0);
+
+            executeWithRewriteTimestamp(
+                    "create table base_price (" +
+                            "  price double, ts #TIMESTAMP" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            execute(
+                    "create materialized view price_1h refresh immediate period (length 1h) as " +
+                            "select ts, test_timestamp_counter(ts) ts0, last(price) as price " +
+                            "from base_price sample by 1h"
+            );
+
+            // First period of data; let the period refresh complete.
+            execute("insert into base_price(price, ts) values (1.0, '2024-09-10T10:01')");
+            currentMicros = parseFloorPartialTimestamp("2024-09-10T11:30:00.000000Z");
+            final MatViewTimerJob timerJob = new MatViewTimerJob(engine);
+            drainMatViewTimerQueue(timerJob);
+            drainQueues();
+
+            final long counterAfterInitial = TestTimestampCounterFactory.COUNTER.get();
+            Assert.assertEquals("Initial period refresh should emit 1 bucket", 1, counterAfterInitial);
+
+            // O3 write 24h back, plus a current write -- arrived as 2 separate
+            // WAL txns. With ~24h gap and warm EMA, clustering should split.
+            execute("insert into base_price(price, ts) values (2.0, '2024-09-09T05:01')");
+            execute("insert into base_price(price, ts) values (3.0, '2024-09-10T11:01')");
+
+            currentMicros = parseFloorPartialTimestamp("2024-09-10T12:30:00.000000Z");
+            drainMatViewTimerQueue(timerJob);
+            drainQueues();
+
+            final long bucketsEmittedByO3Refresh =
+                    TestTimestampCounterFactory.COUNTER.get() - counterAfterInitial;
+
+            // Only the two newly-dirty buckets (09-09T05:00 and 09-10T11:00)
+            // should be recomputed -- not the 09-10T10:00 bucket from the
+            // initial period that sits between them.
+            Assert.assertEquals(
+                    "Period mat view should only recompute the 2 dirty buckets, got: " + bucketsEmittedByO3Refresh,
+                    2, bucketsEmittedByO3Refresh
+            );
+
+            assertQueryNoLeakCheck(
+                    replaceExpectedTimestamp(
+                            """
+                                    ts\tts0\tprice
+                                    2024-09-09T05:00:00.000000Z\t2024-09-09T05:00:00.000000Z\t2.0
+                                    2024-09-10T10:00:00.000000Z\t2024-09-10T10:00:00.000000Z\t1.0
+                                    2024-09-10T11:00:00.000000Z\t2024-09-10T11:00:00.000000Z\t3.0
+                                    """),
+                    "price_1h order by ts",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testRefreshIntervalsMaxClustersConfigCapsClusterCount() throws Exception {
+        // End-to-end test for cairo.mat.view.refresh.max.clusters: with 5
+        // disjoint inserts and the cap forced down to 2, clustering must
+        // collapse the 5 intervals into 2 clusters, producing exactly 2
+        // REPLACE_RANGE commits on the mat-view table instead of 5. Reading
+        // the mat-view's writer txn before and after the refresh is the
+        // only observable that distinguishes "cap took effect" from
+        // "clustering ran but didn't merge anything" -- intervals are
+        // cleared post-refresh regardless of cluster count, so the cache
+        // size assertion alone is cap-independent.
+        setProperty(PropertyKey.CAIRO_MAT_VIEW_ROWS_PER_QUERY_ESTIMATE, 1_000_000);
+        setProperty(PropertyKey.CAIRO_MAT_VIEW_REFRESH_INTERVALS_UPDATE_PERIOD, "5s");
+        setProperty(PropertyKey.CAIRO_MAT_VIEW_REFRESH_MAX_CLUSTERS, 2);
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table base_price (price double, ts #TIMESTAMP) timestamp(ts) partition by DAY WAL"
+            );
+            execute(
+                    "create materialized view price_1h refresh manual as " +
+                            "select ts, last(price) as price from base_price sample by 1h;"
+            );
+            // Initial seed + refresh to clear cache.
+            execute("insert into base_price(price, ts) values (1.0, '2024-01-01T00:01')");
+            currentMicros = parseFloorPartialTimestamp("2099-01-01T01:01:01.000000Z");
+            final MatViewTimerJob timerJob = new MatViewTimerJob(engine);
+            execute("refresh materialized view price_1h incremental;");
+            drainMatViewTimerQueue(timerJob);
+            drainQueues();
+
+            // 5 disjoint inserts widely apart -- each becomes its own cached
+            // interval at refresh-intervals-update time.
+            execute("insert into base_price(price, ts) values (2.0, '2024-02-01T00:01')");
+            execute("insert into base_price(price, ts) values (3.0, '2024-03-01T00:01')");
+            execute("insert into base_price(price, ts) values (4.0, '2024-04-01T00:01')");
+            execute("insert into base_price(price, ts) values (5.0, '2024-05-01T00:01')");
+            execute("insert into base_price(price, ts) values (6.0, '2024-06-01T00:01')");
+
+            currentMicros += 6 * Micros.SECOND_MICROS;
+            drainMatViewTimerQueue(timerJob);
+            drainQueues();
+
+            // Pre-refresh: 5 cached interval pairs (10 longs). Clustering
+            // happens inside findRefreshIntervals during the refresh itself,
+            // so this snapshot is taken before the cap kicks in.
+            final TableToken viewToken = engine.getTableTokenIfExists("price_1h");
+            final MatViewState viewState = engine.getMatViewStateStore().getViewState(viewToken);
+            Assert.assertEquals(10, viewState.getRefreshIntervals().size());
+
+            final long txnBefore = engine.getTableSequencerAPI()
+                    .getTxnTracker(viewToken).getWriterTxn();
+            execute("refresh materialized view price_1h incremental;");
+            drainMatViewTimerQueue(timerJob);
+            drainQueues();
+            final long txnAfter = engine.getTableSequencerAPI()
+                    .getTxnTracker(viewToken).getWriterTxn();
+
+            // Cap of 2 must produce exactly 2 REPLACE_RANGE commits.
+            // Without the cap (or with cap >= 5) the same workload produces
+            // 5 commits -- this delta is the observable that proves the
+            // config knob is doing work.
+            Assert.assertEquals(
+                    "max-clusters cap of 2 must collapse 5 intervals into 2 commits",
+                    2L,
+                    txnAfter - txnBefore
+            );
+            Assert.assertEquals(0, viewState.getRefreshIntervals().size());
+            Assert.assertEquals(-1, viewState.getRefreshIntervalsBaseTxn());
+        });
+    }
+
+    @Test
+    public void testRefreshMaterializedViewStatsResetsEma() throws Exception {
+        // REFRESH MATERIALIZED VIEW <name> STATS clears the EMA values so the
+        // cost model returns to its cold-start state. Operators reach for
+        // this when workload shape has changed and the historical averages
+        // no longer reflect reality.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table base_price (" +
+                            "  price double, ts #TIMESTAMP" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            execute(
+                    "create materialized view price_1h refresh immediate as " +
+                            "select ts, last(price) as price from base_price sample by 1h"
+            );
+
+            // Drive at least one refresh through so both EMAs hold real
+            // samples. The scaled per-ts-unit storage now folds every
+            // positive sample, so neither average stays at zero here.
+            execute("insert into base_price(price, ts) values (1.0, '2024-09-10T12:01')");
+            currentMicros = parseFloorPartialTimestamp("2024-09-10T13:00:00.000000Z");
+            drainWalAndMatViewQueues();
+
+            final TableToken viewToken = engine.getTableTokenIfExists("price_1h");
+            final MatViewState viewState = engine.getMatViewStateStore().getViewState(viewToken);
+            Assert.assertNotNull(viewState);
+            Assert.assertTrue("Expected commit EMA after refresh", viewState.getAvgCommitNanos() > 0);
+            Assert.assertTrue(
+                    "Expected scan-sample EMA after refresh",
+                    viewState.getAvgScanSampleNanos() > 0
+            );
+            Assert.assertTrue(
+                    "Expected scan-range EMA after refresh",
+                    viewState.getAvgScanRangeTsUnits() > 0
+            );
+
+            execute("refresh materialized view price_1h stats");
+
+            Assert.assertEquals("Stats reset should zero avgCommitNanos", 0L, viewState.getAvgCommitNanos());
+            Assert.assertEquals(
+                    "Stats reset should zero avgScanSampleNanos",
+                    0L,
+                    viewState.getAvgScanSampleNanos()
+            );
+            Assert.assertEquals(
+                    "Stats reset should zero avgScanRangeTsUnits",
+                    0L,
+                    viewState.getAvgScanRangeTsUnits()
+            );
+            final long coldStartGap = timestampType.getDriver()
+                    .fromMicros(MatViewState.COLD_START_GAP_THRESHOLD_MICROS);
+            Assert.assertEquals(
+                    "Threshold should fall back to cold-start default after reset",
+                    coldStartGap,
+                    viewState.getCommitGapThresholdTsUnits()
+            );
+
+            // The catalogue function must surface the same EMA values via SQL.
+            assertSql(
+                    "refresh_avg_commit_nanos\trefresh_avg_scan_sample_nanos\trefresh_avg_scan_range_ts_units\trefresh_gap_threshold_ts_units\n" +
+                            "0\t0\t0\t" + coldStartGap + "\n",
+                    "select refresh_avg_commit_nanos, refresh_avg_scan_sample_nanos, refresh_avg_scan_range_ts_units, refresh_gap_threshold_ts_units " +
+                            "from materialized_views() where view_name = 'price_1h'"
+            );
+
+            // Drive another refresh and verify all three EMAs recover. The
+            // two-EMA storage folds every positive sample, so the threshold
+            // leaves the cold-start sentinel as soon as one refresh runs.
+            execute("insert into base_price(price, ts) values (2.0, '2024-09-10T14:01')");
+            drainWalAndMatViewQueues();
+            Assert.assertTrue(
+                    "Catalogue must surface non-zero avg_commit_nanos after refresh",
+                    viewState.getAvgCommitNanos() > 0
+            );
+            Assert.assertTrue(
+                    "Catalogue must surface non-zero avg_scan_sample_nanos after refresh",
+                    viewState.getAvgScanSampleNanos() > 0
+            );
+            Assert.assertTrue(
+                    "Catalogue must surface non-zero avg_scan_range_ts_units after refresh",
+                    viewState.getAvgScanRangeTsUnits() > 0
+            );
+            try (RecordCursorFactory factory = engine.select(
+                    "select refresh_avg_commit_nanos > 0, refresh_gap_threshold_ts_units > 0 " +
+                            "from materialized_views() where view_name = 'price_1h'",
+                    sqlExecutionContext
+            ); RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                Assert.assertTrue(cursor.hasNext());
+                final Record record = cursor.getRecord();
+                Assert.assertTrue("avg_commit_nanos > 0 via SQL", record.getBool(0));
+                Assert.assertTrue("gap_threshold_ts_units > 0 via SQL", record.getBool(1));
+            }
+        });
+    }
+
+    @Test
+    public void testRefreshScanEmaFoldsOnNsBaseTable() throws Exception {
+        // Regression gate for the scan-rate EMA: wall-clock ns and ts-unit ns
+        // share the same magnitude on TIMESTAMP_NS bases, so the natural
+        // per-sample ratio (sampleNanos / rangeTsUnits) is sub-1 and integer
+        // division would floor it to zero. The scaled per-giga-ts-unit
+        // storage preserves the signal -- a real refresh must populate both
+        // EMAs and the derived gap threshold must leave the cold-start
+        // sentinel.
+        assertMemoryLeak(() -> {
+            execute(
+                    "create table base_price (" +
+                            "  price double, ts timestamp_ns" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            execute(
+                    "create materialized view price_1h refresh immediate as " +
+                            "select ts, last(price) as price from base_price sample by 1h"
+            );
+
+            execute("insert into base_price(price, ts) values (1.0, '2024-09-10T12:01')");
+            currentMicros = parseFloorPartialTimestamp("2024-09-10T13:00:00.000000Z");
+            drainWalAndMatViewQueues();
+
+            final TableToken viewToken = engine.getTableTokenIfExists("price_1h");
+            final MatViewState viewState = engine.getMatViewStateStore().getViewState(viewToken);
+            Assert.assertNotNull(viewState);
+            Assert.assertTrue(
+                    "Commit EMA must populate after a real refresh",
+                    viewState.getAvgCommitNanos() > 0
+            );
+            Assert.assertTrue(
+                    "Scan-sample EMA must fold every positive sample on ns bases",
+                    viewState.getAvgScanSampleNanos() > 0
+            );
+            Assert.assertTrue(
+                    "Scan-range EMA must fold every positive sample on ns bases",
+                    viewState.getAvgScanRangeTsUnits() > 0
+            );
+            // ns base: cold-start is 2 s expressed in ns = 2_000_000_000.
+            Assert.assertNotEquals(
+                    "Gap threshold must leave the cold-start sentinel once scan samples accrue",
+                    NanosTimestampDriver.INSTANCE.fromMicros(MatViewState.COLD_START_GAP_THRESHOLD_MICROS),
+                    viewState.getCommitGapThresholdTsUnits()
+            );
+        });
+    }
+
+    @Test
+    public void testRefreshMaterializedViewStatsRejectsGarbageTail() throws Exception {
+        // Operator pastes `REFRESH MATERIALIZED VIEW v STATS FROM ...` -- STATS is
+        // a leaf action, anything after it must be rejected. Same goes for
+        // `STATS INCREMENTAL` etc.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table base_price (price double, ts #TIMESTAMP) timestamp(ts) partition by DAY WAL"
+            );
+            execute("create materialized view price_1h refresh immediate as " +
+                    "select ts, last(price) as price from base_price sample by 1h");
+            execute("insert into base_price(price, ts) values (1.0, '2024-09-10T12:01')");
+            // Drive a refresh through so MatViewGraph registers the definition.
+            currentMicros = parseFloorPartialTimestamp("2024-09-10T13:00:00.000000Z");
+            drainQueues();
+            // Sanity check the view is reachable via the graph before driving
+            // the parser-error scenarios.
+            Assert.assertNotNull(engine.getMatViewGraph().getViewDefinition(
+                    engine.getTableTokenIfExists("price_1h")
+            ));
+
+            assertExceptionNoLeakCheck(
+                    "refresh materialized view price_1h stats from '2024-09-10T00:00'",
+                    41,
+                    "unexpected token [from] while trying to refresh materialized view"
+            );
+            assertExceptionNoLeakCheck(
+                    "refresh materialized view price_1h stats incremental",
+                    41,
+                    "unexpected token [incremental] while trying to refresh materialized view"
+            );
+        });
+    }
+
+    @Test
+    public void testRefreshMaterializedViewUnknownActionMentionsStats() throws Exception {
+        // Sanity: the error text on an unknown action keyword should include
+        // 'stats' so operators discover the new form.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table base_price (price double, ts #TIMESTAMP) timestamp(ts) partition by DAY WAL"
+            );
+            execute("create materialized view price_1h refresh immediate as " +
+                    "select ts, last(price) as price from base_price sample by 1h");
+            execute("insert into base_price(price, ts) values (1.0, '2024-09-10T12:01')");
+            currentMicros = parseFloorPartialTimestamp("2024-09-10T13:00:00.000000Z");
+            drainQueues();
+
+            try {
+                execute("refresh materialized view price_1h blargh");
+                Assert.fail("expected SqlException");
+            } catch (SqlException e) {
+                final String msg = e.getMessage();
+                Assert.assertTrue("error must mention 'stats': " + msg, msg.contains("'stats'"));
+                Assert.assertTrue("error must mention 'full': " + msg, msg.contains("'full'"));
+                Assert.assertTrue("error must mention 'incremental': " + msg, msg.contains("'incremental'"));
+                Assert.assertTrue("error must mention 'range': " + msg, msg.contains("'range'"));
+            }
+        });
+    }
+
+    @Test
+    public void testRefreshMaterializedViewStatsBusyView() throws Exception {
+        // When the refresh latch is held (i.e. a refresh is in progress),
+        // REFRESH ... STATS must return a retryable error instead of blocking.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table base_price (price double, ts #TIMESTAMP) timestamp(ts) partition by DAY WAL"
+            );
+            execute("create materialized view price_1h refresh immediate as " +
+                    "select ts, last(price) as price from base_price sample by 1h");
+            execute("insert into base_price(price, ts) values (1.0, '2024-09-10T12:01')");
+            currentMicros = parseFloorPartialTimestamp("2024-09-10T13:00:00.000000Z");
+            drainQueues();
+
+            final TableToken viewToken = engine.getTableTokenIfExists("price_1h");
+            final MatViewState viewState = engine.getMatViewStateStore().getViewState(viewToken);
+            Assert.assertNotNull(viewState);
+            Assert.assertTrue(viewState.tryLock());
+            try {
+                assertExceptionNoLeakCheck(
+                        "refresh materialized view price_1h stats",
+                        35,
+                        "materialized view is currently refreshing, retry stats reset later"
+                );
+            } finally {
+                viewState.unlock();
+            }
+        });
+    }
+
+    @Test
+    public void testRefreshIntervalsO3SingleIntervalUnaffected() throws Exception {
+        // With only one cached refresh interval, capStepByNarrowestInterval
+        // shrinks step to a single bucket. The iterator then does one cursor
+        // pass over that bucket -- functionally identical to the pre-fix
+        // behaviour (since the envelope was already 1 bucket wide). This
+        // test guards against an over-aggressive step cap that would split
+        // a single dirty bucket into many cursor calls.
+        setProperty(PropertyKey.CAIRO_MAT_VIEW_ROWS_PER_QUERY_ESTIMATE, 1_000_000);
+        setProperty(PropertyKey.CAIRO_MAT_VIEW_REFRESH_INTERVALS_UPDATE_PERIOD, "5s");
+        assertMemoryLeak(() -> {
+            TestTimestampCounterFactory.COUNTER.set(0);
+
+            executeWithRewriteTimestamp(
+                    "create table base_price (" +
+                            "  price double, ts #TIMESTAMP" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            execute(
+                    "create materialized view price_1h refresh manual as " +
+                            "select ts, test_timestamp_counter(ts) ts0, last(price) as price " +
+                            "from base_price sample by 1h;"
+            );
+
+            execute("insert into base_price(price, ts) values (1.0, '2024-09-10T12:01')");
+            currentMicros = parseFloorPartialTimestamp("2099-01-01T01:01:01.000000Z");
+            final MatViewTimerJob timerJob = new MatViewTimerJob(engine);
+            execute("refresh materialized view price_1h incremental;");
+            drainMatViewTimerQueue(timerJob);
+            drainQueues();
+
+            // Single new WAL txn -- one cached interval, one cluster.
+            execute("insert into base_price(price, ts) values (2.0, '2024-09-10T13:01')");
+            currentMicros += 6 * Micros.SECOND_MICROS;
+            drainMatViewTimerQueue(timerJob);
+            drainQueues();
+
+            final long counterBefore = TestTimestampCounterFactory.COUNTER.get();
+            execute("refresh materialized view price_1h incremental;");
+            drainMatViewTimerQueue(timerJob);
+            drainQueues();
+            final long bucketsEmitted = TestTimestampCounterFactory.COUNTER.get() - counterBefore;
+
+            // Exactly one bucket recomputed -- the new 13:00 bucket.
+            Assert.assertEquals(1, bucketsEmitted);
+        });
+    }
+
+    @Test
+    public void testRefreshIntervalsO3SplitsWideEnvelope() throws Exception {
+        // Regression test for the wasted-bucket-recompute that fires when an O3
+        // historical write into the base table sits far away from the current
+        // commit position. Before the cost-aware clustering + step-cap was
+        // added, the refresh would scan and recompute every non-empty bucket
+        // between the O3 timestamp and "now", including ones that no WAL txn
+        // had actually touched.
+        //
+        // Setup: an existing bucket at 2024-09-10T12:00. Two new WAL txns
+        // arrive: one at 13:01 (current), one at 2024-08-10T07:01 (O3, 31
+        // days earlier). The cached refresh intervals are two point
+        // intervals 31 days apart. The auto-tune's cold-start gap-threshold
+        // is 2 ms -- the 31-day gap is way over that -- so clustering keeps
+        // them separate, and capStepByNarrowestInterval reduces the iterator
+        // step to 1 bucket. The iterator then walks the gap step-groups
+        // cheaply and emits a cursor scan only for the two truly-dirty
+        // buckets.
+        //
+        // Pre-fix: the test_timestamp_counter would fire 3 times (the two
+        // dirty buckets + the unchanged 12:00 bucket that fell inside the
+        // step-group). Post-fix: it fires exactly 2 times.
+        setProperty(PropertyKey.CAIRO_MAT_VIEW_ROWS_PER_QUERY_ESTIMATE, 1_000_000);
+        setProperty(PropertyKey.CAIRO_MAT_VIEW_REFRESH_INTERVALS_UPDATE_PERIOD, "5s");
+        assertMemoryLeak(() -> {
+            TestTimestampCounterFactory.COUNTER.set(0);
+
+            executeWithRewriteTimestamp(
+                    "create table base_price (" +
+                            "  price double, ts #TIMESTAMP" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            execute(
+                    "create materialized view price_1h refresh manual as " +
+                            "select ts, test_timestamp_counter(ts) ts0, last(price) as price " +
+                            "from base_price sample by 1h;"
+            );
+
+            execute("insert into base_price(price, ts) values (1.0, '2024-09-10T12:01')");
+            currentMicros = parseFloorPartialTimestamp("2099-01-01T01:01:01.000000Z");
+            final MatViewTimerJob timerJob = new MatViewTimerJob(engine);
+            execute("refresh materialized view price_1h incremental;");
+            drainMatViewTimerQueue(timerJob);
+            drainQueues();
+
+            final TableToken viewToken = engine.getTableTokenIfExists("price_1h");
+            Assert.assertNotNull(viewToken);
+            final MatViewState viewState = engine.getMatViewStateStore().getViewState(viewToken);
+            Assert.assertNotNull(viewState);
+            Assert.assertEquals(-1, viewState.getRefreshIntervalsBaseTxn());
+            Assert.assertEquals(0, viewState.getRefreshIntervals().size());
+            Assert.assertEquals(1, TestTimestampCounterFactory.COUNTER.get());
+
+            execute("insert into base_price(price, ts) values (2.0, '2024-09-10T13:01')");
+            execute("insert into base_price(price, ts) values (3.0, '2024-08-10T07:01')");
+
+            currentMicros += 6 * Micros.SECOND_MICROS;
+            drainMatViewTimerQueue(timerJob);
+            drainQueues();
+
+            // Two distinct cached intervals, ~31 days apart.
+            final LongList cached = viewState.getRefreshIntervals();
+            Assert.assertEquals(
+                    "Expected two distinct intervals (one per affected bucket), got: " + cached,
+                    4, cached.size()
+            );
+
+            final long counterBefore = TestTimestampCounterFactory.COUNTER.get();
+            execute("refresh materialized view price_1h incremental;");
+            drainMatViewTimerQueue(timerJob);
+            drainQueues();
+            final long bucketsEmitted = TestTimestampCounterFactory.COUNTER.get() - counterBefore;
+
+            // The fix: only the two truly-dirty buckets are recomputed.
+            // Without the cost-aware clustering + step-cap this would be 3.
+            Assert.assertEquals(
+                    "Expected only the 2 truly-dirty buckets to be recomputed, got: " + bucketsEmitted,
+                    2, bucketsEmitted
+            );
+
+            Assert.assertEquals(-1, viewState.getRefreshIntervalsBaseTxn());
+            Assert.assertEquals(0, viewState.getRefreshIntervals().size());
+
+            assertQueryNoLeakCheck(
+                    replaceExpectedTimestamp(
+                            """
+                                    ts\tts0\tprice
+                                    2024-08-10T07:00:00.000000Z\t2024-08-10T07:00:00.000000Z\t3.0
+                                    2024-09-10T12:00:00.000000Z\t2024-09-10T12:00:00.000000Z\t1.0
+                                    2024-09-10T13:00:00.000000Z\t2024-09-10T13:00:00.000000Z\t2.0
+                                    """),
+                    "price_1h order by ts",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testRefreshIntervalsO3MergesNarrowGap() throws Exception {
+        // Companion to testRefreshIntervalsO3SplitsWideEnvelope: when two
+        // cached intervals sit close enough together that scanning the gap
+        // would be cheaper than paying for an extra REPLACE_RANGE commit,
+        // clusterIntervals merges them into one cluster and the refresh
+        // does a single cursor scan covering both. The "wasted" recompute
+        // of any pre-existing bucket inside the merged cluster is the
+        // cost-optimal call.
+        //
+        // Setup: a pre-existing bucket at T=12s. Then two new WAL txns at
+        // T=11s and T=13s (~1s gap on each side of the pre-existing bucket).
+        // The cold-start gap-threshold is 2 ms; here both gaps are 1s = 1_000_000 us,
+        // well above 2_000 us, so clustering would NORMALLY split. We bump
+        // the threshold via setting the env-var-equivalent rowsPerQuery so
+        // that the auto-tune at this scale chooses to merge.
+        //
+        // Simpler approach: use a refresh that processes one big cluster
+        // up-front. After the warmup refresh, scanNanosPerMicro is small
+        // (sparse data: cursor finishes fast for the wide envelope) and the
+        // gap threshold grows large enough that 1s gaps merge.
+        setProperty(PropertyKey.CAIRO_MAT_VIEW_ROWS_PER_QUERY_ESTIMATE, 1_000_000);
+        setProperty(PropertyKey.CAIRO_MAT_VIEW_REFRESH_INTERVALS_UPDATE_PERIOD, "5s");
+        assertMemoryLeak(() -> {
+            TestTimestampCounterFactory.COUNTER.set(0);
+
+            executeWithRewriteTimestamp(
+                    "create table base_price (" +
+                            "  price double, ts #TIMESTAMP" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            execute(
+                    "create materialized view price_1s refresh manual as " +
+                            "select ts, test_timestamp_counter(ts) ts0, last(price) as price " +
+                            "from base_price sample by 1s;"
+            );
+
+            // Pre-existing bucket at 12s. This will end up between the two
+            // new intervals once they arrive.
+            execute("insert into base_price(price, ts) values (1.0, '2024-09-10T12:00:12.5')");
+            currentMicros = parseFloorPartialTimestamp("2099-01-01T01:01:01.000000Z");
+            final MatViewTimerJob timerJob = new MatViewTimerJob(engine);
+            execute("refresh materialized view price_1s incremental;");
+            drainMatViewTimerQueue(timerJob);
+            drainQueues();
+
+            // Two new WAL txns straddling the pre-existing 12s bucket, 2s
+            // apart in actual timestamp space.
+            execute("insert into base_price(price, ts) values (2.0, '2024-09-10T12:00:11.7')");
+            execute("insert into base_price(price, ts) values (3.0, '2024-09-10T12:00:13.3')");
+
+            currentMicros += 6 * Micros.SECOND_MICROS;
+            drainMatViewTimerQueue(timerJob);
+            drainQueues();
+
+            // Seed the EMA so the cost model has a known threshold. The
+            // threshold value is in the base table's timestamp unit (us for
+            // TIMESTAMP, ns for TIMESTAMP_NS). For our 1.6 s gap (= 1.6e6 us
+            // = 1.6e9 ns), seed values that produce a threshold of 5 s
+            // expressed in whichever unit is in play.
+            final TableToken viewToken = engine.getTableTokenIfExists("price_1s");
+            final MatViewState viewState = engine.getMatViewStateStore().getViewState(viewToken);
+            final long fiveSecondsInTsUnits = timestampType.getDriver().fromMicros(5_000_000L);
+            Assert.assertTrue(viewState.tryLock());
+            try {
+                // threshold = commit * range / sample. Seed sample = range
+                // = 1 so the formula reduces to threshold = commit, then
+                // pick commit to land threshold at fiveSecondsInTsUnits.
+                viewState.setRefreshMetricsForTesting(fiveSecondsInTsUnits, 1L, 1L);
+            } finally {
+                viewState.unlock();
+            }
+
+            final long counterBefore = TestTimestampCounterFactory.COUNTER.get();
+            execute("refresh materialized view price_1s incremental;");
+            drainMatViewTimerQueue(timerJob);
+            drainQueues();
+            final long bucketsEmitted = TestTimestampCounterFactory.COUNTER.get() - counterBefore;
+
+            // Clustering merges the two intervals -- the merged cluster
+            // [11s, 13s] contains the pre-existing 12s bucket. The cursor
+            // scans the full cluster range and emits all 3 buckets, but
+            // this is the cost-optimal call (one cursor + one commit beats
+            // two cursors + two commits when the gap is tiny).
+            Assert.assertEquals(
+                    "Expected merged-cluster behaviour: 3 emitted buckets, got: " + bucketsEmitted,
+                    3, bucketsEmitted
+            );
+        });
+    }
+
+    @Test
+    public void testRefreshIntervalsO3RandomFuzz() throws Exception {
+        // Fuzz: random batches of inserts at random offsets relative to the
+        // current watermark, with random batch widths. Some batches land
+        // behind the watermark (O3), some at it, some past it. The mat view
+        // is refreshed incrementally on a random subset of iterations and
+        // once at the end. We then assert the view content matches a fresh
+        // SAMPLE BY query on the base table -- the strongest invariant: if
+        // per-cluster stepping or the cluster-boundary snap has any
+        // off-by-one or boundary bug, the mat view drifts from the SAMPLE
+        // BY ground truth and the cursor diff surfaces it.
+        setProperty(PropertyKey.CAIRO_MAT_VIEW_ROWS_PER_QUERY_ESTIMATE, 1_000_000);
+        final Rnd rnd = generateRandom(LOG);
+        final int batchCount = 8 + rnd.nextInt(25);
+        final int maxBatchWidth = 1 + rnd.nextInt(30);
+        final int maxLagMinutes = 60 + rnd.nextInt(2000);
+        final double midDrainProb = 0.2 + rnd.nextDouble() * 0.6;
+        LOG.info().$("fuzz seed run: batches=").$(batchCount)
+                .$(", maxBatchWidth=").$(maxBatchWidth)
+                .$(", maxLagMinutes=").$(maxLagMinutes)
+                .$(", midDrainProb=").$(midDrainProb)
+                .$();
+
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table base_price (" +
+                            "  price double, ts #TIMESTAMP" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            execute(
+                    "create materialized view price_1m refresh manual as " +
+                            "select ts, last(price) as price, min(price) as low, max(price) as high " +
+                            "from base_price sample by 1m"
+            );
+
+            final long anchorMicros = MicrosTimestampDriver.INSTANCE.parseFloorLiteral("2024-09-10T12:00:00.000000Z");
+            final long oneMinuteMicros = 60_000_000L;
+            final StringSink tsSink = new StringSink();
+
+            // Anchor with a single row so the SAMPLE BY ground truth has a
+            // stable origin; refresh once to flush the initial commit
+            // through the EMA cost model.
+            tsSink.clear();
+            MicrosFormatUtils.appendDateTime(tsSink, anchorMicros);
+            execute("insert into base_price(price, ts) values (0.0, '" + tsSink + "')");
+            execute("refresh materialized view price_1m incremental;");
+            drainQueues();
+
+            long highMicros = anchorMicros;
+            for (int batch = 0; batch < batchCount; batch++) {
+                // Lag in [-maxLagMinutes, +maxLagMinutes]. Negative = O3
+                // (behind watermark). Bias toward O3 by skewing the sign.
+                final long lagMagnitude = (rnd.nextLong() & Long.MAX_VALUE) % (maxLagMinutes + 1L);
+                final long signedLag = rnd.nextDouble() < 0.7 ? -lagMagnitude : lagMagnitude;
+                final int width = 1 + rnd.nextInt(maxBatchWidth);
+                final long batchBaseMicros = highMicros + signedLag * oneMinuteMicros;
+
+                final StringBuilder sql = new StringBuilder("insert into base_price(price, ts) values ");
+                for (int k = 0; k < width; k++) {
+                    if (k > 0) sql.append(',');
+                    final long ts = batchBaseMicros + k * oneMinuteMicros;
+                    tsSink.clear();
+                    MicrosFormatUtils.appendDateTime(tsSink, ts);
+                    sql.append("(").append(rnd.nextDouble()).append("::double, '").append(tsSink).append("')");
+                }
+                execute(sql.toString());
+
+                // Update watermark.
+                final long batchEndMicros = batchBaseMicros + (width - 1L) * oneMinuteMicros;
+                if (batchEndMicros > highMicros) {
+                    highMicros = batchEndMicros;
+                }
+
+                // Randomly refresh mid-stream so we exercise both the
+                // "many small refreshes" and "one big refresh" code paths.
+                // The cached refresh intervals accumulate between refreshes,
+                // which is what we want -- it drives cluster shapes
+                // through the per-cluster step path.
+                if (rnd.nextDouble() < midDrainProb) {
+                    execute("refresh materialized view price_1m incremental;");
+                    drainQueues();
+                }
+            }
+
+            // Final refresh to flush any remaining cached intervals.
+            execute("refresh materialized view price_1m incremental;");
+            drainQueues();
+
+            // The view must still be valid -- O3 writes must not have
+            // invalidated it.
+            assertSql(
+                    "count\n1\n",
+                    "select count() from materialized_views where view_name = 'price_1m' and view_status = 'valid'"
+            );
+
+            // Strongest invariant: mat view content == direct SAMPLE BY of
+            // the base table. assertSqlCursors diffs row-by-row so any
+            // bucket-level divergence surfaces immediately, with the
+            // failing seed logged above so we can reproduce.
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                TestUtils.assertSqlCursors(
+                        compiler,
+                        sqlExecutionContext,
+                        "select ts, last(price) as price, min(price) as low, max(price) as high " +
+                                "from base_price sample by 1m order by ts",
+                        "select ts, price, low, high from price_1m order by ts",
+                        LOG
+                );
+            }
         });
     }
 

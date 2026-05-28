@@ -1352,15 +1352,25 @@ public class MemoryCARWImplTest {
         final byte[] buf = new byte[0];
         binarySequence.of(buf);
         mem.putBin(null);
+        // putBin(from, len) with len == 0 writes an empty (non-null) BINARY
+        // entry. Callers signal null via putNullBin() or a negative len.
+        long emptyOff = mem.getAppendOffset();
         mem.putBin(0, 0);
-        long o1 = mem.putBin(binarySequence);
+        long emptyOff2 = mem.getAppendOffset();
+        mem.putBin(binarySequence);
+        long nullOff1 = mem.getAppendOffset();
         mem.putNullBin();
+        long nullOff2 = mem.getAppendOffset();
+        mem.putBin(0L, -1L);
 
         assertNull(mem.getBin(0));
-        assertNull(mem.getBin(8));
-        BinarySequence bsview = mem.getBin(16);
-        assertNotNull(bsview);
-        assertEquals(0, bsview.length());
-        assertNull(mem.getBin(o1));
+        BinarySequence empty1 = mem.getBin(emptyOff);
+        assertNotNull(empty1);
+        assertEquals(0, empty1.length());
+        BinarySequence empty2 = mem.getBin(emptyOff2);
+        assertNotNull(empty2);
+        assertEquals(0, empty2.length());
+        assertNull(mem.getBin(nullOff1));
+        assertNull(mem.getBin(nullOff2));
     }
 }

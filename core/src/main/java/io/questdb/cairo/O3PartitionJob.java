@@ -25,6 +25,7 @@
 package io.questdb.cairo;
 
 import io.questdb.MessageBus;
+import io.questdb.cairo.idx.BitmapIndexUtils;
 import io.questdb.cairo.idx.IndexWriter;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.TableRecordMetadata;
@@ -3443,8 +3444,12 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                 long rowId = Math.max(rowCount, columnTop);
                                 final long addr = rowGroupBuffers.getChunkDataPtr(0);
                                 final long size = rowGroupBuffers.getChunkDataSize(0);
-                                for (long p = addr, lim = addr + size; p < lim; p += 4, rowId++) {
-                                    indexWriter.add(TableUtils.toIndexKey(Unsafe.getInt(p)), rowId);
+                                if (size == 0) {
+                                    BitmapIndexUtils.addNullEntries(indexWriter, rowId, rowCount + rowGroupSize);
+                                } else {
+                                    for (long p = addr, lim = addr + size; p < lim; p += 4, rowId++) {
+                                        indexWriter.add(TableUtils.toIndexKey(Unsafe.getInt(p)), rowId);
+                                    }
                                 }
 
                                 rowCount += rowGroupSize;

@@ -85,6 +85,17 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
 
     @Test
     public void testAsyncModeLargeNumberOfRows() throws Exception {
+        // 25M-row async ingest is a throughput / correctness-at-scale test,
+        // not a fragmentation test. AbstractQwpWebSocketTest's @Before picks
+        // random send/recv fragmentation chunks in [1, 500]; on an unlucky
+        // seed (e.g. chunk = a handful of bytes), the per-send overhead on
+        // the wire path makes the I/O thread the producer's bottleneck and
+        // the cursor ring fills well before the inner loop finishes, then
+        // appendBlocking throws after 30s. Dedicated fuzz / protocol tests
+        // cover fragmentation; pin both chunks high here so the seed cannot
+        // turn this test into a wire-throughput stress test in disguise.
+        sendChunk = Integer.MAX_VALUE;
+        recvChunk = Integer.MAX_VALUE;
         runInContext((port) -> {
             try (QwpWebSocketSender sender = connectWs(port)) {
                 for (int i = 0; i < 25_000_000; i++) {
@@ -237,12 +248,13 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
                 // Row 2 omits the column -- implicit NULL via the null bitmap.
                 sender.table(table)
                         .at(2_000_000, ChronoUnit.MICROS);
-                // Row 3 ships a zero-length value. QuestDB's BINARY storage
-                // layer (MemoryPARWImpl.putBin) writes the NULL_LEN sentinel
-                // when len == 0, so an empty byte[] round-trips as NULL on
-                // read -- there is no length-0 non-null BINARY in the storage
-                // contract. We send it anyway to pin that quirk in case it
-                // ever changes.
+                // Row 3 ships a zero-length value. Cairo's MemoryCARW.putBin
+                // / MemoryPARWImpl.putBin now write the length prefix as 0
+                // (rather than NULL_LEN) for len == 0, so an empty byte[]
+                // round-trips as an empty (non-null) BINARY -- matching the
+                // BinarySequence overload's behavior and the QWP wire spec
+                // which distinguishes the null bitmap from the per-row
+                // length.
                 sender.table(table)
                         .binaryColumn("b", new byte[0])
                         .at(3_000_000, ChronoUnit.MICROS);
@@ -255,14 +267,28 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
                     "column\ttype\nb\tBINARY\n"
             );
             // length() returns -1 for NULL and the byte count otherwise.
-            // Rows 2 and 3 both surface as -1 (see comment on row 3 above).
+            // Row 2 is NULL (column omitted), row 3 is an empty non-null
+            // BINARY -- pinned distinct from null.
             assertSql(
                     "SELECT length(b) AS len FROM " + table + " ORDER BY ts",
                     """
                             len
                             6
                             -1
-                            -1
+                            0
+                            """
+            );
+            // Stronger regression than length() alone: pin isNull(b) so a
+            // future regression that flips empty back to null (e.g. by
+            // restoring the putBin(addr, 0) -> NULL_LEN shortcut) trips
+            // here rather than only in length-based assertions.
+            assertSql(
+                    "SELECT b IS NULL AS isnull FROM " + table + " ORDER BY ts",
+                    """
+                            isnull
+                            false
+                            true
+                            false
                             """
             );
         });
@@ -2512,6 +2538,317 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
     }
 
     @Test
+    public void testDeferredCommitHappyPath() throws Exception {
+        runInContext((port) -> {
+            try (QwpWebSocketSender sender = connectWs(port)) {
+                // Deferred message 1
+                sender.setDeferCommit(true);
+                for (int i = 0; i < 10; i++) {
+                    sender.table("defer_happy")
+                            .longColumn("id", i)
+                            .at(1_000_000_000_000L + i * 1000L, ChronoUnit.MICROS);
+                }
+                sender.flush();
+
+                // Deferred message 2
+                for (int i = 10; i < 20; i++) {
+                    sender.table("defer_happy")
+                            .longColumn("id", i)
+                            .at(1_000_000_000_000L + i * 1000L, ChronoUnit.MICROS);
+                }
+                sender.flush();
+
+                // Final committing message
+                sender.setDeferCommit(false);
+                for (int i = 20; i < 30; i++) {
+                    sender.table("defer_happy")
+                            .longColumn("id", i)
+                            .at(1_000_000_000_000L + i * 1000L, ChronoUnit.MICROS);
+                }
+                sender.flush();
+            }
+
+            drainWalQueue();
+            assertSql("SELECT count() FROM defer_happy", "count\n30\n");
+            assertSql(
+                    "SELECT min(id), max(id) FROM defer_happy",
+                    "min\tmax\n0\t29\n"
+            );
+        });
+    }
+
+    @Test
+    public void testDeferredCommitMixedTables() throws Exception {
+        runInContext((port) -> {
+            try (QwpWebSocketSender sender = connectWs(port)) {
+                // Deferred message: rows for two tables
+                sender.setDeferCommit(true);
+                for (int i = 0; i < 10; i++) {
+                    sender.table("defer_mixed_a")
+                            .longColumn("id", i)
+                            .at(1_000_000_000_000L + i * 1000L, ChronoUnit.MICROS);
+                    sender.table("defer_mixed_b")
+                            .doubleColumn("value", i * 1.5)
+                            .at(1_000_000_000_000L + i * 1000L, ChronoUnit.MICROS);
+                }
+                sender.flush();
+
+                // Final committing message: more rows for both tables
+                sender.setDeferCommit(false);
+                for (int i = 10; i < 15; i++) {
+                    sender.table("defer_mixed_a")
+                            .longColumn("id", i)
+                            .at(1_000_000_000_000L + i * 1000L, ChronoUnit.MICROS);
+                    sender.table("defer_mixed_b")
+                            .doubleColumn("value", i * 1.5)
+                            .at(1_000_000_000_000L + i * 1000L, ChronoUnit.MICROS);
+                }
+                sender.flush();
+            }
+
+            drainWalQueue();
+            assertSql("SELECT count() FROM defer_mixed_a", "count\n15\n");
+            assertSql("SELECT count() FROM defer_mixed_b", "count\n15\n");
+        });
+    }
+
+    @Test
+    public void testDeferredCommitEmptyFinalMessage() throws Exception {
+        runInContext((port) -> {
+            try (QwpWebSocketSender sender = connectWs(port)) {
+                // Deferred messages carry all the data
+                sender.setDeferCommit(true);
+                for (int i = 0; i < 20; i++) {
+                    sender.table("defer_empty_final")
+                            .longColumn("id", i)
+                            .at(1_000_000_000_000L + i * 1000L, ChronoUnit.MICROS);
+                }
+                sender.flush();
+
+                // Final message without defer flag and with more rows triggers commit
+                sender.setDeferCommit(false);
+                sender.table("defer_empty_final")
+                        .longColumn("id", 99)
+                        .at(1_000_000_100_000L, ChronoUnit.MICROS);
+                sender.flush();
+            }
+
+            drainWalQueue();
+            assertSql("SELECT count() FROM defer_empty_final", "count\n21\n");
+        });
+    }
+
+    @Test
+    public void testDeferredCommitSingleDeferredMessage() throws Exception {
+        runInContext((port) -> {
+            try (QwpWebSocketSender sender = connectWs(port)) {
+                // One deferred message
+                sender.setDeferCommit(true);
+                for (int i = 0; i < 5; i++) {
+                    sender.table("defer_single")
+                            .longColumn("id", i)
+                            .at(1_000_000_000_000L + i * 1000L, ChronoUnit.MICROS);
+                }
+                sender.flush();
+
+                // Immediately followed by a committing message
+                sender.setDeferCommit(false);
+                for (int i = 5; i < 10; i++) {
+                    sender.table("defer_single")
+                            .longColumn("id", i)
+                            .at(1_000_000_000_000L + i * 1000L, ChronoUnit.MICROS);
+                }
+                sender.flush();
+            }
+
+            drainWalQueue();
+            assertSql("SELECT count() FROM defer_single", "count\n10\n");
+        });
+    }
+
+    @Test
+    public void testDeferredCommitConnectionDropRollsBack() throws Exception {
+        runInContext((port) -> {
+            // Send deferred messages then close without committing
+            try (QwpWebSocketSender sender = connectWs(port)) {
+                sender.setDeferCommit(true);
+                for (int i = 0; i < 10; i++) {
+                    sender.table("defer_drop")
+                            .longColumn("id", i)
+                            .at(1_000_000_000_000L + i * 1000L, ChronoUnit.MICROS);
+                }
+                sender.flush();
+
+                // Close without ever clearing the defer flag — server should roll back
+            }
+
+            drainWalQueue();
+
+            // Table may not even exist, or if auto-created it should have 0 committed rows
+            try {
+                assertSql("SELECT count() FROM defer_drop", "count\n0\n");
+            } catch (AssertionError e) {
+                // Table was never created — that's also correct
+                if (!e.getMessage().contains("defer_drop")) {
+                    throw e;
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testDeferredCommitMultipleCycles() throws Exception {
+        runInContext((port) -> {
+            try (QwpWebSocketSender sender = connectWs(port)) {
+                // Cycle 1: defer → commit
+                sender.setDeferCommit(true);
+                for (int i = 0; i < 10; i++) {
+                    sender.table("defer_multi_cycle")
+                            .longColumn("id", i)
+                            .at(1_000_000_000_000L + i * 1000L, ChronoUnit.MICROS);
+                }
+                sender.flush();
+
+                sender.setDeferCommit(false);
+                for (int i = 10; i < 15; i++) {
+                    sender.table("defer_multi_cycle")
+                            .longColumn("id", i)
+                            .at(1_000_000_000_000L + i * 1000L, ChronoUnit.MICROS);
+                }
+                sender.flush();
+
+                // Cycle 2: defer → commit on the same connection
+                sender.setDeferCommit(true);
+                for (int i = 15; i < 25; i++) {
+                    sender.table("defer_multi_cycle")
+                            .longColumn("id", i)
+                            .at(1_000_000_000_000L + i * 1000L, ChronoUnit.MICROS);
+                }
+                sender.flush();
+
+                sender.setDeferCommit(false);
+                for (int i = 25; i < 30; i++) {
+                    sender.table("defer_multi_cycle")
+                            .longColumn("id", i)
+                            .at(1_000_000_000_000L + i * 1000L, ChronoUnit.MICROS);
+                }
+                sender.flush();
+            }
+
+            drainWalQueue();
+            assertSql("SELECT count() FROM defer_multi_cycle", "count\n30\n");
+            assertSql(
+                    "SELECT min(id), max(id) FROM defer_multi_cycle",
+                    "min\tmax\n0\t29\n"
+            );
+        });
+    }
+
+    @Test
+    public void testDeferredCommitSchemaMismatchRollsBack() throws Exception {
+        runInContext((port) -> {
+            // Seed table_a with a DOUBLE column
+            try (QwpWebSocketSender sender = connectWs(port)) {
+                sender.table("defer_mismatch_a")
+                        .doubleColumn("px", 1.5)
+                        .at(1_000_000, ChronoUnit.MICROS);
+                sender.flush();
+            }
+            drainWalQueue();
+
+            // Deferred sequence: valid rows for table_b, then schema error on table_a
+            CompletableFuture<SenderError> errorFut = new CompletableFuture<>();
+            try (QwpWebSocketSender sender = connectWs(port, errorFut::complete)) {
+                sender.setDeferCommit(true);
+                for (int i = 0; i < 10; i++) {
+                    sender.table("defer_mismatch_b")
+                            .longColumn("id", i)
+                            .at(1_000_000_000_000L + i * 1000L, ChronoUnit.MICROS);
+                }
+                sender.flush();
+
+                // STRING value for a DOUBLE column triggers SCHEMA_MISMATCH on the server;
+                // all accumulated deferred WAL rows (including table_b) must be rolled back
+                sender.table("defer_mismatch_a")
+                        .stringColumn("px", "not-a-double")
+                        .at(2_000_000, ChronoUnit.MICROS);
+                sender.flush();
+
+                SenderError err = errorFut.get(10, TimeUnit.SECONDS);
+                Assert.assertEquals(SenderError.Category.SCHEMA_MISMATCH, err.getCategory());
+            }
+
+            drainWalQueue();
+
+            // Original row in table_a survives; the mismatched row was not committed
+            assertSql("SELECT px FROM defer_mismatch_a", "px\n1.5\n");
+
+            // Deferred rows for table_b were rolled back together with the error
+            try {
+                assertSql("SELECT count() FROM defer_mismatch_b", "count\n0\n");
+            } catch (AssertionError e) {
+                if (!e.getMessage().contains("defer_mismatch_b")) {
+                    throw e;
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testDeferredCommitSymbolDictContinuity() throws Exception {
+        runInContext((port) -> {
+            try (QwpWebSocketSender sender = connectWs(port)) {
+                // Deferred message 1: introduce symbols
+                sender.setDeferCommit(true);
+                sender.table("defer_symbol")
+                        .symbol("host", "server-01")
+                        .longColumn("val", 1)
+                        .at(1_000_000, ChronoUnit.MICROS);
+                sender.table("defer_symbol")
+                        .symbol("host", "server-02")
+                        .longColumn("val", 2)
+                        .at(2_000_000, ChronoUnit.MICROS);
+                sender.flush();
+
+                // Deferred message 2: reuse "server-01" + add new "server-03"
+                sender.table("defer_symbol")
+                        .symbol("host", "server-01")
+                        .longColumn("val", 3)
+                        .at(3_000_000, ChronoUnit.MICROS);
+                sender.table("defer_symbol")
+                        .symbol("host", "server-03")
+                        .longColumn("val", 4)
+                        .at(4_000_000, ChronoUnit.MICROS);
+                sender.flush();
+
+                // Committing message: reuse symbol from message 1
+                sender.setDeferCommit(false);
+                sender.table("defer_symbol")
+                        .symbol("host", "server-02")
+                        .longColumn("val", 5)
+                        .at(5_000_000, ChronoUnit.MICROS);
+                sender.flush();
+            }
+
+            drainWalQueue();
+            assertQueryNoLeakCheck(
+                    """
+                            host\tval\ttimestamp
+                            server-01\t1\t1970-01-01T00:00:01.000000Z
+                            server-02\t2\t1970-01-01T00:00:02.000000Z
+                            server-01\t3\t1970-01-01T00:00:03.000000Z
+                            server-03\t4\t1970-01-01T00:00:04.000000Z
+                            server-02\t5\t1970-01-01T00:00:05.000000Z
+                            """,
+                    "SELECT host, val, timestamp FROM defer_symbol ORDER BY timestamp",
+                    "timestamp",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
     public void testDecimal() throws Exception {
         runInContext((port) -> {
             String table = "test_qwp_decimal";
@@ -2622,6 +2959,89 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
 
             drainWalQueue();
             assertSql("SELECT count() FROM " + table, "count\n1\n");
+        });
+    }
+
+    /**
+     * Regression: empty BINARY ingested via the Java client must round-trip
+     * as an empty (non-null) value, not as NULL.
+     * <p>
+     * Cairo's {@code MemoryCARW.putBin(long, long)} and {@code
+     * MemoryPARWImpl.putBin(long, long)} used to write {@code NULL_LEN} (-1)
+     * as the length prefix when {@code len == 0}, conflating empty with null.
+     * The QWP-WS WAL ingest path (the only production caller of the {@code
+     * (from, len)} overload, via {@code
+     * WalColumnarRowAppender.putBinaryColumn}) drove a non-null empty {@code
+     * DirectUtf8Sequence} into {@code putBin(ptr, 0)}, so {@code byte[0]}
+     * sent through {@code sender.binaryColumn} was silently stored as NULL
+     * and read back as NULL by SQL and by the QWP egress reader.
+     * <p>
+     * After the fix, {@code putBin(from, len)} treats {@code len >= 0} as a
+     * real value (callers signal NULL via a negative {@code len} or via
+     * {@code putNullBin}). This test pins the corrected semantic
+     * end-to-end: a missing column still yields NULL while
+     * {@code binaryColumn("b", new byte[0])} yields a length-0 non-null
+     * value, distinct from NULL on both the {@code length()} and {@code IS
+     * NULL} predicates.
+     */
+    @Test
+    public void testEmptyBinaryColumnRoundTripsAsNonNull() throws Exception {
+        runInContext((port) -> {
+            String table = "test_qwp_empty_binary_round_trip";
+            execute("CREATE TABLE " + table
+                    + " (b BINARY, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            byte[] payload = {0x01, 0x02, 0x03, 0x04};
+
+            try (QwpWebSocketSender sender = connectWs(port)) {
+                // Row 1: a small non-null payload. Anchors the "happy path"
+                // so a regression that flips every BINARY to NULL trips here
+                // as well as on the empty row.
+                sender.table(table)
+                        .binaryColumn("b", payload)
+                        .at(1_000_000, ChronoUnit.MICROS);
+                // Row 2: column omitted -> NULL via the row-level null
+                // bitmap. The (length=-1, isNull=true) signal must keep
+                // working after the fix.
+                sender.table(table)
+                        .at(2_000_000, ChronoUnit.MICROS);
+                // Row 3: empty payload sent explicitly. Before the fix this
+                // round-tripped as NULL; after the fix it is a length-0
+                // non-null BINARY.
+                sender.table(table)
+                        .binaryColumn("b", new byte[0])
+                        .at(3_000_000, ChronoUnit.MICROS);
+                sender.flush();
+            }
+
+            drainWalQueue();
+            // length() distinguishes the three cases on a single line:
+            //   4  -> non-null with payload bytes
+            //   -1 -> NULL (implicit via omitted column)
+            //   0  -> empty non-null (regression target)
+            assertSql(
+                    "SELECT length(b) AS len FROM " + table + " ORDER BY ts",
+                    """
+                            len
+                            4
+                            -1
+                            0
+                            """
+            );
+            // IS NULL pins null-vs-empty independently of length(), so a
+            // future regression that emits empty as NULL on the wire but
+            // keeps the length prefix at 0 (e.g. a server-side change that
+            // re-introduces fillNulls for BINARY column-tops) is caught
+            // here.
+            assertSql(
+                    "SELECT b IS NULL AS isnull FROM " + table + " ORDER BY ts",
+                    """
+                            isnull
+                            false
+                            true
+                            false
+                            """
+            );
         });
     }
 

@@ -45,7 +45,7 @@ import io.questdb.cutlass.qwp.protocol.QwpParseException;
 import io.questdb.cutlass.qwp.protocol.QwpSchema;
 import io.questdb.cutlass.qwp.protocol.QwpSchemaRegistry;
 import io.questdb.cutlass.qwp.protocol.QwpTableBlockCursor;
-import io.questdb.cutlass.qwp.server.QwpProcessorState;
+import io.questdb.cutlass.qwp.server.QwpIngressProcessorState;
 import io.questdb.cutlass.qwp.server.QwpTudCache;
 import io.questdb.std.CharSequenceLongHashMap;
 import io.questdb.std.LowerCaseUtf8SequenceObjHashMap;
@@ -64,14 +64,14 @@ import java.lang.reflect.Field;
 import java.lang.reflect.Proxy;
 import java.util.HashMap;
 
-public class QwpProcessorStateTest extends AbstractCairoTest {
+public class QwpIngressProcessorStateTest extends AbstractCairoTest {
 
     @Test
     public void testAddDataIgnoresZeroLengthInput() throws Exception {
         assertMemoryLeak(() -> {
             LineHttpProcessorConfiguration lineConfig =
                     new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
-            QwpProcessorState state = new QwpProcessorState(1024, 4096, engine, lineConfig);
+            QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, lineConfig);
             try {
                 state.of(1, AllowAllSecurityContext.INSTANCE);
 
@@ -100,7 +100,7 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
                             return 256;
                         }
                     };
-            QwpProcessorState state = new QwpProcessorState(64, 4096, engine, lineConfig);
+            QwpIngressProcessorState state = new QwpIngressProcessorState(64, 4096, engine, lineConfig);
             try {
                 state.of(1, AllowAllSecurityContext.INSTANCE);
 
@@ -133,7 +133,7 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             LineHttpProcessorConfiguration lineConfig =
                     new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
-            QwpProcessorState state = new QwpProcessorState(1024, 4096, engine, lineConfig);
+            QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, lineConfig);
             try {
                 state.of(1, AllowAllSecurityContext.INSTANCE);
                 state.setDurableAckEnabled(true);
@@ -170,7 +170,7 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             LineHttpProcessorConfiguration lineConfig =
                     new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
-            QwpProcessorState state = new QwpProcessorState(1024, 4096, engine, lineConfig);
+            QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, lineConfig);
             try {
                 state.of(1, AllowAllSecurityContext.INSTANCE);
                 state.setDurableAckEnabled(true);
@@ -212,7 +212,7 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             LineHttpProcessorConfiguration lineConfig =
                     new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
-            QwpProcessorState state = new QwpProcessorState(1024, 4096, engine, lineConfig);
+            QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, lineConfig);
             try {
                 state.of(1, AllowAllSecurityContext.INSTANCE);
                 state.setDurableAckEnabled(true);
@@ -248,7 +248,7 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             LineHttpProcessorConfiguration lineConfig =
                     new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
-            QwpProcessorState state = new QwpProcessorState(1024, 4096, engine, lineConfig);
+            QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, lineConfig);
             try {
                 state.of(1, AllowAllSecurityContext.INSTANCE);
                 state.setDurableAckEnabled(true);
@@ -315,7 +315,7 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             LineHttpProcessorConfiguration lineConfig =
                     new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
-            QwpProcessorState state = new QwpProcessorState(1024, 4096, engine, lineConfig);
+            QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, lineConfig);
             try {
                 state.of(1, AllowAllSecurityContext.INSTANCE);
                 // durableAckEnabled is false by default
@@ -349,7 +349,7 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             LineHttpProcessorConfiguration lineConfig =
                     new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
-            QwpProcessorState state = new QwpProcessorState(1024, 4096, engine, lineConfig);
+            QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, lineConfig);
             try {
                 state.of(1, AllowAllSecurityContext.INSTANCE);
                 state.setDurableAckEnabled(true);
@@ -398,7 +398,7 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             LineHttpProcessorConfiguration lineConfig =
                     new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
-            QwpProcessorState state = new QwpProcessorState(1024, 4096, engine, lineConfig);
+            QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, lineConfig);
             try {
                 state.of(1, AllowAllSecurityContext.INSTANCE);
                 state.setHighestProcessedSequence(5);
@@ -417,7 +417,7 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             LineHttpProcessorConfiguration lineConfig =
                     new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
-            QwpProcessorState state = new QwpProcessorState(1024, 4096, engine, lineConfig);
+            QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, lineConfig);
             try {
                 state.of(1, AllowAllSecurityContext.INSTANCE);
                 state.setDurableAckEnabled(true);
@@ -449,7 +449,7 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             LineHttpProcessorConfiguration lineConfig =
                     new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
-            QwpProcessorState state = new QwpProcessorState(1024, 4096, engine, lineConfig);
+            QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, lineConfig);
             try {
                 state.of(1, AllowAllSecurityContext.INSTANCE);
                 FakeConsumerTudCache fake = installFakeTudCache(state, engine, lineConfig);
@@ -476,7 +476,7 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             LineHttpProcessorConfiguration lineConfig =
                     new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
-            QwpProcessorState state = new QwpProcessorState(1024, 4096, engine, lineConfig);
+            QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, lineConfig);
             try {
                 state.of(1, AllowAllSecurityContext.INSTANCE);
                 FakeConsumerTudCache fake = installFakeTudCache(state, engine, lineConfig);
@@ -498,7 +498,7 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             LineHttpProcessorConfiguration lineConfig =
                     new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
-            QwpProcessorState state = new QwpProcessorState(1024, 4096, engine, lineConfig);
+            QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, lineConfig);
             try {
                 state.of(1, AllowAllSecurityContext.INSTANCE);
                 state.setDurableAckEnabled(true);
@@ -533,12 +533,12 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             LineHttpProcessorConfiguration lineConfig =
                     new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
-            QwpProcessorState state = new QwpProcessorState(1024, 4096, engine, lineConfig);
+            QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, lineConfig);
             try {
                 state.of(1, AllowAllSecurityContext.INSTANCE);
 
                 // Replace tudCache with one that throws a critical CairoException
-                Field tudCacheField = QwpProcessorState.class.getDeclaredField("tudCache");
+                Field tudCacheField = QwpIngressProcessorState.class.getDeclaredField("tudCache");
                 tudCacheField.setAccessible(true);
                 Misc.free((QwpTudCache) tudCacheField.get(state));
                 DefaultColumnTypes defaultColumnTypes = new DefaultColumnTypes(lineConfig);
@@ -560,7 +560,7 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
                         0     // schemaId=0
                 }));
                 state.processMessage();
-                Assert.assertEquals(QwpProcessorState.Status.INTERNAL_ERROR, state.getStatus());
+                Assert.assertEquals(QwpIngressProcessorState.Status.INTERNAL_ERROR, state.getStatus());
                 Assert.assertTrue(state.getErrorText().contains("simulated critical error"));
             } finally {
                 state.onDisconnected();
@@ -641,7 +641,7 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             LineHttpProcessorConfiguration lineConfig =
                     new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
-            QwpProcessorState state = new QwpProcessorState(1024, 4096, engine, lineConfig);
+            QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, lineConfig);
             state.of(1, AllowAllSecurityContext.INSTANCE);
             // Simulate the fixed onConnectionClosed lifecycle:
             // onDisconnected() resets per-connection state (WAL writers, symbol caches),
@@ -649,6 +649,399 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
             // Before the fix, only onDisconnected() was called, leaking native memory.
             state.onDisconnected();
             state.close();
+        });
+    }
+
+    @Test
+    public void testClearMessageStatePreservesWalState() throws Exception {
+        assertMemoryLeak(() -> {
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, lineConfig);
+            try {
+                state.of(1, AllowAllSecurityContext.INSTANCE);
+                FakeConsumerTudCache fake = installFakeTudCache(state, engine, lineConfig);
+
+                // clearMessageState() resets parsing buffers but preserves tudCache
+                state.clearMessageState();
+                Assert.assertTrue(state.isOk());
+
+                // tudCache survives: commit still works after clearMessageState()
+                fake.queueCommit(new String[]{"t"}, new String[]{"t~1"}, new long[]{10L});
+                state.setHighestProcessedSequence(0);
+                state.commit();
+                Assert.assertEquals(1, state.getPendingAckSeqTxns().size());
+                Assert.assertEquals(10L, state.getPendingAckSeqTxns().get("t"));
+            } finally {
+                state.onDisconnected();
+                state.close();
+            }
+        });
+    }
+
+    @Test
+    public void testClearMessageStateResetsBufferPosition() throws Exception {
+        assertMemoryLeak(() -> {
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, lineConfig);
+            try {
+                state.of(1, AllowAllSecurityContext.INSTANCE);
+
+                // Feed some data to advance bufferPosition
+                addNativeData(state, wrapQwpPayload(new byte[]{
+                        4, 't', 'e', 's', 't',
+                        0, 0, 0x00
+                }));
+
+                // clearMessageState() resets buffer for the next message
+                state.clearMessageState();
+                Assert.assertTrue(state.isOk());
+
+                // isDeferCommit() returns false when buffer is empty
+                Assert.assertFalse(state.isDeferCommit());
+            } finally {
+                state.onDisconnected();
+                state.close();
+            }
+        });
+    }
+
+    @Test
+    public void testDeferCommitFlagParsedFromHeader() throws Exception {
+        assertMemoryLeak(() -> {
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, lineConfig);
+            try {
+                state.of(1, AllowAllSecurityContext.INSTANCE);
+
+                // Message without FLAG_DEFER_COMMIT
+                addNativeData(state, wrapQwpPayload(new byte[]{
+                        4, 't', 'e', 's', 't',
+                        0, 0, 0x00
+                }, (byte) 0));
+                Assert.assertFalse(state.isDeferCommit());
+                state.clear();
+
+                // Message with FLAG_DEFER_COMMIT
+                addNativeData(state, wrapQwpPayload(new byte[]{
+                        4, 't', 'e', 's', 't',
+                        0, 0, 0x00
+                }, QwpConstants.FLAG_DEFER_COMMIT));
+                Assert.assertTrue(state.isDeferCommit());
+                state.clear();
+
+                // FLAG_DEFER_COMMIT combined with other flags
+                addNativeData(state, wrapQwpPayload(new byte[]{
+                        4, 't', 'e', 's', 't',
+                        0, 0, 0x00
+                }, (byte) (QwpConstants.FLAG_DEFER_COMMIT | QwpConstants.FLAG_DELTA_SYMBOL_DICT)));
+                Assert.assertTrue(state.isDeferCommit());
+            } finally {
+                state.onDisconnected();
+                state.close();
+            }
+        });
+    }
+
+    @Test
+    public void testDeferCommitReturnsFalseWhenBufferTooSmall() throws Exception {
+        assertMemoryLeak(() -> {
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, lineConfig);
+            try {
+                state.of(1, AllowAllSecurityContext.INSTANCE);
+
+                // No data at all: bufferPosition < HEADER_SIZE
+                Assert.assertFalse(state.isDeferCommit());
+
+                // Partial header (less than 12 bytes)
+                long ptr = Unsafe.malloc(6, MemoryTag.NATIVE_HTTP_CONN);
+                try {
+                    Unsafe.putByte(ptr, (byte) 'Q');
+                    Unsafe.putByte(ptr + 1, (byte) 'W');
+                    Unsafe.putByte(ptr + 2, (byte) 'P');
+                    Unsafe.putByte(ptr + 3, (byte) '1');
+                    Unsafe.putByte(ptr + 4, (byte) 1);
+                    Unsafe.putByte(ptr + 5, QwpConstants.FLAG_DEFER_COMMIT);
+                    state.addData(ptr, ptr + 6);
+                } finally {
+                    Unsafe.free(ptr, 6, MemoryTag.NATIVE_HTTP_CONN);
+                }
+                // Only 6 bytes — less than HEADER_SIZE (12), so isDeferCommit returns false
+                Assert.assertFalse(state.isDeferCommit());
+            } finally {
+                state.onDisconnected();
+                state.close();
+            }
+        });
+    }
+
+    @Test
+    public void testDeferredCommitAccumulatesAcrossMessages() throws Exception {
+        assertMemoryLeak(() -> {
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, lineConfig);
+            try {
+                state.of(1, AllowAllSecurityContext.INSTANCE);
+                FakeConsumerTudCache fake = installFakeTudCache(state, engine, lineConfig);
+
+                // Message 1: deferred — no commit, clearMessageState() preserves WAL state
+                addNativeData(state, wrapQwpPayload(new byte[]{
+                        4, 't', 'e', 's', 't',
+                        0, 0, 0x00
+                }, QwpConstants.FLAG_DEFER_COMMIT));
+                Assert.assertTrue(state.isDeferCommit());
+                Assert.assertTrue(state.isOk());
+                state.clearMessageState();
+
+                // Message 2: deferred — still no commit
+                addNativeData(state, wrapQwpPayload(new byte[]{
+                        4, 't', 'e', 's', 't',
+                        0, 0, 0x00
+                }, QwpConstants.FLAG_DEFER_COMMIT));
+                Assert.assertTrue(state.isDeferCommit());
+                Assert.assertTrue(state.isOk());
+                state.clearMessageState();
+
+                // Message 3: final message (no defer flag) — commit all accumulated rows
+                addNativeData(state, wrapQwpPayload(new byte[]{
+                        4, 't', 'e', 's', 't',
+                        0, 0, 0x00
+                }, (byte) 0));
+                Assert.assertFalse(state.isDeferCommit());
+
+                fake.queueCommit(new String[]{"test"}, new String[]{"test~1"}, new long[]{30L});
+                state.setHighestProcessedSequence(2);
+                state.commit();
+                Assert.assertTrue(state.isOk());
+                Assert.assertEquals(1, state.getPendingAckSeqTxns().size());
+                Assert.assertEquals(30L, state.getPendingAckSeqTxns().get("test"));
+            } finally {
+                state.onDisconnected();
+                state.close();
+            }
+        });
+    }
+
+    @Test
+    public void testDeferredCommitErrorCausesFullClear() throws Exception {
+        assertMemoryLeak(() -> {
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, lineConfig);
+            try {
+                state.of(1, AllowAllSecurityContext.INSTANCE);
+                FakeConsumerTudCache fake = installFakeTudCache(state, engine, lineConfig);
+
+                // Message 1: deferred — clearMessageState preserves WAL
+                addNativeData(state, wrapQwpPayload(new byte[]{
+                        4, 't', 'e', 's', 't',
+                        0, 0, 0x00
+                }, QwpConstants.FLAG_DEFER_COMMIT));
+                Assert.assertTrue(state.isOk());
+                state.clearMessageState();
+
+                // Now simulate an error on the next message by queuing a commit failure
+                fake.queueCommitThrow(new RuntimeException("simulated commit failure"));
+                state.setHighestProcessedSequence(1);
+                state.commit();
+
+                // After error, clear() rolls back all accumulated WAL state
+                Assert.assertFalse(state.isOk());
+                state.clear();
+                Assert.assertTrue(state.isOk());
+            } finally {
+                state.onDisconnected();
+                state.close();
+            }
+        });
+    }
+
+    @Test
+    public void testDeferredCommitOnDisconnectedRollsBackWalState() throws Exception {
+        assertMemoryLeak(() -> {
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, lineConfig);
+            try {
+                state.of(1, AllowAllSecurityContext.INSTANCE);
+                installFakeTudCache(state, engine, lineConfig);
+
+                // Message 1: deferred — clearMessageState preserves WAL
+                addNativeData(state, wrapQwpPayload(new byte[]{
+                        4, 't', 'e', 's', 't',
+                        0, 0, 0x00
+                }, QwpConstants.FLAG_DEFER_COMMIT));
+                Assert.assertTrue(state.isOk());
+                state.clearMessageState();
+
+                // Simulate connection drop mid-deferred-sequence
+                // onDisconnected() calls clear() which rolls back all WAL state
+                state.onDisconnected();
+
+                // After disconnect + close, no leaks
+            } finally {
+                state.close();
+            }
+        });
+    }
+
+    @Test
+    public void testDeferredCommitMaxUncommittedRowsTriggersCommit() throws Exception {
+        assertMemoryLeak(() -> {
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, lineConfig);
+            try {
+                state.of(1, AllowAllSecurityContext.INSTANCE);
+                FakeConsumerTudCache fake = installFakeTudCache(state, engine, lineConfig);
+
+                // Deferred message — processMessage then commitIfMaxUncommittedRowsReached
+                addNativeData(state, wrapQwpPayload(new byte[]{
+                        4, 't', 'e', 's', 't',
+                        0, 0, 0x00
+                }, QwpConstants.FLAG_DEFER_COMMIT));
+                Assert.assertTrue(state.isOk());
+
+                // Simulate the limit being reached: queue a commit callback
+                fake.queueMaxRowsCommit(new String[]{"test"}, new String[]{"test~1"}, new long[]{42L});
+                state.commitIfMaxUncommittedRowsReached();
+                Assert.assertTrue(state.isOk());
+
+                // The forced commit should have recorded the seqTxn in pendingAckSeqTxns
+                Assert.assertEquals(1, state.getPendingAckSeqTxns().size());
+                Assert.assertEquals(42L, state.getPendingAckSeqTxns().get("test"));
+                Assert.assertEquals(1, fake.getMaxRowsCommitCallCount());
+            } finally {
+                state.onDisconnected();
+                state.close();
+            }
+        });
+    }
+
+    @Test
+    public void testDeferredCommitMaxUncommittedRowsNoOpBelowLimit() throws Exception {
+        assertMemoryLeak(() -> {
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, lineConfig);
+            try {
+                state.of(1, AllowAllSecurityContext.INSTANCE);
+                FakeConsumerTudCache fake = installFakeTudCache(state, engine, lineConfig);
+
+                // Deferred message
+                addNativeData(state, wrapQwpPayload(new byte[]{
+                        4, 't', 'e', 's', 't',
+                        0, 0, 0x00
+                }, QwpConstants.FLAG_DEFER_COMMIT));
+                Assert.assertTrue(state.isOk());
+
+                // Don't queue any commit data — simulates rows below the limit
+                state.commitIfMaxUncommittedRowsReached();
+                Assert.assertTrue(state.isOk());
+
+                // No seqTxns should be recorded
+                Assert.assertEquals(0, state.getPendingAckSeqTxns().size());
+                Assert.assertEquals(1, fake.getMaxRowsCommitCallCount());
+            } finally {
+                state.onDisconnected();
+                state.close();
+            }
+        });
+    }
+
+    @Test
+    public void testDeferredCommitMaxUncommittedRowsErrorSetsDistressed() throws Exception {
+        assertMemoryLeak(() -> {
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, lineConfig);
+            try {
+                state.of(1, AllowAllSecurityContext.INSTANCE);
+                FakeConsumerTudCache fake = installFakeTudCache(state, engine, lineConfig);
+
+                // Deferred message
+                addNativeData(state, wrapQwpPayload(new byte[]{
+                        4, 't', 'e', 's', 't',
+                        0, 0, 0x00
+                }, QwpConstants.FLAG_DEFER_COMMIT));
+                Assert.assertTrue(state.isOk());
+
+                // Simulate a commit failure during the max-rows check
+                fake.queueMaxRowsCommitThrow(new RuntimeException("simulated WAL failure"));
+                state.commitIfMaxUncommittedRowsReached();
+
+                // Error should set the state to not-OK
+                Assert.assertFalse(state.isOk());
+            } finally {
+                state.onDisconnected();
+                state.close();
+            }
+        });
+    }
+
+    @Test
+    public void testDeferredCommitMaxUncommittedRowsUpdatesAckSeqTxns() throws Exception {
+        assertMemoryLeak(() -> {
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, lineConfig);
+            try {
+                state.of(1, AllowAllSecurityContext.INSTANCE);
+                FakeConsumerTudCache fake = installFakeTudCache(state, engine, lineConfig);
+
+                // Message 1: deferred
+                addNativeData(state, wrapQwpPayload(new byte[]{
+                        4, 't', 'e', 's', 't',
+                        0, 0, 0x00
+                }, QwpConstants.FLAG_DEFER_COMMIT));
+                Assert.assertTrue(state.isOk());
+
+                // Max-rows triggers a mid-batch commit with seqTxn=10
+                fake.queueMaxRowsCommit(new String[]{"test"}, new String[]{"test~1"}, new long[]{10L});
+                state.commitIfMaxUncommittedRowsReached();
+                Assert.assertTrue(state.isOk());
+                Assert.assertEquals(10L, state.getPendingAckSeqTxns().get("test"));
+
+                state.clearMessageState();
+
+                // Message 2: deferred
+                addNativeData(state, wrapQwpPayload(new byte[]{
+                        4, 't', 'e', 's', 't',
+                        0, 0, 0x00
+                }, QwpConstants.FLAG_DEFER_COMMIT));
+                Assert.assertTrue(state.isOk());
+
+                // Max-rows triggers another mid-batch commit with seqTxn=20
+                fake.queueMaxRowsCommit(new String[]{"test"}, new String[]{"test~1"}, new long[]{20L});
+                state.commitIfMaxUncommittedRowsReached();
+                Assert.assertTrue(state.isOk());
+
+                // The cumulative ACK should carry the latest seqTxn (20, not 10)
+                Assert.assertEquals(1, state.getPendingAckSeqTxns().size());
+                Assert.assertEquals(20L, state.getPendingAckSeqTxns().get("test"));
+
+                state.clearMessageState();
+
+                // Message 3: final (non-deferred) — commit remaining
+                addNativeData(state, wrapQwpPayload(new byte[]{
+                        4, 't', 'e', 's', 't',
+                        0, 0, 0x00
+                }, (byte) 0));
+                fake.queueCommit(new String[]{"test"}, new String[]{"test~1"}, new long[]{30L});
+                state.commit();
+                Assert.assertTrue(state.isOk());
+
+                // Final commit updates to seqTxn=30
+                Assert.assertEquals(30L, state.getPendingAckSeqTxns().get("test"));
+            } finally {
+                state.onDisconnected();
+                state.close();
+            }
         });
     }
 
@@ -988,7 +1381,7 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             LineHttpProcessorConfiguration lineConfig =
                     new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
-            QwpProcessorState state = new QwpProcessorState(1024, 4096, engine, lineConfig);
+            QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, lineConfig);
             try {
                 state.of(1, AllowAllSecurityContext.INSTANCE);
                 state.setDurableAckEnabled(true);
@@ -1011,7 +1404,7 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             LineHttpProcessorConfiguration lineConfig =
                     new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
-            QwpProcessorState state = new QwpProcessorState(1024, 4096, engine, lineConfig);
+            QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, lineConfig);
             try {
                 state.of(1, AllowAllSecurityContext.INSTANCE);
                 state.setDurableAckEnabled(true);
@@ -1034,7 +1427,7 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             LineHttpProcessorConfiguration lineConfig =
                     new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
-            QwpProcessorState state = new QwpProcessorState(1024, 4096, engine, lineConfig);
+            QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, lineConfig);
             try {
                 state.of(1, AllowAllSecurityContext.INSTANCE);
                 FakeConsumerTudCache fake = installFakeTudCache(state, engine, lineConfig);
@@ -1057,7 +1450,7 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             LineHttpProcessorConfiguration lineConfig =
                     new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
-            QwpProcessorState state = new QwpProcessorState(1024, 4096, engine, lineConfig);
+            QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, lineConfig);
             try {
                 state.of(1, AllowAllSecurityContext.INSTANCE);
                 FakeConsumerTudCache fake = installFakeTudCache(state, engine, lineConfig);
@@ -1081,7 +1474,7 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             LineHttpProcessorConfiguration lineConfig =
                     new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
-            QwpProcessorState state = new QwpProcessorState(1024, 4096, engine, lineConfig);
+            QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, lineConfig);
             try {
                 state.of(1, AllowAllSecurityContext.INSTANCE);
 
@@ -1106,7 +1499,7 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             LineHttpProcessorConfiguration lineConfig =
                     new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
-            QwpProcessorState state = new QwpProcessorState(1024, 4096, engine, lineConfig);
+            QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, lineConfig);
             state.of(1, AllowAllSecurityContext.INSTANCE);
             state.onDisconnected();
             // close() may be called twice: once explicitly and once via
@@ -1372,7 +1765,7 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             LineHttpProcessorConfiguration lineConfig =
                     new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
-            QwpProcessorState state = new QwpProcessorState(1024, 4096, engine, lineConfig);
+            QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, lineConfig);
             try {
                 state.of(1, AllowAllSecurityContext.INSTANCE);
 
@@ -1399,7 +1792,7 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             LineHttpProcessorConfiguration lineConfig =
                     new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
-            QwpProcessorState state = new QwpProcessorState(1024, 4096, engine, lineConfig);
+            QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, lineConfig);
             try {
                 state.of(1, AllowAllSecurityContext.INSTANCE);
                 state.setDurableAckEnabled(true);
@@ -1452,7 +1845,7 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             LineHttpProcessorConfiguration lineConfig =
                     new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
-            QwpProcessorState state = new QwpProcessorState(1024, 4096, engine, lineConfig);
+            QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, lineConfig);
             try {
                 state.of(1, AllowAllSecurityContext.INSTANCE);
                 state.setDurableAckEnabled(true);
@@ -1480,7 +1873,7 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             LineHttpProcessorConfiguration lineConfig =
                     new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
-            QwpProcessorState state = new QwpProcessorState(1024, 4096, engine, lineConfig);
+            QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, lineConfig);
             try {
                 state.of(1, AllowAllSecurityContext.INSTANCE);
 
@@ -1503,7 +1896,7 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             LineHttpProcessorConfiguration lineConfig =
                     new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
-            QwpProcessorState state = new QwpProcessorState(1024, 4096, engine, lineConfig);
+            QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, lineConfig);
             try {
                 state.of(1, AllowAllSecurityContext.INSTANCE);
 
@@ -1526,12 +1919,12 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             LineHttpProcessorConfiguration lineConfig =
                     new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
-            QwpProcessorState state = new QwpProcessorState(1024, 4096, engine, lineConfig);
+            QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, lineConfig);
             try {
                 state.of(1, AllowAllSecurityContext.INSTANCE);
 
                 // Pre-register schema 0 with 2 columns via reflection
-                Field decoderField = QwpProcessorState.class.getDeclaredField("streamingDecoder");
+                Field decoderField = QwpIngressProcessorState.class.getDeclaredField("streamingDecoder");
                 decoderField.setAccessible(true);
                 Object decoder = decoderField.get(state);
                 Field registryField = decoder.getClass().getDeclaredField("schemaRegistry");
@@ -1551,7 +1944,7 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
                         0                               // schemaId=0
                 }));
                 state.processMessage();
-                Assert.assertEquals(QwpProcessorState.Status.SCHEMA_MISMATCH, state.getStatus());
+                Assert.assertEquals(QwpIngressProcessorState.Status.SCHEMA_MISMATCH, state.getStatus());
             } finally {
                 state.onDisconnected();
                 state.close();
@@ -1564,7 +1957,7 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             LineHttpProcessorConfiguration lineConfig =
                     new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
-            QwpProcessorState state = new QwpProcessorState(1024, 4096, engine, lineConfig);
+            QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, lineConfig);
             try {
                 state.of(1, AllowAllSecurityContext.INSTANCE);
 
@@ -1583,11 +1976,11 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             LineHttpProcessorConfiguration lineConfig =
                     new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
-            QwpProcessorState state = new QwpProcessorState(1024, 4096, engine, lineConfig);
+            QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, lineConfig);
             try {
                 state.of(1, AllowAllSecurityContext.INSTANCE);
 
-                state.reject(QwpProcessorState.Status.PARSE_ERROR, "initial error", 1);
+                state.reject(QwpIngressProcessorState.Status.PARSE_ERROR, "initial error", 1);
                 Assert.assertFalse(state.isOk());
 
                 // Add some data so bufferPosition > 0
@@ -1613,12 +2006,12 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             LineHttpProcessorConfiguration lineConfig =
                     new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
-            QwpProcessorState state = new QwpProcessorState(1024, 250, engine, lineConfig);
+            QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 250, engine, lineConfig);
             try {
                 state.of(1, AllowAllSecurityContext.INSTANCE);
 
                 String shortError = "something went wrong";
-                state.reject(QwpProcessorState.Status.PARSE_ERROR, shortError, 1);
+                state.reject(QwpIngressProcessorState.Status.PARSE_ERROR, shortError, 1);
 
                 Assert.assertEquals(shortError, state.getErrorText());
             } finally {
@@ -1634,13 +2027,13 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
             // maxResponseContentLength=250 → maxResponseErrorMessageLength = (250-100)/1.5 = 100
             LineHttpProcessorConfiguration lineConfig =
                     new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
-            QwpProcessorState state = new QwpProcessorState(1024, 250, engine, lineConfig);
+            QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 250, engine, lineConfig);
             try {
                 state.of(1, AllowAllSecurityContext.INSTANCE);
 
                 // Build a 200-char error message, well above the 100-char limit
                 String longError = "x".repeat(200);
-                state.reject(QwpProcessorState.Status.INTERNAL_ERROR, longError, 1);
+                state.reject(QwpIngressProcessorState.Status.INTERNAL_ERROR, longError, 1);
 
                 String errorText = state.getErrorText();
                 Assert.assertEquals(100, errorText.length());
@@ -1657,11 +2050,11 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             LineHttpProcessorConfiguration lineConfig =
                     new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
-            QwpProcessorState state = new QwpProcessorState(1024, 4096, engine, lineConfig);
+            QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, lineConfig);
             try {
                 state.of(1, AllowAllSecurityContext.INSTANCE);
 
-                state.reject(QwpProcessorState.Status.INTERNAL_ERROR, null, 1);
+                state.reject(QwpIngressProcessorState.Status.INTERNAL_ERROR, null, 1);
                 Assert.assertFalse(state.isOk());
                 Assert.assertEquals("(no error message)", state.getErrorText());
             } finally {
@@ -1676,7 +2069,7 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             LineHttpProcessorConfiguration lineConfig =
                     new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
-            QwpProcessorState state = new QwpProcessorState(1024, 4096, engine, lineConfig);
+            QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, lineConfig);
             try {
                 state.of(1, AllowAllSecurityContext.INSTANCE);
                 FakeConsumerTudCache fake = installFakeTudCache(state, engine, lineConfig);
@@ -1695,7 +2088,7 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
                 try {
                     Unsafe.putByte(ptr, (byte) 0x00); // STATUS_OK
                     Unsafe.putLong(ptr + 1, 0L);      // sequence
-                    int tableBytes = QwpProcessorState.writeTableSeqTxnEntries(ptr + 9, state.getPendingAckSeqTxns());
+                    int tableBytes = QwpIngressProcessorState.writeTableSeqTxnEntries(ptr + 9, state.getPendingAckSeqTxns());
                     Assert.assertEquals(payloadSize, 9 + tableBytes);
                 } finally {
                     Unsafe.free(ptr, payloadSize, MemoryTag.NATIVE_DEFAULT);
@@ -1712,7 +2105,7 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             LineHttpProcessorConfiguration lineConfig =
                     new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
-            QwpProcessorState state = new QwpProcessorState(1024, 4096, engine, lineConfig);
+            QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, lineConfig);
             try {
                 state.of(1, AllowAllSecurityContext.INSTANCE);
                 state.setDurableAckEnabled(true);
@@ -1737,7 +2130,7 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
                 long ptr = Unsafe.malloc(payloadSize, MemoryTag.NATIVE_DEFAULT);
                 try {
                     Unsafe.putByte(ptr, (byte) 0x02); // STATUS_DURABLE_ACK
-                    int tableBytes = QwpProcessorState.writeTableSeqTxnEntries(ptr + 1, progress);
+                    int tableBytes = QwpIngressProcessorState.writeTableSeqTxnEntries(ptr + 1, progress);
                     Assert.assertEquals(payloadSize, 1 + tableBytes);
                 } finally {
                     Unsafe.free(ptr, payloadSize, MemoryTag.NATIVE_DEFAULT);
@@ -1754,7 +2147,7 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             LineHttpProcessorConfiguration lineConfig =
                     new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
-            QwpProcessorState state = new QwpProcessorState(1024, 4096, engine, lineConfig);
+            QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, lineConfig);
             try {
                 state.of(1, AllowAllSecurityContext.INSTANCE);
 
@@ -1778,7 +2171,7 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
             CharSequenceLongHashMap entries = new CharSequenceLongHashMap();
             long ptr = Unsafe.malloc(64, MemoryTag.NATIVE_DEFAULT);
             try {
-                int written = QwpProcessorState.writeTableSeqTxnEntries(ptr, entries);
+                int written = QwpIngressProcessorState.writeTableSeqTxnEntries(ptr, entries);
                 // Empty map: just tableCount(2) = 0
                 Assert.assertEquals(2, written);
                 Assert.assertEquals(0, Unsafe.getShort(ptr) & 0xFFFF);
@@ -1797,7 +2190,7 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
             entries.put("abc", 30L);
             long ptr = Unsafe.malloc(256, MemoryTag.NATIVE_DEFAULT);
             try {
-                int written = QwpProcessorState.writeTableSeqTxnEntries(ptr, entries);
+                int written = QwpIngressProcessorState.writeTableSeqTxnEntries(ptr, entries);
                 // tableCount(2) + 3 * (nameLen(2) + name + seqTxn(8))
                 // "t1"(2), "t2"(2), "abc"(3) -> 2 + (2+2+8) + (2+2+8) + (2+3+8) = 39
                 Assert.assertEquals(39, written);
@@ -1834,7 +2227,7 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
             entries.put("café", 77L);
             long ptr = Unsafe.malloc(128, MemoryTag.NATIVE_DEFAULT);
             try {
-                int written = QwpProcessorState.writeTableSeqTxnEntries(ptr, entries);
+                int written = QwpIngressProcessorState.writeTableSeqTxnEntries(ptr, entries);
                 // tableCount(2) + nameLen(2) + "café" UTF-8 (5 bytes) + seqTxn(8) = 17
                 Assert.assertEquals(17, written);
                 int tableCount = Unsafe.getShort(ptr) & 0xFFFF;
@@ -1861,7 +2254,7 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
             entries.put("trades", 42L);
             long ptr = Unsafe.malloc(128, MemoryTag.NATIVE_DEFAULT);
             try {
-                int written = QwpProcessorState.writeTableSeqTxnEntries(ptr, entries);
+                int written = QwpIngressProcessorState.writeTableSeqTxnEntries(ptr, entries);
                 // tableCount(2) + nameLen(2) + "trades"(6) + seqTxn(8) = 18
                 Assert.assertEquals(18, written);
                 Assert.assertEquals(1, Unsafe.getShort(ptr) & 0xFFFF);
@@ -1879,7 +2272,7 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             LineHttpProcessorConfiguration lineConfig =
                     new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
-            QwpProcessorState state = new QwpProcessorState(1024, 4096, engine, lineConfig);
+            QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, lineConfig);
             try {
                 state.of(1, AllowAllSecurityContext.INSTANCE);
 
@@ -1903,7 +2296,7 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             LineHttpProcessorConfiguration lineConfig =
                     new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
-            QwpProcessorState state = new QwpProcessorState(1024, 4096, engine, lineConfig);
+            QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, lineConfig);
             try {
                 state.of(1, AllowAllSecurityContext.INSTANCE);
                 FakeConsumerTudCache fake = installFakeTudCache(state, engine, lineConfig);
@@ -1937,7 +2330,7 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             LineHttpProcessorConfiguration lineConfig =
                     new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
-            QwpProcessorState state = new QwpProcessorState(1024, 4096, engine, lineConfig);
+            QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, lineConfig);
             try {
                 state.of(1, AllowAllSecurityContext.INSTANCE);
 
@@ -1976,7 +2369,7 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             LineHttpProcessorConfiguration lineConfig =
                     new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
-            QwpProcessorState state = new QwpProcessorState(1024, 4096, engine, lineConfig);
+            QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, lineConfig);
             try {
                 state.of(1, AllowAllSecurityContext.INSTANCE);
 
@@ -1997,8 +2390,8 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
         });
     }
 
-    private static int fieldSize(QwpProcessorState state, String fieldName) throws Exception {
-        Field f = QwpProcessorState.class.getDeclaredField(fieldName);
+    private static int fieldSize(QwpIngressProcessorState state, String fieldName) throws Exception {
+        Field f = QwpIngressProcessorState.class.getDeclaredField(fieldName);
         f.setAccessible(true);
         Object map = f.get(state);
         // Both CharSequenceLongHashMap and CharSequenceObjHashMap expose size().
@@ -2006,9 +2399,9 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
     }
 
     private static FakeConsumerTudCache installFakeTudCache(
-            QwpProcessorState state, io.questdb.cairo.CairoEngine engine, LineHttpProcessorConfiguration lineConfig
+            QwpIngressProcessorState state, io.questdb.cairo.CairoEngine engine, LineHttpProcessorConfiguration lineConfig
     ) throws Exception {
-        Field f = QwpProcessorState.class.getDeclaredField("tudCache");
+        Field f = QwpIngressProcessorState.class.getDeclaredField("tudCache");
         f.setAccessible(true);
         Misc.free((QwpTudCache) f.get(state));
         FakeConsumerTudCache fake = new FakeConsumerTudCache(engine, lineConfig);
@@ -2016,7 +2409,7 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
         return fake;
     }
 
-    private static void addNativeData(QwpProcessorState state, byte[] data) {
+    private static void addNativeData(QwpIngressProcessorState state, byte[] data) {
         long ptr = Unsafe.malloc(data.length, MemoryTag.NATIVE_HTTP_CONN);
         try {
             for (int i = 0; i < data.length; i++) {
@@ -2080,13 +2473,17 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
     }
 
     private static byte[] wrapQwpPayload(byte[] payload) {
+        return wrapQwpPayload(payload, (byte) 0);
+    }
+
+    private static byte[] wrapQwpPayload(byte[] payload, byte flags) {
         byte[] message = new byte[12 + payload.length];
         message[0] = 'Q';
         message[1] = 'W';
         message[2] = 'P';
         message[3] = '1';
         message[4] = 1; // version
-        message[5] = 0; // flags
+        message[5] = flags;
         message[6] = 1; // tableCount low byte
         message[7] = 0; // tableCount high byte
         message[8] = (byte) payload.length;
@@ -2102,6 +2499,11 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
         private long[] commitSeqTxns;
         private String[] commitTableNames;
         private Throwable commitThrow;
+        private String[] maxRowsCommitDirNames;
+        private long[] maxRowsCommitSeqTxns;
+        private String[] maxRowsCommitTableNames;
+        private Throwable maxRowsCommitThrow;
+        private int maxRowsCommitCallCount;
 
         FakeConsumerTudCache(io.questdb.cairo.CairoEngine engine, LineHttpProcessorConfiguration lineConfig) {
             super(engine, true, true, new DefaultColumnTypes(lineConfig), PartitionBy.DAY);
@@ -2124,6 +2526,24 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
             }
         }
 
+        @Override
+        public void commitIfMaxUncommittedRowsReached(CommittedTxnConsumer consumer) throws Throwable {
+            maxRowsCommitCallCount++;
+            if (consumer != null && maxRowsCommitTableNames != null) {
+                for (int i = 0; i < maxRowsCommitTableNames.length; i++) {
+                    consumer.accept(maxRowsCommitTableNames[i], maxRowsCommitDirNames[i], maxRowsCommitSeqTxns[i]);
+                }
+            }
+            maxRowsCommitTableNames = null;
+            maxRowsCommitDirNames = null;
+            maxRowsCommitSeqTxns = null;
+            if (maxRowsCommitThrow != null) {
+                Throwable t = maxRowsCommitThrow;
+                maxRowsCommitThrow = null;
+                throw t;
+            }
+        }
+
         void queueCommit(String[] tableNames, String[] dirNames, long[] seqTxns) {
             this.commitTableNames = tableNames;
             this.commitDirNames = dirNames;
@@ -2132,6 +2552,20 @@ public class QwpProcessorStateTest extends AbstractCairoTest {
 
         void queueCommitThrow(Throwable t) {
             this.commitThrow = t;
+        }
+
+        void queueMaxRowsCommit(String[] tableNames, String[] dirNames, long[] seqTxns) {
+            this.maxRowsCommitTableNames = tableNames;
+            this.maxRowsCommitDirNames = dirNames;
+            this.maxRowsCommitSeqTxns = seqTxns;
+        }
+
+        void queueMaxRowsCommitThrow(Throwable t) {
+            this.maxRowsCommitThrow = t;
+        }
+
+        int getMaxRowsCommitCallCount() {
+            return maxRowsCommitCallCount;
         }
     }
 
