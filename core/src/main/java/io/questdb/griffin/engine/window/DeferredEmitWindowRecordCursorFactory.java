@@ -124,12 +124,12 @@ public class DeferredEmitWindowRecordCursorFactory extends AbstractRecordCursorF
     // Mask of leadCount bits, representing one slot's LEAD pending bits.
     private final long perSlotLeadMask;
     private final int ringCapacity;
+    // Per-slot bytes = ROWID_BYTES + FUNC_VALUE_BYTES * windowFunctions.size().
+    private final int slotBytes;
     // Set when isSingleLead. Cached references for the single-LEAD fast path to avoid the
     // ObjList.getQuick(0) and array load on every backfill / flush.
     private final WindowFunction soleLeadFunction;
     private final long soleLeadOffset;
-    // Per-slot bytes = ROWID_BYTES + FUNC_VALUE_BYTES * windowFunctions.size().
-    private final int slotBytes;
     private boolean isClosed;
 
     public DeferredEmitWindowRecordCursorFactory(
@@ -356,10 +356,10 @@ public class DeferredEmitWindowRecordCursorFactory extends AbstractRecordCursorF
         private SqlExecutionCircuitBreaker circuitBreaker;
         private MapRecordCursor flushMapCursor;
         private long flushPartitionFilled;
-        private boolean isFlushPartitionOpen;
         private long flushPartitionRingCount;
         private long flushPartitionRingHead;
         private long flushPartitionSlotsOff;
+        private boolean isFlushPartitionOpen;
         private boolean isFlushPhase;
         private boolean isOpen;
         private long nextFreeSlotOffset;
