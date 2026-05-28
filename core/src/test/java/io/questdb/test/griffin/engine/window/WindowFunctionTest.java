@@ -7410,7 +7410,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "timestamp_sequence_ns(0, 2000000000) as ts_ns " +
                             "from long_sequence(5)" +
                             ") timestamp(ts)");
-                    assertQuery(
+                    assertQueryNoLeakCheck(
                             """
                                     ts\tts_ns\tlead\tlead1\tlag\tlag1
                                     1970-01-01T00:00:00.000000Z\t1970-01-01T00:00:00.000000000Z\t1970-01-01T00:00:02.000000Z\t1970-01-01T00:00:04.000000000Z\t1970-01-01T00:00:00.000000Z\t1970-01-01T00:00:00.000000000Z
