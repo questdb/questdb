@@ -441,6 +441,15 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         responseSink.resumeSend();
     }
 
+    public void drainRecvBuffer() {
+        try {
+            while (socket.recv(recvBuffer, recvBufferSize) > 0) {
+                // discard
+            }
+        } catch (Throwable ignored) {
+        }
+    }
+
     public void scheduleRetry(HttpRequestProcessor processor, RescheduleContext rescheduleContext) throws PeerIsSlowToReadException, ServerDisconnectException {
         try {
             pendingRetry = true;

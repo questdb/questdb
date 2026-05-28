@@ -34,7 +34,7 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TxWriter;
 import io.questdb.cairo.mig.EngineMigration;
-import io.questdb.cairo.mig.Mig940;
+import io.questdb.cairo.mig.Mig941;
 import io.questdb.cairo.mig.MigrationContext;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryARW;
@@ -54,13 +54,13 @@ import org.junit.Test;
 import java.io.InputStream;
 import java.nio.file.Files;
 
-public class Mig940Test extends AbstractCairoTest {
+public class Mig941Test extends AbstractCairoTest {
 
     /// Committed parquet fixture: single designated-ts column, two row
     /// groups of 10 rows each, row values 0..19, no min/max stats on the ts
     /// column. Regenerate via
-    /// `cargo test emit_mig940_ts_no_stats_fixture -- --ignored`.
-    private static final String TS_NO_STATS_FIXTURE = "/mig940/ts_no_stats.parquet";
+    /// `cargo test emit_mig941_ts_no_stats_fixture -- --ignored`.
+    private static final String TS_NO_STATS_FIXTURE = "/mig941/ts_no_stats.parquet";
 
     @Test
     public void testMigrateAbortOnCorruptParquetFile() throws Exception {
@@ -105,7 +105,7 @@ public class Mig940Test extends AbstractCairoTest {
             }
 
             try {
-                runMig940(token);
+                runMig941(token);
                 Assert.fail("Expected exception from corrupt parquet file");
             } catch (CairoException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), "parquet");
@@ -148,7 +148,7 @@ public class Mig940Test extends AbstractCairoTest {
             }
 
             try {
-                runMig940(token);
+                runMig941(token);
                 Assert.fail("Expected CairoException");
             } catch (CairoException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), "parquet file empty or unreadable");
@@ -186,7 +186,7 @@ public class Mig940Test extends AbstractCairoTest {
             }
 
             try {
-                runMig940(token);
+                runMig941(token);
                 Assert.fail("Expected CairoException");
             } catch (CairoException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), "parquet file not found");
@@ -223,7 +223,7 @@ public class Mig940Test extends AbstractCairoTest {
             try (Path path = new Path()) {
                 path.of(configuration.getDbRoot()).concat(token);
                 TableUtils.setPathForParquetPartition(path, ColumnType.TIMESTAMP, PartitionBy.DAY, partitionTs, partitionNameTxn);
-                try (InputStream is = Mig940Test.class.getResourceAsStream(TS_NO_STATS_FIXTURE)) {
+                try (InputStream is = Mig941Test.class.getResourceAsStream(TS_NO_STATS_FIXTURE)) {
                     Assert.assertNotNull("fixture missing: " + TS_NO_STATS_FIXTURE, is);
                     byte[] fixtureBytes = is.readAllBytes();
                     Files.write(java.nio.file.Path.of(path.toString()), fixtureBytes);
@@ -234,7 +234,7 @@ public class Mig940Test extends AbstractCairoTest {
                 ff.remove(path.$());
             }
             patchTxnParquetFileSize(token, partitionTs, fixtureParquetFileSize);
-            runMig940(token);
+            runMig941(token);
 
             try (Path path = new Path()) {
                 path.of(configuration.getDbRoot()).concat(token);
@@ -270,7 +270,7 @@ public class Mig940Test extends AbstractCairoTest {
     public void testMigrateContinuesAfterCorruptPm() throws Exception {
         // A _pm whose header claims a size larger than the actual file length
         // (e.g. from a torn write of a prior interrupted migration) must not
-        // abort the migration of remaining partitions. Mig940 has to treat the
+        // abort the migration of remaining partitions. Mig941 has to treat the
         // unreadable _pm as stale and regenerate it just like the missing-file
         // case.
         assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
@@ -316,7 +316,7 @@ public class Mig940Test extends AbstractCairoTest {
 
             // Migration must complete without throwing, even though the first
             // partition's _pm reports an inconsistent size.
-            runMig940(token);
+            runMig941(token);
 
             // Both _pm files exist, are readable, and resolve a footer.
             for (int i = 0; i < 2; i++) {
@@ -341,6 +341,63 @@ public class Mig940Test extends AbstractCairoTest {
                         ff.munmap(parquetMetaAddr, parquetMetaSize, MemoryTag.MMAP_DEFAULT);
                     }
                 }
+            }
+        });
+    }
+
+    @Test
+    public void testMigrateDoesNotRerunOnRestart() throws Exception {
+        // With cairo.repeat.migration.from.version at its default (-1), once the
+        // dispatcher has stamped MIGRATION_VERSION into _upgrade.d it short-circuits
+        // on subsequent startups (EngineMigration.java:114). The forward-compatible
+        // Mig941 must NOT re-run on every boot. Regression guard for the every-startup
+        // _pm regeneration that occurred when the repeat version defaulted to
+        // ColumnType.VERSION and so reset the recorded migration version each start.
+        node1.setProperty(PropertyKey.CAIRO_REPEAT_MIGRATION_FROM_VERSION, -1);
+
+        assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
+            execute("CREATE TABLE t (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES(1, '2024-06-10T00:00:00.000000Z')");
+            execute("INSERT INTO t VALUES(2, '2024-06-11T00:00:00.000000Z')");
+            execute("ALTER TABLE t CONVERT PARTITION TO PARQUET WHERE ts > 0");
+
+            final FilesFacade ff = configuration.getFilesFacade();
+            final TableToken token = engine.verifyTableName("t");
+
+            long partitionTs;
+            long partitionNameTxn;
+            try (TableReader reader = engine.getReader(token)) {
+                partitionTs = reader.getTxFile().getPartitionTimestampByIndex(0);
+                partitionNameTxn = reader.getTxFile().getPartitionNameTxn(0);
+            }
+
+            engine.releaseAllWriters();
+            engine.releaseAllReaders();
+            engine.releaseInactive();
+
+            // First dispatcher run stamps MIGRATION_VERSION into _upgrade.d.
+            EngineMigration.migrateEngineTo(engine, ColumnType.VERSION, ColumnType.MIGRATION_VERSION, false);
+
+            // Remove the _pm. A re-run of the migration would regenerate it.
+            try (Path path = new Path()) {
+                path.of(configuration.getDbRoot()).concat(token);
+                TableUtils.setPathForParquetPartitionMetadata(path, ColumnType.TIMESTAMP, PartitionBy.DAY, partitionTs, partitionNameTxn);
+                ff.remove(path.$());
+                Assert.assertFalse("_pm should be deleted", ff.exists(path.$()));
+            }
+
+            // Second dispatcher run must short-circuit: the migration version is
+            // already recorded and the repeat default does not force a re-run, so
+            // Mig941 does not execute and the deleted _pm stays absent.
+            EngineMigration.migrateEngineTo(engine, ColumnType.VERSION, ColumnType.MIGRATION_VERSION, false);
+
+            try (Path path = new Path()) {
+                path.of(configuration.getDbRoot()).concat(token);
+                TableUtils.setPathForParquetPartitionMetadata(path, ColumnType.TIMESTAMP, PartitionBy.DAY, partitionTs, partitionNameTxn);
+                Assert.assertFalse(
+                        "migration must not re-run on restart; the deleted _pm should stay absent",
+                        ff.exists(path.$())
+                );
             }
         });
     }
@@ -374,7 +431,7 @@ public class Mig940Test extends AbstractCairoTest {
             }
 
             // Run migration.
-            runMig940(token);
+            runMig941(token);
 
             // Verify _pm file was generated.
             try (Path path = new Path()) {
@@ -402,11 +459,96 @@ public class Mig940Test extends AbstractCairoTest {
     }
 
     @Test
+    public void testMigrateInlinesBloomFiltersInPm() throws Exception {
+        // Regression cover: an earlier version of Mig941 recorded each chunk's
+        // bloom_filter_offset in the regenerated _pm but never read the bitset,
+        // leaving the BLOOM_FILTERS feature-flag bit clear in the header.
+        // Readers then had to fall back to reading the bitset from data.parquet
+        // on every query touching the bloom-indexed column. The migration must
+        // produce a _pm equivalent to the one the write path produces, with
+        // the BLOOM_FILTERS bit set.
+        assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
+            execute("CREATE TABLE t (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("ALTER TABLE t ALTER COLUMN id SET PARQUET(bloom_filter)");
+            execute("INSERT INTO t VALUES(1, '2024-06-10T00:00:00.000000Z')," +
+                    "(2, '2024-06-10T01:00:00.000000Z')," +
+                    "(3, '2024-06-10T02:00:00.000000Z')");
+            execute("INSERT INTO t VALUES(4, '2024-06-11T00:00:00.000000Z')");
+            execute("ALTER TABLE t CONVERT PARTITION TO PARQUET WHERE ts < '2024-06-11'");
+
+            final FilesFacade ff = configuration.getFilesFacade();
+            final TableToken token = engine.verifyTableName("t");
+
+            long partitionTs;
+            long partitionNameTxn;
+            try (TableReader reader = engine.getReader(token)) {
+                partitionTs = reader.getTxFile().getPartitionTimestampByIndex(0);
+                partitionNameTxn = reader.getTxFile().getPartitionNameTxn(0);
+            }
+
+            // The header feature-flags word is at offset 8 (HEADER_FEATURE_FLAGS_OFF
+            // in ParquetMetaFileReader); BLOOM_FILTERS is bit 0.
+            final int headerFeatureFlagsOff = 8;
+            final long bloomFiltersBit = 1L;
+
+            // Sanity: the write-path _pm produced by CONVERT PARTITION already
+            // carries the BLOOM_FILTERS bit. If not, the rest of the test is
+            // meaningless because the parquet file has no bloom filter to inline.
+            try (Path path = new Path()) {
+                path.of(configuration.getDbRoot()).concat(token);
+                TableUtils.setPathForParquetPartitionMetadata(path, ColumnType.TIMESTAMP, PartitionBy.DAY, partitionTs, partitionNameTxn);
+                long writePmSize = ParquetMetaFileReader.readParquetMetaFileSize(ff, path.$());
+                long writePmAddr = TableUtils.mapRO(ff, path.$(), LOG, writePmSize, MemoryTag.MMAP_DEFAULT);
+                try {
+                    long writeFlags = Unsafe.getLong(writePmAddr + headerFeatureFlagsOff);
+                    Assert.assertTrue(
+                            "write-path _pm should already declare BLOOM_FILTERS; flags=0x"
+                                    + Long.toHexString(writeFlags),
+                            (writeFlags & bloomFiltersBit) != 0
+                    );
+                } finally {
+                    ff.munmap(writePmAddr, writePmSize, MemoryTag.MMAP_DEFAULT);
+                }
+            }
+
+            // Delete the write-path _pm so the migration path has to regenerate it.
+            try (Path path = new Path()) {
+                path.of(configuration.getDbRoot()).concat(token);
+                TableUtils.setPathForParquetPartitionMetadata(path, ColumnType.TIMESTAMP, PartitionBy.DAY, partitionTs, partitionNameTxn);
+                ff.remove(path.$());
+                Assert.assertFalse("_pm should be deleted", ff.exists(path.$()));
+            }
+
+            runMig941(token);
+            try (Path path = new Path()) {
+                path.of(configuration.getDbRoot()).concat(token);
+                TableUtils.setPathForParquetPartitionMetadata(path, ColumnType.TIMESTAMP, PartitionBy.DAY, partitionTs, partitionNameTxn);
+                Assert.assertTrue("_pm should exist after migration", ff.exists(path.$()));
+
+                long parquetMetaSize = ParquetMetaFileReader.readParquetMetaFileSize(ff, path.$());
+                Assert.assertTrue("_pm should have positive size", parquetMetaSize > 0);
+
+                long parquetMetaAddr = TableUtils.mapRO(ff, path.$(), LOG, parquetMetaSize, MemoryTag.MMAP_DEFAULT);
+                try {
+                    long featureFlags = Unsafe.getLong(parquetMetaAddr + headerFeatureFlagsOff);
+                    Assert.assertTrue(
+                            "_pm header should declare BLOOM_FILTERS after migration; flags=0x"
+                                    + Long.toHexString(featureFlags),
+                            (featureFlags & bloomFiltersBit) != 0
+                    );
+                } finally {
+                    ff.munmap(parquetMetaAddr, parquetMetaSize, MemoryTag.MMAP_DEFAULT);
+                }
+            }
+        });
+    }
+
+    @Test
     public void testMigrateMixedNativeAndParquetPartitions() throws Exception {
         assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
             // Three day partitions; WHERE ts > 0 converts every inactive
             // partition to parquet, leaving the active (last) partition
-            // native. Mig940 must regenerate _pm on the parquet partitions
+            // native. Mig941 must regenerate _pm on the parquet partitions
             // and leave the native one alone.
             execute("CREATE TABLE t (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("INSERT INTO t VALUES(1, '2024-06-10T00:00:00.000000Z')," +
@@ -442,7 +584,7 @@ public class Mig940Test extends AbstractCairoTest {
                 }
             }
 
-            runMig940(token);
+            runMig941(token);
 
             // Both parquet partitions have _pm regenerated and readable.
             for (int i = 0; i < 2; i++) {
@@ -507,7 +649,7 @@ public class Mig940Test extends AbstractCairoTest {
             }
 
             // Run migration — should detect staleness and regenerate.
-            runMig940(token);
+            runMig941(token);
 
             // Verify _pm was regenerated and is valid.
             try (Path path = new Path()) {
@@ -535,11 +677,11 @@ public class Mig940Test extends AbstractCairoTest {
     @Test
     public void testMigrateRepeatableViaEscapeHatch() throws Exception {
         // cairo.repeat.migration.from.version forces EngineMigration to
-        // re-invoke Mig940 on an already-upgraded database. The check at
+        // re-invoke Mig941 on an already-upgraded database. The check at
         // EngineMigration.java:110 resets the recorded migration version
         // back to the table version so the standard dispatcher runs it
         // again. This test drives the full dispatcher path (not the direct
-        // Mig940.migrate() call that runMig940() uses) to prove the
+        // Mig941.migrate() call that runMig941() uses) to prove the
         // documented recovery flow.
         node1.setProperty(PropertyKey.CAIRO_REPEAT_MIGRATION_FROM_VERSION, ColumnType.VERSION);
 
@@ -559,7 +701,7 @@ public class Mig940Test extends AbstractCairoTest {
                 partitionNameTxn = reader.getTxFile().getPartitionNameTxn(0);
             }
 
-            // Delete _pm so we can observe the dispatcher actually invoking Mig940.
+            // Delete _pm so we can observe the dispatcher actually invoking Mig941.
             try (Path path = new Path()) {
                 path.of(configuration.getDbRoot()).concat(token);
                 TableUtils.setPathForParquetPartitionMetadata(path, ColumnType.TIMESTAMP, PartitionBy.DAY, partitionTs, partitionNameTxn);
@@ -572,7 +714,7 @@ public class Mig940Test extends AbstractCairoTest {
             engine.releaseAllReaders();
             engine.releaseInactive();
 
-            // Drive the dispatcher end-to-end. The escape hatch forces Mig940
+            // Drive the dispatcher end-to-end. The escape hatch forces Mig941
             // to re-run even though the database is already at MIGRATION_VERSION.
             EngineMigration.migrateEngineTo(engine, ColumnType.VERSION, ColumnType.MIGRATION_VERSION, true);
 
@@ -600,7 +742,7 @@ public class Mig940Test extends AbstractCairoTest {
 
     @Test
     public void testMigrateRespectsTxnParquetFileSize() throws Exception {
-        // Regression: Mig940 must regenerate _pm against the parquet file
+        // Regression: Mig941 must regenerate _pm against the parquet file
         // size recorded in _txn field 3, NOT the actual on-disk file length.
         // ParquetMetaFileReader.java's class doc states this explicitly --
         // bytes past _txn field 3 may belong to an in-progress, unpublished
@@ -614,7 +756,7 @@ public class Mig940Test extends AbstractCairoTest {
         // first _txn-field-3 bytes of data.parquet and produce a _pm
         // describing the original row count.
         //
-        // Negative case: a Mig940 that called ff.length() on data.parquet
+        // Negative case: a Mig941 that called ff.length() on data.parquet
         // would try to parse the trailing junk as a parquet footer and
         // either fail with a parse error or emit garbage metadata.
         assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
@@ -688,7 +830,7 @@ public class Mig940Test extends AbstractCairoTest {
                 Assert.assertFalse("_pm must be deleted to force regeneration", ff.exists(path.$()));
             }
 
-            runMig940(token);
+            runMig941(token);
 
             // Regenerated _pm must reflect the committed boundary: its
             // footer chain matches _txn field 3, and the row count equals
@@ -730,12 +872,11 @@ public class Mig940Test extends AbstractCairoTest {
         //   - _pm is left over from before the rollback, so its footer chain
         //     has no footer matching _txn field 3.
         //
-        // The dispatcher's normal upgrade path will not re-run Mig940 on its
+        // The dispatcher's normal upgrade path will not re-run Mig941 on its
         // own because _upgrade.d already records MIGRATION_VERSION. The
         // documented recovery is cairo.repeat.migration.from.version, which
         // resets the recorded migration version (EngineMigration.java:110)
-        // so the dispatcher proceeds and Mig940 picks up the stale chain via
-        // isParquetMetadataStale() and regenerates _pm.
+        // so the dispatcher proceeds and Mig941 regenerates _pm.
         //
         // This test stages the rollback shape by performing an O3 merge
         // under the new build (which advances data.parquet, _pm, and _txn
@@ -875,15 +1016,15 @@ public class Mig940Test extends AbstractCairoTest {
     @Test
     public void testMigrateRunsAfterMig702EraStamp() throws Exception {
         // EngineMigration.migrateEngineTo() short-circuits when _upgrade.d offset 4
-        // equals MIGRATION_VERSION (EngineMigration.java:114). If Mig940's slot
+        // equals MIGRATION_VERSION (EngineMigration.java:114). If Mig941's slot
         // collides with a slot that any prior, distinct migration once stamped
         // into _upgrade.d, the dispatcher will see "already at MIGRATION_VERSION"
-        // on those databases and skip Mig940 — so their parquet partitions never
+        // on those databases and skip Mig941 — so their parquet partitions never
         // get _pm sidecars and become unreadable.
         //
         // This test stamps _upgrade.d offset 4 to slot 427 (a historical
-        // migration stamp) and asserts Mig940 still runs and regenerates _pm.
-        // Pinning this requires Mig940 to be registered at a slot strictly
+        // migration stamp) and asserts Mig941 still runs and regenerates _pm.
+        // Pinning this requires Mig941 to be registered at a slot strictly
         // greater than 427 with MIGRATION_VERSION bumped accordingly.
         final int MIG702_SLOT = 427;
 
@@ -930,16 +1071,16 @@ public class Mig940Test extends AbstractCairoTest {
                 }
             }
 
-            // Drive the production upgrade path (force=false). If Mig940's slot
+            // Drive the production upgrade path (force=false). If Mig941's slot
             // collides with the stamp written above, the dispatcher returns early
-            // and Mig940 never runs.
+            // and Mig941 never runs.
             EngineMigration.migrateEngineTo(engine, ColumnType.VERSION, ColumnType.MIGRATION_VERSION, false);
 
             try (Path path = new Path()) {
                 path.of(configuration.getDbRoot()).concat(token);
                 TableUtils.setPathForParquetPartitionMetadata(path, ColumnType.TIMESTAMP, PartitionBy.DAY, partitionTs, partitionNameTxn);
                 Assert.assertTrue(
-                        "Mig940 must run when _upgrade.d carries a stamp from a prior, distinct migration; " +
+                        "Mig941 must run when _upgrade.d carries a stamp from a prior, distinct migration; " +
                                 "otherwise databases at that stamp keep their parquet partitions without _pm sidecars",
                         ff.exists(path.$())
                 );
@@ -962,7 +1103,11 @@ public class Mig940Test extends AbstractCairoTest {
     }
 
     @Test
-    public void testMigrateSkipsHealthyPm() throws Exception {
+    public void testMigrateRegeneratesEquivalentPm() throws Exception {
+        // Mig941 carries no staleness check: it regenerates every parquet partition's
+        // _pm unconditionally. This pins that the regeneration is idempotent -- it
+        // reproduces the write-path _pm (same size) and a second run leaves the file
+        // unchanged -- so re-running the migration never damages a healthy _pm.
         assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
             execute("CREATE TABLE t (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("INSERT INTO t VALUES(1, '2024-06-10T00:00:00.000000Z')");
@@ -979,23 +1124,33 @@ public class Mig940Test extends AbstractCairoTest {
                 partitionNameTxn = reader.getTxFile().getPartitionNameTxn(0);
             }
 
-            // Record _pm size before migration.
-            long parquetMetaSizeBefore;
+            // Size of the write-path _pm produced by CONVERT PARTITION.
+            long writePathPmSize;
             try (Path path = new Path()) {
                 path.of(configuration.getDbRoot()).concat(token);
                 TableUtils.setPathForParquetPartitionMetadata(path, ColumnType.TIMESTAMP, PartitionBy.DAY, partitionTs, partitionNameTxn);
-                parquetMetaSizeBefore = ff.length(path.$());
-                Assert.assertTrue("_pm should exist", parquetMetaSizeBefore > 0);
+                writePathPmSize = ff.length(path.$());
+                Assert.assertTrue("_pm should exist", writePathPmSize > 0);
             }
 
-            // Run migration — should skip healthy _pm.
-            runMig940(token);
-
-            // Verify _pm size is unchanged.
+            // First migration run regenerates the _pm to a file equivalent to the
+            // write-path output.
+            runMig941(token);
+            long firstRunSize;
             try (Path path = new Path()) {
                 path.of(configuration.getDbRoot()).concat(token);
                 TableUtils.setPathForParquetPartitionMetadata(path, ColumnType.TIMESTAMP, PartitionBy.DAY, partitionTs, partitionNameTxn);
-                Assert.assertEquals("_pm should not be rewritten", parquetMetaSizeBefore, ff.length(path.$()));
+                firstRunSize = ff.length(path.$());
+                Assert.assertEquals("regenerated _pm should match the write-path _pm size", writePathPmSize, firstRunSize);
+            }
+
+            // Second run is idempotent: regenerating an unchanged partition yields
+            // the same _pm.
+            runMig941(token);
+            try (Path path = new Path()) {
+                path.of(configuration.getDbRoot()).concat(token);
+                TableUtils.setPathForParquetPartitionMetadata(path, ColumnType.TIMESTAMP, PartitionBy.DAY, partitionTs, partitionNameTxn);
+                Assert.assertEquals("re-running the migration must not change the _pm", firstRunSize, ff.length(path.$()));
             }
         });
     }
@@ -1008,13 +1163,13 @@ public class Mig940Test extends AbstractCairoTest {
 
             final TableToken token = engine.verifyTableName("t");
             // Should return without error — non-partitioned tables are skipped.
-            runMig940(token);
+            runMig941(token);
         });
     }
 
     @Test
     public void testMigrateSplitPartition() throws Exception {
-        // Mig940 iterates partitions by index in _txn (Mig940.java:151) and
+        // Mig941 iterates partitions by index in _txn (Mig941.java:151) and
         // resolves directory paths via setPathForNativePartition(timestamp,
         // nameTxn). This test exercises the path-resolution surface for a
         // partition that originated as a split — i.e., its nameTxn is
@@ -1063,7 +1218,7 @@ public class Mig940Test extends AbstractCairoTest {
 
             // Snapshot whatever the post-CONVERT layout looks like. CONVERT
             // may merge the split sub-partitions into a single parquet
-            // directory or preserve them; either way Mig940 must regenerate a
+            // directory or preserve them; either way Mig941 must regenerate a
             // _pm for every parquet entry. Capture nameTxns — at least one
             // will be non-zero because CONVERT bumps it.
             int partitionCount;
@@ -1112,7 +1267,7 @@ public class Mig940Test extends AbstractCairoTest {
                 }
             }
 
-            runMig940(token);
+            runMig941(token);
 
             // Every parquet sub-directory now has a regenerated, valid _pm.
             for (int i = 0; i < partitionCount; i++) {
@@ -1152,7 +1307,7 @@ public class Mig940Test extends AbstractCairoTest {
         }
     }
 
-    private void runMig940(TableToken token) {
+    private void runMig941(TableToken token) {
         engine.releaseAllWriters();
         engine.releaseAllReaders();
         engine.releaseInactive();
@@ -1165,7 +1320,7 @@ public class Mig940Test extends AbstractCairoTest {
         ) {
             MigrationContext ctx = new MigrationContext(engine, tempMem, 1024, tempVirtualMem, rwMem);
             ctx.of(tablePath, tablePath2, -1);
-            Mig940.migrate(ctx);
+            Mig941.migrate(ctx);
         } finally {
             Unsafe.free(tempMem, 1024, MemoryTag.NATIVE_MIG_MMAP);
         }

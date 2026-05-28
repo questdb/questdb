@@ -30,7 +30,7 @@ use crate::parquet::error::{fmt_err, ParquetError, ParquetErrorExt, ParquetResul
 use crate::parquet::io::FromRawFdI32Ext;
 use crate::parquet::qdb_metadata::{QdbMeta, QDB_META_KEY};
 use crate::parquet_metadata::convert::{
-    convert_from_parquet, detect_designated_timestamp, extract_sorting_columns,
+    convert_from_parquet, detect_designated_timestamp, extract_sorting_columns, TsStatsBackfill,
 };
 use crate::parquet_metadata::error::ParquetMetaErrorKind;
 use crate::parquet_read::decode_column::{decode_single_timestamp_value, reconstruct_descriptor};
@@ -114,53 +114,53 @@ fn generate_parquet_meta(
             )
         })?;
 
-    // If a designated timestamp is present, mmap the parquet so we can
-    // backfill missing inline min/max stats for that column. mmap overhead is
-    // negligible on the migration path. `convert_from_parquet` only invokes
-    // the closure when a row group's ts chunk is missing inline stats, so for
-    // well-formed QDB parquets the mmap is paid but never read.
+    // mmap the parquet file so the converter can: (1) inline parquet bloom
+    // filter bitsets into `_pm`, and (2) backfill missing inline min/max ts
+    // stats for the designated timestamp column. Both are pay-only-when-used
+    // by `convert_from_parquet`; the mmap is paid up front but the lookups
+    // run only when the converter actually needs them.
+    //
+    // Safety: we hold an exclusive ManuallyDrop borrow on `parquet_file` for
+    // the duration of the mmap, and the file is not truncated or written to
+    // concurrently because Mig941 and TableSnapshotRestore open it read-only.
+    let file_data = unsafe { Mmap::map(&*parquet_file) }.map_err(|e| {
+        parquet_meta_err!(
+            ParquetMetaErrorKind::InvalidValue,
+            "could not mmap parquet file: {}",
+            e
+        )
+    })?;
+    let parquet_bytes: &[u8] = &file_data;
+
     let sorting_cols = extract_sorting_columns(&metadata)?;
     let designated_ts = detect_designated_timestamp(&metadata, qdb_meta.as_ref(), &sorting_cols);
 
-    let mmap = if designated_ts >= 0 {
-        // Safety: we hold an exclusive ManuallyDrop borrow on `parquet_file`
-        // for the duration of the mmap, and the file is not truncated or
-        // written to concurrently because Mig940 opens it read-only.
-        let m = unsafe { Mmap::map(&*parquet_file) }.map_err(|e| {
-            parquet_meta_err!(
-                ParquetMetaErrorKind::InvalidValue,
-                "could not mmap parquet file: {}",
-                e
+    let backfill: Option<Box<TsStatsBackfill<'_>>> = if designated_ts >= 0 {
+        let ts_col = designated_ts as usize;
+        let metadata_ref = &metadata;
+        Some(Box::new(move |rg_idx, row_lo, row_hi| {
+            decode_single_ts_value_from_parquet(
+                allocator,
+                parquet_bytes,
+                metadata_ref,
+                rg_idx,
+                ts_col,
+                row_lo,
+                row_hi,
             )
-        })?;
-        Some(m)
+        }))
     } else {
         None
     };
 
-    let (parquet_meta_bytes, _parquet_meta_footer_offset) = if let Some(ref file_data) = mmap {
-        let ts_col = designated_ts as usize;
-        let backfill = |rg_idx: usize, row_lo: usize, row_hi: usize| -> ParquetResult<i64> {
-            decode_single_ts_value_from_parquet(
-                allocator, file_data, &metadata, rg_idx, ts_col, row_lo, row_hi,
-            )
-        };
-        convert_from_parquet(
-            &metadata,
-            qdb_meta.as_ref(),
-            parquet_footer_offset,
-            footer_length,
-            Some(&backfill),
-        )
-    } else {
-        convert_from_parquet(
-            &metadata,
-            qdb_meta.as_ref(),
-            parquet_footer_offset,
-            footer_length,
-            None,
-        )
-    }
+    let (parquet_meta_bytes, _parquet_meta_footer_offset) = convert_from_parquet(
+        &metadata,
+        qdb_meta.as_ref(),
+        parquet_footer_offset,
+        footer_length,
+        backfill.as_deref(),
+        Some(parquet_bytes),
+    )
     .context("could not convert parquet metadata to parquet meta file")?;
 
     let parquet_meta_file_size = parquet_meta_bytes.len() as u64;
@@ -186,7 +186,7 @@ fn generate_parquet_meta(
 
 /// Decode a single i64 timestamp value from a parquet column chunk using
 /// `FileMetaData`. Mirrors `decode_single_ts_from_pm` but reads from parquet
-/// metadata directly, so it is callable from Mig940 before any `_pm` exists.
+/// metadata directly, so it is callable from Mig941 before any `_pm` exists.
 pub(crate) fn decode_single_ts_value_from_parquet(
     allocator: *const QdbAllocator,
     file_data: &[u8],
