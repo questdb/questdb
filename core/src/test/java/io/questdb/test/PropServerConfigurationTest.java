@@ -805,6 +805,35 @@ public class PropServerConfigurationTest {
     }
 
     @Test
+    public void testPageSizesClampedToOne() throws Exception {
+        // A misconfigured *.page.size=0 must clamp to 1 rather than propagate a 0 into
+        // downstream divisions (RecordTreeChain.derivePageBudget, EncodedSortRecordCursor,
+        // the CachedWindow resolved-cap math) where it would throw ArithmeticException at
+        // factory build time. Numbers.ceilPow2(0) also returns 0, so the window-side keys
+        // need the same clamp even though they pass through ceilPow2.
+        Properties properties = new Properties();
+        properties.setProperty("cairo.sql.sort.key.page.size", "0");
+        properties.setProperty("cairo.sql.sort.light.value.page.size", "0");
+        properties.setProperty("cairo.sql.sort.value.page.size", "0");
+        properties.setProperty("cairo.sql.window.store.page.size", "0");
+        properties.setProperty("cairo.sql.window.rowid.page.size", "0");
+        properties.setProperty("cairo.sql.window.tree.page.size", "0");
+
+        CairoConfiguration cairo = newPropServerConfiguration(properties).getCairoConfiguration();
+
+        Assert.assertEquals(1L, cairo.getSqlSortKeyPageSize());
+        Assert.assertEquals(1L, cairo.getSqlSortLightValuePageSize());
+        Assert.assertEquals(1, cairo.getSqlSortValuePageSize());
+        Assert.assertEquals(1, cairo.getSqlWindowStorePageSize());
+        Assert.assertEquals(1, cairo.getSqlWindowRowIdPageSize());
+        Assert.assertEquals(1, cairo.getSqlWindowTreeKeyPageSize());
+        // The CachedWindow resolved page count uses the storePageSize as its divisor: with
+        // pageSize=1 and cap=Long.MAX_VALUE, the page count saturates at Integer.MAX_VALUE
+        // rather than throwing ArithmeticException.
+        Assert.assertEquals(Integer.MAX_VALUE, cairo.getSqlWindowCacheMaxPagesResolved());
+    }
+
+    @Test
     public void testWindowCacheResolvedDefault() throws Exception {
         Properties properties = new Properties();
 
