@@ -437,6 +437,17 @@ public final class QueryRunner {
      *       time; the same logical query against a non-indexed sibling
      *       full-scans and compiles fine. Same planner-sensitivity shape as
      *       the ASC-timestamp check above.</li>
+     *   <li>"right side column ... is of unsupported type" - ASOF JOIN
+     *       falls back to {@code createFullFatJoin} when the slave factory
+     *       does not support random access (e.g. shadow's slave becomes a
+     *       {@code CoveringIndexRecordCursorFactory} once a {@code sym}
+     *       predicate propagates onto an indexed slave). The full-fat path
+     *       materialises non-key slave columns into a map value, and the
+     *       map rejects variable-length slave columns (STRING, VARCHAR,
+     *       BINARY, arrays). The primary, with no slave index, keeps a
+     *       page-frame scan that supports random access and takes the
+     *       light path, which has no such type restriction. Same
+     *       planner-sensitivity shape as the SPLICE check above.</li>
      *   <li>"column must appear in GROUP BY clause" - the literal form
      *       constant-folds a sub-expression so its repeated occurrence in
      *       projection and GROUP BY becomes the same constant; the bind
@@ -487,7 +498,9 @@ public final class QueryRunner {
                 || o.exceptionMessage.contains("constant expected")
                 || o.exceptionMessage.contains("there is no matching function")
                 || o.exceptionMessage.contains("there is no matching operator")
-                || o.exceptionMessage.contains("decimal places but scale is limited to");
+                || o.exceptionMessage.contains("decimal places but scale is limited to")
+                || (o.exceptionMessage.contains("right side column")
+                        && o.exceptionMessage.contains("is of unsupported type"));
     }
 
     /**
