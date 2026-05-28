@@ -6858,6 +6858,20 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             final long partitionSize = txWriter.getPartitionRowCountByTimestamp(timestamp);
             final long columnTop = columnVersionWriter.getColumnTop(timestamp, columnIndex);
 
+            // Invariant: on a parquet partition the indexed SYMBOL's columnTop
+            // is either 0 (column has data from row 0) or partitionSize (column
+            // is all-NULL in this partition). zeroColumnTopsAfterParquetRewrite
+            // collapses every intermediate 0 < columnTop < partitionSize down
+            // to 0 at convert time, so the merged decode below can rely on
+            // columnTop == 0 whenever it executes. A future ATTACH PARQUET /
+            // restore path that bypasses that routine must restore this
+            // invariant before reaching here, or the rowLo formula at the
+            // decodeRowGroup call would truncate the covered columns.
+            assert columnTop == 0 || columnTop == partitionSize
+                    : "parquet partition indexed SYMBOL columnTop=" + columnTop
+                    + " is neither 0 nor partitionSize=" + partitionSize
+                    + " (timestamp=" + timestamp + ", columnIndex=" + columnIndex + ")";
+
             if (columnTop > -1 && partitionSize > columnTop) {
                 indexer.getWriter().setCurrentTableTxn(txWriter.getTxn());
                 indexer.configureWriter(path.trimTo(plen), columnName, columnNameTxn, columnTop, timestamp, txWriter.getPartitionNameTxnByPartitionTimestamp(timestamp));
@@ -6889,7 +6903,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     if (hasCovering) {
                         includedCoveredCount = prepareCoveredColumnMmaps(
                                 coveringColumnIndices, timestamp, plen,
-                                parquetMetadata, covSlotMeta, covMmaps);
+                                parquetMetadata, partitionSize, covSlotMeta, covMmaps);
                     }
 
                     long rowCount = 0;
@@ -8443,28 +8457,54 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * covered columns actually included (those present in the parquet
      * schema).
      *
+     * <p>Sizes the scratch mmaps from parquet row-count metadata where the
+     * size is known exactly (fixed-size data, var-size aux), and falls back
+     * to the configured data-append page size for var-size data, whose
+     * decoded size is not derivable from metadata.
+     *
      * <p>{@code covSlotMeta} is filled with 3 longs per slot:
      * [decodedChunkIdx, colType, dataVecBytesWritten].
      * Slots whose column is absent from parquet get decodedChunkIdx == -1.
      *
      * <p>{@code covMmaps} is filled with 2 entries per slot:
      * [auxMem (null for fixed-size), dataMem]. Both are null for skipped slots.
+     *
+     * <p>Slots whose covered column is fully null in this partition (columnTop
+     * equals or exceeds partitionSize -- the column was added after the
+     * partition was created) are skipped without opening scratch files or
+     * decoding the parquet column. The indexer paths in PostingIndexWriter
+     * short-circuit to a null sentinel whenever {@code rowId < colTop}, and
+     * {@code configureCoveringFromMmaps} reads colTop straight from
+     * columnVersionWriter, so the indexer emits nulls for every row of every
+     * key without ever dereferencing a data address. The
+     * {@code zeroColumnTopsAfterParquetRewrite} routine normalises parquet
+     * partitions to {@code colTop in {0, partitionSize}}, so {@code >=
+     * partitionSize} is the right tripwire here.
      */
     private int prepareCoveredColumnMmaps(
             IntList coveringColumnIndices,
             long partitionTimestamp,
             int plen,
             ParquetMetaFileReader parquetMetadata,
+            long partitionSize,
             DirectLongList covSlotMeta,
             ObjList<MemoryMARW> covMmaps
     ) {
         final int coverCount = coveringColumnIndices.size();
-        final long appendPageSize = configuration.getDataAppendPageSize();
         int includedCount = 0;
 
         for (int slot = 0; slot < coverCount; slot++) {
             final int tableColIdx = coveringColumnIndices.getQuick(slot);
             if (tableColIdx < 0 || metadata.getColumnType(tableColIdx) <= 0) {
+                covSlotMeta.add(-1L);
+                covSlotMeta.add(0L);
+                covSlotMeta.add(0L);
+                covMmaps.add(null);
+                covMmaps.add(null);
+                continue;
+            }
+            final long coveredColTop = columnVersionWriter.getColumnTop(partitionTimestamp, tableColIdx);
+            if (coveredColTop >= partitionSize) {
                 covSlotMeta.add(-1L);
                 covSlotMeta.add(0L);
                 covSlotMeta.add(0L);
@@ -8483,13 +8523,25 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
 
             final int columnType = metadata.getColumnType(tableColIdx);
+            final boolean isVarSize = ColumnType.isVarSize(columnType);
             final CharSequence colName = metadata.getColumnName(tableColIdx);
             final long colNameTxn = columnVersionWriter.getColumnNameTxn(partitionTimestamp, tableColIdx);
+
+            // Fixed-size data: total bytes are exact (rowCount * entrySize),
+            // so the scratch file is pre-sized exactly and never extends.
+            // Var-size data: decoded size depends on actual entry contents and
+            // is not derivable from parquet metadata, so fall back to the
+            // configured data-append page size and let the mmap grow on demand
+            // at that pace -- the same extend pace TableWriter uses for every
+            // other var-size data vector.
+            final long dataPreSize = isVarSize
+                    ? configuration.getDataAppendPageSize()
+                    : Files.ceilPageSize((long) ColumnType.sizeOf(columnType) * partitionSize);
 
             ff.removeQuiet(dFile(path.trimTo(plen), colName, colNameTxn));
             MemoryMARW dataMem = Vm.getCMARWInstance();
             dataMem.of(ff, dFile(path.trimTo(plen), colName, colNameTxn),
-                    appendPageSize, 0L, MemoryTag.NATIVE_TABLE_WRITER);
+                    dataPreSize, 0L, MemoryTag.NATIVE_TABLE_WRITER);
 
             // +1 because chunk index 0 is the SYMBOL column
             covSlotMeta.add(includedCount + 1);
@@ -8498,11 +8550,16 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             covMmaps.add(null);
             covMmaps.add(dataMem);
 
-            if (ColumnType.isVarSize(columnType)) {
+            if (isVarSize) {
+                // Var-size aux: bytes are exact (driver-defined fixed entry
+                // width times row count, accounting for the N+1 storage model
+                // where applicable).
+                final long auxPreSize = Files.ceilPageSize(
+                        ColumnType.getDriver(columnType).getAuxVectorSize(partitionSize));
                 ff.removeQuiet(iFile(path.trimTo(plen), colName, colNameTxn));
                 MemoryMARW auxMem = Vm.getCMARWInstance();
                 auxMem.of(ff, iFile(path.trimTo(plen), colName, colNameTxn),
-                        appendPageSize, 0L, MemoryTag.NATIVE_TABLE_WRITER);
+                        auxPreSize, 0L, MemoryTag.NATIVE_TABLE_WRITER);
                 covMmaps.setQuick(covMmaps.size() - 2, auxMem);
             }
 
