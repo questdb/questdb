@@ -327,6 +327,7 @@ import io.questdb.griffin.engine.union.IntersectRecordCursorFactory;
 import io.questdb.griffin.engine.union.SetRecordCursorFactoryConstructor;
 import io.questdb.griffin.engine.union.UnionAllRecordCursorFactory;
 import io.questdb.griffin.engine.union.UnionRecordCursorFactory;
+import io.questdb.griffin.engine.functions.window.BasePartitionedWindowFunction;
 import io.questdb.griffin.engine.window.CachedWindowRecordCursorFactory;
 import io.questdb.griffin.engine.window.DeferredEmitWindowRecordCursorFactory;
 import io.questdb.griffin.engine.window.WindowFunction;
@@ -9591,9 +9592,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         && base.recordCursorSupportsRandomAccess()
                         && costModelFavoursStreaming
                         && allWindowsSharePartitionBy) {
-                    // Phase 5: rebuild PARTITION BY info for the LEAD column (the per-column locals
-                    // computed inside the loop above were reused/cleared). Re-parse the window
-                    // expression's PARTITION BY here to make the cursor-owned partition map.
+                    // The lookahead window function has already parsed its PARTITION BY clause in the
+                    // first pass above. Reuse those Function instances directly for the cursor's
+                    // partition record instead of parsing the same expressions a second time. The
+                    // cursor wraps the shared function list in its own VirtualRecord so both records
+                    // can call .of() independently; Misc.freeObjList tolerates re-frees by null-checking
+                    // each entry, so closing either VirtualRecord first leaves the second close a no-op.
                     VirtualRecord cursorPartitionByRecord = null;
                     RecordSink cursorPartitionBySink = null;
                     io.questdb.cairo.map.Map cursorPartitionMap = null;
@@ -9601,29 +9605,26 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     final WindowExpression leadCol = (WindowExpression) columns.getQuick(lookaheadColumnIndex);
                     final int psz = leadCol.getPartitionBy().size();
                     if (psz > 0) {
-                        ObjList<Function> leadPartitionFns = new ObjList<>(psz);
-                        ArrayColumnTypes leadKeyTypes = new ArrayColumnTypes();
+                        final Function lookaheadFunc = functions.getQuick(lookaheadColumnIndex);
+                        if (!(lookaheadFunc instanceof BasePartitionedWindowFunction sharedSrc)) {
+                            throw SqlException.$(0, "expected partitioned window function for streaming dispatch");
+                        }
                         try {
+                            final VirtualRecord sharedPartitionRecord = sharedSrc.getPartitionByRecord();
+                            cursorPartitionByRecord = new VirtualRecord(sharedPartitionRecord.getFunctions());
+                            cursorPartitionBySink = sharedSrc.getPartitionBySink();
+                            final ArrayColumnTypes leadKeyTypes = new ArrayColumnTypes();
                             for (int j = 0; j < psz; j++) {
-                                Function pf = functionParser.parseFunction(
-                                        leadCol.getPartitionBy().getQuick(j),
-                                        baseMetadata,
-                                        executionContext
-                                );
-                                leadPartitionFns.add(pf);
-                                leadKeyTypes.add(pf.getType());
+                                leadKeyTypes.add(sharedPartitionRecord.getFunctions().getQuick(j).getType());
                             }
-                            cursorPartitionByRecord = new VirtualRecord(leadPartitionFns);
-                            EntityColumnFilter entityFilter = new EntityColumnFilter();
-                            entityFilter.of(psz);
-                            cursorPartitionBySink = RecordSinkFactory.getInstance(configuration, asm, leadKeyTypes, entityFilter);
                             cursorPartitionMap = MapFactory.createUnorderedMap(
                                     configuration,
                                     leadKeyTypes,
                                     DeferredEmitWindowRecordCursorFactory.PARTITION_VALUE_TYPES
                             );
                         } catch (Throwable t) {
-                            Misc.freeObjList(leadPartitionFns);
+                            // cursorPartitionByRecord wraps a list owned by sharedSrc; do not free it
+                            // here or sharedSrc.close() would later double-free.
                             Misc.free(cursorPartitionMap);
                             throw t;
                         }

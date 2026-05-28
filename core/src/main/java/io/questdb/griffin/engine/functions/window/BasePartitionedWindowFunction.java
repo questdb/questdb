@@ -54,6 +54,14 @@ public abstract class BasePartitionedWindowFunction extends BaseWindowFunction i
         Misc.freeObjList(partitionByRecord.getFunctions());
     }
 
+    public VirtualRecord getPartitionByRecord() {
+        return partitionByRecord;
+    }
+
+    public RecordSink getPartitionBySink() {
+        return partitionBySink;
+    }
+
     @Override
     public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
         super.init(symbolTableSource, executionContext);

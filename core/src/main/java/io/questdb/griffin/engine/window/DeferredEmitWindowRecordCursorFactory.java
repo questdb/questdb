@@ -307,8 +307,9 @@ public class DeferredEmitWindowRecordCursorFactory extends AbstractRecordCursorF
         Misc.free(base);
         Misc.free(cursor);
         Misc.free(partitionMap);
-        // partitionByRecord owns the partition-by Function instances that SqlCodeGenerator
-        // parsed when building this factory; VirtualRecord.close() cascades to free them.
+        // partitionByRecord shares its underlying Function list with the lookahead window function's
+        // own partitionByRecord. VirtualRecord.close() nulls each list entry; the lookahead function's
+        // close() runs next (via freeObjList(functions)) and iterates the now-null list as a no-op.
         Misc.free(partitionByRecord);
         Misc.freeObjList(functions);
         isClosed = true;
