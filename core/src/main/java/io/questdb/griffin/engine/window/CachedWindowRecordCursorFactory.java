@@ -106,13 +106,12 @@ public class CachedWindowRecordCursorFactory extends AbstractRecordCursorFactory
                         ));
                     }
                 }
+                this.cursor = new CachedWindowRecordCursor(columnIndexes, recordChain, sortBuffers);
             } catch (Throwable t) {
                 Misc.freeObjList(sortBuffers);
                 Misc.free(recordChain);
                 throw t;
             }
-
-            this.cursor = new CachedWindowRecordCursor(columnIndexes, recordChain, sortBuffers);
             this.allFunctions = new ObjList<>();
 
             ObjList<ObjList<WindowFunction>> orderedTmp = null;
@@ -281,8 +280,8 @@ public class CachedWindowRecordCursorFactory extends AbstractRecordCursorFactory
 
     class CachedWindowRecordCursor implements RecordCursor {
         private final IntList columnIndexes;
-        private final ObjList<WindowSortBuffer> sortBuffers;
         private final RecordArray recordChain;
+        private final ObjList<WindowSortBuffer> sortBuffers;
         private RecordCursor baseCursor;
         private SqlExecutionCircuitBreaker circuitBreaker;
         private boolean isOpen;

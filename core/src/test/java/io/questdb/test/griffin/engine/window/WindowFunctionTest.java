@@ -494,6 +494,67 @@ public class WindowFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCachedWindowLightCumeDistTwoPassUnderLightFactory() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_CACHED_LIGHT_ENABLED, true);
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, v long) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values (1, 10), (2, 20), (3, 30), (4, 30), (5, 40)");
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix("""
+                            ts\tv\tcume_dist
+                            1970-01-01T00:00:00.000001Z\t10\t0.2
+                            1970-01-01T00:00:00.000002Z\t20\t0.4
+                            1970-01-01T00:00:00.000003Z\t30\t0.8
+                            1970-01-01T00:00:00.000004Z\t30\t0.8
+                            1970-01-01T00:00:00.000005Z\t40\t1.0
+                            """, timestampType.getTypeName()),
+                    "SELECT ts, v, cume_dist() OVER (ORDER BY v) FROM tab",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testCachedWindowLightLagSwapBlockedByMixedSortGroup() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, v long) timestamp(ts)", timestampType.getTypeName());
+            assertPlanNoLeakCheck(
+                    "SELECT lag(v, 1) OVER (ORDER BY ts DESC), sum(v) OVER (ORDER BY ts DESC) FROM tab",
+                    (this.cacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") +
+                            """
+                                      orderedFunctions: [[ts desc] => [lag(v, 1, NULL) over (),sum(v) over (rows between unbounded preceding and current row)]]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: tab
+                                    """
+            );
+        });
+    }
+
+    @Test
+    public void testCachedWindowLightVarcharOrderByFallsBackToNonLight() throws Exception {
+        // VARCHAR sort keys cannot fit the encoded sort buffer, so the LIGHT dispatch gate
+        // refuses them and the query falls through to the non-light factory regardless of
+        // cairo.sql.window.cached.light.enabled. Plan label must be plain CachedWindow.
+        node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_CACHED_LIGHT_ENABLED, true);
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, v VARCHAR) timestamp(ts)", timestampType.getTypeName());
+            assertPlanNoLeakCheck(
+                    "SELECT row_number() OVER (ORDER BY v) FROM tab",
+                    """
+                            CachedWindow
+                              orderedFunctions: [[v] => [row_number()]]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: tab
+                            """
+            );
+        });
+    }
+
+    @Test
     public void testCaseWindowFnUsesNonSelectedColumn() throws Exception {
         // Regression for issue https://github.com/questdb/questdb/issues/6769
         // Price is only used inside the CASE expression, not as a

@@ -79,20 +79,25 @@ public class SortKeyEncoder implements QuietCloseable {
         boolean hasDecimal256 = false;
         this.rankMaps = new ObjList<>(n);
 
-        for (int i = 0; i < n; i++) {
-            int encoded = sortColumnFilter.getQuick(i);
-            isDesc[i] = encoded < 0;
-            columnIndices[i] = (encoded > 0 ? encoded : -encoded) - 1;
-            columnTypes[i] = ColumnType.tagOf(metadata.getColumnType(columnIndices[i]));
-            isSymbol[i] = ColumnType.isSymbol(columnTypes[i]);
-            hasDecimal128 |= columnTypes[i] == ColumnType.DECIMAL128;
-            hasDecimal256 |= columnTypes[i] == ColumnType.DECIMAL256;
-            if (!isSymbol[i]) {
-                columnByteWidths[i] = columnByteWidth(columnTypes[i], metadata, columnIndices[i]);
-                rankMaps.add(null);
-            } else {
-                rankMaps.add(new DirectIntList(1024, MemoryTag.NATIVE_DEFAULT, true));
+        try {
+            for (int i = 0; i < n; i++) {
+                int encoded = sortColumnFilter.getQuick(i);
+                isDesc[i] = encoded < 0;
+                columnIndices[i] = (encoded > 0 ? encoded : -encoded) - 1;
+                columnTypes[i] = ColumnType.tagOf(metadata.getColumnType(columnIndices[i]));
+                isSymbol[i] = ColumnType.isSymbol(columnTypes[i]);
+                hasDecimal128 |= columnTypes[i] == ColumnType.DECIMAL128;
+                hasDecimal256 |= columnTypes[i] == ColumnType.DECIMAL256;
+                if (!isSymbol[i]) {
+                    columnByteWidths[i] = columnByteWidth(columnTypes[i], metadata, columnIndices[i]);
+                    rankMaps.add(null);
+                } else {
+                    rankMaps.add(new DirectIntList(1024, MemoryTag.NATIVE_DEFAULT, true));
+                }
             }
+        } catch (Throwable th) {
+            Misc.freeObjList(rankMaps);
+            throw th;
         }
         this.isSingleColumnFixed8 = n == 1 && columnByteWidths[0] <= 8;
         this.decimal128Sink = hasDecimal128 ? new Decimal128() : null;

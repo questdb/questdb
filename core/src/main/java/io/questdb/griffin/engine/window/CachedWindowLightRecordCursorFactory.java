@@ -39,8 +39,6 @@ import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.RecordComparator;
-import io.questdb.griffin.engine.orderby.SortKeyEncoder;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
@@ -67,7 +65,6 @@ public class CachedWindowLightRecordCursorFactory extends AbstractRecordCursorFa
             RecordCursorFactory base,
             GenericRecordMetadata metadata,
             @Transient ColumnTypes narrowChainTypes,
-            ObjList<RecordComparator> comparators,
             ObjList<ObjList<WindowFunction>> orderedFunctions,
             @Nullable ObjList<WindowFunction> unorderedFunctions,
             @NotNull IntList columnIndexes,
@@ -78,31 +75,24 @@ public class CachedWindowLightRecordCursorFactory extends AbstractRecordCursorFa
         super(metadata);
         try {
             this.base = base;
-            this.orderedGroupCount = comparators.size();
+            this.orderedGroupCount = sortKeys.size();
             assert orderedGroupCount == orderedFunctions.size();
             this.orderedFunctions = orderedFunctions;
             RecordArray narrowChain = new RecordArray(
                     narrowChainTypes,
                     null,
-                    configuration.getSqlWindowTreeKeyPageSize(),
-                    configuration.getSqlWindowTreeKeyMaxPages()
+                    configuration.getSqlWindowStorePageSize(),
+                    configuration.getSqlWindowStoreMaxPages()
             );
             this.sortKeys = sortKeys;
             this.chainMetadata = chainMetadata;
 
+            // Caller guarantees every group is encoded-sort-eligible; the LIGHT factory does not
+            // accept the tree fallback (see SqlCodeGenerator's allGroupsEncodedEligible gate).
             ObjList<WindowSortBuffer> sortBuffers = new ObjList<>(orderedGroupCount);
             try {
                 for (int i = 0; i < orderedGroupCount; i++) {
-                    final IntList groupKeys = sortKeys.getQuick(i);
-                    if (comparators.getQuiet(i) == null) {
-                        sortBuffers.add(new EncodedWindowSortBuffer(configuration, chainMetadata, groupKeys));
-                    } else {
-                        sortBuffers.add(new TreeWindowSortBuffer(
-                                configuration,
-                                comparators.getQuick(i),
-                                SortKeyEncoder.createRankMaps(chainMetadata, groupKeys)
-                        ));
-                    }
+                    sortBuffers.add(new EncodedWindowSortBuffer(configuration, chainMetadata, sortKeys.getQuick(i)));
                 }
                 this.cursor = new CachedWindowLightRecordCursor(
                         columnIndexes,

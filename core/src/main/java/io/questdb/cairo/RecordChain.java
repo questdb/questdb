@@ -69,14 +69,6 @@ public class RecordChain implements Closeable, RecordCursor, RecordSinkSPI, Wind
     private RecordChainRecord recordC;
     private SymbolTableSource symbolTableResolver;
 
-    public RecordChain(
-            @Transient @NotNull ColumnTypes columnTypes,
-            long pageSize,
-            int maxPages
-    ) {
-        this(columnTypes, null, pageSize, maxPages);
-    }
-
     /**
      * Sink may be null when the caller does not need {@code put(Record)} - e.g. the
      * Light window chain only allocates rows via {@link #beginRecord} and writes via

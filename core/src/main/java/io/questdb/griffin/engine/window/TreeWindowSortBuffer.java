@@ -50,12 +50,17 @@ final class TreeWindowSortBuffer implements WindowSortBuffer {
     ) {
         this.comparator = comparator;
         this.rankMaps = rankMaps;
-        this.tree = new LongTreeChain(
-                configuration.getSqlWindowTreeKeyPageSize(),
-                configuration.getSqlWindowTreeKeyMaxPages(),
-                configuration.getSqlWindowRowIdPageSize(),
-                configuration.getSqlWindowRowIdMaxPages()
-        );
+        try {
+            this.tree = new LongTreeChain(
+                    configuration.getSqlWindowTreeKeyPageSize(),
+                    configuration.getSqlWindowTreeKeyMaxPages(),
+                    configuration.getSqlWindowRowIdPageSize(),
+                    configuration.getSqlWindowRowIdMaxPages()
+            );
+        } catch (Throwable th) {
+            Misc.freeObjListAndKeepObjects(rankMaps);
+            throw th;
+        }
     }
 
     @Override

@@ -9794,16 +9794,24 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             final ObjList<RecordComparator> windowComparators = new ObjList<>(groupedWindow.size());
             final ObjList<ObjList<WindowFunction>> functionGroups = new ObjList<>(groupedWindow.size());
             final ObjList<IntList> keys = new ObjList<>();
+            boolean allGroupsEncodedEligible = configuration.isSqlOrderBySortEnabled();
             for (ObjObjHashMap.Entry<IntList, ObjList<WindowFunction>> e : groupedWindow) {
-                final RecordComparator comparator = configuration.isSqlOrderBySortEnabled() && SortKeyEncoder.isSupported(chainMetadata, e.key)
+                final boolean encodedEligible = configuration.isSqlOrderBySortEnabled() && SortKeyEncoder.isSupported(chainMetadata, e.key);
+                final RecordComparator comparator = encodedEligible
                         ? null
                         : recordComparatorCompiler.newInstance(chainMetadata, e.key);
                 windowComparators.add(comparator);
                 functionGroups.add(e.value);
                 keys.add(e.key);
+                allGroupsEncodedEligible &= encodedEligible;
             }
 
-            if (configuration.isSqlWindowCachedLightEnabled() && base.recordCursorSupportsRandomAccess()) {
+            // LIGHT path is restricted to queries where every ordered group can use the encoded
+            // sort buffer. Tree-fallback in LIGHT would do O(N log N) random base reads per
+            // compare, which can regress 10-100x on cold/partitioned bases.
+            if (configuration.isSqlWindowCachedLightEnabled()
+                    && base.recordCursorSupportsRandomAccess()
+                    && allGroupsEncodedEligible) {
                 final IntList sourceMap = new IntList();
                 final ArrayColumnTypes narrowChainTypes = new ArrayColumnTypes();
                 narrowChainTypes.add(ColumnType.LONG);
@@ -9823,7 +9831,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         base,
                         factoryMetadata,
                         narrowChainTypes,
-                        windowComparators,
                         functionGroups,
                         naturalOrderFunctions,
                         columnIndexes,
