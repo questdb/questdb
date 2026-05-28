@@ -486,12 +486,11 @@ public class LimitTest extends AbstractCairoTest {
                     Limit value: 30 skip-rows-max: 0 take-rows-max: 30
                         GroupBy vectorized: false
                           keys: [kk]
-                            SelectedRecord
-                                Async JIT Filter workers: 1
-                                  filter: 0<k
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: tab
+                            Async JIT Filter workers: 1
+                              filter: 0<k
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: tab
                     """);
             try (
                     RecordCursorFactory factory = engine.select(query, sqlExecutionContext);
@@ -531,12 +530,11 @@ public class LimitTest extends AbstractCairoTest {
                             GroupBy vectorized: false
                               keys: [kk]
                               values: [first(true)]
-                                SelectedRecord
-                                    Async JIT Filter workers: 1
-                                      filter: 0<k
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: tab
+                                Async JIT Filter workers: 1
+                                  filter: 0<k
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: tab
                     """);
             try (
                     RecordCursorFactory factory = engine.select(query, sqlExecutionContext);
