@@ -58,6 +58,7 @@ import io.questdb.jit.CompiledFilter;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.IntList;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
@@ -130,6 +131,10 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Reopenable, Plannable 
     private final boolean vectorized;
     private final long windowHi;
     private final long windowLo;
+    // Per-query native memory tracker captured from SqlExecutionContext on init.
+    // Null when no per-query limit applies. Workers and operator code feed it to
+    // tracker-aware Unsafe overloads to charge allocations to the active workload.
+    private MemoryTracker memoryTracker;
     private boolean skipAggregation = false;
 
     public AsyncWindowJoinAtom(
@@ -357,6 +362,7 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Reopenable, Plannable 
 
         ownerSelectivityStats.clear();
         Misc.clearObjList(perWorkerSelectivityStats);
+        memoryTracker = null;
     }
 
     public void clearTemporaryData(int slotId) {
@@ -505,6 +511,10 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Reopenable, Plannable 
         return masterTsScale;
     }
 
+    public MemoryTracker getMemoryTracker() {
+        return memoryTracker;
+    }
+
     // Thread-unsafe, should be used by query owner thread only.
     public FlyweightMapValue getOwnerGroupByValue() {
         return ownerGroupByValue;
@@ -567,6 +577,7 @@ public class AsyncWindowJoinAtom implements StatefulAtom, Reopenable, Plannable 
 
     @Override
     public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+        memoryTracker = executionContext.getMemoryTracker();
         if (ownerMasterFilter != null) {
             ownerMasterFilter.init(symbolTableSource, executionContext);
         }

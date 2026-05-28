@@ -35,6 +35,7 @@ import io.questdb.cairo.sql.StatefulAtom;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.FlyweightMessageContainer;
 import io.questdb.std.IntHashSet;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
 import io.questdb.std.NumericException;
@@ -198,6 +199,15 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
 
     public long getFrameSequenceId() {
         return frameSequenceId;
+    }
+
+    /**
+     * Returns the per-query memory tracker captured by the owning frame sequence
+     * at workload start, or {@code null} between workloads / when no per-query
+     * limit is configured. Workers feed this to tracker-aware allocation paths.
+     */
+    public MemoryTracker getMemoryTracker() {
+        return frameSequence != null ? frameSequence.getMemoryTracker() : null;
     }
 
     public byte getTaskType() {

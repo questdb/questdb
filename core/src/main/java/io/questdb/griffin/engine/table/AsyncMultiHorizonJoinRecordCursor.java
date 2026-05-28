@@ -204,6 +204,7 @@ class AsyncMultiHorizonJoinRecordCursor implements RecordCursor {
                     messageBus,
                     frameSequence.getWorkStealingStrategy(),
                     circuitBreaker,
+                    frameSequence.getMemoryTracker(),
                     postAggregationCircuitBreaker,
                     postAggregationDoneLatch,
                     postAggregationStartedCounter

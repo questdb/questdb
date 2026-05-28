@@ -27,7 +27,9 @@ package io.questdb.tasks;
 import io.questdb.cairo.sql.AtomicBooleanCircuitBreaker;
 import io.questdb.griffin.engine.table.GroupByShardingContext;
 import io.questdb.mp.CountDownLatchSPI;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Mutable;
+import org.jetbrains.annotations.Nullable;
 
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -35,6 +37,10 @@ public class GroupByMergeShardTask implements Mutable {
     private GroupByShardingContext shardingCtx;
     private AtomicBooleanCircuitBreaker circuitBreaker;
     private CountDownLatchSPI doneLatch;
+    // Per-query memory tracker captured at dispatch time. Null when no per-query
+    // limit applies. Workers read it via getMemoryTracker() to charge their
+    // allocations to the active workload.
+    private MemoryTracker memoryTracker;
     private int shardIndex = -1;
     private AtomicInteger startedCounter;
 
@@ -44,6 +50,7 @@ public class GroupByMergeShardTask implements Mutable {
         shardingCtx = null;
         circuitBreaker = null;
         doneLatch = null;
+        memoryTracker = null;
         startedCounter = null;
     }
 
@@ -59,6 +66,10 @@ public class GroupByMergeShardTask implements Mutable {
         return doneLatch;
     }
 
+    public MemoryTracker getMemoryTracker() {
+        return memoryTracker;
+    }
+
     public int getShardIndex() {
         return shardIndex;
     }
@@ -69,12 +80,14 @@ public class GroupByMergeShardTask implements Mutable {
 
     public void of(
             AtomicBooleanCircuitBreaker circuitBreaker,
+            @Nullable MemoryTracker memoryTracker,
             AtomicInteger startedCounter,
             CountDownLatchSPI doneLatch,
             GroupByShardingContext shardingCtx,
             int shardIndex
     ) {
         this.circuitBreaker = circuitBreaker;
+        this.memoryTracker = memoryTracker;
         this.startedCounter = startedCounter;
         this.doneLatch = doneLatch;
         this.shardingCtx = shardingCtx;

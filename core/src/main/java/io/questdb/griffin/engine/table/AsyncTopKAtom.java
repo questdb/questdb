@@ -46,6 +46,7 @@ import io.questdb.griffin.engine.orderby.SortKeyEncoder;
 import io.questdb.jit.CompiledFilter;
 import io.questdb.std.DirectIntList;
 import io.questdb.std.IntHashSet;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
@@ -65,6 +66,10 @@ public class AsyncTopKAtom implements StatefulAtom, Reopenable, Plannable {
     private final ObjList<PageFrameMemoryRecord> perWorkerRecordsB;
     private final ObjList<DirectIntList> rankMaps;
     private final int workerCount;
+    // Per-query native memory tracker captured from SqlExecutionContext on init.
+    // Null when no per-query limit applies. Workers and operator code feed it to
+    // tracker-aware Unsafe overloads to charge allocations to the active workload.
+    private MemoryTracker memoryTracker;
 
     public AsyncTopKAtom(
             @NotNull CairoConfiguration configuration,
@@ -145,6 +150,7 @@ public class AsyncTopKAtom implements StatefulAtom, Reopenable, Plannable {
         Misc.free(ownerRecordB);
         freePerWorkerChainsAndPools();
         filterCtx.clear();
+        memoryTracker = null;
     }
 
     @Override
@@ -168,6 +174,10 @@ public class AsyncTopKAtom implements StatefulAtom, Reopenable, Plannable {
 
     public AsyncFilterContext getFilterContext() {
         return filterCtx;
+    }
+
+    public MemoryTracker getMemoryTracker() {
+        return memoryTracker;
     }
 
     public LimitedSizeLongTreeChain getOwnerChain() {
@@ -211,6 +221,7 @@ public class AsyncTopKAtom implements StatefulAtom, Reopenable, Plannable {
 
     @Override
     public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+        memoryTracker = executionContext.getMemoryTracker();
         filterCtx.initFilters(symbolTableSource, executionContext);
         buildRankMaps(symbolTableSource);
 

@@ -43,6 +43,7 @@ import io.questdb.mp.MPSequence;
 import io.questdb.mp.RingQueue;
 import io.questdb.mp.SOUnboundedCountDownLatch;
 import io.questdb.std.LongList;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
 import io.questdb.std.ObjList;
@@ -351,6 +352,7 @@ public class GroupByShardingContext implements QuietCloseable, Mutable {
             MessageBus messageBus,
             WorkStealingStrategy workStealingStrategy,
             SqlExecutionCircuitBreaker circuitBreaker,
+            @Nullable MemoryTracker memoryTracker,
             AtomicBooleanCircuitBreaker postAggregationCircuitBreaker,
             SOUnboundedCountDownLatch postAggregationDoneLatch,
             AtomicInteger postAggregationStartedCounter
@@ -392,6 +394,7 @@ public class GroupByShardingContext implements QuietCloseable, Mutable {
                     } else {
                         queue.get(cursor).of(
                                 postAggregationCircuitBreaker,
+                                memoryTracker,
                                 postAggregationStartedCounter,
                                 postAggregationDoneLatch,
                                 this,

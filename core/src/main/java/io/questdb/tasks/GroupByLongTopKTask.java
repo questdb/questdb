@@ -28,7 +28,9 @@ import io.questdb.cairo.sql.AtomicBooleanCircuitBreaker;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.engine.table.AsyncGroupByAtom;
 import io.questdb.mp.CountDownLatchSPI;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Mutable;
+import org.jetbrains.annotations.Nullable;
 
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -38,6 +40,10 @@ public class GroupByLongTopKTask implements Mutable {
     private CountDownLatchSPI doneLatch;
     private Function func;
     private int limit = -1;
+    // Per-query memory tracker captured at dispatch time. Null when no per-query
+    // limit applies. Workers read it via getMemoryTracker() to charge their
+    // allocations to the active workload.
+    private MemoryTracker memoryTracker;
     private int order = -1;
     private int shardIndex = -1;
     private AtomicInteger startedCounter;
@@ -51,6 +57,7 @@ public class GroupByLongTopKTask implements Mutable {
         atom = null;
         circuitBreaker = null;
         doneLatch = null;
+        memoryTracker = null;
         startedCounter = null;
     }
 
@@ -74,6 +81,10 @@ public class GroupByLongTopKTask implements Mutable {
         return limit;
     }
 
+    public MemoryTracker getMemoryTracker() {
+        return memoryTracker;
+    }
+
     public int getOrder() {
         return order;
     }
@@ -88,6 +99,7 @@ public class GroupByLongTopKTask implements Mutable {
 
     public void of(
             AtomicBooleanCircuitBreaker circuitBreaker,
+            @Nullable MemoryTracker memoryTracker,
             AtomicInteger startedCounter,
             CountDownLatchSPI doneLatch,
             AsyncGroupByAtom atom,
@@ -97,6 +109,7 @@ public class GroupByLongTopKTask implements Mutable {
             int limit
     ) {
         this.circuitBreaker = circuitBreaker;
+        this.memoryTracker = memoryTracker;
         this.startedCounter = startedCounter;
         this.doneLatch = doneLatch;
         this.atom = atom;
