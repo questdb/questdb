@@ -142,7 +142,6 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                 txnTsHi = walTxnDetails.getReplaceRangeTsHi(seqTxn);
             }
 
-            long firstNonSkippableTxn = Long.MAX_VALUE;
             boolean seqTxnCanBeSkipped = false;
 
             // Even though it's O(N^2) complexity, the number of transactions we can skip is expected to be small.
@@ -151,28 +150,22 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
             // TRUNCATE has special optimization to stop scanning early.
             for (long futureSeqTxn = seqTxn + 1; futureSeqTxn <= lastSeqTxn; futureSeqTxn++) {
                 int futureWalId = walTxnDetails.getWalId(futureSeqTxn);
-                if (futureWalId > 0) {
-                    final byte walTxnType = walTxnDetails.getWalTxnType(futureSeqTxn);
-                    if (walTxnType == TRUNCATE) {
-                        // Truncate fully removes any prior data, no point doing any data apply
-                        // We can skip straight to the truncate operation or the first non-skippable operation before it
-                        return Math.min(firstNonSkippableTxn, futureSeqTxn) - initialSeqTxn;
-                    }
+                if (futureWalId > 0 && walTxnDetails.getWalTxnType(futureSeqTxn) == TRUNCATE) {
+                    // Truncate fully removes any prior data, no point doing any data apply.
+                    // Everything between seqTxn and the truncate is data (otherwise we would have stopped at
+                    // the barrier below), so we can skip straight to the truncate.
+                    return futureSeqTxn - initialSeqTxn;
+                }
 
-                    if (walTxnType == SQL) {
-                        // This is not a data transaction.
-                        // Potentially it can be an UPDATE SQL that uses existing data
-                        // so the transactions cannot be skipped even if the data is fully replaces after the update.
-                        // We can optimize partition drops to be recognized here in the future.
-                        break;
-                    }
-                    if (!WalTxnType.isDataType(walTxnType)) {
-                        firstNonSkippableTxn = Math.min(firstNonSkippableTxn, futureSeqTxn);
-                        continue;
-                    }
-                } else {
-                    firstNonSkippableTxn = Math.min(firstNonSkippableTxn, futureSeqTxn);
-                    continue;
+                if (futureWalId < 1 || !isDataType(walTxnDetails.getWalTxnType(futureSeqTxn))) {
+                    // Not a data transaction: either an SQL statement (e.g. an UPDATE that uses existing data)
+                    // or a structural change (e.g. a column type conversion). Such transactions can read the
+                    // rows present when they apply, so the transactions before them must be materialised
+                    // identically on every instance and cannot be skipped. A STRING->SYMBOL conversion, for
+                    // instance, builds the column's symbol map from the rows present at conversion time; if the
+                    // primary and a replica skipped different transactions before it, their symbol maps - and
+                    // therefore the replicated data - would diverge. Treat it as a barrier.
+                    break;
                 }
 
                 // If the future transaction is a replace range operation

@@ -26,6 +26,7 @@ package io.questdb.test.cairo.wal;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
@@ -33,6 +34,7 @@ import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.NumericException;
+import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
@@ -240,6 +242,77 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
     @Test
     public void testReplaceRangeDeletesMidFirstPartitionNoRowsCommit() throws Exception {
         testReplaceRangeCommit(null, "2022-02-24T18:30", "2022-02-24T20:59:31", false, false, true);
+    }
+
+    @Test
+    public void testReplaceRangeDoesNotSkipInsertBeforeSymbolConversion() throws Exception {
+        // The WAL apply job's replace-range skip optimization (ApplyWal2TableJob.calculateSkipTransactionCount)
+        // must not skip an INSERT that precedes a STRING->SYMBOL conversion, even when a later REPLACE_RANGE
+        // fully covers the insert. A conversion to SYMBOL builds the column's symbol map from the rows present
+        // when it runs, so skipping the insert would make the conversion see fewer rows. In a single instance
+        // that stays self-consistent, but a replica that skips a different set of transactions than the primary
+        // ends up with a divergent symbol map and silently wrong data.
+        //
+        // We commit insert + conversion + replace before applying, so the apply job sees the REPLACE_RANGE while
+        // deciding whether to skip the insert. We then assert via the symbol map that the conversion processed
+        // the inserted rows: the symbol map is append-only, so the 10 distinct inserted values survive even
+        // after the REPLACE_RANGE overwrites their rows. If the insert were skipped, the conversion would see 0
+        // rows and the map would hold only the 10 replacement values.
+        assertMemoryLeak(() -> {
+            execute("create table x (s string, ts timestamp) timestamp(ts) partition by DAY WAL");
+            final TableToken tableToken = engine.verifyTableName("x");
+
+            final long rangeLo = MicrosTimestampDriver.floor("2022-02-24T00");
+            final long rangeHi = MicrosTimestampDriver.floor("2022-02-24T01"); // exclusive
+
+            // INSERT 10 distinct values into the range the REPLACE_RANGE will later cover.
+            final StringSink insert = new StringSink();
+            insert.put("insert into x values ");
+            for (int i = 0; i < 10; i++) {
+                if (i > 0) {
+                    insert.put(',');
+                }
+                insert.put("('v").put(i).put("','2022-02-24T00:0").put(i).put(":00.000000Z')");
+            }
+            execute(insert.toString());
+
+            // Convert the column to SYMBOL (structural change that reads the inserted rows).
+            execute("alter table x alter column s type symbol");
+
+            // REPLACE_RANGE fully covering the inserted rows, with 10 different values.
+            try (WalWriter ww = engine.getWalWriter(tableToken)) {
+                int symbolColumnIndex = -1;
+                for (int i = 0, n = ww.getMetadata().getColumnCount(); i < n; i++) {
+                    if (ColumnType.isSymbol(ww.getMetadata().getColumnType(i))) {
+                        symbolColumnIndex = i;
+                        break;
+                    }
+                }
+                Assert.assertTrue("converted symbol column not found", symbolColumnIndex >= 0);
+                for (int i = 0; i < 10; i++) {
+                    TableWriter.Row row = ww.newRow(rangeLo + i * 60_000_000L);
+                    row.putSym(symbolColumnIndex, "w" + i);
+                    row.append();
+                }
+                ww.commitWithParams(rangeLo, rangeHi, WAL_DEDUP_MODE_REPLACE_RANGE);
+            }
+
+            // Apply insert + conversion + replace in one batch.
+            drainWalQueue();
+
+            // Only the replacement values remain in the data.
+            assertSql(
+                    "s\nw0\nw1\nw2\nw3\nw4\nw5\nw6\nw7\nw8\nw9\n",
+                    "select s from x order by ts"
+            );
+
+            // But the symbol map must hold all 20 values (10 inserted + 10 replacement), proving the conversion
+            // processed the inserted rows rather than skipping them. With the bug it would be 10.
+            try (TableReader reader = engine.getReader(tableToken)) {
+                final int colIdx = reader.getMetadata().getColumnIndex("s");
+                Assert.assertEquals(20, reader.getSymbolMapReader(colIdx).getSymbolCount());
+            }
+        });
     }
 
     @Test
@@ -714,9 +787,8 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
             long[] lastValues = new long[6];
 
             for (int batch = 0; batch < 10; batch++) {
-                for (int i = 0; i < pattern.length; i++) {
+                for (int rangeSelector : pattern) {
                     try (WalWriter ww = engine.getWalWriter(tableToken)) {
-                        int rangeSelector = pattern[i];
                         // Create 6 different 10-minute ranges to spread transactions across more ranges
                         long rangeStart = baseHour + rangeSelector * 10 * minuteInMicros; // 23:00, 23:10, 23:20, 23:30, 23:40, 23:50
                         long rangeEnd = rangeStart + 10 * minuteInMicros; // 10 minute ranges
