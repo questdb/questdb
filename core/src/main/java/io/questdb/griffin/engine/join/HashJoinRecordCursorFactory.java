@@ -74,7 +74,9 @@ public class HashJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory
         Map joinKeyMap = null;
         RecordChain slaveChain = null;
         try {
-            joinKeyMap = MapFactory.createUnorderedMap(configuration, joinColumnTypes, valueTypes);
+            // Lazy variant: the map skeleton is constructed but the native backing is not
+            // allocated until the first cursor's of() binds a MemoryTracker and reopens it.
+            joinKeyMap = MapFactory.createUnorderedMap(configuration, joinColumnTypes, valueTypes, false, false);
             slaveChain = new RecordChain(
                     slaveFactory.getMetadata(),
                     slaveChainSink,
@@ -106,7 +108,7 @@ public class HashJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory
         RecordCursor masterCursor = null;
         try {
             masterCursor = masterFactory.getCursor(executionContext);
-            cursor.of(masterCursor, slaveCursor, executionContext.getCircuitBreaker());
+            cursor.of(masterCursor, slaveCursor, executionContext);
             return cursor;
         } catch (Throwable e) {
             Misc.free(slaveCursor);
@@ -185,7 +187,8 @@ public class HashJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory
             this.recordA = new JoinRecord(columnSplit);
             this.joinKeyMap = joinKeyMap;
             this.slaveChain = slaveChain;
-            this.isOpen = true;
+            // joinKeyMap was created with openOnInit=false; first cursor's of() reopens it.
+            this.isOpen = false;
         }
 
         @Override
@@ -261,14 +264,15 @@ public class HashJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory
             }
         }
 
-        private void of(RecordCursor masterCursor, RecordCursor slaveCursor, SqlExecutionCircuitBreaker circuitBreaker) {
+        private void of(RecordCursor masterCursor, RecordCursor slaveCursor, SqlExecutionContext executionContext) {
             if (!isOpen) {
                 isOpen = true;
+                joinKeyMap.setMemoryTracker(executionContext.getMemoryTracker());
                 joinKeyMap.reopen();
             }
             this.masterCursor = masterCursor;
             this.slaveCursor = slaveCursor;
-            this.circuitBreaker = circuitBreaker;
+            this.circuitBreaker = executionContext.getCircuitBreaker();
             masterRecord = masterCursor.getRecord();
             Record slaveRecord = slaveChain.getRecord();
             recordA.of(masterRecord, slaveRecord);

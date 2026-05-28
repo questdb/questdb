@@ -274,11 +274,15 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
         ) {
             super(functions);
             try {
-                this.isOpen = true;
-                this.dataMap = MapFactory.createUnorderedMap(configuration, keyTypes, valueTypes, true);
+                // Lazy variant: the map skeleton is constructed but the native heap and
+                // hash directory are not allocated until the first cursor's of() binds a
+                // MemoryTracker and calls reopen(). This keeps malloc/free symmetric on
+                // the per-query counter from the very first cursor.
+                this.dataMap = MapFactory.createUnorderedMap(configuration, keyTypes, valueTypes, true, false);
                 this.groupByFunctionsUpdater = groupByFunctionsUpdater;
                 this.allocator = GroupByAllocatorFactory.createAllocator(configuration);
                 GroupByUtils.setAllocator(groupByFunctions, allocator);
+                this.isOpen = false;
             } catch (Throwable th) {
                 close();
                 throw th;
@@ -318,6 +322,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
             this.managedCursor = managedCursor;
             if (!isOpen) {
                 isOpen = true;
+                dataMap.setMemoryTracker(executionContext.getMemoryTracker());
                 dataMap.reopen();
                 allocator.reopen();
             }

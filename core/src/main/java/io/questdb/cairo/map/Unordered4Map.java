@@ -43,6 +43,7 @@ import io.questdb.std.Hash;
 import io.questdb.std.Interval;
 import io.questdb.std.Long256;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Numbers;
 import io.questdb.std.Transient;
 import io.questdb.std.Unsafe;
@@ -108,6 +109,11 @@ public class Unordered4Map implements Map, Reopenable {
     private long mask;
     private long memLimit; // Hash table memory limit pointer.
     private long memStart; // Hash table memory start pointer.
+    // Per-query native memory tracker bound by the owning factory at cursor start.
+    // Null when no per-query limit applies; all Unsafe.{malloc,realloc,free} calls
+    // degrade to the global-only overloads in that case.
+    @Nullable
+    private MemoryTracker memoryTracker;
     private int nResizes;
     private int size = 0;
     private long zeroMemStart; // Zero key-value pair memory start pointer.
@@ -119,7 +125,18 @@ public class Unordered4Map implements Map, Reopenable {
             double loadFactor,
             int maxResizes
     ) {
-        this(keyType, valueTypes, keyCapacity, loadFactor, maxResizes, MemoryTag.NATIVE_UNORDERED_MAP);
+        this(keyType, valueTypes, keyCapacity, loadFactor, maxResizes, MemoryTag.NATIVE_UNORDERED_MAP, true);
+    }
+
+    public Unordered4Map(
+            int keyType,
+            @Transient @Nullable ColumnTypes valueTypes,
+            int keyCapacity,
+            double loadFactor,
+            int maxResizes,
+            boolean openOnInit
+    ) {
+        this(keyType, valueTypes, keyCapacity, loadFactor, maxResizes, MemoryTag.NATIVE_UNORDERED_MAP, openOnInit);
     }
 
     Unordered4Map(
@@ -128,18 +145,16 @@ public class Unordered4Map implements Map, Reopenable {
             int keyCapacity,
             double loadFactor,
             int maxResizes,
-            int memoryTag
+            int memoryTag,
+            boolean openOnInit
     ) {
         assert loadFactor > 0 && loadFactor < 1d;
 
         try {
             this.memoryTag = memoryTag;
             this.loadFactor = loadFactor;
-            this.keyCapacity = (int) (keyCapacity / loadFactor);
-            this.keyCapacity = this.initialKeyCapacity = Math.max(Numbers.ceilPow2(this.keyCapacity), MIN_KEY_CAPACITY);
+            this.initialKeyCapacity = Math.max(Numbers.ceilPow2((int) (keyCapacity / loadFactor)), MIN_KEY_CAPACITY);
             this.maxResizes = maxResizes;
-            mask = this.keyCapacity - 1;
-            free = (int) (this.keyCapacity * loadFactor);
             nResizes = 0;
 
             if (!isSupportedKeyType(keyType)) {
@@ -167,13 +182,24 @@ public class Unordered4Map implements Map, Reopenable {
             this.valueSize = valueSize;
 
             this.entrySize = Bytes.align4b(KEY_SIZE + valueSize);
-            // Allocate one extra slot at the end for the zero key entry.
-            final long sizeBytes = entrySize * (this.keyCapacity + 1);
-            validateBatchAddressable(sizeBytes);
-            memStart = Unsafe.malloc(sizeBytes, memoryTag);
-            Vect.memset(memStart, sizeBytes, 0);
-            memLimit = memStart + entrySize * this.keyCapacity;
-            zeroMemStart = memLimit; // zero key lives right after the hash table
+            // Validate against initialKeyCapacity so both eager and lazy modes catch the
+            // overflow up front, before any cursor opens.
+            validateBatchAddressable(entrySize * (this.initialKeyCapacity + 1));
+
+            if (openOnInit) {
+                this.keyCapacity = this.initialKeyCapacity;
+                mask = this.keyCapacity - 1;
+                free = (int) (this.keyCapacity * loadFactor);
+                // Allocate one extra slot at the end for the zero key entry.
+                final long sizeBytes = entrySize * (this.keyCapacity + 1);
+                memStart = Unsafe.malloc(sizeBytes, memoryTag, memoryTracker);
+                Vect.memset(memStart, sizeBytes, 0);
+                memLimit = memStart + entrySize * this.keyCapacity;
+                zeroMemStart = memLimit; // zero key lives right after the hash table
+            }
+            // else: memStart / memLimit / zeroMemStart stay 0, keyCapacity stays 0;
+            // first reopen() allocates initial backing under whatever MemoryTracker
+            // is bound at that time.
 
             value = new FlyweightPackedMapValue(valueSize, valueOffsets);
             value2 = new FlyweightPackedMapValue(valueSize, valueOffsets);
@@ -204,14 +230,14 @@ public class Unordered4Map implements Map, Reopenable {
     @Override
     public void close() {
         if (memStart != 0) {
-            memLimit = memStart = Unsafe.free(memStart, memLimit - memStart + entrySize, memoryTag);
+            memLimit = memStart = Unsafe.free(memStart, memLimit - memStart + entrySize, memoryTag, memoryTracker);
             zeroMemStart = 0;
             free = 0;
             size = 0;
             hasZero = false;
         }
         if (batchEmptyValueStart != 0) {
-            batchEmptyValueStart = Unsafe.free(batchEmptyValueStart, valueSize, memoryTag);
+            batchEmptyValueStart = Unsafe.free(batchEmptyValueStart, valueSize, memoryTag, memoryTracker);
         }
     }
 
@@ -487,9 +513,9 @@ public class Unordered4Map implements Map, Reopenable {
             final long sizeBytes = entrySize * (initialKeyCapacity + 1);
             long newMemStart;
             if (memStart == 0) {
-                newMemStart = Unsafe.malloc(sizeBytes, memoryTag);
+                newMemStart = Unsafe.malloc(sizeBytes, memoryTag, memoryTracker);
             } else {
-                newMemStart = Unsafe.realloc(memStart, memLimit - memStart + entrySize, sizeBytes, memoryTag);
+                newMemStart = Unsafe.realloc(memStart, memLimit - memStart + entrySize, sizeBytes, memoryTag, memoryTracker);
             }
             memStart = newMemStart;
             memLimit = memStart + entrySize * initialKeyCapacity;
@@ -506,12 +532,12 @@ public class Unordered4Map implements Map, Reopenable {
     @Override
     public void setBatchEmptyValue(GroupByFunctionsUpdater updater) {
         if (batchEmptyValueStart != 0) {
-            batchEmptyValueStart = Unsafe.free(batchEmptyValueStart, valueSize, memoryTag);
+            batchEmptyValueStart = Unsafe.free(batchEmptyValueStart, valueSize, memoryTag, memoryTracker);
         }
         if (updater == null || valueSize == 0) {
             return;
         }
-        final long buf = Unsafe.malloc(valueSize, memoryTag);
+        final long buf = Unsafe.malloc(valueSize, memoryTag, memoryTracker);
         try {
             Vect.memset(buf, valueSize, 0);
             // Populate the empty value into the scratch buffer using value as a flyweight.
@@ -529,13 +555,13 @@ public class Unordered4Map implements Map, Reopenable {
                 }
             }
             if (allZero) {
-                Unsafe.free(buf, valueSize, memoryTag);
+                Unsafe.free(buf, valueSize, memoryTag, memoryTracker);
             } else {
                 batchEmptyValueStart = buf;
             }
         } catch (Throwable th) {
             if (batchEmptyValueStart != buf) {
-                Unsafe.free(buf, valueSize, memoryTag);
+                Unsafe.free(buf, valueSize, memoryTag, memoryTracker);
             }
             throw th;
         }
@@ -548,6 +574,11 @@ public class Unordered4Map implements Map, Reopenable {
             throw CairoException.nonCritical().put("map capacity overflow");
         }
         rehash(Numbers.ceilPow2((int) requiredCapacity));
+    }
+
+    @Override
+    public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+        this.memoryTracker = tracker;
     }
 
     @Override
@@ -724,7 +755,7 @@ public class Unordered4Map implements Map, Reopenable {
         // Allocate one extra slot at the end for the zero key entry.
         final long newSizeBytes = entrySize * (newKeyCapacity + 1);
         validateBatchAddressable(newSizeBytes);
-        final long newMemStart = Unsafe.malloc(newSizeBytes, memoryTag);
+        final long newMemStart = Unsafe.malloc(newSizeBytes, memoryTag, memoryTracker);
         final long newMemLimit = newMemStart + entrySize * newKeyCapacity;
         Vect.memset(newMemStart, newSizeBytes, 0);
         final int newMask = (int) newKeyCapacity - 1;
@@ -750,7 +781,7 @@ public class Unordered4Map implements Map, Reopenable {
             Unsafe.copyMemory(zeroMemStart, newMemLimit, entrySize);
         }
 
-        Unsafe.free(memStart, memLimit - memStart + entrySize, memoryTag);
+        Unsafe.free(memStart, memLimit - memStart + entrySize, memoryTag, memoryTracker);
 
         memStart = newMemStart;
         memLimit = newMemLimit;

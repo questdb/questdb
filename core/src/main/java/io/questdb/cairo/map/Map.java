@@ -28,7 +28,9 @@ import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.Reopenable;
 import io.questdb.cairo.sql.PageFrameMemoryRecord;
 import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdater;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Mutable;
+import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
@@ -213,6 +215,25 @@ public interface Map extends Mutable, Closeable, Reopenable {
     }
 
     void setKeyCapacity(int keyCapacity);
+
+    /**
+     * Binds a per-query native memory tracker to this map. All subsequent
+     * {@code Unsafe.malloc} / {@code realloc} / {@code free} calls performed by the
+     * map route through tracker-aware overloads so that allocations are charged to
+     * the active workload's per-query counter in addition to the global counter.
+     * <p>
+     * A {@code null} tracker means no per-query charging — allocations go to the
+     * global counter only, as before. The caller owns the tracker's lifetime and
+     * must call this with {@code null} (or replace with a new tracker) before the
+     * bound tracker is closed or returned to its provider's pool; the map must not
+     * outlive the tracker it was bound to.
+     * <p>
+     * The default implementation is a no-op for maps that have not been wired to
+     * the per-query memory limit yet.
+     */
+    default void setMemoryTracker(@Nullable MemoryTracker tracker) {
+        // no-op
+    }
 
     long size();
 
