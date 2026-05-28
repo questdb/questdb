@@ -82,6 +82,30 @@ public class TwapGroupByFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNullPrefixRecoveryReinitializesLastFrameId() throws Exception {
+        assertMemoryLeak(() -> {
+            try (
+                    GroupByAllocator allocator = GroupByAllocatorFactory.createAllocator(configuration);
+                    SimpleMapValue mapValue = new SimpleMapValue(7)
+            ) {
+                // computeFirst sees NULL and calls setNull(), which zeroes lastFrameId.
+                TwapGroupByFunction nullFunc = new TwapGroupByFunction(DoubleConstant.NULL, LongConstant.NULL);
+                nullFunc.initValueIndex(0);
+                nullFunc.setAllocator(allocator);
+                nullFunc.computeFirst(mapValue, null, rowId(5, 0));
+
+                // The first valid observation arrives via computeNext on a non-zero
+                // frame: the recovery branch must initialise lastFrameId to the
+                // current frame, not leave it at setNull's starting value of 0.
+                TwapGroupByFunction func = twapFunction(allocator);
+                func.computeNext(mapValue, null, rowId(5, 1));
+                Assert.assertEquals("entry count", 1, mapValue.getLong(1));
+                Assert.assertEquals("lastFrameId", 5, mapValue.getLong(6));
+            }
+        });
+    }
+
+    @Test
     public void testOutOfOrderFrameRecordsDescriptor() throws Exception {
         assertMemoryLeak(() -> {
             try (
