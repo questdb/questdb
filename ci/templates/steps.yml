@@ -7,12 +7,12 @@ steps:
         echo "Skipping on ${AGENT_MACHINENAME:-unknown}; only applied to hetzner-incus-* agents"
         exit 0
       fi
-      # Abort any git HTTP transfer that averages below 100 KiB/s for 30s
+      # Abort any git HTTP transfer that averages below 100 KiB/s for 120s
       # so Azure's checkout retry picks a fresh TCP connection instead of
       # crawling for 30-60 min. Mitigates the per-flow upstream-network
       # stalls observed on the FSN1 dedicated-server boxes.
       git config --global http.lowSpeedLimit 102400
-      git config --global http.lowSpeedTime 30
+      git config --global http.lowSpeedTime 120
     displayName: "Set git low-speed abort thresholds"
   - checkout: self
     fetchDepth: 1
