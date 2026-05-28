@@ -184,11 +184,7 @@ class EncodedSortRecordCursor implements DelegatingRecordCursor {
             long maxEntries = maxEntryMemBytes / entrySize;
             if (estimatedSize > 0) {
                 if (estimatedSize > maxEntries) {
-                    throw LimitOverflowException.instance()
-                            .put("limit of ").put(maxEntryMemBytes)
-                            .put(" memory exceeded in EncodedSort (raise ")
-                            .put(PropertyKey.CAIRO_SQL_SORT_KEY_MAX_BYTES.getPropertyPath())
-                            .put(')');
+                    throwLimitOverflow();
                 }
                 entryMem.setCapacity(estimatedSize * longsPerEntry);
             }
@@ -209,11 +205,7 @@ class EncodedSortRecordCursor implements DelegatingRecordCursor {
                 while (baseCursor.hasNext()) {
                     circuitBreaker.statefulThrowExceptionIfTripped();
                     if (count >= maxEntries) {
-                        throw LimitOverflowException.instance()
-                                .put("limit of ").put(maxEntryMemBytes)
-                                .put(" memory exceeded in EncodedSort (raise ")
-                                .put(PropertyKey.CAIRO_SQL_SORT_KEY_MAX_BYTES.getPropertyPath())
-                                .put(')');
+                        throwLimitOverflow();
                     }
                     long chainOffset = recordChain.put(record, -1L);
                     entryMem.ensureCapacity(longsPerEntry);
@@ -244,5 +236,13 @@ class EncodedSortRecordCursor implements DelegatingRecordCursor {
         Misc.free(encoder);
         Misc.free(recordChain);
         baseCursor = Misc.free(baseCursor);
+    }
+
+    private void throwLimitOverflow() {
+        throw LimitOverflowException.instance()
+                .put("limit of ").put(maxEntryMemBytes)
+                .put(" memory exceeded in EncodedSort (raise ")
+                .put(PropertyKey.CAIRO_SQL_SORT_KEY_MAX_BYTES.getPropertyPath())
+                .put(')');
     }
 }

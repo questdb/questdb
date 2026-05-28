@@ -111,9 +111,12 @@ public abstract class AbstractRedBlackTree implements Mutable, Reopenable {
         if (keyHeapPos + BLOCK_SIZE > keyHeapLimit) {
             final long newHeapSize = keyHeapSize << 1;
             if (newHeapSize > maxKeyHeapSize) {
-                throw LimitOverflowException.instance()
-                        .put("limit of ").put(maxKeyHeapSize)
-                        .put(" memory exceeded in RedBlackTree (raise ").put(keyHeapConfigKey).put(')');
+                LimitOverflowException ex = LimitOverflowException.instance();
+                ex.put("limit of ").put(maxKeyHeapSize).put(" memory exceeded in RedBlackTree");
+                if (keyHeapConfigKey != null) {
+                    ex.put(" (raise ").put(keyHeapConfigKey).put(')');
+                }
+                throw ex;
             }
             long newHeapPos = Unsafe.realloc(keyHeapStart, keyHeapSize, newHeapSize, MemoryTag.NATIVE_TREE_CHAIN);
 

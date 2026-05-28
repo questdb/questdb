@@ -174,13 +174,7 @@ class EncodedSortLightRecordCursor implements DelegatingRecordCursor {
             long maxEntries = maxEntryMemBytes / entrySize;
             if (estimatedSize > 0) {
                 if (estimatedSize > maxEntries) {
-                    throw LimitOverflowException.instance()
-                            .put("limit of ").put(maxEntryMemBytes)
-                            .put(" memory exceeded in EncodedSort (raise ")
-                            .put(PropertyKey.CAIRO_SQL_SORT_KEY_MAX_BYTES.getPropertyPath())
-                            .put(" or ")
-                            .put(PropertyKey.CAIRO_SQL_SORT_LIGHT_VALUE_MAX_BYTES.getPropertyPath())
-                            .put(')');
+                    throwLimitOverflow();
                 }
                 entryMem.setCapacity(estimatedSize * longsPerEntry);
             }
@@ -200,13 +194,7 @@ class EncodedSortLightRecordCursor implements DelegatingRecordCursor {
                 while (baseCursor.hasNext()) {
                     circuitBreaker.statefulThrowExceptionIfTripped();
                     if (count >= maxEntries) {
-                        throw LimitOverflowException.instance()
-                                .put("limit of ").put(maxEntryMemBytes)
-                                .put(" memory exceeded in EncodedSort (raise ")
-                                .put(PropertyKey.CAIRO_SQL_SORT_KEY_MAX_BYTES.getPropertyPath())
-                                .put(" or ")
-                                .put(PropertyKey.CAIRO_SQL_SORT_LIGHT_VALUE_MAX_BYTES.getPropertyPath())
-                                .put(')');
+                        throwLimitOverflow();
                     }
                     entryMem.ensureCapacity(longsPerEntry);
                     long addr = entryMem.getAppendAddress();
@@ -236,5 +224,15 @@ class EncodedSortLightRecordCursor implements DelegatingRecordCursor {
         Misc.free(encoder);
         baseCursor = Misc.free(baseCursor);
         baseRecord = null;
+    }
+
+    private void throwLimitOverflow() {
+        throw LimitOverflowException.instance()
+                .put("limit of ").put(maxEntryMemBytes)
+                .put(" memory exceeded in EncodedSort (raise ")
+                .put(PropertyKey.CAIRO_SQL_SORT_KEY_MAX_BYTES.getPropertyPath())
+                .put(" or ")
+                .put(PropertyKey.CAIRO_SQL_SORT_LIGHT_VALUE_MAX_BYTES.getPropertyPath())
+                .put(')');
     }
 }

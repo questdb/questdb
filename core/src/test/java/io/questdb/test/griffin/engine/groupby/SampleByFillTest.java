@@ -1770,6 +1770,10 @@ public class SampleByFillTest extends AbstractCairoTest {
                 // fails loudly instead of hiding the signal under a substring
                 // disjunction.
                 TestUtils.assertContains(ex.getFlyweightMessage(), "Maximum number of pages");
+                // The (raise X) hint must name the actual config key that drove the cap,
+                // so renaming cairo.sql.sort.key.max.bytes would fail this assertion
+                // instead of silently breaking the user-facing remediation guidance.
+                TestUtils.assertContains(ex.getFlyweightMessage(), "(raise cairo.sql.sort.key.max.bytes)");
             }
         });
     }

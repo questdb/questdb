@@ -792,6 +792,22 @@ public class PropServerConfigurationTest {
     }
 
     @Test
+    public void testDeprecatedMaxPagesAndAliasBothExplicitMainWins() throws Exception {
+        // When both the modern deprecated key (cairo.sql.window.tree.max.pages) and the
+        // older analytic.* alias are set with conflicting values, the modern key wins.
+        // This matches the pre-PR behaviour where the alias only served as a default for
+        // the modern key.
+        Properties properties = new Properties();
+        properties.setProperty("cairo.sql.window.tree.page.size", "512k");
+        properties.setProperty("cairo.sql.analytic.tree.max.pages", "100");
+        properties.setProperty("cairo.sql.window.tree.max.pages", "200");
+
+        CairoConfiguration cairo = newPropServerConfiguration(properties).getCairoConfiguration();
+
+        Assert.assertEquals(200L * 512 * 1024, cairo.getSqlWindowTreeKeyMaxBytes());
+    }
+
+    @Test
     public void testDeprecatedMaxPagesHonorsExplicitIntegerMaxValue() throws Exception {
         // An explicit deprecated *.max.pages value must carry over as a byte cap rather than
         // collapsing back to the uncapped default.
