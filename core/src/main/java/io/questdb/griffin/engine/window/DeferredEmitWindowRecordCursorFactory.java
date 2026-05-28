@@ -106,6 +106,10 @@ public class DeferredEmitWindowRecordCursorFactory extends AbstractRecordCursorF
     private final int[] columnToSlotOffset;
     private final DeferredEmitWindowRecordCursor cursor;
     private final ObjList<Function> functions;
+    // True when leadCount == 1. The hot paths branch on this to skip the per-slot bit-mask
+    // machinery (perSlotLeadMask, targetRingIdx * leadCount, etc.) since each slot's mask is a
+    // single bit at position equal to the slot index.
+    private final boolean isSingleLead;
     // LAG (immediate-emit) functions in column order.
     private final ObjList<WindowFunction> lagFunctions;
     private final int leadCount;
@@ -120,6 +124,10 @@ public class DeferredEmitWindowRecordCursorFactory extends AbstractRecordCursorF
     // Mask of leadCount bits, representing one slot's LEAD pending bits.
     private final long perSlotLeadMask;
     private final int ringCapacity;
+    // Set when isSingleLead. Cached references for the single-LEAD fast path to avoid the
+    // ObjList.getQuick(0) and array load on every backfill / flush.
+    private final WindowFunction soleLeadFunction;
+    private final long soleLeadOffset;
     // Per-slot bytes = ROWID_BYTES + FUNC_VALUE_BYTES * windowFunctions.size().
     private final int slotBytes;
     private boolean isClosed;
@@ -206,6 +214,7 @@ public class DeferredEmitWindowRecordCursorFactory extends AbstractRecordCursorF
             this.maxLookahead = maxLA;
             this.ringCapacity = ringCap;
             this.leadCount = lCount;
+            this.isSingleLead = lCount == 1;
             this.perSlotLeadMask = (1L << lCount) - 1;
             this.slotBytes = ROWID_BYTES + (lagFns.size() + leadFns.size()) * FUNC_VALUE_BYTES;
             this.columnToSlotOffset = colToSlot;
@@ -214,6 +223,8 @@ public class DeferredEmitWindowRecordCursorFactory extends AbstractRecordCursorF
             for (int i = 0; i < lCount; i++) {
                 this.leadOffsets[i] = leadOffsetsTmp.getQuick(i);
             }
+            this.soleLeadFunction = isSingleLead ? leadFns.getQuick(0) : null;
+            this.soleLeadOffset = isSingleLead ? leadOffsetsTmp.getQuick(0) : 0L;
             // Release the temp lists to GC; we've copied into primitive arrays.
 
             this.partitionByRecord = partitionByRecord;
@@ -597,11 +608,18 @@ public class DeferredEmitWindowRecordCursorFactory extends AbstractRecordCursorF
                 // which (slot, lead) pairs were already backfilled during processBaseRow — those
                 // must not be overwritten. LAG slots were already filled at enqueue and have no
                 // pending bits.
-                final long headSlotPendingShift = flushPartitionRingHead * leadCount;
-                for (int i = 0; i < leadCount; i++) {
-                    long bit = 1L << (headSlotPendingShift + i);
+                if (isSingleLead) {
+                    long bit = 1L << flushPartitionRingHead;
                     if ((flushPartitionFilled & bit) == 0L) {
-                        leadFunctions.getQuick(i).streamingFlushDefault(headSlot, this);
+                        soleLeadFunction.streamingFlushDefault(headSlot, this);
+                    }
+                } else {
+                    final long headSlotPendingShift = flushPartitionRingHead * leadCount;
+                    for (int i = 0; i < leadCount; i++) {
+                        long bit = 1L << (headSlotPendingShift + i);
+                        if ((flushPartitionFilled & bit) == 0L) {
+                            leadFunctions.getQuick(i).streamingFlushDefault(headSlot, this);
+                        }
                     }
                 }
                 flushPartitionRingHead++;
@@ -638,18 +656,23 @@ public class DeferredEmitWindowRecordCursorFactory extends AbstractRecordCursorF
                         throw CairoException.critical(0)
                                 .put("DeferredEmitWindowRecordCursor partition cap exceeded: maxPartitions=").put(maxPartitions);
                     }
-                    final long newSlotsOff = allocatePartitionSlice();
-                    mapValue.putLong(0, newSlotsOff);
+                    slotsOff = allocatePartitionSlice();
+                    mapValue.putLong(0, slotsOff);
                     mapValue.putLong(1, 0L);
                     mapValue.putLong(2, 0L);
                     mapValue.putLong(3, 0L);
                     mapValue.putLong(4, 0L);
+                    ringHead = 0L;
+                    ringTail = 0L;
+                    ringCount = 0L;
+                    pendingFilled = 0L;
+                } else {
+                    slotsOff = mapValue.getLong(0);
+                    ringHead = mapValue.getLong(1);
+                    ringTail = mapValue.getLong(2);
+                    ringCount = mapValue.getLong(3);
+                    pendingFilled = mapValue.getLong(4);
                 }
-                slotsOff = mapValue.getLong(0);
-                ringHead = mapValue.getLong(1);
-                ringTail = mapValue.getLong(2);
-                ringCount = mapValue.getLong(3);
-                pendingFilled = mapValue.getLong(4);
             }
 
             final long mapValueAddr = mapValue != null ? mapValue.getAddress(0) : 0;
@@ -659,18 +682,34 @@ public class DeferredEmitWindowRecordCursorFactory extends AbstractRecordCursorF
             //    The target ring index = (ringHead + (ringCount - k_i)) % ringCapacity, valid only
             //    when ringCount >= k_i. The sum is bounded by 2*ringCapacity-2, so a single
             //    conditional subtract is enough.
-            for (int i = 0; i < leadCount; i++) {
-                long k = leadOffsets[i];
+            if (isSingleLead) {
+                long k = soleLeadOffset;
                 if (ringCount >= k) {
                     long targetRingIdx = ringHead + (ringCount - k);
                     if (targetRingIdx >= ringCapacity) {
                         targetRingIdx -= ringCapacity;
                     }
-                    long bit = 1L << (targetRingIdx * leadCount + i);
+                    long bit = 1L << targetRingIdx;
                     if ((pendingFilled & bit) == 0L) {
                         long targetSlotOff = slotsOff + targetRingIdx * slotBytes;
-                        leadFunctions.getQuick(i).streamingBackfill(baseRow, targetSlotOff, this);
+                        soleLeadFunction.streamingBackfill(baseRow, targetSlotOff, this);
                         pendingFilled |= bit;
+                    }
+                }
+            } else {
+                for (int i = 0; i < leadCount; i++) {
+                    long k = leadOffsets[i];
+                    if (ringCount >= k) {
+                        long targetRingIdx = ringHead + (ringCount - k);
+                        if (targetRingIdx >= ringCapacity) {
+                            targetRingIdx -= ringCapacity;
+                        }
+                        long bit = 1L << (targetRingIdx * leadCount + i);
+                        if ((pendingFilled & bit) == 0L) {
+                            long targetSlotOff = slotsOff + targetRingIdx * slotBytes;
+                            leadFunctions.getQuick(i).streamingBackfill(baseRow, targetSlotOff, this);
+                            pendingFilled |= bit;
+                        }
                     }
                 }
             }
@@ -678,7 +717,7 @@ public class DeferredEmitWindowRecordCursorFactory extends AbstractRecordCursorF
             // 2) If head is fully resolved (all leadCount bits set in its slot mask), stage it for
             //    emission and advance head. Only one head emit per processBaseRow; subsequent
             //    backfills wait for the next row arrival.
-            long headSlotMask = perSlotLeadMask << (ringHead * leadCount);
+            long headSlotMask = isSingleLead ? 1L << ringHead : perSlotLeadMask << (ringHead * leadCount);
             if (ringCount > 0 && (pendingFilled & headSlotMask) == headSlotMask) {
                 pendingEmitSlotOffset = slotsOff + ringHead * slotBytes;
                 pendingFilled &= ~headSlotMask;
@@ -696,7 +735,7 @@ public class DeferredEmitWindowRecordCursorFactory extends AbstractRecordCursorF
             Unsafe.getUnsafe().putLong(pendingBaseAddr + newSlot + ROWID_OFFSET, baseRow.getRowId());
             // Clear LEAD pending bits for the new slot (defensive — should already be 0 from prior
             // emit or initial state).
-            long newSlotMask = perSlotLeadMask << (ringTail * leadCount);
+            long newSlotMask = isSingleLead ? 1L << ringTail : perSlotLeadMask << (ringTail * leadCount);
             pendingFilled &= ~newSlotMask;
             // LAG functions write their values directly to the new slot.
             for (int i = 0, n = lagFunctions.size(); i < n; i++) {
@@ -708,7 +747,10 @@ public class DeferredEmitWindowRecordCursorFactory extends AbstractRecordCursorF
             }
             ringCount++;
 
-            // 4) Persist state.
+            // 4) Persist state. The flyweight assertion proves mapValue still points at the same value
+            //    tuple captured at mapValueAddr; PARTITION_VALUE_TYPES is five LONG columns laid out
+            //    8 bytes apart, so we can write directly via Unsafe without going through the
+            //    flyweight's per-call valueOffsets lookup.
             if (partitionByRecord == null) {
                 singlePartitionState[1] = ringHead;
                 singlePartitionState[2] = ringTail;
@@ -716,10 +758,10 @@ public class DeferredEmitWindowRecordCursorFactory extends AbstractRecordCursorF
                 singlePartitionState[4] = pendingFilled;
             } else {
                 assert mapValue.getAddress(0) == mapValueAddr : "partitionMap flyweight invalidated between read and write-back";
-                mapValue.putLong(1, ringHead);
-                mapValue.putLong(2, ringTail);
-                mapValue.putLong(3, ringCount);
-                mapValue.putLong(4, pendingFilled);
+                Unsafe.getUnsafe().putLong(mapValueAddr + Long.BYTES, ringHead);
+                Unsafe.getUnsafe().putLong(mapValueAddr + 2 * Long.BYTES, ringTail);
+                Unsafe.getUnsafe().putLong(mapValueAddr + 3 * Long.BYTES, ringCount);
+                Unsafe.getUnsafe().putLong(mapValueAddr + 4 * Long.BYTES, pendingFilled);
             }
         }
 
