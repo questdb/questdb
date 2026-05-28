@@ -410,9 +410,8 @@ public class TwapGroupByFunction extends DoubleFunction implements GroupByFuncti
      * of a forward scan.
      */
     public void validateTimestampArg(int designatedTimestampIndex, boolean isBaseTimestampAscending, int position) throws SqlException {
-        if (designatedTimestampIndex < 0
-                || !(tsFunc instanceof ColumnFunction cf)
-                || cf.getColumnIndex() != designatedTimestampIndex) {
+        ColumnFunction cf = ColumnFunction.unwrap(tsFunc);
+        if (designatedTimestampIndex < 0 || cf == null || cf.getColumnIndex() != designatedTimestampIndex) {
             throw SqlException.$(position, "twap() requires the table's designated timestamp as the second argument");
         }
         if (!isBaseTimestampAscending) {
