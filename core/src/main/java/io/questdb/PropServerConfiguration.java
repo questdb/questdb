@@ -1560,11 +1560,17 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.sqlSortKeyPageSize = Math.max(1L, getLongSize(properties, env, PropertyKey.CAIRO_SQL_SORT_KEY_PAGE_SIZE, 128 * 1024));
             this.sqlSortKeyMaxBytes = getLongSize(properties, env, PropertyKey.CAIRO_SQL_SORT_KEY_MAX_BYTES,
                     deriveMaxBytesDefault(properties, env, PropertyKey.CAIRO_SQL_SORT_KEY_MAX_PAGES, this.sqlSortKeyPageSize));
+            warnIfMaxBytesBelowPageSize(properties, env,
+                    PropertyKey.CAIRO_SQL_SORT_KEY_MAX_BYTES, this.sqlSortKeyMaxBytes,
+                    PropertyKey.CAIRO_SQL_SORT_KEY_PAGE_SIZE, this.sqlSortKeyPageSize);
             this.sqlSortKeyMaterializationThreshold = getInt(properties, env, PropertyKey.CAIRO_SQL_SORT_KEY_MATERIALIZATION_THRESHOLD, 3);
             this.sqlSortEncodedParallelThreshold = getLong(properties, env, PropertyKey.CAIRO_SQL_SORT_ENCODED_PARALLEL_THRESHOLD, 1_024_000);
             this.sqlSortLightValuePageSize = Math.max(1L, getLongSize(properties, env, PropertyKey.CAIRO_SQL_SORT_LIGHT_VALUE_PAGE_SIZE, 128 * 1024));
             this.sqlSortLightValueMaxBytes = getLongSize(properties, env, PropertyKey.CAIRO_SQL_SORT_LIGHT_VALUE_MAX_BYTES,
                     deriveMaxBytesDefault(properties, env, PropertyKey.CAIRO_SQL_SORT_LIGHT_VALUE_MAX_PAGES, this.sqlSortLightValuePageSize));
+            warnIfMaxBytesBelowPageSize(properties, env,
+                    PropertyKey.CAIRO_SQL_SORT_LIGHT_VALUE_MAX_BYTES, this.sqlSortLightValueMaxBytes,
+                    PropertyKey.CAIRO_SQL_SORT_LIGHT_VALUE_PAGE_SIZE, this.sqlSortLightValuePageSize);
             this.sqlHashJoinValuePageSize = getIntSize(properties, env, PropertyKey.CAIRO_SQL_HASH_JOIN_VALUE_PAGE_SIZE, 16777216);
             this.sqlHashJoinValueMaxPages = getIntSize(properties, env, PropertyKey.CAIRO_SQL_HASH_JOIN_VALUE_MAX_PAGES, Integer.MAX_VALUE);
             this.sqlLatestByRowCount = getInt(properties, env, PropertyKey.CAIRO_SQL_LATEST_BY_ROW_COUNT, 1000);
@@ -1576,6 +1582,9 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.sqlSortValuePageSize = Math.max(1, getIntSize(properties, env, PropertyKey.CAIRO_SQL_SORT_VALUE_PAGE_SIZE, 16777216));
             this.sqlSortValueMaxBytes = getLongSize(properties, env, PropertyKey.CAIRO_SQL_SORT_VALUE_MAX_BYTES,
                     deriveMaxBytesDefault(properties, env, PropertyKey.CAIRO_SQL_SORT_VALUE_MAX_PAGES, this.sqlSortValuePageSize));
+            warnIfMaxBytesBelowPageSize(properties, env,
+                    PropertyKey.CAIRO_SQL_SORT_VALUE_MAX_BYTES, this.sqlSortValueMaxBytes,
+                    PropertyKey.CAIRO_SQL_SORT_VALUE_PAGE_SIZE, this.sqlSortValuePageSize);
             this.workStealTimeoutNanos = getNanos(properties, env, PropertyKey.CAIRO_WORK_STEAL_TIMEOUT_NANOS, 10_000);
             this.parallelIndexingEnabled = getBoolean(properties, env, PropertyKey.CAIRO_PARALLEL_INDEXING_ENABLED, true);
             this.postingIndexAutoIncludeTimestamp = getBoolean(properties, env, PropertyKey.CAIRO_POSTING_INDEX_AUTO_INCLUDE_TIMESTAMP, true);
@@ -1755,6 +1764,9 @@ public class PropServerConfiguration implements ServerConfiguration {
             int sqlWindowStoreMaxPages = getInt(properties, env, PropertyKey.CAIRO_SQL_ANALYTIC_STORE_MAX_PAGES, Integer.MAX_VALUE);
             this.sqlWindowStoreMaxPages = getInt(properties, env, PropertyKey.CAIRO_SQL_WINDOW_STORE_MAX_PAGES, sqlWindowStoreMaxPages);
             this.sqlWindowCacheMaxBytes = getLongSize(properties, env, PropertyKey.CAIRO_SQL_WINDOW_CACHE_MAX_BYTES, Long.MAX_VALUE);
+            warnIfMaxBytesBelowPageSize(properties, env,
+                    PropertyKey.CAIRO_SQL_WINDOW_CACHE_MAX_BYTES, this.sqlWindowCacheMaxBytes,
+                    PropertyKey.CAIRO_SQL_WINDOW_STORE_PAGE_SIZE, this.sqlWindowStorePageSize);
             // Resolve the CachedWindow record-store cap. Two legacy keys can cap the same RecordArray:
             // the new byte-denominated cairo.sql.window.cache.max.bytes, and the older page-denominated
             // cairo.sql.window.store.max.pages (whose own alias is cairo.sql.analytic.store.max.pages
@@ -1779,11 +1791,17 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.sqlWindowRowIdMaxBytes = getLongSize(properties, env, PropertyKey.CAIRO_SQL_WINDOW_ROWID_MAX_BYTES,
                     deriveMaxBytesDefault(properties, env, PropertyKey.CAIRO_SQL_WINDOW_ROWID_MAX_PAGES,
                             PropertyKey.CAIRO_SQL_ANALYTIC_ROWID_MAX_PAGES, this.sqlWindowRowIdPageSize));
+            warnIfMaxBytesBelowPageSize(properties, env,
+                    PropertyKey.CAIRO_SQL_WINDOW_ROWID_MAX_BYTES, this.sqlWindowRowIdMaxBytes,
+                    PropertyKey.CAIRO_SQL_WINDOW_ROWID_PAGE_SIZE, this.sqlWindowRowIdPageSize);
             int sqlWindowTreeKeyPageSize = Numbers.ceilPow2(getIntSize(properties, env, PropertyKey.CAIRO_SQL_ANALYTIC_TREE_PAGE_SIZE, 512 * 1024));
             this.sqlWindowTreeKeyPageSize = Math.max(1, Numbers.ceilPow2(getIntSize(properties, env, PropertyKey.CAIRO_SQL_WINDOW_TREE_PAGE_SIZE, sqlWindowTreeKeyPageSize)));
             this.sqlWindowTreeKeyMaxBytes = getLongSize(properties, env, PropertyKey.CAIRO_SQL_WINDOW_TREE_MAX_BYTES,
                     deriveMaxBytesDefault(properties, env, PropertyKey.CAIRO_SQL_WINDOW_TREE_MAX_PAGES,
                             PropertyKey.CAIRO_SQL_ANALYTIC_TREE_MAX_PAGES, this.sqlWindowTreeKeyPageSize));
+            warnIfMaxBytesBelowPageSize(properties, env,
+                    PropertyKey.CAIRO_SQL_WINDOW_TREE_MAX_BYTES, this.sqlWindowTreeKeyMaxBytes,
+                    PropertyKey.CAIRO_SQL_WINDOW_TREE_PAGE_SIZE, this.sqlWindowTreeKeyPageSize);
             this.sqlIntervalMaxBracketDepth = getInt(properties, env, PropertyKey.CAIRO_SQL_INTERVAL_MAX_BRACKET_DEPTH, 8);
             this.sqlIntervalMaxIntervalsAfterMerge = getInt(properties, env, PropertyKey.CAIRO_SQL_INTERVAL_MAX_INTERVALS_AFTER_MERGE, 1024);
             this.sqlIntervalIncrementalMergeThreshold = getInt(properties, env, PropertyKey.CAIRO_SQL_INTERVAL_INCREMENTAL_MERGE_THRESHOLD, 256);
@@ -2683,6 +2701,29 @@ public class PropServerConfiguration implements ServerConfiguration {
             } else {
                 log.advisory().$(validation.message).$();
             }
+        }
+    }
+
+    // Tree/sort heaps and the CachedWindow record store all share the same convention:
+    // the heap starts at one `*.page.size` and doubles until it hits the configured cap.
+    // When the user-supplied cap is below the page size, the implementation silently floors
+    // the effective cap at one page (max(cap, pageSize)). The runtime LimitOverflowException
+    // then reports the floored value, not the user's setting, which is confusing. Surface the
+    // override at config time so the operator knows their (otherwise correct) value was
+    // silently raised.
+    private void warnIfMaxBytesBelowPageSize(
+            Properties properties,
+            @Nullable Map<String, String> env,
+            ConfigPropertyKey maxBytesKey,
+            long maxBytes,
+            ConfigPropertyKey pageSizeKey,
+            long pageSize
+    ) {
+        if (isPropertyExplicitlySet(properties, env, maxBytesKey) && maxBytes < pageSize) {
+            log.advisory().$("config: ").$(maxBytesKey.getPropertyPath()).$('=').$(maxBytes)
+                    .$(" is below ").$(pageSizeKey.getPropertyPath()).$('=').$(pageSize)
+                    .$("; effective cap will be floored at ").$(pageSize).$(" bytes (one page)")
+                    .$();
         }
     }
 

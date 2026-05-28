@@ -821,6 +821,30 @@ public class PropServerConfigurationTest {
     }
 
     @Test
+    public void testMaxBytesBelowPageSizeAccepted() throws Exception {
+        // The implementation floors each operator's effective cap at one *.page.size, so a
+        // *.max.bytes below the page size is silently raised at runtime. The config layer
+        // accepts the value (the floor produces a valid cap), and stores it verbatim in the
+        // field; an advisory log entry is emitted at init so the operator knows.
+        Properties properties = new Properties();
+        properties.setProperty("cairo.sql.sort.key.page.size", "128k");
+        properties.setProperty("cairo.sql.sort.key.max.bytes", "1024");
+        properties.setProperty("cairo.sql.window.store.page.size", "1m");
+        properties.setProperty("cairo.sql.window.cache.max.bytes", "100");
+        properties.setProperty("cairo.sql.window.tree.page.size", "512k");
+        properties.setProperty("cairo.sql.window.tree.max.bytes", "4096");
+
+        CairoConfiguration cairo = newPropServerConfiguration(properties).getCairoConfiguration();
+
+        Assert.assertEquals(1024L, cairo.getSqlSortKeyMaxBytes());
+        Assert.assertEquals(100L, cairo.getSqlWindowCacheMaxBytes());
+        Assert.assertEquals(4096L, cairo.getSqlWindowTreeKeyMaxBytes());
+        // CachedWindow resolved cap goes through Math.max(1L, bytes/pageSize), so it floors at
+        // 1 page even with the sub-page bytes value above.
+        Assert.assertEquals(1, cairo.getSqlWindowCacheMaxPagesResolved());
+    }
+
+    @Test
     public void testPageSizesClampedToOne() throws Exception {
         // A misconfigured *.page.size=0 must clamp to 1 rather than propagate a 0 into
         // downstream divisions (RecordTreeChain.derivePageBudget, EncodedSortRecordCursor,
