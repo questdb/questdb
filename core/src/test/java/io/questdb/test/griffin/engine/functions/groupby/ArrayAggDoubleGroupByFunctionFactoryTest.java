@@ -461,8 +461,8 @@ public class ArrayAggDoubleGroupByFunctionFactoryTest extends AbstractCairoTest 
         // The output of the inner scalar array_agg(D) flows into the outer
         // array array_agg(D[]) via the array variant's computeFirst/computeNext.
         // This exercises the cross-variant handoff: the outer reads the inner's
-        // BorrowedArray flyweight (allocator-backed render buffer) and copies
-        // its elements into its own pair buffer.
+        // DirectArray render output and copies its elements into its own pair
+        // buffer.
         // Use a single inner group so the test does not depend on hash GROUP BY
         // emission order. array_sum on the outer concatenated array is
         // order-independent.
@@ -655,7 +655,7 @@ public class ArrayAggDoubleGroupByFunctionFactoryTest extends AbstractCairoTest 
     public void testReAggregationViaArrayCount() throws Exception {
         // Forces array_agg's getArray() to be consumed by another array
         // function (array_count) inside an outer query, exercising the
-        // BorrowedArray-as-shape-descriptor handoff across the cursor boundary.
+        // rendered-array handoff across the cursor boundary.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tab (grp SYMBOL, val DOUBLE)");
             execute("""
@@ -939,10 +939,12 @@ public class ArrayAggDoubleGroupByFunctionFactoryTest extends AbstractCairoTest 
 
     @Test
     public void testSampleByFillValueRejectedNonKeyed() throws Exception {
-        // Non-keyed SAMPLE BY goes through SqlOptimiser.rewriteSampleBy which converts
-        // SAMPLE BY into GROUP BY + FillRangeRecordCursorFactory. The rewrite path must
-        // still validate that the aggregate supports VALUE fill, otherwise the query
-        // compiles and crashes at runtime when a gap triggers FillRangeRecord.getArray().
+        // Non-keyed SAMPLE BY FILL(value) is rewritten by SqlOptimiser into a base model
+        // with the fill list on baseModel.fillValues. SqlOptimiser.rewriteSelectClause0
+        // propagates that list to groupByModel.sampleByFill, and GroupByUtils
+        // .assembleGroupByFunctions checks each aggregate's getSampleByFlags() bitmask.
+        // array_agg omits SAMPLE_BY_FILL_VALUE, so the query is rejected at compile time
+        // rather than crashing when a gap is hit at runtime.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tab (ts TIMESTAMP, val DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
@@ -962,10 +964,9 @@ public class ArrayAggDoubleGroupByFunctionFactoryTest extends AbstractCairoTest 
     @Test
     public void testSampleByFromToFillNull() throws Exception {
         // FROM/TO + FILL(NULL) extends the result range beyond the data window, forcing
-        // FillRangeRecordCursorFactory to emit synthetic null buckets at the front and
-        // back. Pins FillRangeRecord.getArray() returning ArrayConstant.NULL for the
-        // synthetic rows -- the array() override on FillRangeRecord must hand back null
-        // rather than the underlying function value when a bucket has no source row.
+        // the fill path to emit synthetic null buckets at the front and back. Pins that
+        // array_agg returns null in those synthetic buckets rather than reaching into
+        // the underlying aggregate state when a bucket has no source row.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tab (ts TIMESTAMP, val DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""

@@ -471,13 +471,13 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testNonKeyedSampleByFillValuePassesValidation() throws Exception {
-        // Non-keyed SAMPLE BY with FILL(value) goes through SqlOptimiser.rewriteSampleBy,
-        // which converts SAMPLE BY into GROUP BY + SampleByFillValueRecordCursorFactory and
-        // clears the inner sample-by clause. SqlCodeGenerator.findRewrittenSampleByFill walks
-        // the nested-model chain (gated on getFillStride() != null) to recover the fill list
-        // and feeds it to GroupByUtils.assembleGroupByFunctions for fill-mode validation.
-        // This regression test guards against breakage where that recovery path could
-        // spuriously reject standard aggregates that legitimately support FILL(VALUE).
+        // Non-keyed SAMPLE BY with FILL(value) is rewritten by SqlOptimiser into a base
+        // model with the fill list on baseModel.fillValues, and the inner sample-by
+        // clause is cleared. SqlOptimiser.rewriteSelectClause0 then propagates that list
+        // to groupByModel.sampleByFill so GroupByUtils.assembleGroupByFunctions can
+        // validate each aggregate against its fill token. This regression test guards
+        // against breakage where that propagation could spuriously reject standard
+        // aggregates that legitimately support FILL(VALUE).
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tab (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
