@@ -157,6 +157,151 @@ public class SortedRunsMergeTest extends AbstractCairoTest {
         });
     }
 
+    /**
+     * 17 batches arrive with (firstKey, lastKey) ties on every pair: a wide
+     * batch [k, k, k+5] arrives before the narrow [k, k, k] that preceded
+     * it in scan order. With n above the insertion-sort threshold, the
+     * mergesort branch's lastKey tie-break must put narrow ahead of wide
+     * so the concatenated buffer is non-decreasing.
+     */
+    @Test
+    public void testCompactInPlaceMergeSortKeyTies() throws Exception {
+        assertMemoryLeak(() -> {
+            try (GroupByAllocator allocator = GroupByAllocatorFactory.createAllocator(configuration)) {
+                final int pairs = 8;
+                final int n = pairs * 2 + 1;
+                final int entriesPerBatch = 3;
+                final long[] arrivalKeys = new long[n * entriesPerBatch];
+                final long[] arrivalDesc = new long[n];
+                for (int p = 0; p < pairs; p++) {
+                    final long k = p * 10L;
+                    final int wide = 2 * p;
+                    final int wideBase = wide * entriesPerBatch;
+                    arrivalKeys[wideBase] = k;
+                    arrivalKeys[wideBase + 1] = k;
+                    arrivalKeys[wideBase + 2] = k + 5;
+                    arrivalDesc[wide] = wideBase;
+                    final int narrow = 2 * p + 1;
+                    final int narrowBase = narrow * entriesPerBatch;
+                    arrivalKeys[narrowBase] = k;
+                    arrivalKeys[narrowBase + 1] = k;
+                    arrivalKeys[narrowBase + 2] = k;
+                    arrivalDesc[narrow] = narrowBase;
+                }
+                final long singleKey = pairs * 10L;
+                final int singleBase = (n - 1) * entriesPerBatch;
+                arrivalKeys[singleBase] = singleKey;
+                arrivalKeys[singleBase + 1] = singleKey;
+                arrivalKeys[singleBase + 2] = singleKey;
+                arrivalDesc[n - 1] = singleBase;
+
+                LongList scratch = new LongList(16);
+                long entries = allocEntries(allocator, arrivalKeys);
+                long desc = allocDescriptors(allocator, arrivalDesc);
+                SortedRunsMerge.compactInPlace(allocator, scratch, entries, (long) n * entriesPerBatch, desc, n, ENTRY_STRIDE);
+
+                final long[] expectedKeys = new long[n * entriesPerBatch];
+                int idx = 0;
+                for (int p = 0; p < pairs; p++) {
+                    final long k = p * 10L;
+                    expectedKeys[idx++] = k;
+                    expectedKeys[idx++] = k;
+                    expectedKeys[idx++] = k;
+                    expectedKeys[idx++] = k;
+                    expectedKeys[idx++] = k;
+                    expectedKeys[idx++] = k + 5;
+                }
+                expectedKeys[idx++] = singleKey;
+                expectedKeys[idx++] = singleKey;
+                expectedKeys[idx] = singleKey;
+                assertEntries(entries, expectedKeys);
+
+                final long[] expectedDesc = new long[n];
+                for (int i = 0; i < n; i++) {
+                    expectedDesc[i] = (long) i * entriesPerBatch;
+                }
+                assertDescriptors(desc, expectedDesc);
+            }
+        });
+    }
+
+    /**
+     * 17 batches arrive in reverse key order. With n above the
+     * insertion-sort threshold, {@link SortedRunsMerge#compactInPlace}
+     * takes the bottom-up mergesort branch to restore ascending key order.
+     */
+    @Test
+    public void testCompactInPlaceMergeSortReversed() throws Exception {
+        assertMemoryLeak(() -> {
+            try (GroupByAllocator allocator = GroupByAllocatorFactory.createAllocator(configuration)) {
+                final int n = 17;
+                final long[] arrivalKeys = new long[n * 2];
+                final long[] arrivalDesc = new long[n];
+                for (int i = 0; i < n; i++) {
+                    final long k = (n - 1 - i) * 10L;
+                    arrivalKeys[i * 2] = k;
+                    arrivalKeys[i * 2 + 1] = k + 1;
+                    arrivalDesc[i] = i * 2L;
+                }
+                LongList scratch = new LongList(16);
+                long entries = allocEntries(allocator, arrivalKeys);
+                long desc = allocDescriptors(allocator, arrivalDesc);
+                SortedRunsMerge.compactInPlace(allocator, scratch, entries, n * 2L, desc, n, ENTRY_STRIDE);
+
+                final long[] expectedKeys = new long[n * 2];
+                final long[] expectedDesc = new long[n];
+                for (int i = 0; i < n; i++) {
+                    final long k = i * 10L;
+                    expectedKeys[i * 2] = k;
+                    expectedKeys[i * 2 + 1] = k + 1;
+                    expectedDesc[i] = i * 2L;
+                }
+                assertEntries(entries, expectedKeys);
+                assertDescriptors(desc, expectedDesc);
+            }
+        });
+    }
+
+    /**
+     * 32 batches arrive in a fixed shuffled order, forcing the bottom-up
+     * mergesort through all log2(32) = 5 ping-pong rounds.
+     */
+    @Test
+    public void testCompactInPlaceMergeSortShuffled() throws Exception {
+        assertMemoryLeak(() -> {
+            try (GroupByAllocator allocator = GroupByAllocatorFactory.createAllocator(configuration)) {
+                final int n = 32;
+                final int[] perm = {
+                        17, 5, 28, 12, 0, 9, 23, 31, 6, 19, 14, 26, 2, 11, 21, 8,
+                        30, 4, 16, 25, 7, 13, 29, 1, 22, 10, 27, 3, 15, 20, 24, 18
+                };
+                final long[] arrivalKeys = new long[n * 2];
+                final long[] arrivalDesc = new long[n];
+                for (int i = 0; i < n; i++) {
+                    final long k = perm[i] * 10L;
+                    arrivalKeys[i * 2] = k;
+                    arrivalKeys[i * 2 + 1] = k + 1;
+                    arrivalDesc[i] = i * 2L;
+                }
+                LongList scratch = new LongList(16);
+                long entries = allocEntries(allocator, arrivalKeys);
+                long desc = allocDescriptors(allocator, arrivalDesc);
+                SortedRunsMerge.compactInPlace(allocator, scratch, entries, n * 2L, desc, n, ENTRY_STRIDE);
+
+                final long[] expectedKeys = new long[n * 2];
+                final long[] expectedDesc = new long[n];
+                for (int i = 0; i < n; i++) {
+                    final long k = i * 10L;
+                    expectedKeys[i * 2] = k;
+                    expectedKeys[i * 2 + 1] = k + 1;
+                    expectedDesc[i] = i * 2L;
+                }
+                assertEntries(entries, expectedKeys);
+                assertDescriptors(desc, expectedDesc);
+            }
+        });
+    }
+
     @Test
     public void testCompactInPlaceOrderedBatchesIsNoOp() throws Exception {
         assertMemoryLeak(() -> {
