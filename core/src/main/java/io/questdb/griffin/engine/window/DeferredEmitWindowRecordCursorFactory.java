@@ -438,6 +438,10 @@ public class DeferredEmitWindowRecordCursorFactory extends AbstractRecordCursorF
             // initialization step below throws. The caller (factory.getCursor) does not free
             // baseCursor on its own.
             this.baseCursor = baseCursor;
+            // baseCursor.getRecordB() typically returns a cached B record; calling it on every
+            // of() is cheap. The reference is reused across toTop() because toTop() resets ringHead
+            // but does not re-call of(), so the B record we hold remains valid against the same
+            // baseCursor.
             this.baseRecordForEmit = baseCursor.getRecordB();
             this.circuitBreaker = executionContext.getCircuitBreaker();
             if (!isOpen) {

@@ -9400,6 +9400,16 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             dismissOrder = true;
                         }
                     }
+                    // Invariant: when Phase 4 normalisation has fired, the OVER ORDER BY direction
+                    // on the cloned AST is the opposite of the original. Downstream init paths read
+                    // the original direction via ac.getOrderByDirection() / qc.getOrderByDirection(),
+                    // which would now disagree with the parsed function's effective ordering. The
+                    // only safe consumer of the normalised function is the streaming cursor, which
+                    // requires dismissOrder=true to skip comparator-driven sorting. If we ever land
+                    // here with normalisation set and dismissOrder still false, the function would
+                    // run with a stale direction on the cached path.
+                    assert !leadLagNormalised || dismissOrder
+                            : "Phase 4 normalisation requires dismissOrder; otherwise the swapped function would receive the original (now mismatched) OVER ORDER BY direction";
 
                     executionContext.configureWindowContext(
                             partitionByRecord,
@@ -9543,15 +9553,18 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         }
                     }
                 }
-                // Cost-model heuristic: only dispatch to streaming when there's a real win to be had.
-                // Phase 4 normalisation firing means cached would build a sort tree to satisfy the
-                // OVER ORDER BY; streaming eliminates that tree. When every window function is
-                // positive-lookahead (no LAG), cached must materialise the full input to look ahead,
-                // and streaming avoids the materialisation. In all other cases (e.g. LAG-only with
-                // OVER ORDER BY matching base scan), cached's natural-scan path is already optimal
-                // and streaming's per-row overhead (map lookup, slot allocation, recordAt) is pure
-                // tax.
-                boolean costModelFavoursStreaming = normalisationFiredAnywhere
+                // Shape-gate: only dispatch to streaming when the cached path would do measurably
+                // worse on this query shape. This is a structural check, not a row-count cost model.
+                // - Phase 4 normalisation firing means cached would build a sort tree to satisfy the
+                //   opposing OVER ORDER BY; streaming eliminates that tree.
+                // - When every window function is positive-lookahead (no LAG), cached must
+                //   materialise the full input to look ahead; streaming avoids the materialisation.
+                // - In all other cases (e.g. LAG-only with OVER ORDER BY matching base scan),
+                //   cached's natural-scan path is already optimal and streaming's per-row overhead
+                //   (map lookup, slot allocation, recordAt) is pure tax.
+                // Worth tightening into a real cost model later (e.g. a min-rowcount guard for the
+                // pure-LEAD branch on tiny tables); for now the shape check is the entire gate.
+                boolean streamingDispatchEligible = normalisationFiredAnywhere
                         || lookaheadFunctionCount == windowFunctionCount;
                 // The cursor maintains a single per-partition map keyed by ONE window expression's
                 // PARTITION BY clause. All window functions in the query must agree on partition
@@ -9589,7 +9602,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         && allWindowsFit8Bytes
                         && (long) ringCap * lookaheadFunctionCount <= 64
                         && base.recordCursorSupportsRandomAccess()
-                        && costModelFavoursStreaming
+                        && streamingDispatchEligible
                         && allWindowsSharePartitionBy) {
                     // The lookahead window function has already parsed its PARTITION BY clause in the
                     // first pass above. Reuse those Function instances directly for the cursor's

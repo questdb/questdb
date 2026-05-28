@@ -207,4 +207,74 @@ public class StreamingLeadNormalisationTest extends AbstractCairoTest {
             assertQueryNoLeakCheck(expected, sql, null, false, true);
         });
     }
+
+    @Test
+    public void testLagDescNormalisedWithLargerOffset() throws Exception {
+        // Larger offset (k=3) exercises the same Phase 4 AST swap on a non-trivial lookahead. LAG(x, 3)
+        // OVER (ORDER BY ts DESC) equals LEAD(x, 3) OVER (ORDER BY ts ASC) value-wise.
+        assertMemoryLeak(() -> {
+            execute("create table t (x long, ts timestamp) timestamp(ts) partition by day");
+            execute(
+                    "insert into t values " +
+                            "(10, 0), (20, 1000), (30, 2000), (40, 3000), (50, 4000), (60, 5000)"
+            );
+
+            assertQueryNoLeakCheck(
+                    """
+                            x\tlx
+                            10\t40
+                            20\t50
+                            30\t60
+                            40\tnull
+                            50\tnull
+                            60\tnull
+                            """,
+                    "select x, lag(x, 3) over (order by ts desc) as lx from t",
+                    null, false, true
+            );
+        });
+    }
+
+    @Test
+    public void testLagDescNormalisedWithNonNullDefault() throws Exception {
+        // Non-NULL default value flows through the Phase 4 swap. The default applies to the rows whose
+        // lookahead position falls past EOF (here: top three rows after the swap to LEAD ASC).
+        assertMemoryLeak(() -> {
+            execute("create table t (x long, ts timestamp) timestamp(ts) partition by day");
+            execute("insert into t values (10, 0), (20, 1000), (30, 2000)");
+
+            assertQueryNoLeakCheck(
+                    """
+                            x\tlx
+                            10\t20
+                            20\t30
+                            30\t99
+                            """,
+                    "select x, lag(x, 1, 99::long) over (order by ts desc) as lx from t",
+                    null, false, true
+            );
+        });
+    }
+
+    @Test
+    public void testLagDescNormalisedWithCompoundArgument() throws Exception {
+        // Compound argument expression (x + 1) forces the AST deep-clone to walk an args subtree, not
+        // just a leaf. The swap must rebuild the function on the cloned AST without mutating the
+        // original subtree.
+        assertMemoryLeak(() -> {
+            execute("create table t (x long, ts timestamp) timestamp(ts) partition by day");
+            execute("insert into t values (10, 0), (20, 1000), (30, 2000)");
+
+            assertQueryNoLeakCheck(
+                    """
+                            x\tlx
+                            10\t21
+                            20\t31
+                            30\tnull
+                            """,
+                    "select x, lag(x + 1, 1) over (order by ts desc) as lx from t",
+                    null, false, true
+            );
+        });
+    }
 }

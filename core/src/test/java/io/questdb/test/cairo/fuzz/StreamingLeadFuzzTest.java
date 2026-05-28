@@ -150,6 +150,40 @@ public class StreamingLeadFuzzTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testEdgeCaseLimitWithoutOuterOrderBy() throws Exception {
+        // Bare LIMIT N without an outer ORDER BY: the streaming cursor emits in partition-major
+        // resolution order while the cached path emits in scan order, so the two paths can pick a
+        // different N rows. The contract documented in the PR description is that both result sets
+        // are correct *as multisets* — that is, every row each path returns is a valid LEAD result,
+        // they just may not agree on which N to return. We can't assert equivalence as a sorted
+        // multiset here because the multisets themselves differ; instead, run each path and assert
+        // both produce the requested row count with no errors. A regression that drops rows or
+        // crashes on this shape would still fire.
+        assertMemoryLeak(() -> {
+            execute("create table t (x long, sym symbol, ts timestamp) timestamp(ts) partition by day");
+            execute(
+                    "insert into t select x, ('S' || (x % 5))::symbol as sym, (1000_000L * x)::timestamp from long_sequence(40)"
+            );
+            String sql = "select x, sym, lead(x, 1) over (partition by sym) as lx from t limit 7";
+
+            io.questdb.std.str.StringSink cachedSink = new io.questdb.std.str.StringSink();
+            io.questdb.test.AbstractCairoTest.staticOverrides.setProperty(io.questdb.PropertyKey.CAIRO_SQL_WINDOW_STREAMING_LEAD_ENABLED, "false");
+            engine.print(sql, cachedSink, sqlExecutionContext);
+
+            io.questdb.std.str.StringSink streamingSink = new io.questdb.std.str.StringSink();
+            io.questdb.test.AbstractCairoTest.staticOverrides.setProperty(io.questdb.PropertyKey.CAIRO_SQL_WINDOW_STREAMING_LEAD_ENABLED, "true");
+            engine.print(sql, streamingSink, sqlExecutionContext);
+
+            // 1 header row + 7 data rows expected in each.
+            int cachedLineCount = cachedSink.toString().split("\n", -1).length;
+            int streamingLineCount = streamingSink.toString().split("\n", -1).length;
+            // Trailing newline produces an empty trailing element after split(-1); both paths add it.
+            org.junit.Assert.assertEquals("cached row count for bare LIMIT", 1 + 7 + 1, cachedLineCount);
+            org.junit.Assert.assertEquals("streaming row count for bare LIMIT", 1 + 7 + 1, streamingLineCount);
+        });
+    }
+
+    @Test
     public void testEdgeCaseLargeLookahead() throws Exception {
         // Single-function LEAD exercising the pending-bit-mask layout at and below its upper bound:
         // k=63 gives ringCapacity=64 (each slot consumes one of the 64 bits), the maximum supported.

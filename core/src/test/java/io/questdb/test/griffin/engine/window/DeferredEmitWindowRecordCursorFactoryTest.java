@@ -170,6 +170,73 @@ public class DeferredEmitWindowRecordCursorFactoryTest extends AbstractCairoTest
     }
 
     @Test
+    public void testMixedZeroAndPositiveLookaheadAccepted() throws Exception {
+        // Mixed bucket: one zero-lookahead (LAG-style, pass1) function plus one positive-lookahead
+        // (LEAD-style, streamingBackfill) function in the same factory. The cursor must route LAG
+        // through pass1 and LEAD through streamingBackfill; both columns end up in the same output
+        // slot.
+        assertMemoryLeak(() -> {
+            execute("create table t (x long, ts timestamp) timestamp(ts) partition by day");
+            execute("insert into t values (10, 0), (20, 1000), (30, 2000), (40, 3000), (50, 4000)");
+
+            RecordCursorFactory base;
+            try (io.questdb.griffin.SqlCompiler compiler = engine.getSqlCompiler()) {
+                base = compiler.compile("select x from t", sqlExecutionContext).getRecordCursorFactory();
+            }
+
+            GenericRecordMetadata metadata = new GenericRecordMetadata();
+            metadata.add(new TableColumnMetadata("x", ColumnType.LONG));
+            metadata.add(new TableColumnMetadata("lag_x", ColumnType.LONG));
+            metadata.add(new TableColumnMetadata("lead_x", ColumnType.LONG));
+
+            ObjList<Function> functions = new ObjList<>();
+            functions.add(LongColumn.newInstance(0));
+            TestZeroLookaheadLagFunction lag = new TestZeroLookaheadLagFunction(LongColumn.newInstance(0));
+            lag.setColumnIndex(1);
+            functions.add(lag);
+            TestStreamingLeadLongFunction lead = new TestStreamingLeadLongFunction(LongColumn.newInstance(0), 1);
+            lead.setColumnIndex(2);
+            functions.add(lead);
+
+            try (RecordCursorFactory factory = new DeferredEmitWindowRecordCursorFactory(
+                    base, metadata, functions, null, null, null, 1_048_576)) {
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    Record rec = cursor.getRecord();
+
+                    // LAG writes the current row's x (zero-lookahead, pass1 fills the slot on the way in).
+                    // LEAD(1) pairs each row with the next row's x; row 50 has no successor and flushes NULL.
+                    Assert.assertTrue(cursor.hasNext());
+                    Assert.assertEquals(10L, rec.getLong(0));
+                    Assert.assertEquals(10L, rec.getLong(1));
+                    Assert.assertEquals(20L, rec.getLong(2));
+
+                    Assert.assertTrue(cursor.hasNext());
+                    Assert.assertEquals(20L, rec.getLong(0));
+                    Assert.assertEquals(20L, rec.getLong(1));
+                    Assert.assertEquals(30L, rec.getLong(2));
+
+                    Assert.assertTrue(cursor.hasNext());
+                    Assert.assertEquals(30L, rec.getLong(0));
+                    Assert.assertEquals(30L, rec.getLong(1));
+                    Assert.assertEquals(40L, rec.getLong(2));
+
+                    Assert.assertTrue(cursor.hasNext());
+                    Assert.assertEquals(40L, rec.getLong(0));
+                    Assert.assertEquals(40L, rec.getLong(1));
+                    Assert.assertEquals(50L, rec.getLong(2));
+
+                    Assert.assertTrue(cursor.hasNext());
+                    Assert.assertEquals(50L, rec.getLong(0));
+                    Assert.assertEquals(50L, rec.getLong(1));
+                    Assert.assertEquals(Numbers.LONG_NULL, rec.getLong(2));
+
+                    Assert.assertFalse(cursor.hasNext());
+                }
+            }
+        });
+    }
+
+    @Test
     public void testRejectsAllWindowFunctionsZeroLookahead() throws Exception {
         // Phase 6 still requires AT LEAST ONE positive-lookahead function. If all window functions
         // have lookahead=0, the factory rejects (the planner would route through
@@ -435,6 +502,48 @@ public class DeferredEmitWindowRecordCursorFactoryTest extends AbstractCairoTest
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             // Unused in this test.
+        }
+    }
+
+    /**
+     * LAG-style window function for the mixed-lookahead acceptance test: zero lookahead, but
+     * actually writes the current row's value into its slot via {@code pass1}. The cursor calls
+     * {@code pass1} on every enqueue so the slot is filled by the time the LEAD bit completes.
+     */
+    private static final class TestZeroLookaheadLagFunction extends BaseWindowFunction implements WindowFunction {
+
+        TestZeroLookaheadLagFunction(Function arg) {
+            super(arg);
+        }
+
+        @Override
+        public int getLookahead() {
+            return 0;
+        }
+
+        @Override
+        public long getLong(Record rec) {
+            throw new UnsupportedOperationException("TestZeroLookaheadLagFunction.getLong unexpected");
+        }
+
+        @Override
+        public String getName() {
+            return "test_zero_lookahead_lag";
+        }
+
+        @Override
+        public int getPassCount() {
+            return ZERO_PASS;
+        }
+
+        @Override
+        public int getType() {
+            return ColumnType.LONG;
+        }
+
+        @Override
+        public void pass1(Record record, long recordOffset, WindowSPI spi) {
+            Unsafe.getUnsafe().putLong(spi.getAddress(recordOffset, columnIndex), arg.getLong(record));
         }
     }
 }
