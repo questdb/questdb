@@ -117,6 +117,9 @@ public class DeferredEmitWindowRecordCursorFactory extends AbstractRecordCursorF
     private final boolean isSingleLead;
     // LAG (immediate-emit) functions in column order.
     private final ObjList<WindowFunction> lagFunctions;
+    // Mirror of lagFunctions as a final array. Same JIT-range-analysis motivation as
+    // leadFunctionsArr; the LAG dispatch loop in processBaseRow runs once per base row.
+    private final WindowFunction[] lagFunctionsArr;
     private final int leadCount;
     // LEAD (deferred-emit) functions in column order. leadOffsets[i] is the lookahead of leadFunctions[i].
     private final ObjList<WindowFunction> leadFunctions;
@@ -216,6 +219,10 @@ public class DeferredEmitWindowRecordCursorFactory extends AbstractRecordCursorF
         this.functions = functions;
         this.lagFunctions = lagFns;
         this.leadFunctions = leadFns;
+        this.lagFunctionsArr = new WindowFunction[lagFns.size()];
+        for (int i = 0, n = lagFns.size(); i < n; i++) {
+            this.lagFunctionsArr[i] = lagFns.getQuick(i);
+        }
         this.maxLookahead = maxLA;
         this.ringCapacity = ringCap;
         this.leadCount = lCount;
@@ -742,9 +749,12 @@ public class DeferredEmitWindowRecordCursorFactory extends AbstractRecordCursorF
             // emit or initial state).
             long newSlotMask = isSingleLead ? 1L << ringTail : perSlotLeadMask << (ringTail * leadCount);
             pendingFilled &= ~newSlotMask;
-            // LAG functions write their values directly to the new slot.
-            for (int i = 0, n = lagFunctions.size(); i < n; i++) {
-                lagFunctions.getQuick(i).pass1(baseRow, newSlot, this);
+            // LAG functions write their values directly to the new slot via pass1. Eliminating the
+            // redundant per-LAG hash probe (the cursor has already resolved the partition) is
+            // tracked as a follow-up: it needs the cursor's MapValue layout to grow per-LAG slots
+            // and a streamingPass1 SPI extension, neither small enough to land in this PR safely.
+            for (int i = 0, n = lagFunctionsArr.length; i < n; i++) {
+                lagFunctionsArr[i].pass1(baseRow, newSlot, this);
             }
             ringTail++;
             if (ringTail == ringCapacity) {
