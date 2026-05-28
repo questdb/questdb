@@ -85,6 +85,66 @@ public class SortedRunsMergeTest extends AbstractCairoTest {
         });
     }
 
+    /**
+     * Mirrors production usage in {@code TwapGroupByFunction} and
+     * {@code SparklineGroupByFunction}: build the descriptor buffer through
+     * {@link SortedRunsMerge#appendBatchStart}, letting it grow past
+     * {@code DESC_INITIAL_CAPACITY = 8}, then hand the grown buffer to
+     * {@link SortedRunsMerge#compactInPlace}. With 12 batches the buffer
+     * doubles once to capacity 16, so {@code compactInPlace} reads the
+     * descriptors out of the post-{@code realloc} pointer.
+     */
+    @Test
+    public void testCompactInPlaceAfterDescriptorGrowth() throws Exception {
+        assertMemoryLeak(() -> {
+            try (
+                    GroupByAllocator allocator = GroupByAllocatorFactory.createAllocator(configuration);
+                    SimpleMapValue mapValue = new SimpleMapValue(3)
+            ) {
+                mapValue.putLong(0, 0); // descPtr
+                mapValue.putLong(1, 0); // descCount
+                mapValue.putLong(2, 0); // descCapacity
+
+                final int n = 12;
+                final int entriesPerBatch = 2;
+                // First call seeds two descriptors (batch 0 at offset 0,
+                // batch 1 at entriesPerBatch); subsequent calls append one
+                // descriptor each. The 8th call triggers the doubling growth.
+                SortedRunsMerge.appendBatchStart(allocator, mapValue, 0, entriesPerBatch);
+                for (int i = 2; i < n; i++) {
+                    SortedRunsMerge.appendBatchStart(allocator, mapValue, 0, (long) i * entriesPerBatch);
+                }
+                Assert.assertEquals(n, mapValue.getLong(1));
+                Assert.assertEquals(16, mapValue.getLong(2));
+
+                // Arrange the n batches in reverse key order, forcing
+                // compactInPlace to sort rather than take the isAscending
+                // early return.
+                final long[] arrivalKeys = new long[n * entriesPerBatch];
+                for (int i = 0; i < n; i++) {
+                    final long k = (n - 1 - i) * 10L;
+                    arrivalKeys[i * entriesPerBatch] = k;
+                    arrivalKeys[i * entriesPerBatch + 1] = k + 1;
+                }
+                LongList scratch = new LongList(16);
+                long entries = allocEntries(allocator, arrivalKeys);
+                long desc = mapValue.getLong(0);
+                SortedRunsMerge.compactInPlace(allocator, scratch, entries, (long) n * entriesPerBatch, desc, n, ENTRY_STRIDE);
+
+                final long[] expectedKeys = new long[n * entriesPerBatch];
+                final long[] expectedDesc = new long[n];
+                for (int i = 0; i < n; i++) {
+                    final long k = i * 10L;
+                    expectedKeys[i * entriesPerBatch] = k;
+                    expectedKeys[i * entriesPerBatch + 1] = k + 1;
+                    expectedDesc[i] = (long) i * entriesPerBatch;
+                }
+                assertEntries(entries, expectedKeys);
+                assertDescriptors(desc, expectedDesc);
+            }
+        });
+    }
+
     @Test
     public void testCompactInPlaceConflatedFrames() throws Exception {
         // Three frames appended out of order: [0,1], then [100,101], then
