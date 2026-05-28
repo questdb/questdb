@@ -1188,7 +1188,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     }
 
     @SuppressWarnings("unchecked")
-    private static <T extends Function> @Nullable ObjList<ObjList<T>> extractWorkerFunctionsConditionally(
+    private static <T extends Function> @Nullable ObjList<ObjList<T>> extractWorkerFunctionsByFlag(
             ObjList<Function> projectionFunctions,
             IntList projectionFunctionFlags,
             ObjList<ObjList<Function>> perThreadFunctions,
@@ -4504,7 +4504,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 );
 
                 // Extract per-worker key functions (for expression keys)
-                perWorkerKeyFunctions = extractWorkerFunctionsConditionally(
+                perWorkerKeyFunctions = extractWorkerFunctionsByFlag(
                         tempInnerProjectionFunctions,
                         projectionFunctionFlags,
                         perWorkerInnerProjectionFunctions,
@@ -7191,7 +7191,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     innerMetadata,
                     projectionFunctionFlags
             );
-            final ObjList<ObjList<Function>> perWorkerKeyFunctions = extractWorkerFunctionsConditionally(
+            final ObjList<ObjList<Function>> perWorkerKeyFunctions = extractWorkerFunctionsByFlag(
                     tempInnerProjectionFunctions,
                     projectionFunctionFlags,
                     perWorkerInnerProjectionFunctions,
@@ -8912,14 +8912,14 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     keyTypesCopy,
                                     valueTypesCopy,
                                     groupByFunctions,
-                                    extractWorkerFunctionsConditionally(
+                                    extractWorkerFunctionsByFlag(
                                             tempInnerProjectionFunctions,
                                             projectionFunctionFlags,
                                             perWorkerInnerProjectionFunctions,
                                             GroupByUtils.PROJECTION_FUNCTION_FLAG_GROUP_BY
                                     ),
                                     keyFunctions,
-                                    extractWorkerFunctionsConditionally(
+                                    extractWorkerFunctionsByFlag(
                                             tempInnerProjectionFunctions,
                                             projectionFunctionFlags,
                                             perWorkerInnerProjectionFunctions,

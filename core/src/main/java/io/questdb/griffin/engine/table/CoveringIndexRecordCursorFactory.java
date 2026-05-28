@@ -1901,14 +1901,16 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
 
         @Override
         boolean advanceKey() {
-            // Unused: hasNext() is overridden directly.
-            return false;
+            // hasNext() is overridden directly; the base routing into
+            // advanceKey() never runs for this cursor.
+            throw new UnsupportedOperationException();
         }
 
         @Override
         boolean hasNextLatestBy() {
-            // Unused: latestBy uses MultiKeyLatestByCoveringCursor.
-            return false;
+            // latestBy uses MultiKeyLatestByCoveringCursor; this cursor
+            // is the non-latestBy variant.
+            throw new UnsupportedOperationException();
         }
 
         @Override
@@ -1995,8 +1997,9 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
 
         @Override
         boolean advanceKey() {
-            // Unused: the base class routes latestBy=true through hasNextLatestBy().
-            return false;
+            // latestBy=true routes through hasNextLatestBy() in the base
+            // class; advanceKey() is unreachable here.
+            throw new UnsupportedOperationException();
         }
 
         @Override
