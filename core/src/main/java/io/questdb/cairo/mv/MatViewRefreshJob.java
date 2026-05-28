@@ -604,23 +604,28 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                     // Empty base table reports Long.MIN_VALUE; fall back to now to avoid underflow.
                     boundaryAnchor = maxBaseTs == Long.MIN_VALUE ? now : Math.min(maxBaseTs, now);
                 }
-                // Publish the anchor before any REPLACE_RANGE commit lands. The backfill
-                // validator and materialized_views().backfill_max_ts read this snapshot
-                // and clamp their own boundary anchor to min(own, published). That bounds
-                // any user backfill commit (which may run with a later, higher own anchor)
-                // below this tick's REPLACE_RANGE lo, so refresh never overwrites a row
-                // the validator just accepted.
-                viewState.setLastRefreshFrozenBoundaryAnchor(boundaryAnchor);
                 // The interval iterators snap minTs down to the containing bucket floor
                 // (FixedOffsetIntervalIterator.ofCommon and TimeZoneIntervalIterator.of),
                 // so refresh always processes whole buckets even when the boundary lands
                 // mid-bucket. The backfill validator (separate layer) replicates the same
                 // snap so the managed/frozen split is bucket-aligned on both sides.
+                final long rawBoundary;
                 if (refreshLimitHoursOrMonths > 0) { // hours
-                    minTs = Math.max(minTs, boundaryAnchor - driver.fromHours(refreshLimitHoursOrMonths));
+                    rawBoundary = boundaryAnchor - driver.fromHours(refreshLimitHoursOrMonths);
                 } else { // months
-                    minTs = Math.max(minTs, driver.addMonths(boundaryAnchor, refreshLimitHoursOrMonths));
+                    rawBoundary = driver.addMonths(boundaryAnchor, refreshLimitHoursOrMonths);
                 }
+                minTs = Math.max(minTs, rawBoundary);
+                // Publish the snapped REPLACE_RANGE.lo before any commit lands. The
+                // backfill validator and materialized_views().backfill_max_ts clamp
+                // their accepted floor to min(own, published) -- the published floor
+                // is what refresh actually wipes, so any user backfill the validator
+                // accepts sits strictly below it and survives subsequent REPLACE_RANGE
+                // commits even when ALTER SET REFRESH LIMIT changes the current LIMIT
+                // between this publish and the user commit.
+                final TimestampSampler publishSampler = viewDefinition.getTimestampSampler();
+                publishSampler.setOffset(viewDefinition.getFixedOffset());
+                viewState.setLastRefreshFrozenBoundaryFloor(publishSampler.round(rawBoundary));
                 intersectIntervals(refreshIntervals, minTs, Long.MAX_VALUE);
             }
         }

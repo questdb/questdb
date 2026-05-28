@@ -118,14 +118,19 @@ public class MatViewState implements QuietCloseable {
     // Increases monotonically as long as mat view stays valid.
     private volatile long lastRefreshBaseTxn = -1;
     private volatile long lastRefreshFinishTimestampUs = Numbers.LONG_NULL;
-    // Snapshot of the boundary anchor (min(max(base_ts), wallClock)) used by the
-    // most recent REFRESH LIMIT-bounded refresh tick. The backfill validator and
-    // materialized_views().backfill_max_ts read this so their accepted frozen
-    // zone never overlaps an in-flight refresh's REPLACE_RANGE coverage. Stays
+    // Snapped REPLACE_RANGE.lo (the bucket floor) that the most recent
+    // REFRESH LIMIT-bounded refresh tick computed and committed to. The
+    // backfill validator and materialized_views().backfill_max_ts read this
+    // so their accepted frozen zone never overlaps refresh's coverage. Stays
     // at LONG_NULL until the first refresh tick that runs under a non-zero
-    // REFRESH LIMIT publishes its anchor; from then on it advances monotonically
-    // with refresh ticks. Driver units (base table's timestamp driver).
-    private volatile long lastRefreshFrozenBoundaryAnchor = Numbers.LONG_NULL;
+    // REFRESH LIMIT publishes a floor; from then on it advances monotonically
+    // (modulo ALTER SET REFRESH LIMIT, which can move the floor in either
+    // direction on the next refresh tick). Driver units (base table's
+    // timestamp driver). Publishing the snapped floor -- not the raw anchor --
+    // is what closes the SHRINK-LIMIT race: refresh's REPLACE_RANGE.lo is the
+    // value that survives an ALTER, so the validator clamps to it directly
+    // instead of re-applying the (now-different) LIMIT.
+    private volatile long lastRefreshFrozenBoundaryFloor = Numbers.LONG_NULL;
     private volatile long lastRefreshStartTimestampUs = Numbers.LONG_NULL;
     private volatile boolean pendingInvalidation;
     // Protected by this.latch.
@@ -406,8 +411,8 @@ public class MatViewState implements QuietCloseable {
         return lastRefreshFinishTimestampUs;
     }
 
-    public long getLastRefreshFrozenBoundaryAnchor() {
-        return lastRefreshFrozenBoundaryAnchor;
+    public long getLastRefreshFrozenBoundaryFloor() {
+        return lastRefreshFrozenBoundaryFloor;
     }
 
     public long getLastRefreshStartTimestampUs() {
@@ -644,8 +649,9 @@ public class MatViewState implements QuietCloseable {
         lastRefreshBaseTxn = txn;
     }
 
-    public void setLastRefreshFrozenBoundaryAnchor(long anchor) {
-        lastRefreshFrozenBoundaryAnchor = anchor;
+    public void setLastRefreshFrozenBoundaryFloor(long floor) {
+        assert latch.get();
+        lastRefreshFrozenBoundaryFloor = floor;
     }
 
     public void setLastRefreshStartTimestampUs(long timestampUs) {

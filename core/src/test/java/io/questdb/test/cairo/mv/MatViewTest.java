@@ -7248,17 +7248,17 @@ public class MatViewTest extends AbstractCairoTest {
         // C1 regression: the validator and refresh must agree on a boundary so
         // the next refresh's REPLACE_RANGE never wipes a row that the
         // commit-time validator just accepted. The fix publishes the refresh
-        // tick's anchor on MatViewState and the validator clamps to it.
+        // tick's snapped REPLACE_RANGE.lo (bucket floor) on MatViewState and
+        // the validator clamps its own snapped floor to min(own, published).
         //
         // Sequence: refresh ticks at wall 11:30 with max(base_ts) = 11:00,
-        // boundary = 10:00. Wall advances, more base ingest brings
-        // max(base_ts) = 13:00. User backfills a row at 10:30 (bucket
-        // [10:00, 11:00), end = 11:00). Without the published-anchor clamp,
-        // the validator would compute boundary = 12:00 and accept the row.
+        // boundary = 10:00, published floor = 10:00. Wall advances, more base
+        // ingest brings max(base_ts) = 13:00. User backfills a row at 10:30
+        // (bucket [10:00, 11:00), end = 11:00). Without the published-floor
+        // clamp, the validator would compute floor = 12:00 and accept the row.
         // The next refresh's REPLACE_RANGE covers [10:00, ...) and would wipe
-        // it. With the clamp, the validator clamps the anchor to the published
-        // 11:00, boundary stays at 10:00, the row is rejected and never
-        // reaches the mat view in the first place.
+        // it. With the clamp, the validator's effective floor stays at 10:00
+        // and the row is rejected.
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp(
                     "create table base_price (" +
@@ -7435,6 +7435,171 @@ public class MatViewTest extends AbstractCairoTest {
                     true,
                     true
             );
+        });
+    }
+
+    @Test
+    public void testMatViewBackfillRejectedAfterShrinkLimit() throws Exception {
+        // C1' regression: ALTER SET REFRESH LIMIT shrinking the limit between
+        // a refresh tick's publish and a user commit must not let the user
+        // commit slip into refresh's already-locked-in REPLACE_RANGE.
+        //
+        // Sequence: refresh at wall 12:30 under LIMIT=2h. Anchor = min(12:00,
+        // 12:30) = 12:00. Refresh's REPLACE_RANGE.lo = 10:00 (snapped).
+        // Published floor = 10:00. ALTER LIMIT to 1h. User backfills at ts =
+        // 10:30. Validator under LIMIT_now = 1h would compute its own snapped
+        // floor at 11:00 -- without the published-floor clamp it would accept
+        // the row, which the next refresh's REPLACE_RANGE [10:00, ...) would
+        // wipe. With the clamp the effective floor is min(11:00, 10:00) =
+        // 10:00 and the bucket [10:00, 11:00) is rejected.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table base_price (" +
+                            "  sym symbol, price double, ts #TIMESTAMP" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            execute("insert into base_price values('a', 9.0, '2024-09-10T12:00')");
+            drainWalQueue();
+            execute(
+                    "create materialized view price_1h refresh manual deferred as " +
+                            "select sym, last(price) as price, ts from base_price sample by 1h;"
+            );
+            execute("alter materialized view price_1h set refresh limit 2 hour;");
+            drainQueues();
+
+            // Refresh under 2h: floor = 10:00.
+            currentMicros = parseFloorPartialTimestamp("2024-09-10T12:30:00.000000Z");
+            execute("refresh materialized view price_1h full;");
+            drainQueues();
+
+            execute("alter materialized view price_1h set refresh limit 1 hour;");
+            drainQueues();
+
+            try {
+                execute("insert into price_1h values('a', 1.0, '2024-09-10T10:30')");
+                Assert.fail("expected rejection clamped by published floor (was 10:00 under 2h)");
+            } catch (CairoException e) {
+                assertContains(e.getFlyweightMessage(), "backfill row falls in or past the managed zone");
+            }
+
+            // A row strictly below the published floor is still acceptable.
+            execute("insert into price_1h values('a', 5.0, '2024-09-10T08:00')");
+            drainQueues();
+
+            // 08:00 is the user backfill we just accepted; 12:00 is the
+            // refresh-filled row from the earlier FULL under LIMIT=2h.
+            assertQueryNoLeakCheck(
+                    replaceExpectedTimestamp("""
+                            sym\tprice\tts
+                            a\t5.0\t2024-09-10T08:00:00.000000Z
+                            a\t9.0\t2024-09-10T12:00:00.000000Z
+                            """),
+                    "price_1h order by ts",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testMaterializedViewsBackfillMaxTsMixedDrivers() throws Exception {
+        // C2' regression: materialized_views().backfill_max_ts must be correct
+        // for every row even when consecutive views have different timestamp
+        // drivers (MICROS vs NANOS). The cursor's sampler cache must be keyed
+        // on the driver as well as (interval, unit) -- without that, a MICROS
+        // sampler is reused for a NANOS view and the published bucket floor is
+        // mis-rounded by ~1000x.
+        assertMemoryLeak(() -> {
+            execute(
+                    "create table base_us (" +
+                            "  sym symbol, price double, ts timestamp" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            execute(
+                    "create table base_ns (" +
+                            "  sym symbol, price double, ts timestamp_ns" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            execute("insert into base_us values('a', 1.0, '2024-09-10T12:00')");
+            execute("insert into base_ns values('a', 1.0, '2024-09-10T12:00')");
+            drainWalQueue();
+            execute(
+                    "create materialized view view_us refresh manual deferred as " +
+                            "select sym, last(price) as price, ts from base_us sample by 1h;"
+            );
+            execute(
+                    "create materialized view view_ns refresh manual deferred as " +
+                            "select sym, last(price) as price, ts from base_ns sample by 1h;"
+            );
+            execute("alter materialized view view_us set refresh limit 1 hour;");
+            execute("alter materialized view view_ns set refresh limit 1 hour;");
+            drainQueues();
+
+            currentMicros = parseFloorPartialTimestamp("2024-09-10T12:30:00.000000Z");
+
+            // Both views: anchor = min(12:00, 12:30) = 12:00. boundary = 11:00.
+            // Snapped (1h bucket) = 11:00. backfill_max_ts in micros = same wall.
+            // Cursor iteration order follows view creation order: view_us first.
+            assertQueryNoLeakCheck(
+                    "view_name\tbackfill_max_ts\n" +
+                            "view_us\t2024-09-10T11:00:00.000000Z\n" +
+                            "view_ns\t2024-09-10T11:00:00.000000Z\n",
+                    "select view_name, backfill_max_ts from materialized_views()",
+                    null
+            );
+        });
+    }
+
+    @Test
+    public void testValidatorPicksUpBaseDropRecreate() throws Exception {
+        // The validator caches (baseToken, baseTxn, maxBaseTs) by reference
+        // identity of the base token. After DROP TABLE + CREATE TABLE with
+        // the same name, the new TableToken instance differs from the cached
+        // one, so the cache invalidates and the validator picks up the new
+        // max(base_ts). Confirms a refactor to name-based caching would not
+        // silently break consistency.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table base_price (" +
+                            "  sym symbol, price double, ts #TIMESTAMP" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            execute("insert into base_price values('a', 1.0, '2024-09-10T12:00')");
+            drainWalQueue();
+            execute(
+                    "create materialized view price_1h refresh manual deferred as " +
+                            "select sym, last(price) as price, ts from base_price sample by 1h;"
+            );
+            execute("alter materialized view price_1h set refresh limit 1 hour;");
+            drainQueues();
+
+            // Warm the validator's per-writer cache with one backfill against
+            // base@12:00 (boundary 11:00, bucket [09:00, 10:00) accepted).
+            currentMicros = parseFloorPartialTimestamp("2024-09-10T12:30:00.000000Z");
+            execute("insert into price_1h values('a', 5.0, '2024-09-10T09:00')");
+            drainQueues();
+
+            // Drop and recreate base with a much earlier max(base_ts). The
+            // validator's cache must invalidate (new token instance) -- if it
+            // returned the stale 12:00 max, the new boundary computation would
+            // still allow 09:00 rows. Under the fresh max=09:00 boundary=08:00,
+            // and a backfill at 08:30 should now be rejected.
+            execute("drop table base_price");
+            executeWithRewriteTimestamp(
+                    "create table base_price (" +
+                            "  sym symbol, price double, ts #TIMESTAMP" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            execute("insert into base_price values('a', 1.0, '2024-09-10T09:00')");
+            drainWalQueue();
+
+            try {
+                execute("insert into price_1h values('a', 7.0, '2024-09-10T08:30')");
+                Assert.fail("expected rejection under new (lower) base max_ts");
+            } catch (CairoException e) {
+                assertContains(e.getFlyweightMessage(), "backfill row falls in or past the managed zone");
+            }
         });
     }
 

@@ -26,13 +26,18 @@ package io.questdb.cairo.wal;
 
 /**
  * Optional hook that {@link WalWriter} consults right before sealing a transaction.
- * Implementations MUST throw {@link io.questdb.cairo.CairoException} to reject the
- * transaction; the writer rolls the transaction back and rethrows. Any other
- * Throwable from an implementation is treated as an internal validator fault: the
- * writer marks itself distressed and lets the Throwable propagate, so the next
- * acquisition of this token gets a fresh tenant. Implementations must be fast and
- * side-effect free -- a slow validator stretches every commit on the table it is
- * attached to.
+ * <p>
+ * Rejection must be signalled by throwing {@link io.questdb.cairo.CairoException};
+ * the writer then rolls the transaction back and rethrows. Any other Throwable
+ * is treated as an internal validator fault: the writer marks itself distressed
+ * (so the pool expels this tenant and the next acquisition starts fresh),
+ * attempts rollback, and lets the Throwable propagate. The distressed path is
+ * defence in depth, not a sanctioned reject channel -- implementations that
+ * intentionally throw non-CairoException to "reject" will permanently distress
+ * the writer they are attached to.
+ * <p>
+ * Implementations must be fast and side-effect free -- a slow validator
+ * stretches every commit on the table it is attached to.
  */
 @FunctionalInterface
 public interface WalPreCommitValidator {

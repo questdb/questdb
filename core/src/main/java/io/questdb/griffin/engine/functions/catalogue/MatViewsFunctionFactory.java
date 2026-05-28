@@ -32,6 +32,7 @@ import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.file.BlockFileReader;
 import io.questdb.cairo.mv.MatViewBackfillValidator;
 import io.questdb.cairo.mv.MatViewDefinition;
@@ -162,11 +163,13 @@ public class MatViewsFunctionFactory implements FunctionFactory {
             private final BlockFileReader viewStateFileReader;
             private final MatViewStateReader viewStateReader = new MatViewStateReader();
             private final ObjList<TableToken> viewTokens = new ObjList<>();
-            // Sampler reused across rows when the sampling interval/unit
-            // matches the last view we saw. Avoids one TimestampSampler
-            // allocation per view per row in the common case where views
-            // on the same base table share a sampling interval.
+            // Sampler reused across rows when the sampling interval/unit AND
+            // the base timestamp driver all match the previous view. Driver
+            // must be in the key because TimestampSampler is driver-bound:
+            // a MICROS sampler returned for view A would mis-round NANOS
+            // timestamps from view B even when (interval, unit) match.
             private TimestampSampler cachedSampler;
+            private TimestampDriver cachedSamplerDriver;
             private long cachedSamplerInterval = Long.MIN_VALUE;
             private char cachedSamplerUnit;
             private int viewIndex = 0;
@@ -259,10 +262,15 @@ public class MatViewsFunctionFactory implements FunctionFactory {
                         // mat-view state (may be null when the engine has not hydrated
                         // it) so its bound clamps to the last refresh tick's anchor.
                         // Reuse the sampler across rows whose sampling matches.
+                        // Driver identity is part of the key because samplers are
+                        // driver-bound -- see field comment for the MICROS/NANOS
+                        // mis-rounding hazard.
                         if (cachedSampler == null
+                                || cachedSamplerDriver != viewDefinition.getBaseTableTimestampDriver()
                                 || cachedSamplerInterval != viewDefinition.getSamplingInterval()
                                 || cachedSamplerUnit != viewDefinition.getSamplingIntervalUnit()) {
                             cachedSampler = MatViewBackfillValidator.createSampler(viewDefinition);
+                            cachedSamplerDriver = viewDefinition.getBaseTableTimestampDriver();
                             cachedSamplerInterval = viewDefinition.getSamplingInterval();
                             cachedSamplerUnit = viewDefinition.getSamplingIntervalUnit();
                         }

@@ -46,41 +46,46 @@ import org.jetbrains.annotations.Nullable;
  * <p>
  * A backfill txn is accepted only if the bucket containing its max-row timestamp
  * ends at-or-before the effective frozen-zone boundary's bucket floor. The
- * effective boundary is the minimum of: (1) what this commit's own snapshot of
- * {@code min(max(base_ts), wallClock) - LIMIT} produces, and (2) the snapshot
- * the most recent refresh tick published via
- * {@link MatViewState#setLastRefreshFrozenBoundaryAnchor(long)}. Taking the
- * minimum keeps the accepted ceiling strictly below the lo of any in-flight
- * refresh's REPLACE_RANGE coverage, so refresh never wipes a row this validator
- * just accepted.
+ * effective floor is the minimum of: (1) what this commit's own snapshot of
+ * {@code min(max(base_ts), wallClock) - LIMIT}, snapped through the sampler,
+ * produces, and (2) the snapped REPLACE_RANGE.lo the most recent refresh tick
+ * published via {@link MatViewState#setLastRefreshFrozenBoundaryFloor(long)}.
+ * Taking the minimum keeps the accepted ceiling strictly below the lo of any
+ * in-flight refresh's REPLACE_RANGE coverage even when ALTER SET REFRESH LIMIT
+ * changes LIMIT between refresh publish and the user commit, because the
+ * published value is the floor refresh actually wipes -- not the anchor it
+ * derived it from.
  * <p>
  * Refresh-job writes carry {@link WalTxnType#MAT_VIEW_DATA} or
  * {@link WalTxnType#DATA} with {@link WalUtils#WAL_DEDUP_MODE_REPLACE_RANGE} and
  * are passed through untouched; only generic {@link WalTxnType#DATA} with the
  * default dedup mode -- user INSERT/COPY/ILP/QWP -- is checked.
  * <p>
- * When {@code REFRESH LIMIT == 0} the validator rejects user DATA writes
- * outright. The entry-point gate ({@code engine.isBackfillableMatView}) already
- * does the same for callers that consult it; rejecting here closes the gap for
- * cached ILP/QWP {@code TableUpdateDetails} that outlive an
- * {@code ALTER MATERIALIZED VIEW ... SET REFRESH LIMIT 0}.
+ * When {@code REFRESH LIMIT == 0} no frozen zone exists; the validator passes
+ * user DATA writes through and relies on the entry-point gate
+ * ({@code engine.isBackfillableMatView}) as the authoritative contract for
+ * rejecting user backfills. Internal/test write paths still need to commit DATA
+ * txns through this writer, so a hard reject here would break them. Stale
+ * ILP/QWP {@code TableUpdateDetails} caches that outlive an
+ * {@code ALTER ... SET REFRESH LIMIT 0} may slip rows through until the cache
+ * TTL expires; the next FULL refresh's {@code truncateSoft} resets the view.
  */
 public final class MatViewBackfillValidator implements WalPreCommitValidator {
     private static final Log LOG = LogFactory.getLog(MatViewBackfillValidator.class);
     private final CairoEngine engine;
     private final TableToken matViewToken;
+    // Per-writer cache: token, txn, max-base-ts, and a validity flag. The flag
+    // lets the cache hold a legitimate Long.MIN_VALUE max-ts (empty base
+    // table) without colliding with the "no cache yet" sentinel.
+    private TableToken cachedBaseToken;
+    private long cachedBaseTxn = -1;
+    private boolean cachedBaseValid;
+    private long cachedMaxBaseTs = Long.MIN_VALUE;
     // Sampler is lazily allocated on first validated commit and reused across
     // subsequent commits on this writer. Sample interval and unit are fixed at
     // mat-view creation (changing either requires DROP + recreate), so the
     // cached sampler stays valid for the writer's lifetime.
     private TimestampSampler cachedSampler;
-    // Per-writer cache to skip the base reader open on commits where the base
-    // table writer txn has not advanced since the last validated commit. Reset
-    // when the base table is recreated (token instance differs) or when the
-    // writer txn moves.
-    private long cachedBaseTxn = -1;
-    private long cachedMaxBaseTs = Long.MIN_VALUE;
-    private TableToken cachedBaseToken;
 
     public MatViewBackfillValidator(CairoEngine engine, TableToken matViewToken) {
         assert matViewToken.isMatView();
@@ -247,12 +252,13 @@ public final class MatViewBackfillValidator implements WalPreCommitValidator {
     }
 
     /**
-     * Snap the effective boundary -- the smaller of the validator's own snapshot
-     * anchor and the anchor the last refresh tick published -- through the
-     * sampler. Coordinating with refresh's published anchor is what makes the
-     * validator safe under an in-flight refresh: refresh's REPLACE_RANGE always
-     * runs with the anchor it published, so accepted buckets sitting strictly
-     * below that anchor's snapped boundary are never overlapped.
+     * Snap the effective boundary floor -- the smaller of the validator's own
+     * snapshot floor and the floor the last refresh tick published -- through
+     * the sampler. Coordinating with refresh's published floor is what makes
+     * the validator safe under an in-flight refresh and under ALTER SET REFRESH
+     * LIMIT: refresh's REPLACE_RANGE.lo is the published floor itself, so
+     * accepted buckets sitting strictly below it are never overlapped, no
+     * matter what LIMIT the validator subsequently sees.
      */
     private static long computeBoundaryBucketFloor(
             CairoEngine engine,
@@ -270,17 +276,18 @@ public final class MatViewBackfillValidator implements WalPreCommitValidator {
         }
         final TimestampDriver driver = def.getBaseTableTimestampDriver();
         final long now = driver.getTicks();
-        long boundaryAnchor = ownMaxBaseTs == Long.MIN_VALUE ? now : Math.min(ownMaxBaseTs, now);
+        final long ownAnchor = ownMaxBaseTs == Long.MIN_VALUE ? now : Math.min(ownMaxBaseTs, now);
+        final long ownRawBoundary = limitHoursOrMonths > 0
+                ? ownAnchor - driver.fromHours(limitHoursOrMonths)
+                : driver.addMonths(ownAnchor, limitHoursOrMonths);
+        final long ownFloor = sampler.round(ownRawBoundary);
         if (state != null) {
-            final long publishedAnchor = state.getLastRefreshFrozenBoundaryAnchor();
-            if (publishedAnchor != Numbers.LONG_NULL) {
-                boundaryAnchor = Math.min(boundaryAnchor, publishedAnchor);
+            final long publishedFloor = state.getLastRefreshFrozenBoundaryFloor();
+            if (publishedFloor != Numbers.LONG_NULL) {
+                return Math.min(ownFloor, publishedFloor);
             }
         }
-        final long rawBoundary = limitHoursOrMonths > 0
-                ? boundaryAnchor - driver.fromHours(limitHoursOrMonths)
-                : driver.addMonths(boundaryAnchor, limitHoursOrMonths);
-        return sampler.round(rawBoundary);
+        return ownFloor;
     }
 
     /**
@@ -297,11 +304,7 @@ public final class MatViewBackfillValidator implements WalPreCommitValidator {
         try (TableReader reader = engine.getReader(baseTableToken)) {
             return reader.getMaxTimestamp();
         } catch (CairoException | TableReferenceOutOfDateException e) {
-            LOG.advisory().$("mat view backfill boundary falling back to wall clock; base reader unavailable [view=")
-                    .$(def.getMatViewToken())
-                    .$(", base=").$(baseTableToken)
-                    .$(", reason=").$safe(e.getMessage())
-                    .I$();
+            logBaseReaderFallback(def.getMatViewToken(), baseTableToken, e);
             return Long.MIN_VALUE;
         }
     }
@@ -315,13 +318,11 @@ public final class MatViewBackfillValidator implements WalPreCommitValidator {
     private long readBaseMaxTimestampCached(MatViewDefinition def) {
         final TableToken baseTableToken = engine.getTableTokenIfExists(def.getBaseTableName());
         if (baseTableToken == null) {
-            cachedBaseToken = null;
-            cachedBaseTxn = -1;
-            cachedMaxBaseTs = Long.MIN_VALUE;
+            invalidateBaseCache();
             return Long.MIN_VALUE;
         }
         final long currentBaseTxn = engine.getTableSequencerAPI().getTxnTracker(baseTableToken).getWriterTxn();
-        if (baseTableToken == cachedBaseToken && currentBaseTxn == cachedBaseTxn && cachedMaxBaseTs != Long.MIN_VALUE) {
+        if (cachedBaseValid && baseTableToken == cachedBaseToken && currentBaseTxn == cachedBaseTxn) {
             return cachedMaxBaseTs;
         }
         try (TableReader reader = engine.getReader(baseTableToken)) {
@@ -329,17 +330,27 @@ public final class MatViewBackfillValidator implements WalPreCommitValidator {
             cachedBaseToken = baseTableToken;
             cachedBaseTxn = currentBaseTxn;
             cachedMaxBaseTs = maxBaseTs;
+            cachedBaseValid = true;
             return maxBaseTs;
         } catch (CairoException | TableReferenceOutOfDateException e) {
-            LOG.advisory().$("mat view backfill boundary falling back to wall clock; base reader unavailable [view=")
-                    .$(matViewToken)
-                    .$(", base=").$(baseTableToken)
-                    .$(", reason=").$safe(e.getMessage())
-                    .I$();
-            cachedBaseToken = null;
-            cachedBaseTxn = -1;
-            cachedMaxBaseTs = Long.MIN_VALUE;
+            logBaseReaderFallback(matViewToken, baseTableToken, e);
+            invalidateBaseCache();
             return Long.MIN_VALUE;
         }
+    }
+
+    private void invalidateBaseCache() {
+        cachedBaseToken = null;
+        cachedBaseTxn = -1;
+        cachedMaxBaseTs = Long.MIN_VALUE;
+        cachedBaseValid = false;
+    }
+
+    private static void logBaseReaderFallback(TableToken viewToken, TableToken baseToken, Throwable cause) {
+        LOG.advisory().$("mat view backfill boundary falling back to wall clock; base reader unavailable [view=")
+                .$(viewToken)
+                .$(", base=").$(baseToken)
+                .$(", reason=").$safe(cause.getMessage())
+                .I$();
     }
 }
