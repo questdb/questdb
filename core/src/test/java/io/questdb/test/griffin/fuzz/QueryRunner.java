@@ -27,17 +27,25 @@ package io.questdb.test.griffin.fuzz;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.CursorPrinter;
+import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.sql.BindVariableService;
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.griffin.FunctionParser;
+import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.TextPlanSink;
+import io.questdb.griffin.engine.functions.constants.LongConstant;
+import io.questdb.griffin.model.ExpressionNode;
+import io.questdb.griffin.model.IQueryModel;
 import io.questdb.std.Chars;
+import io.questdb.std.Misc;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.StringSink;
@@ -104,18 +112,29 @@ import java.util.regex.Pattern;
  * </ul>
  */
 public final class QueryRunner {
-    // Matches a parenthesised binary arithmetic of two integer literals,
-    // each optionally followed by an integer cast suffix. The whitespace
-    // around the operator is mandatory because ArithmeticExpr always emits
-    // it; that lets the pattern stay deterministic about where one operand
-    // ends and the next begins. See hasIntOverflowingConstantArithmetic.
-    private static final Pattern INT_CONST_ARITH_PATTERN = Pattern.compile(
-            "\\(\\s*(-?\\d+)(?:::(?:INT|SHORT|BYTE))?\\s+([+\\-*])\\s+(-?\\d+)(?:::(?:INT|SHORT|BYTE))?\\s*\\)"
+    // Empty metadata for parseFunction calls in hasIntOverflowingConstantArithmetic.
+    // The detector compiles candidate subexpressions to check for INT-to-LONG
+    // overflow promotion; column references in a candidate force parseFunction
+    // to fail with "column not found", which the caller treats as "candidate
+    // is not a constant arithmetic subtree" and skips.
+    private static final GenericRecordMetadata EMPTY_METADATA = new GenericRecordMetadata();
+    // Matches LONG, FLOAT, DOUBLE, DECIMAL, TIMESTAMP, or DATE type hints in a
+    // candidate subexpression. The presence of any such hint means the bind
+    // form keeps the same type as the literal form, so a fold-to-LongConstant
+    // does not imply the INT-overflow asymmetry. See
+    // hasIntOverflowingConstantArithmetic for the full rationale.
+    private static final Pattern NON_INT_TYPE_HINT = Pattern.compile(
+            "\\d+[Ll]\\b|::(?:LONG|FLOAT|DOUBLE|DECIMAL|TIMESTAMP|DATE)"
     );
     private final boolean diffJit;
     private final boolean diffShadow;
     private final CairoEngine engine;
     private final SqlExecutionContext executionContext;
+    // Reused per parseFunction call. Stateful (metadataStack, function stacks)
+    // but parseFunction is contractually re-entrant: it pushes/pops its own
+    // state in try/finally, so a single instance is safe across the runner's
+    // single-threaded check loop.
+    private final FunctionParser functionParser;
     private final TextPlanSink planSink = new TextPlanSink();
     private final boolean primaryHasAnyParquet;
     private final Pattern[] primaryPatterns;
@@ -135,6 +154,7 @@ public final class QueryRunner {
     ) {
         this.engine = engine;
         this.executionContext = executionContext;
+        this.functionParser = new FunctionParser(engine.getConfiguration(), engine.getFunctionFactoryCache());
         this.diffJit = diffJit;
         this.diffShadow = diffShadow;
         if (diffShadow) {
@@ -296,72 +316,112 @@ public final class QueryRunner {
     }
 
     /**
-     * Returns true iff {@code sql} contains a constant arithmetic subtree
-     * {@code (N1 op N2)} where both operands are integer-typed literals
-     * (optionally cast to {@code ::INT}/{@code ::SHORT}/{@code ::BYTE}) and
-     * applying {@code op} (one of {@code +}, {@code -}, {@code *}) under long
-     * arithmetic produces a value that does not fit in INT. This is the SQL
-     * shape that triggers the bind-vs-literal int-overflow asymmetry: the
-     * literal form folds the subtree at compile time, {@code FunctionParser
-     * .functionToConstant0} promotes the result to {@code LongConstant}, and
-     * the result keeps its full LONG magnitude; the bind form keeps the
-     * subtree opaque, the optimizer picks the {@code *(II)} factory and
-     * runtime evaluation wraps modulo 2^32. When this overflowing value
-     * feeds a string-context cast (e.g. {@code ::SYMBOL} / {@code ::VARCHAR}
-     * inside a comparison), the lexicographic order of the rendered string
-     * legitimately differs between the two forms and the WHERE clause
-     * filters a different set of rows. Cell-level tolerance via
-     * {@link #rowEqualsWithIntOverflowTolerance} cannot help once the
-     * surviving row sets differ in size, so the bind axis falls back to
-     * this SQL-shape detector.
-     * <p>
-     * Nested arithmetic such as {@code ((-17::BYTE + 125931) * -816546)}
-     * places a non-literal on the outer multiplication's left side and the
-     * regex only matches when both operands are bare integer literals.
-     * Iterating the scan handles this: each pass folds inner non-overflowing
-     * matches to their numeric value and rescans, exposing the next outer
-     * level. The folded value drops the parentheses so the outer subtree's
-     * own parens become the parens the regex needs at the next level.
+     * Scans {@code sql} character-by-character for balanced parenthesised
+     * substrings starting at {@code openIdx}, and returns the position of
+     * the matching {@code )} (or -1 if none). Used by
+     * {@link #hasIntOverflowingConstantArithmetic} so every {@code (...)}
+     * subtree the fuzzer's
+     * {@link io.questdb.test.griffin.fuzz.expr.ArithmeticExpr#appendSql
+     * ArithmeticExpr} emits becomes a candidate for the fold check, without
+     * regex-encoding the inner grammar of the parenthesised expression.
      */
-    private static boolean hasIntOverflowingConstantArithmetic(CharSequence sql) {
-        String working = sql.toString();
-        while (true) {
-            Matcher m = INT_CONST_ARITH_PATTERN.matcher(working);
-            StringBuilder sb = null;
-            int last = 0;
-            boolean folded = false;
-            while (m.find()) {
-                try {
-                    long a = Long.parseLong(m.group(1));
-                    long b = Long.parseLong(m.group(3));
-                    // The pattern only captures +, -, * in group 2 so the switch
-                    // is exhaustive over the matched operators.
-                    long result = switch (m.group(2).charAt(0)) {
-                        case '+' -> a + b;
-                        case '-' -> a - b;
-                        case '*' -> a * b;
-                        default -> throw new AssertionError("unreachable: regex group 2 is one of +, -, *");
-                    };
-                    if (result != (int) result) {
-                        return true;
-                    }
-                    if (sb == null) {
-                        sb = new StringBuilder(working.length());
-                    }
-                    sb.append(working, last, m.start()).append(result);
-                    last = m.end();
-                    folded = true;
-                } catch (NumberFormatException ignore) {
-                    // Operand exceeds long range. Leave the match as-is so the
-                    // outer loop terminates; literal-vs-bind divergence on
-                    // out-of-long-range constants is its own concern.
+    private static int findMatchingParen(CharSequence sql, int openIdx, int n) {
+        int depth = 1;
+        for (int j = openIdx + 1; j < n; j++) {
+            char c = sql.charAt(j);
+            if (c == '(') {
+                depth++;
+            } else if (c == ')' && --depth == 0) {
+                return j;
+            }
+        }
+        return -1;
+    }
+
+    /**
+     * Returns true iff a parenthesised subexpression of {@code sql} folds,
+     * through the same {@link FunctionParser} the compiler uses, to a
+     * {@link LongConstant} whose long value does not fit in INT. This is the
+     * SQL shape that triggers the bind-vs-literal int-overflow asymmetry:
+     * the literal form folds the subtree at compile time, {@code
+     * FunctionParser.functionToConstant0} promotes the INT-typed result to a
+     * {@link LongConstant} (because {@code intConst != longConst}), and the
+     * result keeps its full LONG magnitude; the bind form keeps the subtree
+     * opaque, the optimizer picks the {@code *(II)} (or {@code +(II)} /
+     * {@code -(II)}) factory and runtime evaluation wraps modulo 2^32. The
+     * wrap can shift the truth value of a downstream comparison: against a
+     * SHORT column, an INT predicate widens to INT on the bind side (so the
+     * wrapped negative compares as less than any short value) while the
+     * literal side carries the LONG and compares honestly, and the
+     * surviving row sets differ in size. Equivalently, when the overflowing
+     * value feeds a string-context cast (e.g. {@code ::SYMBOL} /
+     * {@code ::VARCHAR} inside a comparison), the lexicographic order of
+     * the rendered string legitimately differs between the two forms and
+     * the WHERE clause filters a different set of rows. Cell-level
+     * tolerance via {@link #rowEqualsWithIntOverflowTolerance} cannot help
+     * once the surviving row sets differ in size, so the bind axis falls
+     * back to this SQL-shape detector.
+     * <p>
+     * Reusing {@code FunctionParser} rather than re-implementing the fold
+     * here means the detector covers every shape the compiler would
+     * collapse: nested arithmetic such as {@code ((-17::BYTE + 125931) *
+     * -816546)}, wrappers like {@code abs(58539)}, integer casts, and
+     * anything else {@code functionToConstant0} promotes. Each
+     * {@link io.questdb.test.griffin.fuzz.expr.ArithmeticExpr ArithmeticExpr}
+     * emits a {@code (lhs op rhs)} parens, so walking balanced parens
+     * surfaces every candidate without parsing the whole SQL.
+     * <p>
+     * The {@link #NON_INT_TYPE_HINT} pre-filter excludes candidates that
+     * carry a LONG/FLOAT/DOUBLE/DECIMAL/TIMESTAMP/DATE literal or cast,
+     * because their fold lands on a {@link LongConstant} (or larger type)
+     * for type-promotion reasons, not the INT-overflow promotion the
+     * asymmetry needs. The bind form of those subexpressions keeps the
+     * same wide type, so there is no divergence to attribute.
+     */
+    private boolean hasIntOverflowingConstantArithmetic(CharSequence sql) {
+        int n = sql.length();
+        try (SqlCompiler compiler = engine.getSqlCompiler()) {
+            for (int i = 0; i < n; i++) {
+                if (sql.charAt(i) != '(') {
+                    continue;
+                }
+                int closeIdx = findMatchingParen(sql, i, n);
+                if (closeIdx < 0) {
+                    continue;
+                }
+                if (foldsToOverflowingLong(compiler, sql.subSequence(i, closeIdx + 1).toString())) {
+                    return true;
                 }
             }
-            if (!folded) {
+        } catch (Throwable ignore) {
+            // Compiler unavailable. Conservative: report no overflow shape so
+            // the surrounding bind axis still flags the divergence honestly.
+        }
+        return false;
+    }
+
+    private boolean foldsToOverflowingLong(SqlCompiler compiler, String candidate) {
+        if (NON_INT_TYPE_HINT.matcher(candidate).find()) {
+            return false;
+        }
+        Function fn = null;
+        try {
+            ExpressionNode node = compiler.testParseExpression(candidate, (IQueryModel) null);
+            if (node == null) {
                 return false;
             }
-            sb.append(working, last, working.length());
-            working = sb.toString();
+            fn = functionParser.parseFunction(node, EMPTY_METADATA, executionContext);
+            if (!(fn instanceof LongConstant)) {
+                return false;
+            }
+            long v = fn.getLong(null);
+            return v != (int) v;
+        } catch (Throwable ignore) {
+            // Candidate parse/fold failed (column ref, subselect, unsupported
+            // syntax, etc.). Not a constant arithmetic subtree; move on.
+            return false;
+        } finally {
+            Misc.free(fn);
         }
     }
 
