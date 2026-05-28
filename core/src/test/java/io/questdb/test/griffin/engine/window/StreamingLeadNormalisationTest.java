@@ -62,12 +62,14 @@ public class StreamingLeadNormalisationTest extends AbstractCairoTest {
             // `over ()` rather than the original `order by ts desc`.
             assertPlanNoLeakCheck(
                     "select x, lag(x, 1) over (order by ts desc) as lx from t",
-                    "DeferredEmitWindow\n" +
-                            "  functions: [lead(x, 1, NULL) over ()]\n" +
-                            "  maxLookahead: 1\n" +
-                            "    PageFrame\n" +
-                            "        Row forward scan\n" +
-                            "        Frame forward scan on: t\n"
+                    """
+                            DeferredEmitWindow
+                              functions: [lead(x, 1, NULL) over ()]
+                              maxLookahead: 1
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: t
+                            """
             );
         });
     }
@@ -81,12 +83,15 @@ public class StreamingLeadNormalisationTest extends AbstractCairoTest {
             // LAG(x, 1) OVER (ORDER BY ts DESC) equals LEAD(x, 1) OVER (ORDER BY ts ASC) value-wise:
             // for each row, the "next row at higher timestamp" — which is what LAG-DESC and LEAD-ASC
             // both compute. Row 30 has no higher ts so default (NULL) applies.
-            assertSql(
-                    "x\tlx\n" +
-                            "10\t20\n" +
-                            "20\t30\n" +
-                            "30\tnull\n",
-                    "select x, lag(x, 1) over (order by ts desc) as lx from t"
+            assertQueryNoLeakCheck(
+                    """
+                            x\tlx
+                            10\t20
+                            20\t30
+                            30\tnull
+                            """,
+                    "select x, lag(x, 1) over (order by ts desc) as lx from t",
+                    null, false, true
             );
         });
     }
@@ -100,11 +105,13 @@ public class StreamingLeadNormalisationTest extends AbstractCairoTest {
             // OVER ORDER BY a non-timestamp column — normalisation does not fire, falls to cached.
             assertPlanNoLeakCheck(
                     "select x, lag(x, 1) over (order by y desc) as lx from t",
-                    "CachedWindow\n" +
-                            "  orderedFunctions: [[y desc] => [lag(x, 1, NULL) over ()]]\n" +
-                            "    PageFrame\n" +
-                            "        Row forward scan\n" +
-                            "        Frame forward scan on: t\n"
+                    """
+                            CachedWindow
+                              orderedFunctions: [[y desc] => [lag(x, 1, NULL) over ()]]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: t
+                            """
             );
         });
     }
@@ -119,14 +126,17 @@ public class StreamingLeadNormalisationTest extends AbstractCairoTest {
             // and streams via per-partition deferred emit. Output is partition-major-resolution order:
             // in-stream emissions when the next row of a partition arrives; remaining entries flushed
             // per partition at end-of-cursor in map iteration order.
-            assertSql(
-                    "x\tsym\tlx\n" +
-                            "10\tA\t30\n" +
-                            "20\tB\t40\n" +
-                            "30\tA\t50\n" +
-                            "50\tA\tnull\n" +
-                            "40\tB\tnull\n",
-                    "select x, sym, lag(x, 1) over (partition by sym order by ts desc) as lx from t"
+            assertQueryNoLeakCheck(
+                    """
+                            x\tsym\tlx
+                            10\tA\t30
+                            20\tB\t40
+                            30\tA\t50
+                            50\tA\tnull
+                            40\tB\tnull
+                            """,
+                    "select x, sym, lag(x, 1) over (partition by sym order by ts desc) as lx from t",
+                    null, false, true
             );
         });
     }
@@ -142,11 +152,13 @@ public class StreamingLeadNormalisationTest extends AbstractCairoTest {
             // existing Window streaming factory directly without going through DeferredEmit.
             assertPlanNoLeakCheck(
                     "select x, lag(x, 1) over () as lx from t",
-                    "Window\n" +
-                            "  functions: [lag(x, 1, NULL) over ()]\n" +
-                            "    PageFrame\n" +
-                            "        Row forward scan\n" +
-                            "        Frame forward scan on: t\n"
+                    """
+                            Window
+                              functions: [lag(x, 1, NULL) over ()]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: t
+                            """
             );
         });
     }
@@ -164,12 +176,14 @@ public class StreamingLeadNormalisationTest extends AbstractCairoTest {
             // the OVER ORDER BY is dismissed because it now matches the scan direction.
             assertPlanNoLeakCheck(
                     "select x, lead(x, 1) over (order by ts asc) as lx from t order by ts desc",
-                    "SelectedRecord\n" +
-                            "    Window\n" +
-                            "      functions: [lag(x, 1, NULL) over ()]\n" +
-                            "        PageFrame\n" +
-                            "            Row backward scan\n" +
-                            "            Frame backward scan on: t\n"
+                    """
+                            SelectedRecord
+                                Window
+                                  functions: [lag(x, 1, NULL) over ()]
+                                    PageFrame
+                                        Row backward scan
+                                        Frame backward scan on: t
+                            """
             );
         });
     }
@@ -188,9 +202,9 @@ public class StreamingLeadNormalisationTest extends AbstractCairoTest {
             String expected = "x\tlx\n10\t20\n20\t30\n30\tnull\n";
 
             // Run twice — second run must compile and execute identically.
-            assertSql(expected, sql);
-            assertSql(expected, sql);
-            assertSql(expected, sql);
+            assertQueryNoLeakCheck(expected, sql, null, false, true);
+            assertQueryNoLeakCheck(expected, sql, null, false, true);
+            assertQueryNoLeakCheck(expected, sql, null, false, true);
         });
     }
 }

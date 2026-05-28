@@ -65,7 +65,7 @@ public class LagLongFunctionFactory extends AbstractWindowFunctionFactory {
                 sqlExecutionContext,
                 (defaultValue) -> {
                     if (!ColumnType.isSameOrBuiltInWideningCast(defaultValue.getType(), ColumnType.LONG)) {
-                        throw SqlException.$(argPositions.getQuick(2), "default value must be can cast to long");
+                        throw SqlException.$(argPositions.getQuick(2), "default value cannot be cast to long");
                     }
                 },
                 LagFunction::new,

@@ -66,7 +66,7 @@ public class LagTimestampFunctionFactory extends AbstractWindowFunctionFactory {
                 sqlExecutionContext,
                 (defaultValue) -> {
                     if (!ColumnType.isSameTagOrBuiltInWideningCast(defaultValue.getType(), args.getQuick(0).getType())) {
-                        throw SqlException.$(argPositions.getQuick(2), "default value must be can cast to timestamp");
+                        throw SqlException.$(argPositions.getQuick(2), "default value cannot be cast to timestamp");
                     }
                 },
                 LagFunction::new,

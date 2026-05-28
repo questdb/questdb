@@ -65,7 +65,7 @@ public class LagDateFunctionFactory extends AbstractWindowFunctionFactory {
                 sqlExecutionContext,
                 (defaultValue) -> {
                     if (!ColumnType.isSameOrBuiltInWideningCast(defaultValue.getType(), ColumnType.DATE)) {
-                        throw SqlException.$(argPositions.getQuick(2), "default value must be can cast to date");
+                        throw SqlException.$(argPositions.getQuick(2), "default value cannot be cast to date");
                     }
                 },
                 LagFunction::new,

@@ -65,11 +65,13 @@ public class StreamingLeadIntegrationTest extends AbstractCairoTest {
             // Streaming LEAD does not support IGNORE NULLS in Phase 3; planner uses cached.
             assertPlanNoLeakCheck(
                     "select x, lead(x, 1) ignore nulls over () as lx from t",
-                    "CachedWindow\n" +
-                            "  unorderedFunctions: [lead(x, 1, NULL) ignore nulls over ()]\n" +
-                            "    PageFrame\n" +
-                            "        Row forward scan\n" +
-                            "        Frame forward scan on: t\n"
+                    """
+                            CachedWindow
+                              unorderedFunctions: [lead(x, 1, NULL) ignore nulls over ()]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: t
+                            """
             );
         });
     }
@@ -80,14 +82,17 @@ public class StreamingLeadIntegrationTest extends AbstractCairoTest {
             execute("create table t (x long, ts timestamp) timestamp(ts) partition by day");
             execute("insert into t values (10, 0), (20, 1000), (30, 2000), (40, 3000), (50, 4000)");
 
-            assertSql(
-                    "x\tlx\n" +
-                            "10\t20\n" +
-                            "20\t30\n" +
-                            "30\t40\n" +
-                            "40\t50\n" +
-                            "50\tnull\n",
-                    "select x, lead(x, 1) over () as lx from t"
+            assertQueryNoLeakCheck(
+                    """
+                            x\tlx
+                            10\t20
+                            20\t30
+                            30\t40
+                            40\t50
+                            50\tnull
+                            """,
+                    "select x, lead(x, 1) over () as lx from t",
+                    null, false, true
             );
         });
     }
@@ -99,12 +104,15 @@ public class StreamingLeadIntegrationTest extends AbstractCairoTest {
             execute("insert into t values (10, 0), (20, 1000), (30, 2000)");
 
             // Default value -1 supplied; flushed entries should carry it instead of NULL.
-            assertSql(
-                    "x\tlx\n" +
-                            "10\t20\n" +
-                            "20\t30\n" +
-                            "30\t-1\n",
-                    "select x, lead(x, 1, -1) over () as lx from t"
+            assertQueryNoLeakCheck(
+                    """
+                            x\tlx
+                            10\t20
+                            20\t30
+                            30\t-1
+                            """,
+                    "select x, lead(x, 1, -1) over () as lx from t",
+                    null, false, true
             );
         });
     }
@@ -118,12 +126,14 @@ public class StreamingLeadIntegrationTest extends AbstractCairoTest {
             // Plan should route through DeferredEmitWindow.
             assertPlanNoLeakCheck(
                     "select x, lead(x, 1) over () as lx from t",
-                    "DeferredEmitWindow\n" +
-                            "  functions: [lead(x, 1, NULL) over ()]\n" +
-                            "  maxLookahead: 1\n" +
-                            "    PageFrame\n" +
-                            "        Row forward scan\n" +
-                            "        Frame forward scan on: t\n"
+                    """
+                            DeferredEmitWindow
+                              functions: [lead(x, 1, NULL) over ()]
+                              maxLookahead: 1
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: t
+                            """
             );
         });
     }
@@ -135,14 +145,17 @@ public class StreamingLeadIntegrationTest extends AbstractCairoTest {
             execute("insert into t values (10, 0), (20, 1000), (30, 2000), (40, 3000), (50, 4000)");
 
             // Lookahead 3 over 5 rows: rows 0,1 in-stream (paired with rows 3,4); rows 2,3,4 flushed.
-            assertSql(
-                    "x\tlx\n" +
-                            "10\t40\n" +
-                            "20\t50\n" +
-                            "30\tnull\n" +
-                            "40\tnull\n" +
-                            "50\tnull\n",
-                    "select x, lead(x, 3) over () as lx from t"
+            assertQueryNoLeakCheck(
+                    """
+                            x\tlx
+                            10\t40
+                            20\t50
+                            30\tnull
+                            40\tnull
+                            50\tnull
+                            """,
+                    "select x, lead(x, 3) over () as lx from t",
+                    null, false, true
             );
         });
     }
@@ -158,19 +171,24 @@ public class StreamingLeadIntegrationTest extends AbstractCairoTest {
 
             assertPlanNoLeakCheck(
                     "select x, lag(x, 1) over () as l, lead(x, 1) over () as ld from t",
-                    "CachedWindow\n" +
-                            "  unorderedFunctions: [lag(x, 1, NULL) over (),lead(x, 1, NULL) over ()]\n" +
-                            "    PageFrame\n" +
-                            "        Row forward scan\n" +
-                            "        Frame forward scan on: t\n"
+                    """
+                            CachedWindow
+                              unorderedFunctions: [lag(x, 1, NULL) over (),lead(x, 1, NULL) over ()]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: t
+                            """
             );
 
-            assertSql(
-                    "x\tl\tld\n" +
-                            "1\tnull\t2\n" +
-                            "2\t1\t3\n" +
-                            "3\t2\tnull\n",
-                    "select x, lag(x, 1) over () as l, lead(x, 1) over () as ld from t"
+            assertQueryNoLeakCheck(
+                    """
+                            x\tl\tld
+                            1\tnull\t2
+                            2\t1\t3
+                            3\t2\tnull
+                            """,
+                    "select x, lag(x, 1) over () as l, lead(x, 1) over () as ld from t",
+                    null, true, true
             );
         });
     }
@@ -192,14 +210,17 @@ public class StreamingLeadIntegrationTest extends AbstractCairoTest {
             // A: 10,30,50  LAG=null,10,30  LEAD=30,50,null
             // B: 20,40     LAG=null,20     LEAD=40,null
             // Cached emits in base scan order.
-            assertSql(
-                    "x\tsym\tl\tld\n" +
-                            "10\tA\tnull\t30\n" +
-                            "20\tB\tnull\t40\n" +
-                            "30\tA\t10\t50\n" +
-                            "40\tB\t20\tnull\n" +
-                            "50\tA\t30\tnull\n",
-                    "select x, sym, lag(x, 1) over (partition by sym) as l, lead(x, 1) over (partition by sym) as ld from t"
+            assertQueryNoLeakCheck(
+                    """
+                            x\tsym\tl\tld
+                            10\tA\tnull\t30
+                            20\tB\tnull\t40
+                            30\tA\t10\t50
+                            40\tB\t20\tnull
+                            50\tA\t30\tnull
+                            """,
+                    "select x, sym, lag(x, 1) over (partition by sym) as l, lead(x, 1) over (partition by sym) as ld from t",
+                    null, true, true
             );
         });
     }
@@ -222,27 +243,32 @@ public class StreamingLeadIntegrationTest extends AbstractCairoTest {
                             "lag(x, 1) over (order by ts desc) as l, " +
                             "lead(x, 1) over (order by ts desc) as ld " +
                             "from t",
-                    "DeferredEmitWindow\n" +
-                            "  functions: [lag(x, 1, NULL) over (),lead(x, 1, NULL) over ()]\n" +
-                            "  maxLookahead: 1\n" +
-                            "    PageFrame\n" +
-                            "        Row forward scan\n" +
-                            "        Frame forward scan on: t\n"
+                    """
+                            DeferredEmitWindow
+                              functions: [lag(x, 1, NULL) over (),lead(x, 1, NULL) over ()]
+                              maxLookahead: 1
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: t
+                            """
             );
 
             // OVER ORDER BY ts DESC means: for row R, LAG(x,1) = x at R's predecessor in DESC = R's
             // successor in scan; LEAD(x,1) = x at R's successor in DESC = R's predecessor in scan.
             // Rows emit in stream order (DeferredEmitWindow's emission contract; partition-major when
             // partitioned, scan-order otherwise).
-            assertSql(
-                    "x\tl\tld\n" +
-                            "1\t2\tnull\n" +
-                            "2\t3\t1\n" +
-                            "3\tnull\t2\n",
+            assertQueryNoLeakCheck(
+                    """
+                            x\tl\tld
+                            1\t2\tnull
+                            2\t3\t1
+                            3\tnull\t2
+                            """,
                     "select x, " +
                             "lag(x, 1) over (order by ts desc) as l, " +
                             "lead(x, 1) over (order by ts desc) as ld " +
-                            "from t"
+                            "from t",
+                    null, false, true
             );
         });
     }
@@ -256,11 +282,13 @@ public class StreamingLeadIntegrationTest extends AbstractCairoTest {
             // Non-constant default (y is a column) blocks streaming; planner uses cached.
             assertPlanNoLeakCheck(
                     "select x, lead(x, 1, y) over () as lx from t",
-                    "CachedWindow\n" +
-                            "  unorderedFunctions: [lead(x, 1, y) over ()]\n" +
-                            "    PageFrame\n" +
-                            "        Row forward scan\n" +
-                            "        Frame forward scan on: t\n"
+                    """
+                            CachedWindow
+                              unorderedFunctions: [lead(x, 1, y) over ()]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: t
+                            """
             );
         });
     }
@@ -277,14 +305,17 @@ public class StreamingLeadIntegrationTest extends AbstractCairoTest {
             // emissions happen as the next row in each partition arrives, end-of-cursor flush emits
             // remaining pending entries in map iteration order. Within each partition rows stay in
             // OVER ORDER BY order.
-            assertSql(
-                    "x\tsym\tlx\n" +
-                            "10\tA\t30\n" +
-                            "20\tB\t40\n" +
-                            "30\tA\t50\n" +
-                            "50\tA\tnull\n" +
-                            "40\tB\tnull\n",
-                    "select x, sym, lead(x, 1) over (partition by sym) as lx from t"
+            assertQueryNoLeakCheck(
+                    """
+                            x\tsym\tlx
+                            10\tA\t30
+                            20\tB\t40
+                            30\tA\t50
+                            50\tA\tnull
+                            40\tB\tnull
+                            """,
+                    "select x, sym, lead(x, 1) over (partition by sym) as lx from t",
+                    null, false, true
             );
         });
     }
@@ -297,20 +328,25 @@ public class StreamingLeadIntegrationTest extends AbstractCairoTest {
 
             assertPlanNoLeakCheck(
                     "select d, lead(d, 1) over () as ld from t",
-                    "DeferredEmitWindow\n" +
-                            "  functions: [lead(d, 1, NULL) over ()]\n" +
-                            "  maxLookahead: 1\n" +
-                            "    PageFrame\n" +
-                            "        Row forward scan\n" +
-                            "        Frame forward scan on: t\n"
+                    """
+                            DeferredEmitWindow
+                              functions: [lead(d, 1, NULL) over ()]
+                              maxLookahead: 1
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: t
+                            """
             );
 
-            assertSql(
-                    "d\tld\n" +
-                            "1970-01-01T00:00:00.100Z\t1970-01-01T00:00:00.200Z\n" +
-                            "1970-01-01T00:00:00.200Z\t1970-01-01T00:00:00.300Z\n" +
-                            "1970-01-01T00:00:00.300Z\t\n",
-                    "select d, lead(d, 1) over () as ld from t"
+            assertQueryNoLeakCheck(
+                    """
+                            d\tld
+                            1970-01-01T00:00:00.100Z\t1970-01-01T00:00:00.200Z
+                            1970-01-01T00:00:00.200Z\t1970-01-01T00:00:00.300Z
+                            1970-01-01T00:00:00.300Z\t
+                            """,
+                    "select d, lead(d, 1) over () as ld from t",
+                    null, false, true
             );
         });
     }
@@ -323,20 +359,25 @@ public class StreamingLeadIntegrationTest extends AbstractCairoTest {
 
             assertPlanNoLeakCheck(
                     "select d, lead(d, 1) over () as ld from t",
-                    "DeferredEmitWindow\n" +
-                            "  functions: [lead(d, 1, NULL) over ()]\n" +
-                            "  maxLookahead: 1\n" +
-                            "    PageFrame\n" +
-                            "        Row forward scan\n" +
-                            "        Frame forward scan on: t\n"
+                    """
+                            DeferredEmitWindow
+                              functions: [lead(d, 1, NULL) over ()]
+                              maxLookahead: 1
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: t
+                            """
             );
 
-            assertSql(
-                    "d\tld\n" +
-                            "1.5\t2.5\n" +
-                            "2.5\t3.5\n" +
-                            "3.5\tnull\n",
-                    "select d, lead(d, 1) over () as ld from t"
+            assertQueryNoLeakCheck(
+                    """
+                            d\tld
+                            1.5\t2.5
+                            2.5\t3.5
+                            3.5\tnull
+                            """,
+                    "select d, lead(d, 1) over () as ld from t",
+                    null, false, true
             );
         });
     }
@@ -349,20 +390,25 @@ public class StreamingLeadIntegrationTest extends AbstractCairoTest {
 
             assertPlanNoLeakCheck(
                     "select ts, lead(ts, 1) over () as lts from t",
-                    "DeferredEmitWindow\n" +
-                            "  functions: [lead(ts, 1, NULL) over ()]\n" +
-                            "  maxLookahead: 1\n" +
-                            "    PageFrame\n" +
-                            "        Row forward scan\n" +
-                            "        Frame forward scan on: t\n"
+                    """
+                            DeferredEmitWindow
+                              functions: [lead(ts, 1, NULL) over ()]
+                              maxLookahead: 1
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: t
+                            """
             );
 
-            assertSql(
-                    "ts\tlts\n" +
-                            "1970-01-01T00:00:00.001000Z\t1970-01-01T00:00:00.002000Z\n" +
-                            "1970-01-01T00:00:00.002000Z\t1970-01-01T00:00:00.003000Z\n" +
-                            "1970-01-01T00:00:00.003000Z\t\n",
-                    "select ts, lead(ts, 1) over () as lts from t"
+            assertQueryNoLeakCheck(
+                    """
+                            ts\tlts
+                            1970-01-01T00:00:00.001000Z\t1970-01-01T00:00:00.002000Z
+                            1970-01-01T00:00:00.002000Z\t1970-01-01T00:00:00.003000Z
+                            1970-01-01T00:00:00.003000Z\t
+                            """,
+                    "select ts, lead(ts, 1) over () as lts from t",
+                    "ts", false, true
             );
         });
     }
@@ -386,7 +432,7 @@ public class StreamingLeadIntegrationTest extends AbstractCairoTest {
             );
 
             try {
-                assertSql("dummy", "select x, sym, lead(x, 1) over (partition by sym) as lx from t");
+                assertQueryNoLeakCheck("dummy", "select x, sym, lead(x, 1) over (partition by sym) as lx from t", null, false, true);
                 org.junit.Assert.fail("expected CairoException for cap exceeded");
             } catch (io.questdb.cairo.CairoException e) {
                 org.junit.Assert.assertTrue(
@@ -415,15 +461,18 @@ public class StreamingLeadIntegrationTest extends AbstractCairoTest {
                             "('B', 4000), ('A', 5000), ('B', 6000)"
             );
 
-            assertSql(
-                    "sym\tts\tnext_ts\n" +
-                            "A\t1970-01-01T00:00:00.001000Z\t1970-01-01T00:00:00.003000Z\n" +
-                            "B\t1970-01-01T00:00:00.002000Z\t1970-01-01T00:00:00.004000Z\n" +
-                            "A\t1970-01-01T00:00:00.003000Z\t1970-01-01T00:00:00.005000Z\n" +
-                            "B\t1970-01-01T00:00:00.004000Z\t1970-01-01T00:00:00.006000Z\n" +
-                            "A\t1970-01-01T00:00:00.005000Z\t\n" +
-                            "B\t1970-01-01T00:00:00.006000Z\t\n",
-                    "select sym, ts, lag(ts, 1) over (partition by sym order by ts desc) as next_ts from t"
+            assertQueryNoLeakCheck(
+                    """
+                            sym\tts\tnext_ts
+                            A\t1970-01-01T00:00:00.001000Z\t1970-01-01T00:00:00.003000Z
+                            B\t1970-01-01T00:00:00.002000Z\t1970-01-01T00:00:00.004000Z
+                            A\t1970-01-01T00:00:00.003000Z\t1970-01-01T00:00:00.005000Z
+                            B\t1970-01-01T00:00:00.004000Z\t1970-01-01T00:00:00.006000Z
+                            A\t1970-01-01T00:00:00.005000Z\t
+                            B\t1970-01-01T00:00:00.006000Z\t
+                            """,
+                    "select sym, ts, lag(ts, 1) over (partition by sym order by ts desc) as next_ts from t",
+                    "ts", false, true
             );
         });
     }
@@ -444,17 +493,20 @@ public class StreamingLeadIntegrationTest extends AbstractCairoTest {
             // LEAD(x, 2) per partition: A: (1,3) (2,4) (3,NULL) (4,NULL); B: (1,3) (2,4) (3,NULL) (4,NULL).
             // In-stream emissions when R+2 arrives for the same partition; remaining 2 per partition
             // flushed at EOF. Within each partition rows stay in OVER ORDER BY order.
-            assertSql(
-                    "x\tsym\tlx\n" +
-                            "1\tA\t3\n" +
-                            "1\tB\t3\n" +
-                            "2\tA\t4\n" +
-                            "2\tB\t4\n" +
-                            "3\tA\tnull\n" +
-                            "4\tA\tnull\n" +
-                            "3\tB\tnull\n" +
-                            "4\tB\tnull\n",
-                    "select x, sym, lead(x, 2) over (partition by sym) as lx from t"
+            assertQueryNoLeakCheck(
+                    """
+                            x\tsym\tlx
+                            1\tA\t3
+                            1\tB\t3
+                            2\tA\t4
+                            2\tB\t4
+                            3\tA\tnull
+                            4\tA\tnull
+                            3\tB\tnull
+                            4\tB\tnull
+                            """,
+                    "select x, sym, lead(x, 2) over (partition by sym) as lx from t",
+                    null, false, true
             );
         });
     }
@@ -472,15 +524,17 @@ public class StreamingLeadIntegrationTest extends AbstractCairoTest {
             // Running the same query twice in the same test should produce the same partition-major
             // output — verifies toTop / partition-map clear is correct under PARTITION BY.
             String expected =
-                    "x\tsym\tlx\n" +
-                            "10\tA\t30\n" +
-                            "20\tB\t40\n" +
-                            "30\tA\tnull\n" +
-                            "40\tB\tnull\n";
+                    """
+                            x\tsym\tlx
+                            10\tA\t30
+                            20\tB\t40
+                            30\tA\tnull
+                            40\tB\tnull
+                            """;
             String sql = "select x, sym, lead(x, 1) over (partition by sym) as lx from t";
-            assertSql(expected, sql);
-            assertSql(expected, sql);
-            assertSql(expected, sql);
+            assertQueryNoLeakCheck(expected, sql, null, false, true);
+            assertQueryNoLeakCheck(expected, sql, null, false, true);
+            assertQueryNoLeakCheck(expected, sql, null, false, true);
         });
     }
 
@@ -490,10 +544,13 @@ public class StreamingLeadIntegrationTest extends AbstractCairoTest {
             execute("create table t (x long, ts timestamp) timestamp(ts) partition by day");
             execute("insert into t values (42, 0)");
 
-            assertSql(
-                    "x\tlx\n" +
-                            "42\tnull\n",
-                    "select x, lead(x, 1) over () as lx from t"
+            assertQueryNoLeakCheck(
+                    """
+                            x\tlx
+                            42\tnull
+                            """,
+                    "select x, lead(x, 1) over () as lx from t",
+                    null, false, true
             );
         });
     }

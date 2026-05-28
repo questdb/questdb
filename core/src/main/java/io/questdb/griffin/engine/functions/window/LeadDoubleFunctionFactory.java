@@ -75,7 +75,7 @@ public class LeadDoubleFunctionFactory extends AbstractWindowFunctionFactory {
                 sqlExecutionContext,
                 (defaultValue) -> {
                     if (!ColumnType.isSameOrBuiltInWideningCast(defaultValue.getType(), ColumnType.DOUBLE)) {
-                        throw SqlException.$(argPositions.getQuick(2), "default value must be can cast to double");
+                        throw SqlException.$(argPositions.getQuick(2), "default value cannot be cast to double");
                     }
                 },
                 LeadFunction::new,
@@ -113,7 +113,7 @@ public class LeadDoubleFunctionFactory extends AbstractWindowFunctionFactory {
             }
             if (!dv.isConstant()) return null;
             if (!ColumnType.isSameOrBuiltInWideningCast(dv.getType(), ColumnType.DOUBLE)) {
-                throw SqlException.$(argPositions.getQuick(2), "default value must be can cast to double");
+                throw SqlException.$(argPositions.getQuick(2), "default value cannot be cast to double");
             }
             defaultValue = dv;
         }

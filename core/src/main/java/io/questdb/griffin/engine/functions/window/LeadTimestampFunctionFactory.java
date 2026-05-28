@@ -76,7 +76,7 @@ public class LeadTimestampFunctionFactory extends AbstractWindowFunctionFactory 
                 sqlExecutionContext,
                 (defaultValue) -> {
                     if (!ColumnType.isSameTagOrBuiltInWideningCast(defaultValue.getType(), args.getQuick(0).getType())) {
-                        throw SqlException.$(argPositions.getQuick(2), "default value must be can cast to timestamp");
+                        throw SqlException.$(argPositions.getQuick(2), "default value cannot be cast to timestamp");
                     }
                 },
                 LeadFunction::new,
@@ -114,7 +114,7 @@ public class LeadTimestampFunctionFactory extends AbstractWindowFunctionFactory 
             }
             if (!dv.isConstant()) return null;
             if (!ColumnType.isSameTagOrBuiltInWideningCast(dv.getType(), args.getQuick(0).getType())) {
-                throw SqlException.$(argPositions.getQuick(2), "default value must be can cast to timestamp");
+                throw SqlException.$(argPositions.getQuick(2), "default value cannot be cast to timestamp");
             }
             defaultValue = dv;
         }

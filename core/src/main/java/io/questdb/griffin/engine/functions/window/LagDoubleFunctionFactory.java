@@ -65,7 +65,7 @@ public class LagDoubleFunctionFactory extends AbstractWindowFunctionFactory {
                 sqlExecutionContext,
                 (defaultValue) -> {
                     if (!ColumnType.isSameOrBuiltInWideningCast(defaultValue.getType(), ColumnType.DOUBLE)) {
-                        throw SqlException.$(argPositions.getQuick(2), "default value must be can cast to double");
+                        throw SqlException.$(argPositions.getQuick(2), "default value cannot be cast to double");
                     }
                 },
                 LagFunction::new,

@@ -41,6 +41,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
+import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.VirtualRecord;
 import io.questdb.cairo.sql.WindowSPI;
 import io.questdb.cairo.vm.Vm;
@@ -53,6 +54,8 @@ import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
+
+import java.util.Arrays;
 
 /**
  * Streaming window factory that supports mixed deferred-emit and immediate-emit window functions
@@ -95,11 +98,9 @@ public class DeferredEmitWindowRecordCursorFactory extends AbstractRecordCursorF
     private final int[] columnToSlotOffset;
     private final DeferredEmitWindowRecordCursor cursor;
     private final ObjList<Function> functions;
-    private final int[] lagColumnIndices;
     // LAG (immediate-emit) functions in column order.
     private final ObjList<WindowFunction> lagFunctions;
     private final int leadCount;
-    private final int[] leadColumnIndices;
     // LEAD (deferred-emit) functions in column order. leadOffsets[i] is the lookahead of leadFunctions[i].
     private final ObjList<WindowFunction> leadFunctions;
     private final long[] leadOffsets;
@@ -146,9 +147,7 @@ public class DeferredEmitWindowRecordCursorFactory extends AbstractRecordCursorF
             final ObjList<WindowFunction> lagFns = new ObjList<>();
             final ObjList<WindowFunction> leadFns = new ObjList<>();
             final int[] colToSlot = new int[columnCount];
-            for (int i = 0; i < columnCount; i++) {
-                colToSlot[i] = -1;
-            }
+            Arrays.fill(colToSlot, -1);
             // We need leadColumnIndices in the same order as leadFns; build them in lock-step.
             // Same for lagColumnIndices. Use primitive list types so we don't autobox into Integer/Long.
             final IntList lagColIdxTmp = new IntList();
@@ -210,14 +209,8 @@ public class DeferredEmitWindowRecordCursorFactory extends AbstractRecordCursorF
             this.columnToSlotOffset = colToSlot;
 
             this.leadOffsets = new long[lCount];
-            this.leadColumnIndices = new int[lCount];
             for (int i = 0; i < lCount; i++) {
                 this.leadOffsets[i] = leadOffsetsTmp.getQuick(i);
-                this.leadColumnIndices[i] = leadColIdxTmp.getQuick(i);
-            }
-            this.lagColumnIndices = new int[lagFns.size()];
-            for (int i = 0, n = lagFns.size(); i < n; i++) {
-                this.lagColumnIndices[i] = lagColIdxTmp.getQuick(i);
             }
             // Release the temp lists to GC; we've copied into primitive arrays.
 
@@ -341,7 +334,6 @@ public class DeferredEmitWindowRecordCursorFactory extends AbstractRecordCursorF
     final class DeferredEmitWindowRecordCursor implements RecordCursor, WindowSPI, Reopenable {
 
         private final OutputRecord outputRecord = new OutputRecord();
-        private final OutputRecord outputRecordB = new OutputRecord();
         // For no-partition mode this is the only partition state; for partition mode it's a scratch
         // copy holding the looked-up Map value during processBaseRow.
         private final long[] singlePartitionState = new long[5];
@@ -362,11 +354,6 @@ public class DeferredEmitWindowRecordCursorFactory extends AbstractRecordCursorF
 
         DeferredEmitWindowRecordCursor() {
             this.isOpen = true;
-        }
-
-        @Override
-        public void calculateSize(SqlExecutionCircuitBreaker circuitBreaker, Counter counter) {
-            baseCursor.calculateSize(circuitBreaker, counter);
         }
 
         @Override
@@ -399,17 +386,23 @@ public class DeferredEmitWindowRecordCursorFactory extends AbstractRecordCursorF
         }
 
         @Override
+        public SymbolTable getSymbolTable(int columnIndex) {
+            return baseCursor.getSymbolTable(columnIndex);
+        }
+
+        @Override
         public Record getRecordAt(long recordOffset) {
             throw new UnsupportedOperationException("DeferredEmitWindowRecordCursor does not back two-pass window functions");
         }
 
         @Override
         public Record getRecordB() {
-            // Returns the secondary OutputRecord. Callers that try to position it via recordAt()
-            // will get UnsupportedOperationException — the streaming cursor cannot back random
-            // access. Returning the unbound record matches the RecordCursor interface contract;
-            // most window-function consumers only need getRecord() and never touch recordB.
-            return outputRecordB;
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public SymbolTable newSymbolTable(int columnIndex) {
+            return baseCursor.newSymbolTable(columnIndex);
         }
 
         @Override
@@ -596,39 +589,45 @@ public class DeferredEmitWindowRecordCursorFactory extends AbstractRecordCursorF
         }
 
         private void processBaseRow(Record baseRow) {
-            final long[] state;
+            final MapValue mapValue;
+            final long slotsOff;
+            long ringHead;
+            long ringTail;
+            long ringCount;
+            long pendingFilled;
+
             if (partitionByRecord == null) {
-                state = singlePartitionState;
+                mapValue = null;
+                slotsOff = singlePartitionState[0];
+                ringHead = singlePartitionState[1];
+                ringTail = singlePartitionState[2];
+                ringCount = singlePartitionState[3];
+                pendingFilled = singlePartitionState[4];
             } else {
                 partitionByRecord.of(baseRow);
                 MapKey key = partitionMap.withKey();
                 key.put(partitionByRecord, partitionBySink);
-                MapValue mapValue = key.createValue();
+                mapValue = key.createValue();
                 if (mapValue.isNew()) {
                     if (partitionMap.size() > maxPartitions) {
                         throw CairoException.critical(0)
                                 .put("DeferredEmitWindowRecordCursor partition cap exceeded: maxPartitions=").put(maxPartitions);
                     }
-                    final long slotsOff = allocatePartitionSlice();
-                    mapValue.putLong(0, slotsOff);
+                    final long newSlotsOff = allocatePartitionSlice();
+                    mapValue.putLong(0, newSlotsOff);
                     mapValue.putLong(1, 0L);
                     mapValue.putLong(2, 0L);
                     mapValue.putLong(3, 0L);
                     mapValue.putLong(4, 0L);
                 }
-                singlePartitionState[0] = mapValue.getLong(0);
-                singlePartitionState[1] = mapValue.getLong(1);
-                singlePartitionState[2] = mapValue.getLong(2);
-                singlePartitionState[3] = mapValue.getLong(3);
-                singlePartitionState[4] = mapValue.getLong(4);
-                state = singlePartitionState;
+                slotsOff = mapValue.getLong(0);
+                ringHead = mapValue.getLong(1);
+                ringTail = mapValue.getLong(2);
+                ringCount = mapValue.getLong(3);
+                pendingFilled = mapValue.getLong(4);
             }
 
-            final long slotsOff = state[0];
-            long ringHead = state[1];
-            long ringTail = state[2];
-            long ringCount = state[3];
-            long pendingFilled = state[4];
+            final long mapValueAddr = mapValue != null ? mapValue.getAddress(0) : 0;
 
             // 1) Back-fill: for each LEAD function with offset k_i, find the entry at age k_i
             //    (i.e., enqueued k_i partition-local rows ago) and write LEAD's value into its slot.
@@ -676,24 +675,16 @@ public class DeferredEmitWindowRecordCursorFactory extends AbstractRecordCursorF
 
             // 4) Persist state.
             if (partitionByRecord == null) {
-                state[1] = ringHead;
-                state[2] = ringTail;
-                state[3] = ringCount;
-                state[4] = pendingFilled;
+                singlePartitionState[1] = ringHead;
+                singlePartitionState[2] = ringTail;
+                singlePartitionState[3] = ringCount;
+                singlePartitionState[4] = pendingFilled;
             } else {
-                partitionByRecord.of(baseRow);
-                MapKey key2 = partitionMap.withKey();
-                key2.put(partitionByRecord, partitionBySink);
-                MapValue mapValue2 = key2.findValue();
-                if (mapValue2 == null) {
-                    throw CairoException.critical(0)
-                            .put("partition state lost between row arrivals; this is a bug");
-                }
-                mapValue2.putLong(0, slotsOff);
-                mapValue2.putLong(1, ringHead);
-                mapValue2.putLong(2, ringTail);
-                mapValue2.putLong(3, ringCount);
-                mapValue2.putLong(4, pendingFilled);
+                assert mapValue.getAddress(0) == mapValueAddr : "partitionMap flyweight invalidated between read and write-back";
+                mapValue.putLong(1, ringHead);
+                mapValue.putLong(2, ringTail);
+                mapValue.putLong(3, ringCount);
+                mapValue.putLong(4, pendingFilled);
             }
         }
 
