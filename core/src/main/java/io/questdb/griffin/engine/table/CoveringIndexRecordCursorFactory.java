@@ -1820,9 +1820,10 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
      * Multi-key covering cursor that emits rows in ts-ascending order.
      * <p>
      * Opens one posting cursor per resolved key for the current
-     * partition, then merges them by row-id via a min-heap
-     * ({@link IntLongSortedList}). Row-id within a partition is
-     * ts-ascending by the designated-timestamp contract, so heap-merge
+     * partition, then k-way-merges them by row-id through an
+     * {@link IntLongSortedList} (a sorted-insert list keyed on the next
+     * row-id of each per-key cursor). Row-id within a partition is
+     * ts-ascending by the designated-timestamp contract, so the merge
      * yields a globally ts-ascending stream across the partition. This
      * is what {@link CoveringIndexRecordCursorFactory#getScanDirection()}
      * advertises as {@code SCAN_DIRECTION_FORWARD}.
@@ -2022,15 +2023,16 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
      * Multi-key covering page-frame cursor.
      * <p>
      * Opens one posting cursor per resolved key for the current partition
-     * and merges them by row-id via a min-heap. The earlier per-key fill
-     * emitted (key, partition) blocks, which violated the row-id
-     * ascending order page-frame consumers (and the SAMPLE BY entry gate)
-     * rely on. The indexed-symbol column is now written per-row, since
-     * consecutive emitted rows can belong to different keys.
+     * and k-way-merges them by row-id via an {@link IntLongSortedList}.
+     * The earlier per-key fill emitted (key, partition) blocks, which
+     * violated the row-id ascending order page-frame consumers (and the
+     * SAMPLE BY entry gate) rely on. The indexed-symbol column is now
+     * written per-row, since consecutive emitted rows can belong to
+     * different keys.
      * <p>
-     * Resume across nextImpl() calls is heap-based: when a frame fills to
-     * maxRowsPerFrame the heap and per-key cursors are left in place;
-     * the next call continues from {@link #pendingAdvanceSlot}.
+     * Resume across nextImpl() calls: when a frame fills to
+     * maxRowsPerFrame the sorted list and per-key cursors are left in
+     * place; the next call continues from {@link #pendingAdvanceSlot}.
      */
     private static class MultiKeyCoveringPageFrameCursor extends CoveringPageFrameCursor {
         final IntList multiKeys = new IntList();

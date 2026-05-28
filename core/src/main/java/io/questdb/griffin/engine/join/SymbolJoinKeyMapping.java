@@ -34,11 +34,14 @@ import io.questdb.griffin.engine.functions.SymbolFunction;
 public interface SymbolJoinKeyMapping {
 
     static StaticSymbolTable toStaticSymbolTable(SymbolTable symbolTable) {
-        if (symbolTable instanceof StaticSymbolTable) {
-            return (StaticSymbolTable) symbolTable;
+        if (symbolTable instanceof StaticSymbolTable sst) {
+            return sst;
         }
-        if (symbolTable instanceof SymbolFunction) {
-            return ((SymbolFunction) symbolTable).getStaticSymbolTable();
+        if (symbolTable instanceof SymbolFunction sf) {
+            StaticSymbolTable sst = sf.getStaticSymbolTable();
+            if (sst != null) {
+                return sst;
+            }
         }
         throw new AssertionError("Failed to get static symbol table from " + symbolTable);
     }
