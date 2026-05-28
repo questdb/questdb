@@ -1573,6 +1573,18 @@ public class PropServerConfigurationTest {
     }
 
     @Test
+    public void testRepeatMigrationFromVersionDefault() throws Exception {
+        // The default must never equal ColumnType.VERSION. When it does, EngineMigration
+        // resets currentMigrationVersion to the table version (EngineMigration.java:110) and
+        // never short-circuits, so every forward-compatible migration registered above VERSION
+        // re-runs on every startup instead of once. -1 disables forced repeats by default.
+        Properties properties = new Properties();
+        PropServerConfiguration configuration = newPropServerConfiguration(properties);
+        Assert.assertEquals(-1, configuration.getCairoConfiguration().getRepeatMigrationsFromVersion());
+        Assert.assertNotEquals(ColumnType.VERSION, configuration.getCairoConfiguration().getRepeatMigrationsFromVersion());
+    }
+
+    @Test
     public void testSetAllFromFile() throws Exception {
         try (InputStream is = PropServerConfigurationTest.class.getResourceAsStream("/server.conf")) {
             Properties properties = new Properties();
