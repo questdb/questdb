@@ -6842,6 +6842,18 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                     final long columnNameTxn = getColumnNameTxn(partitionTimestamp, columnIndex);
 
+                    // Posting value files are .pv.<colTxn>.<sealTxn>; resolve
+                    // sealTxn from the live chain head in .pk. Empty chain
+                    // (pre-seal state) means live data sits in .pv.<colTxn>.0,
+                    // so fall back to 0 there. Bitmap indexes ignore sealTxn.
+                    long linkSealTxn = columnNameTxn;
+                    if (IndexType.isPosting(indexType)) {
+                        long fromPk = PostingIndexUtils.readLiveSealTxnFromKeyFileOrThrow(
+                                ff, path, partitionDirLen, columnName, columnNameTxn,
+                                keyFileName(indexType, path.trimTo(partitionDirLen), columnName, columnNameTxn));
+                        linkSealTxn = fromPk >= 0 ? fromPk : 0L;
+                    }
+
                     keyFileName(indexType, path.trimTo(partitionDirLen), columnName, columnNameTxn);
                     keyFileName(indexType, other.trimTo(newPartitionDirLen), columnName, columnNameTxn);
                     if (ff.hardLink(path.$(), other.$()) != FILES_RENAME_OK) {
@@ -6853,8 +6865,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                 .put(']');
                     }
 
-                    BitmapIndexUtils.valueFileName(path.trimTo(partitionDirLen), columnName, columnNameTxn);
-                    BitmapIndexUtils.valueFileName(other.trimTo(newPartitionDirLen), columnName, columnNameTxn);
+                    valueFileName(indexType, path.trimTo(partitionDirLen), columnName, columnNameTxn, linkSealTxn);
+                    valueFileName(indexType, other.trimTo(newPartitionDirLen), columnName, columnNameTxn, linkSealTxn);
                     if (ff.hardLink(path.$(), other.$()) != FILES_RENAME_OK) {
                         throw CairoException.critical(ff.errno())
                                 .put("could not hard link index value file [table=")
@@ -6862,6 +6874,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                 .put(", column=")
                                 .put(columnName)
                                 .put(']');
+                    }
+
+                    if (IndexType.isPosting(indexType)) {
+                        // .pci sidecar + per-column .pc<N>.{colTxn}.{sealTxn}
+                        // files for the live generation. Same arg shape as
+                        // copyOrRebuildColumnIndexes's no-column-top branch
+                        // (no rename, src column == dst column).
+                        linkPostingIndexAuxFiles(partitionDirLen, newPartitionDirLen, columnName, columnNameTxn, columnName, columnNameTxn);
                     }
                 }
             }
