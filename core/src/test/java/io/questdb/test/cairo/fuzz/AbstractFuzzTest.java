@@ -353,8 +353,8 @@ public class AbstractFuzzTest extends AbstractCairoTest {
             double symbolAccessProb,
             double queryProb,
             double setParquetEncodingProb,
-            double setTableFormatProb,
-            double addCoveringIndexProb
+            double addCoveringIndexProb,
+            double setTableFormatProb
     ) {
         fuzzer.setFuzzProbabilities(
                 cancelRowsProb, notSetProb, nullSetProb, rollbackProb,
