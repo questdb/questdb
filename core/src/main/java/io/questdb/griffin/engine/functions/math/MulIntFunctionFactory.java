@@ -30,19 +30,42 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.IntFunction;
+import io.questdb.griffin.engine.functions.constants.IntConstant;
 import io.questdb.std.IntList;
+import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
+import io.questdb.std.Transient;
 
 public class MulIntFunctionFactory implements FunctionFactory {
+
     @Override
     public String getSignature() {
         return "*(II)";
     }
 
     @Override
-    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return new Func(args.getQuick(0), args.getQuick(1));
+    public Function newInstance(
+            int position,
+            @Transient ObjList<Function> args,
+            @Transient IntList argPositions,
+            CairoConfiguration configuration,
+            SqlExecutionContext sqlExecutionContext
+    ) {
+        final Function left = args.getQuick(0);
+        final Function right = args.getQuick(1);
+        // null * x and x * null always evaluate to null. Fold at construction time so the
+        // non-null operand (potentially a column reference) is never evaluated with a null
+        // record via FunctionParser.functionToConstant().
+        if (left.isNullConstant()) {
+            Misc.free(right);
+            return IntConstant.NULL;
+        }
+        if (right.isNullConstant()) {
+            Misc.free(left);
+            return IntConstant.NULL;
+        }
+        return new Func(left, right);
     }
 
     private static final class Func extends IntFunction implements ArithmeticBinaryFunction {
@@ -58,7 +81,6 @@ public class MulIntFunctionFactory implements FunctionFactory {
         public int getInt(Record rec) {
             final int l = left.getInt(rec);
             final int r = right.getInt(rec);
-
             if (l == Numbers.INT_NULL || r == Numbers.INT_NULL) {
                 return Numbers.INT_NULL;
             }
@@ -72,13 +94,17 @@ public class MulIntFunctionFactory implements FunctionFactory {
 
         @Override
         public long getLong(Record rec) {
-            final int l = left.getInt(rec);
-            final int r = right.getInt(rec);
-
-            if (l == Numbers.INT_NULL || r == Numbers.INT_NULL) {
+            // Widen subtree operands to long so nested INT arithmetic computes
+            // at long width here too. Calling getInt() recursively would let
+            // an inner INT*INT product wrap mod 2^32 before the outer cast
+            // promoted it to long, diverging from the JIT path which widens
+            // every narrow operand up front when the predicate has a LONG.
+            final long l = left.getLong(rec);
+            final long r = right.getLong(rec);
+            if (l == Numbers.LONG_NULL || r == Numbers.LONG_NULL) {
                 return Numbers.LONG_NULL;
             }
-            return ((long) l) * r;
+            return l * r;
         }
 
         @Override

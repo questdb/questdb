@@ -345,6 +345,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final long matViewMaxRefreshStepUs;
     private final boolean matViewParallelExecutionEnabled;
     private final long matViewRefreshIntervalsUpdatePeriod;
+    private final int matViewRefreshMaxClusters;
     private final boolean matViewRefreshMissingWalFilesFatal;
     private final long matViewRefreshOomRetryTimeout;
     private final WorkerPoolConfiguration matViewRefreshPoolConfiguration = new PropMatViewsRefreshPoolConfiguration();
@@ -430,6 +431,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int qwpMaxRowsPerTable;
     private final int qwpMaxSchemasPerConnection;
     private final int qwpMaxTablesPerConnection;
+    private final long qwpMaxUncommittedRows;
     private final long qwpUdpCommitInterval;
     private final boolean qwpUdpEnabled;
     private final int qwpUdpGroupIPv4Address;
@@ -880,7 +882,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         this.cairoTableRegistryAutoReloadFrequency = getMillis(properties, env, PropertyKey.CAIRO_TABLE_REGISTRY_AUTO_RELOAD_FREQUENCY, 500);
         this.cairoTableRegistryCompactionThreshold = getInt(properties, env, PropertyKey.CAIRO_TABLE_REGISTRY_COMPACTION_THRESHOLD, 30);
         this.cairoWriteBackOffTimeoutOnMemPressureMs = getMillis(properties, env, PropertyKey.CAIRO_WRITE_BACK_OFF_TIMEOUT_ON_MEM_PRESSURE, 4000);
-        this.repeatMigrationFromVersion = getInt(properties, env, PropertyKey.CAIRO_REPEAT_MIGRATION_FROM_VERSION, 426);
+        this.repeatMigrationFromVersion = getInt(properties, env, PropertyKey.CAIRO_REPEAT_MIGRATION_FROM_VERSION, -1);
         this.mkdirMode = getInt(properties, env, PropertyKey.CAIRO_MKDIR_MODE, 509);
         this.maxFileNameLength = getInt(properties, env, PropertyKey.CAIRO_MAX_FILE_NAME_LENGTH, 127);
         // changing the default value of walEnabledDefault to true would mean that QuestDB instances upgraded from
@@ -908,7 +910,7 @@ public class PropServerConfiguration implements ServerConfiguration {
         this.walSquashUncommittedRowsMultiplier = getDouble(properties, env, PropertyKey.CAIRO_WAL_SQUASH_UNCOMMITTED_ROWS_MULTIPLIER, "20.0");
         this.walMaxLagTxnCount = getInt(properties, env, PropertyKey.CAIRO_WAL_MAX_LAG_TXN_COUNT, -1);
         this.debugWalApplyBlockFailureNoRetry = getBoolean(properties, env, PropertyKey.DEBUG_WAL_APPLY_BLOCK_FAILURE_NO_RETRY, false);
-        this.walMaxLagSize = getLongSize(properties, env, PropertyKey.CAIRO_WAL_MAX_LAG_SIZE, 75 * Numbers.SIZE_1MB);
+        this.walMaxLagSize = getLongSize(properties, env, PropertyKey.CAIRO_WAL_MAX_LAG_SIZE, 75 * Numbers.SIZE_1MB, 0);
         this.walMaxSegmentFileDescriptorsCache = getInt(properties, env, PropertyKey.CAIRO_WAL_MAX_SEGMENT_FILE_DESCRIPTORS_CACHE, 30);
         this.walApplyTableTimeQuota = getMillis(properties, env, PropertyKey.CAIRO_WAL_APPLY_TABLE_TIME_QUOTA, 1000);
         this.walApplyLookAheadTransactionCount = getInt(properties, env, PropertyKey.CAIRO_WAL_APPLY_LOOK_AHEAD_TXN_COUNT, 200);
@@ -1614,6 +1616,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.matViewInsertAsSelectBatchSize = getLong(properties, env, PropertyKey.CAIRO_MAT_VIEW_INSERT_AS_SELECT_BATCH_SIZE, sqlInsertModelBatchSize);
             this.matViewRowsPerQueryEstimate = getLong(properties, env, PropertyKey.CAIRO_MAT_VIEW_ROWS_PER_QUERY_ESTIMATE, 1_000_000L);
             this.matViewMaxRefreshIntervals = getInt(properties, env, PropertyKey.CAIRO_MAT_VIEW_MAX_REFRESH_INTERVALS, 100);
+            this.matViewRefreshMaxClusters = getInt(properties, env, PropertyKey.CAIRO_MAT_VIEW_REFRESH_MAX_CLUSTERS, 32);
             this.sqlCompileViewModelPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_COMPILE_VIEW_MODEL_POOL_CAPACITY, 8);
             this.sqlCopyBufferSize = getIntSize(properties, env, PropertyKey.CAIRO_SQL_COPY_BUFFER_SIZE, 2 * Numbers.SIZE_1MB);
             this.columnPurgeQueueCapacity = getQueueCapacity(properties, env, PropertyKey.CAIRO_SQL_COLUMN_PURGE_QUEUE_CAPACITY, 128);
@@ -1872,6 +1875,13 @@ public class PropServerConfiguration implements ServerConfiguration {
             if (qwpMaxTablesPerConnection < 1) {
                 throw new ServerConfigurationException(
                         PropertyKey.QWP_MAX_TABLES_PER_CONNECTION.getPropertyPath()
+                                + " must be at least 1"
+                );
+            }
+            this.qwpMaxUncommittedRows = getLong(properties, env, PropertyKey.QWP_MAX_UNCOMMITTED_ROWS, QwpConstants.DEFAULT_MAX_UNCOMMITTED_ROWS);
+            if (qwpMaxUncommittedRows < 1) {
+                throw new ServerConfigurationException(
+                        PropertyKey.QWP_MAX_UNCOMMITTED_ROWS.getPropertyPath()
                                 + " must be at least 1"
                 );
             }
@@ -2165,7 +2175,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.writerAsyncCommandBusyWaitTimeout = getMillis(properties, env, PropertyKey.CAIRO_WRITER_ALTER_BUSY_WAIT_TIMEOUT, 500);
             this.writerAsyncCommandMaxWaitTimeout = getMillis(properties, env, PropertyKey.CAIRO_WRITER_ALTER_MAX_WAIT_TIMEOUT, 30_000);
             this.writerTickRowsCountMod = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_WRITER_TICK_ROWS_COUNT, 1024)) - 1;
-            this.writerAsyncCommandQueueCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_WRITER_COMMAND_QUEUE_CAPACITY, 32));
+            this.writerAsyncCommandQueueCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_WRITER_COMMAND_QUEUE_CAPACITY, 256));
             this.writerAsyncCommandQueueSlotSize = Numbers.ceilPow2(getLongSize(properties, env, PropertyKey.CAIRO_WRITER_COMMAND_QUEUE_SLOT_SIZE, 2048));
 
             this.buildInformation = buildInformation;
@@ -2726,6 +2736,14 @@ public class PropServerConfiguration implements ServerConfiguration {
         } catch (NumericException e) {
             throw ServerConfigurationException.forInvalidKey(key.getPropertyPath(), value);
         }
+    }
+
+    protected long getLongSize(Properties properties, @Nullable Map<String, String> env, ConfigPropertyKey key, long defaultValue, long minValue) throws ServerConfigurationException {
+        final long size = getLongSize(properties, env, key, defaultValue);
+        if (size < minValue) {
+            throw ServerConfigurationException.forInvalidKey(key.getPropertyPath(), Long.toString(size));
+        }
+        return size;
     }
 
     protected long getMicros(
@@ -4003,6 +4021,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public long getMatViewRefreshIntervalsUpdatePeriod() {
             return matViewRefreshIntervalsUpdatePeriod;
+        }
+
+        @Override
+        public int getMatViewRefreshMaxClusters() {
+            return matViewRefreshMaxClusters;
         }
 
         @Override
@@ -5852,6 +5875,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getQwpMaxTablesPerConnection() {
             return qwpMaxTablesPerConnection;
+        }
+
+        @Override
+        public long getQwpMaxUncommittedRows() {
+            return qwpMaxUncommittedRows;
         }
 
         @Override

@@ -410,7 +410,7 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(500, configuration.getLineTcpReceiverConfiguration().getWriterIdleTimeout());
         Assert.assertEquals(0, configuration.getCairoConfiguration().getSampleByIndexSearchPageSize());
         Assert.assertTrue(configuration.getCairoConfiguration().getSampleByDefaultAlignmentCalendar());
-        Assert.assertEquals(32, configuration.getCairoConfiguration().getWriterCommandQueueCapacity());
+        Assert.assertEquals(256, configuration.getCairoConfiguration().getWriterCommandQueueCapacity());
         Assert.assertEquals(2048, configuration.getCairoConfiguration().getWriterCommandQueueSlotSize());
         Assert.assertEquals(500, configuration.getCairoConfiguration().getWriterAsyncCommandBusyWaitTimeout());
         Assert.assertEquals(30_000, configuration.getCairoConfiguration().getWriterAsyncCommandMaxTimeout());
@@ -1186,6 +1186,23 @@ public class PropServerConfigurationTest {
         }
     }
 
+    @Test(expected = ServerConfigurationException.class)
+    public void testInvalidWalMaxLagSizeNegative() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty("cairo.wal.max.lag.size", "-1");
+        newPropServerConfiguration(properties);
+    }
+
+    @Test
+    public void testWalMaxLagSizeZeroAccepted() throws Exception {
+        // 0 is the minimum accepted value (the guard rejects only negatives), so it must pass and
+        // round-trip unchanged. Guards against a > vs >= regression in getLongSize(..., minValue).
+        Properties properties = new Properties();
+        properties.setProperty("cairo.wal.max.lag.size", "0");
+        PropServerConfiguration configuration = newPropServerConfiguration(properties);
+        Assert.assertEquals(0, configuration.getCairoConfiguration().getWalMaxLagSize());
+    }
+
     @Test
     public void testInvalidValidationResult() {
         Properties properties = new Properties();
@@ -1553,6 +1570,18 @@ public class PropServerConfigurationTest {
 
         PropServerConfiguration configuration = newPropServerConfiguration(properties);
         Assert.assertEquals(-1, configuration.getQwpUdpReceiverConfiguration().getReceiveBufferSize());
+    }
+
+    @Test
+    public void testRepeatMigrationFromVersionDefault() throws Exception {
+        // The default must never equal ColumnType.VERSION. When it does, EngineMigration
+        // resets currentMigrationVersion to the table version (EngineMigration.java:110) and
+        // never short-circuits, so every forward-compatible migration registered above VERSION
+        // re-runs on every startup instead of once. -1 disables forced repeats by default.
+        Properties properties = new Properties();
+        PropServerConfiguration configuration = newPropServerConfiguration(properties);
+        Assert.assertEquals(-1, configuration.getCairoConfiguration().getRepeatMigrationsFromVersion());
+        Assert.assertNotEquals(ColumnType.VERSION, configuration.getCairoConfiguration().getRepeatMigrationsFromVersion());
     }
 
     @Test

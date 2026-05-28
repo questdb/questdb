@@ -32,6 +32,7 @@ import io.questdb.std.Rnd;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
+import org.junit.Before;
 import org.junit.Test;
 
 import java.io.File;
@@ -93,6 +94,27 @@ public class QwpIngressServerRestartFuzzTest extends AbstractCairoTest {
 
     private static final Log LOG = LogFactory.getLog(QwpIngressServerRestartFuzzTest.class);
     private static final String TABLE_NAME = "qwp_restart_fuzz";
+    // Server defaults from DefaultIODispatcherConfiguration. RestartableQwpServer
+    // does not override these, so the actual buffers are this size.
+    private static final int RECV_BUFFER_SIZE = 131_072;
+    private static final int SEND_BUFFER_SIZE = 131_072;
+    private int recvChunk;
+    private int sendChunk;
+
+    @Before
+    public void setUp() {
+        super.setUp();
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        // Independent recv / send fragmentation chunks (asymmetric, min=1).
+        // chunk=1 makes every wire byte its own socket event, exposing
+        // park-resume bugs in the WS parser and the SF replay path.
+        // Upper bound is the corresponding buffer size: a chunk larger than
+        // the buffer is effectively no fragmentation.
+        recvChunk = 1 + rnd.nextInt(RECV_BUFFER_SIZE);
+        sendChunk = 1 + rnd.nextInt(SEND_BUFFER_SIZE);
+        LOG.info().$("QwpIngressServerRestartFuzzTest fragmentation recvChunk=").$(recvChunk)
+                .$(", sendChunk=").$(sendChunk).$();
+    }
 
     @Test
     public void testSenderPushesContinuouslyWhileServerBounces() throws Exception {
@@ -125,7 +147,7 @@ public class QwpIngressServerRestartFuzzTest extends AbstractCairoTest {
                     + ";reconnect_max_duration_millis=120000"
                     + ";close_flush_timeout_millis=120000;";
 
-            try (RestartableQwpServer server = new RestartableQwpServer(engine, configuration, port)) {
+            try (RestartableQwpServer server = new RestartableQwpServer(engine, configuration, port, recvChunk, sendChunk)) {
                 server.start();
 
                 AtomicBoolean stopProducer = new AtomicBoolean();
@@ -247,7 +269,7 @@ public class QwpIngressServerRestartFuzzTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             createTargetTable();
             int port = RestartableQwpServer.pickFreePort();
-            try (RestartableQwpServer server = new RestartableQwpServer(engine, configuration, port)) {
+            try (RestartableQwpServer server = new RestartableQwpServer(engine, configuration, port, recvChunk, sendChunk)) {
                 server.start();
                 int writers = 2;
                 int rowsPerWriter = 500;
@@ -305,7 +327,7 @@ public class QwpIngressServerRestartFuzzTest extends AbstractCairoTest {
 
             // Epoch 1: sender writes, then server is killed BEFORE sender
             // close so some frames sit unacked on disk.
-            RestartableQwpServer server1 = new RestartableQwpServer(engine, configuration, port);
+            RestartableQwpServer server1 = new RestartableQwpServer(engine, configuration, port, recvChunk, sendChunk);
             server1.start();
             String connect1 = "ws::addr=localhost:" + port + ";sf_dir=" + sfDir
                     + ";close_flush_timeout_millis=0;";
@@ -325,7 +347,7 @@ public class QwpIngressServerRestartFuzzTest extends AbstractCairoTest {
             // Epoch 2: brand-new server on the same port; the new sender
             // pointed at the same sfDir locks the same slot and replays
             // any unacked frames before continuing with new ones.
-            try (RestartableQwpServer server2 = new RestartableQwpServer(engine, configuration, port)) {
+            try (RestartableQwpServer server2 = new RestartableQwpServer(engine, configuration, port, recvChunk, sendChunk)) {
                 server2.start();
                 runOneSfSender(port, sfDir, /*idBase*/ rowsPerEpoch, rowsPerEpoch,
                         1_700_000_000_000_000_000L + (long) rowsPerEpoch * 1000L);
@@ -345,7 +367,7 @@ public class QwpIngressServerRestartFuzzTest extends AbstractCairoTest {
             int port = RestartableQwpServer.pickFreePort();
             String sfDir = freshSfDir("same-sender-survives");
 
-            try (RestartableQwpServer server = new RestartableQwpServer(engine, configuration, port)) {
+            try (RestartableQwpServer server = new RestartableQwpServer(engine, configuration, port, recvChunk, sendChunk)) {
                 server.start();
 
                 int rowsPerPhase = 500;
@@ -399,7 +421,7 @@ public class QwpIngressServerRestartFuzzTest extends AbstractCairoTest {
                 LOG.info().$("fuzz epoch ").$(epoch).$('/').$(epochs)
                         .$(" rows=").$(rowsPerEpoch)
                         .$(" idBase=").$(idBase).$();
-                RestartableQwpServer server = new RestartableQwpServer(engine, configuration, port);
+                RestartableQwpServer server = new RestartableQwpServer(engine, configuration, port, recvChunk, sendChunk);
                 server.start();
                 Sender sender = Sender.fromConfig(connect);
                 try {
@@ -421,7 +443,7 @@ public class QwpIngressServerRestartFuzzTest extends AbstractCairoTest {
             // Final epoch with no kill: a sender's startup recovery picks
             // up any leftover unacked frames from the previous epoch and
             // replays them; we wait long enough for the I/O loop to drain.
-            try (RestartableQwpServer server = new RestartableQwpServer(engine, configuration, port)) {
+            try (RestartableQwpServer server = new RestartableQwpServer(engine, configuration, port, recvChunk, sendChunk)) {
                 server.start();
                 // Open one more sender against the same slot to trigger
                 // recovery and drain. close() with the default 5s flush

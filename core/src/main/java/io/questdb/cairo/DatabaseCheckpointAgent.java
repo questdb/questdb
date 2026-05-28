@@ -104,7 +104,7 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
         this.messageBus = engine.getMessageBus();
         this.microClock = configuration.getMicrosecondClock();
         this.ff = configuration.getFilesFacade();
-        this.metadata = new WalWriterMetadata(ff);
+        this.metadata = WalWriterMetadata.newSequencerMetadataSink(ff);
         this.tableNameRegistryStore = new GrowOnlyTableNameRegistryStore(ff);
         this.txReader = new TxReader(configuration.getFilesFacade());
     }

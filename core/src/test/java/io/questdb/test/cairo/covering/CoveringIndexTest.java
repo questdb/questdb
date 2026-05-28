@@ -55,6 +55,7 @@ import io.questdb.cairo.vm.api.MemoryMR;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.griffin.engine.table.CoveringIndexRecordCursorFactory;
 import io.questdb.std.DirectBitSet;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.IntList;
@@ -83,6 +84,582 @@ import static org.junit.Assert.*;
 public class CoveringIndexTest extends AbstractCairoTest {
 
     private static final ColumnVersionReader EMPTY_CVR = new ColumnVersionReader();
+
+    @Test
+    public void testAddPostingCoveringIndexAcrossManyParquetRowGroupsAllVarSizeWal() throws Exception {
+        // The VARCHAR-only multi-row-group test pins ONE aux vector format
+        // across the cross-row-group ColumnTypeDriver.shiftCopyAuxVector
+        // boundary. STRING and BINARY have their own aux layouts and their own
+        // shiftCopyAuxVector drivers; this covers all three varsize types in
+        // the same row-group split. rnd_bin produces deterministic bytes for a
+        // given seed so the no_covering vs covering comparison is exact.
+        node1.setProperty(io.questdb.PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 16);
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_repro_rg_vs (
+                        ts TIMESTAMP,
+                        sym SYMBOL,
+                        v_str STRING,
+                        v_vc VARCHAR,
+                        v_bin BINARY
+                    ) TIMESTAMP(ts) PARTITION BY DAY WAL
+                    """);
+            execute("""
+                    INSERT INTO t_repro_rg_vs
+                    SELECT
+                        dateadd('m', x::INT, '2024-01-01T00:00:00Z'::TIMESTAMP),
+                        'A' || (x % 4),
+                        'S' || x,
+                        'V' || x,
+                        rnd_bin(4, 8, 0)
+                    FROM long_sequence(100)
+                    """);
+            drainWalQueue();
+            execute("ALTER TABLE t_repro_rg_vs CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            drainWalQueue();
+            execute("ALTER TABLE t_repro_rg_vs ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (v_str, v_vc, v_bin)");
+            drainWalQueue();
+
+            assertSql(
+                    "suspended\nfalse\n",
+                    "SELECT suspended FROM wal_tables() WHERE name = 't_repro_rg_vs'"
+            );
+            // Every covered value across all three varsize column types must
+            // agree between the covering scan and the no_covering fallback,
+            // for every row across the ~7 row groups -- proves cross-row-group
+            // aux offset rewriting works for STRING, VARCHAR, and BINARY.
+            assertSqlCursors(
+                    "SELECT ts, sym, v_str, v_vc, v_bin FROM t_repro_rg_vs ORDER BY ts",
+                    "SELECT /*+ no_covering */ ts, sym, v_str, v_vc, v_bin FROM t_repro_rg_vs ORDER BY ts"
+            );
+        });
+    }
+
+    @Test
+    public void testAddPostingCoveringIndexAcrossManyParquetRowGroupsWal() throws Exception {
+        // Force a tiny Parquet row group size (16 rows) so a 100-row partition
+        // spans ~7 row groups. The cross-row-group case is the one that goes
+        // through ColumnTypeDriver.shiftCopyAuxVector to rewrite the VARCHAR
+        // aux offsets to be cumulative across row groups -- the default-size
+        // tests stay inside a single row group and never exercise it.
+        node1.setProperty(io.questdb.PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 16);
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_repro_rg (
+                        ts TIMESTAMP,
+                        sym SYMBOL,
+                        price DOUBLE,
+                        tag VARCHAR
+                    ) TIMESTAMP(ts) PARTITION BY DAY WAL
+                    """);
+            execute("""
+                    INSERT INTO t_repro_rg
+                    SELECT
+                        dateadd('m', x::INT, '2024-01-01T00:00:00Z'::TIMESTAMP),
+                        'A' || (x % 4), x::DOUBLE, 'V' || (x % 4)
+                    FROM long_sequence(100)
+                    """);
+            drainWalQueue();
+            execute("ALTER TABLE t_repro_rg CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            drainWalQueue();
+            execute("ALTER TABLE t_repro_rg ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (price, tag)");
+            drainWalQueue();
+
+            assertSql(
+                    "suspended\nfalse\n",
+                    "SELECT suspended FROM wal_tables() WHERE name = 't_repro_rg'"
+            );
+            // Same headline assertion as the default-row-group test; if the
+            // multi-row-group VARCHAR aux rewriting were wrong, tag values
+            // beyond the first row group would be misaligned.
+            assertSql(
+                    "sum_price\tfirst_tag\n1300.0\tV0\n",
+                    "SELECT sum(price) sum_price, first(tag) first_tag FROM t_repro_rg WHERE sym = 'A0'"
+            );
+            // Full cursor comparison: every covered (price, tag) pair must match
+            // the no_covering scan across all 100 rows / ~7 row groups.
+            assertSqlCursors(
+                    "SELECT ts, sym, price, tag FROM t_repro_rg ORDER BY ts",
+                    "SELECT /*+ no_covering */ ts, sym, price, tag FROM t_repro_rg ORDER BY ts"
+            );
+        });
+    }
+
+    @Test
+    public void testAddPostingCoveringIndexAcrossMixedPartitionsWal() throws Exception {
+        // Mixed-layout WAL test: historic partition NATIVE, last partition
+        // PARQUET. Exercises indexHistoricPartitions -> indexNativePartition
+        // for partition 0 alongside indexLastPartition -> indexParquetPartition
+        // (the PR #7141 fix plus the covering provider) for partition 1.
+        // Assertions sum across both partitions so a regression in either
+        // path is visible.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_repro_mixed (
+                        ts TIMESTAMP,
+                        sym SYMBOL,
+                        price DOUBLE,
+                        tag VARCHAR
+                    ) TIMESTAMP(ts) PARTITION BY DAY WAL
+                    """);
+            execute("""
+                    INSERT INTO t_repro_mixed
+                    SELECT
+                        dateadd('m', x::INT, '2024-01-01T00:00:00Z'::TIMESTAMP),
+                        'A' || (x % 4), x::DOUBLE, 'V' || (x % 4)
+                    FROM long_sequence(100)
+                    """);
+            execute("""
+                    INSERT INTO t_repro_mixed
+                    SELECT
+                        dateadd('m', x::INT, '2024-01-02T00:00:00Z'::TIMESTAMP),
+                        'A' || (x % 4), x::DOUBLE, 'V' || (x % 4)
+                    FROM long_sequence(100)
+                    """);
+            drainWalQueue();
+
+            // Convert only the last partition to Parquet.
+            execute("ALTER TABLE t_repro_mixed CONVERT PARTITION TO PARQUET LIST '2024-01-02'");
+            drainWalQueue();
+
+            execute("ALTER TABLE t_repro_mixed ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (price, tag)");
+            drainWalQueue();
+
+            assertSql(
+                    "suspended\nfalse\n",
+                    "SELECT suspended FROM wal_tables() WHERE name = 't_repro_mixed'"
+            );
+            // 25 rows per partition with sym='A0' (x%4==0 -> x in {4,8,..,100});
+            // sum(price) per partition = 1300, totals: 50 rows and 2600.0.
+            // tag = 'V0' on every one of those rows.
+            assertSql(
+                    "rows\tsum_price\tfirst_tag\n50\t2600.0\tV0\n",
+                    "SELECT count(*) rows, sum(price) sum_price, first(tag) first_tag FROM t_repro_mixed WHERE sym = 'A0'"
+            );
+        });
+    }
+
+    @Test
+    public void testAddPostingCoveringIndexAcrossMultipleParquetPartitionsWal() throws Exception {
+        // Two Parquet partitions: exercises the historic-partition Parquet
+        // covering path AND the last-partition Parquet covering path in the
+        // same ADD INDEX. With the provider broken, sidecars for both
+        // partitions are empty; with the fix, both materialise correctly.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_repro_multi (
+                        ts TIMESTAMP,
+                        sym SYMBOL,
+                        price DOUBLE,
+                        tag VARCHAR
+                    ) TIMESTAMP(ts) PARTITION BY DAY WAL
+                    """);
+            execute("""
+                    INSERT INTO t_repro_multi
+                    SELECT
+                        dateadd('m', x::INT, '2024-01-01T00:00:00Z'::TIMESTAMP),
+                        'A' || (x % 4), x::DOUBLE, 'V' || (x % 4)
+                    FROM long_sequence(100)
+                    """);
+            execute("""
+                    INSERT INTO t_repro_multi
+                    SELECT
+                        dateadd('m', x::INT, '2024-01-02T00:00:00Z'::TIMESTAMP),
+                        'A' || (x % 4), x::DOUBLE, 'V' || (x % 4)
+                    FROM long_sequence(100)
+                    """);
+            drainWalQueue();
+
+            execute("ALTER TABLE t_repro_multi CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+            drainWalQueue();
+
+            execute("ALTER TABLE t_repro_multi ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (price, tag)");
+            drainWalQueue();
+
+            assertSql(
+                    "suspended\nfalse\n",
+                    "SELECT suspended FROM wal_tables() WHERE name = 't_repro_multi'"
+            );
+            assertSql(
+                    "rows\tsum_price\tfirst_tag\n50\t2600.0\tV0\n",
+                    "SELECT count(*) rows, sum(price) sum_price, first(tag) first_tag FROM t_repro_multi WHERE sym = 'A0'"
+            );
+        });
+    }
+
+    @Test
+    public void testAddPostingCoveringIndexHandlesMidPartitionColumnTopNativeWal() throws Exception {
+        // Native counterpart to ...ParquetWal below. Column added mid-partition
+        // on a WAL table, NO convert -- the partition stays native. The existing
+        // native covering build must also handle column_top correctly. The two
+        // tests share assertions so any divergence between native and Parquet
+        // covering for the column_top region surfaces immediately.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_repro_top_n (
+                        ts TIMESTAMP,
+                        sym SYMBOL,
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY WAL
+                    """);
+            execute("""
+                    INSERT INTO t_repro_top_n
+                    SELECT
+                        dateadd('m', x::INT, '2024-01-01T00:00:00Z'::TIMESTAMP),
+                        'A' || (x % 4), x::DOUBLE
+                    FROM long_sequence(50)
+                    """);
+            drainWalQueue();
+            execute("ALTER TABLE t_repro_top_n ADD COLUMN tag VARCHAR");
+            drainWalQueue();
+            execute("""
+                    INSERT INTO t_repro_top_n
+                    SELECT
+                        dateadd('m', (x + 60)::INT, '2024-01-01T00:00:00Z'::TIMESTAMP),
+                        'A' || (x % 4), x::DOUBLE, 'V' || (x % 4)
+                    FROM long_sequence(50)
+                    """);
+            drainWalQueue();
+            // No CONVERT -- partition stays native, native covering path runs.
+            execute("ALTER TABLE t_repro_top_n ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (price, tag)");
+            drainWalQueue();
+
+            assertSql(
+                    "suspended\nfalse\n",
+                    "SELECT suspended FROM wal_tables() WHERE name = 't_repro_top_n'"
+            );
+            assertSqlCursors(
+                    "SELECT ts, sym, price, tag FROM t_repro_top_n WHERE sym = 'A0' ORDER BY ts",
+                    "SELECT /*+ no_covering */ ts, sym, price, tag FROM t_repro_top_n WHERE sym = 'A0' ORDER BY ts"
+            );
+        });
+    }
+
+    @Test
+    public void testAddPostingCoveringIndexHandlesMidPartitionColumnTopParquetWal() throws Exception {
+        // Edge: a covering column was added MID-PARTITION (rows 0..49 inserted
+        // before ADD COLUMN, rows 50..99 inserted after, all in the same day
+        // partition). The partition is then converted to Parquet -- which
+        // zeroes column_top and stores nulls in the parquet file for the
+        // pre-add region. The provider decodes the whole column from Parquet
+        // (nulls included); the covering scan must agree with the no_covering
+        // scan on every row, including the nulls in the pre-add region.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_repro_top (
+                        ts TIMESTAMP,
+                        sym SYMBOL,
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY WAL
+                    """);
+            // First batch: tag column doesn't exist yet.
+            execute("""
+                    INSERT INTO t_repro_top
+                    SELECT
+                        dateadd('m', x::INT, '2024-01-01T00:00:00Z'::TIMESTAMP),
+                        'A' || (x % 4), x::DOUBLE
+                    FROM long_sequence(50)
+                    """);
+            drainWalQueue();
+            // ADD COLUMN: existing rows now have tag=null via column_top.
+            execute("ALTER TABLE t_repro_top ADD COLUMN tag VARCHAR");
+            drainWalQueue();
+            // Second batch into the same day partition: tag has values here.
+            execute("""
+                    INSERT INTO t_repro_top
+                    SELECT
+                        dateadd('m', (x + 60)::INT, '2024-01-01T00:00:00Z'::TIMESTAMP),
+                        'A' || (x % 4), x::DOUBLE, 'V' || (x % 4)
+                    FROM long_sequence(50)
+                    """);
+            drainWalQueue();
+
+            execute("ALTER TABLE t_repro_top CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            drainWalQueue();
+            execute("ALTER TABLE t_repro_top ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (price, tag)");
+            drainWalQueue();
+
+            assertSql(
+                    "suspended\nfalse\n",
+                    "SELECT suspended FROM wal_tables() WHERE name = 't_repro_top'"
+            );
+            // assertSqlCursors compares the covering scan to the no_covering
+            // fallback. The pre-add region must come back as null on BOTH; any
+            // mismatch (e.g. covering decoding garbage for the null region)
+            // surfaces as cursor divergence.
+            assertSqlCursors(
+                    "SELECT ts, sym, price, tag FROM t_repro_top WHERE sym = 'A0' ORDER BY ts",
+                    "SELECT /*+ no_covering */ ts, sym, price, tag FROM t_repro_top WHERE sym = 'A0' ORDER BY ts"
+            );
+        });
+    }
+
+    @Test
+    public void testAddPostingCoveringIndexIncludesColumnAddedAfterParquetConvertWal() throws Exception {
+        // Edge: a covering column was added AFTER the partition was converted
+        // to Parquet, so it isn't in the Parquet file's schema. The provider's
+        // findParquetColumnIndex returns -1 -- materialiseAt returns false --
+        // the .pc sidecar stays at its zero-filled maxCompressedSize. The
+        // reader is expected to honour column_top (column did not exist in
+        // this partition) and synthesise nulls, NOT read the empty sidecar.
+        // This test pins that contract: a covering scan must return null for
+        // every row in the pre-existing Parquet partition, not whatever
+        // garbage the empty sidecar would decode to.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_repro_added (
+                        ts TIMESTAMP,
+                        sym SYMBOL,
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY WAL
+                    """);
+            execute("""
+                    INSERT INTO t_repro_added
+                    SELECT
+                        dateadd('m', x::INT, '2024-01-01T00:00:00Z'::TIMESTAMP),
+                        'A' || (x % 4), x::DOUBLE
+                    FROM long_sequence(100)
+                    """);
+            drainWalQueue();
+            execute("ALTER TABLE t_repro_added CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            drainWalQueue();
+
+            // Add the new column AFTER the partition is already Parquet.
+            execute("ALTER TABLE t_repro_added ADD COLUMN tag VARCHAR");
+            drainWalQueue();
+
+            execute("ALTER TABLE t_repro_added ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (price, tag)");
+            drainWalQueue();
+
+            assertSql(
+                    "suspended\nfalse\n",
+                    "SELECT suspended FROM wal_tables() WHERE name = 't_repro_added'"
+            );
+            // price (in the Parquet schema) builds normally; tag (not in the
+            // Parquet schema) must read back null on every row -- column_top
+            // semantics, not data smuggled in from a zero-filled sidecar.
+            assertSql(
+                    "rows\tsum_price\tnull_tag\n25\t1300.0\t25\n",
+                    "SELECT count(*) rows, sum(price) sum_price, " +
+                            "sum(CASE WHEN tag IS NULL THEN 1 ELSE 0 END) null_tag " +
+                            "FROM t_repro_added WHERE sym = 'A0'"
+            );
+        });
+    }
+
+    @Test
+    public void testAddPostingCoveringIndexIncludesColumnAddedToFullyPopulatedNativeWal() throws Exception {
+        // Native counterpart to ...AfterParquetConvertWal above. Column added
+        // AFTER all partition data exists; column_top == partition_row_count
+        // so every row reads as null. The native covering path must produce
+        // the same null result that the Parquet provider variant produces.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_repro_added_n (
+                        ts TIMESTAMP,
+                        sym SYMBOL,
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY WAL
+                    """);
+            execute("""
+                    INSERT INTO t_repro_added_n
+                    SELECT
+                        dateadd('m', x::INT, '2024-01-01T00:00:00Z'::TIMESTAMP),
+                        'A' || (x % 4), x::DOUBLE
+                    FROM long_sequence(100)
+                    """);
+            drainWalQueue();
+            execute("ALTER TABLE t_repro_added_n ADD COLUMN tag VARCHAR");
+            drainWalQueue();
+            // No CONVERT -- native partition. column_top for tag == 100; all
+            // rows read tag as null.
+            execute("ALTER TABLE t_repro_added_n ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (price, tag)");
+            drainWalQueue();
+
+            assertSql(
+                    "suspended\nfalse\n",
+                    "SELECT suspended FROM wal_tables() WHERE name = 't_repro_added_n'"
+            );
+            // Identical assertion shape to the Parquet variant: 25 sym='A0'
+            // rows, sum=1300, all-null tag.
+            assertSql(
+                    "rows\tsum_price\tnull_tag\n25\t1300.0\t25\n",
+                    "SELECT count(*) rows, sum(price) sum_price, " +
+                            "sum(CASE WHEN tag IS NULL THEN 1 ELSE 0 END) null_tag " +
+                            "FROM t_repro_added_n WHERE sym = 'A0'"
+            );
+        });
+    }
+
+    @Test
+    public void testAddPostingCoveringIndexNonWalActivePartitionCannotBeParquet() throws Exception {
+        // Non-WAL counterpart to the WAL bug below. That bug needs a Parquet
+        // LAST partition -- but a non-WAL table can never have one: CONVERT
+        // PARTITION TO PARQUET skips the active (last) partition by design (see
+        // TableWriter.convertPartitionNativeToParquet, "conversion is
+        // unsupported for non-WAL tables"). So on a non-WAL table the last
+        // partition stays native, ADD INDEX TYPE POSTING INCLUDE (...) takes the
+        // native indexLastPartition() path, and there is no crash to reproduce.
+        // This test pins that boundary.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_repro_nowal (
+                        ts TIMESTAMP,
+                        sym SYMBOL,
+                        price DOUBLE,
+                        tag VARCHAR
+                    ) TIMESTAMP(ts) PARTITION BY DAY
+                    """);
+            execute("""
+                    INSERT INTO t_repro_nowal
+                    SELECT
+                        dateadd('m', x::INT, '2024-01-01T00:00:00Z'::TIMESTAMP),
+                        'A' || (x % 4),
+                        x::DOUBLE,
+                        'V' || (x % 4)
+                    FROM long_sequence(100)
+                    """);
+
+            // CONVERT is a no-op here: 2024-01-01 is the active partition.
+            execute("ALTER TABLE t_repro_nowal CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            assertSql(
+                    "name\tisParquet\n2024-01-01\tfalse\n",
+                    "SELECT name, isParquet FROM table_partitions('t_repro_nowal')"
+            );
+
+            // The last partition is native, so the covering index builds fine.
+            execute("ALTER TABLE t_repro_nowal ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (price, tag)");
+            assertSql(
+                    "indexed\ntrue\n",
+                    "SELECT indexed FROM table_columns('t_repro_nowal') WHERE \"column\" = 'sym'"
+            );
+            // x % 4 == 0 for x in {4, 8, ..., 100}: sum = 4*(1+2+...+25) = 1300;
+            // tag = 'V0' on every one of those rows.
+            assertSql(
+                    "sum_price\tfirst_tag\n1300.0\tV0\n",
+                    "SELECT sum(price) sum_price, first(tag) first_tag FROM t_repro_nowal WHERE sym = 'A0'"
+            );
+        });
+    }
+
+    @Test
+    public void testAddPostingCoveringIndexWhenLastPartitionIsNativeWal() throws Exception {
+        // Native-partition parity for the Parquet fix below: same data, same
+        // INCLUDE list, same assertions. The point is to show the covered
+        // values returned by a covering scan are identical between native and
+        // Parquet partitions on a WAL table -- so the Parquet provider path
+        // really is a drop-in for the native path, not a separately-tuned
+        // alternative.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_repro_native (
+                        ts TIMESTAMP,
+                        sym SYMBOL,
+                        price DOUBLE,
+                        tag VARCHAR
+                    ) TIMESTAMP(ts) PARTITION BY DAY WAL
+                    """);
+            execute("""
+                    INSERT INTO t_repro_native
+                    SELECT
+                        dateadd('m', x::INT, '2024-01-01T00:00:00Z'::TIMESTAMP),
+                        'A' || (x % 4),
+                        x::DOUBLE,
+                        'V' || (x % 4)
+                    FROM long_sequence(100)
+                    """);
+            drainWalQueue();
+            // No CONVERT TO PARQUET -- partition stays native.
+
+            execute("ALTER TABLE t_repro_native ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (price, tag)");
+            drainWalQueue();
+
+            assertSql(
+                    "suspended\nfalse\n",
+                    "SELECT suspended FROM wal_tables() WHERE name = 't_repro_native'"
+            );
+            assertSql(
+                    "indexed\ntrue\n",
+                    "SELECT indexed FROM table_columns('t_repro_native') WHERE \"column\" = 'sym'"
+            );
+            // Mirror the Parquet test's assertion verbatim: x % 4 == 0 for
+            // x in {4, 8, ..., 100}, so sum(price) = 4*(1+2+...+25) = 1300
+            // and first(tag) = 'V0'.
+            assertSql(
+                    "sum_price\tfirst_tag\n1300.0\tV0\n",
+                    "SELECT sum(price) sum_price, first(tag) first_tag FROM t_repro_native WHERE sym = 'A0'"
+            );
+        });
+    }
+
+    @Test
+    public void testAddPostingCoveringIndexWhenLastPartitionIsParquetWal() throws Exception {
+        // ADD INDEX TYPE POSTING ... INCLUDE (...) crashed with an NPE
+        // ("Cannot invoke FilesFacade.read(...) because ff is null") when the
+        // table's LAST partition is a Parquet partition, and -- separately --
+        // covering source data was not being read for ANY Parquet partition
+        // because mapColumnFile silently no-op'd on missing native .d/.i files.
+        // The result was empty covering sidecars; queries returned null for
+        // every INCLUDE column.
+        //
+        // Fix: indexLastPartition() routes Parquet last partitions through the
+        // Parquet-aware indexParquetPartition(), and indexParquetPartition()
+        // installs a CoveringSourceProvider on the posting writer so
+        // mapCoveredColumn can decode each INCLUDE column from Parquet into
+        // temp .d/.i files at the standard paths; unmapCoveredColumn deletes
+        // them after the per-column seal iteration.
+        //
+        // A single-partition table is the minimal trigger: that partition is
+        // the last partition, so indexLastPartition() handles it. On a WAL
+        // table the failed apply suspends the table.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_repro (
+                        ts TIMESTAMP,
+                        sym SYMBOL,
+                        price DOUBLE,
+                        tag VARCHAR
+                    ) TIMESTAMP(ts) PARTITION BY DAY WAL
+                    """);
+            execute("""
+                    INSERT INTO t_repro
+                    SELECT
+                        dateadd('m', x::INT, '2024-01-01T00:00:00Z'::TIMESTAMP),
+                        'A' || (x % 4),
+                        x::DOUBLE,
+                        'V' || (x % 4)
+                    FROM long_sequence(100)
+                    """);
+            drainWalQueue();
+
+            execute("ALTER TABLE t_repro CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            drainWalQueue();
+
+            // INCLUDE both a fixed-width (DOUBLE) and a varsize (VARCHAR)
+            // column to exercise both .d and .i materialisation paths.
+            execute("ALTER TABLE t_repro ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (price, tag)");
+            drainWalQueue();
+
+            // The ADD INDEX must have applied cleanly: table not suspended,
+            // column indexed.
+            assertSql(
+                    "suspended\nfalse\n",
+                    "SELECT suspended FROM wal_tables() WHERE name = 't_repro'"
+            );
+            assertSql(
+                    "indexed\ntrue\n",
+                    "SELECT indexed FROM table_columns('t_repro') WHERE \"column\" = 'sym'"
+            );
+            // Covered columns must be populated. With the bug, the covering
+            // sidecars are zero-filled and these reads return 0 / null.
+            // x % 4 == 0 for x in {4, 8, ..., 100}: sum = 4*(1+2+...+25) = 1300;
+            // tag = 'V0' on every one of those rows.
+            assertSql(
+                    "sum_price\tfirst_tag\n1300.0\tV0\n",
+                    "SELECT sum(price) sum_price, first(tag) first_tag FROM t_repro WHERE sym = 'A0'"
+            );
+        });
+    }
 
     @Test
     public void testAlterAddIndexAuthorizesIndexedColumnOnly() throws Exception {
@@ -737,6 +1314,81 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     30.5\t300
                     40.5\t400
                     """, "SELECT price, qty FROM t_alter_cov WHERE sym = 'A'");
+        });
+    }
+
+    @Test
+    public void testAsyncFilterPageFrameAllTypesParquetWal() throws Exception {
+        // Parquet variant of testAsyncFilterPageFrameAllTypesWalUnsealed below:
+        // CREATE without index, INSERT across every column type, CONVERT to
+        // Parquet, then ALTER ADD INDEX TYPE POSTING INCLUDE (all 15 cols).
+        // This exercises the Parquet covering provider for every QuestDB type
+        // -- including the three varsize types (STRING, VARCHAR, BINARY) that
+        // route through ColumnTypeDriver.shiftCopyAuxVector for offset
+        // rewriting across row groups.
+        //
+        // Asserts the covering scan agrees with the no_covering scan over the
+        // same data: any mismatch on any column proves that column's sidecar
+        // is wrong.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_pf_alltypes_pq (
+                        ts TIMESTAMP,
+                        sym SYMBOL,
+                        v_byte BYTE,
+                        v_short SHORT,
+                        v_int INT,
+                        v_long LONG,
+                        v_float FLOAT,
+                        v_double DOUBLE,
+                        v_bool BOOLEAN,
+                        v_char CHAR,
+                        v_date DATE,
+                        v_uuid UUID,
+                        v_ipv4 IPv4,
+                        v_l256 LONG256,
+                        v_str STRING,
+                        v_vc VARCHAR,
+                        v_bin BINARY
+                    ) TIMESTAMP(ts) PARTITION BY DAY WAL
+                    """);
+            execute("""
+                    INSERT INTO t_pf_alltypes_pq VALUES
+                    ('2024-01-01T00:00:00', 'A', 1, 100, 1000, 10_000, 1.5, 2.5, true, 'x',
+                     '2024-06-01T00:00:00.000Z', '11111111-1111-1111-1111-111111111111', '1.2.3.4',
+                     cast('0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef' as LONG256),
+                     'str_a', 'vc_a', rnd_bin(8, 16, 0)),
+                    ('2024-01-01T01:00:00', 'B', 9, 900, 9000, 90_000, 9.5, 8.5, false, 'y',
+                     NULL, NULL, NULL, NULL, NULL, NULL, NULL),
+                    ('2024-01-01T02:00:00', 'A', 2, 200, 2000, 20_000, 2.5, 3.5, false, 'z',
+                     '2024-07-01T00:00:00.000Z', '22222222-2222-2222-2222-222222222222', '5.6.7.8',
+                     cast('0xabcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890' as LONG256),
+                     'str_a2', 'vc_a2', rnd_bin(8, 16, 0))
+                    """);
+            drainWalQueue();
+
+            // Convert to Parquet THEN add the covering index -- the path
+            // the provider hooks. After this, the covering sidecars must be
+            // populated from Parquet bytes for every INCLUDE column.
+            execute("ALTER TABLE t_pf_alltypes_pq CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            drainWalQueue();
+            execute("""
+                    ALTER TABLE t_pf_alltypes_pq ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (
+                        v_byte, v_short, v_int, v_long, v_float, v_double,
+                        v_bool, v_char, v_date, v_uuid, v_ipv4, v_l256,
+                        v_str, v_vc, v_bin
+                    )
+                    """);
+            drainWalQueue();
+
+            assertSqlCursors(
+                    "SELECT v_byte, v_short, v_int, v_long, v_float, v_double, v_bool, v_char, " +
+                            "v_date, v_uuid, v_ipv4, v_l256, v_str, v_vc, v_bin " +
+                            "FROM t_pf_alltypes_pq WHERE sym = 'A' AND v_int > 0",
+                    "SELECT /*+ no_covering */ v_byte, v_short, v_int, v_long, v_float, v_double, v_bool, v_char, " +
+                            "v_date, v_uuid, v_ipv4, v_l256, v_str, v_vc, v_bin " +
+                            "FROM t_pf_alltypes_pq WHERE sym = 'A' AND v_int > 0"
+            );
         });
     }
 
@@ -9676,6 +10328,70 @@ public class CoveringIndexTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testMaterialiseFromParquetCleansUpTempFilesOnOpenAppendFailure() throws Exception {
+        final AtomicBoolean failArmed = new AtomicBoolean(false);
+        ff = new TestFilesFacadeImpl() {
+            @Override
+            public long openAppend(LPSZ name) {
+                if (failArmed.get() && name != null
+                        && Utf8s.endsWithAscii(name, "price.d")) {
+                    failArmed.set(false);
+                    return -1;
+                }
+                return super.openAppend(name);
+            }
+        };
+        assertMemoryLeak(ff, () -> {
+            execute("""
+                    CREATE TABLE t_mat_fail (
+                        ts TIMESTAMP,
+                        sym SYMBOL,
+                        price DOUBLE,
+                        tag VARCHAR
+                    ) TIMESTAMP(ts) PARTITION BY DAY WAL
+                    """);
+            execute("""
+                    INSERT INTO t_mat_fail
+                    SELECT
+                        dateadd('m', x::INT, '2024-01-01T00:00:00Z'::TIMESTAMP),
+                        'A' || (x % 4),
+                        x::DOUBLE,
+                        'V' || (x % 4)
+                    FROM long_sequence(100)
+                    """);
+            drainWalQueue();
+
+            execute("ALTER TABLE t_mat_fail CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            drainWalQueue();
+
+            failArmed.set(true);
+            execute("ALTER TABLE t_mat_fail ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (price, tag)");
+            drainWalQueue();
+
+            assertSql(
+                    "suspended\ntrue\n",
+                    "SELECT suspended FROM wal_tables() WHERE name = 't_mat_fail'"
+            );
+
+            execute("ALTER TABLE t_mat_fail RESUME WAL");
+            drainWalQueue();
+
+            assertSql(
+                    "suspended\nfalse\n",
+                    "SELECT suspended FROM wal_tables() WHERE name = 't_mat_fail'"
+            );
+            assertSql(
+                    "indexed\ntrue\n",
+                    "SELECT indexed FROM table_columns('t_mat_fail') WHERE \"column\" = 'sym'"
+            );
+            assertSql(
+                    "sum_price\tfirst_tag\n1300.0\tV0\n",
+                    "SELECT sum(price) sum_price, first(tag) first_tag FROM t_mat_fail WHERE sym = 'A0'"
+            );
+        });
+    }
+
+    @Test
     public void testMetadataPersistenceAcrossReopen() throws Exception {
         assertMemoryLeak(() -> {
             execute("""
@@ -12684,8 +13400,10 @@ public class CoveringIndexTest extends AbstractCairoTest {
             assertPlanNoLeakCheck(
                     "SELECT count(*), min(price), max(price) FROM t_vw_agg WHERE sym = 'A'",
                     """
-                            GroupBy vectorized: true workers: 1
+                            Async Group By workers: 1
+                              vectorized: true
                               values: [count(*),min(price),max(price)]
+                              filter: null
                                 CoveringIndex on: sym with: price
                                   filter: sym='A'
                             """
@@ -13542,6 +14260,119 @@ public class CoveringIndexTest extends AbstractCairoTest {
             String planText = planSink.getSink().toString();
             assertFalse("Plan should not contain '" + "CoveringIndex" + "':\n" + planText,
                     planText.contains("CoveringIndex"));
+        }
+    }
+
+    /**
+     * Regression for the MultiKey cursor's resume bug. The resume branch
+     * of MultiKeyCoveringPageFrameCursor.nextImpl previously did not
+     * advance currentKeyIdx after the parked CoveringRowCursor exhausted,
+     * so the cursor kept reopening the SAME (key, partition) tuple and
+     * producing the same frames forever. The page-frame buffers
+     * accumulated until the RSS limit fired -- a 2-key multi-key query
+     * with ~28 M rows per key tripped at 15.4 GiB on a 16 GB Mac.
+     * <p>
+     * To trigger the bug deterministically with small data we lower
+     * {@code maxRowsPerFrame} via the {@code @TestOnly} setter so a
+     * 200-row dataset is enough to force the multi-frame-per-key resume
+     * path. Without the fix the test hangs or OOMs; with the fix it
+     * returns the expected count.
+     */
+    @Test
+    public void testMultiKeyResumeAdvancesKeyIndexAfterCursorExhausts() throws Exception {
+        final int capForTest = 50;
+        CoveringIndexRecordCursorFactory.setMaxRowsPerFrameForTesting(capForTest);
+        try {
+            assertMemoryLeak(() -> {
+                execute("""
+                        CREATE TABLE t_mk_resume (
+                            ts TIMESTAMP,
+                            sym SYMBOL,
+                            payload VARCHAR
+                        ) TIMESTAMP(ts) PARTITION BY DAY WAL
+                        """);
+                // 200 rows per partition, alternating between two symbols.
+                // With a 50-row per-frame cap, each (key, partition) tuple
+                // produces 2 frames -- exactly the shape the bug exposed.
+                execute("""
+                        INSERT INTO t_mk_resume
+                        SELECT
+                            dateadd('s', x::INT, '2024-01-01T00:00:00Z'::TIMESTAMP),
+                            CASE WHEN x % 2 = 0 THEN 'K0' ELSE 'K1' END,
+                            'payload-' || x
+                        FROM long_sequence(200)
+                        """);
+                drainWalQueue();
+                execute("ALTER TABLE t_mk_resume ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (payload)");
+                drainWalQueue();
+
+                // Multi-key COUNT — would loop forever on the bugged code
+                // because the resume branch never advances past K0 once
+                // its parked cursor exhausts; the test's surefire timeout
+                // would surface that as a hang.
+                assertSql(
+                        "count\n200\n",
+                        "SELECT count() FROM t_mk_resume WHERE sym IN ('K0','K1')"
+                );
+
+                // Per-key counts also exercise the resume path on both
+                // keys and validate that the per-key totals stay correct
+                // (without the fix some frames would carry duplicate K0
+                // rows from re-iteration, inflating K0 and missing K1).
+                assertSql(
+                        "sym\tc\nK0\t100\nK1\t100\n",
+                        "SELECT sym, count() c FROM t_mk_resume WHERE sym IN ('K0','K1') GROUP BY sym ORDER BY sym"
+                );
+
+                // Covered VARCHAR read through the multi-key cursor: the
+                // 200 unique payloads must come back exactly once each.
+                assertSql(
+                        "c\n200\n",
+                        "SELECT count_distinct(payload::string) c FROM t_mk_resume WHERE sym IN ('K0','K1')"
+                );
+            });
+        } finally {
+            CoveringIndexRecordCursorFactory.setMaxRowsPerFrameForTesting(-1);
+        }
+    }
+
+    @Test
+    public void testSingleKeyResumeProducesAllRowsAcrossFrameCap() throws Exception {
+        final int capForTest = 50;
+        CoveringIndexRecordCursorFactory.setMaxRowsPerFrameForTesting(capForTest);
+        try {
+            assertMemoryLeak(() -> {
+                execute("""
+                        CREATE TABLE t_sk_resume (
+                            ts TIMESTAMP,
+                            sym SYMBOL,
+                            payload VARCHAR
+                        ) TIMESTAMP(ts) PARTITION BY DAY WAL
+                        """);
+                execute("""
+                        INSERT INTO t_sk_resume
+                        SELECT
+                            dateadd('s', x::INT, '2024-01-01T00:00:00Z'::TIMESTAMP),
+                            'K0',
+                            'payload-' || x
+                        FROM long_sequence(200)
+                        """);
+                drainWalQueue();
+                execute("ALTER TABLE t_sk_resume ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (payload)");
+                drainWalQueue();
+
+                assertSql(
+                        "count\n200\n",
+                        "SELECT count() FROM t_sk_resume WHERE sym = 'K0'"
+                );
+
+                assertSql(
+                        "c\n200\n",
+                        "SELECT count_distinct(payload::string) c FROM t_sk_resume WHERE sym = 'K0'"
+                );
+            });
+        } finally {
+            CoveringIndexRecordCursorFactory.setMaxRowsPerFrameForTesting(-1);
         }
     }
 

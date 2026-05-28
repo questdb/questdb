@@ -3127,8 +3127,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testGroupByNotKeyed1() throws Exception {
         assertPlan("create table a (i int, d double)", "select min(d) from a", """
-                GroupBy vectorized: true workers: 1
+                Async Group By workers: 1
+                  vectorized: true
                   values: [min(d)]
+                  filter: null
                     PageFrame
                         Row forward scan
                         Frame forward scan on: a
@@ -3184,8 +3186,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan("create table a (i int)", "select max(i) - min(i) from a", """
                 VirtualRecord
                   functions: [max-min]
-                    GroupBy vectorized: true workers: 1
+                    Async Group By workers: 1
+                      vectorized: true
                       values: [min(i),max(i)]
+                      filter: null
                         PageFrame
                             Row forward scan
                             Frame forward scan on: a
@@ -3221,8 +3225,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testGroupByNotKeyed4() throws Exception {
         assertPlan("create table a (i int, d double)", "select count(*), max(i), min(d) from a", """
-                GroupBy vectorized: true workers: 1
+                Async Group By workers: 1
+                  vectorized: true
                   values: [count(*),max(i),min(d)]
+                  filter: null
                     PageFrame
                         Row forward scan
                         Frame forward scan on: a
@@ -3258,8 +3264,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test // order by is ignored and grouped by - vectorized
     public void testGroupByNotKeyed7() throws Exception {
         assertPlan("create table a (i int, d double)", "select max(i) from (select * from a order by d)", """
-                GroupBy vectorized: true workers: 1
+                Async Group By workers: 1
+                  vectorized: true
                   values: [max(i)]
+                  filter: null
                     PageFrame
                         Row forward scan
                         Frame forward scan on: a
@@ -5038,8 +5046,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 "create table x (ts timestamp, ts1 timestamp) timestamp(ts) partition by day;",
                 "select min(ts), max(ts), min(ts1), max(ts1) from x",
                 """
-                        GroupBy vectorized: true workers: 1
+                        Async Group By workers: 1
+                          vectorized: true
                           values: [min_designated(ts),max_designated(ts),min(ts1),max(ts1)]
+                          filter: null
                             PageFrame
                                 Row forward scan
                                 Frame forward scan on: x
@@ -5437,41 +5447,50 @@ public class ExplainPlanTest extends AbstractCairoTest {
             execute("create table taba (a1 int, a2 long)");
             execute("create table tabb (b1 int, b2 long)");
 
-            assertPlanNoLeakCheck("select * from taba left join tabb on a1=b1 and a2=b2 and a2+5 = b2+10 and 1=0", """
-                    SelectedRecord
-                        Hash Left Outer Join
-                          condition: b2=a2 and b1=a1
-                          filter: false
-                            PageFrame
-                                Row forward scan
-                                Frame forward scan on: taba
-                            Hash
-                                Empty table
-                    """);
-            assertPlanNoLeakCheck("select * from taba right join tabb on a1=b1 and a2=b2 and a2+5 = b2+10 and 1=0", """
-                    SelectedRecord
-                        Hash Right Outer Join Light
-                          condition: b2=a2 and b1=a1
-                          filter: false
-                            Empty table
-                            Hash
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: tabb
-                    """);
-            assertPlanNoLeakCheck("select * from taba full join tabb on a1=b1 and a2=b2 and a2+5 = b2+10 and 1=0", """
-                    SelectedRecord
-                        Hash Full Outer Join Light
-                          condition: b2=a2 and b1=a1
-                          filter: false
-                            PageFrame
-                                Row forward scan
-                                Frame forward scan on: taba
-                            Hash
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: tabb
-                    """);
+            assertPlanNoLeakCheck(
+                    "select * from taba left join tabb on a1=b1 and a2=b2 and a2+5 = b2+10 and 1=0",
+                    """
+                            SelectedRecord
+                                Hash Left Outer Join Light
+                                  condition: b2=a2 and b1=a1
+                                  filter: false
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: taba
+                                    Hash
+                                        Empty table
+                            """
+            );
+            assertPlanNoLeakCheck(
+                    "select * from taba right join tabb on a1=b1 and a2=b2 and a2+5 = b2+10 and 1=0",
+                    """
+                            SelectedRecord
+                                Hash Right Outer Join Light
+                                  condition: b2=a2 and b1=a1
+                                  filter: false
+                                    Empty table
+                                    Hash
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: tabb
+                            """
+            );
+            assertPlanNoLeakCheck(
+                    "select * from taba full join tabb on a1=b1 and a2=b2 and a2+5 = b2+10 and 1=0",
+                    """
+                            SelectedRecord
+                                Hash Full Outer Join Light
+                                  condition: b2=a2 and b1=a1
+                                  filter: false
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: taba
+                                    Hash
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: tabb
+                            """
+            );
         });
     }
 
@@ -5680,8 +5699,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 );
 
                 assertPlanNoLeakCheck("select avg(a_long) from read_parquet('x.parquet');", """
-                        GroupBy vectorized: true workers: 1
+                        Async Group By workers: 1
+                          vectorized: true
                           values: [avg(a_long)]
+                          filter: null
                             parquet page frame scan
                               columns: a_long
                         """
@@ -5777,8 +5798,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
             assertPlanNoLeakCheck("SELECT sum(x), sum(x+10) FROM tab", """
                     VirtualRecord
                       functions: [sum,sum+COUNT*10]
-                        GroupBy vectorized: true workers: 1
+                        Async Group By workers: 1
+                          vectorized: true
                           values: [sum(x),count(x)]
+                          filter: null
                             PageFrame
                                 Row forward scan
                                 Frame forward scan on: tab
@@ -5787,8 +5810,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
             assertPlanNoLeakCheck("SELECT sum(x), sum(10+x) FROM tab", """
                     VirtualRecord
                       functions: [sum,COUNT*10+sum]
-                        GroupBy vectorized: true workers: 1
+                        Async Group By workers: 1
+                          vectorized: true
                           values: [sum(x),count(x)]
+                          filter: null
                             PageFrame
                                 Row forward scan
                                 Frame forward scan on: tab
@@ -5804,8 +5829,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
             assertPlanNoLeakCheck("SELECT sum(x), sum(x*10) FROM tab", """
                     VirtualRecord
                       functions: [sum,sum*10]
-                        GroupBy vectorized: true workers: 1
+                        Async Group By workers: 1
+                          vectorized: true
                           values: [sum(x)]
+                          filter: null
                             PageFrame
                                 Row forward scan
                                 Frame forward scan on: tab
@@ -5814,8 +5841,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
             assertPlanNoLeakCheck("SELECT sum(x), sum(10*x) FROM tab", """
                     VirtualRecord
                       functions: [sum,10*sum]
-                        GroupBy vectorized: true workers: 1
+                        Async Group By workers: 1
+                          vectorized: true
                           values: [sum(x)]
+                          filter: null
                             PageFrame
                                 Row forward scan
                                 Frame forward scan on: tab
@@ -5831,8 +5860,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
             assertPlanNoLeakCheck("SELECT sum(x), sum(x-10) FROM tab", """
                     VirtualRecord
                       functions: [sum,sum-COUNT*10]
-                        GroupBy vectorized: true workers: 1
+                        Async Group By workers: 1
+                          vectorized: true
                           values: [sum(x),count(x)]
+                          filter: null
                             PageFrame
                                 Row forward scan
                                 Frame forward scan on: tab
@@ -5841,8 +5872,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
             assertPlanNoLeakCheck("SELECT sum(x), sum(10-x) FROM tab", """
                     VirtualRecord
                       functions: [sum,COUNT*10-sum]
-                        GroupBy vectorized: true workers: 1
+                        Async Group By workers: 1
+                          vectorized: true
                           values: [sum(x),count(x)]
+                          filter: null
                             PageFrame
                                 Row forward scan
                                 Frame forward scan on: tab
@@ -5858,8 +5891,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
             assertPlanNoLeakCheck("SELECT sum(x), sum(x+2) FROM tab", """
                     VirtualRecord
                       functions: [sum,sum+COUNT*2]
-                        GroupBy vectorized: true workers: 1
+                        Async Group By workers: 1
+                          vectorized: true
                           values: [sum(x),count(x)]
+                          filter: null
                             PageFrame
                                 Row forward scan
                                 Frame forward scan on: tab
@@ -5868,8 +5903,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
             assertPlanNoLeakCheck("SELECT sum(x), sum(2+x) FROM tab", """
                     VirtualRecord
                       functions: [sum,COUNT*2+sum]
-                        GroupBy vectorized: true workers: 1
+                        Async Group By workers: 1
+                          vectorized: true
                           values: [sum(x),count(x)]
+                          filter: null
                             PageFrame
                                 Row forward scan
                                 Frame forward scan on: tab
@@ -5885,8 +5922,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
             assertPlanNoLeakCheck("SELECT sum(x), sum(x*10) FROM tab", """
                     VirtualRecord
                       functions: [sum,sum*10]
-                        GroupBy vectorized: true workers: 1
+                        Async Group By workers: 1
+                          vectorized: true
                           values: [sum(x)]
+                          filter: null
                             PageFrame
                                 Row forward scan
                                 Frame forward scan on: tab
@@ -5895,8 +5934,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
             assertPlanNoLeakCheck("SELECT sum(x), sum(10*x) FROM tab", """
                     VirtualRecord
                       functions: [sum,10*sum]
-                        GroupBy vectorized: true workers: 1
+                        Async Group By workers: 1
+                          vectorized: true
                           values: [sum(x)]
+                          filter: null
                             PageFrame
                                 Row forward scan
                                 Frame forward scan on: tab
@@ -5912,8 +5953,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
             assertPlanNoLeakCheck("SELECT sum(x), sum(x-10) FROM tab", """
                     VirtualRecord
                       functions: [sum,sum-COUNT*10]
-                        GroupBy vectorized: true workers: 1
+                        Async Group By workers: 1
+                          vectorized: true
                           values: [sum(x),count(x)]
+                          filter: null
                             PageFrame
                                 Row forward scan
                                 Frame forward scan on: tab
@@ -5922,8 +5965,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
             assertPlanNoLeakCheck("SELECT sum(x), sum(10-x) FROM tab", """
                     VirtualRecord
                       functions: [sum,COUNT*10-sum]
-                        GroupBy vectorized: true workers: 1
+                        Async Group By workers: 1
+                          vectorized: true
                           values: [sum(x),count(x)]
+                          filter: null
                             PageFrame
                                 Row forward scan
                                 Frame forward scan on: tab
@@ -6035,8 +6080,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
             assertPlanNoLeakCheck("SELECT sum(x), sum(x+42) FROM tab", """
                     VirtualRecord
                       functions: [sum,sum+COUNT*42]
-                        GroupBy vectorized: true workers: 1
+                        Async Group By workers: 1
+                          vectorized: true
                           values: [sum(x),count(*)]
+                          filter: null
                             PageFrame
                                 Row forward scan
                                 Frame forward scan on: tab
@@ -6045,8 +6092,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
             assertPlanNoLeakCheck("SELECT sum(x), sum(42+x) FROM tab", """
                     VirtualRecord
                       functions: [sum,COUNT*42+sum]
-                        GroupBy vectorized: true workers: 1
+                        Async Group By workers: 1
+                          vectorized: true
                           values: [sum(x),count(*)]
+                          filter: null
                             PageFrame
                                 Row forward scan
                                 Frame forward scan on: tab
@@ -6062,8 +6111,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
             assertPlanNoLeakCheck("SELECT sum(x), sum(x*10) FROM tab", """
                     VirtualRecord
                       functions: [sum,sum*10]
-                        GroupBy vectorized: true workers: 1
+                        Async Group By workers: 1
+                          vectorized: true
                           values: [sum(x)]
+                          filter: null
                             PageFrame
                                 Row forward scan
                                 Frame forward scan on: tab
@@ -6072,8 +6123,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
             assertPlanNoLeakCheck("SELECT sum(x), sum(10*x) FROM tab", """
                     VirtualRecord
                       functions: [sum,10*sum]
-                        GroupBy vectorized: true workers: 1
+                        Async Group By workers: 1
+                          vectorized: true
                           values: [sum(x)]
+                          filter: null
                             PageFrame
                                 Row forward scan
                                 Frame forward scan on: tab
@@ -6089,8 +6142,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
             assertPlanNoLeakCheck("SELECT sum(x), sum(x-10) FROM tab", """
                     VirtualRecord
                       functions: [sum,sum-COUNT*10]
-                        GroupBy vectorized: true workers: 1
+                        Async Group By workers: 1
+                          vectorized: true
                           values: [sum(x),count(*)]
+                          filter: null
                             PageFrame
                                 Row forward scan
                                 Frame forward scan on: tab
@@ -6099,8 +6154,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
             assertPlanNoLeakCheck("SELECT sum(x), sum(10-x) FROM tab", """
                     VirtualRecord
                       functions: [sum,COUNT*10-sum]
-                        GroupBy vectorized: true workers: 1
+                        Async Group By workers: 1
+                          vectorized: true
                           values: [sum(x),count(*)]
+                          filter: null
                             PageFrame
                                 Row forward scan
                                 Frame forward scan on: tab
@@ -6191,8 +6248,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
             assertPlanNoLeakCheck("SELECT sum(resolutIONWidth), count(resolutionwIDTH), SUM(ResolutionWidth), sum(ResolutionWidth) + count(), " + "SUM(ResolutionWidth+1),SUM(ResolutionWidth*2),sUM(ResolutionWidth), count()\n" + "FROM hits", """
                     VirtualRecord
                       functions: [sum,count,sum,sum+count1,sum+count*1,sum*2,sum,count1]
-                        GroupBy vectorized: true workers: 1
+                        Async Group By workers: 1
+                          vectorized: true
                           values: [sum(ResolutionWidth),count(ResolutionWidth),count(*)]
+                          filter: null
                             PageFrame
                                 Row forward scan
                                 Frame forward scan on: hits
@@ -8181,70 +8240,88 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectIndexedSymbols04() throws Exception {
-        assertPlan("create table a ( s symbol index, ts timestamp) timestamp(ts) ;", "select * from a where s = 'S1' and s = 'S2' order by ts desc limit 1", """
-                Limit value: 1 skip-rows: 0 take-rows: 0
-                    Encode sort
-                      keys: [ts desc]
-                        Empty table
-                """);
+        assertPlan(
+                "create table a ( s symbol index, ts timestamp) timestamp(ts) ;",
+                "select * from a where s = 'S1' and s = 'S2' order by ts desc limit 1",
+                """
+                        Sort light lo: 1
+                          keys: [ts desc]
+                            Empty table
+                        """
+        );
     }
 
     @Test
     public void testSelectIndexedSymbols05() throws Exception {
-        assertPlan("create table a ( s symbol index, ts timestamp) timestamp(ts) ;", "select * from a where s in (select 'S1' union all select 'S2') order by ts desc limit 1", """
-                Sort light lo: 1
-                  keys: [ts desc]
-                    FilterOnSubQuery
-                        Union All
-                            VirtualRecord
-                              functions: ['S1']
-                                long_sequence count: 1
-                            VirtualRecord
-                              functions: ['S2']
-                                long_sequence count: 1
-                        Frame backward scan on: a
-                """);
+        assertPlan(
+                "create table a ( s symbol index, ts timestamp) timestamp(ts) ;",
+                "select * from a where s in (select 'S1' union all select 'S2') order by ts desc limit 1",
+                """
+                        Sort light lo: 1
+                          keys: [ts desc]
+                            FilterOnSubQuery
+                                Union All
+                                    VirtualRecord
+                                      functions: ['S1']
+                                        long_sequence count: 1
+                                    VirtualRecord
+                                      functions: ['S2']
+                                        long_sequence count: 1
+                                Frame backward scan on: a
+                        """
+        );
     }
 
     @Test
     public void testSelectIndexedSymbols05a() throws Exception {
-        assertPlan("create table a ( s symbol index, ts timestamp) timestamp(ts) ;", "select * from a where s in (select 'S1' union all select 'S2') and length(s) = 2 order by ts desc limit 1", """
-                Sort light lo: 1
-                  keys: [ts desc]
-                    FilterOnSubQuery
-                      filter: length(s)=2
-                        Union All
-                            VirtualRecord
-                              functions: ['S1']
-                                long_sequence count: 1
-                            VirtualRecord
-                              functions: ['S2']
-                                long_sequence count: 1
-                        Frame backward scan on: a
-                """);
+        assertPlan(
+                "create table a ( s symbol index, ts timestamp) timestamp(ts) ;",
+                "select * from a where s in (select 'S1' union all select 'S2') and length(s) = 2 order by ts desc limit 1",
+                """
+                        Sort light lo: 1
+                          keys: [ts desc]
+                            FilterOnSubQuery
+                              filter: length(s)=2
+                                Union All
+                                    VirtualRecord
+                                      functions: ['S1']
+                                        long_sequence count: 1
+                                    VirtualRecord
+                                      functions: ['S2']
+                                        long_sequence count: 1
+                                Frame backward scan on: a
+                        """
+        );
     }
 
     @Test
     public void testSelectIndexedSymbols06() throws Exception {
-        assertPlan("create table a ( s symbol index) ;", "select * from a where s = 'S1' order by s asc limit 10", """
-                Limit value: 10 skip-rows-max: 0 take-rows-max: 10
-                    DeferredSingleSymbolFilterPageFrame
-                        Index forward scan on: s deferred: true
-                          filter: s='S1'
-                        Frame forward scan on: a
-                """);
+        assertPlan(
+                "create table a ( s symbol index) ;",
+                "select * from a where s = 'S1' order by s asc limit 10",
+                """
+                        Limit value: 10 skip-rows-max: 0 take-rows-max: 10
+                            DeferredSingleSymbolFilterPageFrame
+                                Index forward scan on: s deferred: true
+                                  filter: s='S1'
+                                Frame forward scan on: a
+                        """
+        );
     }
 
     @Test
     public void testSelectIndexedSymbols06a() throws Exception {
-        assertPlan("create table a ( s symbol index, ts timestamp) timestamp(ts) partition by day", "select * from a where s = 'S1' order by s asc limit 10", """
-                Sort light lo: 10
-                  keys: [s]
-                    DeferredSingleSymbolFilterPageFrame
-                        Index forward scan on: s deferred: true
-                          filter: s='S1'
-                        Frame forward scan on: a
-                """);
+        assertPlan(
+                "create table a ( s symbol index, ts timestamp) timestamp(ts) partition by day",
+                "select * from a where s = 'S1' order by s asc limit 10", """
+                        Sort light lo: 10
+                          keys: [s]
+                            DeferredSingleSymbolFilterPageFrame
+                                Index forward scan on: s deferred: true
+                                  filter: s='S1'
+                                Frame forward scan on: a
+                        """
+        );
     }
 
     @Test
@@ -10264,8 +10341,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan("create table x (l long, ts timestamp)", "select * from x where ts = (select min(ts) from x)", """
                 Async Filter workers: 1
                   filter: ts=cursor\s
-                    GroupBy vectorized: true workers: 1
+                    Async Group By workers: 1
+                      vectorized: true
                       values: [min(ts)]
+                      filter: null
                         PageFrame
                             Row forward scan
                             Frame forward scan on: x
@@ -10290,8 +10369,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan("create table x (l long, ts timestamp)", "select * from x where ts > (select min(ts) from x)", """
                 Async Filter workers: 1
                   filter: ts [thread-safe] > cursor\s
-                    GroupBy vectorized: true workers: 1
+                    Async Group By workers: 1
+                      vectorized: true
                       values: [min(ts)]
+                      filter: null
                         PageFrame
                             Row forward scan
                             Frame forward scan on: x
@@ -10316,8 +10397,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertPlan("create table x (l long, ts timestamp)", "select * from x where ts < (select max(ts) from x)", """
                 Async Filter workers: 1
                   filter: ts [thread-safe] < cursor\s
-                    GroupBy vectorized: true workers: 1
+                    Async Group By workers: 1
+                      vectorized: true
                       values: [max(ts)]
+                      filter: null
                         PageFrame
                             Row forward scan
                             Frame forward scan on: x
@@ -10619,7 +10702,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     """
                             SelectedRecord
                                 Encode sort
-                                  keys: [column desc, sum, berlin_ts desc]
+                                  keys: [column desc, a0, berlin_ts desc]
                                     VirtualRecord
                                       functions: [ts,to_utc(ts),a0,sum,10*a0]
                                         Async Window Join workers: 1

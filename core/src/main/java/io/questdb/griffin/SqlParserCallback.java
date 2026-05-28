@@ -25,7 +25,6 @@
 package io.questdb.griffin;
 
 import io.questdb.cairo.PartitionBy;
-import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -112,7 +111,7 @@ public interface SqlParserCallback {
 
     default CreateMatViewOperationBuilder parseCreateMatViewExt(
             GenericLexer lexer,
-            SecurityContext securityContext,
+            SqlExecutionContext executionContext,
             CreateMatViewOperationBuilder builder,
             @Nullable CharSequence tok
     ) throws SqlException {
@@ -124,7 +123,7 @@ public interface SqlParserCallback {
 
     default CreateTableOperationBuilder parseCreateTableExt(
             GenericLexer lexer,
-            SecurityContext securityContext,
+            SqlExecutionContext executionContext,
             CreateTableOperationBuilder builder,
             @Nullable CharSequence tok
     ) throws SqlException {
@@ -136,7 +135,7 @@ public interface SqlParserCallback {
 
     default CreateViewOperationBuilder parseCreateViewExt(
             GenericLexer lexer,
-            SecurityContext securityContext,
+            SqlExecutionContext executionContext,
             CreateViewOperationBuilder builder,
             @Nullable CharSequence tok
     ) throws SqlException {

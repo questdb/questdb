@@ -340,7 +340,7 @@ public class ILikeSymbolFunctionFactoryTest extends AbstractCairoTest {
             assertQuery(
                     "name\n",
                     "select * from x where name ilike null",
-                    false,
+                    true,
                     true
             );
         });

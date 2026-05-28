@@ -24,6 +24,7 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.idx.BitmapIndexUtils;
 import io.questdb.cairo.idx.IndexFactory;
 import io.questdb.cairo.idx.IndexWriter;
 import io.questdb.cairo.idx.PostingIndexUtils;
@@ -1276,8 +1277,12 @@ public class TableSnapshotRestore implements QuietCloseable {
 
                     final long addr = rowGroupBuffers.getChunkDataPtr(i);
                     final long size = rowGroupBuffers.getChunkDataSize(i);
-                    for (long p = addr + startOffset * 4, lim = addr + size; p < lim; p += 4, rowId++) {
-                        indexWriter.add(TableUtils.toIndexKey(Unsafe.getInt(p)), rowId);
+                    if (size == 0) {
+                        BitmapIndexUtils.addNullEntries(indexWriter, rowId, rowCount + rowGroupSize);
+                    } else {
+                        for (long p = addr + startOffset * 4, lim = addr + size; p < lim; p += 4, rowId++) {
+                            indexWriter.add(TableUtils.toIndexKey(Unsafe.getInt(p)), rowId);
+                        }
                     }
                 }
 

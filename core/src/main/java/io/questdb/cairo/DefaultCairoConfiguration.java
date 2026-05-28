@@ -611,6 +611,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getMatViewRefreshMaxClusters() {
+        return 32;
+    }
+
+    @Override
     public long getMatViewRefreshOomRetryTimeout() {
         return 200;
     }

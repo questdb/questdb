@@ -255,7 +255,7 @@ public class HorizonJoinTest extends AbstractCairoTest {
                             """,
                     sql,
                     null,
-                    false,
+                    true,
                     true
             );
         });

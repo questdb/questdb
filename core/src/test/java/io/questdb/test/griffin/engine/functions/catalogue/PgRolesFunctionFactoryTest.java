@@ -36,7 +36,7 @@ public class PgRolesFunctionFactoryTest extends AbstractCairoTest {
                 "pg_roles;",
                 null,
                 null,
-                false,
+                true,
                 true
         );
     }
@@ -48,7 +48,7 @@ public class PgRolesFunctionFactoryTest extends AbstractCairoTest {
                 "pg_catalog.pg_roles;",
                 null,
                 null,
-                false,
+                true,
                 true
         );
     }

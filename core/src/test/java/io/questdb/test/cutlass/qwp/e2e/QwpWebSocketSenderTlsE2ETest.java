@@ -27,8 +27,8 @@ package io.questdb.test.cutlass.qwp.e2e;
 import io.questdb.PropertyKey;
 import io.questdb.client.Sender;
 import io.questdb.client.cutlass.qwp.client.QwpWebSocketSender;
-import io.questdb.test.AbstractBootstrapTest;
 import io.questdb.test.TestServerMain;
+import io.questdb.test.cutlass.qwp.AbstractQwpBootstrapTest;
 import io.questdb.test.tools.TestUtils;
 import io.questdb.test.tools.TlsProxyRule;
 import org.junit.Before;
@@ -45,7 +45,7 @@ import java.time.temporal.ChronoUnit;
  * stored and queryable. The TlsProxy terminates TLS and forwards plaintext
  * to the QuestDB HTTP server.
  */
-public class QwpWebSocketSenderTlsE2ETest extends AbstractBootstrapTest {
+public class QwpWebSocketSenderTlsE2ETest extends AbstractQwpBootstrapTest {
 
     @Rule
     public TlsProxyRule tlsProxy = TlsProxyRule.toHostAndPort("localhost", HTTP_PORT);
@@ -61,7 +61,7 @@ public class QwpWebSocketSenderTlsE2ETest extends AbstractBootstrapTest {
     @Test
     public void testTlsAsyncMode() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables(
+            try (final TestServerMain serverMain = startFragmented(
                     PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
             )) {
                 int tlsPort = tlsProxy.getListeningPort();
@@ -85,7 +85,7 @@ public class QwpWebSocketSenderTlsE2ETest extends AbstractBootstrapTest {
     @Test
     public void testTlsMultipleColumns() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables(
+            try (final TestServerMain serverMain = startFragmented(
                     PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
             )) {
                 int tlsPort = tlsProxy.getListeningPort();
@@ -115,7 +115,7 @@ public class QwpWebSocketSenderTlsE2ETest extends AbstractBootstrapTest {
     @Test
     public void testTlsMultipleRows() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables(
+            try (final TestServerMain serverMain = startFragmented(
                     PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
             )) {
                 int tlsPort = tlsProxy.getListeningPort();
@@ -141,7 +141,7 @@ public class QwpWebSocketSenderTlsE2ETest extends AbstractBootstrapTest {
     @Test
     public void testTlsSingleRow() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (final TestServerMain serverMain = startWithEnvVariables(
+            try (final TestServerMain serverMain = startFragmented(
                     PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "65536"
             )) {
                 int tlsPort = tlsProxy.getListeningPort();

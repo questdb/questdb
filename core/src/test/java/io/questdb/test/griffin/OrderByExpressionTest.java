@@ -24,7 +24,10 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.griffin.SqlException;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.TestUtils;
+import org.junit.Assert;
 import org.junit.Ignore;
 import org.junit.Test;
 
@@ -408,6 +411,44 @@ public class OrderByExpressionTest extends AbstractCairoTest {
                   SELECT 123 AS "5_sum"
                 )
                 ORDER BY "5_sum\""""));
+    }
+
+    @Test
+    public void testOrderByOnNullConstantDoesNotLeakTreeChain() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (c0 TIMESTAMP, c1 DOUBLE, c2 DOUBLE[], ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES (NULL, 1.0, ARRAY[1.0,2.0], '2024-01-01T00:00:00.000000Z')");
+
+            // Multi-column ORDER BY where one key resolves to a NULL constant.
+            // RecordComparatorCompiler throws SqlException("column type is not
+            // supported for order by: NULL") part-way through factory
+            // construction, and a partially built sort factory leaks its
+            // NATIVE_TREE_CHAIN allocation.
+            try {
+                execute("SELECT null AS e0, c2 AS e1, (c1)::INT AS e2 FROM t ORDER BY 3, 1");
+                Assert.fail("expected SqlException");
+            } catch (SqlException expected) {
+                TestUtils.assertContains(expected.getFlyweightMessage(), "column type is not supported for order by: NULL");
+            }
+        });
+    }
+
+    @Test
+    public void testOrderByPositionAfterCountDistinctRewrite() throws Exception {
+        // SqlOptimiser.rewriteCountDistinct lifts the count_distinct argument
+        // into an inner GROUP BY model whose alias comes from the AST token.
+        // For a CAST argument that token is "cast", which used to leak into
+        // positional ORDER BY resolution because rewriteOrderByPosition picked
+        // the inner GROUP BY's bottom-up columns. The optimiser now resolves
+        // positional refs against the outermost SELECT projection.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (c1 BOOLEAN)");
+            execute("INSERT INTO t VALUES (true)");
+            assertSql(
+                    "a0\n1\n",
+                    "SELECT count_distinct('M'::CHAR) AS a0 FROM t ORDER BY 1"
+            );
+        });
     }
 
     @Test

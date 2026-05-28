@@ -254,7 +254,7 @@ public class AllowAllSecurityContext implements SecurityContext {
     }
 
     @Override
-    public String getPrincipal() {
+    public CharSequence getPrincipal() {
         return Constants.USER_NAME;
     }
 

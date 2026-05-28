@@ -33,21 +33,38 @@ import io.questdb.cutlass.http.processors.LineHttpProcessorConfiguration;
 import io.questdb.client.Sender;
 import io.questdb.client.SenderErrorHandler;
 import io.questdb.client.cutlass.qwp.client.QwpWebSocketSender;
-import io.questdb.cutlass.qwp.server.QwpWebSocketHttpProcessor;
+import io.questdb.cutlass.qwp.server.QwpIngressHttpProcessor;
 import io.questdb.griffin.SqlException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.WorkerPoolUtils;
 import io.questdb.network.PlainSocketFactory;
 import io.questdb.std.ObjHashSet;
+import io.questdb.std.Rnd;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.tools.TestUtils;
+import org.junit.Before;
 
 public class AbstractQwpWebSocketTest extends AbstractCairoTest {
 
+    // Default close drain timeout (5s) is too tight: worst-case WS fragmentation
+    // (recvChunk=1) drives one kqueue/epoll round-trip per byte against the
+    // single-worker test server, so large payloads or fuzz batches with concurrent
+    // WAL apply can push close() drain past a minute on loaded CI. 5 minutes covers
+    // that without masking real bugs.
+    private static final long CLOSE_FLUSH_TIMEOUT_MS = 300_000L;
     private static final Log LOG = LogFactory.getLog(AbstractQwpWebSocketTest.class);
+    protected int recvChunk;
+    protected int sendChunk;
+
+    @Before
+    public void setUpFragmentationChunks() {
+        Rnd rnd = TestUtils.generateRandom(LOG);
+        recvChunk = 1 + rnd.nextInt(500);
+        sendChunk = 1 + rnd.nextInt(500);
+    }
 
     protected void assertSql(String sql, String expected) {
         try {
@@ -66,7 +83,7 @@ public class AbstractQwpWebSocketTest extends AbstractCairoTest {
      */
     protected static QwpWebSocketSender connectWs(int port) {
         return (QwpWebSocketSender) Sender.fromConfig(
-                "ws::addr=localhost:" + port + ";close_flush_timeout_millis=60000;");
+                "ws::addr=localhost:" + port + ";close_flush_timeout_millis=" + CLOSE_FLUSH_TIMEOUT_MS + ";");
     }
 
     /**
@@ -80,7 +97,7 @@ public class AbstractQwpWebSocketTest extends AbstractCairoTest {
         return (QwpWebSocketSender) Sender.builder(Sender.Transport.WEBSOCKET)
                 .address("localhost:" + port)
                 .errorHandler(errorHandler)
-                .closeFlushTimeoutMillis(60_000L)
+                .closeFlushTimeoutMillis(CLOSE_FLUSH_TIMEOUT_MS)
                 .build();
     }
 
@@ -111,7 +128,7 @@ public class AbstractQwpWebSocketTest extends AbstractCairoTest {
                 .autoFlushRows(rows)
                 .autoFlushBytes(bytes)
                 .autoFlushIntervalMillis(intervalMillis)
-                .closeFlushTimeoutMillis(60_000L)
+                .closeFlushTimeoutMillis(CLOSE_FLUSH_TIMEOUT_MS)
                 .build();
     }
 
@@ -141,11 +158,7 @@ public class AbstractQwpWebSocketTest extends AbstractCairoTest {
         appendAutoFlushRows(cfg, autoFlushRows);
         appendAutoFlushBytes(cfg, autoFlushBytes);
         appendAutoFlushInterval(cfg, autoFlushIntervalNanos);
-        // Default close drain timeout (5s) is too tight for fuzz tests that
-        // push hundreds of batches against a single-worker test server with
-        // concurrent ALTERs slowing down WAL apply. 60s is enough headroom
-        // without masking real problems.
-        cfg.append("close_flush_timeout_millis=60000;");
+        cfg.append("close_flush_timeout_millis=").append(CLOSE_FLUSH_TIMEOUT_MS).append(';');
         return (QwpWebSocketSender) Sender.fromConfig(cfg.toString());
     }
 
@@ -179,24 +192,33 @@ public class AbstractQwpWebSocketTest extends AbstractCairoTest {
     }
 
     protected void runInContext(QwpTestContext r, int recvBufferSize) throws Exception {
-        runInContext(r, recvBufferSize, Integer.MAX_VALUE);
+        runInContext(r, recvBufferSize, recvChunk);
     }
 
     protected void runInContext(QwpTestContext r, int recvBufferSize, int forceRecvFragmentationChunkSize) throws Exception {
-        runInContext(r, recvBufferSize, forceRecvFragmentationChunkSize, true);
+        runInContext(r, recvBufferSize, forceRecvFragmentationChunkSize, sendChunk, true);
+    }
+
+    protected void runInContext(QwpTestContext r, int recvBufferSize, int forceRecvFragmentationChunkSize, int forceSendFragmentationChunkSize) throws Exception {
+        runInContext(r, recvBufferSize, forceRecvFragmentationChunkSize, forceSendFragmentationChunkSize, true);
     }
 
     protected void runInContextNoAutoCreate(QwpTestContext r) throws Exception {
-        runInContext(r, 65_536, Integer.MAX_VALUE, false);
+        runInContext(r, 65_536, recvChunk, sendChunk, false);
     }
 
-    private void runInContext(QwpTestContext r, int recvBufferSize, int forceRecvFragmentationChunkSize, boolean autoCreateNewColumns) throws Exception {
+    private void runInContext(QwpTestContext r, int recvBufferSize, int forceRecvFragmentationChunkSize, int forceSendFragmentationChunkSize, boolean autoCreateNewColumns) throws Exception {
         final HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(
                 configuration,
                 new DefaultHttpContextConfiguration() {
                     @Override
                     public int getForceRecvFragmentationChunkSize() {
                         return forceRecvFragmentationChunkSize;
+                    }
+
+                    @Override
+                    public int getForceSendFragmentationChunkSize() {
+                        return forceSendFragmentationChunkSize;
                     }
                 }
         ) {
@@ -236,8 +258,8 @@ public class AbstractQwpWebSocketTest extends AbstractCairoTest {
                     }
 
                     @Override
-                    public QwpWebSocketHttpProcessor newInstance() {
-                        return new QwpWebSocketHttpProcessor(engine, httpConfig);
+                    public QwpIngressHttpProcessor newInstance() {
+                        return new QwpIngressHttpProcessor(engine, httpConfig);
                     }
                 });
                 WorkerPoolUtils.setupWriterJobs(workerPool, engine);

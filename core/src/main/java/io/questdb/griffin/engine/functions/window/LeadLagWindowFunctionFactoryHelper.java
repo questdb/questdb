@@ -111,34 +111,48 @@ public class LeadLagWindowFunctionFactoryHelper {
         if (windowContext.getPartitionByRecord() != null) {
             final boolean liveView = windowContext.isLiveView();
             final ColumnTypes partitionByKeyTypes = windowContext.getPartitionByKeyTypes();
-            Map map = MapFactory.createUnorderedMap(
-                    configuration,
-                    partitionByKeyTypes,
-                    liveView ? LeadLagWindowFunctionFactoryHelper.LAG_COLUMN_TYPES_LV
-                            : LeadLagWindowFunctionFactoryHelper.LAG_COLUMN_TYPES
-            );
-            MemoryARW mem = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
-                    configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER
-            );
+            Map map = null;
+            MemoryARW mem = null;
+            try {
+                map = MapFactory.createUnorderedMap(
+                        configuration,
+                        partitionByKeyTypes,
+                        liveView ? LeadLagWindowFunctionFactoryHelper.LAG_COLUMN_TYPES_LV
+                                : LeadLagWindowFunctionFactoryHelper.LAG_COLUMN_TYPES
+                );
+                mem = Vm.getCARWInstance(configuration.getSqlWindowStorePageSize(),
+                        configuration.getSqlWindowStoreMaxPages(), MemoryTag.NATIVE_CIRCULAR_BUFFER
+                );
 
-            return lagOverPartitionConstructor.newFunction(map,
-                    windowContext.getPartitionByRecord(),
-                    windowContext.getPartitionBySink(),
-                    mem,
-                    args.get(0),
-                    windowContext.isIgnoreNulls(),
-                    defaultValue,
-                    offset,
-                    partitionByKeyTypes,
-                    liveView);
+                return lagOverPartitionConstructor.newFunction(map,
+                        windowContext.getPartitionByRecord(),
+                        windowContext.getPartitionBySink(),
+                        mem,
+                        args.get(0),
+                        windowContext.isIgnoreNulls(),
+                        defaultValue,
+                        offset,
+                        partitionByKeyTypes,
+                        liveView);
+            } catch (Throwable th) {
+                Misc.free(map);
+                Misc.free(mem);
+                throw th;
+            }
         }
 
-        MemoryARW mem = Vm.getCARWInstance(
-                configuration.getSqlWindowStorePageSize(),
-                configuration.getSqlWindowStoreMaxPages(),
-                MemoryTag.NATIVE_CIRCULAR_BUFFER
-        );
-        return LagConstructor.newFunction(args.get(0), defaultValue, offset, mem, windowContext.isIgnoreNulls());
+        MemoryARW mem = null;
+        try {
+            mem = Vm.getCARWInstance(
+                    configuration.getSqlWindowStorePageSize(),
+                    configuration.getSqlWindowStoreMaxPages(),
+                    MemoryTag.NATIVE_CIRCULAR_BUFFER
+            );
+            return LagConstructor.newFunction(args.get(0), defaultValue, offset, mem, windowContext.isIgnoreNulls());
+        } catch (Throwable th) {
+            Misc.free(mem);
+            throw th;
+        }
     }
 
     @FunctionalInterface

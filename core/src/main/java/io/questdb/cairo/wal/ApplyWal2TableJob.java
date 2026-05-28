@@ -524,6 +524,34 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                     if (!finishedAll || isTerminating) {
                         writer.commitSeqTxn();
                     }
+
+                    // The apply loop holds the writer across this batch of transactions and never
+                    // ticks the command queue itself. Once the batch is applied and its sequencer
+                    // txn finalized, drain async writer commands (e.g. storage policy parquet-commit
+                    // / drop-local / squash) published while the writer was busy, so they run here
+                    // rather than sitting unprocessed until the writer is returned to the pool.
+                    // The drain shares the per-table time quota with the apply loop: it gets at most
+                    // half of whatever quota is left, so a backlog of expensive commands (each squash
+                    // or parquet conversion can take seconds on a wide table) cannot monopolize an
+                    // apply worker shared with other WAL tables. Commands left undrained stay queued
+                    // for the next tick.
+                    // Draining is a side activity: the WAL transactions are already durably committed
+                    // above, so a drain failure must not fail WAL apply or suspend the table. Each
+                    // command's own failure is reported on its correlation channel inside
+                    // processAsyncWriterCommand; this catch only guards the rare infrastructure error
+                    // escaping the queue loop. Such an error leaves the writer in an unknown state, so
+                    // mark it distressed to force the pool to recreate it on the next acquisition. Only
+                    // Exceptions are swallowed here; Errors (OOM, StackOverflow, LinkageError) propagate
+                    // to the apply loop's existing failure handling.
+                    final long drainNow = microClock.getTicks();
+                    final long drainDeadline = drainNow + Math.max(0, (timeLimit - drainNow) / 2);
+                    try {
+                        writer.tick(false, drainDeadline);
+                    } catch (Exception ex) {
+                        LOG.error().$("error draining async command queue after WAL apply [table=")
+                                .$(writer.getTableToken()).$(", error=").$(ex).I$();
+                        writer.markDistressed();
+                    }
                 } catch (EjectApplyWalException ex) {
                     finishedAll = false;
                 }

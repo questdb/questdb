@@ -270,7 +270,7 @@ public class InSymbolCursorFunctionFactoryTest extends AbstractCairoTest {
                 "SELECT x FROM long_sequence(3) WHERE 'foobar'::symbol IN (SELECT NULL);",
                 null,
                 null,
-                false,
+                true,
                 false
         );
     }
@@ -295,7 +295,7 @@ public class InSymbolCursorFunctionFactoryTest extends AbstractCairoTest {
                 "SELECT x FROM long_sequence(3) WHERE 'foobar'::symbol IN NULL;",
                 null,
                 null,
-                false,
+                true,
                 false
         );
     }
