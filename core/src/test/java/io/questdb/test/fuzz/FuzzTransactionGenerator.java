@@ -75,58 +75,9 @@ public class FuzzTransactionGenerator {
             int maxStrLenForStrColumns,
             String[] symbols,
             int metaVersion,
-            double probabilityOfSetParquetEncoding
-    ) {
-        return generateSet(
-                initialRowCount, sequencerMetadata, tableMetadata, rnd, minTimestamp, maxTimestamp,
-                rowCount, transactionCount, o3,
-                probabilityOfCancelRow, probabilityOfUnassignedColumnValue, probabilityOfAssigningNull,
-                probabilityOfTransactionRollback, probabilityOfAddingNewColumn, probabilityOfRemovingColumn,
-                probabilityOfRenamingColumn, probabilityOfColumnTypeChange, probabilityOfDataInsert,
-                probabilityOfSameTimestamp, probabilityOfDropPartition, probabilityOfConvertPartitionToParquet,
-                probabilityOfConvertPartitionToNative, probabilityOfTruncate, probabilityOfDropTable,
-                probabilityOfSetTtl, replaceInsertProb, probabilityOfSymbolAccessValidation, probabilityOfQuery,
-                maxStrLenForStrColumns, symbols, metaVersion, probabilityOfSetParquetEncoding,
-                0.0,
-                0.0
-        );
-    }
-
-    public static ObjList<FuzzTransaction> generateSet(
-            long initialRowCount,
-            TableRecordMetadata sequencerMetadata,
-            TableMetadata tableMetadata,
-            Rnd rnd,
-            long minTimestamp,
-            long maxTimestamp,
-            int rowCount,
-            int transactionCount,
-            boolean o3,
-            double probabilityOfCancelRow,
-            double probabilityOfUnassignedColumnValue,
-            double probabilityOfAssigningNull,
-            double probabilityOfTransactionRollback,
-            double probabilityOfAddingNewColumn,
-            double probabilityOfRemovingColumn,
-            double probabilityOfRenamingColumn,
-            double probabilityOfColumnTypeChange,
-            double probabilityOfDataInsert,
-            double probabilityOfSameTimestamp,
-            double probabilityOfDropPartition,
-            double probabilityOfConvertPartitionToParquet,
-            double probabilityOfConvertPartitionToNative,
-            double probabilityOfTruncate,
-            double probabilityOfDropTable,
-            double probabilityOfSetTtl,
-            double replaceInsertProb,
-            double probabilityOfSymbolAccessValidation,
-            double probabilityOfQuery,
-            int maxStrLenForStrColumns,
-            String[] symbols,
-            int metaVersion,
             double probabilityOfSetParquetEncoding,
-            double probabilityOfSetTableFormat,
-            double probabilityOfAddCoveringIndex
+            double probabilityOfAddCoveringIndex,
+            double probabilityOfSetTableFormat
     ) {
         ObjList<FuzzTransaction> transactionList = new ObjList<>();
         int waitBarrierVersion = 0;
@@ -145,7 +96,9 @@ public class FuzzTransactionGenerator {
                 + probabilityOfAddCoveringIndex
                 + probabilityOfDataInsert
                 + probabilityOfSymbolAccessValidation
-                + probabilityOfQuery;
+                + probabilityOfQuery
+                + probabilityOfSetTableFormat
+                + probabilityOfSetParquetEncoding;
         probabilityOfAddingNewColumn = probabilityOfAddingNewColumn / sumOfProbabilities;
         probabilityOfRemovingColumn = probabilityOfRemovingColumn / sumOfProbabilities;
         probabilityOfRenamingColumn = probabilityOfRenamingColumn / sumOfProbabilities;
@@ -157,6 +110,8 @@ public class FuzzTransactionGenerator {
         probabilityOfAddCoveringIndex = probabilityOfAddCoveringIndex / sumOfProbabilities;
         probabilityOfSymbolAccessValidation = probabilityOfSymbolAccessValidation / sumOfProbabilities;
         probabilityOfQuery = probabilityOfQuery / sumOfProbabilities;
+        probabilityOfSetParquetEncoding = probabilityOfSetParquetEncoding / sumOfProbabilities;
+        probabilityOfSetTableFormat = probabilityOfSetTableFormat / sumOfProbabilities;
         // effectively, probabilityOfDataInsert is as follows, but we don't need this value:
         // probabilityOfDataInsert = probabilityOfDataInsert / sumOfProbabilities;
 

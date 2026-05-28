@@ -518,8 +518,7 @@ public class FuzzRunner {
                 generateSymbols(rnd, rnd.nextInt(Math.max(1, symbolCountMax - 5)) + 5, symbolStrLenMax, tableName),
                 (int) sequencerMetadata.getMetadataVersion(),
                 setParquetEncodingProb,
-                setTableFormatProb,
-                addCoveringIndexProb
+                addCoveringIndexProb, setTableFormatProb
         );
     }
 
