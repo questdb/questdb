@@ -373,37 +373,6 @@ public class QwpUdpMalformedTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testMultipleMalformedThenValid() throws Exception {
-        assertMemoryLeak(() -> {
-            try (QwpUdpReceiver receiver = receiverFactory.create(RCVR_CONF, engine)) {
-                // too short
-                sendRawBytes(new byte[]{0, 0, 0, 0});
-                // bad magic
-                sendRawBytes(new byte[12]);
-                // bad version
-                byte[] badVersion = createHeader(
-                        VALID_MAGIC,
-                        (byte) 2, (byte) 0, 0, 0L
-                );
-                sendRawBytes(badVersion);
-                // valid row
-                sendValidRow("multi_bad", 1L, 1_000_000L);
-                drainReceiver(receiver, 4);
-
-                Assert.assertEquals(1, receiver.getDroppedTooShortCount());
-                Assert.assertEquals(1, receiver.getDroppedBadMagicCount());
-                Assert.assertEquals(1, receiver.getDroppedBadVersionCount());
-            }
-
-            drainWalQueue();
-            assertSql(
-                    "count\n1\n",
-                    "SELECT count() FROM multi_bad"
-            );
-        });
-    }
-
-    @Test
     public void testMalformedDatagramDoesNotCountTowardsMaxUncommittedDatagrams() throws Exception {
         QwpUdpReceiverConfiguration conf = new DefaultQwpUdpReceiverConfiguration() {
             @Override
@@ -441,6 +410,37 @@ public class QwpUdpMalformedTest extends AbstractCairoTest {
 
             drainWalQueue();
             assertSql("count\n1\n", "SELECT count() FROM noise_then_valid");
+        });
+    }
+
+    @Test
+    public void testMultipleMalformedThenValid() throws Exception {
+        assertMemoryLeak(() -> {
+            try (QwpUdpReceiver receiver = receiverFactory.create(RCVR_CONF, engine)) {
+                // too short
+                sendRawBytes(new byte[]{0, 0, 0, 0});
+                // bad magic
+                sendRawBytes(new byte[12]);
+                // bad version
+                byte[] badVersion = createHeader(
+                        VALID_MAGIC,
+                        (byte) 2, (byte) 0, 0, 0L
+                );
+                sendRawBytes(badVersion);
+                // valid row
+                sendValidRow("multi_bad", 1L, 1_000_000L);
+                drainReceiver(receiver, 4);
+
+                Assert.assertEquals(1, receiver.getDroppedTooShortCount());
+                Assert.assertEquals(1, receiver.getDroppedBadMagicCount());
+                Assert.assertEquals(1, receiver.getDroppedBadVersionCount());
+            }
+
+            drainWalQueue();
+            assertSql(
+                    "count\n1\n",
+                    "SELECT count() FROM multi_bad"
+            );
         });
     }
 
@@ -509,6 +509,30 @@ public class QwpUdpMalformedTest extends AbstractCairoTest {
                     "count\n1\n",
                     "SELECT count() FROM too_large"
             );
+        });
+    }
+
+    @Test
+    public void testProcessedCountDoesNotIncludeDroppedDatagrams() throws Exception {
+        // Regression test: drainReceiver() uses processedCount + totalDroppedCount as a
+        // "datagrams seen so far" signal. If processedCount is incremented even when
+        // processDatagram() classifies the packet as dropped, a single bad datagram bumps
+        // both counters and silently doubles its contribution, letting callers proceed
+        // before subsequent valid datagrams have been read from the kernel buffer.
+        assertMemoryLeak(() -> {
+            try (QwpUdpReceiver receiver = receiverFactory.create(RCVR_CONF, engine)) {
+                sendRawBytes(new byte[11]); // shorter than HEADER_SIZE -> droppedTooShort
+
+                long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(20);
+                while (System.nanoTime() < deadline && receiver.getDroppedTooShortCount() == 0) {
+                    receiver.runSerially();
+                    Os.pause();
+                }
+
+                Assert.assertEquals(1, receiver.getDroppedTooShortCount());
+                Assert.assertEquals("processedCount must not include dropped datagrams",
+                        0, receiver.getProcessedCount());
+            }
         });
     }
 
