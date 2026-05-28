@@ -108,7 +108,11 @@ public class CachedWindowRecordCursorFactory extends AbstractRecordCursorFactory
             }
 
             ObjList<LongTreeChain> orderedSources = new ObjList<>(orderedGroupCount);
-            // red&black trees, one for each comparator where comparator is not null
+            // red&black trees, one for each comparator where comparator is not null.
+            // Lazy variant: chain skeletons are constructed but the key/value heaps
+            // are not allocated until the first cursor's of() binds a MemoryTracker
+            // and calls reopen(). This keeps malloc/free symmetric on the per-query
+            // counter from the very first cursor.
             try {
                 for (int i = 0; i < orderedGroupCount; i++) {
                     orderedSources.add(
@@ -116,7 +120,8 @@ public class CachedWindowRecordCursorFactory extends AbstractRecordCursorFactory
                                     configuration.getSqlWindowTreeKeyPageSize(),
                                     configuration.getSqlWindowTreeKeyMaxPages(),
                                     configuration.getSqlWindowRowIdPageSize(),
-                                    configuration.getSqlWindowRowIdMaxPages()
+                                    configuration.getSqlWindowRowIdMaxPages(),
+                                    false
                             )
                     );
                 }
@@ -315,7 +320,10 @@ public class CachedWindowRecordCursorFactory extends AbstractRecordCursorFactory
             this.columnIndexes = columnIndexes;
             this.recordChain = recordChain;
             this.recordChain.setSymbolTableResolver(this);
-            this.isOpen = true;
+            // Lazy variant: the tree chains are constructed without backing
+            // memory. The first of() call binds the MemoryTracker on each tree
+            // and reopens them under it.
+            this.isOpen = false;
             this.orderedSources = orderedSources;
             this.perGroupRankMaps = perGroupRankMaps;
         }
@@ -521,7 +529,7 @@ public class CachedWindowRecordCursorFactory extends AbstractRecordCursorFactory
             if (!isOpen) {
                 isOpen = true;
                 recordChain.setSymbolTableResolver(this);
-                reopenTrees();
+                reopenTrees(executionContext);
                 reopen(allFunctions);
             }
             Function.init(allFunctions, this, executionContext, null);
@@ -538,9 +546,11 @@ public class CachedWindowRecordCursorFactory extends AbstractRecordCursorFactory
             }
         }
 
-        private void reopenTrees() {
+        private void reopenTrees(SqlExecutionContext executionContext) {
             for (int i = 0; i < orderedGroupCount; i++) {
-                orderedSources.getQuick(i).reopen();
+                final LongTreeChain tree = orderedSources.getQuick(i);
+                tree.setMemoryTracker(executionContext.getMemoryTracker());
+                tree.reopen();
             }
         }
     }

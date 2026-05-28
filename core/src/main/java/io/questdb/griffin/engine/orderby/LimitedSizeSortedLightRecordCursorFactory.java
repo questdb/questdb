@@ -131,11 +131,16 @@ public class LimitedSizeSortedLightRecordCursorFactory extends AbstractRecordCur
      */
     public void initializeLimitedSizeCursor(SqlExecutionContext executionContext, RecordCursor baseCursor) throws SqlException {
         computeLimits(baseCursor, executionContext);
+        // Lazy variant: the chain skeleton is constructed but the key/value heaps
+        // are not allocated until the first cursor's of() binds a MemoryTracker
+        // and calls reopen(). This keeps malloc/free symmetric on the per-query
+        // counter from the very first cursor.
         this.chain = new LimitedSizeLongTreeChain(
                 configuration.getSqlSortKeyPageSize(),
                 configuration.getSqlSortKeyMaxPages(),
                 configuration.getSqlSortLightValuePageSize(),
-                configuration.getSqlSortLightValueMaxPages()
+                configuration.getSqlSortLightValueMaxPages(),
+                false
         );
 
         if (timestampIndex == -1 || !isFirstN) {
@@ -257,11 +262,16 @@ public class LimitedSizeSortedLightRecordCursorFactory extends AbstractRecordCur
     }
 
     private void initializeUnlimitedSizeCursor() {
+        // Lazy variant: the chain skeleton is constructed but the key/value heaps
+        // are not allocated until the first cursor's of() binds a MemoryTracker
+        // and calls reopen(). This keeps malloc/free symmetric on the per-query
+        // counter from the very first cursor.
         LongTreeChain chain = new LongTreeChain(
                 configuration.getSqlSortKeyPageSize(),
                 configuration.getSqlSortKeyMaxPages(),
                 configuration.getSqlSortLightValuePageSize(),
-                configuration.getSqlSortLightValueMaxPages()
+                configuration.getSqlSortLightValueMaxPages(),
+                false
         );
         this.cursor = new SortedLightRecordCursor(chain, comparator, rankMaps);
     }

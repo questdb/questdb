@@ -41,7 +41,10 @@ class AsyncTopKRecordCursor implements RecordCursor {
     private PageFrameMemoryPool frameMemoryPool;
     private UnorderedPageFrameSequence<AsyncTopKAtom> frameSequence;
     private boolean isChainBuilt;
-    private boolean isOpen = true;
+    // Starts closed so the first of() call triggers atom.reopen() — which binds
+    // the per-query MemoryTracker on each chain before allocating their backing.
+    // Keeps the very first cursor's malloc/free symmetric on the tracker.
+    private boolean isOpen = false;
     private PageFrameMemoryRecord recordA;
     private PageFrameMemoryRecord recordB;
 

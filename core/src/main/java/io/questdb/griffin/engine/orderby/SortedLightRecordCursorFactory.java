@@ -56,11 +56,16 @@ public class SortedLightRecordCursorFactory extends AbstractRecordCursorFactory 
         LongTreeChain chain = null;
         ObjList<DirectIntList> rankMaps = null;
         try {
+            // Lazy variant: the chain skeleton is constructed but the key/value
+            // heaps are not allocated until the first cursor's of() binds a
+            // MemoryTracker and calls reopen(). This keeps malloc/free symmetric
+            // on the per-query counter from the very first cursor.
             chain = new LongTreeChain(
                     configuration.getSqlSortKeyPageSize(),
                     configuration.getSqlSortKeyMaxPages(),
                     configuration.getSqlSortLightValuePageSize(),
-                    configuration.getSqlSortLightValueMaxPages()
+                    configuration.getSqlSortLightValueMaxPages(),
+                    false
             );
             // Hoist rankMaps into a named local so the catch can free the
             // (native-memory-owning) list if the cursor ctor below throws after

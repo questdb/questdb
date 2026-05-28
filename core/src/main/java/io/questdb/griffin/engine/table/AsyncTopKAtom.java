@@ -107,11 +107,16 @@ public class AsyncTopKAtom implements StatefulAtom, Reopenable, Plannable {
             this.ownerComparator = recordComparatorCompiler.newInstance(clazz);
             this.ownerRecordA = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_A_LETTER);
             this.ownerRecordB = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_B_LETTER);
+            // Lazy variant: the chain skeleton is constructed but the key/value
+            // heaps are not allocated until the first cursor's reopen() binds a
+            // MemoryTracker on the chain. This keeps malloc/free symmetric on
+            // the per-query counter from the very first cursor.
             this.ownerChain = new LimitedSizeLongTreeChain(
                     configuration.getSqlSortKeyPageSize(),
                     configuration.getSqlSortKeyMaxPages(),
                     configuration.getSqlSortLightValuePageSize(),
-                    configuration.getSqlSortLightValueMaxPages()
+                    configuration.getSqlSortLightValueMaxPages(),
+                    false
             );
             ownerChain.updateLimits(true, lo);
 
@@ -128,7 +133,8 @@ public class AsyncTopKAtom implements StatefulAtom, Reopenable, Plannable {
                         configuration.getSqlSortKeyPageSize(),
                         configuration.getSqlSortKeyMaxPages(),
                         configuration.getSqlSortLightValuePageSize(),
-                        configuration.getSqlSortLightValueMaxPages()
+                        configuration.getSqlSortLightValueMaxPages(),
+                        false
                 );
                 chain.updateLimits(true, lo);
                 perWorkerChains.extendAndSet(i, chain);
@@ -252,9 +258,16 @@ public class AsyncTopKAtom implements StatefulAtom, Reopenable, Plannable {
 
     @Override
     public void reopen() {
+        // Propagate the tracker captured in init() to every chain before reopen,
+        // so each chain's malloc is charged to the active workload's per-query
+        // counter. The matching close at workload end charges to the same tracker
+        // because the chain holds the reference for the duration of the cursor.
+        ownerChain.setMemoryTracker(memoryTracker);
         ownerChain.reopen();
         for (int i = 0, n = perWorkerChains.size(); i < n; i++) {
-            perWorkerChains.getQuick(i).reopen();
+            final LimitedSizeLongTreeChain chain = perWorkerChains.getQuick(i);
+            chain.setMemoryTracker(memoryTracker);
+            chain.reopen();
         }
     }
 

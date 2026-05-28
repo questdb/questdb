@@ -48,12 +48,20 @@ public class LongTreeChain extends AbstractRedBlackTree implements Reopenable {
     private long valueHeapStart;
 
     public LongTreeChain(long keyPageSize, int keyMaxPages, long valuePageSize, int valueMaxPages) {
-        super(keyPageSize, keyMaxPages);
+        this(keyPageSize, keyMaxPages, valuePageSize, valueMaxPages, true);
+    }
+
+    public LongTreeChain(long keyPageSize, int keyMaxPages, long valuePageSize, int valueMaxPages, boolean openOnInit) {
+        super(keyPageSize, keyMaxPages, openOnInit);
         try {
             valueHeapSize = initialValueHeapSize = valuePageSize;
-            valueHeapStart = valueHeapPos = Unsafe.malloc(valueHeapSize, MemoryTag.NATIVE_TREE_CHAIN);
-            valueHeapLimit = valueHeapStart + valueHeapSize;
             maxValueHeapSize = Math.min(valuePageSize * valueMaxPages, MAX_VALUE_HEAP_SIZE_LIMIT);
+            if (openOnInit) {
+                valueHeapStart = valueHeapPos = Unsafe.malloc(valueHeapSize, MemoryTag.NATIVE_TREE_CHAIN, memoryTracker);
+                valueHeapLimit = valueHeapStart + valueHeapSize;
+            }
+            // else: valueHeapStart stays 0; first reopen() allocates initial backing
+            // under whatever MemoryTracker is bound at that time.
         } catch (Throwable th) {
             close();
             throw th;
@@ -71,7 +79,7 @@ public class LongTreeChain extends AbstractRedBlackTree implements Reopenable {
         super.close();
         cursor.clear();
         if (valueHeapStart != 0) {
-            valueHeapStart = Unsafe.free(valueHeapStart, valueHeapSize, MemoryTag.NATIVE_TREE_CHAIN);
+            valueHeapStart = Unsafe.free(valueHeapStart, valueHeapSize, MemoryTag.NATIVE_TREE_CHAIN, memoryTracker);
             valueHeapLimit = valueHeapPos = 0;
             valueHeapSize = 0;
         }
@@ -136,7 +144,7 @@ public class LongTreeChain extends AbstractRedBlackTree implements Reopenable {
         super.reopen();
         if (valueHeapStart == 0) {
             valueHeapSize = initialValueHeapSize;
-            valueHeapStart = valueHeapPos = Unsafe.malloc(valueHeapSize, MemoryTag.NATIVE_TREE_CHAIN);
+            valueHeapStart = valueHeapPos = Unsafe.malloc(valueHeapSize, MemoryTag.NATIVE_TREE_CHAIN, memoryTracker);
             valueHeapLimit = valueHeapStart + valueHeapSize;
         }
     }
@@ -164,7 +172,7 @@ public class LongTreeChain extends AbstractRedBlackTree implements Reopenable {
             if (newHeapSize > maxValueHeapSize) {
                 throw LimitOverflowException.instance().put("limit of ").put(maxValueHeapSize).put(" memory exceeded in LongTreeChain");
             }
-            long newHeapPos = Unsafe.realloc(valueHeapStart, valueHeapSize, newHeapSize, MemoryTag.NATIVE_TREE_CHAIN);
+            long newHeapPos = Unsafe.realloc(valueHeapStart, valueHeapSize, newHeapSize, MemoryTag.NATIVE_TREE_CHAIN, memoryTracker);
 
             valueHeapSize = newHeapSize;
             long delta = newHeapPos - valueHeapStart;

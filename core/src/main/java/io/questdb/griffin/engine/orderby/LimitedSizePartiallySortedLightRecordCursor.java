@@ -70,7 +70,10 @@ public class LimitedSizePartiallySortedLightRecordCursor implements DelegatingRe
         this.chain = chain;
         this.comparator = comparator;
         this.chainCursor = chain.getCursor();
-        this.isOpen = true;
+        // Lazy variant: the chain skeleton is constructed but the key/value heaps
+        // are not allocated yet. The first of() call binds the MemoryTracker and
+        // calls chain.reopen() to allocate the initial backing under it.
+        this.isOpen = false;
         this.timestampIndex = timestampIndex;
         this.rankMaps = rankMaps;
     }
@@ -125,6 +128,7 @@ public class LimitedSizePartiallySortedLightRecordCursor implements DelegatingRe
         baseRecord = baseCursor.getRecord();
         if (!isOpen) {
             isOpen = true;
+            chain.setMemoryTracker(executionContext.getMemoryTracker());
             chain.reopen();
         }
         SortKeyEncoder.buildRankMaps(baseCursor, rankMaps, comparator);
