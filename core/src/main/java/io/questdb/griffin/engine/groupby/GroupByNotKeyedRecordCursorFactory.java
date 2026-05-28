@@ -285,7 +285,10 @@ public class GroupByNotKeyedRecordCursorFactory extends AbstractRecordCursorFact
                 GroupByFunctionsUpdater groupByFunctionsUpdater
         ) {
             this.groupByFunctionsUpdater = groupByFunctionsUpdater;
-            this.allocator = GroupByAllocatorFactory.createAllocator(configuration);
+            // Lazy variant: the allocator's chunk index is not allocated until the
+            // first cursor's of() binds a MemoryTracker and calls reopen(), keeping
+            // per-query alloc/free accounting symmetric from the very first cursor.
+            this.allocator = GroupByAllocatorFactory.createAllocator(configuration, false);
             GroupByUtils.setAllocator(groupByFunctions, allocator);
         }
 
@@ -338,6 +341,7 @@ public class GroupByNotKeyedRecordCursorFactory extends AbstractRecordCursorFact
             this.isExhausted = false;
             this.isValueBuilt = false;
             this.circuitBreaker = executionContext.getCircuitBreaker();
+            allocator.setMemoryTracker(executionContext.getMemoryTracker());
             allocator.reopen();
             Function.init(groupByFunctions, baseCursor, executionContext, null);
             return this;
