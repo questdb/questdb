@@ -270,7 +270,10 @@ public class LeadLagWindowFunctionFactoryHelper {
     abstract static class BaseLagOverPartitionFunction extends BasePartitionedWindowFunction {
         protected final Function defaultValue;
         protected final boolean ignoreNulls;
-        protected final MemoryARW memory;
+        // Non-final so streaming-LAG variants can lazy-allocate the per-partition ring buffer on
+        // first cached-path invocation. Streaming dispatch writes its state via the cursor's co-
+        // located MapValue slots and does not touch this memory until cached fallback fires.
+        protected MemoryARW memory;
         protected final long offset;
 
         public BaseLagOverPartitionFunction(Map map,
@@ -374,7 +377,9 @@ public class LeadLagWindowFunctionFactoryHelper {
         @Override
         public void toTop() {
             super.toTop();
-            memory.truncate();
+            if (memory != null) {
+                memory.truncate();
+            }
         }
 
         abstract protected boolean computeNext0(long count,

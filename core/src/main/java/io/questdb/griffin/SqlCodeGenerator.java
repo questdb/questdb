@@ -9629,10 +9629,14 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             for (int j = 0; j < psz; j++) {
                                 leadKeyTypes.add(sharedPartitionRecord.getFunctions().getQuick(j).getType());
                             }
+                            // Reserve 3 extra LONG slots per LAG function in the partition value layout
+                            // so streaming LAG variants can store their (startOffset, firstIdx, count)
+                            // tuple inline and skip a second hash probe per row.
+                            final int lagFnCount = windowFunctionCount - lookaheadFunctionCount;
                             cursorPartitionMap = MapFactory.createUnorderedMap(
                                     configuration,
                                     leadKeyTypes,
-                                    DeferredEmitWindowRecordCursorFactory.PARTITION_VALUE_TYPES
+                                    DeferredEmitWindowRecordCursorFactory.buildPartitionValueTypes(lagFnCount)
                             );
                         }
                         return new DeferredEmitWindowRecordCursorFactory(

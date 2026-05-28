@@ -96,7 +96,12 @@ import java.util.Arrays;
  */
 public class DeferredEmitWindowRecordCursorFactory extends AbstractRecordCursorFactory {
 
+    // Base layout for the cursor's per-partition state: 5 LONGs. Streaming LAG variants extend
+    // this layout with 3 LONGs each via {@link #buildPartitionValueTypes(int)} so they can store
+    // (startOffset, firstIdx, count) inline in the cursor's MapValue and skip a second hash probe.
     public static final ArrayColumnTypes PARTITION_VALUE_TYPES;
+    public static final int PARTITION_VALUE_BASE_LONGS = 5;
+    public static final int PARTITION_VALUE_LONGS_PER_LAG = 3;
     private static final int FUNC_VALUE_BYTES = 8;       // each window function's value is 8 bytes
     // Upfront partition slices to pre-allocate when a partitioned cursor first opens. Trades a small
     // amount of overcommit (most queries materialise under this many partitions) for elimination of
@@ -325,6 +330,19 @@ public class DeferredEmitWindowRecordCursorFactory extends AbstractRecordCursorF
         Misc.free(partitionByRecord);
         Misc.freeObjList(functions);
         isClosed = true;
+    }
+
+    /**
+     * Builds the {@link ArrayColumnTypes} layout for a streaming-dispatch partition map: the base
+     * 5 LONGs followed by {@code lagCount * 3} LONGs reserved for per-LAG state tuples.
+     */
+    public static ArrayColumnTypes buildPartitionValueTypes(int lagCount) {
+        ArrayColumnTypes types = new ArrayColumnTypes();
+        final int total = PARTITION_VALUE_BASE_LONGS + lagCount * PARTITION_VALUE_LONGS_PER_LAG;
+        for (int i = 0; i < total; i++) {
+            types.add(ColumnType.LONG);
+        }
+        return types;
     }
 
     private static boolean isFixed8ByteType(int type) {
@@ -674,6 +692,12 @@ public class DeferredEmitWindowRecordCursorFactory extends AbstractRecordCursorF
                     mapValue.putLong(2, 0L);
                     mapValue.putLong(3, 0L);
                     mapValue.putLong(4, 0L);
+                    // Zero the per-LAG slots so streaming LAG variants see a clean (0,0,0) tuple
+                    // on first touch. Map.createValue's memset covers the value region but writing
+                    // explicitly makes the contract local to the LAG dispatch.
+                    for (int j = 0, m = lagFunctionsArr.length * PARTITION_VALUE_LONGS_PER_LAG; j < m; j++) {
+                        mapValue.putLong(PARTITION_VALUE_BASE_LONGS + j, 0L);
+                    }
                     ringHead = 0L;
                     ringTail = 0L;
                     ringCount = 0L;
@@ -749,12 +773,16 @@ public class DeferredEmitWindowRecordCursorFactory extends AbstractRecordCursorF
             // emit or initial state).
             long newSlotMask = isSingleLead ? 1L << ringTail : perSlotLeadMask << (ringTail * leadCount);
             pendingFilled &= ~newSlotMask;
-            // LAG functions write their values directly to the new slot via pass1. Eliminating the
-            // redundant per-LAG hash probe (the cursor has already resolved the partition) is
-            // tracked as a follow-up: it needs the cursor's MapValue layout to grow per-LAG slots
-            // and a streamingPass1 SPI extension, neither small enough to land in this PR safely.
+            // LAG functions write to the new slot via streamingPass1. In partitioned mode the
+            // cursor has already resolved the partition; passing each LAG its co-located per-
+            // partition state address (3 LONGs at offset PARTITION_VALUE_BASE_LONGS + lagIdx*3)
+            // lets the LAG skip a redundant hash probe per row. In non-partitioned mode the
+            // address is 0 and streamingPass1's default falls back to plain pass1.
             for (int i = 0, n = lagFunctionsArr.length; i < n; i++) {
-                lagFunctionsArr[i].pass1(baseRow, newSlot, this);
+                long lagStateAddr = mapValueAddr == 0
+                        ? 0L
+                        : mapValueAddr + (long) (PARTITION_VALUE_BASE_LONGS + i * PARTITION_VALUE_LONGS_PER_LAG) * Long.BYTES;
+                lagFunctionsArr[i].streamingPass1(baseRow, newSlot, this, lagStateAddr);
             }
             ringTail++;
             if (ringTail == ringCapacity) {

@@ -796,6 +796,157 @@ public class StreamingLeadIntegrationTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testStreamingLagLongMixedWithLeadPartitioned() throws Exception {
+        // Mixed LAG+LEAD on LONG with PARTITION BY exercises the streaming LAG dispatch path:
+        // SqlCodeGenerator extends the cursor's MapValue with 3 LONGs per LAG function so the
+        // streaming LAG can read its (startOffset, firstIdx, count) tuple directly via Unsafe.
+        // Phase 4 normalisation turns the LAG-DESC into LEAD-ASC and the LEAD-DESC into LAG-ASC.
+        assertMemoryLeak(() -> {
+            execute("create table t (x long, sym symbol, ts timestamp) timestamp(ts) partition by day");
+            execute(
+                    "insert into t values " +
+                            "(10, 'A', 0), (20, 'B', 1000), (30, 'A', 2000), " +
+                            "(40, 'B', 3000), (50, 'A', 4000), (60, 'B', 5000)"
+            );
+
+            assertQueryNoLeakCheck(
+                    """
+                            x\tsym\tlg\tld
+                            10\tA\t30\tnull
+                            20\tB\t40\tnull
+                            30\tA\t50\t10
+                            40\tB\t60\t20
+                            50\tA\tnull\t30
+                            60\tB\tnull\t40
+                            """,
+                    "select x, sym, " +
+                            "lag(x, 1) over (partition by sym order by ts desc) as lg, " +
+                            "lead(x, 1) over (partition by sym order by ts desc) as ld " +
+                            "from t",
+                    null, false, true
+            );
+        });
+    }
+
+    @Test
+    public void testStreamingLagDoubleMixedWithLeadPartitioned() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t (d double, sym symbol, ts timestamp) timestamp(ts) partition by day");
+            execute(
+                    "insert into t values " +
+                            "(1.5, 'A', 0), (2.5, 'B', 1000), (3.5, 'A', 2000), " +
+                            "(4.5, 'B', 3000), (5.5, 'A', 4000), (6.5, 'B', 5000)"
+            );
+
+            assertQueryNoLeakCheck(
+                    """
+                            d\tsym\tlg\tld
+                            1.5\tA\t3.5\tnull
+                            2.5\tB\t4.5\tnull
+                            3.5\tA\t5.5\t1.5
+                            4.5\tB\t6.5\t2.5
+                            5.5\tA\tnull\t3.5
+                            6.5\tB\tnull\t4.5
+                            """,
+                    "select d, sym, " +
+                            "lag(d, 1) over (partition by sym order by ts desc) as lg, " +
+                            "lead(d, 1) over (partition by sym order by ts desc) as ld " +
+                            "from t",
+                    null, false, true
+            );
+        });
+    }
+
+    @Test
+    public void testStreamingLagDateMixedWithLeadPartitioned() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t (d date, sym symbol, ts timestamp) timestamp(ts) partition by day");
+            execute(
+                    "insert into t values " +
+                            "(100, 'A', 0), (200, 'B', 1000), (300, 'A', 2000), " +
+                            "(400, 'B', 3000), (500, 'A', 4000), (600, 'B', 5000)"
+            );
+
+            assertQueryNoLeakCheck(
+                    """
+                            d\tsym\tlg\tld
+                            1970-01-01T00:00:00.100Z\tA\t1970-01-01T00:00:00.300Z\t
+                            1970-01-01T00:00:00.200Z\tB\t1970-01-01T00:00:00.400Z\t
+                            1970-01-01T00:00:00.300Z\tA\t1970-01-01T00:00:00.500Z\t1970-01-01T00:00:00.100Z
+                            1970-01-01T00:00:00.400Z\tB\t1970-01-01T00:00:00.600Z\t1970-01-01T00:00:00.200Z
+                            1970-01-01T00:00:00.500Z\tA\t\t1970-01-01T00:00:00.300Z
+                            1970-01-01T00:00:00.600Z\tB\t\t1970-01-01T00:00:00.400Z
+                            """,
+                    "select d, sym, " +
+                            "lag(d, 1) over (partition by sym order by ts desc) as lg, " +
+                            "lead(d, 1) over (partition by sym order by ts desc) as ld " +
+                            "from t",
+                    null, false, true
+            );
+        });
+    }
+
+    @Test
+    public void testStreamingLagTimestampMixedWithLeadPartitioned() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t (event_ts timestamp, sym symbol, ts timestamp) timestamp(ts) partition by day");
+            execute(
+                    "insert into t values " +
+                            "(100, 'A', 0), (200, 'B', 1000), (300, 'A', 2000), " +
+                            "(400, 'B', 3000), (500, 'A', 4000), (600, 'B', 5000)"
+            );
+
+            assertQueryNoLeakCheck(
+                    """
+                            event_ts\tsym\tlg\tld
+                            1970-01-01T00:00:00.000100Z\tA\t1970-01-01T00:00:00.000300Z\t
+                            1970-01-01T00:00:00.000200Z\tB\t1970-01-01T00:00:00.000400Z\t
+                            1970-01-01T00:00:00.000300Z\tA\t1970-01-01T00:00:00.000500Z\t1970-01-01T00:00:00.000100Z
+                            1970-01-01T00:00:00.000400Z\tB\t1970-01-01T00:00:00.000600Z\t1970-01-01T00:00:00.000200Z
+                            1970-01-01T00:00:00.000500Z\tA\t\t1970-01-01T00:00:00.000300Z
+                            1970-01-01T00:00:00.000600Z\tB\t\t1970-01-01T00:00:00.000400Z
+                            """,
+                    "select event_ts, sym, " +
+                            "lag(event_ts, 1) over (partition by sym order by ts desc) as lg, " +
+                            "lead(event_ts, 1) over (partition by sym order by ts desc) as ld " +
+                            "from t",
+                    null, false, true
+            );
+        });
+    }
+
+    @Test
+    public void testStreamingLagWithNonNullDefaultPartitioned() throws Exception {
+        // Default value flows through streamingPass1 (resolved once at construction so streaming
+        // pass1 doesn't need a record). Top three rows after Phase 4 normalisation receive the
+        // default; bottom three receive the partition predecessor.
+        assertMemoryLeak(() -> {
+            execute("create table t (x long, sym symbol, ts timestamp) timestamp(ts) partition by day");
+            execute(
+                    "insert into t values " +
+                            "(10, 'A', 0), (20, 'B', 1000), (30, 'A', 2000), " +
+                            "(40, 'B', 3000), (50, 'A', 4000), (60, 'B', 5000)"
+            );
+
+            assertQueryNoLeakCheck(
+                    """
+                            x\tsym\tlg
+                            10\tA\t30
+                            20\tB\t40
+                            30\tA\t50
+                            40\tB\t60
+                            50\tA\t999
+                            60\tB\t999
+                            """,
+                    "select x, sym, " +
+                            "lag(x, 1, 999::long) over (partition by sym order by ts desc) as lg " +
+                            "from t",
+                    null, false, true
+            );
+        });
+    }
+
+    @Test
     public void testProjectedVarcharColumnDoesNotCrash() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table t (x long, v varchar, ts timestamp) timestamp(ts) partition by day");

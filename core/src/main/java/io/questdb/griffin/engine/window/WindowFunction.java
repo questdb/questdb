@@ -389,6 +389,20 @@ public interface WindowFunction extends Function {
         throw new UnsupportedOperationException();
     }
 
+    /**
+     * Variant of {@link #pass1(Record, long, WindowSPI)} for streaming dispatch where the cursor
+     * has already resolved the current row's partition. {@code partitionStateAddr} points at three
+     * contiguous 8-byte LONG slots reserved for this LAG function inside the cursor's MapValue:
+     * [startOffset, firstIdx, count]. The implementation reads/writes its state directly via
+     * Unsafe, skipping the per-row map lookup the standard pass1 would do.
+     * <p>
+     * Default falls back to {@link #pass1(Record, long, WindowSPI)} and ignores the address.
+     * Pass {@code 0} from a non-co-located context (non-partitioned cursor, cached executor).
+     */
+    default void streamingPass1(Record record, long recordOffset, WindowSPI spi, long partitionStateAddr) {
+        pass1(record, recordOffset, spi);
+    }
+
     enum Pass1ScanDirection {
         FORWARD, BACKWARD
     }
