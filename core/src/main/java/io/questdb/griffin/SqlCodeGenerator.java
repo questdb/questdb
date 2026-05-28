@@ -8754,7 +8754,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     executionContext,
                     baseMetadata,
                     timestampIndex,
-                    factory.getScanDirection() == RecordCursorFactory.SCAN_DIRECTION_FORWARD,
+                    factory.getScanDirection() == RecordCursorFactory.SCAN_DIRECTION_FORWARD
+                            && factory.getMetadata().getTimestampIndex() == timestampIndex,
                     true,
                     groupByFunctions,
                     groupByFunctionPositions,

@@ -354,6 +354,31 @@ public class TwapGroupByFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTwapRejectsOrderByNonTimestampSubquery() throws Exception {
+        // A sort by a non-timestamp column reports SCAN_DIRECTION_FORWARD but
+        // delivers rows out of designated-timestamp order. The sort drops the
+        // designated timestamp from its metadata; a `timestamp(ts)` clause on
+        // the outer subquery re-attaches the column by name. The compiler
+        // must still reject the query because the rows are not actually in
+        // ascending timestamp order.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tbl (price DOUBLE, ts TIMESTAMP, key SYMBOL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO tbl VALUES
+                    (5.0,  '2024-01-01T00:00:00.000000Z', 'A'),
+                    (50.0, '2024-01-01T00:00:30.000000Z', 'A'),
+                    (10.0, '2024-01-01T00:01:00.000000Z', 'A')
+                    """);
+            assertExceptionNoLeakCheck(
+                    "SELECT key, twap(price, ts) FROM (SELECT * FROM tbl ORDER BY price ASC) timestamp(ts) GROUP BY key",
+                    12,
+                    "twap() requires the base query to provide ascending designated timestamp order",
+                    false
+            );
+        });
+    }
+
+    @Test
     public void testTwapSingleRow() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tbl (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
