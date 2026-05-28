@@ -2461,6 +2461,62 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParallelNonKeyedApproxPercentileFuzz() throws Exception {
+        Assume.assumeTrue(enableParallelGroupBy);
+        assertMemoryLeak(() -> {
+            final Rnd rnd = TestUtils.generateRandom(LOG);
+            final double percentile = rnd.nextDouble();
+            final int precision = rnd.nextInt(6);
+            final int rowCount = rnd.nextInt(ROW_COUNT) + 1;
+            final WorkerPool pool = new WorkerPool(() -> 4);
+            TestUtils.execute(
+                    pool,
+                    (engine, compiler, sqlExecutionContext) -> {
+                        sqlExecutionContext.setJitMode(
+                                enableJitCompiler ? SqlJitMode.JIT_MODE_ENABLED : SqlJitMode.JIT_MODE_DISABLED);
+
+                        execute(
+                                compiler,
+                                "CREATE TABLE tab AS ("
+                                        + "SELECT CASE WHEN rnd_int() % 10 = 0 THEN NULL ELSE abs(rnd_long()) % 10_000_000 END AS x "
+                                        + "FROM long_sequence(" + rowCount + "))",
+                                sqlExecutionContext);
+
+                        final String query = "SELECT approx_percentile(x, " + percentile + ", " + precision + ") FROM tab";
+
+                        sqlExecutionContext.setParallelGroupByEnabled(false);
+                        try {
+                            TestUtils.printSql(
+                                    engine,
+                                    sqlExecutionContext,
+                                    query,
+                                    sink);
+                        } finally {
+                            sqlExecutionContext.setParallelGroupByEnabled(
+                                    engine.getConfiguration().isSqlParallelGroupByEnabled());
+                        }
+
+                        sqlExecutionContext.setParallelGroupByEnabled(true);
+                        final StringSink parallelSink = new StringSink();
+                        try {
+                            TestUtils.printSql(
+                                    engine,
+                                    sqlExecutionContext,
+                                    query,
+                                    parallelSink);
+                        } finally {
+                            sqlExecutionContext.setParallelGroupByEnabled(
+                                    engine.getConfiguration().isSqlParallelGroupByEnabled());
+                        }
+
+                        TestUtils.assertEquals(sink, parallelSink);
+                    },
+                    configuration,
+                    LOG);
+        });
+    }
+
+    @Test
     public void testParallelNonKeyedGroupBy() throws Exception {
         testParallelNonKeyedGroupBy(
                 "SELECT vwap(price, quantity), sum(colTop) FROM tab",
@@ -2573,6 +2629,63 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
     @Test
     public void testParallelNonKeyedGroupByFaultTolerance() throws Exception {
         testParallelGroupByFaultTolerance("select vwap(price, quantity) from tab where npe();");
+    }
+
+    @Test
+    public void testParallelApproxPercentileFuzz() throws Exception {
+        Assume.assumeTrue(enableParallelGroupBy);
+        assertMemoryLeak(() -> {
+            final Rnd rnd = TestUtils.generateRandom(LOG);
+            final double percentile = rnd.nextDouble();
+            final int precision = rnd.nextInt(6);
+            final int rowCount = rnd.nextInt(ROW_COUNT) + 1;
+            final int groupCount = rnd.nextInt(10) + 1;
+            final WorkerPool pool = new WorkerPool(() -> 4);
+            TestUtils.execute(
+                    pool,
+                    (engine, compiler, sqlExecutionContext) -> {
+                        sqlExecutionContext.setJitMode(
+                                enableJitCompiler ? SqlJitMode.JIT_MODE_ENABLED : SqlJitMode.JIT_MODE_DISABLED);
+
+                        execute(
+                                compiler,
+                                "CREATE TABLE tab AS ("
+                                        + "SELECT CASE WHEN rnd_int() % 10 = 0 THEN NULL ELSE abs(rnd_long()) % 10_000_000 END AS x, rnd_int() % " + groupCount + " AS g "
+                                        + "FROM long_sequence(" + rowCount + "))",
+                                sqlExecutionContext);
+
+                        final String query = "SELECT g, approx_percentile(x, " + percentile + ", " + precision + ") FROM tab GROUP BY g ORDER BY g";
+
+                        sqlExecutionContext.setParallelGroupByEnabled(false);
+                        try {
+                            TestUtils.printSql(
+                                    engine,
+                                    sqlExecutionContext,
+                                    query,
+                                    sink);
+                        } finally {
+                            sqlExecutionContext.setParallelGroupByEnabled(
+                                    engine.getConfiguration().isSqlParallelGroupByEnabled());
+                        }
+
+                        sqlExecutionContext.setParallelGroupByEnabled(true);
+                        final StringSink parallelSink = new StringSink();
+                        try {
+                            TestUtils.printSql(
+                                    engine,
+                                    sqlExecutionContext,
+                                    query,
+                                    parallelSink);
+                        } finally {
+                            sqlExecutionContext.setParallelGroupByEnabled(
+                                    engine.getConfiguration().isSqlParallelGroupByEnabled());
+                        }
+
+                        TestUtils.assertEquals(sink, parallelSink);
+                    },
+                    configuration,
+                    LOG);
+        });
     }
 
     @Test
