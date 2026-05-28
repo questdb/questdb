@@ -47,6 +47,7 @@ import io.questdb.std.Decimal256;
 import io.questdb.std.Decimal64;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.IntStack;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjStack;
 import io.questdb.std.Rnd;
@@ -89,6 +90,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     private boolean containsSecret;
     private int intervalFunctionType;
     private int jitMode;
+    private MemoryTracker memoryTracker;
     private long nowMicros;
     private long nowNanos;
     // Timestamp type only for now() function, used by NowFunctionFactory
@@ -256,6 +258,11 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     @Override
     public int getJitMode() {
         return jitMode;
+    }
+
+    @Override
+    public @Nullable MemoryTracker getMemoryTracker() {
+        return memoryTracker;
     }
 
     @Override
@@ -477,6 +484,11 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     @Override
     public void setJitMode(int jitMode) {
         this.jitMode = jitMode;
+    }
+
+    @Override
+    public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+        this.memoryTracker = tracker;
     }
 
     @Override

@@ -128,6 +128,7 @@ import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.LowerCaseCharSequenceHashSet;
 import io.questdb.std.LowerCaseCharSequenceObjHashMap;
+import io.questdb.std.MemoryTrackerProvider;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjHashSet;
@@ -228,6 +229,10 @@ public class CairoEngine implements Closeable, WriterSource {
     private @NotNull WalDirectoryPolicy walDirectoryPolicy = DefaultWalDirectoryPolicy.INSTANCE;
     private @NotNull WalListener walListener = DefaultWalListener.INSTANCE;
     private @NotNull WalLocker walLocker;
+    // Lazily initialized on first call to getMemoryTrackerProvider(), because the
+    // FactoryProvider that produces it is not bound until config.init(engine, ...)
+    // runs -- which is *after* the engine constructor returns.
+    private volatile MemoryTrackerProvider memoryTrackerProvider;
 
     public CairoEngine(CairoConfiguration configuration) {
         this(configuration, new QdbrWalLocker());
@@ -602,6 +607,7 @@ public class CairoEngine implements Closeable, WriterSource {
         Misc.free(settingsStore);
         Misc.free(frameFactory);
         Misc.free(walLocker);
+        Misc.free(memoryTrackerProvider);
     }
 
     @TestOnly
@@ -878,6 +884,20 @@ public class CairoEngine implements Closeable, WriterSource {
 
     public Queue<MatViewTimerTask> getMatViewTimerQueue() {
         return matViewTimerQueue;
+    }
+
+    public MemoryTrackerProvider getMemoryTrackerProvider() {
+        MemoryTrackerProvider p = memoryTrackerProvider;
+        if (p == null) {
+            synchronized (this) {
+                p = memoryTrackerProvider;
+                if (p == null) {
+                    p = configuration.getFactoryProvider().getMemoryTrackerProvider(configuration);
+                    memoryTrackerProvider = p;
+                }
+            }
+        }
+        return p;
     }
 
     public MessageBus getMessageBus() {

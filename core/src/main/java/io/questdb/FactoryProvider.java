@@ -24,6 +24,7 @@
 
 package io.questdb;
 
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.TickCalendarServiceFactory;
 import io.questdb.cairo.WalJobFactory;
 import io.questdb.cairo.security.SecurityContextFactory;
@@ -37,6 +38,8 @@ import io.questdb.cutlass.http.RejectProcessorFactory;
 import io.questdb.cutlass.http.processors.TextImportRequestHeaderProcessor;
 import io.questdb.cutlass.pgwire.PGAuthenticatorFactory;
 import io.questdb.network.SocketFactory;
+import io.questdb.std.MemoryTrackerProvider;
+import io.questdb.std.PerQueryMemoryTrackerProvider;
 import io.questdb.std.QuietCloseable;
 import org.jetbrains.annotations.NotNull;
 
@@ -72,6 +75,25 @@ public interface FactoryProvider extends QuietCloseable {
 
     @NotNull
     SocketFactory getLineSocketFactory();
+
+    /**
+     * Per-engine source of per-workload {@link io.questdb.std.MemoryTracker}
+     * instances. Called once at engine construction; the returned provider is
+     * owned by the engine and closed from {@code CairoEngine.close()}.
+     * <p>
+     * The OSS default returns a {@link PerQueryMemoryTrackerProvider}
+     * configured from the supplied {@link CairoConfiguration}. An enterprise
+     * build overrides this to return its per-principal implementation.
+     */
+    @NotNull
+    default MemoryTrackerProvider getMemoryTrackerProvider(@NotNull CairoConfiguration cairoConfiguration) {
+        return new PerQueryMemoryTrackerProvider(
+                cairoConfiguration.getQueryMemoryLimitBytes(),
+                cairoConfiguration.getMatViewRefreshMemoryLimitBytes(),
+                cairoConfiguration.getWalApplyMemoryLimitBytes(),
+                cairoConfiguration.getMemoryTrackerPoolCapacity()
+        );
+    }
 
     @NotNull
     SocketFactory getPGWireSocketFactory();

@@ -363,6 +363,12 @@ public interface CairoConfiguration {
 
     int getMatViewRefreshMaxClusters();
 
+    /**
+     * @return the per-event byte limit applied to one materialized view refresh
+     * attempt. {@code 0} means unlimited; only the global RSS limit applies.
+     */
+    long getMatViewRefreshMemoryLimitBytes();
+
     long getMatViewRefreshOomRetryTimeout();
 
     long getMatViewRowsPerQueryEstimate();
@@ -378,6 +384,12 @@ public interface CairoConfiguration {
     int getMaxSymbolNotEqualsCount();
 
     int getMaxUncommittedRows();
+
+    /**
+     * @return optional cap on the {@code MemoryTracker} handle pool. {@code 0}
+     * means unbounded.
+     */
+    int getMemoryTrackerPoolCapacity();
 
     int getMetadataPoolCapacity();
 
@@ -560,6 +572,12 @@ public interface CairoConfiguration {
     int getPreferencesStringPoolCapacity();
 
     int getQueryCacheEventQueueCapacity();
+
+    /**
+     * @return the per-query byte limit applied to user SQL execution. {@code 0}
+     * means unlimited; only the global RSS limit applies.
+     */
+    long getQueryMemoryLimitBytes();
 
     int getQueryRegistryPoolSize();
 
@@ -863,6 +881,12 @@ public interface CairoConfiguration {
     VolumeDefinitions getVolumeDefinitions();
 
     int getWalApplyLookAheadTransactionCount();
+
+    /**
+     * @return the per-event byte limit applied to one WAL apply batch.
+     * {@code 0} means unlimited; only the global RSS limit applies.
+     */
+    long getWalApplyMemoryLimitBytes();
 
     long getWalApplyTableTimeQuota();
 

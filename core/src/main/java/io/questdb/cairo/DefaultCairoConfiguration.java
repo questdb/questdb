@@ -566,6 +566,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public long getMatViewRefreshMemoryLimitBytes() {
+        return 0;
+    }
+
+    @Override
     public long getMatViewRefreshOomRetryTimeout() {
         return 200;
     }
@@ -603,6 +608,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public int getMaxUncommittedRows() {
         return 1000;
+    }
+
+    @Override
+    public int getMemoryTrackerPoolCapacity() {
+        return 0;
     }
 
     @Override
@@ -837,6 +847,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public int getQueryCacheEventQueueCapacity() {
         return 4;
+    }
+
+    @Override
+    public long getQueryMemoryLimitBytes() {
+        return 0;
     }
 
     @Override
@@ -1379,6 +1394,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public int getWalApplyLookAheadTransactionCount() {
         return 20;
+    }
+
+    @Override
+    public long getWalApplyMemoryLimitBytes() {
+        return 0;
     }
 
     @Override

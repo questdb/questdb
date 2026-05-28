@@ -1,0 +1,63 @@
+/*+*****************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2026 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.std;
+
+import io.questdb.cairo.SecurityContext;
+import org.jetbrains.annotations.NotNull;
+
+import java.io.Closeable;
+
+/**
+ * Per-engine source of {@link MemoryTracker} instances. The OSS default returns
+ * a per-workload tracker from a pool; an enterprise build can return a tracker
+ * shared across all workloads of the same principal.
+ * <p>
+ * The provider is constructed once per {@code CairoEngine} and its
+ * {@link #close()} is invoked from {@code CairoEngine.close()} to drain the
+ * pool and release every retained native block.
+ */
+public interface MemoryTrackerProvider extends Closeable {
+
+    /**
+     * Returns a tracker bound to a single workload invocation. The caller owns
+     * the returned tracker and must {@link MemoryTracker#close() close} it
+     * exactly once when the workload ends.
+     *
+     * @param securityContext the principal driving the workload; consumed by
+     *                        the enterprise provider to look up a per-principal
+     *                        quota node, ignored by the OSS provider.
+     * @param queryId         identifier carried in error messages on a limit
+     *                        breach. See the per-workload bind points in the
+     *                        feature doc for what this represents per workload
+     *                        class.
+     * @param workload        the workload class; selects which configured
+     *                        limit applies.
+     */
+    @NotNull
+    MemoryTracker acquire(@NotNull SecurityContext securityContext, long queryId, @NotNull MemoryTrackerWorkload workload);
+
+    @Override
+    void close();
+}

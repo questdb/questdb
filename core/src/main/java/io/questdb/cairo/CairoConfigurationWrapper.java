@@ -543,6 +543,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public long getMatViewRefreshMemoryLimitBytes() {
+        return getDelegate().getMatViewRefreshMemoryLimitBytes();
+    }
+
+    @Override
     public long getMatViewRefreshOomRetryTimeout() {
         return getDelegate().getMatViewRefreshOomRetryTimeout();
     }
@@ -580,6 +585,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public int getMaxUncommittedRows() {
         return getDelegate().getMaxUncommittedRows();
+    }
+
+    @Override
+    public int getMemoryTrackerPoolCapacity() {
+        return getDelegate().getMemoryTrackerPoolCapacity();
     }
 
     @Override
@@ -835,6 +845,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public int getQueryCacheEventQueueCapacity() {
         return getDelegate().getQueryCacheEventQueueCapacity();
+    }
+
+    @Override
+    public long getQueryMemoryLimitBytes() {
+        return getDelegate().getQueryMemoryLimitBytes();
     }
 
     @Override
@@ -1385,6 +1400,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public int getWalApplyLookAheadTransactionCount() {
         return getDelegate().getWalApplyLookAheadTransactionCount();
+    }
+
+    @Override
+    public long getWalApplyMemoryLimitBytes() {
+        return getDelegate().getWalApplyMemoryLimitBytes();
     }
 
     @Override
