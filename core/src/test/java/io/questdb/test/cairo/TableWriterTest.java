@@ -3153,7 +3153,7 @@ public class TableWriterTest extends AbstractCairoTest {
             final String tableName = "posting_switch";
             TableModel model = new TableModel(configuration, tableName, PartitionBy.DAY)
                     .col("sym", ColumnType.SYMBOL).symbolCapacity(16).indexed(true, 256, IndexType.POSTING)
-                    .timestamp("ts");
+                    .timestamp("ts", timestampType);
             AbstractCairoTest.create(model);
 
             Rnd rnd = new Rnd();
