@@ -34,6 +34,7 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlUtil;
 import io.questdb.griffin.engine.functions.BooleanFunction;
 import io.questdb.griffin.engine.functions.MultiArgFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
@@ -113,10 +114,16 @@ public final class InIPv4FunctionFactory implements FunctionFactory {
                     set.add(Numbers.IPv4_NULL);
                     break;
                 case ColumnType.IPv4:
+                    set.add(func.getIPv4(null));
+                    break;
                 case ColumnType.STRING:
                 case ColumnType.SYMBOL:
+                    // SymbolFunction.getIPv4 is final and throws UnsupportedOperationException,
+                    // so SYMBOL elements must go through the type-agnostic string getter.
+                    set.add(SqlUtil.implicitCastStrAsIPv4(func.getStrA(null)));
+                    break;
                 case ColumnType.VARCHAR:
-                    set.add(func.getIPv4(null));
+                    set.add(SqlUtil.implicitCastStrAsIPv4(func.getVarcharA(null)));
                     break;
                 default:
                     throw SqlException.position(argPosition)

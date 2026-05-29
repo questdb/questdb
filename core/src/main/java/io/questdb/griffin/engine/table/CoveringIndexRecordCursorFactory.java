@@ -205,7 +205,11 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                         CharSequence symValue = keyValueFuncs.getQuick(i).getStrA(null);
                         key = symValue != null ? smr.keyOf(symValue) : SymbolTable.VALUE_NOT_FOUND;
                     }
-                    if (key != SymbolTable.VALUE_NOT_FOUND) {
+                    // Bind-variable / runtime-constant list elements may resolve
+                    // to the same symbol key; dedup so openPartitionCursors does
+                    // not open a duplicate posting cursor and heap-merge the same
+                    // row-id stream twice (duplicate rows / inflated aggregates).
+                    if (key != SymbolTable.VALUE_NOT_FOUND && !multiKeyCursor.multiKeys.contains(key)) {
                         multiKeyCursor.multiKeys.add(key);
                     }
                 }
@@ -274,7 +278,9 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                         CharSequence symValue = keyValueFuncs.getQuick(i).getStrA(null);
                         key = symValue != null ? smr.keyOf(symValue) : SymbolTable.VALUE_NOT_FOUND;
                     }
-                    if (key != SymbolTable.VALUE_NOT_FOUND) {
+                    // See getCursor(): dedup duplicate resolved keys so the
+                    // parallel GROUP BY page-frame path does not over-count.
+                    if (key != SymbolTable.VALUE_NOT_FOUND && !multiKeyPageFrameCursor.multiKeys.contains(key)) {
                         multiKeyPageFrameCursor.multiKeys.add(key);
                     }
                 }

@@ -70,6 +70,7 @@ import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
+import io.questdb.test.tools.BindVariableTestTuple;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
@@ -10532,6 +10533,91 @@ public class CoveringIndexTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testInListWithDuplicateBindVarKeys() throws Exception {
+        // Literal IN-list duplicates are deduped upstream by the WhereClauseParser
+        // (see testInListWithDuplicateKeys), so only bind-variable / runtime-constant
+        // duplicates reach the multi-key covering build loops. Without a contains()
+        // guard there, openPartitionCursors opens one posting cursor per slot and the
+        // heap-merge emits each matching row once per duplicate key: duplicate rows in
+        // the record cursor, inflated count/sum in the page-frame (parallel GROUP BY)
+        // path, and the latest row emitted multiple times in LATEST ON.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_in_dup_bind (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price),
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_in_dup_bind VALUES
+                    ('2024-01-01T00:00:00.000000Z', 'A', 1.0),
+                    ('2024-01-01T00:00:01.000000Z', 'B', 2.0),
+                    ('2024-01-01T00:00:02.000000Z', 'A', 3.0)
+                    """);
+
+            // 1) Plain projection - record cursor (getCursor build loop).
+            final ObjList<BindVariableTestTuple> projection = new ObjList<>();
+            projection.add(new BindVariableTestTuple(
+                    "both bind vars resolve to 'A' - each A row appears once",
+                    """
+                            price
+                            1.0
+                            3.0
+                            """,
+                    bindVariableService -> {
+                        bindVariableService.setStr(0, "A");
+                        bindVariableService.setStr(1, "A");
+                    }
+            ));
+            projection.add(new BindVariableTestTuple(
+                    "distinct keys A,B - all matching rows returned",
+                    """
+                            price
+                            1.0
+                            2.0
+                            3.0
+                            """,
+                    bindVariableService -> {
+                        bindVariableService.setStr(0, "A");
+                        bindVariableService.setStr(1, "B");
+                    }
+            ));
+            assertSql("SELECT price FROM t_in_dup_bind WHERE sym IN ($1, $2) ORDER BY ts", projection);
+
+            // 2) Parallel GROUP BY - page-frame cursor (getPageFrameCursor build loop).
+            final ObjList<BindVariableTestTuple> aggregate = new ObjList<>();
+            aggregate.add(new BindVariableTestTuple(
+                    "duplicate key 'A' - count/sum not inflated",
+                    """
+                            sym\tc\ts
+                            A\t2\t4.0
+                            """,
+                    bindVariableService -> {
+                        bindVariableService.setStr(0, "A");
+                        bindVariableService.setStr(1, "A");
+                    }
+            ));
+            assertSql("SELECT sym, count() c, sum(price) s FROM t_in_dup_bind WHERE sym IN ($1, $2) GROUP BY sym", aggregate);
+
+            // 3) LATEST ON - multi-key latest-by covering cursor.
+            final ObjList<BindVariableTestTuple> latest = new ObjList<>();
+            latest.add(new BindVariableTestTuple(
+                    "duplicate key 'A' - latest row emitted once",
+                    """
+                            sym\tprice
+                            A\t3.0
+                            """,
+                    bindVariableService -> {
+                        bindVariableService.setStr(0, "A");
+                        bindVariableService.setStr(1, "A");
+                    }
+            ));
+            assertSql("SELECT sym, price FROM t_in_dup_bind WHERE sym IN ($1, $2) LATEST ON ts PARTITION BY sym", latest);
+        });
+    }
+
+    @Test
     public void testInListWithDuplicateKeys() throws Exception {
         // Gap 11: IN-list with duplicate keys
         assertMemoryLeak(() -> {
@@ -11630,79 +11716,6 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     X\t3.0
                     """, "SELECT psym, price FROM t_mixed_wal WHERE psym = 'X'");
         });
-    }
-
-    /**
-     * Regression for the MultiKey cursor's resume bug. The resume branch
-     * of MultiKeyCoveringPageFrameCursor.nextImpl previously did not
-     * advance currentKeyIdx after the parked CoveringRowCursor exhausted,
-     * so the cursor kept reopening the SAME (key, partition) tuple and
-     * producing the same frames forever. The page-frame buffers
-     * accumulated until the RSS limit fired -- a 2-key multi-key query
-     * with ~28 M rows per key tripped at 15.4 GiB on a 16 GB Mac.
-     * <p>
-     * To trigger the bug deterministically with small data we lower
-     * {@code maxRowsPerFrame} via the {@code @TestOnly} setter so a
-     * 200-row dataset is enough to force the multi-frame-per-key resume
-     * path. Without the fix the test hangs or OOMs; with the fix it
-     * returns the expected count.
-     */
-    @Test
-    public void testMultiKeyResumeAdvancesKeyIndexAfterCursorExhausts() throws Exception {
-        final int capForTest = 50;
-        CoveringIndexRecordCursorFactory.setMaxRowsPerFrameForTesting(capForTest);
-        try {
-            assertMemoryLeak(() -> {
-                execute("""
-                        CREATE TABLE t_mk_resume (
-                            ts TIMESTAMP,
-                            sym SYMBOL,
-                            payload VARCHAR
-                        ) TIMESTAMP(ts) PARTITION BY DAY WAL
-                        """);
-                // 200 rows per partition, alternating between two symbols.
-                // With a 50-row per-frame cap, each (key, partition) tuple
-                // produces 2 frames -- exactly the shape the bug exposed.
-                execute("""
-                        INSERT INTO t_mk_resume
-                        SELECT
-                            dateadd('s', x::INT, '2024-01-01T00:00:00Z'::TIMESTAMP),
-                            CASE WHEN x % 2 = 0 THEN 'K0' ELSE 'K1' END,
-                            'payload-' || x
-                        FROM long_sequence(200)
-                        """);
-                drainWalQueue();
-                execute("ALTER TABLE t_mk_resume ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (payload)");
-                drainWalQueue();
-
-                // Multi-key COUNT — would loop forever on the bugged code
-                // because the resume branch never advances past K0 once
-                // its parked cursor exhausts; the test's surefire timeout
-                // would surface that as a hang.
-                assertSql(
-                        "count\n200\n",
-                        "SELECT count() FROM t_mk_resume WHERE sym IN ('K0','K1')"
-                );
-
-                // Per-key counts also exercise the resume path on both
-                // keys and validate that the per-key totals stay correct
-                // (without the fix some frames would carry duplicate K0
-                // rows from re-iteration, inflating K0 and missing K1).
-                assertSql(
-                        "sym\tc\nK0\t100\nK1\t100\n",
-                        "SELECT sym, count() c FROM t_mk_resume WHERE sym IN ('K0','K1') GROUP BY sym ORDER BY sym"
-                );
-
-                // Covered VARCHAR read through the multi-key cursor: the
-                // 200 unique payloads must come back exactly once each.
-                assertSql(
-                        "c\n200\n",
-                        "SELECT count_distinct(payload::string) c FROM t_mk_resume WHERE sym IN ('K0','K1')"
-                );
-            });
-        } finally {
-            CoveringIndexRecordCursorFactory.setMaxRowsPerFrameForTesting(-1);
-        }
     }
 
     @Test

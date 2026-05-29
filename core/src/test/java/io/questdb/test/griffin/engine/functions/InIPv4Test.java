@@ -322,4 +322,59 @@ public class InIPv4Test extends AbstractCairoTest {
             );
         });
     }
+
+    @Test
+    public void testSymbolListElementConst() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table test (ip ipv4, ts timestamp) timestamp(ts)");
+            execute(
+                    "insert into test values " +
+                            "('127.0.0.1', 0), " +
+                            "('192.168.0.1', 1000000), " +
+                            "('10.0.0.5', 2000000)"
+            );
+            // All-const list with SYMBOL elements: addIPv4ToSet must read them via
+            // the type-agnostic getStrA, since SymbolFunction.getIPv4 is final and
+            // throws UnsupportedOperationException.
+            assertQueryNoLeakCheck(
+                    """
+                            ip\tts
+                            192.168.0.1\t1970-01-01T00:00:01.000000Z
+                            10.0.0.5\t1970-01-01T00:00:02.000000Z
+                            """,
+                    "test where ip in ('192.168.0.1'::symbol, '10.0.0.5'::symbol)",
+                    "ts",
+                    true,
+                    false
+            );
+        });
+    }
+
+    @Test
+    public void testSymbolListElementRuntimeConst() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table test (ip ipv4, ts timestamp) timestamp(ts)");
+            execute(
+                    "insert into test values " +
+                            "('127.0.0.1', 0), " +
+                            "('192.168.0.1', 1000000), " +
+                            "('10.0.0.5', 2000000)"
+            );
+
+            final ObjList<BindVariableTestTuple> tuples = new ObjList<>();
+            // The runtime-constant bind var keeps the list un-folded, so the SYMBOL
+            // element is resolved in InIPv4RuntimeConstFunction.init() via addIPv4ToSet.
+            tuples.add(new BindVariableTestTuple(
+                    "bind var plus symbol element",
+                    """
+                            ip\tts
+                            127.0.0.1\t1970-01-01T00:00:00.000000Z
+                            192.168.0.1\t1970-01-01T00:00:01.000000Z
+                            """,
+                    bindVariableService -> bindVariableService.setStr(0, "127.0.0.1")
+            ));
+
+            assertSql("test where ip in ($1, '192.168.0.1'::symbol) order by ts", tuples);
+        });
+    }
 }
