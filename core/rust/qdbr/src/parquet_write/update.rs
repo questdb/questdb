@@ -1181,7 +1181,7 @@ fn adjust_column_chunk_offsets(col: &mut ColumnChunk, offset_delta: i64) {
 /// row groups declare the same sorting columns as freshly written ones. Using
 /// the target (not the old footer's own value) is required because ADD/DROP
 /// COLUMN can shift the timestamp index, leaving the old footer's column index
-/// stale; this matches what the inline `_pm` path does.
+/// stale; for the same reason as the inline `_pm` path.
 fn build_raw_row_group(
     columns: Vec<ColumnChunk>,
     num_rows: usize,
@@ -2248,38 +2248,49 @@ mod tests {
     }
 
     /// Same regression as copy_row_group_preserves_sorting_columns, but for the
-    /// ADD COLUMN variant: copy_row_group_with_null_columns must also stamp the
-    /// file-level target sorting columns onto the copied group. The bug report
-    /// motivates using the target (not the old footer's value) precisely because
-    /// ADD/DROP COLUMN shifts the timestamp index, so this path is the one where
-    /// the distinction matters.
+    /// ADD/DROP COLUMN variant, and it exercises the case the bug report cares
+    /// about: a timestamp-index SHIFT. The old file's footer declares its sort
+    /// column at index 1 (its own timestamp position), but the target schema
+    /// drops the leading column and so the timestamp lands at index 0. The
+    /// copied group must therefore stamp the TARGET index (0), taken from
+    /// `self.parquet_file.sorting_columns()`, not the stale old-footer index (1).
+    ///
+    /// Concretely: old schema `[drop_me(id=5), ts(id=0), val(id=1)]` with the
+    /// old footer sort column at index 1; target schema
+    /// `[ts(id=0), val(id=1), added(id=2)]` with the target sort column at
+    /// index 0. `drop_me` is dropped and `added` is backfilled with nulls. The
+    /// decisive assertion is that the stamped `column_idx` is 0, which only
+    /// holds if the code used the target value rather than the old footer's 1.
     #[test]
     fn copy_row_group_with_null_columns_preserves_sorting_columns() -> Result<(), Box<dyn Error>> {
         use crate::allocator::TestAllocatorState;
         use crate::parquet_metadata::convert::extract_sorting_columns;
         use parquet2::metadata::SortingColumn;
 
-        // Designated timestamp at column 0, ascending.
-        let sorting = || Some(vec![SortingColumn::new(0, false, false)]);
-
-        // 1. Initial file with the OLD schema [ts(id=0), val(id=1)] and the
-        //    timestamp sort column.
+        // 1. Initial file with the OLD schema [drop_me(id=5), ts(id=0),
+        //    val(id=1)]. The designated timestamp sits at column index 1, so the
+        //    OLD footer's sort column points at index 1.
+        let old_sorting = || Some(vec![SortingColumn::new(1, false, false)]);
+        let drop_me = [100i32, 200, 300, 400];
         let ts = [1i64, 2, 3, 4];
         let val = [10i32, 20, 30, 40];
         let partition = Partition {
             table: "t".to_string(),
             columns: vec![
+                make_column_with_id(5, "drop_me", ColumnTypeTag::Int.into_type(), &drop_me),
                 make_column_with_id(0, "ts", ColumnTypeTag::Timestamp.into_type(), &ts),
                 make_column_with_id(1, "val", ColumnTypeTag::Int.into_type(), &val),
             ],
         };
         let src = NamedTempFile::new()?;
         ParquetWriter::new(src.reopen()?)
-            .with_sorting_columns(sorting())
+            .with_sorting_columns(old_sorting())
             .finish(partition)?;
         let src_len = src.as_file().metadata()?.len();
 
-        // 2. Rewrite-mode updater with the target sort columns.
+        // 2. Rewrite-mode updater with the TARGET sort columns: timestamp at
+        //    index 0 (its target position), DIFFERENT from the old footer's 1.
+        let target_sorting = || Some(vec![SortingColumn::new(0, false, false)]);
         let out = NamedTempFile::new()?;
         let alloc = TestAllocatorState::new();
         let mut updater = super::ParquetUpdater::new(
@@ -2288,7 +2299,7 @@ mod tests {
             src_len,
             out.reopen()?,
             0, // rewrite
-            sorting(),
+            target_sorting(),
             true,
             false,
             CompressionOptions::Uncompressed,
@@ -2301,7 +2312,9 @@ mod tests {
             -1,
         )?;
 
-        // 3. Target schema adds a third column [ts, val, added(id=2)].
+        // 3. Target schema drops the leading column and adds a trailing one:
+        //    [ts(id=0), val(id=1), added(id=2)]. This shifts the timestamp from
+        //    old index 1 to target index 0.
         let added = ColumnTypeTag::Int.into_type();
         let target = Partition {
             table: "t".to_string(),
@@ -2313,7 +2326,8 @@ mod tests {
         };
         updater.set_target_schema(&target)?;
 
-        // 4. Copy the old row group, backfilling the new column with nulls, then
+        // 4. Copy the old row group: drop_me (id=5) is dropped, ts and val are
+        //    remapped, and added (target pos 2) is backfilled with nulls. Then
         //    append a fresh O3 group in the new 3-column schema.
         updater.copy_row_group_with_null_columns(0, &[(2, added)])?;
         let o3_ts = [5i64, 6, 7];
@@ -2330,7 +2344,10 @@ mod tests {
         updater.insert_row_group(&o3, 1)?;
         updater.end(None)?;
 
-        // 5. Both row groups must declare identical sorting columns.
+        // 5. Both row groups must declare identical sorting columns, AND the
+        //    stamped column index must be the TARGET timestamp position (0),
+        //    proving the code used self.parquet_file.sorting_columns() (target,
+        //    set at construction) rather than the old footer's index 1.
         let f = out.reopen()?;
         let len = f.metadata()?.len();
         let md = read_metadata_with_size(&mut &f, len)?;
@@ -2339,6 +2356,11 @@ mod tests {
             md.row_groups[0].sorting_columns(),
             md.row_groups[1].sorting_columns(),
             "copied (with null column) and appended row groups must agree on sorting columns",
+        );
+        assert_eq!(
+            md.row_groups[0].sorting_columns(),
+            &target_sorting(),
+            "copied group must stamp the TARGET sort index (0), not the old footer's index 1",
         );
         extract_sorting_columns(&md).expect("sorting columns must be consistent across row groups");
         Ok(())

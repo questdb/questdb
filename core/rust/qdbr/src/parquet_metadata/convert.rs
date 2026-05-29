@@ -34,6 +34,7 @@ use crate::parquet_metadata::types::{
 };
 use crate::parquet_metadata::writer::ParquetMetaWriter;
 use parquet2::metadata::FileMetaData;
+use parquet2::metadata::SortingColumn;
 use parquet2::schema::types::{PhysicalType, PrimitiveLogicalType};
 use qdb_core::col_type::ColumnTypeTag;
 
@@ -765,22 +766,20 @@ pub(crate) fn extract_sorting_columns(
     // copied groups (no sorting columns) with freshly written ones (the
     // timestamp sort column). Genuinely conflicting sort orders -- two groups
     // sorted on different columns -- are still rejected.
-    let mut reference: Option<(usize, Vec<SortingCol>)> = None;
+    // The reference holds the first declaring group's sorting columns borrowed
+    // straight from the footer (with its rg index, kept only for error
+    // messages). Later declaring groups are compared against it in place, so no
+    // per-row-group Vec is allocated; the result is materialized once at the end.
+    let mut reference: Option<(usize, &[SortingColumn])> = None;
 
     for (rg_idx, rg) in file_metadata.row_groups.iter().enumerate() {
-        let current: Vec<SortingCol> = match rg.sorting_columns() {
-            Some(cols) if !cols.is_empty() => cols
-                .iter()
-                .map(|sc| SortingCol {
-                    column_idx: sc.column_idx,
-                    descending: sc.descending,
-                })
-                .collect(),
+        let current: &[SortingColumn] = match rg.sorting_columns() {
+            Some(cols) if !cols.is_empty() => cols.as_slice(),
             _ => continue, // no sorting columns -> ignore this row group
         };
 
         let (ref_idx, prev) = match reference {
-            Some(ref r) => (r.0, &r.1),
+            Some(r) => r,
             None => {
                 reference = Some((rg_idx, current));
                 continue;
@@ -810,7 +809,16 @@ pub(crate) fn extract_sorting_columns(
         }
     }
 
-    Ok(reference.map(|(_, cols)| cols).unwrap_or_default())
+    Ok(reference
+        .map(|(_, cols)| {
+            cols.iter()
+                .map(|sc| SortingCol {
+                    column_idx: sc.column_idx,
+                    descending: sc.descending,
+                })
+                .collect()
+        })
+        .unwrap_or_default())
 }
 
 pub(crate) fn detect_designated_timestamp(
@@ -1089,6 +1097,19 @@ mod tests {
         assert_eq!(cols[0].column_idx, 0);
         assert!(!cols[0].descending);
 
+        // Reverse order: rg0 declares the sort column, rg1 declares none -> still tolerated.
+        metadata.row_groups = vec![
+            // fresh: ts sort
+            RowGroupMetaData::with_sorting_columns(vec![], 10, Some(ts_sort.clone()), 0),
+            // copied: no sort cols
+            RowGroupMetaData::with_sorting_columns(vec![], 10, None, 0),
+        ];
+        let cols = extract_sorting_columns(&metadata)
+            .expect("a mix of empty and non-empty sorting columns must be tolerated");
+        assert_eq!(cols.len(), 1);
+        assert_eq!(cols[0].column_idx, 0);
+        assert!(!cols[0].descending);
+
         // Two row groups sorted on DIFFERENT columns is a real conflict -> still rejected.
         metadata.row_groups = vec![
             RowGroupMetaData::with_sorting_columns(
@@ -1126,6 +1147,64 @@ mod tests {
             ),
         ];
         assert!(extract_sorting_columns(&metadata).is_err());
+
+        // Same column but OPPOSITE sort direction is a real conflict -> still rejected.
+        metadata.row_groups = vec![
+            RowGroupMetaData::with_sorting_columns(
+                vec![],
+                10,
+                Some(vec![SortingColumn::new(0, false, false)]),
+                0,
+            ),
+            RowGroupMetaData::with_sorting_columns(
+                vec![],
+                10,
+                Some(vec![SortingColumn::new(0, true, false)]),
+                0,
+            ),
+        ];
+        assert!(extract_sorting_columns(&metadata).is_err());
+    }
+
+    /// End-to-end: the full Mig941 conversion (extract_sorting_columns ->
+    /// detect_designated_timestamp -> _pm writer -> ParquetMetaReader), not just
+    /// extract_sorting_columns in isolation, must tolerate an O3-merged footer
+    /// that mixes a copied row group (no sort cols) with a fresh one (the ts
+    /// sort col) and still record the designated timestamp. This is the exact
+    /// path that threw "rg 0 has 0 but rg 1 has 1" and crashed replica bootstrap.
+    #[test]
+    fn convert_from_parquet_tolerates_mixed_sorting_columns() {
+        use parquet2::metadata::{RowGroupMetaData, SortingColumn};
+
+        // A real, valid file (real column chunks + QdbMeta), ts sort column at col 0.
+        let parquet_data = write_test_parquet(10, CompressionOptions::Uncompressed);
+        let mut cursor = Cursor::new(&parquet_data);
+        let mut metadata = read_metadata_with_size(&mut cursor, parquet_data.len() as u64).unwrap();
+        let qdb_meta = extract_qdb_meta_from(&metadata).expect("test parquet has qdb meta");
+
+        // Reshape into the O3-merged footer shape, carrying the REAL column chunks
+        // so convert_from_parquet's per-row-group column walk runs for real: rg0
+        // copied (no sort cols), rg1 fresh (ts sort col).
+        let cols = metadata.row_groups[0].columns().to_vec();
+        let n = metadata.row_groups[0].num_rows();
+        metadata.row_groups = vec![
+            RowGroupMetaData::with_sorting_columns(cols.clone(), n, None, 0),
+            RowGroupMetaData::with_sorting_columns(
+                cols,
+                n,
+                Some(vec![SortingColumn::new(0, false, false)]),
+                1,
+            ),
+        ];
+
+        // The full conversion must succeed and still record the designated ts.
+        let (pm_bytes, pm_size) =
+            convert_from_parquet(&metadata, Some(&qdb_meta), 0, 0, None, None)
+                .expect("convert_from_parquet must tolerate the mixed O3 footer");
+        let reader = ParquetMetaReader::from_file_size(&pm_bytes, pm_size).unwrap();
+        assert_eq!(reader.designated_timestamp(), Some(0));
+        assert_eq!(reader.sorting_column_count(), 1);
+        assert_eq!(reader.sorting_column(0).unwrap(), 0);
     }
 
     fn leak_bytes(data: &[u8]) -> &'static [u8] {
