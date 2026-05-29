@@ -725,8 +725,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         txn,
                         partitionUpdateSinkAddr,
                         o3Basket,
-                        newPartitionSize,
-                        columnCounter
+                        newPartitionSize
                 );
                 return;
             }
@@ -3537,8 +3536,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             long txn,
             long partitionUpdateSinkAddr,
             O3Basket o3Basket,
-            long newPartitionSize,
-            AtomicInteger columnCounter
+            long newPartitionSize
     ) {
         assert !tableWriter.getTableToken().isMatView() : "FORMAT PARQUET should be rejected on mat views at SQL level";
 
