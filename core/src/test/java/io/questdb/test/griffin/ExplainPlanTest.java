@@ -10513,7 +10513,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testWindow2() throws Exception {
         assertPlan("create table t as ( select x l, x::string str, x::timestamp ts from long_sequence(100))", "select str, ts, l as l1, ts::long+l as tsum, row_number() over ( partition by l, ts order by str) from t", """
-                CachedWindowLight
+                CachedWindow
                   orderedFunctions: [[str] => [row_number() over (partition by [l1,ts])]]
                     VirtualRecord
                       functions: [str,ts,l1,ts::long+l1]
