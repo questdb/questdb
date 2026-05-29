@@ -31,7 +31,7 @@ public class FirstSymbolGroupByFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testKeyed() throws Exception {
-        assertMemoryLeak(() -> assertQuery(
+        assertQuery(
                 """
                         a\tsym
                         -1\tbb
@@ -43,12 +43,12 @@ public class FirstSymbolGroupByFunctionFactoryTest extends AbstractCairoTest {
                 null,
                 true,
                 true
-        ));
+        );
     }
 
     @Test
     public void testNotKeyed() throws Exception {
-        assertMemoryLeak(() -> assertQuery(
+        assertQuery(
                 """
                         sym
                         aa
@@ -58,7 +58,7 @@ public class FirstSymbolGroupByFunctionFactoryTest extends AbstractCairoTest {
                 null,
                 false,
                 true
-        ));
+        );
     }
 
     @Test
@@ -66,22 +66,23 @@ public class FirstSymbolGroupByFunctionFactoryTest extends AbstractCairoTest {
         // first(constant) over a WHERE-folded empty table must return NULL: setEmpty
         // stores VALUE_IS_NULL on the group-by state, and SymbolConstant.valueOf must
         // honour that key. Before the fix the constant was returned verbatim.
-        assertMemoryLeak(() -> assertQuery(
+        assertQuery(
                 """
                         a0
-
+                        
                         """,
                 "select first(('0.83055')::symbol) a0 from tab where 1 = 0",
                 "create table tab as (select rnd_int() a from long_sequence(10))",
                 null,
                 false,
                 true
-        ));
+        );
     }
 
     @Test
     public void testSampleFill() throws Exception {
-        assertQuery("""
+        assertQuery(
+                """
                         b\ta\tk
                         \tkl2\t1970-01-03T00:00:00.000000Z
                         VTJW\tl1\t1970-01-03T00:00:00.000000Z

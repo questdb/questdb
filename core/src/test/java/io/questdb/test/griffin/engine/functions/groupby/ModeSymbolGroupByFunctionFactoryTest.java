@@ -75,7 +75,7 @@ public class ModeSymbolGroupByFunctionFactoryTest extends AbstractCairoTest {
         assertQuery(
                 """
                         a0
-
+                        
                         """,
                 "select mode(('0.83055')::symbol) a0 from tab where 1 = 0",
                 "create table tab as (select rnd_int() a from long_sequence(10))",
