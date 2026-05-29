@@ -304,8 +304,9 @@ public class ParquetLateMaterializationFuzzTest extends AbstractCairoTest {
                     "SELECT c_vc FROM x",
                     "SELECT c_long, c_sym, c_vc FROM x",
             };
-            final String[] expected = new String[queries.length];
-            for (int i = 0; i < queries.length; i++) {
+            final int queryCount = queries.length;
+            final String[] expected = new String[queryCount];
+            for (int i = 0; i < queryCount; i++) {
                 sink.clear();
                 printSql(queries[i], sink);
                 expected[i] = sink.toString();
@@ -315,7 +316,7 @@ public class ParquetLateMaterializationFuzzTest extends AbstractCairoTest {
             // the newer ones, so an ascending scan primes the buffers from a present
             // frame and then reuses them for the absent frames.
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts < '2024-02-01'");
-            for (int i = 0; i < queries.length; i++) {
+            for (int i = 0; i < queryCount; i++) {
                 assertSql(expected[i], queries[i]);
             }
         });
