@@ -60,6 +60,9 @@ public class RecordArray extends RecordChain {
         }
         size++;
         varAppendOffset = recordOffset + varOffset + fixOffset;
+        // First jumpTo extends pages to the row end so random-access writes
+        // via getAddressAtRowIndex land on allocated memory; second rewinds
+        // appendAddress to the fix-region start for sequential recordSink.copy.
         mem.jumpTo(varAppendOffset);
         mem.jumpTo(recordOffset + varOffset);
         return recordOffset;

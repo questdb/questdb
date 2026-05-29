@@ -62,7 +62,7 @@ public class CachedWindowLightRecordCursorFactory extends AbstractRecordCursorFa
     private final ObjList<WindowFunction> unordered2PassFunctions;
     @Nullable
     private final ObjList<WindowFunction> unorderedFunctions;
-    private boolean closed;
+    private boolean isClosed;
 
     public CachedWindowLightRecordCursorFactory(
             CairoConfiguration configuration,
@@ -287,10 +287,10 @@ public class CachedWindowLightRecordCursorFactory extends AbstractRecordCursorFa
 
     @Override
     protected void _close() {
-        if (closed) {
+        if (isClosed) {
             return;
         }
-        closed = true;
+        isClosed = true;
         Misc.free(base);
         Misc.free(cursor);
         Misc.freeObjList(allFunctions);
@@ -410,26 +410,35 @@ public class CachedWindowLightRecordCursorFactory extends AbstractRecordCursorFa
 
         private void computeWindow() {
             final Record baseRecord = baseCursor.getRecord();
-            // Pre-position recordA so encoded sort key encoders / tree comparators
-            // can read sort columns (all in the base range) through it.
+            // recordA pre-positioned so encoded sort key encoders can read base columns through it.
             recordA.of(baseRecord, narrowChain.getRecord(), -1);
 
-            // Step 1: scan base, record (baseRowId, narrow slot) per row, feed
-            // each row into every ordered group's sorter.
             long rowIndex = 0;
-            if (orderedGroupCount > 0) {
+            final boolean hasOrdered = orderedGroupCount > 0;
+            final int forwardFnCount = forwardUnorderedFunctions != null ? forwardUnorderedFunctions.size() : 0;
+            if (hasOrdered || forwardFnCount > 0) {
                 while (baseCursor.hasNext()) {
+                    circuitBreaker.statefulThrowExceptionIfTripped();
                     narrowChain.beginRecord();
                     baseRowIds.add(baseRecord.getRowId());
-                    for (int i = 0; i < orderedGroupCount; i++) {
-                        circuitBreaker.statefulThrowExceptionIfTripped();
-                        sortBuffers.getQuick(i).put(recordA, rowIndex);
+                    if (hasOrdered) {
+                        for (int i = 0; i < orderedGroupCount; i++) {
+                            sortBuffers.getQuick(i).put(recordA, rowIndex);
+                        }
+                    }
+                    if (forwardFnCount > 0) {
+                        recordA.setRowIndex(rowIndex);
+                        for (int j = 0; j < forwardFnCount; j++) {
+                            forwardUnorderedFunctions.getQuick(j).pass1(recordA, rowIndex, lightSpi);
+                        }
                     }
                     rowIndex++;
                 }
-                for (int i = 0; i < orderedGroupCount; i++) {
-                    circuitBreaker.statefulThrowExceptionIfTripped();
-                    sortBuffers.getQuick(i).finishPut(circuitBreaker);
+                if (hasOrdered) {
+                    for (int i = 0; i < orderedGroupCount; i++) {
+                        circuitBreaker.statefulThrowExceptionIfTripped();
+                        sortBuffers.getQuick(i).finishPut(circuitBreaker);
+                    }
                 }
             } else {
                 while (baseCursor.hasNext()) {
@@ -441,8 +450,7 @@ public class CachedWindowLightRecordCursorFactory extends AbstractRecordCursorFa
             }
             size = rowIndex;
 
-            // Step 2: pass1 for ordered functions, in sorted order per group.
-            if (orderedGroupCount > 0) {
+            if (hasOrdered) {
                 for (int i = 0; i < orderedGroupCount; i++) {
                     final WindowSortBuffer group = sortBuffers.getQuick(i);
                     final ObjList<WindowFunction> functions = orderedFunctions.getQuick(i);
@@ -462,19 +470,6 @@ public class CachedWindowLightRecordCursorFactory extends AbstractRecordCursorFa
                 }
             }
 
-            // Forward walks via positionRecordA rather than baseCursor.toTop() + hasNext():
-            // upstream pipelines (async filter, sort) make toTop expensive, whereas the
-            // base supports random access by gate.
-            if (forwardUnorderedFunctions != null) {
-                final int fnCount = forwardUnorderedFunctions.size();
-                for (long rIdx = 0; rIdx < size; rIdx++) {
-                    circuitBreaker.statefulThrowExceptionIfTripped();
-                    positionRecordA(rIdx);
-                    for (int j = 0; j < fnCount; j++) {
-                        forwardUnorderedFunctions.getQuick(j).pass1(recordA, rIdx, lightSpi);
-                    }
-                }
-            }
             if (backwardUnorderedFunctions != null) {
                 final int fnCount = backwardUnorderedFunctions.size();
                 for (long rIdx = size - 1; rIdx >= 0; rIdx--) {
@@ -486,7 +481,6 @@ public class CachedWindowLightRecordCursorFactory extends AbstractRecordCursorFa
                 }
             }
 
-            // Pass2 preparation.
             if (ordered2PassFunctions != null) {
                 for (int i = 0, n = ordered2PassFunctions.size(); i < n; i++) {
                     final ObjList<WindowFunction> functions = ordered2PassFunctions.getQuick(i);
@@ -504,7 +498,6 @@ public class CachedWindowLightRecordCursorFactory extends AbstractRecordCursorFa
                 }
             }
 
-            // Pass2 for ordered functions.
             if (ordered2PassFunctions != null) {
                 for (int i = 0, n = ordered2PassFunctions.size(); i < n; i++) {
                     final ObjList<WindowFunction> functions = ordered2PassFunctions.getQuick(i);
@@ -525,7 +518,6 @@ public class CachedWindowLightRecordCursorFactory extends AbstractRecordCursorFa
                 }
             }
 
-            // Pass2 for unordered functions (fused row-outer loop).
             if (unordered2PassFunctions != null) {
                 final int funcCount = unordered2PassFunctions.size();
                 for (long rIdx = 0; rIdx < size; rIdx++) {

@@ -517,6 +517,49 @@ public class WindowFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCachedWindowLightDecimalWideSortKeyFallsBackToNonLight() throws Exception {
+        // Three DECIMAL128 sort columns total 48 bytes of key, exceeding the encoded
+        // sort buffer's 32-byte limit. Dispatch must route to non-light.
+        node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_CACHED_LIGHT_ENABLED, true);
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table tab (ts #TIMESTAMP, d1 DECIMAL(20,2), d2 DECIMAL(20,2), d3 DECIMAL(20,2)) timestamp(ts)",
+                    timestampType.getTypeName()
+            );
+            assertPlanNoLeakCheck(
+                    "SELECT row_number() OVER (ORDER BY d1, d2, d3) FROM tab",
+                    """
+                            CachedWindow
+                              orderedFunctions: [[d1, d2, d3] => [row_number()]]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: tab
+                            """
+            );
+        });
+    }
+
+    @Test
+    public void testCachedWindowLightDisabledRoutesToNonLight() throws Exception {
+        // With cairo.sql.window.cached.light.enabled=false the dispatcher must skip the LIGHT
+        // factory regardless of base capabilities and sort-key eligibility.
+        node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_CACHED_LIGHT_ENABLED, false);
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, v long) timestamp(ts)", timestampType.getTypeName());
+            assertPlanNoLeakCheck(
+                    "SELECT row_number() OVER (ORDER BY v) FROM tab",
+                    """
+                            CachedWindow
+                              orderedFunctions: [[v] => [row_number()]]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: tab
+                            """
+            );
+        });
+    }
+
+    @Test
     public void testCachedWindowLightLagSwapBlockedByMixedSortGroup() throws Exception {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, v long) timestamp(ts)", timestampType.getTypeName());
@@ -529,6 +572,49 @@ public class WindowFunctionTest extends AbstractCairoTest {
                                             Row forward scan
                                             Frame forward scan on: tab
                                     """
+            );
+        });
+    }
+
+    @Test
+    public void testCachedWindowLightNoRandomAccessBaseFallsBackToNonLight() throws Exception {
+        // UNION ALL produces a base cursor that does not support random access, so the
+        // dispatch gate must skip the LIGHT factory even with an encoded-eligible sort key.
+        node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_CACHED_LIGHT_ENABLED, true);
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, v long) timestamp(ts)", timestampType.getTypeName());
+            assertPlanNoLeakCheck(
+                    "SELECT row_number() OVER (ORDER BY v) FROM (SELECT v FROM tab UNION ALL SELECT v FROM tab)",
+                    """
+                            CachedWindow
+                              orderedFunctions: [[v] => [row_number()]]
+                                Union All
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: tab
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: tab
+                            """
+            );
+        });
+    }
+
+    @Test
+    public void testCachedWindowLightParallelEncodedSortBranch() throws Exception {
+        // Set the parallel-sort threshold below the row count so Vect.sortEncodedEntries
+        // takes the parallel branch when finishPut runs under the LIGHT factory.
+        node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_CACHED_LIGHT_ENABLED, true);
+        node1.setProperty(PropertyKey.CAIRO_SQL_SORT_ENCODED_PARALLEL_THRESHOLD, 100);
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, v long) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab select x::timestamp, x from long_sequence(1_000)");
+            assertQueryNoLeakCheck(
+                    "min\tmax\tcnt\n1\t1000\t1000\n",
+                    "select min(rn) min, max(rn) max, count() cnt from (SELECT row_number() OVER (ORDER BY v) rn FROM tab)",
+                    null,
+                    false,
+                    true
             );
         });
     }

@@ -1254,39 +1254,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return viewExpr != null ? viewExpr.position : 0;
     }
 
-    private static boolean hasNonLagLeadSiblingInSortGroup(
-            ObjList<QueryColumn> columns,
-            int columnCount,
-            int excludeIndex,
-            CharSequence orderByCol,
-            int direction
-    ) {
-        for (int j = 0; j < columnCount; j++) {
-            if (j == excludeIndex) {
-                continue;
-            }
-            QueryColumn qc = columns.getQuick(j);
-            if (!qc.isWindowExpression()) {
-                continue;
-            }
-            WindowExpression ac = (WindowExpression) qc;
-            if (ac.getOrderBy().size() != 1) {
-                continue;
-            }
-            if (!Chars.equalsIgnoreCase(ac.getOrderBy().getQuick(0).token, orderByCol)
-                    || ac.getOrderByDirection().getQuick(0) != direction) {
-                continue;
-            }
-            ExpressionNode siblingAst = qc.getAst();
-            if (siblingAst == null || siblingAst.token == null
-                    || (!Chars.equalsIgnoreCase(siblingAst.token, "lag")
-                    && !Chars.equalsIgnoreCase(siblingAst.token, "lead"))) {
-                return true;
-            }
-        }
-        return false;
-    }
-
     // Fixed-size scalars and wide types that MapValue can put/get directly.
     // SYMBOL is cached as the int symbol id. UUID, INTERVAL, and variable-width
     // types fall back to the recordAt path -- MapValue lacks symmetric put APIs
@@ -1312,6 +1279,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return model.getTableNameExpr() == null
                 && model.getNestedModel() == null
                 && model.getHorizonJoinContext().getAlias() != null;
+    }
+
+    private static boolean isLagOrLeadToken(ExpressionNode ast) {
+        return ast != null && ast.token != null
+                && (Chars.equalsIgnoreCase(ast.token, "lag") || Chars.equalsIgnoreCase(ast.token, "lead"));
     }
 
     private static boolean isSingleColumnFunction(ExpressionNode ast, CharSequence name) {
@@ -1361,10 +1333,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 continue;
             }
             ExpressionNode ast = qc.getAst();
-            if (ast == null || ast.token == null) {
-                continue;
-            }
-            if (!Chars.equalsIgnoreCase(ast.token, "lag") && !Chars.equalsIgnoreCase(ast.token, "lead")) {
+            if (!isLagOrLeadToken(ast)) {
                 continue;
             }
             if (hasNonLagLeadSiblingInSortGroup(columns, columnCount, i, orderByNode.token, direction)) {
@@ -1374,6 +1343,36 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 ac.getOrderByDirection().setQuick(0, direction == ORDER_ASC ? ORDER_DESC : ORDER_ASC);
             }
         }
+    }
+
+    private static boolean hasNonLagLeadSiblingInSortGroup(
+            ObjList<QueryColumn> columns,
+            int columnCount,
+            int excludeIndex,
+            CharSequence orderByCol,
+            int direction
+    ) {
+        for (int j = 0; j < columnCount; j++) {
+            if (j == excludeIndex) {
+                continue;
+            }
+            QueryColumn qc = columns.getQuick(j);
+            if (!qc.isWindowExpression()) {
+                continue;
+            }
+            WindowExpression ac = (WindowExpression) qc;
+            if (ac.getOrderBy().size() != 1) {
+                continue;
+            }
+            if (!Chars.equalsIgnoreCase(ac.getOrderBy().getQuick(0).token, orderByCol)
+                    || ac.getOrderByDirection().getQuick(0) != direction) {
+                continue;
+            }
+            if (!isLagOrLeadToken(qc.getAst())) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static boolean swapLagLeadToken(ExpressionNode ast) {

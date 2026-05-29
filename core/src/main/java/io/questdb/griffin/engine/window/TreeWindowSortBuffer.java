@@ -43,6 +43,11 @@ final class TreeWindowSortBuffer implements WindowSortBuffer {
     private LongTreeChain.TreeCursor cursor;
     private RecordCursor sourceCursor;
 
+    /**
+     * Takes ownership of {@code rankMaps}: frees the inner DirectIntList contents
+     * if the inner tree allocation fails, and on {@link #close()}. Callers must not
+     * retain a separate reference.
+     */
     TreeWindowSortBuffer(
             CairoConfiguration configuration,
             RecordComparator comparator,

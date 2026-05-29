@@ -52,9 +52,11 @@ import org.jetbrains.annotations.Nullable;
 
 public class CachedWindowRecordCursorFactory extends AbstractRecordCursorFactory {
     private final ObjList<WindowFunction> allFunctions;
+    private final ObjList<WindowFunction> backwardUnorderedFunctions;
     private final RecordCursorFactory base;
     private final GenericRecordMetadata chainMetadata;
     private final CachedWindowRecordCursor cursor;
+    private final ObjList<WindowFunction> forwardUnorderedFunctions;
     private final ObjList<ObjList<WindowFunction>> ordered2PassFunctions;
     private final ObjList<ObjList<WindowFunction>> orderedFunctions;
     private final int orderedGroupCount;
@@ -62,7 +64,7 @@ public class CachedWindowRecordCursorFactory extends AbstractRecordCursorFactory
     private final ObjList<WindowFunction> unordered2PassFunctions;
     @Nullable
     private final ObjList<WindowFunction> unorderedFunctions;
-    private boolean closed = false;
+    private boolean isClosed = false;
 
     public CachedWindowRecordCursorFactory(
             CairoConfiguration configuration,
@@ -141,6 +143,8 @@ public class CachedWindowRecordCursorFactory extends AbstractRecordCursorFactory
             ordered2PassFunctions = orderedTmp;
 
             ObjList<WindowFunction> unorderedTmp = null;
+            ObjList<WindowFunction> forwardTmp = null;
+            ObjList<WindowFunction> backwardTmp = null;
             if (unorderedFunctions != null) {
                 allFunctions.addAll(unorderedFunctions);
 
@@ -152,9 +156,22 @@ public class CachedWindowRecordCursorFactory extends AbstractRecordCursorFactory
                         }
                         unorderedTmp.add(function);
                     }
+                    if (function.getPass1ScanDirection() == WindowFunction.Pass1ScanDirection.FORWARD) {
+                        if (forwardTmp == null) {
+                            forwardTmp = new ObjList<>();
+                        }
+                        forwardTmp.add(function);
+                    } else {
+                        if (backwardTmp == null) {
+                            backwardTmp = new ObjList<>();
+                        }
+                        backwardTmp.add(function);
+                    }
                 }
             }
             this.unordered2PassFunctions = unorderedTmp;
+            this.forwardUnorderedFunctions = forwardTmp;
+            this.backwardUnorderedFunctions = backwardTmp;
 
             this.unorderedFunctions = unorderedFunctions;
         } catch (Throwable th) {
@@ -269,10 +286,10 @@ public class CachedWindowRecordCursorFactory extends AbstractRecordCursorFactory
 
     @Override
     protected void _close() {
-        if (closed) {
+        if (isClosed) {
             return;
         }
-        closed = true;
+        isClosed = true;
         Misc.free(base);
         Misc.free(cursor);
         Misc.freeObjList(allFunctions);
@@ -370,18 +387,27 @@ public class CachedWindowRecordCursorFactory extends AbstractRecordCursorFactory
         private void buildRecordChain() {
             final Record record = baseCursor.getRecord();
             final Record chainRecord = recordChain.getRecord();
-            if (orderedGroupCount > 0) {
+            final boolean hasOrdered = orderedGroupCount > 0;
+            final int forwardFnCount = forwardUnorderedFunctions != null ? forwardUnorderedFunctions.size() : 0;
+            if (hasOrdered || forwardFnCount > 0) {
                 while (baseCursor.hasNext()) {
+                    circuitBreaker.statefulThrowExceptionIfTripped();
                     recordChainOffset = recordChain.put(record);
                     recordChain.recordAt(chainRecord, recordChainOffset);
-                    for (int i = 0; i < orderedGroupCount; i++) {
-                        circuitBreaker.statefulThrowExceptionIfTripped();
-                        sortBuffers.getQuick(i).put(chainRecord, recordChainOffset);
+                    if (hasOrdered) {
+                        for (int i = 0; i < orderedGroupCount; i++) {
+                            sortBuffers.getQuick(i).put(chainRecord, recordChainOffset);
+                        }
+                    }
+                    for (int j = 0; j < forwardFnCount; j++) {
+                        forwardUnorderedFunctions.getQuick(j).pass1(chainRecord, recordChainOffset, recordChain);
                     }
                 }
-                for (int i = 0; i < orderedGroupCount; i++) {
-                    circuitBreaker.statefulThrowExceptionIfTripped();
-                    sortBuffers.getQuick(i).finishPut(circuitBreaker);
+                if (hasOrdered) {
+                    for (int i = 0; i < orderedGroupCount; i++) {
+                        circuitBreaker.statefulThrowExceptionIfTripped();
+                        sortBuffers.getQuick(i).finishPut(circuitBreaker);
+                    }
                 }
             } else {
                 while (baseCursor.hasNext()) {
@@ -391,7 +417,7 @@ public class CachedWindowRecordCursorFactory extends AbstractRecordCursorFactory
             }
 
             long offset;
-            if (orderedGroupCount > 0) {
+            if (hasOrdered) {
                 for (int i = 0; i < orderedGroupCount; i++) {
                     final WindowSortBuffer group = sortBuffers.getQuick(i);
                     final ObjList<WindowFunction> functions = orderedFunctions.getQuick(i);
@@ -408,21 +434,14 @@ public class CachedWindowRecordCursorFactory extends AbstractRecordCursorFactory
                 }
             }
 
-            if (unorderedFunctions != null) {
-                for (int j = 0, n = unorderedFunctions.size(); j < n; j++) {
-                    final WindowFunction f = unorderedFunctions.getQuick(j);
-                    if (f.getPass1ScanDirection() == WindowFunction.Pass1ScanDirection.FORWARD) {
-                        recordChain.toTop();
-                        while (recordChain.hasNext()) {
-                            circuitBreaker.statefulThrowExceptionIfTripped();
-                            f.pass1(chainRecord, chainRecord.getRowId(), recordChain);
-                        }
-                    } else {
-                        recordChain.toBottom();
-                        while (recordChain.hasPrev()) {
-                            circuitBreaker.statefulThrowExceptionIfTripped();
-                            f.pass1(chainRecord, chainRecord.getRowId(), recordChain);
-                        }
+            if (backwardUnorderedFunctions != null) {
+                final int fnCount = backwardUnorderedFunctions.size();
+                recordChain.toBottom();
+                while (recordChain.hasPrev()) {
+                    circuitBreaker.statefulThrowExceptionIfTripped();
+                    final long rowId = chainRecord.getRowId();
+                    for (int j = 0; j < fnCount; j++) {
+                        backwardUnorderedFunctions.getQuick(j).pass1(chainRecord, rowId, recordChain);
                     }
                 }
             }
@@ -465,12 +484,13 @@ public class CachedWindowRecordCursorFactory extends AbstractRecordCursorFactory
             }
 
             if (unordered2PassFunctions != null) {
-                for (int j = 0, n = unordered2PassFunctions.size(); j < n; j++) {
-                    final WindowFunction f = unordered2PassFunctions.getQuick(j);
-                    recordChain.toTop();
-                    while (recordChain.hasNext()) {
-                        circuitBreaker.statefulThrowExceptionIfTripped();
-                        f.pass2(chainRecord, chainRecord.getRowId(), recordChain);
+                final int fnCount = unordered2PassFunctions.size();
+                recordChain.toTop();
+                while (recordChain.hasNext()) {
+                    circuitBreaker.statefulThrowExceptionIfTripped();
+                    final long rowId = chainRecord.getRowId();
+                    for (int j = 0; j < fnCount; j++) {
+                        unordered2PassFunctions.getQuick(j).pass2(chainRecord, rowId, recordChain);
                     }
                 }
             }
