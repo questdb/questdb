@@ -202,7 +202,7 @@ impl ParquetUpdater {
                 .find(|kv| kv.key == QDB_META_KEY)
                 .and_then(|kv| kv.value.as_ref())
         });
-        match qdb_meta {
+        let source_qdb_meta = match qdb_meta {
             None => {
                 return Err(fmt_err!(
                     InvalidLayout,
@@ -220,8 +220,18 @@ impl ParquetUpdater {
                         num_parquet_cols
                     ));
                 }
+                meta
             }
-        }
+        };
+
+        // The caller derives `sorting_columns` from the table's raw timestamp
+        // writer slot, which keeps a tombstone after DROP COLUMN and so is stale
+        // against the file's dense column layout. Recompute the sort column from
+        // the dense designated-timestamp position recorded in the source
+        // metadata; keep the caller's presence decision (no designated
+        // timestamp -> no sort order). Schema-change rewrites recompute this
+        // again in set_target_schema from the (also dense) target schema.
+        let sorting_columns = sorting_columns.and(designated_sorting_columns(&source_qdb_meta));
 
         // Detect which columns had bloom filters in the original file.
         let bloom_filter_columns = if let Some(first_rg) = metadata.row_groups.first() {
@@ -668,6 +678,15 @@ impl ParquetUpdater {
                 .filter_map(|(i, f)| f.get_field_info().id.map(|id| (id, i)))
                 .collect(),
         );
+
+        // Re-stamp the file-level sort order from the dense designated-timestamp
+        // position in the freshly built (dense) target schema. The value set at
+        // construction came from the table's raw timestamp slot, which is stale
+        // once a pre-timestamp column has been dropped. build_raw_row_group and
+        // the inline `_pm` path read sorting_columns() during the copy/insert
+        // calls that follow, so this must run here, before them.
+        self.parquet_file
+            .set_sorting_columns(designated_sorting_columns(&qdb_meta));
 
         self.target_qdb_meta = Some(qdb_meta);
         Ok(())
@@ -1173,6 +1192,26 @@ fn adjust_column_chunk_offsets(col: &mut ColumnChunk, offset_delta: i64) {
     col.offset_index_length = None;
 }
 
+/// Returns the file-level `sorting_columns` for a QuestDB parquet file: a
+/// single entry at the dense column position of the designated timestamp, or
+/// `None` when the schema has no designated timestamp.
+///
+/// `SortingColumn::column_idx` is a positional index into the file's (dense)
+/// columns. The table's raw timestamp slot (`META_OFFSET_TIMESTAMP_INDEX`) is
+/// NOT a valid dense index: `removeColumn` only marks a dropped column deleted,
+/// leaving a tombstone in the raw layout, so after DROP COLUMN the raw slot is
+/// stale against the dense file. Deriving the position from the designated-
+/// timestamp flag in `qdb_meta` mirrors the fresh-encode path (jni.rs) and
+/// end()'s `designated_ts`, so copied row groups and the footer declare the
+/// same dense index a freshly written file would.
+fn designated_sorting_columns(qdb_meta: &QdbMeta) -> Option<Vec<SortingColumn>> {
+    qdb_meta
+        .schema
+        .iter()
+        .position(|col| col.column_type.is_designated())
+        .map(|pos| vec![SortingColumn::new(pos as i32, false, false)])
+}
+
 /// Builds a thrift `RowGroup` from a list of `ColumnChunk`s, computing
 /// `file_offset`, `total_byte_size`, and `total_compressed_size` from the
 /// column metadata.
@@ -1590,6 +1629,30 @@ mod tests {
             0,
             false,
             false,
+            0,
+        )
+        .unwrap()
+    }
+
+    /// Builds a designated (ascending) TIMESTAMP column. The encoder records the
+    /// designated flag in `qdb_meta`, which is what the sorting-column derivation
+    /// keys off, so sorting-column tests must use this rather than a plain
+    /// TIMESTAMP column.
+    fn make_designated_ts_with_id(id: i32, name: &'static str, values: &[i64]) -> Column {
+        Column::from_raw_data(
+            id,
+            name,
+            ColumnTypeTag::Timestamp.into_type().code(),
+            0,
+            values.len(),
+            values.as_ptr() as *const u8,
+            std::mem::size_of_val(values),
+            null(),
+            0,
+            null(),
+            0,
+            true,
+            true,
             0,
         )
         .unwrap()
@@ -2264,13 +2327,14 @@ mod tests {
         let sorting = || Some(vec![SortingColumn::new(0, false, false)]);
 
         // 1. Initial single-row-group file WITH sorting columns -> a freshly
-        //    converted parquet partition.
+        //    converted parquet partition. The timestamp is designated, so the
+        //    encoder records the designated flag in qdb_meta at column 0.
         let ts = [1i64, 2, 3, 4];
         let val = [10i32, 20, 30, 40];
         let partition = Partition {
             table: "t".to_string(),
             columns: vec![
-                make_column("ts", ColumnTypeTag::Timestamp.into_type(), &ts),
+                make_designated_ts_with_id(0, "ts", &ts),
                 make_column("val", ColumnTypeTag::Int.into_type(), &val),
             ],
         };
@@ -2309,7 +2373,7 @@ mod tests {
         let o3 = Partition {
             table: "t".to_string(),
             columns: vec![
-                make_column("ts", ColumnTypeTag::Timestamp.into_type(), &o3_ts),
+                make_designated_ts_with_id(0, "ts", &o3_ts),
                 make_column("val", ColumnTypeTag::Int.into_type(), &o3_val),
             ],
         };
@@ -2318,7 +2382,8 @@ mod tests {
         updater.end(None)?;
 
         // 4. Every row group must declare identical sorting columns, so Mig941 /
-        //    convert_from_parquet accepts the file.
+        //    convert_from_parquet accepts the file, AND the declared index is the
+        //    dense designated-timestamp position (0).
         let f = out.reopen()?;
         let len = f.metadata()?.len();
         let md = read_metadata_with_size(&mut &f, len)?;
@@ -2328,6 +2393,11 @@ mod tests {
             md.row_groups[1].sorting_columns(),
             "copied and appended row groups must agree on sorting columns",
         );
+        assert_eq!(
+            md.row_groups[0].sorting_columns(),
+            &sorting(),
+            "every row group must declare the dense designated-timestamp index (0)",
+        );
         // Sanity check: the native call Mig941 makes still accepts the file.
         extract_sorting_columns(&md).expect("sorting columns must be consistent across row groups");
         Ok(())
@@ -2336,17 +2406,20 @@ mod tests {
     /// Same regression as copy_row_group_preserves_sorting_columns, but for the
     /// ADD/DROP COLUMN variant, and it exercises the case the bug report cares
     /// about: a timestamp-index SHIFT. The old file's footer declares its sort
-    /// column at index 1 (its own timestamp position), but the target schema
-    /// drops the leading column and so the timestamp lands at index 0. The
-    /// copied group must therefore stamp the TARGET index (0), taken from
-    /// `self.parquet_file.sorting_columns()`, not the stale old-footer index (1).
+    /// column at index 1 (its own designated-timestamp position), but the target
+    /// schema drops the leading column and so the timestamp lands at index 0.
+    /// set_target_schema must re-stamp the dense TARGET index (0), derived from
+    /// the target schema's designated-timestamp flag, and every row group must
+    /// declare it.
     ///
     /// Concretely: old schema `[drop_me(id=5), ts(id=0), val(id=1)]` with the
     /// old footer sort column at index 1; target schema
     /// `[ts(id=0), val(id=1), added(id=2)]` with the target sort column at
-    /// index 0. `drop_me` is dropped and `added` is backfilled with nulls. The
-    /// decisive assertion is that the stamped `column_idx` is 0, which only
-    /// holds if the code used the target value rather than the old footer's 1.
+    /// index 0. `drop_me` is dropped and `added` is backfilled with nulls. To
+    /// prove the index is recomputed (not passed through), the updater is
+    /// constructed with a deliberately bogus sort index that matches neither the
+    /// source's 1 nor the target's 0; the decisive assertion is that the stamped
+    /// `column_idx` is the dense target position 0.
     #[test]
     fn copy_row_group_with_null_columns_preserves_sorting_columns() -> Result<(), Box<dyn Error>> {
         use crate::allocator::TestAllocatorState;
@@ -2364,7 +2437,7 @@ mod tests {
             table: "t".to_string(),
             columns: vec![
                 make_column_with_id(5, "drop_me", ColumnTypeTag::Int.into_type(), &drop_me),
-                make_column_with_id(0, "ts", ColumnTypeTag::Timestamp.into_type(), &ts),
+                make_designated_ts_with_id(0, "ts", &ts),
                 make_column_with_id(1, "val", ColumnTypeTag::Int.into_type(), &val),
             ],
         };
@@ -2374,8 +2447,10 @@ mod tests {
             .finish(partition)?;
         let src_len = src.as_file().metadata()?.len();
 
-        // 2. Rewrite-mode updater with the TARGET sort columns: timestamp at
-        //    index 0 (its target position), DIFFERENT from the old footer's 1.
+        // 2. Rewrite-mode updater built with a deliberately bogus sort index (7):
+        //    it is neither the source's 1 nor the target's 0, so a passing test
+        //    proves set_target_schema recomputes the dense index rather than
+        //    threading the constructed value through.
         let target_sorting = || Some(vec![SortingColumn::new(0, false, false)]);
         let out = NamedTempFile::new()?;
         let alloc = TestAllocatorState::new();
@@ -2385,7 +2460,7 @@ mod tests {
             src_len,
             out.reopen()?,
             0, // rewrite
-            target_sorting(),
+            Some(vec![SortingColumn::new(7, false, false)]),
             true,
             false,
             CompressionOptions::Uncompressed,
@@ -2405,7 +2480,7 @@ mod tests {
         let target = Partition {
             table: "t".to_string(),
             columns: vec![
-                make_column_with_id(0, "ts", ColumnTypeTag::Timestamp.into_type(), &ts),
+                make_designated_ts_with_id(0, "ts", &ts),
                 make_column_with_id(1, "val", ColumnTypeTag::Int.into_type(), &val),
                 make_column_with_id(2, "added", added, &val),
             ],
@@ -2422,7 +2497,7 @@ mod tests {
         let o3 = Partition {
             table: "t".to_string(),
             columns: vec![
-                make_column_with_id(0, "ts", ColumnTypeTag::Timestamp.into_type(), &o3_ts),
+                make_designated_ts_with_id(0, "ts", &o3_ts),
                 make_column_with_id(1, "val", ColumnTypeTag::Int.into_type(), &o3_val),
                 make_column_with_id(2, "added", added, &o3_added),
             ],
@@ -2431,9 +2506,10 @@ mod tests {
         updater.end(None)?;
 
         // 5. Both row groups must declare identical sorting columns, AND the
-        //    stamped column index must be the TARGET timestamp position (0),
-        //    proving the code used self.parquet_file.sorting_columns() (target,
-        //    set at construction) rather than the old footer's index 1.
+        //    stamped column index must be the dense TARGET timestamp position
+        //    (0), proving set_target_schema re-derived it from the target
+        //    schema's designated flag rather than reusing the bogus constructed
+        //    value (7) or the old footer's 1.
         let f = out.reopen()?;
         let len = f.metadata()?.len();
         let md = read_metadata_with_size(&mut &f, len)?;
@@ -2446,7 +2522,98 @@ mod tests {
         assert_eq!(
             md.row_groups[0].sorting_columns(),
             &target_sorting(),
-            "copied group must stamp the TARGET sort index (0), not the old footer's index 1",
+            "copied group must stamp the dense TARGET sort index (0), not the bogus 7 or the old footer's 1",
+        );
+        extract_sorting_columns(&md).expect("sorting columns must be consistent across row groups");
+        Ok(())
+    }
+
+    /// Regression for the stale raw-slot bug in the no-schema-change rewrite
+    /// path. A leading column was dropped BEFORE the partition was converted to
+    /// parquet, so the file is already dense `[ts(0), val(1)]` with its footer
+    /// correctly sorted on column 0. The table's raw timestamp slot, however, is
+    /// still 1 (the dropped column keeps a tombstone), and the caller passes
+    /// that stale slot into the updater. With no schema change set_target_schema
+    /// is never called, so the construction-time derivation is the only line of
+    /// defense: it must ignore the stale slot and re-derive the dense index (0)
+    /// from the source qdb_meta's designated flag. Before the fix every row
+    /// group would have been stamped with the out-of-range index 1.
+    #[test]
+    fn rewrite_ignores_stale_raw_timestamp_slot() -> Result<(), Box<dyn Error>> {
+        use crate::allocator::TestAllocatorState;
+        use crate::parquet_metadata::convert::extract_sorting_columns;
+        use parquet2::metadata::SortingColumn;
+
+        // 1. Already-dense file [ts(id=0), val(id=1)]: the designated timestamp
+        //    is at column 0, and the encoder writes the footer sort column at 0.
+        let ts = [1i64, 2, 3, 4];
+        let val = [10i32, 20, 30, 40];
+        let partition = Partition {
+            table: "t".to_string(),
+            columns: vec![
+                make_designated_ts_with_id(0, "ts", &ts),
+                make_column_with_id(1, "val", ColumnTypeTag::Int.into_type(), &val),
+            ],
+        };
+        let src = NamedTempFile::new()?;
+        ParquetWriter::new(src.reopen()?)
+            .with_sorting_columns(Some(vec![SortingColumn::new(0, false, false)]))
+            .finish(partition)?;
+        let src_len = src.as_file().metadata()?.len();
+
+        // 2. Rewrite-mode updater fed the STALE raw timestamp slot (1), as
+        //    O3PartitionJob would after a pre-conversion DROP COLUMN left a
+        //    tombstone in the raw layout. No set_target_schema call follows.
+        let out = NamedTempFile::new()?;
+        let alloc = TestAllocatorState::new();
+        let mut updater = super::ParquetUpdater::new(
+            alloc.allocator(),
+            src.reopen()?,
+            src_len,
+            out.reopen()?,
+            0, // rewrite
+            Some(vec![SortingColumn::new(1, false, false)]),
+            true,
+            false,
+            CompressionOptions::Uncompressed,
+            None,
+            None,
+            DEFAULT_BLOOM_FILTER_FPP,
+            0.0,
+            None,
+            0,
+            -1,
+        )?;
+
+        // 3. Copy the existing row group and append a fresh O3 group, same schema.
+        let o3_ts = [5i64, 6, 7];
+        let o3_val = [50i32, 60, 70];
+        let o3 = Partition {
+            table: "t".to_string(),
+            columns: vec![
+                make_designated_ts_with_id(0, "ts", &o3_ts),
+                make_column_with_id(1, "val", ColumnTypeTag::Int.into_type(), &o3_val),
+            ],
+        };
+        updater.copy_row_group(0)?;
+        updater.insert_row_group(&o3, 1)?;
+        updater.end(None)?;
+
+        // 4. Every row group must declare the dense designated-timestamp index
+        //    (0), NOT the stale raw slot (1) the caller passed in.
+        let f = out.reopen()?;
+        let len = f.metadata()?.len();
+        let md = read_metadata_with_size(&mut &f, len)?;
+        assert_eq!(md.row_groups.len(), 2);
+        assert_eq!(
+            md.row_groups[0].sorting_columns(),
+            md.row_groups[1].sorting_columns(),
+            "copied and appended row groups must agree on sorting columns",
+        );
+        assert_eq!(
+            md.row_groups[0].sorting_columns(),
+            &Some(vec![SortingColumn::new(0, false, false)]),
+            "rewrite must declare the dense designated-timestamp index (0), not the stale raw slot (1)",
         );
         extract_sorting_columns(&md).expect("sorting columns must be consistent across row groups");
         Ok(())
