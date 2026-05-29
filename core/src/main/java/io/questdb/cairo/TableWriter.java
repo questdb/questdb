@@ -4829,38 +4829,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         ff.munmap(dataAddr, dataSize, MemoryTag.MMAP_TABLE_WRITER);
                     }
                 } else {
-                    // No column top change (or posting index): hard link existing index files.
-                    long linkSealTxn = columnNameTxn;
-                    if (IndexType.isPosting(indexType)) {
-                        // Strict read: throw if .pk header is unreadable while .pv files
-                        // exist in the partition (silent fallback to columnNameTxn would
-                        // make linkFile target a path that does not exist).
-                        long fromPk = PostingIndexUtils.readLiveSealTxnFromKeyFileOrThrow(
-                                ff, path, srcDirLen, columnName, columnNameTxn,
-                                keyFileName(indexType, path.trimTo(srcDirLen), columnName, columnNameTxn));
-                        // Live data sits at sealTxn=0 in the pre-seal state
-                        // (chain empty). Fall back to 0 instead of leaving
-                        // linkSealTxn at the columnNameTxn, which would point
-                        // valueFileName at .pv.<col>.<col> -- a path that
-                        // never exists.
-                        linkSealTxn = fromPk >= 0 ? fromPk : 0L;
-                    }
-                    if (
-                            !linkFile(ff,
-                                    keyFileName(indexType, path.trimTo(srcDirLen), columnName, columnNameTxn),
-                                    keyFileName(indexType, other.trimTo(dstDirLen), columnName, columnNameTxn)
-                            ) || !linkFile(ff,
-                                    valueFileName(indexType, path.trimTo(srcDirLen), columnName, columnNameTxn, linkSealTxn),
-                                    valueFileName(indexType, other.trimTo(dstDirLen), columnName, columnNameTxn, linkSealTxn)
-                            )) {
-                        throw CairoException.critical(0)
-                                .put("index files do not exist [path=")
-                                .put(path.trimTo(srcDirLen))
-                                .put(']');
-                    }
-                    if (IndexType.isPosting(indexType)) {
-                        linkPostingIndexAuxFiles(srcDirLen, dstDirLen, columnName, columnNameTxn, columnName, columnNameTxn);
-                    }
+                    // colTop == 0: no NULL prefix to materialise, just hard-link the
+                    // existing index trio (key + value + posting aux).
+                    linkColumnIndexFiles(srcDirLen, dstDirLen, columnName, columnNameTxn, indexType);
                 }
             }
         } finally {
@@ -6826,54 +6797,79 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return io.questdb.cairo.idx.PostingIndexUtils.readSealTxnFromKeyFile(ff, keyFile) >= 0;
     }
 
+    /**
+     * Hard-links the index files for a single indexed-symbol column from the
+     * source partition directory to the destination, dispatching on
+     * {@code indexType}: BITMAP links {@code .k}/{@code .v}; POSTING links
+     * {@code .pk}/{@code .pv.<colTxn>.<sealTxn>} plus the {@code .pci} sidecar
+     * and per-column {@code .pc<N>.{colTxn}.{sealTxn}} files for the live
+     * generation. {@code sealTxn} is resolved from the live chain head in
+     * {@code .pk}; the pre-seal empty-chain case falls back to {@code 0L}
+     * because live data sits in {@code .pv.<colTxn>.0} then. Throws
+     * {@link CairoException} if either the key or value file is missing in
+     * the source.
+     */
+    private void linkColumnIndexFiles(
+            int srcDirLen,
+            int dstDirLen,
+            CharSequence columnName,
+            long columnNameTxn,
+            byte indexType
+    ) {
+        long linkSealTxn = columnNameTxn;
+        if (IndexType.isPosting(indexType)) {
+            // Strict read: throw if .pk header is unreadable while .pv files
+            // exist in the partition (silent fallback to columnNameTxn would
+            // point valueFileName at .pv.<col>.<col>, which never exists).
+            long fromPk = PostingIndexUtils.readLiveSealTxnFromKeyFileOrThrow(
+                    ff, path, srcDirLen, columnName, columnNameTxn,
+                    keyFileName(indexType, path.trimTo(srcDirLen), columnName, columnNameTxn));
+            linkSealTxn = fromPk >= 0 ? fromPk : 0L;
+        }
+        if (
+                !linkFile(ff,
+                        keyFileName(indexType, path.trimTo(srcDirLen), columnName, columnNameTxn),
+                        keyFileName(indexType, other.trimTo(dstDirLen), columnName, columnNameTxn)
+                ) || !linkFile(ff,
+                        valueFileName(indexType, path.trimTo(srcDirLen), columnName, columnNameTxn, linkSealTxn),
+                        valueFileName(indexType, other.trimTo(dstDirLen), columnName, columnNameTxn, linkSealTxn)
+                )) {
+            throw CairoException.critical(0)
+                    .put("index files do not exist [path=")
+                    .put(path.trimTo(srcDirLen))
+                    .put(']');
+        }
+        if (IndexType.isPosting(indexType)) {
+            linkPostingIndexAuxFiles(srcDirLen, dstDirLen, columnName, columnNameTxn, columnName, columnNameTxn);
+        }
+    }
+
     private void linkPartitionIndexFiles(long partitionTimestamp, int partitionDirLen, int newPartitionDirLen) {
         try {
             final int columnCount = metadata.getColumnCount();
             for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
-                final String columnName = metadata.getColumnName(columnIndex);
-                final byte indexType = metadata.getColumnIndexType(columnIndex);
-                if (ColumnType.isSymbol(metadata.getColumnType(columnIndex)) && metadata.isIndexed(columnIndex)) {
-                    final long columnTop = columnVersionWriter.getColumnTop(partitionTimestamp, columnIndex);
-
-                    // no data in partition for this column
-                    if (columnTop == -1) {
-                        continue;
-                    }
-
-                    final long columnNameTxn = getColumnNameTxn(partitionTimestamp, columnIndex);
-
-                    keyFileName(indexType, path.trimTo(partitionDirLen), columnName, columnNameTxn);
-                    keyFileName(indexType, other.trimTo(newPartitionDirLen), columnName, columnNameTxn);
-                    if (ff.hardLink(path.$(), other.$()) != FILES_RENAME_OK) {
-                        throw CairoException.critical(ff.errno())
-                                .put("could not hard link index key file [table=")
-                                .put(tableToken.getTableName())
-                                .put(", column=")
-                                .put(columnName)
-                                .put(']');
-                    }
-
-                    BitmapIndexUtils.valueFileName(path.trimTo(partitionDirLen), columnName, columnNameTxn);
-                    BitmapIndexUtils.valueFileName(other.trimTo(newPartitionDirLen), columnName, columnNameTxn);
-                    if (ff.hardLink(path.$(), other.$()) != FILES_RENAME_OK) {
-                        throw CairoException.critical(ff.errno())
-                                .put("could not hard link index value file [table=")
-                                .put(tableToken.getTableName())
-                                .put(", column=")
-                                .put(columnName)
-                                .put(']');
-                    }
+                if (!ColumnType.isSymbol(metadata.getColumnType(columnIndex)) || !metadata.isIndexed(columnIndex)) {
+                    continue;
                 }
+                // no data in partition for this column
+                if (columnVersionWriter.getColumnTop(partitionTimestamp, columnIndex) == -1) {
+                    continue;
+                }
+                linkColumnIndexFiles(
+                        partitionDirLen,
+                        newPartitionDirLen,
+                        metadata.getColumnName(columnIndex),
+                        getColumnNameTxn(partitionTimestamp, columnIndex),
+                        metadata.getColumnIndexType(columnIndex)
+                );
             }
         } catch (CairoException e) {
+            // The outer catch in switchNativePartitionWithParquet rmdirs the
+            // new partition dir on any throw; this log adds the partition
+            // timestamp for triage and rethrows so the caller still rolls back.
             LOG.error().$("could not link index files [table=").$(tableToken)
                     .$(", partition=").$ts(timestampDriver, partitionTimestamp)
                     .$(", error=").$safe(e.getMessage()).I$();
-
-            // rollback
-            if (!ff.rmdir(other.trimTo(newPartitionDirLen).slash())) {
-                LOG.error().$("could not remove partition dir [path=").$(other).I$();
-            }
             throw e;
         } finally {
             path.trimTo(pathSize);
