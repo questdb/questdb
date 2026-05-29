@@ -64,6 +64,7 @@ public class Worker extends Thread {
     private final Metrics metrics;
     private final long napThreshold;
     private final OnHaltAction onHaltAction;
+    private final ObjList<Job> ownedJobClones = new ObjList<>();
     private final String poolName;
     private final Job.RunStatus runStatus = () -> lifecycle.get() == WorkerLifecycle.HALTED;
     private final long sleepMs;
@@ -432,7 +433,16 @@ public class Worker extends Thread {
         }
         ObjList<Job> next = new ObjList<>(from.size());
         for (int i = 0, n = from.size(); i < n; i++) {
-            next.add(from.get(i).cloneInstance());
+            Job src = from.get(i);
+            Job clone = src.cloneInstance();
+            next.add(clone);
+            // Track fresh clones (not the shared singleton returned by the
+            // default cloneInstance()) so the pool can close their native
+            // resources at halt -- the cont holding this clone may be abandoned
+            // and never recycled.
+            if (clone != src) {
+                ownedJobClones.add(clone);
+            }
         }
         return next;
     }
@@ -504,6 +514,10 @@ public class Worker extends Thread {
 
     long getJobStartMicros() {
         return jobStartMicros.get();
+    }
+
+    ObjList<Job> getOwnedJobClones() {
+        return ownedJobClones;
     }
 
     @FunctionalInterface

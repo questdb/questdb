@@ -269,7 +269,7 @@ public class SeqTxnTrackerTest {
             tracker.initTxns(1, 5, false);
             TxnWaiter w = new TxnWaiter(10, dummyContinuation());
             tracker.registerWaiter(w);
-            assertTrue(w.tryCancel());
+            w.cancel();
             assertTrue(w.isCancelled());
             // Advancing past target must not fire a cancelled waiter.
             tracker.updateWriterTxns(10, 10);

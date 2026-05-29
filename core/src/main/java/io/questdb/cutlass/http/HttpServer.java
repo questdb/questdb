@@ -447,6 +447,16 @@ public class HttpServer implements Closeable {
         }
 
         @Override
+        public void closeInstance() {
+            // Cloned selectors are cont-owned; free here when the pool closes
+            // owned clones at halt. gen-0 selectors (recyclableSelector=false)
+            // live in selectors[] and are freed by the factory's close().
+            if (recyclableSelector && selector != null) {
+                selector = Misc.free(selector);
+            }
+        }
+
+        @Override
         public void recycleInstance() {
             // gen-0 (per-worker) Jobs have recyclableSelector=false; their
             // selectors live in HttpRequestProcessorSelectorFactory.selectors

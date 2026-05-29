@@ -271,7 +271,7 @@ public class Table2IlpTest {
         new Table2IlpCopier().copyTable(params);
 
         ApplyWal2TableJob job = new ApplyWal2TableJob(engine, 0);
-        job.run();
+        job.run(0);
         TestUtils.assertEquals(engine, sqlExecutionContext, tableNameSrc, tableNameDst);
     }
 

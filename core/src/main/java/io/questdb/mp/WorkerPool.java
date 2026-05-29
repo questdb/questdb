@@ -201,29 +201,29 @@ public class WorkerPool implements Closeable {
                 }
                 halted.await();
             }
+            // Close stateful clones each worker minted during cont rotation
+            // (mintNextGen). A clone whose cont is abandoned at shutdown is never
+            // recycled, so this is the only release of its per-cont native
+            // resources (e.g. an HTTP selector). Workers have stopped, so reading
+            // their owned-clone lists is single-threaded. Idempotent: a clone
+            // already recycled cleared its resource, so closeInstance() is a
+            // no-op for it.
+            for (int i = 0, n = workers.size(); i < n; i++) {
+                ObjList<Job> owned = workers.getQuick(i).getOwnedJobClones();
+                for (int j = 0, m = owned.size(); j < m; j++) {
+                    try {
+                        owned.getQuick(j).closeInstance();
+                    } catch (Throwable ignore) {
+                        // contract: Job.closeInstance() must not throw
+                    }
+                }
+            }
             workers.clear(); // Worker is not closable
             // Closeable entries that the caller owns (the original Job passed
             // to assign() and singletons returned by Job.cloneInstance()) are
-            // released by the caller via freeOnExit. Stateful clones minted by
-            // assign(Job) live in workerJobs without a separate freeOnExit
-            // registration; their resources are released when the workerJobs
-            // entries become unreachable on pool GC. (TODO: track owned clones
-            // explicitly to release native resources at halt time.)
+            // released by the caller via freeOnExit.
             Misc.freeObjListAndClear(freeOnExit);
         }
-    }
-
-    /**
-     * Constructs a fresh {@link WorkerContinuation} bound to this pool's resume sink.
-     * Used by workers to build their own loop-body continuation, and by
-     * suspending-evaluation gateways to wrap a one-shot body. Throws on legacy
-     * pools, which do not run continuations.
-     */
-    public WorkerContinuation newContinuation(Runnable body) {
-        if (legacy) {
-            throw new IllegalStateException("legacy worker pool does not host continuations");
-        }
-        return new WorkerContinuation(body, continuationQueue);
     }
 
     @TestOnly

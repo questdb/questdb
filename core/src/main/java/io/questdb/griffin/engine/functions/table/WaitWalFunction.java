@@ -144,7 +144,7 @@ class WaitWalFunction extends BooleanFunction implements Function {
                 // CAS fails harmlessly. The timer-shard heap entry is not
                 // touched either way -- it pops at its deadline and observes
                 // CANCELLED / FIRED, so expire() short-circuits.
-                waiter.tryCancel();
+                waiter.cancel();
             }
         }
 

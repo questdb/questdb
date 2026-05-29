@@ -273,8 +273,10 @@ public class SeqTxnTracker {
             }
             if (terminal || wtxn >= w.getTargetWriterTxn()) {
                 w.tryFire();
-            } else if (w.getState() == TxnWaiter.STATE_PENDING) {
-                enqueueHolder(holder, w);
+            } else {
+                if (w.getState() != TxnWaiter.STATE_CANCELLED) {
+                    enqueueHolder(holder, w);
+                }
             }
         }
     }

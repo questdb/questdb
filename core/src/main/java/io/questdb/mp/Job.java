@@ -58,6 +58,21 @@ public interface Job {
         return this;
     }
 
+    /**
+     * Frees per-continuation resources this job owns. The framework calls it at
+     * shutdown on jobs attached to a continuation still parked when the pool
+     * halts -- in the resume queue or in a TimerShards waiter -- which never
+     * complete, so {@link #recycleInstance()} never runs and any native handle
+     * (e.g. a selector) would leak.
+     * <p>
+     * Override only on jobs whose {@link #cloneInstance()} mints a fresh instance
+     * per generation. A job that returns {@code this} is a caller-owned shared
+     * singleton (e.g. an IODispatcher freed by its server) and MUST keep the
+     * no-op default. Must be idempotent and must not throw.
+     */
+    default void closeInstance() {
+    }
+
     default void drain(int workerId) {
         while (true) {
             if (!run(workerId)) {

@@ -173,10 +173,6 @@ public final class TxnWaiter implements DelayedFireable {
         return resumed;
     }
 
-    public void scheduleResume() {
-        cont.scheduleResume();
-    }
-
     /**
      * Engine-shutdown path. Marks the bound continuation as shutting down so the
      * body's wake loop exits instead of re-parking, then transitions PENDING ->
@@ -236,8 +232,8 @@ public final class TxnWaiter implements DelayedFireable {
      * window where suspend() returned false after scheduleResume had already enqueued
      * the cont -- it is NOT a generic "I lost a race" signal.
      */
-    public boolean tryCancel() {
-        return Unsafe.cas(this, STATE_OFFSET, STATE_PENDING, STATE_CANCELLED);
+    public void cancel() {
+        state = STATE_CANCELLED;
     }
 
     public void tryFire() {
