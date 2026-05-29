@@ -191,7 +191,7 @@ public class SampleByFillValueRecordCursorFactory extends AbstractSampleByFillRe
                     throw SqlException.position(fillValues.getQuick(fillIndex - 1).position)
                             .put("insufficient fill values for SAMPLE BY FILL: expected ")
                             .put(groupByFunctions.size())
-                            .put(" values but only ")
+                            .put(groupByFunctions.size() == 1 ? " value but only " : " values but only ")
                             .put(fillValueCount)
                             .put(" provided");
                 }
@@ -214,6 +214,14 @@ public class SampleByFillValueRecordCursorFactory extends AbstractSampleByFillRe
             } else {
                 placeholderFunctions.add(function);
             }
+        }
+        if (fillIndex < fillValueCount) {
+            throw SqlException.position(fillValues.getQuick(fillIndex).position)
+                    .put("too many fill values for SAMPLE BY FILL: expected ")
+                    .put(fillIndex)
+                    .put(fillIndex == 1 ? " value but " : " values but ")
+                    .put(fillValueCount)
+                    .put(" provided");
         }
         return placeholderFunctions;
     }
