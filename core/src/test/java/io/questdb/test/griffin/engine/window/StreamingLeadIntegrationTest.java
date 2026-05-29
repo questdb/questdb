@@ -526,6 +526,10 @@ public class StreamingLeadIntegrationTest extends AbstractCairoTest {
                             "('B', 4000), ('A', 5000), ('B', 6000)"
             );
 
+            // The partitioned streaming cursor strips the timestamp index from its metadata, so
+            // assertQueryNoLeakCheck is invoked with expectedTimestamp = null. The row order below
+            // is the partition-major resolution order produced by the cursor on this specific
+            // 1:1-interleaved input; in general, partitioned streaming does not preserve ts order.
             assertQueryNoLeakCheck(
                     """
                             sym\tts\tnext_ts
@@ -537,7 +541,7 @@ public class StreamingLeadIntegrationTest extends AbstractCairoTest {
                             B\t1970-01-01T00:00:00.006000Z\t
                             """,
                     "select sym, ts, lag(ts, 1) over (partition by sym order by ts desc) as next_ts from t",
-                    "ts", false, true
+                    null, false, true
             );
         });
     }

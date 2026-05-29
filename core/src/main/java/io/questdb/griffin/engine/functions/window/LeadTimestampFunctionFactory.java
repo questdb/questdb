@@ -157,6 +157,12 @@ public class LeadTimestampFunctionFactory extends AbstractWindowFunctionFactory 
         }
 
         @Override
+        public void close() {
+            super.close();
+            buffer = null;
+        }
+
+        @Override
         public int getLookahead() {
             return (int) offset;
         }
@@ -182,6 +188,12 @@ public class LeadTimestampFunctionFactory extends AbstractWindowFunctionFactory 
                 );
             }
             super.pass1(record, recordOffset, spi);
+        }
+
+        @Override
+        public void reset() {
+            super.reset();
+            buffer = null;
         }
 
         @Override
@@ -217,6 +229,13 @@ public class LeadTimestampFunctionFactory extends AbstractWindowFunctionFactory 
         }
 
         @Override
+        public void close() {
+            super.close();
+            map = null;
+            memory = null;
+        }
+
+        @Override
         public int getLookahead() {
             return (int) offset;
         }
@@ -247,6 +266,13 @@ public class LeadTimestampFunctionFactory extends AbstractWindowFunctionFactory 
                 );
             }
             super.pass1(record, recordOffset, spi);
+        }
+
+        @Override
+        public void reset() {
+            super.reset();
+            map = null;
+            memory = null;
         }
 
         @Override

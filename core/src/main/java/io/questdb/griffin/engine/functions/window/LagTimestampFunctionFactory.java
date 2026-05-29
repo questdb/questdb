@@ -278,6 +278,13 @@ public class LagTimestampFunctionFactory extends AbstractWindowFunctionFactory {
         }
 
         @Override
+        public void close() {
+            super.close();
+            map = null;
+            memory = null;
+        }
+
+        @Override
         public void computeNext(Record record) {
             if (map == null) {
                 map = MapFactory.createUnorderedMap(
@@ -304,6 +311,13 @@ public class LagTimestampFunctionFactory extends AbstractWindowFunctionFactory {
                 final int defaultType = ColumnType.getTimestampType(defaultValue.getType());
                 this.defaultTimestampValue = driver.from(defaultValue.getTimestamp(null), defaultType);
             }
+        }
+
+        @Override
+        public void reset() {
+            super.reset();
+            map = null;
+            memory = null;
         }
 
         @Override

@@ -240,6 +240,13 @@ public class LagDateFunctionFactory extends AbstractWindowFunctionFactory {
         }
 
         @Override
+        public void close() {
+            super.close();
+            map = null;
+            memory = null;
+        }
+
+        @Override
         public void computeNext(Record record) {
             if (map == null) {
                 map = MapFactory.createUnorderedMap(
@@ -260,6 +267,13 @@ public class LagDateFunctionFactory extends AbstractWindowFunctionFactory {
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             super.init(symbolTableSource, executionContext);
             this.defaultDateValue = defaultValue == null ? Numbers.LONG_NULL : defaultValue.getDate(null);
+        }
+
+        @Override
+        public void reset() {
+            super.reset();
+            map = null;
+            memory = null;
         }
 
         @Override

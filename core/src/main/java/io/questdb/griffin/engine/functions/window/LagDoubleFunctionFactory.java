@@ -241,6 +241,13 @@ public class LagDoubleFunctionFactory extends AbstractWindowFunctionFactory {
         }
 
         @Override
+        public void close() {
+            super.close();
+            map = null;
+            memory = null;
+        }
+
+        @Override
         public void computeNext(Record record) {
             if (map == null) {
                 map = MapFactory.createUnorderedMap(
@@ -261,6 +268,13 @@ public class LagDoubleFunctionFactory extends AbstractWindowFunctionFactory {
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             super.init(symbolTableSource, executionContext);
             this.defaultDoubleValue = defaultValue == null ? Double.NaN : defaultValue.getDouble(null);
+        }
+
+        @Override
+        public void reset() {
+            super.reset();
+            map = null;
+            memory = null;
         }
 
         @Override

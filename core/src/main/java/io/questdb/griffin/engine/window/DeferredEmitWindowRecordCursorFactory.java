@@ -158,7 +158,14 @@ public class DeferredEmitWindowRecordCursorFactory extends AbstractRecordCursorF
             Map partitionMap,
             int maxPartitions
     ) {
-        super(metadata);
+        // Partitioned streaming emits rows in partition-major resolution order, not in base scan
+        // order, so the cursor cannot honour a designated timestamp. Strip the timestamp index from
+        // the metadata before AbstractRecordCursorFactory captures it. The Sort that
+        // generateOrderBy inserts when followedOrderByAdvice returns false still finds ts by column
+        // name; nothing downstream that relies on a timestamp-indexed cursor would be correct here.
+        super(partitionByRecord != null && metadata.getTimestampIndex() != -1
+                ? GenericRecordMetadata.copyOfSansTimestamp(metadata)
+                : metadata);
 
         // The caller (SqlCodeGenerator.generateSelectWindow) is responsible for releasing base,
         // functions, and partitionMap if any validation below throws. partitionByRecord is shared
@@ -254,7 +261,11 @@ public class DeferredEmitWindowRecordCursorFactory extends AbstractRecordCursorF
 
     @Override
     public boolean followedOrderByAdvice() {
-        return base.followedOrderByAdvice();
+        // Partitioned streaming emits rows in partition-major resolution order: backfill-driven
+        // in-stream emits and the end-of-cursor flush both iterate partitions independently of
+        // base scan order. Outer ORDER BY on the base timestamp would otherwise be skipped here
+        // and the user would see the tail rows out of order.
+        return partitionByRecord == null && base.followedOrderByAdvice();
     }
 
     @Override
@@ -273,7 +284,7 @@ public class DeferredEmitWindowRecordCursorFactory extends AbstractRecordCursorF
 
     @Override
     public int getScanDirection() {
-        return base.getScanDirection();
+        return partitionByRecord == null ? base.getScanDirection() : SCAN_DIRECTION_OTHER;
     }
 
     @Override
@@ -884,32 +895,32 @@ public class DeferredEmitWindowRecordCursorFactory extends AbstractRecordCursorF
 
             @Override
             public ArrayView getArray(int col, int columnType) {
-                return baseRec.getArray(col, columnType);
+                return functions.getQuick(col).getArray(baseRec);
             }
 
             @Override
             public BinarySequence getBin(int col) {
-                return baseRec.getBin(col);
+                return functions.getQuick(col).getBin(baseRec);
             }
 
             @Override
             public long getBinLen(int col) {
-                return baseRec.getBinLen(col);
+                return functions.getQuick(col).getBinLen(baseRec);
             }
 
             @Override
             public boolean getBool(int col) {
-                return baseRec.getBool(col);
+                return functions.getQuick(col).getBool(baseRec);
             }
 
             @Override
             public byte getByte(int col) {
-                return baseRec.getByte(col);
+                return functions.getQuick(col).getByte(baseRec);
             }
 
             @Override
             public char getChar(int col) {
-                return baseRec.getChar(col);
+                return functions.getQuick(col).getChar(baseRec);
             }
 
             @Override
@@ -918,37 +929,37 @@ public class DeferredEmitWindowRecordCursorFactory extends AbstractRecordCursorF
                 if (off != -1) {
                     return Unsafe.getUnsafe().getLong(pendingBaseAddr + slotOff + off);
                 }
-                return baseRec.getDate(col);
+                return functions.getQuick(col).getDate(baseRec);
             }
 
             @Override
             public void getDecimal128(int col, Decimal128 sink) {
-                baseRec.getDecimal128(col, sink);
+                functions.getQuick(col).getDecimal128(baseRec, sink);
             }
 
             @Override
             public short getDecimal16(int col) {
-                return baseRec.getDecimal16(col);
+                return functions.getQuick(col).getDecimal16(baseRec);
             }
 
             @Override
             public void getDecimal256(int col, Decimal256 sink) {
-                baseRec.getDecimal256(col, sink);
+                functions.getQuick(col).getDecimal256(baseRec, sink);
             }
 
             @Override
             public int getDecimal32(int col) {
-                return baseRec.getDecimal32(col);
+                return functions.getQuick(col).getDecimal32(baseRec);
             }
 
             @Override
             public long getDecimal64(int col) {
-                return baseRec.getDecimal64(col);
+                return functions.getQuick(col).getDecimal64(baseRec);
             }
 
             @Override
             public byte getDecimal8(int col) {
-                return baseRec.getDecimal8(col);
+                return functions.getQuick(col).getDecimal8(baseRec);
             }
 
             @Override
@@ -957,7 +968,7 @@ public class DeferredEmitWindowRecordCursorFactory extends AbstractRecordCursorF
                 if (off != -1) {
                     return Double.longBitsToDouble(Unsafe.getUnsafe().getLong(pendingBaseAddr + slotOff + off));
                 }
-                return baseRec.getDouble(col);
+                return functions.getQuick(col).getDouble(baseRec);
             }
 
             @Override
@@ -966,32 +977,32 @@ public class DeferredEmitWindowRecordCursorFactory extends AbstractRecordCursorF
                 if (off != -1) {
                     return Float.intBitsToFloat((int) Unsafe.getUnsafe().getLong(pendingBaseAddr + slotOff + off));
                 }
-                return baseRec.getFloat(col);
+                return functions.getQuick(col).getFloat(baseRec);
             }
 
             @Override
             public byte getGeoByte(int col) {
-                return baseRec.getGeoByte(col);
+                return functions.getQuick(col).getGeoByte(baseRec);
             }
 
             @Override
             public int getGeoInt(int col) {
-                return baseRec.getGeoInt(col);
+                return functions.getQuick(col).getGeoInt(baseRec);
             }
 
             @Override
             public long getGeoLong(int col) {
-                return baseRec.getGeoLong(col);
+                return functions.getQuick(col).getGeoLong(baseRec);
             }
 
             @Override
             public short getGeoShort(int col) {
-                return baseRec.getGeoShort(col);
+                return functions.getQuick(col).getGeoShort(baseRec);
             }
 
             @Override
             public int getIPv4(int col) {
-                return baseRec.getIPv4(col);
+                return functions.getQuick(col).getIPv4(baseRec);
             }
 
             @Override
@@ -1000,12 +1011,12 @@ public class DeferredEmitWindowRecordCursorFactory extends AbstractRecordCursorF
                 if (off != -1) {
                     return (int) Unsafe.getUnsafe().getLong(pendingBaseAddr + slotOff + off);
                 }
-                return baseRec.getInt(col);
+                return functions.getQuick(col).getInt(baseRec);
             }
 
             @Override
             public Interval getInterval(int col) {
-                return baseRec.getInterval(col);
+                return functions.getQuick(col).getInterval(baseRec);
             }
 
             @Override
@@ -1014,36 +1025,40 @@ public class DeferredEmitWindowRecordCursorFactory extends AbstractRecordCursorF
                 if (off != -1) {
                     return Unsafe.getUnsafe().getLong(pendingBaseAddr + slotOff + off);
                 }
-                return baseRec.getLong(col);
+                return functions.getQuick(col).getLong(baseRec);
             }
 
             @Override
             public long getLong128Hi(int col) {
-                return baseRec.getLong128Hi(col);
+                return functions.getQuick(col).getLong128Hi(baseRec);
             }
 
             @Override
             public long getLong128Lo(int col) {
-                return baseRec.getLong128Lo(col);
+                return functions.getQuick(col).getLong128Lo(baseRec);
             }
 
             @Override
             public void getLong256(int col, CharSink<?> sink) {
-                baseRec.getLong256(col, sink);
+                functions.getQuick(col).getLong256(baseRec, sink);
             }
 
             @Override
             public Long256 getLong256A(int col) {
-                return baseRec.getLong256A(col);
+                return functions.getQuick(col).getLong256A(baseRec);
             }
 
             @Override
             public Long256 getLong256B(int col) {
-                return baseRec.getLong256B(col);
+                return functions.getQuick(col).getLong256B(baseRec);
             }
 
             @Override
             public Record getRecord(int col) {
+                // Function does not expose getRecord; nested-record projection is not produced by
+                // the streaming dispatch (no SELECT-list expression yields a record-typed value
+                // through any of the supported function factories), so delegating to baseRec via
+                // the cursor's own column index is fine here.
                 return baseRec.getRecord(col);
             }
 
@@ -1054,32 +1069,32 @@ public class DeferredEmitWindowRecordCursorFactory extends AbstractRecordCursorF
 
             @Override
             public short getShort(int col) {
-                return baseRec.getShort(col);
+                return functions.getQuick(col).getShort(baseRec);
             }
 
             @Override
             public CharSequence getStrA(int col) {
-                return baseRec.getStrA(col);
+                return functions.getQuick(col).getStrA(baseRec);
             }
 
             @Override
             public CharSequence getStrB(int col) {
-                return baseRec.getStrB(col);
+                return functions.getQuick(col).getStrB(baseRec);
             }
 
             @Override
             public int getStrLen(int col) {
-                return baseRec.getStrLen(col);
+                return functions.getQuick(col).getStrLen(baseRec);
             }
 
             @Override
             public CharSequence getSymA(int col) {
-                return baseRec.getSymA(col);
+                return functions.getQuick(col).getSymbol(baseRec);
             }
 
             @Override
             public CharSequence getSymB(int col) {
-                return baseRec.getSymB(col);
+                return functions.getQuick(col).getSymbolB(baseRec);
             }
 
             @Override
@@ -1088,7 +1103,7 @@ public class DeferredEmitWindowRecordCursorFactory extends AbstractRecordCursorF
                 if (off != -1) {
                     return Unsafe.getUnsafe().getLong(pendingBaseAddr + slotOff + off);
                 }
-                return baseRec.getTimestamp(col);
+                return functions.getQuick(col).getTimestamp(baseRec);
             }
 
             @Override
@@ -1098,17 +1113,17 @@ public class DeferredEmitWindowRecordCursorFactory extends AbstractRecordCursorF
 
             @Override
             public Utf8Sequence getVarcharA(int col) {
-                return baseRec.getVarcharA(col);
+                return functions.getQuick(col).getVarcharA(baseRec);
             }
 
             @Override
             public Utf8Sequence getVarcharB(int col) {
-                return baseRec.getVarcharB(col);
+                return functions.getQuick(col).getVarcharB(baseRec);
             }
 
             @Override
             public int getVarcharSize(int col) {
-                return baseRec.getVarcharSize(col);
+                return functions.getQuick(col).getVarcharSize(baseRec);
             }
 
             void of(Record baseRec, long slotOff) {
