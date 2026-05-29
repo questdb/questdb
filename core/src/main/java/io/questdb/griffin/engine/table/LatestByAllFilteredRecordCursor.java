@@ -68,10 +68,8 @@ class LatestByAllFilteredRecordCursor extends AbstractDescendingRecordListCursor
 
     @Override
     public void of(PageFrameCursor pageFrameCursor, SqlExecutionContext executionContext) throws SqlException {
-        if (!isOpen) {
-            isOpen = true;
-            map.reopen();
-        }
+        map.setMemoryTracker(executionContext.getMemoryTracker());
+        map.reopen();
         super.of(pageFrameCursor, executionContext);
         filter.init(pageFrameCursor, executionContext);
     }
