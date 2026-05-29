@@ -30,7 +30,6 @@ import io.questdb.log.Log;
 import io.questdb.metrics.WorkerMetrics;
 import io.questdb.mp.continuation.ContinuationQueue;
 import io.questdb.mp.continuation.ContinuationSink;
-import io.questdb.mp.continuation.WorkerContinuation;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
@@ -42,6 +41,11 @@ import java.io.Closeable;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public class WorkerPool implements Closeable {
+    // Every Job instance the pool mints through assign() (blueprints and their
+    // gen-0 clones). halt() closeInstance()s each one. closeInstance() is a
+    // no-op default on caller-owned singletons and idempotent on recycled
+    // clones, so the pool needs no blueprint-vs-clone bookkeeping to free them.
+    private final ObjList<Job> assignedJobs = new ObjList<>();
     private final AtomicBoolean closed = new AtomicBoolean();
     // Non-legacy pools own a ContinuationQueue. Workers drain it from their
     // outer driver between continuation mounts, NOT as a regular job. It cannot
@@ -50,7 +54,7 @@ public class WorkerPool implements Closeable {
     // not inside a mounted worker-loop body. Null on legacy pools.
     private final ContinuationQueue continuationQueue;
     private final boolean daemons;
-    private final ObjList<Closeable> freeOnExit = new ObjList<>();
+    private final ObjList<Job> freeOnExit = new ObjList<>();
     private final boolean haltOnError;
     private final SOCountDownLatch halted;
     // Legacy pools run their loop body directly (no WorkerContinuation
@@ -118,28 +122,19 @@ public class WorkerPool implements Closeable {
     public void assign(Job job) {
         assert !running.get() && !closed.get();
 
-        boolean isStatefulBlueprint = false;
+        // The blueprint is closeInstance()d at halt; with zero workers it is
+        // never cloned, so this is also what frees its construction resources.
+        assignedJobs.add(job);
         for (int i = 0; i < workerCount; i++) {
-            Job clone = job.cloneInstance();
+            Job clone = i == 0 ? job : job.cloneInstance();
             workerJobs.getQuick(i).add(clone);
-            // Clones minted by cloneInstance() (clone != receiver) have no
-            // other lifecycle owner -- the framework registers them for close
-            // at halt(). Singletons returned by the default cloneInstance()
-            // (clone == job) stay caller-owned: e.g., PGServer.close() and
-            // HttpServer.close() free their dispatcher explicitly, so the
-            // pool must NOT close it again.
+            // A stateful Job mints a fresh clone per worker; a stateless one
+            // returns the same singleton. Track only the fresh clones -- the
+            // singleton is already tracked above and closeInstance() is a no-op
+            // on it anyway.
             if (clone != job) {
-                isStatefulBlueprint = true;
-                if (clone instanceof Closeable) {
-                    freeOnExit.add((Closeable) clone);
-                }
+                assignedJobs.add(clone);
             }
-        }
-        // When the blueprint produces fresh clones (typical stateful Job
-        // pattern), the blueprint itself is never added to workerJobs and
-        // would leak its construction resources. Register it for close too.
-        if (isStatefulBlueprint && job instanceof Closeable) {
-            freeOnExit.add((Closeable) job);
         }
     }
 
@@ -166,10 +161,9 @@ public class WorkerPool implements Closeable {
         halt();
     }
 
-    public void freeOnExit(Closeable closeable) {
+    public void freeOnExit(Job job) {
         assert !running.get() && !closed.get();
-
-        freeOnExit.add(closeable);
+        freeOnExit.add(job);
     }
 
     /**
@@ -201,28 +195,24 @@ public class WorkerPool implements Closeable {
                 }
                 halted.await();
             }
-            // Close stateful clones each worker minted during cont rotation
-            // (mintNextGen). A clone whose cont is abandoned at shutdown is never
+            // Workers have stopped, so reading their owned-clone lists is
+            // single-threaded. closeInstance() every Job instance the pool
+            // owns: the blueprints and gen-0 clones from assign(), plus the
+            // clones each worker minted during cont rotation (mintNextGen). A
+            // rotation clone whose cont is abandoned at shutdown is never
             // recycled, so this is the only release of its per-cont native
-            // resources (e.g. an HTTP selector). Workers have stopped, so reading
-            // their owned-clone lists is single-threaded. Idempotent: a clone
-            // already recycled cleared its resource, so closeInstance() is a
-            // no-op for it.
+            // resources (e.g. an HTTP selector). closeInstance() is a no-op
+            // default on caller-owned singletons and idempotent on recycled
+            // clones, so blanket-closing is safe.
+            closeInstances(assignedJobs);
             for (int i = 0, n = workers.size(); i < n; i++) {
-                ObjList<Job> owned = workers.getQuick(i).getOwnedJobClones();
-                for (int j = 0, m = owned.size(); j < m; j++) {
-                    try {
-                        owned.getQuick(j).closeInstance();
-                    } catch (Throwable ignore) {
-                        // contract: Job.closeInstance() must not throw
-                    }
-                }
+                closeInstances(workers.getQuick(i).getOwnedJobClones());
             }
             workers.clear(); // Worker is not closable
-            // Closeable entries that the caller owns (the original Job passed
-            // to assign() and singletons returned by Job.cloneInstance()) are
-            // released by the caller via freeOnExit.
-            Misc.freeObjListAndClear(freeOnExit);
+            // Closeables the caller explicitly handed to the pool via
+            // freeOnExit() are closed here; the pool never close()d the jobs it
+            // minted itself -- those release through closeInstance() above.
+            Misc.freeObjListIfCloseable(freeOnExit);
         }
     }
 
@@ -292,6 +282,16 @@ public class WorkerPool implements Closeable {
             }
         }
         workerMetrics.update(min, max);
+    }
+
+    private static void closeInstances(ObjList<Job> jobs) {
+        for (int i = 0, n = jobs.size(); i < n; i++) {
+            try {
+                jobs.getQuick(i).closeInstance();
+            } catch (Throwable ignore) {
+                // contract: Job.closeInstance() must not throw
+            }
+        }
     }
 
     private void setupPathCleaner() {

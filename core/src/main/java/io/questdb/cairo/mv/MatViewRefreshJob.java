@@ -149,6 +149,14 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
     }
 
     @Override
+    public void closeInstance() {
+        // cloneInstance() mints a fresh job per generation, so the pool frees
+        // each instance's native resources through this hook at halt. Misc.free
+        // nulls the fields, keeping the call idempotent.
+        close();
+    }
+
+    @Override
     public void recycleInstance() {
         // Per-iteration scratch is overwritten on entry to each refresh task.
         // Clearing here is defensive against stale state surviving into the

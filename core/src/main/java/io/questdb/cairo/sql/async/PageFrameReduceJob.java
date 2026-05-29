@@ -153,6 +153,14 @@ public class PageFrameReduceJob implements Job, QuietCloseable {
         record = Misc.free(record);
     }
 
+    @Override
+    public void closeInstance() {
+        // cloneInstance() mints a fresh job per generation, so the pool frees
+        // each instance's native resources through this hook at halt. Misc.free
+        // nulls the fields, keeping the call idempotent.
+        close();
+    }
+
     @TestOnly
     public SqlExecutionCircuitBreaker getCircuitBreaker() {
         return circuitBreaker.getDelegate();

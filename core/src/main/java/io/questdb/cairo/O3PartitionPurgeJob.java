@@ -102,6 +102,14 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
         }
     }
 
+    @Override
+    public void closeInstance() {
+        // cloneInstance() mints a fresh job per generation, so the pool frees
+        // each instance's native scratch through this hook at halt. The halted
+        // CAS in close() keeps the call idempotent.
+        close();
+    }
+
     private static void parsePartitionDateVersion(
             Utf8StringSink fileNameSink,
             DirectLongList partitionList,

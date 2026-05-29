@@ -101,6 +101,14 @@ public class CopyImportJob extends AbstractQueueConsumerJob<CopyImportTask> impl
     }
 
     @Override
+    public void closeInstance() {
+        // cloneInstance() mints a fresh job per generation, so the pool frees
+        // each instance's native resources through this hook at halt. close()
+        // nulls the fields and guards fileBufSize, keeping the call idempotent.
+        close();
+    }
+
+    @Override
     protected boolean doRun(int workerId, long cursor, RunStatus runStatus) {
         final CopyImportTask task = queue.get(cursor);
         final boolean result = task.run(tlw, indexer, utf16Sink, utf8Sink, decimal256, mergeIndexes, fileBufAddr, fileBufSize, tmpPath1, tmpPath2);

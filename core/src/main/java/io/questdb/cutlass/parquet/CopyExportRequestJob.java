@@ -85,6 +85,14 @@ public class CopyExportRequestJob extends AbstractQueueConsumerJob<CopyExportReq
     }
 
     @Override
+    public void closeInstance() {
+        // cloneInstance() mints a fresh job per generation, so the pool frees
+        // each instance's native resources through this hook at halt. Misc.free
+        // nulls the fields, keeping the call idempotent.
+        close();
+    }
+
+    @Override
     protected boolean doRun(int workerId, long cursor, RunStatus runStatus) {
         try {
             CopyExportRequestTask task = queue.get(cursor);
