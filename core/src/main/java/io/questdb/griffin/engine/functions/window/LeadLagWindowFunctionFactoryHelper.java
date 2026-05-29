@@ -55,6 +55,13 @@ public class LeadLagWindowFunctionFactoryHelper {
     public static final ArrayColumnTypes LAG_COLUMN_TYPES;
     public static final String LAG_NAME = "lag";
     public static final String LEAD_NAME = "lead";
+    // Upper bound on the LAG offset accepted by streaming dispatch. Streaming LAG allocates an
+    // offset-sized ring buffer per partition (offset * 8 bytes), so without this gate a single
+    // adversarial query such as `lag(x, 1_000_000_000) OVER (PARTITION BY p ...)` could allocate
+    // multi-TB of native memory before any cap on partition count kicks in. Above this bound the
+    // call falls back to the cached path, whose own MemoryARW page/page-count limits provide an
+    // independent backstop.
+    public static final long MAX_STREAMING_LAG_OFFSET = 65_536L;
 
     static Function newInstance(int position,
                                 ObjList<Function> args,

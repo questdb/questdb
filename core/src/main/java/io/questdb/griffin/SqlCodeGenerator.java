@@ -9345,6 +9345,15 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     // direction so the OVER ORDER BY aligns with the base scan. The AST mutation happens
                     // on a deep clone of the original node so the model is left untouched (defensive
                     // against pool-recycled AST reuse across re-compilations).
+                    //
+                    // The normalised function is only safe to use when dismissOrder turns out true
+                    // below; the cached path reads `ac.getOrderByDirection()` (the ORIGINAL direction)
+                    // and would feed that to the swapped-token function, producing the wrong result.
+                    // Predict here whether the dismiss-order logic below would succeed for the swapped
+                    // direction and only normalise when it will. Without this gate, queries that fire
+                    // Phase 4 but whose outer ORDER BY does not align with the swap would parse the
+                    // swapped function, fail the assertion below in debug builds, fall back to the
+                    // cached path, and re-parse from the original AST — a wasted parse/free cycle.
                     ExpressionNode astForParse = ast;
                     int effectiveOrderByDirection = osz > 0 ? ac.getOrderByDirection().getQuick(0) : ORDER_ASC;
                     boolean isLeadLagNormalised = false;
@@ -9358,18 +9367,32 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         boolean isMismatch = (dir == ORDER_ASC && baseDir == RecordCursorFactory.SCAN_DIRECTION_BACKWARD)
                                 || (dir == ORDER_DESC && baseDir == RecordCursorFactory.SCAN_DIRECTION_FORWARD);
                         if (isMismatch) {
-                            CharSequence newToken = null;
-                            if (Chars.equalsIgnoreCase("lag", ast.token)) {
-                                newToken = "lead";
-                            } else if (Chars.equalsIgnoreCase("lead", ast.token)) {
-                                newToken = "lag";
-                            }
-                            if (newToken != null) {
-                                astForParse = ExpressionNode.deepClone(expressionNodePool, ast);
-                                astForParse.token = newToken;
-                                effectiveOrderByDirection = dir == ORDER_ASC ? ORDER_DESC : ORDER_ASC;
-                                isLeadLagNormalised = true;
-                                hasNormalisationFiredAnywhere = true;
+                            // Predicted dismissOrder if we normalise: the second dismiss path below
+                            // (orderHash.size() < 2) is guaranteed to succeed after swap because the
+                            // swapped direction matches base scan direction by construction. The first
+                            // dismiss path (followedOrderByAdvice && orderHash.size() > 0) succeeds
+                            // when the outer ORDER BY's first column matches the OVER column with the
+                            // swapped direction.
+                            int swappedDir = dir == ORDER_ASC ? ORDER_DESC : ORDER_ASC;
+                            final ExpressionNode overOrderByNode = ac.getOrderBy().getQuick(0);
+                            boolean wouldDismissAfterSwap = orderHash.size() < 2
+                                    || (base.followedOrderByAdvice()
+                                            && Chars.equalsIgnoreCase(overOrderByNode.token, orderHash.keys().get(0))
+                                            && orderHash.get(overOrderByNode.token) == swappedDir);
+                            if (wouldDismissAfterSwap) {
+                                CharSequence newToken = null;
+                                if (Chars.equalsIgnoreCase("lag", ast.token)) {
+                                    newToken = "lead";
+                                } else if (Chars.equalsIgnoreCase("lead", ast.token)) {
+                                    newToken = "lag";
+                                }
+                                if (newToken != null) {
+                                    astForParse = ExpressionNode.deepClone(expressionNodePool, ast);
+                                    astForParse.token = newToken;
+                                    effectiveOrderByDirection = swappedDir;
+                                    isLeadLagNormalised = true;
+                                    hasNormalisationFiredAnywhere = true;
+                                }
                             }
                         }
                     }

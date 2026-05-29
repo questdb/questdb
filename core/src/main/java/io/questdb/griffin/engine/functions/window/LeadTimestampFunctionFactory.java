@@ -145,6 +145,93 @@ public class LeadTimestampFunctionFactory extends AbstractWindowFunctionFactory 
         return driver.from(defaultValueFunc.getTimestamp(null), defaultType);
     }
 
+    static class LeadFunction extends LeadLagWindowFunctionFactoryHelper.BaseLeadFunction implements Reopenable, WindowTimestampFunction {
+        private final int defaultValueTimestampType;
+        private final TimestampDriver timestampDriver;
+
+        public LeadFunction(Function arg, Function defaultValueFunc, long offset, MemoryARW memory, boolean ignoreNulls) {
+            super(arg, defaultValueFunc, offset, memory, ignoreNulls);
+            this.timestampDriver = ColumnType.getTimestampDriver(ColumnType.getTimestampType(arg.getType()));
+            if (defaultValueFunc != null) {
+                this.defaultValueTimestampType = ColumnType.getTimestampType(defaultValueFunc.getType());
+            } else {
+                this.defaultValueTimestampType = ColumnType.UNDEFINED;
+            }
+        }
+
+        @Override
+        public int getType() {
+            return arg.getType();
+        }
+
+        @Override
+        protected boolean doPass1(Record record, long recordOffset, WindowSPI spi) {
+            long leadValue;
+            if (count < offset) {
+                leadValue = defaultValue == null ? Numbers.LONG_NULL : timestampDriver.from(defaultValue.getTimestamp(record), defaultValueTimestampType);
+            } else {
+                leadValue = buffer.getLong((long) loIdx * Long.BYTES);
+            }
+            long l = arg.getTimestamp(record);
+            boolean respectNull = !ignoreNulls || l != Numbers.LONG_NULL;
+            if (respectNull) {
+                buffer.putLong((long) loIdx * Long.BYTES, l);
+            }
+            Unsafe.putLong(spi.getAddress(recordOffset, columnIndex), leadValue);
+            return respectNull;
+        }
+    }
+
+    static class LeadOverPartitionFunction extends LeadLagWindowFunctionFactoryHelper.BaseLeadOverPartitionFunction implements WindowTimestampFunction {
+        private final int defaultValueTimestampType;
+        private final TimestampDriver timestampDriver;
+
+        public LeadOverPartitionFunction(Map map,
+                                         VirtualRecord partitionByRecord,
+                                         RecordSink partitionBySink,
+                                         MemoryARW memory,
+                                         Function arg,
+                                         boolean ignoreNulls,
+                                         Function defaultValue,
+                                         long offset) {
+            super(map, partitionByRecord, partitionBySink, memory, arg, ignoreNulls, defaultValue, offset);
+            this.timestampDriver = ColumnType.getTimestampDriver(ColumnType.getTimestampType(arg.getType()));
+            if (defaultValue != null) {
+                this.defaultValueTimestampType = ColumnType.getTimestampType(defaultValue.getType());
+            } else {
+                this.defaultValueTimestampType = ColumnType.UNDEFINED;
+            }
+        }
+
+        @Override
+        public int getType() {
+            return arg.getType();
+        }
+
+        @Override
+        protected boolean doPass1(long count,
+                                  long offset,
+                                  long startOffset,
+                                  long firstIdx,
+                                  Record record,
+                                  long recordOffset,
+                                  WindowSPI spi) {
+            long l = arg.getTimestamp(record);
+            long leadValue;
+            if (count < offset) {
+                leadValue = defaultValue == null ? Numbers.LONG_NULL : timestampDriver.from(defaultValue.getTimestamp(record), defaultValueTimestampType);
+            } else {
+                leadValue = memory.getLong(startOffset + firstIdx * Long.BYTES);
+            }
+            boolean respectNulls = !ignoreNulls || l != Numbers.LONG_NULL;
+            if (respectNulls) {
+                memory.putLong(startOffset + firstIdx * Long.BYTES, l);
+            }
+            Unsafe.putLong(spi.getAddress(recordOffset, columnIndex), leadValue);
+            return respectNulls;
+        }
+    }
+
     static final class StreamingLeadFunction extends LeadFunction {
         private final CairoConfiguration configuration;
         // Resolved in init() after super.init() runs defaultValue.init(); see LeadLongFunctionFactory.
@@ -283,93 +370,6 @@ public class LeadTimestampFunctionFactory extends AbstractWindowFunctionFactory 
         @Override
         public void streamingFlushDefault(long pendingSlot, WindowSPI spi) {
             Unsafe.putLong(spi.getAddress(pendingSlot, columnIndex), defaultTimestampValue);
-        }
-    }
-
-    static class LeadFunction extends LeadLagWindowFunctionFactoryHelper.BaseLeadFunction implements Reopenable, WindowTimestampFunction {
-        private final int defaultValueTimestampType;
-        private final TimestampDriver timestampDriver;
-
-        public LeadFunction(Function arg, Function defaultValueFunc, long offset, MemoryARW memory, boolean ignoreNulls) {
-            super(arg, defaultValueFunc, offset, memory, ignoreNulls);
-            this.timestampDriver = ColumnType.getTimestampDriver(ColumnType.getTimestampType(arg.getType()));
-            if (defaultValueFunc != null) {
-                this.defaultValueTimestampType = ColumnType.getTimestampType(defaultValueFunc.getType());
-            } else {
-                this.defaultValueTimestampType = ColumnType.UNDEFINED;
-            }
-        }
-
-        @Override
-        public int getType() {
-            return arg.getType();
-        }
-
-        @Override
-        protected boolean doPass1(Record record, long recordOffset, WindowSPI spi) {
-            long leadValue;
-            if (count < offset) {
-                leadValue = defaultValue == null ? Numbers.LONG_NULL : timestampDriver.from(defaultValue.getTimestamp(record), defaultValueTimestampType);
-            } else {
-                leadValue = buffer.getLong((long) loIdx * Long.BYTES);
-            }
-            long l = arg.getTimestamp(record);
-            boolean respectNull = !ignoreNulls || l != Numbers.LONG_NULL;
-            if (respectNull) {
-                buffer.putLong((long) loIdx * Long.BYTES, l);
-            }
-            Unsafe.putLong(spi.getAddress(recordOffset, columnIndex), leadValue);
-            return respectNull;
-        }
-    }
-
-    static class LeadOverPartitionFunction extends LeadLagWindowFunctionFactoryHelper.BaseLeadOverPartitionFunction implements WindowTimestampFunction {
-        private final int defaultValueTimestampType;
-        private final TimestampDriver timestampDriver;
-
-        public LeadOverPartitionFunction(Map map,
-                                         VirtualRecord partitionByRecord,
-                                         RecordSink partitionBySink,
-                                         MemoryARW memory,
-                                         Function arg,
-                                         boolean ignoreNulls,
-                                         Function defaultValue,
-                                         long offset) {
-            super(map, partitionByRecord, partitionBySink, memory, arg, ignoreNulls, defaultValue, offset);
-            this.timestampDriver = ColumnType.getTimestampDriver(ColumnType.getTimestampType(arg.getType()));
-            if (defaultValue != null) {
-                this.defaultValueTimestampType = ColumnType.getTimestampType(defaultValue.getType());
-            } else {
-                this.defaultValueTimestampType = ColumnType.UNDEFINED;
-            }
-        }
-
-        @Override
-        public int getType() {
-            return arg.getType();
-        }
-
-        @Override
-        protected boolean doPass1(long count,
-                                  long offset,
-                                  long startOffset,
-                                  long firstIdx,
-                                  Record record,
-                                  long recordOffset,
-                                  WindowSPI spi) {
-            long l = arg.getTimestamp(record);
-            long leadValue;
-            if (count < offset) {
-                leadValue = defaultValue == null ? Numbers.LONG_NULL : timestampDriver.from(defaultValue.getTimestamp(record), defaultValueTimestampType);
-            } else {
-                leadValue = memory.getLong(startOffset + firstIdx * Long.BYTES);
-            }
-            boolean respectNulls = !ignoreNulls || l != Numbers.LONG_NULL;
-            if (respectNulls) {
-                memory.putLong(startOffset + firstIdx * Long.BYTES, l);
-            }
-            Unsafe.putLong(spi.getAddress(recordOffset, columnIndex), leadValue);
-            return respectNulls;
         }
     }
 }

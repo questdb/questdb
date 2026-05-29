@@ -113,6 +113,9 @@ public class LagTimestampFunctionFactory extends AbstractWindowFunctionFactory {
                 return null;
             }
         }
+        if (offset > LeadLagWindowFunctionFactoryHelper.MAX_STREAMING_LAG_OFFSET) {
+            return null;
+        }
 
         Function defaultValue = null;
         if (args.size() == 3) {
@@ -251,6 +254,42 @@ public class LagTimestampFunctionFactory extends AbstractWindowFunctionFactory {
         }
     }
 
+    static class LeadLagValueCurrentRow extends LeadLagWindowFunctionFactoryHelper.BaseLeadLagCurrentRow implements WindowTimestampFunction {
+        private final TimestampDriver timestampDriver;
+        private long value;
+
+        public LeadLagValueCurrentRow(VirtualRecord partitionByRecord, Function arg, String name, boolean ignoreNulls) {
+            super(partitionByRecord, arg, name, ignoreNulls);
+            this.timestampDriver = ColumnType.getTimestampDriver(ColumnType.getTimestampType(arg.getType()));
+        }
+
+        @Override
+        public void computeNext(Record record) {
+            value = arg.getTimestamp(record);
+        }
+
+        @Override
+        public long getDate(Record rec) {
+            return timestampDriver.toDate(arg.getTimestamp(rec));
+        }
+
+        @Override
+        public long getTimestamp(Record rec) {
+            return value;
+        }
+
+        @Override
+        public int getType() {
+            return arg.getType();
+        }
+
+        @Override
+        public void pass1(Record record, long recordOffset, WindowSPI spi) {
+            computeNext(record);
+            Unsafe.putLong(spi.getAddress(recordOffset, columnIndex), value);
+        }
+    }
+
     /**
      * Partitioned TIMESTAMP LAG variant for streaming dispatch. Pre-resolves the default value
      * once at construction (via the TimestampDriver) so streamingPass1 needs no record-dependent
@@ -362,42 +401,6 @@ public class LagTimestampFunctionFactory extends AbstractWindowFunctionFactory {
             Unsafe.getUnsafe().putLong(partitionStateAddr, startOffset);
             Unsafe.getUnsafe().putLong(partitionStateAddr + Long.BYTES, firstIdx);
             Unsafe.getUnsafe().putLong(partitionStateAddr + 2L * Long.BYTES, count);
-        }
-    }
-
-    static class LeadLagValueCurrentRow extends LeadLagWindowFunctionFactoryHelper.BaseLeadLagCurrentRow implements WindowTimestampFunction {
-        private final TimestampDriver timestampDriver;
-        private long value;
-
-        public LeadLagValueCurrentRow(VirtualRecord partitionByRecord, Function arg, String name, boolean ignoreNulls) {
-            super(partitionByRecord, arg, name, ignoreNulls);
-            this.timestampDriver = ColumnType.getTimestampDriver(ColumnType.getTimestampType(arg.getType()));
-        }
-
-        @Override
-        public void computeNext(Record record) {
-            value = arg.getTimestamp(record);
-        }
-
-        @Override
-        public long getDate(Record rec) {
-            return timestampDriver.toDate(arg.getTimestamp(rec));
-        }
-
-        @Override
-        public long getTimestamp(Record rec) {
-            return value;
-        }
-
-        @Override
-        public int getType() {
-            return arg.getType();
-        }
-
-        @Override
-        public void pass1(Record record, long recordOffset, WindowSPI spi) {
-            computeNext(record);
-            Unsafe.putLong(spi.getAddress(recordOffset, columnIndex), value);
         }
     }
 }

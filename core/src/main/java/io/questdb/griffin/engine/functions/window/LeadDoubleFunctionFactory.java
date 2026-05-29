@@ -134,6 +134,65 @@ public class LeadDoubleFunctionFactory extends AbstractWindowFunctionFactory {
         return new StreamingLeadFunction(configuration, args.get(0), defaultValue, offset);
     }
 
+    static class LeadFunction extends LeadLagWindowFunctionFactoryHelper.BaseLeadFunction implements Reopenable, WindowDoubleFunction {
+        public LeadFunction(Function arg, Function defaultValueFunc, long offset, MemoryARW memory, boolean ignoreNulls) {
+            super(arg, defaultValueFunc, offset, memory, ignoreNulls);
+        }
+
+        @Override
+        protected boolean doPass1(Record record, long recordOffset, WindowSPI spi) {
+            double leadValue;
+            if (count < offset) {
+                leadValue = defaultValue == null ? Double.NaN : defaultValue.getDouble(record);
+            } else {
+                leadValue = buffer.getDouble((long) loIdx * Double.BYTES);
+            }
+            double d = arg.getDouble(record);
+            boolean respectNull = !ignoreNulls || Numbers.isFinite(d);
+            if (respectNull) {
+                buffer.putDouble((long) loIdx * Double.BYTES, d);
+            }
+            Unsafe.putDouble(spi.getAddress(recordOffset, columnIndex), leadValue);
+            return respectNull;
+        }
+    }
+
+    static class LeadOverPartitionFunction extends LeadLagWindowFunctionFactoryHelper.BaseLeadOverPartitionFunction implements WindowDoubleFunction {
+        public LeadOverPartitionFunction(Map map,
+                                         VirtualRecord partitionByRecord,
+                                         RecordSink partitionBySink,
+                                         MemoryARW memory,
+                                         Function arg,
+                                         boolean ignoreNulls,
+                                         Function defaultValue,
+                                         long offset) {
+            super(map, partitionByRecord, partitionBySink, memory, arg, ignoreNulls, defaultValue, offset);
+        }
+
+        @Override
+        protected boolean doPass1(long count,
+                                  long offset,
+                                  long startOffset,
+                                  long firstIdx,
+                                  Record record,
+                                  long recordOffset,
+                                  WindowSPI spi) {
+            double d = arg.getDouble(record);
+            double leadValue;
+            if (count < offset) {
+                leadValue = defaultValue == null ? Double.NaN : defaultValue.getDouble(record);
+            } else {
+                leadValue = memory.getDouble(startOffset + firstIdx * Double.BYTES);
+            }
+            boolean respectNulls = !ignoreNulls || Numbers.isFinite(d);
+            if (respectNulls) {
+                memory.putDouble(startOffset + firstIdx * Double.BYTES, d);
+            }
+            Unsafe.putDouble(spi.getAddress(recordOffset, columnIndex), leadValue);
+            return respectNulls;
+        }
+    }
+
     static final class StreamingLeadFunction extends LeadFunction {
         private final CairoConfiguration configuration;
         // Resolved in init() after super.init() runs defaultValue.init(); see LeadLongFunctionFactory.
@@ -272,65 +331,6 @@ public class LeadDoubleFunctionFactory extends AbstractWindowFunctionFactory {
         @Override
         public void streamingFlushDefault(long pendingSlot, WindowSPI spi) {
             Unsafe.putDouble(spi.getAddress(pendingSlot, columnIndex), defaultDoubleValue);
-        }
-    }
-
-    static class LeadFunction extends LeadLagWindowFunctionFactoryHelper.BaseLeadFunction implements Reopenable, WindowDoubleFunction {
-        public LeadFunction(Function arg, Function defaultValueFunc, long offset, MemoryARW memory, boolean ignoreNulls) {
-            super(arg, defaultValueFunc, offset, memory, ignoreNulls);
-        }
-
-        @Override
-        protected boolean doPass1(Record record, long recordOffset, WindowSPI spi) {
-            double leadValue;
-            if (count < offset) {
-                leadValue = defaultValue == null ? Double.NaN : defaultValue.getDouble(record);
-            } else {
-                leadValue = buffer.getDouble((long) loIdx * Double.BYTES);
-            }
-            double d = arg.getDouble(record);
-            boolean respectNull = !ignoreNulls || Numbers.isFinite(d);
-            if (respectNull) {
-                buffer.putDouble((long) loIdx * Double.BYTES, d);
-            }
-            Unsafe.putDouble(spi.getAddress(recordOffset, columnIndex), leadValue);
-            return respectNull;
-        }
-    }
-
-    static class LeadOverPartitionFunction extends LeadLagWindowFunctionFactoryHelper.BaseLeadOverPartitionFunction implements WindowDoubleFunction {
-        public LeadOverPartitionFunction(Map map,
-                                         VirtualRecord partitionByRecord,
-                                         RecordSink partitionBySink,
-                                         MemoryARW memory,
-                                         Function arg,
-                                         boolean ignoreNulls,
-                                         Function defaultValue,
-                                         long offset) {
-            super(map, partitionByRecord, partitionBySink, memory, arg, ignoreNulls, defaultValue, offset);
-        }
-
-        @Override
-        protected boolean doPass1(long count,
-                                  long offset,
-                                  long startOffset,
-                                  long firstIdx,
-                                  Record record,
-                                  long recordOffset,
-                                  WindowSPI spi) {
-            double d = arg.getDouble(record);
-            double leadValue;
-            if (count < offset) {
-                leadValue = defaultValue == null ? Double.NaN : defaultValue.getDouble(record);
-            } else {
-                leadValue = memory.getDouble(startOffset + firstIdx * Double.BYTES);
-            }
-            boolean respectNulls = !ignoreNulls || Numbers.isFinite(d);
-            if (respectNulls) {
-                memory.putDouble(startOffset + firstIdx * Double.BYTES, d);
-            }
-            Unsafe.putDouble(spi.getAddress(recordOffset, columnIndex), leadValue);
-            return respectNulls;
         }
     }
 }

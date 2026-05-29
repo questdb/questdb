@@ -112,6 +112,9 @@ public class LagDateFunctionFactory extends AbstractWindowFunctionFactory {
                 return null;
             }
         }
+        if (offset > LeadLagWindowFunctionFactoryHelper.MAX_STREAMING_LAG_OFFSET) {
+            return null;
+        }
 
         Function defaultValue = null;
         if (args.size() == 3) {
@@ -211,6 +214,31 @@ public class LagDateFunctionFactory extends AbstractWindowFunctionFactory {
                 memory.putLong(startOffset + firstIdx * Long.BYTES, l);
             }
             return respectNulls;
+        }
+    }
+
+    static class LeadLagValueCurrentRow extends LeadLagWindowFunctionFactoryHelper.BaseLeadLagCurrentRow implements WindowDateFunction {
+
+        private long value;
+
+        public LeadLagValueCurrentRow(VirtualRecord partitionByRecord, Function arg, String name, boolean ignoreNulls) {
+            super(partitionByRecord, arg, name, ignoreNulls);
+        }
+
+        @Override
+        public void computeNext(Record record) {
+            value = arg.getDate(record);
+        }
+
+        @Override
+        public long getDate(Record rec) {
+            return value;
+        }
+
+        @Override
+        public void pass1(Record record, long recordOffset, WindowSPI spi) {
+            computeNext(record);
+            Unsafe.putLong(spi.getAddress(recordOffset, columnIndex), value);
         }
     }
 
@@ -318,31 +346,6 @@ public class LagDateFunctionFactory extends AbstractWindowFunctionFactory {
             Unsafe.getUnsafe().putLong(partitionStateAddr, startOffset);
             Unsafe.getUnsafe().putLong(partitionStateAddr + Long.BYTES, firstIdx);
             Unsafe.getUnsafe().putLong(partitionStateAddr + 2L * Long.BYTES, count);
-        }
-    }
-
-    static class LeadLagValueCurrentRow extends LeadLagWindowFunctionFactoryHelper.BaseLeadLagCurrentRow implements WindowDateFunction {
-
-        private long value;
-
-        public LeadLagValueCurrentRow(VirtualRecord partitionByRecord, Function arg, String name, boolean ignoreNulls) {
-            super(partitionByRecord, arg, name, ignoreNulls);
-        }
-
-        @Override
-        public void computeNext(Record record) {
-            value = arg.getDate(record);
-        }
-
-        @Override
-        public long getDate(Record rec) {
-            return value;
-        }
-
-        @Override
-        public void pass1(Record record, long recordOffset, WindowSPI spi) {
-            computeNext(record);
-            Unsafe.putLong(spi.getAddress(recordOffset, columnIndex), value);
         }
     }
 }

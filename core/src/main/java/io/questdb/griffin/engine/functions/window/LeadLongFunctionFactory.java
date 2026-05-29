@@ -176,6 +176,65 @@ public class LeadLongFunctionFactory extends AbstractWindowFunctionFactory {
         return new StreamingLeadFunction(configuration, args.get(0), defaultValue, offset);
     }
 
+    static class LeadFunction extends LeadLagWindowFunctionFactoryHelper.BaseLeadFunction implements Reopenable, WindowLongFunction {
+        public LeadFunction(Function arg, Function defaultValueFunc, long offset, MemoryARW memory, boolean ignoreNulls) {
+            super(arg, defaultValueFunc, offset, memory, ignoreNulls);
+        }
+
+        @Override
+        protected boolean doPass1(Record record, long recordOffset, WindowSPI spi) {
+            long leadValue;
+            if (count < offset) {
+                leadValue = defaultValue == null ? Numbers.LONG_NULL : defaultValue.getLong(record);
+            } else {
+                leadValue = buffer.getLong((long) loIdx * Long.BYTES);
+            }
+            long l = arg.getLong(record);
+            boolean respectNull = !ignoreNulls || l != Numbers.LONG_NULL;
+            if (respectNull) {
+                buffer.putLong((long) loIdx * Long.BYTES, l);
+            }
+            Unsafe.putLong(spi.getAddress(recordOffset, columnIndex), leadValue);
+            return respectNull;
+        }
+    }
+
+    static class LeadOverPartitionFunction extends LeadLagWindowFunctionFactoryHelper.BaseLeadOverPartitionFunction implements WindowLongFunction {
+        public LeadOverPartitionFunction(Map map,
+                                         VirtualRecord partitionByRecord,
+                                         RecordSink partitionBySink,
+                                         MemoryARW memory,
+                                         Function arg,
+                                         boolean ignoreNulls,
+                                         Function defaultValue,
+                                         long offset) {
+            super(map, partitionByRecord, partitionBySink, memory, arg, ignoreNulls, defaultValue, offset);
+        }
+
+        @Override
+        protected boolean doPass1(long count,
+                                  long offset,
+                                  long startOffset,
+                                  long firstIdx,
+                                  Record record,
+                                  long recordOffset,
+                                  WindowSPI spi) {
+            long l = arg.getLong(record);
+            long leadValue;
+            if (count < offset) {
+                leadValue = defaultValue == null ? Numbers.LONG_NULL : defaultValue.getLong(record);
+            } else {
+                leadValue = memory.getLong(startOffset + firstIdx * Long.BYTES);
+            }
+            boolean respectNulls = !ignoreNulls || l != Numbers.LONG_NULL;
+            if (respectNulls) {
+                memory.putLong(startOffset + firstIdx * Long.BYTES, l);
+            }
+            Unsafe.putLong(spi.getAddress(recordOffset, columnIndex), leadValue);
+            return respectNulls;
+        }
+    }
+
     /**
      * Streaming variant of LEAD that participates in the deferred-emit fast path.
      * <p>
@@ -338,65 +397,6 @@ public class LeadLongFunctionFactory extends AbstractWindowFunctionFactory {
         @Override
         public void streamingFlushDefault(long pendingSlot, WindowSPI spi) {
             Unsafe.putLong(spi.getAddress(pendingSlot, columnIndex), defaultLongValue);
-        }
-    }
-
-    static class LeadFunction extends LeadLagWindowFunctionFactoryHelper.BaseLeadFunction implements Reopenable, WindowLongFunction {
-        public LeadFunction(Function arg, Function defaultValueFunc, long offset, MemoryARW memory, boolean ignoreNulls) {
-            super(arg, defaultValueFunc, offset, memory, ignoreNulls);
-        }
-
-        @Override
-        protected boolean doPass1(Record record, long recordOffset, WindowSPI spi) {
-            long leadValue;
-            if (count < offset) {
-                leadValue = defaultValue == null ? Numbers.LONG_NULL : defaultValue.getLong(record);
-            } else {
-                leadValue = buffer.getLong((long) loIdx * Long.BYTES);
-            }
-            long l = arg.getLong(record);
-            boolean respectNull = !ignoreNulls || l != Numbers.LONG_NULL;
-            if (respectNull) {
-                buffer.putLong((long) loIdx * Long.BYTES, l);
-            }
-            Unsafe.putLong(spi.getAddress(recordOffset, columnIndex), leadValue);
-            return respectNull;
-        }
-    }
-
-    static class LeadOverPartitionFunction extends LeadLagWindowFunctionFactoryHelper.BaseLeadOverPartitionFunction implements WindowLongFunction {
-        public LeadOverPartitionFunction(Map map,
-                                         VirtualRecord partitionByRecord,
-                                         RecordSink partitionBySink,
-                                         MemoryARW memory,
-                                         Function arg,
-                                         boolean ignoreNulls,
-                                         Function defaultValue,
-                                         long offset) {
-            super(map, partitionByRecord, partitionBySink, memory, arg, ignoreNulls, defaultValue, offset);
-        }
-
-        @Override
-        protected boolean doPass1(long count,
-                                  long offset,
-                                  long startOffset,
-                                  long firstIdx,
-                                  Record record,
-                                  long recordOffset,
-                                  WindowSPI spi) {
-            long l = arg.getLong(record);
-            long leadValue;
-            if (count < offset) {
-                leadValue = defaultValue == null ? Numbers.LONG_NULL : defaultValue.getLong(record);
-            } else {
-                leadValue = memory.getLong(startOffset + firstIdx * Long.BYTES);
-            }
-            boolean respectNulls = !ignoreNulls || l != Numbers.LONG_NULL;
-            if (respectNulls) {
-                memory.putLong(startOffset + firstIdx * Long.BYTES, l);
-            }
-            Unsafe.putLong(spi.getAddress(recordOffset, columnIndex), leadValue);
-            return respectNulls;
         }
     }
 }
