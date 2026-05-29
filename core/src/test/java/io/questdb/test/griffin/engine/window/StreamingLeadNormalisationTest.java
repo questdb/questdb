@@ -118,6 +118,49 @@ public class StreamingLeadNormalisationTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLagDescSuppressedNormalisationRoutesToCachedWhenDismissWouldFail() throws Exception {
+        // Phase 4 only swaps lag<->lead when it predicts dismiss-order will succeed after the swap
+        // (the `wouldDismissAfterSwap` gate). Here the OVER ORDER BY ts DESC opposes the forward base
+        // scan, so the mismatch branch is entered, but the outer ORDER BY has two columns (y, ts) whose
+        // first key 'y' is not the OVER column 'ts'. That makes orderHash.size() >= 2 and the first-key
+        // check fail, so wouldDismissAfterSwap is false and normalisation is SUPPRESSED. The query must
+        // route to CachedWindow with the un-normalised LAG (OVER ORDER BY stays `ts desc`), protecting
+        // the `assert !isLeadLagNormalised || dismissOrder` invariant. Contrast with the single-column
+        // outer-order case in testLagDescNormalisesToStreamingLead, which DOES normalise and streams.
+        assertMemoryLeak(() -> {
+            execute("create table t (x long, y long, ts timestamp) timestamp(ts) partition by day");
+            execute("insert into t values (10, 3, 0), (20, 1, 1000), (30, 2, 2000)");
+
+            assertPlanNoLeakCheck(
+                    "select x, y, lag(x, 1) over (order by ts desc) as lx from t order by y, ts",
+                    """
+                            SelectedRecord
+                                Encode sort light
+                                  keys: [y, ts]
+                                    CachedWindow
+                                      orderedFunctions: [[ts desc] => [lag(x, 1, NULL) over ()]]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: t
+                            """
+            );
+
+            // Values are correct: LAG(x,1) OVER (ORDER BY ts DESC) gives each row's successor-by-ts
+            // (predecessor in DESC). Output is ordered by the outer ORDER BY y, ts.
+            assertQueryNoLeakCheck(
+                    """
+                            x\ty\tlx
+                            20\t1\t30
+                            30\t2\tnull
+                            10\t3\t20
+                            """,
+                    "select x, y, lag(x, 1) over (order by ts desc) as lx from t order by y, ts",
+                    null, true, true
+            );
+        });
+    }
+
+    @Test
     public void testLagDescWithPartitionByStreamsViaNormalisation() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table t (x long, sym symbol, ts timestamp) timestamp(ts) partition by day");

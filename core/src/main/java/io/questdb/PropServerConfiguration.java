@@ -1752,7 +1752,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             int sqlWindowTreeKeyMaxPages = getInt(properties, env, PropertyKey.CAIRO_SQL_ANALYTIC_TREE_MAX_PAGES, Integer.MAX_VALUE);
             this.sqlWindowTreeKeyMaxPages = getInt(properties, env, PropertyKey.CAIRO_SQL_WINDOW_TREE_MAX_PAGES, sqlWindowTreeKeyMaxPages);
             this.sqlWindowStreamingLeadEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_WINDOW_STREAMING_LEAD_ENABLED, false);
-            this.sqlWindowStreamingMaxPartitions = getInt(properties, env, PropertyKey.CAIRO_SQL_WINDOW_STREAMING_MAX_PARTITIONS, 65_536);
+            this.sqlWindowStreamingMaxPartitions = Math.max(1, getInt(properties, env, PropertyKey.CAIRO_SQL_WINDOW_STREAMING_MAX_PARTITIONS, 65_536));
             this.sqlIntervalMaxBracketDepth = getInt(properties, env, PropertyKey.CAIRO_SQL_INTERVAL_MAX_BRACKET_DEPTH, 8);
             this.sqlIntervalMaxIntervalsAfterMerge = getInt(properties, env, PropertyKey.CAIRO_SQL_INTERVAL_MAX_INTERVALS_AFTER_MERGE, 1024);
             this.sqlIntervalIncrementalMergeThreshold = getInt(properties, env, PropertyKey.CAIRO_SQL_INTERVAL_INCREMENTAL_MERGE_THRESHOLD, 256);

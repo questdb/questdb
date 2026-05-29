@@ -38,7 +38,9 @@ import org.junit.Assert;
 import org.junit.Test;
 
 import java.util.Arrays;
+import java.util.HashSet;
 import java.util.Random;
+import java.util.Set;
 
 /**
  * Fuzz and edge-case equivalence tests for the streaming-LEAD path. Each test generates input
@@ -99,7 +101,7 @@ public class StreamingLeadFuzzTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table t (x long, sym symbol, ts timestamp) timestamp(ts) partition by day");
             execute(
-                    "insert into t select x, 'ONLY' as sym, (1000_000L * x)::timestamp from long_sequence(100)"
+                    "insert into t select x, 'ONLY' as sym, (1_000_000L * x)::timestamp from long_sequence(100)"
             );
 
             String[] queries = {
@@ -123,7 +125,7 @@ public class StreamingLeadFuzzTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table t (x long, sym symbol, ts timestamp) timestamp(ts) partition by day");
             execute(
-                    "insert into t select x, ('S' || (x % 500))::symbol as sym, (1000_000L * x)::timestamp from long_sequence(2000)"
+                    "insert into t select x, ('S' || (x % 500))::symbol as sym, (1_000_000L * x)::timestamp from long_sequence(2000)"
             );
 
             String[] queries = {
@@ -142,7 +144,7 @@ public class StreamingLeadFuzzTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table t (x long, sym symbol, ts timestamp) timestamp(ts) partition by day");
             execute(
-                    "insert into t select x, ('S' || (x % 3))::symbol as sym, (1000_000L * x)::timestamp from long_sequence(30)"
+                    "insert into t select x, ('S' || (x % 3))::symbol as sym, (1_000_000L * x)::timestamp from long_sequence(30)"
             );
             String sql = "select x, sym, lead(x, 1) over (partition by sym) as lx from t order by ts asc limit 5";
             StreamingLeadEquivalence.assertEquivalent(engine, sqlExecutionContext, sql, "ordered-limit");
@@ -156,30 +158,49 @@ public class StreamingLeadFuzzTest extends AbstractCairoTest {
         // different N rows. The contract documented in the PR description is that both result sets
         // are correct *as multisets* — that is, every row each path returns is a valid LEAD result,
         // they just may not agree on which N to return. We can't assert equivalence as a sorted
-        // multiset here because the multisets themselves differ; instead, run each path and assert
-        // both produce the requested row count with no errors. A regression that drops rows or
-        // crashes on this shape would still fire.
+        // multiset here because the multisets themselves differ; instead, we build the canonical
+        // full result set from the cached (reference) path with no LIMIT and assert every streaming
+        // LIMIT row is a member of it. This catches a regression that returns a wrong LEAD value
+        // (not just a different valid subset), which a bare row-count check would miss.
         assertMemoryLeak(() -> {
             execute("create table t (x long, sym symbol, ts timestamp) timestamp(ts) partition by day");
             execute(
-                    "insert into t select x, ('S' || (x % 5))::symbol as sym, (1000_000L * x)::timestamp from long_sequence(40)"
+                    "insert into t select x, ('S' || (x % 5))::symbol as sym, (1_000_000L * x)::timestamp from long_sequence(40)"
             );
-            String sql = "select x, sym, lead(x, 1) over (partition by sym) as lx from t limit 7";
+            String limitSql = "select x, sym, lead(x, 1) over (partition by sym) as lx from t limit 7";
+            String fullSql = "select x, sym, lead(x, 1) over (partition by sym) as lx from t";
 
-            io.questdb.std.str.StringSink cachedSink = new io.questdb.std.str.StringSink();
-            io.questdb.test.AbstractCairoTest.staticOverrides.setProperty(io.questdb.PropertyKey.CAIRO_SQL_WINDOW_STREAMING_LEAD_ENABLED, "false");
-            engine.print(sql, cachedSink, sqlExecutionContext);
+            // Canonical full result from the cached reference path, as an order-independent row set.
+            // x is unique per row, so each printed line is a distinct (x, sym, lx) triple.
+            StringSink fullSink = new StringSink();
+            staticOverrides.setProperty(PropertyKey.CAIRO_SQL_WINDOW_STREAMING_LEAD_ENABLED, "false");
+            engine.print(fullSql, fullSink, sqlExecutionContext);
+            Set<String> canonicalRows = new HashSet<>();
+            String[] fullLines = fullSink.toString().split("\n", -1);
+            for (int i = 1; i < fullLines.length; i++) {
+                if (!fullLines[i].isEmpty()) {
+                    canonicalRows.add(fullLines[i]);
+                }
+            }
 
-            io.questdb.std.str.StringSink streamingSink = new io.questdb.std.str.StringSink();
-            io.questdb.test.AbstractCairoTest.staticOverrides.setProperty(io.questdb.PropertyKey.CAIRO_SQL_WINDOW_STREAMING_LEAD_ENABLED, "true");
-            engine.print(sql, streamingSink, sqlExecutionContext);
+            // Streaming LIMIT 7: count the data rows AND assert each is a valid LEAD result.
+            StringSink streamingSink = new StringSink();
+            staticOverrides.setProperty(PropertyKey.CAIRO_SQL_WINDOW_STREAMING_LEAD_ENABLED, "true");
+            engine.print(limitSql, streamingSink, sqlExecutionContext);
+            String[] streamingLines = streamingSink.toString().split("\n", -1);
 
-            // 1 header row + 7 data rows expected in each.
-            int cachedLineCount = cachedSink.toString().split("\n", -1).length;
-            int streamingLineCount = streamingSink.toString().split("\n", -1).length;
-            // Trailing newline produces an empty trailing element after split(-1); both paths add it.
-            org.junit.Assert.assertEquals("cached row count for bare LIMIT", 1 + 7 + 1, cachedLineCount);
-            org.junit.Assert.assertEquals("streaming row count for bare LIMIT", 1 + 7 + 1, streamingLineCount);
+            int streamingDataRows = 0;
+            for (int i = 1; i < streamingLines.length; i++) {
+                if (streamingLines[i].isEmpty()) {
+                    continue;
+                }
+                streamingDataRows++;
+                Assert.assertTrue(
+                        "streaming LIMIT returned a row that is not a valid LEAD result: " + streamingLines[i],
+                        canonicalRows.contains(streamingLines[i])
+                );
+            }
+            Assert.assertEquals("streaming data row count for bare LIMIT", 7, streamingDataRows);
         });
     }
 
@@ -191,7 +212,7 @@ public class StreamingLeadFuzzTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table t (x long, sym symbol, ts timestamp) timestamp(ts) partition by day");
             execute(
-                    "insert into t select x, 'A' as sym, (1000_000L * x)::timestamp from long_sequence(150)"
+                    "insert into t select x, 'A' as sym, (1_000_000L * x)::timestamp from long_sequence(150)"
             );
 
             // Single LEAD with various large lookaheads. k=63 is the maximum for a single LEAD
@@ -223,7 +244,7 @@ public class StreamingLeadFuzzTest extends AbstractCairoTest {
                     "insert into t select x, " +
                             "case when x % 2 = 0 then 'A0' else 'A1' end, " +
                             "case when x % 3 = 0 then 'B0' when x % 3 = 1 then 'B1' else 'B2' end, " +
-                            "(1000_000L * x)::timestamp from long_sequence(20)"
+                            "(1_000_000L * x)::timestamp from long_sequence(20)"
             );
             String sql = "select x, sym_a, sym_b, " +
                     "lead(x, 1) over (partition by sym_a) as l_a, " +
@@ -240,7 +261,7 @@ public class StreamingLeadFuzzTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table t (x long, sym symbol, ts timestamp) timestamp(ts) partition by day");
             execute(
-                    "insert into t select x, 'A' as sym, (1000_000L * x)::timestamp from long_sequence(30)"
+                    "insert into t select x, 'A' as sym, (1_000_000L * x)::timestamp from long_sequence(30)"
             );
 
             String[] queries = {
@@ -316,7 +337,7 @@ public class StreamingLeadFuzzTest extends AbstractCairoTest {
                             "rnd_geohash(40), " +
                             "ARRAY[x::double, (x + 1)::double], " +
                             "((x % 100) / 4.0)::decimal(10,2), " +
-                            "(1000_000L * x)::timestamp " +
+                            "(1_000_000L * x)::timestamp " +
                             "from long_sequence(30)"
             );
 
@@ -342,7 +363,7 @@ public class StreamingLeadFuzzTest extends AbstractCairoTest {
                     "insert into t select " +
                             "x, " +
                             "case when x % 3 = 0 then cast(null as symbol) else case when x % 2 = 0 then 'A' else 'B' end end, " +
-                            "(1000_000L * x)::timestamp " +
+                            "(1_000_000L * x)::timestamp " +
                             "from long_sequence(40)"
             );
 
@@ -368,7 +389,7 @@ public class StreamingLeadFuzzTest extends AbstractCairoTest {
                     "insert into t select " +
                             "case when x % 4 = 0 then cast(null as long) else x end, " +
                             "case when x % 2 = 0 then 'A' else 'B' end, " +
-                            "(1000_000L * x)::timestamp " +
+                            "(1_000_000L * x)::timestamp " +
                             "from long_sequence(40)"
             );
 
@@ -389,7 +410,7 @@ public class StreamingLeadFuzzTest extends AbstractCairoTest {
         // ORDER BY ts (matching or opposing scan direction). Single LEAD function -> always
         // dispatches to streaming under the cost-model heuristic.
         assertMemoryLeak(() -> {
-            for (int iter = 0; iter < 100; iter++) {
+            for (int iter = 0; iter < 100 && !Thread.interrupted(); iter++) {
                 long seed = 0xC0FFEE_5EEDL + iter;
                 Random r = new Random(seed);
                 try {
@@ -406,7 +427,7 @@ public class StreamingLeadFuzzTest extends AbstractCairoTest {
         // Random single LAG with OVER ORDER BY ts DESC -> normalises to LEAD ASC. Validates the
         // Phase 4 path under random shapes/sizes.
         assertMemoryLeak(() -> {
-            for (int iter = 0; iter < 100; iter++) {
+            for (int iter = 0; iter < 100 && !Thread.interrupted(); iter++) {
                 long seed = 0xDEADBEEF_5EEDL + iter;
                 Random r = new Random(seed);
                 try {
@@ -425,7 +446,7 @@ public class StreamingLeadFuzzTest extends AbstractCairoTest {
         // partition or partitioned, random row counts including small tables where the last few
         // rows depend on tail backfills not being overwritten by flush defaults.
         assertMemoryLeak(() -> {
-            for (int iter = 0; iter < 80; iter++) {
+            for (int iter = 0; iter < 80 && !Thread.interrupted(); iter++) {
                 long seed = 0xD0A1_F00DL + iter;
                 Random r = new Random(seed);
                 try {
@@ -471,7 +492,7 @@ public class StreamingLeadFuzzTest extends AbstractCairoTest {
         // now opposes BACKWARD scan and normalises to LAG. Random over-order direction toggles
         // between dismissed and normalised cases.
         assertMemoryLeak(() -> {
-            for (int iter = 0; iter < 50; iter++) {
+            for (int iter = 0; iter < 50 && !Thread.interrupted(); iter++) {
                 long seed = 0xBACC0001_5EEDL + iter;
                 Random r = new Random(seed);
                 try {
@@ -507,7 +528,7 @@ public class StreamingLeadFuzzTest extends AbstractCairoTest {
     public void testFuzzMixedLagLeadDesc() throws Exception {
         // Random mixed LAG+LEAD with OVER ORDER BY ts DESC -> normalises both, streams.
         assertMemoryLeak(() -> {
-            for (int iter = 0; iter < 80; iter++) {
+            for (int iter = 0; iter < 80 && !Thread.interrupted(); iter++) {
                 long seed = 0xBADF00D_5EEDL + iter;
                 Random r = new Random(seed);
                 try {
@@ -551,7 +572,7 @@ public class StreamingLeadFuzzTest extends AbstractCairoTest {
             // Reuse two StringSink instances across all 20 iterations (QuestDB zero-GC convention).
             final StringSink first = new StringSink();
             final StringSink second = new StringSink();
-            for (int iter = 0; iter < 20; iter++) {
+            for (int iter = 0; iter < 20 && !Thread.interrupted(); iter++) {
                 long seed = 0xC0DE_70_70L + iter;
                 Random r = new Random(seed);
                 String table = "ttop_" + Long.toHexString(seed);
@@ -608,7 +629,7 @@ public class StreamingLeadFuzzTest extends AbstractCairoTest {
         // bugs and mem-arena reset bugs that would only show after the first invocation. Compares
         // each iteration's output against cached's deterministic output.
         assertMemoryLeak(() -> {
-            for (int iter = 0; iter < 10; iter++) {
+            for (int iter = 0; iter < 10 && !Thread.interrupted(); iter++) {
                 long seed = 0xFEEDBEEF_5EEDL + iter;
                 Random r = new Random(seed);
                 String table = "trex_" + iter;
@@ -658,7 +679,7 @@ public class StreamingLeadFuzzTest extends AbstractCairoTest {
             execute(
                     "insert into t select " +
                             "x as l, x::int as i, x * 1.0 as d, (x * 0.5)::float as f, " +
-                            "cast(x * 1000 as date) as dt, (1000_000L * x)::timestamp as tsv, " +
+                            "cast(x * 1000 as date) as dt, (1_000_000L * x)::timestamp as tsv, " +
                             "x::decimal(2) as dec8, x::decimal(4) as dec16, " +
                             "x::decimal(8) as dec32, x::decimal(16) as dec64 " +
                             "from long_sequence(5)"
@@ -713,7 +734,7 @@ public class StreamingLeadFuzzTest extends AbstractCairoTest {
                     "insert into t select " +
                             "cast(x * 100 as date) as d, " +
                             "case when x % 3 = 0 then 'A' else 'B' end as sym, " +
-                            "(1000_000L * x)::timestamp as ts " +
+                            "(1_000_000L * x)::timestamp as ts " +
                             "from long_sequence(30)"
             );
             String[] queries = {
@@ -734,7 +755,7 @@ public class StreamingLeadFuzzTest extends AbstractCairoTest {
                     "insert into t select " +
                             "x * 1.5 as d, " +
                             "case when x % 3 = 0 then 'A' else 'B' end as sym, " +
-                            "(1000_000L * x)::timestamp as ts " +
+                            "(1_000_000L * x)::timestamp as ts " +
                             "from long_sequence(40)"
             );
             String[] queries = {
@@ -756,7 +777,7 @@ public class StreamingLeadFuzzTest extends AbstractCairoTest {
                     "insert into t select " +
                             "(x * 0.25)::float as f, " +
                             "case when x % 3 = 0 then 'A' else 'B' end as sym, " +
-                            "(1000_000L * x)::timestamp as ts " +
+                            "(1_000_000L * x)::timestamp as ts " +
                             "from long_sequence(30)"
             );
             String[] queries = {
@@ -777,7 +798,7 @@ public class StreamingLeadFuzzTest extends AbstractCairoTest {
                     "insert into t select " +
                             "x::int as i, " +
                             "case when x % 3 = 0 then 'A' else 'B' end as sym, " +
-                            "(1000_000L * x)::timestamp as ts " +
+                            "(1_000_000L * x)::timestamp as ts " +
                             "from long_sequence(40)"
             );
             String[] queries = {
@@ -798,7 +819,7 @@ public class StreamingLeadFuzzTest extends AbstractCairoTest {
             execute(
                     "insert into t select " +
                             "case when x % 3 = 0 then 'A' else 'B' end as sym, " +
-                            "(1000_000L * x)::timestamp as ts " +
+                            "(1_000_000L * x)::timestamp as ts " +
                             "from long_sequence(30)"
             );
             String[] queries = {
@@ -820,7 +841,7 @@ public class StreamingLeadFuzzTest extends AbstractCairoTest {
             sb.append("x, ");
         }
         sb.append("('S' || (x % ").append(partitions).append("))::symbol as sym, ");
-        sb.append("(1000_000L * x)::timestamp as ts ");
+        sb.append("(1_000_000L * x)::timestamp as ts ");
         sb.append("from long_sequence(").append(rows).append(")");
         return sb.toString();
     }

@@ -286,12 +286,10 @@ public class WindowLeadLagBenchmark {
 
     private String buildSql() {
         return switch (shape) {
-            // -- Single-function shapes -----------------------------------------------------
             case "S1_LEAD_NO_PARTITION" -> "SELECT x, ts, lead(x, 1) OVER () FROM t";
             case "S2_LAG_DESC_NO_PARTITION" -> "SELECT x, ts, lag(x, 1) OVER (ORDER BY ts DESC) FROM t";
             case "S3_LEAD_PARTITIONED" -> "SELECT x, ts, lead(x, 1) OVER (PARTITION BY sym) FROM t";
             case "S4_LAG_DESC_PARTITIONED" -> "SELECT x, ts, lag(x, 1) OVER (PARTITION BY sym ORDER BY ts DESC) FROM t";
-            // -- Mixed-function shapes (Phase 6 candidates) ---------------------------------
             case "Q1_MIXED_NO_ORDER" -> "SELECT x, ts, lag(x, 1) OVER (), lead(x, 1) OVER () FROM t";
             case "Q2_MIXED_ASC" ->
                     "SELECT x, ts, lag(x, 1) OVER (ORDER BY ts ASC), lead(x, 1) OVER (ORDER BY ts ASC) FROM t";

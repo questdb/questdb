@@ -162,6 +162,122 @@ public class StreamingLeadIntegrationTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testMaxStreamingLagOffsetBoundaryRoutesIdenticallyAndStaysCorrect() throws Exception {
+        // LagXFunctionFactory.tryNewStreamingInstance returns null when a partitioned LAG offset
+        // exceeds MAX_STREAMING_LAG_OFFSET (65_536), falling back to the cached-helper
+        // LagOverPartitionFunction instead of the inline StreamingLagOverPartitionFunction.
+        //
+        // Observed: that fallback does NOT change DeferredEmit-vs-CachedWindow routing. The fallback
+        // LagOverPartitionFunction is still ZERO_PASS with lookahead 0 and partitioned, so the
+        // dispatch gate (which buckets by getLookahead()/type, not concrete class) keeps the query
+        // on the DeferredEmitWindow cursor. Plans at offset 65_536 and 65_537 are byte-for-byte
+        // identical except for the offset literal. The naive "65_536 streams / 65_537 routes to
+        // cached" premise is therefore FALSE.
+        //
+        // The shape that actually carries a streaming LAG through DeferredEmitWindow is a mixed
+        // LAG-DESC + LEAD-DESC query: Phase 4 normalises lead(x, N) OVER (ORDER BY ts DESC) into a
+        // LAG-ASC of offset N (lookahead 0), while lag(x, 1) DESC becomes the positive-lookahead
+        // LEAD-ASC that drives the dispatch. The streaming-LAG offset is thus the ORIGINAL LEAD
+        // offset; N controls the MAX_STREAMING_LAG_OFFSET guard while ringCap stays at 2.
+        assertMemoryLeak(() -> {
+            execute("create table t (x long, sym symbol, ts timestamp) timestamp(ts) partition by day");
+            execute("insert into t values (10, 'A', 0), (20, 'B', 1000), (30, 'A', 2000)");
+
+            // At the bound (65_536): streaming LAG variant is used; routes to DeferredEmitWindow.
+            assertPlanNoLeakCheck(
+                    "select x, sym, " +
+                            "lag(x, 1) over (partition by sym order by ts desc) as lg, " +
+                            "lead(x, 65_536) over (partition by sym order by ts desc) as ld from t",
+                    """
+                            DeferredEmitWindow
+                              functions: [lag(x, 65536, NULL) over (partition by [sym]),lead(x, 1, NULL) over (partition by [sym])]
+                              maxLookahead: 1
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: t
+                            """
+            );
+
+            // One past the bound (65_537): tryNewStreamingInstance returns null, the LAG falls back
+            // to the cached-helper LagOverPartitionFunction — yet the plan is unchanged. Routing is
+            // identical; only the concrete class behind the LAG slot differs (invisible in the plan).
+            assertPlanNoLeakCheck(
+                    "select x, sym, " +
+                            "lag(x, 1) over (partition by sym order by ts desc) as lg, " +
+                            "lead(x, 65_537) over (partition by sym order by ts desc) as ld from t",
+                    """
+                            DeferredEmitWindow
+                              functions: [lag(x, 65537, NULL) over (partition by [sym]),lead(x, 1, NULL) over (partition by [sym])]
+                              maxLookahead: 1
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: t
+                            """
+            );
+        });
+    }
+
+    @Test
+    public void testMaxStreamingLagOffsetBoundaryStreamingVariantCorrectBelowBound() throws Exception {
+        // Below the bound the streaming LAG variant computes its (startOffset, firstIdx, count)
+        // tuple inline in the cursor's MapValue. Prove it returns the same values as the cached
+        // path on a dataset large enough for the LAG to actually buffer: 2 partitions x 5 rows,
+        // streaming-LAG offset 3 (the normalised lead(x, 3) DESC). The last rows of each partition
+        // (in OVER-DESC order) carry the buffered predecessor; earlier rows carry the NULL default.
+        assertMemoryLeak(() -> {
+            execute("create table t (x long, sym symbol, ts timestamp) timestamp(ts) partition by day");
+            execute("insert into t select x, case when x % 2 = 0 then 'A' else 'B' end, x::timestamp from long_sequence(10)");
+
+            // Plan: streaming variant -> DeferredEmitWindow (offset 3 < 65_536, ringCap 2).
+            assertPlanNoLeakCheck(
+                    "select x, sym, " +
+                            "lag(x, 1) over (partition by sym order by ts desc) as lg, " +
+                            "lead(x, 3) over (partition by sym order by ts desc) as ld from t",
+                    """
+                            DeferredEmitWindow
+                              functions: [lag(x, 3, NULL) over (partition by [sym]),lead(x, 1, NULL) over (partition by [sym])]
+                              maxLookahead: 1
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: t
+                            """
+            );
+
+            // Values match the cached path exactly (flag-off vs flag-on multiset equivalence).
+            StreamingLeadEquivalence.assertEquivalent(
+                    engine,
+                    sqlExecutionContext,
+                    "select x, sym, " +
+                            "lag(x, 1) over (partition by sym order by ts desc) as lg, " +
+                            "lead(x, 3) over (partition by sym order by ts desc) as ld " +
+                            "from t order by sym, x",
+                    "streaming-variant offset 3"
+            );
+        });
+    }
+
+    @Test
+    public void testMaxStreamingLagOffsetBoundaryCachedFallbackCorrectAboveBound() throws Exception {
+        // Above the bound the LAG falls back to the cached-helper LagOverPartitionFunction inside the
+        // same DeferredEmitWindow cursor. Prove the fallback still yields correct output: with offset
+        // 65_537 > partition size every LAG result is the NULL default, matching the cached path.
+        assertMemoryLeak(() -> {
+            execute("create table t (x long, sym symbol, ts timestamp) timestamp(ts) partition by day");
+            execute("insert into t select x, case when x % 2 = 0 then 'A' else 'B' end, x::timestamp from long_sequence(10)");
+
+            StreamingLeadEquivalence.assertEquivalent(
+                    engine,
+                    sqlExecutionContext,
+                    "select x, sym, " +
+                            "lag(x, 1) over (partition by sym order by ts desc) as lg, " +
+                            "lead(x, 65_537) over (partition by sym order by ts desc) as ld " +
+                            "from t order by sym, x",
+                    "cached-fallback offset 65_537"
+            );
+        });
+    }
+
+    @Test
     public void testMixedLagAndLeadFallsBackToCachedWhenNotNormalised() throws Exception {
         // Phase 6.1 cost-model: mixed LAG + LEAD without OVER ORDER BY (or with an order matching the
         // base scan direction) has no sort tree for streaming to eliminate. Cached is already optimal,
@@ -1011,6 +1127,57 @@ public class StreamingLeadIntegrationTest extends AbstractCairoTest {
                             "lag(x, 1, 999::long) over (partition by sym order by ts desc) as lg " +
                             "from t",
                     null, false, true
+            );
+        });
+    }
+
+    @Test
+    public void testStreamingOnRejectsInvalidLagLeadArguments() throws Exception {
+        // The shared validation (tryNewStreamingInstance + LeadLagWindowFunctionFactoryHelper)
+        // rejects a non-constant offset, a non-positive offset, and a window-function default.
+        // These are covered with the flag OFF elsewhere; here the flag is ON (set in @Before) and
+        // the shape is PARTITION BY, so tryNewStreamingInstance is actually entered before the
+        // shared helper runs. Confirm the same errors still fire on the streaming dispatch path.
+        assertMemoryLeak(() -> {
+            execute("create table t (x long, sym symbol, ts timestamp) timestamp(ts) partition by day");
+            execute("insert into t values (10, 'A', 0), (20, 'B', 1000)");
+
+            // Non-constant offset (column x). tryNewStreamingInstance returns null on non-constant,
+            // the shared helper then throws.
+            assertExceptionNoLeakCheck(
+                    "select x, lag(x, x) over (partition by sym) as lx from t",
+                    17,
+                    "offset must be a constant"
+            );
+            assertExceptionNoLeakCheck(
+                    "select x, lead(x, x) over (partition by sym) as lx from t",
+                    18,
+                    "offset must be a constant"
+            );
+
+            // Negative offset.
+            assertExceptionNoLeakCheck(
+                    "select x, lag(x, -1) over (partition by sym) as lx from t",
+                    17,
+                    "offset must be a positive integer"
+            );
+            assertExceptionNoLeakCheck(
+                    "select x, lead(x, -1) over (partition by sym) as lx from t",
+                    18,
+                    "offset must be a positive integer"
+            );
+
+            // Window function (aggregate sum) as default value. tryNewStreamingInstance throws
+            // directly here, before any null-return fallback.
+            assertExceptionNoLeakCheck(
+                    "select x, lag(x, 1, sum(x)) over (partition by sym) as lx from t",
+                    20,
+                    "default value can not be a window function"
+            );
+            assertExceptionNoLeakCheck(
+                    "select x, lead(x, 1, sum(x)) over (partition by sym) as lx from t",
+                    21,
+                    "default value can not be a window function"
             );
         });
     }

@@ -41,6 +41,7 @@ import io.questdb.cairo.vm.api.MemoryARW;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.window.WindowContext;
+import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Numbers;
@@ -120,7 +121,7 @@ public class LagTimestampFunctionFactory extends AbstractWindowFunctionFactory {
         Function defaultValue = null;
         if (args.size() == 3) {
             Function dv = args.getQuick(2);
-            if (dv instanceof io.questdb.griffin.engine.window.WindowFunction) {
+            if (dv instanceof WindowFunction) {
                 throw SqlException.$(argPositions.getQuick(2), "default value can not be a window function");
             }
             if (!dv.isConstant()) {
@@ -297,9 +298,9 @@ public class LagTimestampFunctionFactory extends AbstractWindowFunctionFactory {
      */
     static final class StreamingLagOverPartitionFunction extends LagOverPartitionFunction {
         private final CairoConfiguration configuration;
-        private final ColumnTypes keyTypes;
         // Resolved in init() after super.init() runs defaultValue.init(); see LagLongFunctionFactory.
         private long defaultTimestampValue;
+        private final ColumnTypes keyTypes;
 
         public StreamingLagOverPartitionFunction(
                 CairoConfiguration configuration,

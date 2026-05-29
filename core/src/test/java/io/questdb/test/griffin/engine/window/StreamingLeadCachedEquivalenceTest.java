@@ -48,7 +48,7 @@ public class StreamingLeadCachedEquivalenceTest extends AbstractCairoTest {
             "insert into t " +
                     "select x, " +
                     "       case when x % 3 = 0 then 'A' when x % 3 = 1 then 'B' else 'C' end, " +
-                    "       (1000_000L * x)::timestamp " +
+                    "       (1_000_000L * x)::timestamp " +
                     "from long_sequence(60)";
 
     @Test

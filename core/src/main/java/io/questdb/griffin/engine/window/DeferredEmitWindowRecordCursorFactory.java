@@ -90,9 +90,10 @@ import java.util.Arrays;
  *       are looked up via {@link RecordCursor#recordAt(Record, long)} at emission time).</li>
  * </ul>
  * Optionally supports {@code PARTITION BY} via the {@link Map}/{@link VirtualRecord}/{@link RecordSink}
- * trio. Per-partition state is stored in {@link #PARTITION_VALUE_TYPES} (5 longs:
- * slotsByteOffset, ringHead, ringTail, ringCount, pendingFilled). The cursor enforces the runtime
- * partition cardinality cap from {@code cairo.sql.window.streaming.max.partitions}.
+ * trio. Per-partition state is stored as the value layout built by {@link #buildPartitionValueTypes(int)}
+ * (5 base longs: slotsByteOffset, ringHead, ringTail, ringCount, pendingFilled, plus 3 longs per LAG
+ * function). The cursor enforces the runtime partition cardinality cap from
+ * {@code cairo.sql.window.streaming.max.partitions}.
  */
 public class DeferredEmitWindowRecordCursorFactory extends AbstractRecordCursorFactory {
 
@@ -102,7 +103,6 @@ public class DeferredEmitWindowRecordCursorFactory extends AbstractRecordCursorF
     // (startOffset, firstIdx, count) inline in the cursor's MapValue and skip a second hash probe.
     private static final int PARTITION_VALUE_BASE_LONGS = 5;
     private static final int PARTITION_VALUE_LONGS_PER_LAG = 3;
-    private static final ArrayColumnTypes PARTITION_VALUE_TYPES;
     // Upfront partition slices to pre-allocate when a partitioned cursor first opens. Trades a small
     // amount of overcommit (most queries materialise under this many partitions) for elimination of
     // doubling reallocs in the typical case. Capped by maxPartitions inside of() so a deliberately
@@ -827,8 +827,8 @@ public class DeferredEmitWindowRecordCursorFactory extends AbstractRecordCursorF
             ringCount++;
 
             // 4) Persist state. The flyweight assertion proves mapValue still points at the same value
-            //    tuple captured at mapValueAddr; PARTITION_VALUE_TYPES is five LONG columns laid out
-            //    8 bytes apart, so we can write directly via Unsafe without going through the
+            //    tuple captured at mapValueAddr; the partition value layout is five LONG columns laid
+            //    out 8 bytes apart, so we can write directly via Unsafe without going through the
             //    flyweight's per-call valueOffsets lookup.
             if (partitionByRecord == null) {
                 singlePartitionState[1] = ringHead;
@@ -1131,14 +1131,5 @@ public class DeferredEmitWindowRecordCursorFactory extends AbstractRecordCursorF
                 this.slotOff = slotOff;
             }
         }
-    }
-
-    static {
-        PARTITION_VALUE_TYPES = new ArrayColumnTypes();
-        PARTITION_VALUE_TYPES.add(ColumnType.LONG); // [0] slotsByteOffset
-        PARTITION_VALUE_TYPES.add(ColumnType.LONG); // [1] ringHead
-        PARTITION_VALUE_TYPES.add(ColumnType.LONG); // [2] ringTail
-        PARTITION_VALUE_TYPES.add(ColumnType.LONG); // [3] ringCount
-        PARTITION_VALUE_TYPES.add(ColumnType.LONG); // [4] pendingFilled
     }
 }
