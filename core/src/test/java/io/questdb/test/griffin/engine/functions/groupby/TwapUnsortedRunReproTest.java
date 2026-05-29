@@ -79,6 +79,75 @@ public class TwapUnsortedRunReproTest extends AbstractCairoTest {
     private static final double EXPECTED_TWAP = 2500.0;
 
     /**
+     * Regression guard for a separate but related bug: the owner
+     * {@code TwapGroupByFunction}'s {@code cachedPtr}/{@code cachedValue}
+     * memoization in {@code getDouble} must be reset by {@code clear()} so a
+     * reused factory cannot return the previous cursor run's TWAP when the
+     * {@code GroupByAllocator}'s next allocation happens to land at the same
+     * native address as the previous run's merged buffer (likely under the
+     * C heap's thread-local free-list caches).
+     *
+     * <p>Address collision is probabilistic and depends on the underlying
+     * malloc, so a behavioural test would be flaky. Instead this test asserts
+     * the invariant directly: after the first cursor closes, the owner
+     * instance's {@code cachedPtr} must be zero.
+     */
+    @Test
+    public void testFactoryReuseClearsCachedPtr() throws Exception {
+        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 50);
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_ENABLED, "true");
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_WORK_STEALING_THRESHOLD, 1);
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_SHARDING_THRESHOLD, 1_000_000);
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_BATCH_SIZE, 8);
+
+        assertMemoryLeak(() -> {
+            try (WorkerPool pool = new WorkerPool(() -> 2)) {
+                TestUtils.execute(pool, (engine, compiler, sqlExecutionContext) -> {
+                    engine.execute(
+                            "CREATE TABLE tab (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR",
+                            sqlExecutionContext
+                    );
+                    StringBuilder sb = new StringBuilder("INSERT INTO tab VALUES\n");
+                    for (int i = 0; i < ROWS; i++) {
+                        if (i > 0) {
+                            sb.append(",\n");
+                        }
+                        sb.append('(').append((double) (i + 1)).append(", ").append((long) i * 1000).append(')');
+                    }
+                    engine.execute(sb.toString(), sqlExecutionContext);
+
+                    final String sql = "SELECT twap(price, ts) FROM tab";
+                    try (RecordCursorFactory factory = engine.select(sql, sqlExecutionContext)) {
+                        final TwapGroupByFunction twap = findOwnerTwapFunction(factory);
+                        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                            Assert.assertTrue("cursor returned no row", cursor.hasNext());
+                            // Force the getDouble cache to populate.
+                            final double observed = cursor.getRecord().getDouble(0);
+                            Assert.assertEquals(EXPECTED_TWAP, observed, 0.0);
+                            Assert.assertNotEquals(
+                                    "after getDouble populates the memoization cache, cachedPtr must be non-zero",
+                                    0L, readCachedPtr(twap)
+                            );
+                        }
+                        // cursor.close() above triggers frameSequence.reset() ->
+                        // atom.clear() -> function.clear() on the owner. The
+                        // fix in TwapGroupByFunction.clear() must zero cachedPtr
+                        // so the next factory reuse cycle cannot return a stale
+                        // value when the allocator hands out the same address
+                        // again.
+                        Assert.assertEquals(
+                                "after cursor close, TwapGroupByFunction.clear() must reset cachedPtr to 0; "
+                                        + "otherwise a reused factory can return a previous run's TWAP whenever "
+                                        + "the GroupByAllocator's next allocation collides with the stale address.",
+                                0L, readCachedPtr(twap)
+                        );
+                    }
+                }, configuration, LOG);
+            }
+        });
+    }
+
+    /**
      * Keyed counterpart of {@link #testParallelTwapMatchesUnderContention}: a
      * GROUP BY over a SYMBOL key drives the {@code computeKeyedBatch} reduce
      * path, and the low sharding threshold forces the sharded merge path. Every
@@ -327,6 +396,10 @@ public class TwapUnsortedRunReproTest extends AbstractCairoTest {
         });
     }
 
+    private static void appendRow(StringBuilder sb, long ts) {
+        sb.append('(').append((double) ts).append(", ").append(ts).append(')');
+    }
+
     // Builds the duplicate-ts dataset described on
     // testParallelTwapMatchesUnderContentionWithDuplicateTimestamps. Each block
     // contributes one narrow frame (50 rows at blockStartTs) plus two wide
@@ -358,79 +431,6 @@ public class TwapUnsortedRunReproTest extends AbstractCairoTest {
             }
         }
         return sb.toString();
-    }
-
-    private static void appendRow(StringBuilder sb, long ts) {
-        sb.append('(').append((double) ts).append(", ").append(ts).append(')');
-    }
-
-    /**
-     * Regression guard for a separate but related bug: the owner
-     * {@code TwapGroupByFunction}'s {@code cachedPtr}/{@code cachedValue}
-     * memoization in {@code getDouble} must be reset by {@code clear()} so a
-     * reused factory cannot return the previous cursor run's TWAP when the
-     * {@code GroupByAllocator}'s next allocation happens to land at the same
-     * native address as the previous run's merged buffer (likely under the
-     * C heap's thread-local free-list caches).
-     *
-     * <p>Address collision is probabilistic and depends on the underlying
-     * malloc, so a behavioural test would be flaky. Instead this test asserts
-     * the invariant directly: after the first cursor closes, the owner
-     * instance's {@code cachedPtr} must be zero.
-     */
-    @Test
-    public void testFactoryReuseClearsCachedPtr() throws Exception {
-        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 50);
-        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_ENABLED, "true");
-        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_WORK_STEALING_THRESHOLD, 1);
-        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_SHARDING_THRESHOLD, 1_000_000);
-        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_BATCH_SIZE, 8);
-
-        assertMemoryLeak(() -> {
-            try (WorkerPool pool = new WorkerPool(() -> 2)) {
-                TestUtils.execute(pool, (engine, compiler, sqlExecutionContext) -> {
-                    engine.execute(
-                            "CREATE TABLE tab (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR",
-                            sqlExecutionContext
-                    );
-                    StringBuilder sb = new StringBuilder("INSERT INTO tab VALUES\n");
-                    for (int i = 0; i < ROWS; i++) {
-                        if (i > 0) {
-                            sb.append(",\n");
-                        }
-                        sb.append('(').append((double) (i + 1)).append(", ").append((long) i * 1000).append(')');
-                    }
-                    engine.execute(sb.toString(), sqlExecutionContext);
-
-                    final String sql = "SELECT twap(price, ts) FROM tab";
-                    try (RecordCursorFactory factory = engine.select(sql, sqlExecutionContext)) {
-                        final TwapGroupByFunction twap = findOwnerTwapFunction(factory);
-                        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                            Assert.assertTrue("cursor returned no row", cursor.hasNext());
-                            // Force the getDouble cache to populate.
-                            final double observed = cursor.getRecord().getDouble(0);
-                            Assert.assertEquals(EXPECTED_TWAP, observed, 0.0);
-                            Assert.assertNotEquals(
-                                    "after getDouble populates the memoization cache, cachedPtr must be non-zero",
-                                    0L, readCachedPtr(twap)
-                            );
-                        }
-                        // cursor.close() above triggers frameSequence.reset() ->
-                        // atom.clear() -> function.clear() on the owner. The
-                        // fix in TwapGroupByFunction.clear() must zero cachedPtr
-                        // so the next factory reuse cycle cannot return a stale
-                        // value when the allocator hands out the same address
-                        // again.
-                        Assert.assertEquals(
-                                "after cursor close, TwapGroupByFunction.clear() must reset cachedPtr to 0; "
-                                        + "otherwise a reused factory can return a previous run's TWAP whenever "
-                                        + "the GroupByAllocator's next allocation collides with the stale address.",
-                                0L, readCachedPtr(twap)
-                        );
-                    }
-                }, configuration, LOG);
-            }
-        });
     }
 
     // Runs the keyed twap query and returns the number of groups whose twap

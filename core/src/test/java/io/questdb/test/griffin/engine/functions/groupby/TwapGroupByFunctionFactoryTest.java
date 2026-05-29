@@ -27,7 +27,6 @@ package io.questdb.test.griffin.engine.functions.groupby;
 import io.questdb.mp.WorkerPool;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
-import org.junit.Ignore;
 import org.junit.Test;
 
 public class TwapGroupByFunctionFactoryTest extends AbstractCairoTest {
