@@ -262,12 +262,6 @@ public class LeadLongFunctionFactory extends AbstractWindowFunctionFactory {
         }
 
         @Override
-        public void close() {
-            super.close();
-            buffer = null;
-        }
-
-        @Override
         public int getLookahead() {
             return (int) offset;
         }
@@ -284,6 +278,13 @@ public class LeadLongFunctionFactory extends AbstractWindowFunctionFactory {
         }
 
         @Override
+        protected void nullStreamingFields() {
+            // Re-enable the lazy-alloc gate in pass1 on cursor reuse: super's close/reset
+            // frees buffer but leaves the reference non-null.
+            buffer = null;
+        }
+
+        @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             if (buffer == null) {
                 // Cached path won: lazy-allocate the ring buffer on first invocation. Streaming
@@ -295,12 +296,6 @@ public class LeadLongFunctionFactory extends AbstractWindowFunctionFactory {
                 );
             }
             super.pass1(record, recordOffset, spi);
-        }
-
-        @Override
-        public void reset() {
-            super.reset();
-            buffer = null;
         }
 
         @Override
@@ -341,13 +336,6 @@ public class LeadLongFunctionFactory extends AbstractWindowFunctionFactory {
         }
 
         @Override
-        public void close() {
-            super.close();
-            map = null;
-            memory = null;
-        }
-
-        @Override
         public int getLookahead() {
             return (int) offset;
         }
@@ -361,6 +349,14 @@ public class LeadLongFunctionFactory extends AbstractWindowFunctionFactory {
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             super.init(symbolTableSource, executionContext);
             this.defaultLongValue = defaultValue == null ? Numbers.LONG_NULL : defaultValue.getLong(null);
+        }
+
+        @Override
+        protected void nullStreamingFields() {
+            // Re-enable the lazy-alloc gate in pass1 on cursor reuse: super's close/reset
+            // frees map and memory but leaves the references non-null.
+            map = null;
+            memory = null;
         }
 
         @Override
@@ -380,13 +376,6 @@ public class LeadLongFunctionFactory extends AbstractWindowFunctionFactory {
                 );
             }
             super.pass1(record, recordOffset, spi);
-        }
-
-        @Override
-        public void reset() {
-            super.reset();
-            map = null;
-            memory = null;
         }
 
         @Override

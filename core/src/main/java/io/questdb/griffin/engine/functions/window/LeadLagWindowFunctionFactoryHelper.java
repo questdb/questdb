@@ -303,6 +303,7 @@ public class LeadLagWindowFunctionFactoryHelper {
             super.close();
             Misc.free(memory);
             Misc.free(defaultValue);
+            nullStreamingFields();
         }
 
         @Override
@@ -360,6 +361,14 @@ public class LeadLagWindowFunctionFactoryHelper {
         public void reset() {
             super.reset();
             Misc.free(memory);
+            nullStreamingFields();
+        }
+
+        // Default no-op; streaming subclasses override to set their closed-but-non-null fields
+        // (map, memory) to null so their lazy-alloc gate fires on the next computeNext. Without
+        // this hook every streaming subclass would need its own close()/reset() override pair just
+        // to perform the nulling.
+        protected void nullStreamingFields() {
         }
 
         @Override
@@ -420,6 +429,7 @@ public class LeadLagWindowFunctionFactoryHelper {
             super.close();
             Misc.free(buffer);
             Misc.free(defaultValue);
+            nullStreamingFields();
         }
 
         @Override
@@ -460,6 +470,12 @@ public class LeadLagWindowFunctionFactoryHelper {
             Misc.free(buffer);
             loIdx = 0;
             count = 0;
+            nullStreamingFields();
+        }
+
+        // Default no-op; the streaming non-partitioned LEAD subclass overrides to null `buffer`
+        // so its lazy-alloc gate fires on reuse.
+        protected void nullStreamingFields() {
         }
 
         @Override
@@ -558,6 +574,7 @@ public class LeadLagWindowFunctionFactoryHelper {
             super.close();
             Misc.free(memory);
             Misc.free(defaultValue);
+            nullStreamingFields();
         }
 
         @Override
@@ -611,6 +628,12 @@ public class LeadLagWindowFunctionFactoryHelper {
         public void reset() {
             super.reset();
             Misc.free(memory);
+            nullStreamingFields();
+        }
+
+        // Default no-op; partitioned streaming LEAD subclasses override to null `map` and
+        // `memory` after super freed them.
+        protected void nullStreamingFields() {
         }
 
         @Override

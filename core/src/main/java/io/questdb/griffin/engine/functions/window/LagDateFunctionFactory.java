@@ -268,13 +268,6 @@ public class LagDateFunctionFactory extends AbstractWindowFunctionFactory {
         }
 
         @Override
-        public void close() {
-            super.close();
-            map = null;
-            memory = null;
-        }
-
-        @Override
         public void computeNext(Record record) {
             if (map == null) {
                 map = MapFactory.createUnorderedMap(
@@ -298,8 +291,9 @@ public class LagDateFunctionFactory extends AbstractWindowFunctionFactory {
         }
 
         @Override
-        public void reset() {
-            super.reset();
+        protected void nullStreamingFields() {
+            // Re-enable the lazy-alloc gate in computeNext / streamingPass1 on cursor reuse:
+            // super's close/reset frees map and memory but leaves the references non-null.
             map = null;
             memory = null;
         }

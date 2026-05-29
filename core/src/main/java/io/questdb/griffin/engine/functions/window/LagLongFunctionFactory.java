@@ -290,16 +290,6 @@ public class LagLongFunctionFactory extends AbstractWindowFunctionFactory {
         }
 
         @Override
-        public void close() {
-            super.close();
-            // Null the fields so the lazy-alloc gate in computeNext fires on the next reuse.
-            // Misc.free in super closed the objects but left the references non-null, which would
-            // otherwise hide their closed state from `if (memory == null)`.
-            map = null;
-            memory = null;
-        }
-
-        @Override
         public void computeNext(Record record) {
             // Cached path entry (WindowRecordCursorFactory invokes computeNext directly; pass1 is
             // only the CachedWindowRecordCursorFactory entry). Lazy-allocate the map and ring
@@ -327,8 +317,9 @@ public class LagLongFunctionFactory extends AbstractWindowFunctionFactory {
         }
 
         @Override
-        public void reset() {
-            super.reset();
+        protected void nullStreamingFields() {
+            // Re-enable the lazy-alloc gate in computeNext / streamingPass1 on cursor reuse:
+            // super's close/reset frees map and memory but leaves the references non-null.
             map = null;
             memory = null;
         }

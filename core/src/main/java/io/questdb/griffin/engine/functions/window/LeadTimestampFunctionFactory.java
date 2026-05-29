@@ -244,12 +244,6 @@ public class LeadTimestampFunctionFactory extends AbstractWindowFunctionFactory 
         }
 
         @Override
-        public void close() {
-            super.close();
-            buffer = null;
-        }
-
-        @Override
         public int getLookahead() {
             return (int) offset;
         }
@@ -266,6 +260,13 @@ public class LeadTimestampFunctionFactory extends AbstractWindowFunctionFactory 
         }
 
         @Override
+        protected void nullStreamingFields() {
+            // Re-enable the lazy-alloc gate in pass1 on cursor reuse: super's close/reset
+            // frees buffer but leaves the reference non-null.
+            buffer = null;
+        }
+
+        @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             if (buffer == null) {
                 buffer = Vm.getCARWInstance(
@@ -275,12 +276,6 @@ public class LeadTimestampFunctionFactory extends AbstractWindowFunctionFactory 
                 );
             }
             super.pass1(record, recordOffset, spi);
-        }
-
-        @Override
-        public void reset() {
-            super.reset();
-            buffer = null;
         }
 
         @Override
@@ -316,13 +311,6 @@ public class LeadTimestampFunctionFactory extends AbstractWindowFunctionFactory 
         }
 
         @Override
-        public void close() {
-            super.close();
-            map = null;
-            memory = null;
-        }
-
-        @Override
         public int getLookahead() {
             return (int) offset;
         }
@@ -336,6 +324,14 @@ public class LeadTimestampFunctionFactory extends AbstractWindowFunctionFactory 
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             super.init(symbolTableSource, executionContext);
             this.defaultTimestampValue = resolveTimestampDefault(arg, defaultValue);
+        }
+
+        @Override
+        protected void nullStreamingFields() {
+            // Re-enable the lazy-alloc gate in pass1 on cursor reuse: super's close/reset
+            // frees map and memory but leaves the references non-null.
+            map = null;
+            memory = null;
         }
 
         @Override
@@ -353,13 +349,6 @@ public class LeadTimestampFunctionFactory extends AbstractWindowFunctionFactory 
                 );
             }
             super.pass1(record, recordOffset, spi);
-        }
-
-        @Override
-        public void reset() {
-            super.reset();
-            map = null;
-            memory = null;
         }
 
         @Override
