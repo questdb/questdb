@@ -40,10 +40,13 @@ import org.junit.Assert;
 import org.junit.Test;
 
 import java.lang.reflect.Field;
+import java.lang.reflect.Modifier;
+import java.util.IdentityHashMap;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * Regression test that locks in the fix for
@@ -73,10 +76,10 @@ import java.util.concurrent.atomic.AtomicInteger;
  */
 public class TwapUnsortedRunReproTest extends AbstractCairoTest {
 
+    private static final double EXPECTED_TWAP = 2500.0;
     private static final int NUM_ITERATIONS = 30;
     private static final int NUM_THREADS = 8;
     private static final int ROWS = 5_000;
-    private static final double EXPECTED_TWAP = 2500.0;
 
     /**
      * Regression guard for a separate but related bug: the owner
@@ -251,8 +254,7 @@ public class TwapUnsortedRunReproTest extends AbstractCairoTest {
                     final AtomicInteger mismatches = new AtomicInteger();
                     final AtomicInteger threadsThatSawMismatches = new AtomicInteger();
                     // Track one observed wrong value so the failure print is concrete.
-                    final java.util.concurrent.atomic.AtomicReference<Double> sampleWrongValue =
-                            new java.util.concurrent.atomic.AtomicReference<>(null);
+                    final AtomicReference<Double> sampleWrongValue = new AtomicReference<>(null);
 
                     for (int t = 0; t < NUM_THREADS; t++) {
                         final int threadId = t;
@@ -354,8 +356,7 @@ public class TwapUnsortedRunReproTest extends AbstractCairoTest {
                     final SOCountDownLatch latch = new SOCountDownLatch(NUM_THREADS);
                     final Map<Integer, Throwable> errors = new ConcurrentHashMap<>();
                     final AtomicInteger mismatches = new AtomicInteger();
-                    final java.util.concurrent.atomic.AtomicReference<Double> sampleWrongValue =
-                            new java.util.concurrent.atomic.AtomicReference<>(null);
+                    final AtomicReference<Double> sampleWrongValue = new AtomicReference<>(null);
 
                     for (int t = 0; t < NUM_THREADS; t++) {
                         final int threadId = t;
@@ -396,6 +397,90 @@ public class TwapUnsortedRunReproTest extends AbstractCairoTest {
         });
     }
 
+    /**
+     * Lateral-join counterpart of {@link #testFactoryReuseClearsCachedPtr}. A
+     * lateral join whose correlated subquery references an outer {@code twap()}
+     * aggregate creates a shared dependent {@link TwapGroupByFunction}. The
+     * dependent shares the owner's {@code GroupByAllocator} (fanned out by
+     * {@code setAllocator}) but its own {@code clear()} never runs - on the
+     * serial group-by path the shared cursor closes via {@code cursorClosed()},
+     * not {@code clear()}. The owner's {@code clear()} must therefore reset the
+     * dependent's {@code getDouble} memoization too, or a reused factory could
+     * return the dependent's previous-run TWAP once the allocator hands back a
+     * colliding address.
+     *
+     * <p>Parallel group-by is disabled on purpose: the async shared cursor
+     * ({@code AsyncGroupByNotKeyedSharedCursor}) clears its functions directly
+     * via {@code clearObjList}, so only the serial {@code GroupBySharedCursor}
+     * (which closes via {@code cursorClosed()} alone) exposes the missing reset.
+     *
+     * <p>As in the owner test, assert the invariant directly: address collision
+     * is probabilistic, so a behavioural test would be flaky.
+     */
+    @Test
+    public void testSharedDependentFactoryReuseClearsCachedPtr() throws Exception {
+        // Force the serial group-by path; the async path clears shared
+        // functions directly and would not exercise the owner's fan-out.
+        sqlExecutionContext.setParallelGroupByEnabled(false);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE items (key SYMBOL, price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE rates (min_val DOUBLE, rate DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO items VALUES
+                    ('A', 10.0, '2024-01-01T00:00:00.000000Z'),
+                    ('A', 20.0, '2024-01-01T01:00:00.000000Z'),
+                    ('A', 30.0, '2024-01-01T02:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO rates VALUES
+                    (10.0, 0.1, '2024-01-01T00:00:00.000000Z'),
+                    (25.0, 0.2, '2024-01-01T00:00:01.000000Z')
+                    """);
+            // The key column makes this a keyed group-by, so the lateral join
+            // shares the result through GroupByRecordCursorFactory's
+            // GroupBySharedCursor - the cursor that closes via cursorClosed()
+            // alone. o.t = twap(price, ts) over (10,20,30) at 0/1h/2h = 15.0;
+            // the correlated predicate min_val <= o.t reads the shared dependent
+            // twap, populating its getDouble cache.
+            final String sql = """
+                    SELECT o.t, sub.rate
+                    FROM (SELECT key, twap(price, ts) AS t FROM items) o
+                    JOIN LATERAL (
+                        SELECT rate FROM rates WHERE min_val <= o.t
+                    ) sub
+                    ORDER BY sub.rate
+                    """;
+            try (RecordCursorFactory factory = select(sql)) {
+                final TwapGroupByFunction dependent = findSharedDependentTwapFunction(factory);
+                Assert.assertNotNull(
+                        "expected a shared dependent TwapGroupByFunction in the lateral-join factory",
+                        dependent
+                );
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    final Record record = cursor.getRecord();
+                    boolean hadRow = false;
+                    while (cursor.hasNext()) {
+                        record.getDouble(0);
+                        hadRow = true;
+                    }
+                    Assert.assertTrue("lateral join returned no rows", hadRow);
+                    Assert.assertNotEquals(
+                            "the dependent's getDouble cache must populate while the lateral subquery reads o.t",
+                            0L, readCachedPtr(dependent)
+                    );
+                }
+                // Closing the cursor closes the owner GroupByRecordCursor, whose
+                // clear() must fan out to the dependent and zero its cachedPtr.
+                Assert.assertEquals(
+                        "after cursor close, the owner's clear() must reset the shared dependent's cachedPtr "
+                                + "to 0; otherwise a reused factory can return the dependent's previous-run TWAP "
+                                + "when the GroupByAllocator's next allocation collides with the stale address.",
+                        0L, readCachedPtr(dependent)
+                );
+            }
+        });
+    }
+
     private static void appendRow(StringBuilder sb, long ts) {
         sb.append('(').append((double) ts).append(", ").append(ts).append(')');
     }
@@ -431,6 +516,54 @@ public class TwapUnsortedRunReproTest extends AbstractCairoTest {
             }
         }
         return sb.toString();
+    }
+
+    // Recursively collects every TwapGroupByFunction reachable from the factory
+    // by following base factories, factory-typed fields and ObjList fields
+    // (including the nested ObjList<ObjList<Function>> that holds a lateral
+    // join's shared functions). An identity-visited set guards against cycles.
+    private static void collectTwapFunctions(Object node, IdentityHashMap<Object, Object> visited, ObjList<TwapGroupByFunction> out) {
+        if (node == null || visited.put(node, node) != null) {
+            return;
+        }
+        if (node instanceof TwapGroupByFunction t) {
+            out.add(t);
+            return;
+        }
+        if (node instanceof ObjList<?> list) {
+            for (int i = 0, n = list.size(); i < n; i++) {
+                collectTwapFunctions(list.getQuick(i), visited, out);
+            }
+            return;
+        }
+        if (node instanceof RecordCursorFactory f) {
+            RecordCursorFactory base = null;
+            try {
+                base = f.getBaseFactory();
+            } catch (Throwable ignore) {
+                // some factories don't expose a base; the field scan below still reaches children
+            }
+            if (base != f) {
+                collectTwapFunctions(base, visited, out);
+            }
+            for (Class<?> c = f.getClass(); c != null && c != Object.class; c = c.getSuperclass()) {
+                for (Field fld : c.getDeclaredFields()) {
+                    if (Modifier.isStatic(fld.getModifiers())) {
+                        continue;
+                    }
+                    final Class<?> ft = fld.getType();
+                    if (!RecordCursorFactory.class.isAssignableFrom(ft) && !ObjList.class.isAssignableFrom(ft)) {
+                        continue;
+                    }
+                    try {
+                        fld.setAccessible(true);
+                        collectTwapFunctions(fld.get(f), visited, out);
+                    } catch (Throwable ignore) {
+                        // skip inaccessible fields
+                    }
+                }
+            }
+        }
     }
 
     // Runs the keyed twap query and returns the number of groups whose twap
@@ -488,6 +621,23 @@ public class TwapUnsortedRunReproTest extends AbstractCairoTest {
             f = base;
         }
         throw new AssertionError("TwapGroupByFunction not present in any ObjList field of the factory chain: " + chain);
+    }
+
+    // Returns the first shared dependent TwapGroupByFunction in the factory, i.e.
+    // the first entry of some owner's sharedDependents list, or null if none is
+    // wired (no lateral join shares a twap aggregate).
+    private static TwapGroupByFunction findSharedDependentTwapFunction(RecordCursorFactory factory) throws Exception {
+        final ObjList<TwapGroupByFunction> all = new ObjList<>();
+        collectTwapFunctions(factory, new IdentityHashMap<>(), all);
+        final Field deps = TwapGroupByFunction.class.getDeclaredField("sharedDependents");
+        deps.setAccessible(true);
+        for (int i = 0, n = all.size(); i < n; i++) {
+            final Object v = deps.get(all.getQuick(i));
+            if (v instanceof ObjList<?> list && list.size() > 0) {
+                return (TwapGroupByFunction) list.getQuick(0);
+            }
+        }
+        return null;
     }
 
     private static long readCachedPtr(TwapGroupByFunction twap) throws Exception {

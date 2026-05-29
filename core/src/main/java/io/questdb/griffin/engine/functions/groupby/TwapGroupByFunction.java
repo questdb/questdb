@@ -119,15 +119,17 @@ public class TwapGroupByFunction extends DoubleFunction implements GroupByFuncti
 
     @Override
     public void clear() {
-        // cachedPtr is a native address into the GroupByAllocator. When the
-        // enclosing factory is reused across cursor runs the allocator is
-        // reset and the same address may be handed out again - a stale cache
-        // entry would then return the previous run's TWAP for unrelated data.
-        // computeFirst also zeroes cachedPtr on every new group, but in the
-        // parallel keyed path the owner's instance sees groups only via
-        // merge() and getDouble() and would miss that reset.
-        cachedPtr = 0;
-        cachedValue = 0;
+        resetCache();
+        // setAllocator fans the owner's allocator out to its shared dependents,
+        // but clear() never reaches them: their cursor closes via
+        // cursorClosed(), not clear(). Reset their caches here too, mirroring
+        // that fan-out, so a reused factory cannot return a dependent's stale
+        // TWAP when the allocator hands back a colliding address.
+        if (sharedDependents != null) {
+            for (int i = 0, n = sharedDependents.size(); i < n; i++) {
+                sharedDependents.getQuick(i).resetCache();
+            }
+        }
     }
 
     @Override
@@ -447,5 +449,17 @@ public class TwapGroupByFunction extends DoubleFunction implements GroupByFuncti
         if (!isBaseTimestampAscending) {
             throw SqlException.$(position, "twap() requires the base query to provide ascending designated timestamp order");
         }
+    }
+
+    private void resetCache() {
+        // cachedPtr is a native address into the GroupByAllocator. When the
+        // enclosing factory is reused across cursor runs the allocator is
+        // reset and the same address may be handed out again - a stale cache
+        // entry would then return the previous run's TWAP for unrelated data.
+        // computeFirst also zeroes cachedPtr on every new group, but in the
+        // parallel keyed path the owner's instance sees groups only via
+        // merge() and getDouble() and would miss that reset.
+        cachedPtr = 0;
+        cachedValue = 0;
     }
 }

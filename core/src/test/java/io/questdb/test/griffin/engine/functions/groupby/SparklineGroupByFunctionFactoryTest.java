@@ -41,6 +41,7 @@ import io.questdb.griffin.engine.groupby.SimpleMapValue;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.mp.WorkerPool;
 import io.questdb.std.Numbers;
+import io.questdb.std.ObjList;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
@@ -48,6 +49,9 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.lang.reflect.Field;
+import java.lang.reflect.Modifier;
+import java.util.IdentityHashMap;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CyclicBarrier;
@@ -667,6 +671,86 @@ public class SparklineGroupByFunctionFactoryTest extends AbstractCairoTest {
                         }
                     }
                 }
+            }
+        });
+    }
+
+    /**
+     * A lateral join whose correlated subquery references an outer
+     * {@code sparkline()} aggregate creates a shared dependent
+     * {@link SparklineGroupByFunction}. The dependent shares the owner's
+     * {@code GroupByAllocator} (fanned out by {@code setAllocator}) but its own
+     * {@code clear()} never runs - on the serial group-by path the shared cursor
+     * closes via {@code cursorClosed()}, not {@code clear()}. The owner's
+     * {@code clear()} must therefore reset the dependent's render caches too, or
+     * a reused factory could hand back a stale {@code cachedPairPtrA} pointing at
+     * an address the allocator reuses for unrelated data.
+     *
+     * <p>Parallel group-by is disabled on purpose: the async shared cursor
+     * clears its functions directly via {@code clearObjList}, so only the serial
+     * keyed {@code GroupByRecordCursorFactory.GroupBySharedCursor} exposes the
+     * missing reset. Address collision is probabilistic, so the test asserts the
+     * invariant directly rather than reproducing a wrong render.
+     */
+    @Test
+    public void testSharedDependentClearsRenderCache() throws Exception {
+        // Force the serial group-by path; the async path clears shared
+        // functions directly and would not exercise the owner's fan-out.
+        sqlExecutionContext.setParallelGroupByEnabled(false);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE items (key SYMBOL, val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE rates (min_len INT, rate DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO items VALUES
+                    ('A', 1.0, '2024-01-01T00:00:00.000000Z'),
+                    ('A', 4.0, '2024-01-01T01:00:00.000000Z'),
+                    ('A', 8.0, '2024-01-01T02:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO rates VALUES
+                    (1, 0.1, '2024-01-01T00:00:00.000000Z'),
+                    (5, 0.2, '2024-01-01T00:00:01.000000Z')
+                    """);
+            // The key column makes this a keyed group-by, so the lateral join
+            // shares the result through GroupByRecordCursorFactory's
+            // GroupBySharedCursor - the cursor that closes via cursorClosed()
+            // alone. length(o.spark) calls getVarcharA on the shared dependent,
+            // populating its render cache.
+            final String sql = """
+                    SELECT sub.rate
+                    FROM (SELECT key, sparkline(val) AS spark FROM items) o
+                    JOIN LATERAL (
+                        SELECT rate FROM rates WHERE min_len <= length(o.spark)
+                    ) sub
+                    ORDER BY sub.rate
+                    """;
+            try (RecordCursorFactory factory = select(sql)) {
+                final SparklineGroupByFunction dependent = findSharedDependentSparklineFunction(factory);
+                Assert.assertNotNull(
+                        "expected a shared dependent SparklineGroupByFunction in the lateral-join factory",
+                        dependent
+                );
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    final Record record = cursor.getRecord();
+                    boolean hadRow = false;
+                    while (cursor.hasNext()) {
+                        record.getDouble(0);
+                        hadRow = true;
+                    }
+                    Assert.assertTrue("lateral join returned no rows", hadRow);
+                    Assert.assertNotEquals(
+                            "the dependent's getVarcharA cache must populate while the lateral subquery reads o.spark",
+                            0L, readCachedPairPtrA(dependent)
+                    );
+                }
+                // Closing the cursor closes the owner GroupByRecordCursor, whose
+                // clear() must fan out to the dependent and zero its render cache.
+                Assert.assertEquals(
+                        "after cursor close, the owner's clear() must reset the shared dependent's cachedPairPtrA "
+                                + "to 0; otherwise a reused factory can hand back a stale render pointer when the "
+                                + "GroupByAllocator's next allocation collides with the stale address.",
+                        0L, readCachedPairPtrA(dependent)
+                );
             }
         });
     }
@@ -1527,6 +1611,54 @@ public class SparklineGroupByFunctionFactoryTest extends AbstractCairoTest {
     // Runs the keyed sparkline query and returns the number of groups whose
     // rendered sparkline deviates from the exact expected staircase; a wrong
     // group count also counts as a mismatch so a dropped group is caught.
+    // Recursively collects every SparklineGroupByFunction reachable from the
+    // factory by following base factories, factory-typed fields and ObjList
+    // fields (including the nested ObjList<ObjList<Function>> that holds a
+    // lateral join's shared functions). An identity-visited set guards cycles.
+    private static void collectSparklineFunctions(Object node, IdentityHashMap<Object, Object> visited, ObjList<SparklineGroupByFunction> out) {
+        if (node == null || visited.put(node, node) != null) {
+            return;
+        }
+        if (node instanceof SparklineGroupByFunction s) {
+            out.add(s);
+            return;
+        }
+        if (node instanceof ObjList<?> list) {
+            for (int i = 0, n = list.size(); i < n; i++) {
+                collectSparklineFunctions(list.getQuick(i), visited, out);
+            }
+            return;
+        }
+        if (node instanceof RecordCursorFactory f) {
+            RecordCursorFactory base = null;
+            try {
+                base = f.getBaseFactory();
+            } catch (Throwable ignore) {
+                // some factories don't expose a base; the field scan below still reaches children
+            }
+            if (base != f) {
+                collectSparklineFunctions(base, visited, out);
+            }
+            for (Class<?> c = f.getClass(); c != null && c != Object.class; c = c.getSuperclass()) {
+                for (Field fld : c.getDeclaredFields()) {
+                    if (Modifier.isStatic(fld.getModifiers())) {
+                        continue;
+                    }
+                    final Class<?> ft = fld.getType();
+                    if (!RecordCursorFactory.class.isAssignableFrom(ft) && !ObjList.class.isAssignableFrom(ft)) {
+                        continue;
+                    }
+                    try {
+                        fld.setAccessible(true);
+                        collectSparklineFunctions(fld.get(f), visited, out);
+                    } catch (Throwable ignore) {
+                        // skip inaccessible fields
+                    }
+                }
+            }
+        }
+    }
+
     private static int countKeyedSparklineMismatches(
             CairoEngine engine,
             SqlExecutionContext ctx,
@@ -1565,6 +1697,29 @@ public class SparklineGroupByFunctionFactoryTest extends AbstractCairoTest {
             }
         }
         return sb.toString();
+    }
+
+    // Returns the first shared dependent SparklineGroupByFunction in the
+    // factory, i.e. the first entry of some owner's sharedDependents list, or
+    // null if none is wired (no lateral join shares a sparkline aggregate).
+    private static SparklineGroupByFunction findSharedDependentSparklineFunction(RecordCursorFactory factory) throws Exception {
+        final ObjList<SparklineGroupByFunction> all = new ObjList<>();
+        collectSparklineFunctions(factory, new IdentityHashMap<>(), all);
+        final Field deps = SparklineGroupByFunction.class.getDeclaredField("sharedDependents");
+        deps.setAccessible(true);
+        for (int i = 0, n = all.size(); i < n; i++) {
+            final Object v = deps.get(all.getQuick(i));
+            if (v instanceof ObjList<?> list && list.size() > 0) {
+                return (SparklineGroupByFunction) list.getQuick(0);
+            }
+        }
+        return null;
+    }
+
+    private static long readCachedPairPtrA(SparklineGroupByFunction sparkline) throws Exception {
+        final Field f = SparklineGroupByFunction.class.getDeclaredField("cachedPairPtrA");
+        f.setAccessible(true);
+        return f.getLong(sparkline);
     }
 
     private static String runSparkline(CairoEngine engine, SqlExecutionContext ctx, String sql) throws Exception {

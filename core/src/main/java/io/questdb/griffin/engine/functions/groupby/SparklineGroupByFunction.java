@@ -143,20 +143,17 @@ public class SparklineGroupByFunction extends VarcharFunction implements UnaryFu
 
     @Override
     public void clear() {
-        // Render caches hold native pointers into the GroupByAllocator. When
-        // the enclosing factory is reused across cursor runs the allocator
-        // is reset and the same addresses may be handed out again - stale
-        // cache entries would then point at freed memory. computeFirst also
-        // clears these on every new group, but the owner's instance on the
-        // sharded merge path sees groups only via merge() and would miss
-        // that reset.
-        cachedPairPtrA = 0;
-        cachedPairPtrB = 0;
-        cachedRenderLenA = 0;
-        cachedRenderLenB = 0;
-        cachedRenderPtrA = 0;
-        cachedRenderPtrB = 0;
-        lastRenderPtr = 0;
+        resetCaches();
+        // setAllocator fans the owner's allocator out to its shared dependents,
+        // but clear() never reaches them: their cursor closes via
+        // cursorClosed(), not clear(). Reset their caches here too, mirroring
+        // that fan-out, so a reused factory cannot return a dependent's stale
+        // sparkline when the allocator hands back a colliding address.
+        if (sharedDependents != null) {
+            for (int i = 0, n = sharedDependents.size(); i < n; i++) {
+                sharedDependents.getQuick(i).resetCaches();
+            }
+        }
     }
 
     @Override
@@ -619,5 +616,22 @@ public class SparklineGroupByFunction extends VarcharFunction implements UnaryFu
             double v = Unsafe.getDouble(ptr + i * ENTRY_SIZE + 8);
             putChar(out, i, charForValue(v, min, range));
         }
+    }
+
+    private void resetCaches() {
+        // Render caches hold native pointers into the GroupByAllocator. When
+        // the enclosing factory is reused across cursor runs the allocator
+        // is reset and the same addresses may be handed out again - stale
+        // cache entries would then point at freed memory. computeFirst also
+        // clears these on every new group, but the owner's instance on the
+        // sharded merge path sees groups only via merge() and would miss
+        // that reset.
+        cachedPairPtrA = 0;
+        cachedPairPtrB = 0;
+        cachedRenderLenA = 0;
+        cachedRenderLenB = 0;
+        cachedRenderPtrA = 0;
+        cachedRenderPtrB = 0;
+        lastRenderPtr = 0;
     }
 }
