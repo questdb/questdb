@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.table;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.EmptySymbolMapReader;
 import io.questdb.cairo.GeoHashes;
@@ -251,11 +252,23 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         if (multiKeyPageFrameCursor == null && singleKeyPageFrameCursor == null) {
             return null;
         }
+        // A negative LIMIT routes the async filter through its backward
+        // (negative-limit) path, which asks us for ORDER_DESC frames: highest
+        // timestamps first. We honor it with a genuine backward scan -- DESC
+        // partition iteration plus high row-range sub-frames emitted first --
+        // rather than silently returning ascending frames.
+        final boolean descending = order == PartitionFrameCursorFactory.ORDER_DESC;
+        if (descending && multiKeyPageFrameCursor != null) {
+            // Codegen routes multi-key negative-limit queries to the serial
+            // path (multi-key covering is not globally timestamp-ordered), so a
+            // backward page-frame scan must never reach here.
+            throw CairoException.critical(0).put("backward covering scan is not supported for multi-key index queries");
+        }
         int configMaxRows = executionContext.getPageFrameMaxRows();
         PartitionFrameCursor frameCursor = dfcFactory.getCursor(
                 executionContext,
                 columnIndexes,
-                PartitionFrameCursorFactory.ORDER_ASC
+                descending ? PartitionFrameCursorFactory.ORDER_DESC : PartitionFrameCursorFactory.ORDER_ASC
         );
         try {
             TableReader reader = frameCursor.getTableReader();
@@ -277,7 +290,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                 }
                 // Always wire the frame cursor; callers may probe getSymbolTable()
                 // before iteration. Empty multiKeys list yields no frames.
-                multiKeyPageFrameCursor.of(frameCursor, configMaxRows);
+                multiKeyPageFrameCursor.of(frameCursor, configMaxRows, false);
                 return multiKeyPageFrameCursor;
             }
             // Single-key path: see the matching block in getCursor().
@@ -291,7 +304,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                 resolvedKey = symValue != null ? smr.keyOf(symValue) : SymbolTable.VALUE_NOT_FOUND;
             }
             singleKeyPageFrameCursor.resolvedKey = resolvedKey;
-            singleKeyPageFrameCursor.of(frameCursor, configMaxRows);
+            singleKeyPageFrameCursor.of(frameCursor, configMaxRows, descending);
             return singleKeyPageFrameCursor;
         } catch (Throwable th) {
             Misc.free(frameCursor);
@@ -302,6 +315,19 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
     @Override
     public boolean recordCursorSupportsRandomAccess() {
         return false;
+    }
+
+    /**
+     * Whether this factory can serve a correct backward (negative-limit)
+     * page-frame scan. Only single-key queries qualify: their forward cursor
+     * is globally timestamp-ordered (partitions ascending, rows ascending
+     * within a partition), so reversing it yields the true last-N rows. The
+     * multi-key cursor interleaves keys per partition and is not globally
+     * timestamp-ordered, so codegen must route its negative limits to the
+     * serial path instead.
+     */
+    public boolean supportsNegativeLimitPageFrame() {
+        return singleKeyPageFrameCursor != null;
     }
 
     @Override
@@ -691,7 +717,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
     private static abstract class CoveringPageFrameCursor implements PageFrameCursor {
         private static final int INITIAL_CAPACITY = 4096;
         private static int maxRowsPerFrameOverride = -1;
-        private int maxRowsPerFrame;
+        protected int maxRowsPerFrame;
         // Tracks all native allocations as (addr, size) pairs for bulk cleanup.
         // Each fillFrameForKey() call allocates fresh buffers so that
         // PageFrameAddressCache can hold addresses from multiple frames
@@ -712,6 +738,9 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         protected final int queryColCount;
         protected final int[] queryColToIncludeIdx;
         protected final int[] requiredIncludeIndices;
+        // When true, emit frames in descending timestamp order (DESC partition
+        // iteration, high row-range sub-frames first) to serve a negative LIMIT.
+        protected boolean descending;
         protected PartitionFrameCursor frameCursor;
         protected boolean isExhausted;
         // Resume state for chunked fillFrameForKey. When a key+partition
@@ -1147,7 +1176,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         }
 
         /**
-         * Produce up to {@link #maxRowsPerFrame} rows for {@code rawSymbolKey}
+         * Produce up to {@code rowCap} rows for {@code rawSymbolKey}
          * in the given partition's row range. If the key has more rows than the
          * cap, the open {@link RowCursor} is parked in {@link #pendingRowCursor};
          * the caller is expected to call {@code fillFrameForKey} again with the
@@ -1163,7 +1192,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
          * that very large keys now produce multiple frames instead of one
          * GiB-sized frame.
          */
-        protected @Nullable PageFrame fillFrameForKey(int rawSymbolKey, int partitionIndex, long rowLo, long rowHi) {
+        protected @Nullable PageFrame fillFrameForKey(int rawSymbolKey, int partitionIndex, long rowLo, long rowHi, int rowCap) {
             final CoveringRowCursor coveringCursor = openOrContinueCoveringCursor(rawSymbolKey, partitionIndex, rowLo, rowHi);
             if (coveringCursor == null) {
                 return null;
@@ -1214,7 +1243,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                     }
                     writeCoveredRow(addrs, varDataAddrs, varDataPos, varDataCap, count, coveringCursor);
                     count++;
-                    if (count >= maxRowsPerFrame) {
+                    if (count >= rowCap) {
                         cursorExhausted = false;
                         break;
                     }
@@ -1331,11 +1360,12 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             }
         }
 
-        void of(PartitionFrameCursor frameCursor, int configMaxRows) {
+        void of(PartitionFrameCursor frameCursor, int configMaxRows, boolean descending) {
             closePendingCursor();
             this.frameCursor = frameCursor;
             this.tableReader = frameCursor.getTableReader();
             this.maxRowsPerFrame = maxRowsPerFrameOverride >= 0 ? maxRowsPerFrameOverride : configMaxRows;
+            this.descending = descending;
             this.isExhausted = false;
             resetIterationState();
             columnMapping.clear();
@@ -1882,7 +1912,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                 PageFrame result = fillFrameForKey(
                         pendingSymbolKey,
                         pendingPartitionIndex,
-                        0L, 0L);
+                        0L, 0L, maxRowsPerFrame);
                 if (pendingRowCursor == null) {
                     // Resumed cursor drained; advance to next key for
                     // the current partition. Without this we'd loop back
@@ -1903,7 +1933,8 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                                 rawKey,
                                 cachedPartFrame.getPartitionIndex(),
                                 cachedPartFrame.getRowLo(),
-                                cachedPartFrame.getRowHi()
+                                cachedPartFrame.getRowHi(),
+                                maxRowsPerFrame
                         );
                         // Only advance to the next key when fillFrameForKey
                         // signals the parked cursor for this key drained
@@ -2026,6 +2057,12 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
     private static class SingleKeyCoveringPageFrameCursor extends CoveringPageFrameCursor {
         int resolvedKey;
         int symbolKey;
+        // Backward-scan state: the partition currently being drained from its
+        // high row-range downward, and the exclusive upper bound of the next
+        // sub-frame to emit. descPartitionIndex < 0 means no partition is open.
+        private int descPartitionIndex = -1;
+        private long descPartitionLo;
+        private long descSubHi;
 
         SingleKeyCoveringPageFrameCursor(
                 int indexColumnIndex,
@@ -2050,6 +2087,9 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                 isExhausted = true;
                 return null;
             }
+            if (descending) {
+                return nextImplDescending();
+            }
             // If a previous fillFrameForKey parked a partially-drained cursor,
             // resume it before advancing the partition iterator. The row
             // range we pass is unused on the resume path (the parked cursor
@@ -2060,7 +2100,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                 PageFrame result = fillFrameForKey(
                         pendingSymbolKey,
                         pendingPartitionIndex,
-                        0L, 0L);
+                        0L, 0L, maxRowsPerFrame);
                 if (result != null) {
                     return result;
                 }
@@ -2075,7 +2115,8 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                         resolvedKey,
                         partFrame.getPartitionIndex(),
                         partFrame.getRowLo(),
-                        partFrame.getRowHi()
+                        partFrame.getRowHi(),
+                        maxRowsPerFrame
                 );
                 if (result != null) {
                     return result;
@@ -2085,6 +2126,51 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
 
         @Override
         void resetIterationState() {
+            descPartitionIndex = -1;
+        }
+
+        /**
+         * Backward scan for a negative LIMIT. The partition frame cursor was
+         * opened ORDER_DESC, so it yields partitions from latest to earliest.
+         * Within each partition we split the row range [partitionLo,
+         * partitionHi) into sub-frames at most {@code maxRowsPerFrame} rows
+         * wide and emit the highest sub-frame first. Each sub-frame is read
+         * forward (ascending row ids), so rows stay ascending WITHIN a frame
+         * while the frames themselves arrive in descending order -- exactly
+         * what {@link AsyncFilteredNegativeLimitRecordCursor} expects from a
+         * forward-scan-direction base. Because a sub-frame is at most
+         * maxRowsPerFrame row ids wide it holds at most that many matching
+         * rows, so a single fill (rowCap = MAX_VALUE) never parks a cursor.
+         */
+        @Nullable
+        private PageFrame nextImplDescending() {
+            while (true) {
+                if (descPartitionIndex >= 0) {
+                    while (descSubHi > descPartitionLo) {
+                        long subLo = Math.max(descPartitionLo, descSubHi - maxRowsPerFrame);
+                        PageFrame result = fillFrameForKey(
+                                resolvedKey,
+                                descPartitionIndex,
+                                subLo,
+                                descSubHi,
+                                Integer.MAX_VALUE
+                        );
+                        descSubHi = subLo;
+                        if (result != null) {
+                            return result;
+                        }
+                    }
+                    descPartitionIndex = -1;
+                }
+                PartitionFrame partFrame = frameCursor.next();
+                if (partFrame == null) {
+                    isExhausted = true;
+                    return null;
+                }
+                descPartitionIndex = partFrame.getPartitionIndex();
+                descPartitionLo = partFrame.getRowLo();
+                descSubHi = partFrame.getRowHi();
+            }
         }
     }
 }

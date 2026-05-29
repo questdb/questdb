@@ -10262,7 +10262,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                             reader, keyReaderColIdx, columnIndexes, queryMeta
                                     );
                                     if (coveringMapping != null) {
-                                        RecordCursorFactory coveringFactory = new CoveringIndexRecordCursorFactory(
+                                        CoveringIndexRecordCursorFactory coveringFactory = new CoveringIndexRecordCursorFactory(
                                                 queryMeta,
                                                 dfcFactory,
                                                 keyReaderColIdx,
@@ -10363,7 +10363,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     reader, keyReaderColIdx, columnIndexes, queryMeta
                             );
                             if (coveringMapping != null) {
-                                RecordCursorFactory coveringFactory = new CoveringIndexRecordCursorFactory(
+                                CoveringIndexRecordCursorFactory coveringFactory = new CoveringIndexRecordCursorFactory(
                                         queryMeta,
                                         dfcFactory,
                                         keyReaderColIdx,
@@ -11312,6 +11312,19 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         }
     }
 
+    /**
+     * Whether the limit lo function might evaluate to a negative value. A
+     * non-constant (e.g. bind-variable) limit has an unknown sign at compile
+     * time, so we conservatively treat it as possibly negative.
+     */
+    private boolean mayBeNegativeLimit(Function limitLoFunction, SqlExecutionContext executionContext) throws SqlException {
+        if (!limitLoFunction.isConstant()) {
+            return true;
+        }
+        limitLoFunction.init(null, executionContext);
+        return limitLoFunction.getLong(null) < 0;
+    }
+
     private void validateTimestampNotInJoinKeys(IQueryModel slaveModel, RecordMetadata masterMetadata, RecordMetadata slaveMetadata) throws SqlException {
         // When timestamp is the ONLY join key, isKeyedTemporalJoin() will return false and simplify
         // "ASOF JOIN ON (ts)" to a non-keyed join, which is harmless. But when timestamp is combined
@@ -11333,7 +11346,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     }
 
     private RecordCursorFactory wrapCoveringWithFilter(
-            RecordCursorFactory coveringFactory,
+            CoveringIndexRecordCursorFactory coveringFactory,
             Function filter,
             ExpressionNode filterExpr,
             RecordMetadata queryMeta,
@@ -11341,31 +11354,45 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             SqlExecutionContext executionContext
     ) throws SqlException {
         if (executionContext.isParallelFilterEnabled() && coveringFactory.supportsPageFrameCursor()) {
-            IntHashSet filterUsedColumnIndexes = new IntHashSet();
-            collectColumnIndexes(sqlNodeStack, queryMeta, filterExpr, filterUsedColumnIndexes);
-            Function limitLoFunction = getLimitLoFunctionOnly(model, executionContext);
-            int limitLoPos = model.getLimitAdviceLo() != null ? model.getLimitAdviceLo().position : 0;
-            return new AsyncFilteredRecordCursorFactory(
-                    executionContext.getCairoEngine(),
-                    configuration,
-                    executionContext.getMessageBus(),
-                    coveringFactory,
-                    filter,
-                    filterUsedColumnIndexes,
-                    reduceTaskFactory,
-                    compileWorkerFiltersConditionally(
-                            executionContext,
-                            filter,
-                            executionContext.getSharedQueryWorkerCount(),
-                            filterExpr,
-                            queryMeta
-                    ),
-                    deepClone(expressionNodePool, filterExpr),
-                    limitLoFunction,
-                    limitLoPos,
-                    executionContext.getSharedQueryWorkerCount(),
-                    SqlHints.hasEnablePreTouchHint(model, model.getName())
-            );
+            final Function limitLoFunction = getLimitLoFunctionOnly(model, executionContext);
+            // A negative (or unknown-sign bind-variable) limit makes the async
+            // filter drive its backward page-frame path, which requires the base
+            // to honor ORDER_DESC. The covering factory only serves a correct
+            // backward scan for single-key queries; for multi-key it is not
+            // globally timestamp-ordered, so fall back to the serial path where
+            // LimitRecordCursorFactory computes last-N via size + skip.
+            if (limitLoFunction == null
+                    || coveringFactory.supportsNegativeLimitPageFrame()
+                    || !mayBeNegativeLimit(limitLoFunction, executionContext)) {
+                IntHashSet filterUsedColumnIndexes = new IntHashSet();
+                collectColumnIndexes(sqlNodeStack, queryMeta, filterExpr, filterUsedColumnIndexes);
+                int limitLoPos = model.getLimitAdviceLo() != null ? model.getLimitAdviceLo().position : 0;
+                return new AsyncFilteredRecordCursorFactory(
+                        executionContext.getCairoEngine(),
+                        configuration,
+                        executionContext.getMessageBus(),
+                        coveringFactory,
+                        filter,
+                        filterUsedColumnIndexes,
+                        reduceTaskFactory,
+                        compileWorkerFiltersConditionally(
+                                executionContext,
+                                filter,
+                                executionContext.getSharedQueryWorkerCount(),
+                                filterExpr,
+                                queryMeta
+                        ),
+                        deepClone(expressionNodePool, filterExpr),
+                        limitLoFunction,
+                        limitLoPos,
+                        executionContext.getSharedQueryWorkerCount(),
+                        SqlHints.hasEnablePreTouchHint(model, model.getName())
+                );
+            }
+            // Serial fallback owns no limit function; drop the one we created so
+            // it does not leak (generateLimit wraps the result in its own
+            // LimitRecordCursorFactory).
+            Misc.free(limitLoFunction);
         }
         return new FilteredRecordCursorFactory(coveringFactory, filter);
     }
