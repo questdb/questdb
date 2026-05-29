@@ -263,6 +263,103 @@ public class ParquetLateMaterializationFuzzTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testProjectOnlyAddedColumnsAcrossParquetPartitions() throws Exception {
+        // Regression for the parquet read fault when a query projects ONLY column(s)
+        // absent from a parquet partition because they were added by ALTER TABLE ADD
+        // COLUMN after that partition's parquet file was written. Decoding such a
+        // projection produces an empty decode pass. The page-address buffers are pooled
+        // and reused frame to frame, so the empty pass must zero them; otherwise it
+        // leaves the real page pointers written by the previous, populated frame, and
+        // the record accessors read those stale pointers -- returning a neighbouring
+        // partition's value instead of NULL, or dereferencing freed memory.
+        //
+        // To reuse a populated buffer, the column must be present in the OLDER
+        // partitions (which prime the buffers first on an ascending scan) and absent
+        // from the NEWER ones. The newer partitions are converted before the columns
+        // exist, so their parquet files omit the columns entirely; the older partitions
+        // are written and converted afterwards, so their parquet files contain them.
+        // Ten older partitions exceed the parquet frame cache, forcing primed buffers to
+        // be reused for the absent newer frames.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            // Five newer partitions (one row each), converted before the columns exist.
+            execute("INSERT INTO x SELECT x::int, timestamp_sequence('2024-02-01T00:00:00.000000Z', 86400000000L) FROM long_sequence(5)");
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts >= '2024-02-01'");
+
+            execute("ALTER TABLE x ADD COLUMN c_long LONG");
+            execute("ALTER TABLE x ADD COLUMN c_sym SYMBOL");
+            execute("ALTER TABLE x ADD COLUMN c_vc VARCHAR");
+            // Ten older partitions (one row each) carrying the new columns.
+            execute(
+                    "INSERT INTO x SELECT (100 + x)::int, timestamp_sequence('2024-01-01T00:00:00.000000Z', 86400000000L), " +
+                            "(1000 + x)::long, ('s' || (x % 3)), ('v' || x) FROM long_sequence(10)"
+            );
+
+            // Read the projections while the older partitions are still native: this is
+            // the correct result (older values then NULLs) and never touches the pooled
+            // parquet buffers for the present columns.
+            final String[] queries = {
+                    "SELECT c_long FROM x",
+                    "SELECT c_sym FROM x",
+                    "SELECT c_vc FROM x",
+                    "SELECT c_long, c_sym, c_vc FROM x",
+            };
+            final String[] expected = new String[queries.length];
+            for (int i = 0; i < queries.length; i++) {
+                sink.clear();
+                printSql(queries[i], sink);
+                expected[i] = sink.toString();
+            }
+
+            // Now the new columns are present in the older parquet files and absent from
+            // the newer ones, so an ascending scan primes the buffers from a present
+            // frame and then reuses them for the absent frames.
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts < '2024-02-01'");
+            for (int i = 0; i < queries.length; i++) {
+                assertSql(expected[i], queries[i]);
+            }
+        });
+    }
+
+    @Test
+    public void testAggregateOnlyAddedColumnsAcrossParquetPartitions() throws Exception {
+        // Companion to testProjectOnlyAddedColumnsAcrossParquetPartitions covering the
+        // parallel aggregation path: the unconditional zeroing of the page buffers must
+        // not change correct NULL handling when a non-keyed aggregation reads only the
+        // absent columns. The same older-present / newer-absent layout is converted in
+        // two phases so the older parquet files carry the columns and the newer ones omit
+        // them.
+        WorkerPool pool = new WorkerPool(() -> 4);
+        TestUtils.execute(
+                pool,
+                (engine, compiler, sqlExecutionContext) -> {
+                    sqlExecutionContext.setJitMode(enableJitCompiler ? SqlJitMode.JIT_MODE_ENABLED : SqlJitMode.JIT_MODE_DISABLED);
+                    engine.execute("create table x (id int, ts timestamp) timestamp(ts) partition by day;", sqlExecutionContext);
+                    engine.execute(
+                            "insert into x select x::int, timestamp_sequence('2024-02-01T00:00:00.000000Z', 86400000000L) from long_sequence(5);",
+                            sqlExecutionContext
+                    );
+                    engine.execute("alter table x convert partition to parquet where ts >= '2024-02-01';", sqlExecutionContext);
+                    engine.execute("alter table x add column c long;", sqlExecutionContext);
+                    engine.execute("alter table x add column c_sym symbol;", sqlExecutionContext);
+                    engine.execute(
+                            "insert into x select (100 + x)::int, timestamp_sequence('2024-01-01T00:00:00.000000Z', 86400000000L), (1000 + x)::long, ('s' || (x % 3)) from long_sequence(10);",
+                            sqlExecutionContext
+                    );
+
+                    final StringSink expected = new StringSink();
+                    final CharSequence query = "select sum(c) s, count(c) cnt, count(c_sym) cnt_sym from x";
+                    engine.print(query, expected, sqlExecutionContext);
+
+                    engine.execute("alter table x convert partition to parquet where ts < '2024-02-01';", sqlExecutionContext);
+                    TestUtils.assertSql(engine, sqlExecutionContext, query, sink, expected);
+                },
+                configuration,
+                LOG
+        );
+    }
+
+    @Test
     public void testLateMaterializationDateColumn() throws Exception {
         WorkerPool pool = new WorkerPool(() -> 4);
         TestUtils.execute(
