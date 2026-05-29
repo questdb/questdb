@@ -7157,6 +7157,79 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRefreshFullPreservesFrozenZoneAfterBasePartitionDrop() throws Exception {
+        // Regression: the frozen-zone boundary must not retreat when max(base_ts)
+        // drops. Dropping the most-recent base partition lowers max(base_ts), so an
+        // anchor of min(max(base_ts), now) would pull the boundary backwards and the
+        // next FULL refresh would emit a REPLACE_RANGE whose lo sat below an
+        // already-accepted frozen-zone backfill row, deleting it (and recomputing the
+        // base bucket instead). The anchor max(max(base_ts), max(view_ts)) keeps the
+        // boundary pinned at the view's high-water mark (the orphaned 09-13 bucket),
+        // so the backfill survives.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table base_price (" +
+                            "  sym symbol, price double, ts #TIMESTAMP" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            // Base data spans below the backfill (09-10T12:00) up to a recent
+            // partition (09-13T12:00); the low row keeps base_min below the backfill
+            // so a retreating FULL refresh would otherwise reach down and wipe it.
+            execute(
+                    "insert into base_price values" +
+                            "('a', 5.0, '2024-09-10T12:00')" +
+                            ",('a', 6.0, '2024-09-12T12:00')" +
+                            ",('a', 9.0, '2024-09-13T12:00')"
+            );
+            drainWalQueue();
+            execute(
+                    "create materialized view price_1h refresh manual deferred as " +
+                            "select sym, last(price) as price, ts from base_price sample by 1h;"
+            );
+            execute("alter materialized view price_1h set refresh limit 2 days;");
+            drainQueues();
+
+            // Wall clock 09-13T12:30: anchor = min(09-13T12:00, now) = 09-13T12:00,
+            // boundary = 09-11T12:00. First refresh publishes that floor and
+            // materialises the managed-zone buckets 09-12 and 09-13.
+            currentMicros = parseFloorPartialTimestamp("2024-09-13T12:30:00.000000Z");
+            execute("refresh materialized view price_1h full;");
+            drainQueues();
+
+            // Backfill a frozen-zone row well below the published floor.
+            execute("insert into price_1h values('a', 1.0, '2024-09-10T18:00')");
+            drainQueues();
+
+            // Drop the most-recent base partition. max(base_ts) falls to 09-12T12:00,
+            // which would retreat the boundary to 09-10T12:00 without the clamp.
+            execute("alter table base_price drop partition list '2024-09-13'");
+            drainWalQueue();
+
+            execute("refresh materialized view price_1h full;");
+            drainQueues();
+
+            // The backfill at 09-10T18:00 survives (boundary clamped at 09-11T12:00).
+            // 09-12 is recomputed from base; 09-13 stays as a stale orphan because its
+            // base partition is gone (the documented "FULL does not wipe stale buckets"
+            // tradeoff). Crucially, NO row appears at 09-10T12:00 -- that would mean the
+            // boundary retreated and the REPLACE_RANGE recomputed it while deleting the
+            // 09-10T18:00 backfill.
+            assertQueryNoLeakCheck(
+                    replaceExpectedTimestamp("""
+                            sym\tprice\tts
+                            a\t1.0\t2024-09-10T18:00:00.000000Z
+                            a\t6.0\t2024-09-12T12:00:00.000000Z
+                            a\t9.0\t2024-09-13T12:00:00.000000Z
+                            """),
+                    "price_1h order by ts",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
     public void testMatViewBackfillMultiRowAllFrozenAccepted() throws Exception {
         // Multi-row insert where every row sits in the frozen zone is accepted.
         // The validator gates on the txn's max-row timestamp.
