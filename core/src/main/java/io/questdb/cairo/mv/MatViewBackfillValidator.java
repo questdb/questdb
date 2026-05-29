@@ -280,6 +280,11 @@ public final class MatViewBackfillValidator implements WalPreCommitValidator {
         final long ownRawBoundary = limitHoursOrMonths > 0
                 ? ownAnchor - driver.fromHours(limitHoursOrMonths)
                 : driver.addMonths(ownAnchor, limitHoursOrMonths);
+        // A REFRESH LIMIT only ever moves the boundary back from the anchor; a boundary
+        // after the anchor means the duration arithmetic overflowed (absurd limit). Guard
+        // the otherwise silent corruption, matching MatViewRefreshJob.findRefreshIntervals.
+        assert ownRawBoundary <= ownAnchor : "frozen-zone boundary after anchor (REFRESH LIMIT overflow) [limit="
+                + limitHoursOrMonths + ", anchor=" + ownAnchor + ", boundary=" + ownRawBoundary + ']';
         final long ownFloor = sampler.round(ownRawBoundary);
         if (state != null) {
             final long publishedFloor = state.getLastRefreshFrozenBoundaryFloor();

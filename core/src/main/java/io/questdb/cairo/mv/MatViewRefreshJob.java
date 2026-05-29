@@ -641,6 +641,12 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 } else { // months
                     rawBoundary = driver.addMonths(boundaryAnchor, refreshLimitHoursOrMonths);
                 }
+                // A REFRESH LIMIT only ever moves the boundary back from the anchor; a boundary
+                // after the anchor means the duration arithmetic overflowed (e.g. an absurd
+                // multi-century hour limit on the nanosecond driver). Guard the otherwise silent
+                // corruption -- assertions run with -ea in tests and dev.
+                assert rawBoundary <= boundaryAnchor : "frozen-zone boundary after anchor (REFRESH LIMIT overflow) [limit="
+                        + refreshLimitHoursOrMonths + ", anchor=" + boundaryAnchor + ", boundary=" + rawBoundary + ']';
                 minTs = Math.max(minTs, rawBoundary);
                 // Stage the snapped REPLACE_RANGE.lo on the refresh context. The backfill
                 // validator and materialized_views().backfill_max_ts clamp their accepted
