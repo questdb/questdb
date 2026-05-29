@@ -42,6 +42,7 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SingleSymbolFilter;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.groupby.SampleByFirstLastRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.SimpleTimestampSampler;
@@ -18250,19 +18251,22 @@ public class SampleByTest extends AbstractCairoTest {
                             new Thread(() -> {
                                 TestUtils.await(barrier);
 
-                                try {
-                                    final RecordCursorFactory factory = factories[finalI];
+                                final RecordCursorFactory factory = factories[finalI];
+                                try (SqlExecutionContext threadCtx = TestUtils.createSqlExecutionCtx(engine)) {
                                     while (!writerDone.get()) {
-                                        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                                        try (RecordCursor cursor = factory.getCursor(threadCtx)) {
                                             TestUtils.drainCursor(cursor);
                                         } catch (Throwable e) {
                                             e.printStackTrace(System.out);
                                             errors.incrementAndGet();
                                         }
                                     }
-                                    haltLatch.countDown();
+                                } catch (Throwable e) {
+                                    e.printStackTrace(System.out);
+                                    errors.incrementAndGet();
                                 } finally {
                                     Path.clearThreadLocals();
+                                    haltLatch.countDown();
                                 }
                             }).start();
                         }
