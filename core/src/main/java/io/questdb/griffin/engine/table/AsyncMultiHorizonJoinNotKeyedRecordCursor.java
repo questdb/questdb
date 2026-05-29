@@ -176,7 +176,8 @@ class AsyncMultiHorizonJoinNotKeyedRecordCursor implements NoRandomAccessRecordC
                         cursor.isExternal(),
                         executionContext.getPageFrameMinRows(),
                         executionContext.getPageFrameMaxRows(),
-                        executionContext.getSharedQueryWorkerCount()
+                        executionContext.getSharedQueryWorkerCount(),
+                        executionContext.getMemoryTracker()
                 );
                 try {
                     atom.initSlaveTimeFrameCursors(
@@ -203,7 +204,7 @@ class AsyncMultiHorizonJoinNotKeyedRecordCursor implements NoRandomAccessRecordC
 
     private void buildValue() {
         frameSequence.prepareForDispatch();
-        frameSequence.getAtom().getFilterContext().initMemoryPools(frameSequence.getPageFrameAddressCache());
+        frameSequence.getAtom().getFilterContext().initMemoryPools(frameSequence.getPageFrameAddressCache(), frameSequence.getMemoryTracker());
         frameSequence.dispatchAndAwait();
 
         final AsyncMultiHorizonJoinNotKeyedAtom atom = frameSequence.getAtom();

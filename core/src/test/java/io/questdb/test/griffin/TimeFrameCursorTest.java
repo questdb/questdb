@@ -118,7 +118,8 @@ public class TimeFrameCursorTest extends AbstractCairoTest {
                             pageFrameCursor,
                             sqlExecutionContext.getPageFrameMinRows(),
                             sqlExecutionContext.getPageFrameMaxRows(),
-                            1
+                            1,
+                            sqlExecutionContext.getMemoryTracker()
                     );
 
                     Assert.assertEquals(0, reader.getOpenPartitionCount());
@@ -167,7 +168,8 @@ public class TimeFrameCursorTest extends AbstractCairoTest {
                             pageFrameCursor.isExternal(),
                             sqlExecutionContext.getPageFrameMinRows(),
                             sqlExecutionContext.getPageFrameMaxRows(),
-                            sqlExecutionContext.getSharedQueryWorkerCount()
+                            sqlExecutionContext.getSharedQueryWorkerCount(),
+                            sqlExecutionContext.getMemoryTracker()
                     );
 
                     int partitionCount = sharedState.getPartitionCount();
@@ -253,7 +255,8 @@ public class TimeFrameCursorTest extends AbstractCairoTest {
                             pageFrameCursor.isExternal(),
                             sqlExecutionContext.getPageFrameMinRows(),
                             sqlExecutionContext.getPageFrameMaxRows(),
-                            sqlExecutionContext.getSharedQueryWorkerCount()
+                            sqlExecutionContext.getSharedQueryWorkerCount(),
+                            sqlExecutionContext.getMemoryTracker()
                     );
                     cursor.of(sharedState, pageFrameCursor, metadata.getTimestampIndex());
 
@@ -324,7 +327,8 @@ public class TimeFrameCursorTest extends AbstractCairoTest {
                             pageFrameCursor.isExternal(),
                             sqlExecutionContext.getPageFrameMinRows(),
                             sqlExecutionContext.getPageFrameMaxRows(),
-                            sqlExecutionContext.getSharedQueryWorkerCount()
+                            sqlExecutionContext.getSharedQueryWorkerCount(),
+                            sqlExecutionContext.getMemoryTracker()
                     );
                     cursor.of(sharedState, pageFrameCursor, metadata.getTimestampIndex());
 
@@ -1343,7 +1347,8 @@ public class TimeFrameCursorTest extends AbstractCairoTest {
                     pageFrameCursor.isExternal(),
                     sqlExecutionContext.getPageFrameMinRows(),
                     sqlExecutionContext.getPageFrameMaxRows(),
-                    sqlExecutionContext.getSharedQueryWorkerCount()
+                    sqlExecutionContext.getSharedQueryWorkerCount(),
+                    sqlExecutionContext.getMemoryTracker()
             );
 
             cursor.of(sharedState, pageFrameCursor, metadata.getTimestampIndex());

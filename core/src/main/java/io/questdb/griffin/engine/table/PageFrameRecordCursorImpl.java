@@ -152,7 +152,7 @@ public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
         isExhausted = false;
         rowCursor = Misc.free(rowCursor);
         // prepare for page frame iteration
-        super.init();
+        super.init(sqlExecutionContext.getMemoryTracker());
     }
 
     @Override

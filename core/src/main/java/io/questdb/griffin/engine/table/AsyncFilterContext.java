@@ -38,6 +38,7 @@ import io.questdb.jit.CompiledFilter;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.Nullable;
@@ -250,10 +251,13 @@ public class AsyncFilterContext implements Closeable {
         }
     }
 
-    public void initMemoryPools(PageFrameAddressCache pageFrameAddressCache) {
+    public void initMemoryPools(PageFrameAddressCache pageFrameAddressCache, MemoryTracker memoryTracker) {
+        ownerMemoryPool.setMemoryTracker(memoryTracker);
         ownerMemoryPool.of(pageFrameAddressCache);
         for (int i = 0, n = perWorkerMemoryPools.size(); i < n; i++) {
-            perWorkerMemoryPools.getQuick(i).of(pageFrameAddressCache);
+            final PageFrameMemoryPool pool = perWorkerMemoryPools.getQuick(i);
+            pool.setMemoryTracker(memoryTracker);
+            pool.of(pageFrameAddressCache);
         }
     }
 

@@ -59,6 +59,7 @@ import io.questdb.std.DirectLongLongSortedList;
 import io.questdb.std.IntList;
 import io.questdb.std.Long256;
 import io.questdb.std.Long256Impl;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
@@ -225,7 +226,8 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                 base.getMetadata(),
                 pageFrameCursor,
                 executionContext.getMessageBus(),
-                executionContext.getCircuitBreaker()
+                executionContext.getCircuitBreaker(),
+                executionContext.getMemoryTracker()
         );
     }
 
@@ -453,14 +455,17 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                 RecordMetadata metadata,
                 PageFrameCursor frameCursor,
                 MessageBus bus,
-                SqlExecutionCircuitBreaker circuitBreaker
+                SqlExecutionCircuitBreaker circuitBreaker,
+                MemoryTracker memoryTracker
         ) {
             this.frameCursor = frameCursor;
             this.bus = bus;
             this.circuitBreaker = circuitBreaker;
             frameAddressCache.of(metadata, frameCursor.getColumnMapping(), frameCursor.isExternal());
             for (int i = 0; i < workerCount; i++) {
-                frameMemoryPools.getQuick(i).of(frameAddressCache);
+                final PageFrameMemoryPool pool = frameMemoryPools.getQuick(i);
+                pool.setMemoryTracker(memoryTracker);
+                pool.of(frameAddressCache);
             }
             frameCount = 0;
             isRostiBuilt = false;

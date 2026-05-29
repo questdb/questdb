@@ -135,7 +135,7 @@ class AsyncTopKRecordCursor implements RecordCursor {
 
     private void buildChain() {
         frameSequence.prepareForDispatch();
-        frameSequence.getAtom().getFilterContext().initMemoryPools(frameSequence.getPageFrameAddressCache());
+        frameSequence.getAtom().getFilterContext().initMemoryPools(frameSequence.getPageFrameAddressCache(), frameSequence.getMemoryTracker());
         frameSequence.dispatchAndAwait();
 
         // merge everything into owner chain

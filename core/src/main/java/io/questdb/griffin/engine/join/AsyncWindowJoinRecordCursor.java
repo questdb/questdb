@@ -223,7 +223,8 @@ class AsyncWindowJoinRecordCursor implements NoRandomAccessRecordCursor {
                     slaveFrameCursor.isExternal(),
                     executionContext.getPageFrameMinRows(),
                     executionContext.getPageFrameMaxRows(),
-                    executionContext.getSharedQueryWorkerCount()
+                    executionContext.getSharedQueryWorkerCount(),
+                    executionContext.getMemoryTracker()
             );
             try {
                 masterFrameSequence.getAtom().initTimeFrameCursors(

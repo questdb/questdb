@@ -421,6 +421,7 @@ class AsyncFilteredRecordCursor implements RecordCursor {
         this.frameRowIndex = -1;
         this.frameRowCount = -1;
         this.allFramesActive = true;
+        frameMemoryPool.setMemoryTracker(frameSequence.getMemoryTracker());
         frameMemoryPool.of(frameSequence.getPageFrameAddressCache());
         record.of(frameSequence.getSymbolTableSource());
         if (recordB != null) {

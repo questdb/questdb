@@ -190,7 +190,7 @@ class AsyncMultiHorizonJoinRecordCursor implements RecordCursor {
 
     private void buildMap() {
         frameSequence.prepareForDispatch();
-        frameSequence.getAtom().getFilterContext().initMemoryPools(frameSequence.getPageFrameAddressCache());
+        frameSequence.getAtom().getFilterContext().initMemoryPools(frameSequence.getPageFrameAddressCache(), frameSequence.getMemoryTracker());
         frameSequence.dispatchAndAwait();
 
         final AsyncMultiHorizonJoinAtom atom = frameSequence.getAtom();
@@ -241,7 +241,8 @@ class AsyncMultiHorizonJoinRecordCursor implements RecordCursor {
                         cursor.isExternal(),
                         executionContext.getPageFrameMinRows(),
                         executionContext.getPageFrameMaxRows(),
-                        executionContext.getSharedQueryWorkerCount()
+                        executionContext.getSharedQueryWorkerCount(),
+                        executionContext.getMemoryTracker()
                 );
                 try {
                     atom.initSlaveTimeFrameCursors(

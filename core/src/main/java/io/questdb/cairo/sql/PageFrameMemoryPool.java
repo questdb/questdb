@@ -36,6 +36,7 @@ import io.questdb.std.DirectLongList;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.IntIntHashMap;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
 import io.questdb.std.ObjList;
@@ -81,6 +82,11 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
     private final ParquetPartitionDecoder parquetMetaDecoder;
     private ParquetDecoder activeDecoder;
     private PageFrameAddressCache addressCache;
+    // Per-query tracker propagated to each ParquetBuffers' RowGroupBuffers when
+    // it is reopened, so decoded parquet column data charges the owning
+    // workload's limit. Null leaves decode buffers on global-only accounting
+    // (e.g. context-less worker tasks and protocol-layer streaming pools).
+    private MemoryTracker memoryTracker;
 
     public PageFrameMemoryPool(int parquetCacheSize) {
         try {
@@ -109,6 +115,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         activeDecoder = null;
         Misc.free(parquetColumns);
         releaseParquetBuffers();
+        memoryTracker = null;
     }
 
     @Override
@@ -119,6 +126,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         Misc.free(parquetColumns);
         releaseParquetBuffers();
         addressCache = null;
+        memoryTracker = null;
     }
 
     /**
@@ -271,6 +279,16 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         cachedParquetBuffers.clear();
         Misc.freeObjListAndKeepObjects(freeParquetBuffers);
         frameMemory.clear();
+    }
+
+    /**
+     * Binds the per-query tracker propagated to each decode buffer on reopen.
+     * Owners set it at per-query init (before the first {@link #navigateTo});
+     * context-less owners leave it null for global-only accounting. A null
+     * tracker is valid and matches pre-tracker behavior.
+     */
+    public void setMemoryTracker(MemoryTracker memoryTracker) {
+        this.memoryTracker = memoryTracker;
     }
 
     // We don't use additional data structures to speed up the lookups
@@ -597,6 +615,9 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             pageSizes.reopen();
             auxPageAddresses.reopen();
             auxPageSizes.reopen();
+            // Bind the pool's per-query tracker before the lazy create() inside
+            // reopen() captures the native allocator into the Rust struct.
+            rowGroupBuffers.setMemoryTracker(memoryTracker);
             rowGroupBuffers.reopen();
         }
 

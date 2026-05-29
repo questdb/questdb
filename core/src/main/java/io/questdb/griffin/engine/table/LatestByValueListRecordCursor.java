@@ -159,7 +159,7 @@ class LatestByValueListRecordCursor extends AbstractPageFrameRecordCursor {
         }
         areRecordsFound = false;
         // prepare for page frame iteration
-        super.init();
+        super.init(executionContext.getMemoryTracker());
     }
 
     @Override

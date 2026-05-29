@@ -122,7 +122,7 @@ class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
         isFrameCacheBuilt = false;
         isTreeMapBuilt = false;
         // prepare for page frame iteration
-        super.init();
+        super.init(executionContext.getMemoryTracker());
     }
 
     @Override

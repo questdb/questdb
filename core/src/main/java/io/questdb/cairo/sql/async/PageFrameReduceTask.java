@@ -241,6 +241,10 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
         this.taskType = frameSequence.getTaskType();
         this.frameIndex = frameIndex;
         this.isCountOnly = countOnly;
+        // Rebind the per-query tracker on every frame: clear() nulls it on the
+        // pool between frames, and the pool.of() below only re-runs on a fresh
+        // query. Top K uses its own frame memory pool, so this is a no-op there.
+        frameMemoryPool.setMemoryTracker(frameSequence.getMemoryTracker());
         // Initialize the memory pool if the task wasn't previously initialized for the same query,
         // or it belongs to top K. Top K uses its own frame memory pool.
         if (!sameQueryExecution && taskType != TYPE_TOP_K) {

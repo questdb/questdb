@@ -175,7 +175,7 @@ class AsyncHorizonJoinRecordCursor implements RecordCursor {
 
     private void buildMap() {
         frameSequence.prepareForDispatch();
-        frameSequence.getAtom().getFilterContext().initMemoryPools(frameSequence.getPageFrameAddressCache());
+        frameSequence.getAtom().getFilterContext().initMemoryPools(frameSequence.getPageFrameAddressCache(), frameSequence.getMemoryTracker());
         frameSequence.dispatchAndAwait();
 
         final AsyncHorizonJoinAtom atom = frameSequence.getAtom();
@@ -221,7 +221,8 @@ class AsyncHorizonJoinRecordCursor implements RecordCursor {
                     slaveFrameCursor.isExternal(),
                     executionContext.getPageFrameMinRows(),
                     executionContext.getPageFrameMaxRows(),
-                    executionContext.getSharedQueryWorkerCount()
+                    executionContext.getSharedQueryWorkerCount(),
+                    executionContext.getMemoryTracker()
             );
             try {
                 frameSequence.getAtom().initTimeFrameCursors(

@@ -105,7 +105,7 @@ abstract class AbstractDescendingRecordListCursor extends AbstractPageFrameRecor
         isTreeMapBuilt = false;
         isOpen = true;
         // prepare for page frame iteration
-        super.init();
+        super.init(executionContext.getMemoryTracker());
     }
 
     @Override

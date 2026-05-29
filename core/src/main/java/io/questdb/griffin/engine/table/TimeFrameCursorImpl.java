@@ -49,6 +49,7 @@ import io.questdb.std.DirectLongList;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.Rows;
@@ -202,7 +203,8 @@ public final class TimeFrameCursorImpl implements TimeFrameCursor {
             TablePageFrameCursor frameCursor,
             int pageFrameMinRows,
             int pageFrameMaxRows,
-            int workerCount
+            int workerCount,
+            MemoryTracker memoryTracker
     ) {
         this.frameCursor = frameCursor;
         this.pageFrameMinRows = pageFrameMinRows;
@@ -214,6 +216,7 @@ public final class TimeFrameCursorImpl implements TimeFrameCursor {
         for (int i = 0, n = mapping.getColumnCount(); i < n; i++) {
             columnIndexes.add(mapping.getColumnIndex(i));
         }
+        frameMemoryPool.setMemoryTracker(memoryTracker);
         frameMemoryPool.of(frameAddressCache);
         tableReader = frameCursor.getTableReader();
         recordA.of(frameCursor);

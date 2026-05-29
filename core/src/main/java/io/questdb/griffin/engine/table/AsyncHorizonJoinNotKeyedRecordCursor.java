@@ -157,7 +157,8 @@ class AsyncHorizonJoinNotKeyedRecordCursor implements NoRandomAccessRecordCursor
                     slaveFrameCursor.isExternal(),
                     executionContext.getPageFrameMinRows(),
                     executionContext.getPageFrameMaxRows(),
-                    executionContext.getSharedQueryWorkerCount()
+                    executionContext.getSharedQueryWorkerCount(),
+                    executionContext.getMemoryTracker()
             );
             try {
                 frameSequence.getAtom().initTimeFrameCursors(
@@ -175,7 +176,7 @@ class AsyncHorizonJoinNotKeyedRecordCursor implements NoRandomAccessRecordCursor
 
     private void buildValue() {
         frameSequence.prepareForDispatch();
-        frameSequence.getAtom().getFilterContext().initMemoryPools(frameSequence.getPageFrameAddressCache());
+        frameSequence.getAtom().getFilterContext().initMemoryPools(frameSequence.getPageFrameAddressCache(), frameSequence.getMemoryTracker());
         frameSequence.dispatchAndAwait();
 
         // Merge all per-worker values into the owner value

@@ -56,6 +56,7 @@ import io.questdb.std.BitmapIndexUtilsNative;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
@@ -312,6 +313,7 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
         private IndexFrame indexFrame;
         private int indexFramePosition = -1;
         private boolean initialized;
+        private MemoryTracker memoryTracker;
         private long prevSamplePeriodOffset = 0;
         private int rowsFound;
         private long samplePeriodIndexOffset = 0;
@@ -440,6 +442,7 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
             crossRowState = NONE;
             frameCursor.toTop();
             frameAddressCache.clear();
+            frameMemoryPool.setMemoryTracker(memoryTracker);
             frameMemoryPool.of(frameAddressCache);
             frameMemory = null;
         }
@@ -717,6 +720,7 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
         ) throws SqlException {
             this.frameCursor = frameCursor;
             this.groupBySymbolKey = groupBySymbolKey;
+            this.memoryTracker = sqlExecutionContext.getMemoryTracker();
             frameAddressCache.of(metadata, frameCursor.getColumnMapping(), frameCursor.isExternal());
             toTop();
             parseParams(this, sqlExecutionContext);
