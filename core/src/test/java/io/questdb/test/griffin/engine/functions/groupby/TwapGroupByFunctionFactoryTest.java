@@ -33,6 +33,27 @@ import org.junit.Test;
 public class TwapGroupByFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
+    public void testTwapAcceptsDesignatedTimestampCast() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tbl (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("""
+                    INSERT INTO tbl VALUES
+                    (10.0, '2024-01-01T00:00:00.000000Z'),
+                    (20.0, '2024-01-01T00:00:10.000000Z'),
+                    (30.0, '2024-01-01T00:00:30.000000Z')
+                    """);
+            // ts::timestamp is an identity cast on the designated timestamp.
+            // The cast factory returns the column unwrapped, so twap() still
+            // recognizes it as the designated timestamp and the query is
+            // accepted, matching plain twap(price, ts) in testTwapBasic.
+            assertSql(
+                    "twap\n16.666666666666668\n",
+                    "SELECT twap(price, ts::timestamp) FROM tbl"
+            );
+        });
+    }
+
+    @Test
     public void testTwapAllNull() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tbl (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
