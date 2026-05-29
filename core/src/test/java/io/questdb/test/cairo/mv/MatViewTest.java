@@ -6916,12 +6916,15 @@ public class MatViewTest extends AbstractCairoTest {
 
     @Test
     public void testMatViewBackfillCopyAcceptedWithRefreshLimit() throws Exception {
-        // With REFRESH LIMIT set, both the SQL-compile entry-point gate
-        // (checkMatViewInsertOrCopyModification) and the storage-side gate
-        // (CairoTextWriter) accept COPY into the mat view. Verified by attempting
-        // COPY from a CSV whose schema does not match the view: the gate must
-        // not fire, so the failure (if any) must come from a downstream column
-        // mismatch -- never from "cannot modify materialized view".
+        // With REFRESH LIMIT set, the SQL-compile entry-point gate
+        // (checkMatViewInsertOrCopyModification) accepts COPY into the mat view.
+        // Verified by attempting COPY from a CSV whose schema does not match the view:
+        // the compile gate must not fire, so the failure (if any) must come from a
+        // downstream column mismatch -- never from "cannot modify materialized view".
+        // COPY runs on a background import job that this test does not drain, so the
+        // storage-side CairoTextWriter gate is not exercised here; it applies the same
+        // engine.isBackfillableMatView predicate covered by the INSERT path and the
+        // QWP gate test (QwpIngressProcessorStateTest).
         //
         // The companion strict-gate test below shares this setup and confirms
         // ALTER/RENAME/UPDATE/TRUNCATE remain rejected even with REFRESH LIMIT set.
@@ -7000,6 +7003,55 @@ public class MatViewTest extends AbstractCairoTest {
                             a\t1.0\t2024-09-10T09:00:00.000000Z
                             """),
                     "price_1h order by ts",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testMatViewBackfillBucketWholeManagedZoneRejectedMonthsLimit() throws Exception {
+        // Months-based REFRESH LIMIT exercises the driver.addMonths arithmetic in the
+        // commit-time validator's boundary computation; the hours path is covered by
+        // testMatViewBackfillBucketWholeManagedZoneRejected. limit=2 months, base max
+        // 2024-12-01, wall clock 2024-12-15 -> boundary = addMonths(2024-12-01, -2)
+        // = 2024-10-01 (already 1d-bucket aligned). A managed-zone row is rejected; a row
+        // whose 1d bucket ends at-or-before 2024-10-01 is accepted.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table base_price (" +
+                            "  sym symbol, price double, ts #TIMESTAMP" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            execute("insert into base_price values('a', 9.0, '2024-12-01T00:00')");
+            drainWalQueue();
+            execute(
+                    "create materialized view price_1d refresh manual deferred as " +
+                            "select sym, last(price) as price, ts from base_price sample by 1d;"
+            );
+            execute("alter materialized view price_1d set refresh limit 2 months;");
+            drainQueues();
+
+            currentMicros = parseFloorPartialTimestamp("2024-12-15T00:00:00.000000Z");
+            try {
+                execute("insert into price_1d values('a', 7.0, '2024-10-15T00:00')");
+                Assert.fail("expected bucket-whole rejection in the managed zone");
+            } catch (CairoException e) {
+                assertContains(e.getFlyweightMessage(), "backfill row falls in or past the managed zone");
+            }
+
+            // Frozen-zone backfill at 2024-08-15 -- bucket [2024-08-15, 2024-08-16) ends
+            // at-or-before the 2024-10-01 boundary bucket floor.
+            execute("insert into price_1d values('a', 1.0, '2024-08-15T00:00')");
+            drainQueues();
+
+            assertQueryNoLeakCheck(
+                    replaceExpectedTimestamp("""
+                            sym\tprice\tts
+                            a\t1.0\t2024-08-15T00:00:00.000000Z
+                            """),
+                    "price_1d order by ts",
                     "ts",
                     true,
                     true

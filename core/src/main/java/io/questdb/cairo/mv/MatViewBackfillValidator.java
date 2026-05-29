@@ -79,7 +79,7 @@ public final class MatViewBackfillValidator implements WalPreCommitValidator {
     // table) without colliding with the "no cache yet" sentinel.
     private TableToken cachedBaseToken;
     private long cachedBaseTxn = -1;
-    private boolean cachedBaseValid;
+    private boolean isBaseCacheValid;
     private long cachedMaxBaseTs = Long.MIN_VALUE;
     // Sampler is lazily allocated on first validated commit and reused across
     // subsequent commits on this writer. Sample interval and unit are fixed at
@@ -322,7 +322,7 @@ public final class MatViewBackfillValidator implements WalPreCommitValidator {
             return Long.MIN_VALUE;
         }
         final long currentBaseTxn = engine.getTableSequencerAPI().getTxnTracker(baseTableToken).getWriterTxn();
-        if (cachedBaseValid && baseTableToken == cachedBaseToken && currentBaseTxn == cachedBaseTxn) {
+        if (isBaseCacheValid && baseTableToken == cachedBaseToken && currentBaseTxn == cachedBaseTxn) {
             return cachedMaxBaseTs;
         }
         try (TableReader reader = engine.getReader(baseTableToken)) {
@@ -330,7 +330,7 @@ public final class MatViewBackfillValidator implements WalPreCommitValidator {
             cachedBaseToken = baseTableToken;
             cachedBaseTxn = currentBaseTxn;
             cachedMaxBaseTs = maxBaseTs;
-            cachedBaseValid = true;
+            isBaseCacheValid = true;
             return maxBaseTs;
         } catch (CairoException | TableReferenceOutOfDateException e) {
             logBaseReaderFallback(matViewToken, baseTableToken, e);
@@ -343,7 +343,7 @@ public final class MatViewBackfillValidator implements WalPreCommitValidator {
         cachedBaseToken = null;
         cachedBaseTxn = -1;
         cachedMaxBaseTs = Long.MIN_VALUE;
-        cachedBaseValid = false;
+        isBaseCacheValid = false;
     }
 
     private static void logBaseReaderFallback(TableToken viewToken, TableToken baseToken, Throwable cause) {

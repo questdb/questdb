@@ -1700,6 +1700,39 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testGetTableUpdateDetailsAllowsBackfillIntoMatViewWithRefreshLimit() throws Exception {
+        // The QWP ingestion gate (QwpTudCache.getOrCreateTable) must OPEN for a mat view
+        // that has REFRESH LIMIT set (backfillable), so QWP backfill is allowed -- the
+        // companion testGetTableUpdateDetailsReturnsNullForMatView covers the no-limit
+        // reject case. All four ingestion gates (ILP HTTP/TCP/UDP and QWP) apply the same
+        // engine.isBackfillableMatView predicate; this pins the QWP wiring.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE mv_base (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE MATERIALIZED VIEW mv_target AS (SELECT ts, count() cnt FROM mv_base SAMPLE BY 1h)");
+            execute("ALTER MATERIALIZED VIEW mv_target SET REFRESH LIMIT 1 HOUR");
+            // Drain so the SET REFRESH LIMIT applies to the in-memory mat-view state that
+            // engine.isBackfillableMatView reads.
+            drainWalQueue();
+
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            DefaultColumnTypes defaultColumnTypes = new DefaultColumnTypes(lineConfig);
+            try (QwpTudCache cache = new QwpTudCache(
+                    engine, true, true, defaultColumnTypes, PartitionBy.DAY)
+            ) {
+                WalTableUpdateDetails tud = cache.getTableUpdateDetails(
+                        AllowAllSecurityContext.INSTANCE,
+                        new Utf8String("mv_target"),
+                        null,
+                        null,
+                        1
+                );
+                Assert.assertNotNull(tud);
+            }
+        });
+    }
+
+    @Test
     public void testGetTableUpdateDetailsReturnsNullWhenAutoCreateColumnsDisabled() throws Exception {
         assertMemoryLeak(() -> {
             LineHttpProcessorConfiguration lineConfig =
