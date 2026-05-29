@@ -64,7 +64,7 @@ public class CachedWindowRecordCursorFactory extends AbstractRecordCursorFactory
     private final ObjList<WindowFunction> unordered2PassFunctions;
     @Nullable
     private final ObjList<WindowFunction> unorderedFunctions;
-    private boolean isClosed = false;
+    private boolean isClosed;
 
     public CachedWindowRecordCursorFactory(
             CairoConfiguration configuration,
@@ -93,6 +93,7 @@ public class CachedWindowRecordCursorFactory extends AbstractRecordCursorFactory
             );
             this.sortKeys = sortKeys;
             this.chainMetadata = chainMetadata;
+            this.allFunctions = new ObjList<>();
 
             ObjList<WindowSortBuffer> sortBuffers = new ObjList<>(orderedGroupCount);
             try {
@@ -114,7 +115,6 @@ public class CachedWindowRecordCursorFactory extends AbstractRecordCursorFactory
                 Misc.free(recordChain);
                 throw t;
             }
-            this.allFunctions = new ObjList<>();
 
             ObjList<ObjList<WindowFunction>> orderedTmp = null;
             for (int i = 0, n = orderedFunctions.size(); i < n; i++) {

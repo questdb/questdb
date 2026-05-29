@@ -90,6 +90,7 @@ public class CachedWindowLightRecordCursorFactory extends AbstractRecordCursorFa
             );
             this.sortKeys = sortKeys;
             this.chainMetadata = chainMetadata;
+            this.allFunctions = new ObjList<>();
 
             // Caller guarantees every group is encoded-sort-eligible; the LIGHT factory does not
             // accept the tree fallback (see SqlCodeGenerator's allGroupsEncodedEligible gate).
@@ -116,7 +117,6 @@ public class CachedWindowLightRecordCursorFactory extends AbstractRecordCursorFa
                 Misc.free(baseRowIds);
                 throw t;
             }
-            this.allFunctions = new ObjList<>();
 
             ObjList<ObjList<WindowFunction>> orderedTmp = null;
             for (int i = 0, n = orderedFunctions.size(); i < n; i++) {
@@ -412,6 +412,11 @@ public class CachedWindowLightRecordCursorFactory extends AbstractRecordCursorFa
             final Record baseRecord = baseCursor.getRecord();
             // recordA pre-positioned so encoded sort key encoders can read base columns through it.
             recordA.of(baseRecord, narrowChain.getRecord(), -1);
+
+            final long baseSize = baseCursor.size();
+            if (baseSize > 0) {
+                baseRowIds.setCapacity(baseSize);
+            }
 
             long rowIndex = 0;
             final boolean hasOrdered = orderedGroupCount > 0;

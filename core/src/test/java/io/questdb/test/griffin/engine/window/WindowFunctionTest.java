@@ -560,6 +560,49 @@ public class WindowFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCachedWindowLightEncodedSortLimitOverflow() throws Exception {
+        // Pin sort key/value page-max so tiny that EncodedWindowSortBuffer's maxEntries
+        // is exceeded by the row count, exercising the LimitOverflowException path.
+        // Subsequent runs of the cursor must not leak native memory.
+        node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_CACHED_LIGHT_ENABLED, true);
+        node1.setProperty(PropertyKey.CAIRO_SQL_SORT_KEY_PAGE_SIZE, 4096);
+        node1.setProperty(PropertyKey.CAIRO_SQL_SORT_KEY_MAX_PAGES, 2);
+        node1.setProperty(PropertyKey.CAIRO_SQL_SORT_LIGHT_VALUE_PAGE_SIZE, 4096);
+        node1.setProperty(PropertyKey.CAIRO_SQL_SORT_LIGHT_VALUE_MAX_PAGES, 2);
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, v long) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab select x::timestamp, x from long_sequence(5_000)");
+            try {
+                assertExceptionNoLeakCheck("SELECT row_number() OVER (ORDER BY v) FROM tab");
+                Assert.fail("expected LimitOverflowException");
+            } catch (Exception e) {
+                TestUtils.assertContains(e.getMessage(), "memory exceeded in window encoded sort");
+            }
+        });
+    }
+
+    @Test
+    public void testCachedWindowLightFallsBackWhenOrderBySortDisabled() throws Exception {
+        // cairo.sql.orderby.sort.enabled=false flips allGroupsEncodedEligible to false
+        // in the LIGHT dispatcher. LIGHT must be skipped even when its own flag is on.
+        node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_CACHED_LIGHT_ENABLED, true);
+        node1.setProperty(PropertyKey.CAIRO_SQL_ORDER_BY_SORT_ENABLED, false);
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, v long) timestamp(ts)", timestampType.getTypeName());
+            assertPlanNoLeakCheck(
+                    "SELECT row_number() OVER (ORDER BY v) FROM tab",
+                    """
+                            CachedWindow
+                              orderedFunctions: [[v] => [row_number()]]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: tab
+                            """
+            );
+        });
+    }
+
+    @Test
     public void testCachedWindowLightLagSwapBlockedByMixedSortGroup() throws Exception {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, v long) timestamp(ts)", timestampType.getTypeName());
@@ -572,6 +615,45 @@ public class WindowFunctionTest extends AbstractCairoTest {
                                             Row forward scan
                                             Frame forward scan on: tab
                                     """
+            );
+        });
+    }
+
+    @Test
+    public void testCachedWindowLightLagSwapOnBackwardBaseScan() throws Exception {
+        // SCAN_DIRECTION_BACKWARD branch of rewriteLagLeadForBaseScan.
+        // Inner ORDER BY ts DESC produces a backward base scan; LAG(... ORDER BY ts ASC)
+        // opposes the scan direction, so it must be swapped to LEAD(... ORDER BY ts DESC),
+        // matching the LEAD-on-forward-scan result row-for-row.
+        node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_CACHED_LIGHT_ENABLED, true);
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, v long) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values (1, 10), (2, 20), (3, 30), (4, 40), (5, 50)");
+
+            assertPlanNoLeakCheck(
+                    "SELECT ts, v, lag(v, 1) OVER (ORDER BY ts ASC) FROM tab ORDER BY ts DESC",
+                    """
+                            CachedWindowLight
+                              unorderedFunctions: [lead(v, 1, NULL) over ()]
+                                PageFrame
+                                    Row backward scan
+                                    Frame backward scan on: tab
+                            """
+            );
+
+            assertQueryNoLeakCheck(
+                    replaceTimestampSuffix("""
+                            ts\tv\tlag
+                            1970-01-01T00:00:00.000005Z\t50\t40
+                            1970-01-01T00:00:00.000004Z\t40\t30
+                            1970-01-01T00:00:00.000003Z\t30\t20
+                            1970-01-01T00:00:00.000002Z\t20\t10
+                            1970-01-01T00:00:00.000001Z\t10\tnull
+                            """, timestampType.getTypeName()),
+                    "SELECT ts, v, lag(v, 1) OVER (ORDER BY ts ASC) FROM tab ORDER BY ts DESC",
+                    "ts###desc",
+                    true,
+                    true
             );
         });
     }
@@ -616,6 +698,49 @@ public class WindowFunctionTest extends AbstractCairoTest {
                     false,
                     true
             );
+        });
+    }
+
+    @Test
+    public void testCachedWindowLightPositivePlanForEncodedEligible() throws Exception {
+        // Every LIGHT gate satisfied: random-access base, encoded-eligible single-LONG sort key,
+        // window cached.light.enabled on, orderby sort enabled. Plan must be CachedWindowLight.
+        node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_CACHED_LIGHT_ENABLED, true);
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, v long) timestamp(ts)", timestampType.getTypeName());
+            assertPlanNoLeakCheck(
+                    "SELECT row_number() OVER (ORDER BY v) FROM tab",
+                    """
+                            CachedWindowLight
+                              orderedFunctions: [[v] => [row_number()]]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: tab
+                            """
+            );
+        });
+    }
+
+    @Test
+    public void testCachedWindowLightReuseCloseAndReopen() throws Exception {
+        // Re-executing the same LIGHT factory exercises cursor.close() -> of() reuse:
+        // EncodedWindowSortBuffer.reopen() must re-allocate entryMem, and encoder.init()
+        // must resurrect rankMap DirectIntLists via setCapacity on closed lists.
+        node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_CACHED_LIGHT_ENABLED, true);
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, v long) timestamp(ts)", timestampType.getTypeName());
+            execute("insert into tab values (1, 10), (2, 20), (3, 30)");
+
+            final String expected = replaceTimestampSuffix("""
+                    ts\tv\trow_number
+                    1970-01-01T00:00:00.000001Z\t10\t1
+                    1970-01-01T00:00:00.000002Z\t20\t2
+                    1970-01-01T00:00:00.000003Z\t30\t3
+                    """, timestampType.getTypeName());
+            final String query = "SELECT ts, v, row_number() OVER (ORDER BY v) FROM tab";
+
+            assertQueryNoLeakCheck(expected, query, "ts", true, true);
+            assertQueryNoLeakCheck(expected, query, "ts", true, true);
         });
     }
 

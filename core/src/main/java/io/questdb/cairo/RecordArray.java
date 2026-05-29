@@ -69,7 +69,9 @@ public class RecordArray extends RecordChain {
         // via getAddressAtRowIndex land on allocated memory; second rewinds
         // appendAddress to the fix-region start for sequential recordSink.copy.
         mem.jumpTo(varAppendOffset);
-        mem.jumpTo(recordOffset + varOffset);
+        if (recordSink != null) {
+            mem.jumpTo(recordOffset + varOffset);
+        }
         return recordOffset;
     }
 
