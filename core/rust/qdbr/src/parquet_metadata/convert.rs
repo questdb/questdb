@@ -1166,6 +1166,85 @@ mod tests {
         assert!(extract_sorting_columns(&metadata).is_err());
     }
 
+    /// Regression: extract_sorting_columns must stay correct with MORE than two
+    /// row groups, where non-declaring (no-sort-column) groups are interleaved
+    /// among declaring ones. A partition that is converted and then O3-merged
+    /// repeatedly accumulates several copied groups (no sorting columns) around
+    /// freshly written ones (the timestamp sort column). The two-row-group tests
+    /// never adopt the reference from a non-first group and then hit a conflict
+    /// on a later, non-adjacent group; this one does.
+    #[test]
+    fn extract_sorting_columns_handles_many_row_groups() {
+        use parquet2::metadata::{RowGroupMetaData, SortingColumn};
+
+        let parquet_data = write_test_parquet(10, CompressionOptions::Uncompressed);
+        let mut cursor = Cursor::new(&parquet_data);
+        let mut metadata = read_metadata_with_size(&mut cursor, parquet_data.len() as u64).unwrap();
+
+        let ts_sort = || Some(vec![SortingColumn::new(0, false, false)]);
+
+        // Four groups; sorting columns declared only on the inner two, with empty
+        // groups before, between, and after -> tolerated, adopting [ts].
+        metadata.row_groups = vec![
+            RowGroupMetaData::with_sorting_columns(vec![], 10, None, 0),
+            RowGroupMetaData::with_sorting_columns(vec![], 10, ts_sort(), 0),
+            RowGroupMetaData::with_sorting_columns(vec![], 10, None, 0),
+            RowGroupMetaData::with_sorting_columns(vec![], 10, ts_sort(), 0),
+        ];
+        let cols = extract_sorting_columns(&metadata)
+            .expect("interleaved empty and matching groups must be tolerated");
+        assert_eq!(cols.len(), 1);
+        assert_eq!(cols[0].column_idx, 0);
+        assert!(!cols[0].descending);
+
+        // Reference adopted from a non-first group (rg1), conflict on a later,
+        // non-adjacent group (rg3) -> rejected. rg0 and rg2 are skipped.
+        metadata.row_groups = vec![
+            RowGroupMetaData::with_sorting_columns(vec![], 10, None, 0),
+            RowGroupMetaData::with_sorting_columns(
+                vec![],
+                10,
+                Some(vec![SortingColumn::new(0, false, false)]),
+                0,
+            ),
+            RowGroupMetaData::with_sorting_columns(vec![], 10, None, 0),
+            RowGroupMetaData::with_sorting_columns(
+                vec![],
+                10,
+                Some(vec![SortingColumn::new(1, false, false)]),
+                0,
+            ),
+        ];
+        assert!(
+            extract_sorting_columns(&metadata).is_err(),
+            "a conflicting sort column on a later group must still be rejected"
+        );
+
+        // Conflict expressed as a differing sort-column COUNT on a later group.
+        metadata.row_groups = vec![
+            RowGroupMetaData::with_sorting_columns(vec![], 10, None, 0),
+            RowGroupMetaData::with_sorting_columns(
+                vec![],
+                10,
+                Some(vec![SortingColumn::new(0, false, false)]),
+                0,
+            ),
+            RowGroupMetaData::with_sorting_columns(
+                vec![],
+                10,
+                Some(vec![
+                    SortingColumn::new(0, false, false),
+                    SortingColumn::new(1, false, false),
+                ]),
+                0,
+            ),
+        ];
+        assert!(
+            extract_sorting_columns(&metadata).is_err(),
+            "a differing sort-column count on a later group must still be rejected"
+        );
+    }
+
     /// End-to-end: the full Mig941 conversion (extract_sorting_columns ->
     /// detect_designated_timestamp -> _pm writer -> ParquetMetaReader), not just
     /// extract_sorting_columns in isolation, must tolerate an O3-merged footer

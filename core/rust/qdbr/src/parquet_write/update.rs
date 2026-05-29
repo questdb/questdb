@@ -2160,6 +2160,92 @@ mod tests {
         Ok(())
     }
 
+    /// Regression for the no-sorting-columns case (a table with no designated
+    /// timestamp): when the file declares no sort order, copy_row_group must
+    /// leave the copied group without sorting columns and the freshly written
+    /// group must agree, so the footer stays internally consistent and
+    /// extract_sorting_columns returns an empty set rather than erroring. The
+    /// other copy_row_group tests only cover the WITH-sorting-column path.
+    #[test]
+    fn copy_row_group_preserves_absent_sorting_columns() -> Result<(), Box<dyn Error>> {
+        use crate::allocator::TestAllocatorState;
+        use crate::parquet_metadata::convert::extract_sorting_columns;
+
+        // 1. Initial single-row-group file WITHOUT sorting columns.
+        let k = [1i32, 2, 3, 4];
+        let val = [10i32, 20, 30, 40];
+        let partition = Partition {
+            table: "t".to_string(),
+            columns: vec![
+                make_column("k", ColumnTypeTag::Int.into_type(), &k),
+                make_column("val", ColumnTypeTag::Int.into_type(), &val),
+            ],
+        };
+        let src = NamedTempFile::new()?;
+        ParquetWriter::new(src.reopen()?)
+            .with_sorting_columns(None)
+            .finish(partition)?;
+        let src_len = src.as_file().metadata()?.len();
+
+        // 2. Rewrite-mode updater with NO target sorting columns.
+        let out = NamedTempFile::new()?;
+        let alloc = TestAllocatorState::new();
+        let mut updater = super::ParquetUpdater::new(
+            alloc.allocator(),
+            src.reopen()?,
+            src_len,
+            out.reopen()?,
+            0,    // write_file_size == 0 -> rewrite
+            None, // target sorting columns: none
+            true,
+            false,
+            CompressionOptions::Uncompressed,
+            None,
+            None,
+            DEFAULT_BLOOM_FILTER_FPP,
+            0.0,
+            None,
+            0,
+            -1,
+        )?;
+
+        // 3. Copy the existing row group, then append a fresh O3 row group.
+        let o3_k = [5i32, 6, 7];
+        let o3_val = [50i32, 60, 70];
+        let o3 = Partition {
+            table: "t".to_string(),
+            columns: vec![
+                make_column("k", ColumnTypeTag::Int.into_type(), &o3_k),
+                make_column("val", ColumnTypeTag::Int.into_type(), &o3_val),
+            ],
+        };
+        updater.copy_row_group(0)?; // copied group: must stay without sorting cols
+        updater.insert_row_group(&o3, 1)?; // fresh group: also without sorting cols
+        updater.end(None)?;
+
+        // 4. Neither row group declares sorting columns, and they agree.
+        let f = out.reopen()?;
+        let len = f.metadata()?.len();
+        let md = read_metadata_with_size(&mut &f, len)?;
+        assert_eq!(md.row_groups.len(), 2);
+        assert!(
+            md.row_groups[0].sorting_columns().is_none(),
+            "copied group of a no-sort file must declare no sorting columns",
+        );
+        assert_eq!(
+            md.row_groups[0].sorting_columns(),
+            md.row_groups[1].sorting_columns(),
+            "copied and appended row groups must agree (both: no sorting columns)",
+        );
+        // The native call Mig941 makes must accept it and return an empty set.
+        let cols = extract_sorting_columns(&md).expect("a file without sorting columns is valid");
+        assert!(
+            cols.is_empty(),
+            "no row group declares sorting columns -> empty result",
+        );
+        Ok(())
+    }
+
     /// Regression for the O3-merge sorting-columns inconsistency: copy_row_group
     /// must stamp the file-level target sorting columns onto the copied group
     /// rather than leaving it None. The rewrite flow copies the unchanged row
