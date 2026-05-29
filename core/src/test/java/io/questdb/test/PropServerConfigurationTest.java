@@ -821,6 +821,34 @@ public class PropServerConfigurationTest {
     }
 
     @Test
+    public void testDeprecatedMaxPagesAcceptsSizeSuffix() throws Exception {
+        // The deprecated sort.* max.pages keys were historically read with getIntSize, so size-suffixed
+        // values like "2k" parsed. The byte-cap derivation must preserve that, else a previously valid
+        // config fails to start.
+        Properties properties = new Properties();
+        properties.setProperty("cairo.sql.sort.key.page.size", "128k");
+        properties.setProperty("cairo.sql.sort.key.max.pages", "2k");
+
+        CairoConfiguration cairo = newPropServerConfiguration(properties).getCairoConfiguration();
+
+        // 2k (2048) pages of 128k.
+        Assert.assertEquals(2048L * 128 * 1024, cairo.getSqlSortKeyMaxBytes());
+    }
+
+    @Test
+    public void testDeprecatedMaxPagesAcceptsUnderscore() throws Exception {
+        // The deprecated window.* max.pages keys were historically read with getInt, so underscore-
+        // separated values like "1_000_000" parsed. The byte-cap derivation must preserve that.
+        Properties properties = new Properties();
+        properties.setProperty("cairo.sql.window.tree.page.size", "512k");
+        properties.setProperty("cairo.sql.window.tree.max.pages", "1_000");
+
+        CairoConfiguration cairo = newPropServerConfiguration(properties).getCairoConfiguration();
+
+        Assert.assertEquals(1_000L * 512 * 1024, cairo.getSqlWindowTreeKeyMaxBytes());
+    }
+
+    @Test
     public void testMaxBytesBelowPageSizeAccepted() throws Exception {
         // The implementation floors each operator's effective cap at one *.page.size, so a
         // *.max.bytes below the page size is silently raised at runtime. The config layer
@@ -845,32 +873,48 @@ public class PropServerConfigurationTest {
     }
 
     @Test
-    public void testPageSizesClampedToOne() throws Exception {
-        // A misconfigured *.page.size=0 must clamp to 1 rather than propagate a 0 into
-        // downstream divisions (RecordTreeChain.derivePageBudget, EncodedSortRecordCursor,
-        // the CachedWindow resolved-cap math) where it would throw ArithmeticException at
-        // factory build time. Numbers.ceilPow2(0) also returns 0, so the window-side keys
-        // need the same clamp even though they pass through ceilPow2.
+    public void testPageSizeAtMinimumAccepted() throws Exception {
+        // Exactly at each minimum must build (off-by-one guard). window.rowid (>=12, ceilPow2 -> 16)
+        // and window.tree (>=24, ceilPow2 -> 32) are rounded up by the config's ceilPow2.
         Properties properties = new Properties();
-        properties.setProperty("cairo.sql.sort.key.page.size", "0");
-        properties.setProperty("cairo.sql.sort.light.value.page.size", "0");
+        properties.setProperty("cairo.sql.sort.key.page.size", "64");
+        properties.setProperty("cairo.sql.sort.light.value.page.size", "12");
+        properties.setProperty("cairo.sql.window.store.page.size", "64");
+        properties.setProperty("cairo.sql.window.rowid.page.size", "16");
+        properties.setProperty("cairo.sql.window.tree.page.size", "32");
+
+        newPropServerConfiguration(properties); // must not throw
+    }
+
+    @Test
+    public void testPageSizeBelowBlockSizeRejected() throws Exception {
+        // Heap operators need a page holding one fixed-size block: sort.key -> RecordTreeChain
+        // MemoryPages (41B node, ceilPow2 -> 64), window.tree -> 24B node, value chains -> 12B entry,
+        // window.store -> 64 (store/RECORD_SIZE widest 40, and store >> 4). A sub-block page.size is
+        // rejected at startup rather than corrupting the heap at query time. The window keys ceilPow2,
+        // so e.g. 16 stays 16 and 32 stays 32.
+        assertPageSizeRejected("cairo.sql.sort.key.page.size", "0");
+        assertPageSizeRejected("cairo.sql.sort.key.page.size", "32");
+        assertPageSizeRejected("cairo.sql.window.tree.page.size", "0");
+        assertPageSizeRejected("cairo.sql.window.tree.page.size", "16");
+        assertPageSizeRejected("cairo.sql.sort.light.value.page.size", "0");
+        assertPageSizeRejected("cairo.sql.sort.light.value.page.size", "8");
+        assertPageSizeRejected("cairo.sql.window.rowid.page.size", "0");
+        assertPageSizeRejected("cairo.sql.window.rowid.page.size", "8");
+        assertPageSizeRejected("cairo.sql.window.store.page.size", "0");
+        assertPageSizeRejected("cairo.sql.window.store.page.size", "32");
+    }
+
+    @Test
+    public void testSortValuePageSizeClampedToOne() throws Exception {
+        // sort.value.page.size is a divisor-only RecordChain page (no fixed block), so 0 clamps to 1
+        // rather than being rejected - see testPageSizeBelowBlockSizeRejected for the heap-backed keys.
+        Properties properties = new Properties();
         properties.setProperty("cairo.sql.sort.value.page.size", "0");
-        properties.setProperty("cairo.sql.window.store.page.size", "0");
-        properties.setProperty("cairo.sql.window.rowid.page.size", "0");
-        properties.setProperty("cairo.sql.window.tree.page.size", "0");
 
         CairoConfiguration cairo = newPropServerConfiguration(properties).getCairoConfiguration();
 
-        Assert.assertEquals(1L, cairo.getSqlSortKeyPageSize());
-        Assert.assertEquals(1L, cairo.getSqlSortLightValuePageSize());
         Assert.assertEquals(1, cairo.getSqlSortValuePageSize());
-        Assert.assertEquals(1, cairo.getSqlWindowStorePageSize());
-        Assert.assertEquals(1, cairo.getSqlWindowRowIdPageSize());
-        Assert.assertEquals(1, cairo.getSqlWindowTreeKeyPageSize());
-        // The CachedWindow resolved page count uses the storePageSize as its divisor: with
-        // pageSize=1 and cap=Long.MAX_VALUE, the page count saturates at Integer.MAX_VALUE
-        // rather than throwing ArithmeticException.
-        Assert.assertEquals(Integer.MAX_VALUE, cairo.getSqlWindowCacheMaxPagesResolved());
     }
 
     @Test
@@ -2348,6 +2392,17 @@ public class PropServerConfigurationTest {
             Assert.fail("expected ServerConfigurationException");
         } catch (ServerConfigurationException e) {
             TestUtils.assertContains(e.getMessage(), key.getPropertyPath());
+        }
+    }
+
+    private void assertPageSizeRejected(String key, String value) throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty(key, value);
+        try {
+            newPropServerConfiguration(properties);
+            Assert.fail("expected ServerConfigurationException for " + key + '=' + value);
+        } catch (ServerConfigurationException expected) {
+            TestUtils.assertContains(expected.getMessage(), key);
         }
     }
 

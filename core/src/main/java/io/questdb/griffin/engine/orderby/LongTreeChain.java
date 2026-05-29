@@ -60,6 +60,8 @@ public class LongTreeChain extends AbstractRedBlackTree implements Reopenable {
     ) {
         super(keyPageSize, maxKeyHeapBytes, keyHeapConfigKey);
         try {
+            // value page must hold at least one chain entry (config rejects sub-block sizes).
+            assert valuePageSize >= CHAIN_VALUE_SIZE;
             valueHeapSize = initialValueHeapSize = valuePageSize;
             valueHeapStart = valueHeapPos = Unsafe.malloc(valueHeapSize, MemoryTag.NATIVE_TREE_CHAIN);
             valueHeapLimit = valueHeapStart + valueHeapSize;

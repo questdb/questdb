@@ -35,6 +35,7 @@ import io.questdb.griffin.engine.RecordComparator;
 import io.questdb.std.MemoryPages;
 import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
+import io.questdb.std.Numbers;
 import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.NotNull;
 
@@ -70,6 +71,8 @@ public class RecordTreeChain implements Closeable, Mutable, Reopenable {
     ) {
         try {
             this.comparator = comparator;
+            // MemoryPages can't hold a block straddling its ceilPow2 page (config rejects sub-block key pages).
+            assert Numbers.ceilPow2(keyPageSize) >= BLOCK_SIZE;
             this.mem = new MemoryPages(keyPageSize, derivePageBudget(keyPageSize, maxKeyHeapBytes), keyHeapConfigKey);
             this.recordChain = new RecordChain(
                     columnTypes,
