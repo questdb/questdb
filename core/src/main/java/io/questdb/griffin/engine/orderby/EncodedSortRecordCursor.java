@@ -41,6 +41,7 @@ import io.questdb.std.DirectLongList;
 import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 
@@ -79,7 +80,8 @@ class EncodedSortRecordCursor implements DelegatingRecordCursor {
             );
             this.parallelThreshold = configuration.getSqlSortEncodedParallelThreshold();
             final long valuePageSize = configuration.getSqlSortValuePageSize();
-            final long valueMaxPagesFromBytes = Math.max(1L, configuration.getSqlSortValueMaxBytes() / valuePageSize);
+            // RecordChain ceilPow2's the page before allocating; divide by the rounded unit to honor the cap.
+            final long valueMaxPagesFromBytes = Math.max(1L, configuration.getSqlSortValueMaxBytes() / Numbers.ceilPow2(valuePageSize));
             this.recordChain = new RecordChain(
                     metadata,
                     recordSink,

@@ -849,6 +849,21 @@ public class PropServerConfigurationTest {
     }
 
     @Test
+    public void testDeprecatedMaxPagesNegativeValueDerivesNegativeBytes() throws Exception {
+        // A legacy *.max.pages=-1 (historically a pathological "fail fast" probe) parses to -1 and
+        // derives a negative byte cap. The config layer accepts it; downstream consumers floor the
+        // negative cap to one page (or throw a clean LimitOverflowException), never crashing. Pins
+        // that contract, which lost its only coverage when the SampleByFillTest probe was rewritten.
+        Properties properties = new Properties();
+        properties.setProperty("cairo.sql.sort.key.page.size", "128k");
+        properties.setProperty("cairo.sql.sort.key.max.pages", "-1");
+
+        CairoConfiguration cairo = newPropServerConfiguration(properties).getCairoConfiguration();
+
+        Assert.assertEquals(128L * 1024 * -1, cairo.getSqlSortKeyMaxBytes());
+    }
+
+    @Test
     public void testMaxBytesBelowPageSizeAccepted() throws Exception {
         // The implementation floors each operator's effective cap at one *.page.size, so a
         // *.max.bytes below the page size is silently raised at runtime. The config layer

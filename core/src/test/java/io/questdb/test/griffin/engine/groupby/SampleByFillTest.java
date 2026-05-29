@@ -1779,6 +1779,43 @@ public class SampleByFillTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSortedRecordCursorFactoryHandlesValueHeapOverflow() throws Exception {
+        // Sibling of testSortedRecordCursorFactoryHandlesKeyHeapOverflow targeting the value chain:
+        // sort.key is left uncapped while a 1-page sort.value budget makes the RecordTreeChain's
+        // value RecordChain overflow in MemoryCARWImpl. Pins the (raise cairo.sql.sort.value.max.bytes)
+        // hint so a property rename fails here instead of silently breaking remediation guidance.
+        setProperty(PropertyKey.CAIRO_SQL_SAMPLEBY_FILL_SORT_STRATEGY, "full_recordchain");
+        setProperty(PropertyKey.CAIRO_SQL_SORT_VALUE_PAGE_SIZE, 64);
+        setProperty(PropertyKey.CAIRO_SQL_SORT_VALUE_MAX_BYTES, 64);
+
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (" +
+                    "ts TIMESTAMP, " +
+                    "k SYMBOL, " +
+                    "x DOUBLE" +
+                    ") TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t SELECT " +
+                    "timestamp_sequence('2024-01-01T00:00:00.000000Z', 3_600_000_000L) ts, " +
+                    "rnd_symbol(64, 4, 4, 0) k, " +
+                    "rnd_double() x " +
+                    "FROM long_sequence(512)");
+
+            try {
+                assertQueryNoLeakCheck(
+                        "",
+                        "SELECT ts, k, sum(x) FROM t SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR",
+                        "ts",
+                        false
+                );
+                fail("expected LimitOverflowException from constrained sort.value budget");
+            } catch (CairoException ex) {
+                TestUtils.assertContains(ex.getFlyweightMessage(), "breached in VirtualMemory");
+                TestUtils.assertContains(ex.getFlyweightMessage(), "(raise cairo.sql.sort.value.max.bytes)");
+            }
+        });
+    }
+
+    @Test
     public void testRoutingAlignToFirstObservationStaysOnLegacyPath() throws Exception {
         assertMemoryLeak(() -> {
             // ALIGN TO FIRST OBSERVATION forces the legacy cursor path because

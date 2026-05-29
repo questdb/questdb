@@ -89,7 +89,9 @@ public class RecordTreeChain implements Closeable, Mutable, Reopenable {
     }
 
     private static int derivePageBudget(long pageSize, long maxBytes) {
-        long pages = Math.max(1L, maxBytes / pageSize);
+        // Divide by the rounded page: MemoryPages/MemoryCARWImpl ceilPow2 the page before allocating,
+        // so dividing by the raw value would let the heap overshoot maxBytes (up to ~2x for non-pow2).
+        long pages = Math.max(1L, maxBytes / Numbers.ceilPow2(pageSize));
         return (int) Math.min(pages, Integer.MAX_VALUE);
     }
 
