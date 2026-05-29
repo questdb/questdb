@@ -363,6 +363,11 @@ public class GroupByUtils {
             }
             outerProjectionFunctions.clear();
             innerProjectionFunctions.clear();
+            // Every group-by function was also added to outerProjectionFunctions (same
+            // instance) and freed by the loop above. Clear the list so callers that free
+            // it on their own error path (the JOIN callsites call
+            // Misc.freeObjList(groupByFunctions)) don't close the same instance twice.
+            outGroupByFunctions.clear();
             if (extraOuterProjectionFunctions != null) {
                 for (int i = 0, n = extraOuterProjectionFunctions.size(); i < n; i++) {
                     Misc.freeObjListAndClear(extraOuterProjectionFunctions.getQuick(i));
