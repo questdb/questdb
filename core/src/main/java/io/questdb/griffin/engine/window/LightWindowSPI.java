@@ -28,9 +28,12 @@ import io.questdb.cairo.RecordArray;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.WindowSPI;
+import io.questdb.std.DirectLongList;
 import io.questdb.std.IntList;
 
 final class LightWindowSPI implements WindowSPI {
+    private static final String ASSERT_NARROW_ONLY = "getAddress requires a narrow-chain column";
+    private final DirectLongList baseRowIds;
     private final WindowLightRecord lookupRecord;
     private final RecordArray narrowChain;
     private final IntList sourceMap;
@@ -38,21 +41,24 @@ final class LightWindowSPI implements WindowSPI {
     private Record lookupRecordBase;
     private Record lookupRecordNarrow;
 
-    LightWindowSPI(IntList sourceMap, RecordArray narrowChain) {
+    LightWindowSPI(IntList sourceMap, RecordArray narrowChain, DirectLongList baseRowIds) {
         this.sourceMap = sourceMap;
         this.narrowChain = narrowChain;
+        this.baseRowIds = baseRowIds;
         this.lookupRecord = new WindowLightRecord(sourceMap);
     }
 
     @Override
     public long getAddress(long rowIndex, int chainColIdx) {
-        return narrowChain.getAddressAtRowIndex(rowIndex, -sourceMap.getQuick(chainColIdx) - 1);
+        int encoded = sourceMap.getQuick(chainColIdx);
+        assert encoded < 0 : ASSERT_NARROW_ONLY;
+        return narrowChain.getAddressAtRowIndex(rowIndex, -encoded - 1);
     }
 
     @Override
     public Record getRecordAt(long rowIndex) {
+        baseCursor.recordAt(lookupRecordBase, baseRowIds.get(rowIndex));
         narrowChain.recordAtRowIndex(lookupRecordNarrow, rowIndex);
-        baseCursor.recordAt(lookupRecordBase, lookupRecordNarrow.getLong(0));
         lookupRecord.of(lookupRecordBase, lookupRecordNarrow, rowIndex);
         return lookupRecord;
     }

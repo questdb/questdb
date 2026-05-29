@@ -1053,47 +1053,38 @@ public class WindowFunctionTest extends AbstractCairoTest {
             String tenSeconds = timestampType == TestTimestampType.MICRO ? "10000000" : "10000000000";
 
             // partition + range frame
-            assertQueryNoLeakCheck(
-                    "QUERY PLAN\n" +
-                            "Window\n" +
+            assertPlanNoLeakCheck(
+                    "select ts, i, covar_pop(y, x) over (partition by i order by ts range between 10 second preceding and current row) from tab",
+                    "Window\n" +
                             "  functions: [covar_pop(y,x) over (partition by [i] range between " + tenSeconds + " preceding and current row)]\n" +
                             "    PageFrame\n" +
                             "        Row forward scan\n" +
-                            "        Frame forward scan on: tab\n",
-                    "explain select ts, i, covar_pop(y, x) over (partition by i order by ts range between 10 second preceding and current row) from tab",
-                    null,
-                    false,
-                    true);
+                            "        Frame forward scan on: tab\n"
+            );
 
             // partition + rows frame
-            assertQueryNoLeakCheck(
+            assertPlanNoLeakCheck(
+                    "select ts, i, covar_pop(y, x) over (partition by i order by ts rows between 3 preceding and current row) from tab",
                     """
-                            QUERY PLAN
                             Window
                               functions: [covar_pop(y,x) over (partition by [i] rows between 3 preceding and current row)]
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: tab
-                            """,
-                    "explain select ts, i, covar_pop(y, x) over (partition by i order by ts rows between 3 preceding and current row) from tab",
-                    null,
-                    false,
-                    true);
+                            """
+            );
 
             // no partition + rows frame
-            assertQueryNoLeakCheck(
+            assertPlanNoLeakCheck(
+                    "select ts, covar_pop(y, x) over (order by ts rows between 3 preceding and current row) from tab",
                     """
-                            QUERY PLAN
                             Window
                               functions: [covar_pop(y,x) over (rows between 3 preceding and current row)]
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: tab
-                            """,
-                    "explain select ts, covar_pop(y, x) over (order by ts rows between 3 preceding and current row) from tab",
-                    null,
-                    false,
-                    true);
+                            """
+            );
         });
     }
 
@@ -5764,30 +5755,24 @@ public class WindowFunctionTest extends AbstractCairoTest {
             String twoSeconds = timestampType == TestTimestampType.MICRO ? "2000000" : "2000000000";
 
             // Test bounded range frame plan
-            assertQueryNoLeakCheck(
-                    "QUERY PLAN\n" +
-                            "Window\n" +
+            assertPlanNoLeakCheck(
+                    "select ts, i, val, ksum(val) over (partition by i order by ts range between 10 second preceding and current row) from tab",
+                    "Window\n" +
                             "  functions: [ksum(val) over (partition by [i] range between " + tenSeconds + " preceding and current row)]\n" +
                             "    PageFrame\n" +
                             "        Row forward scan\n" +
-                            "        Frame forward scan on: tab\n",
-                    "explain select ts, i, val, ksum(val) over (partition by i order by ts range between 10 second preceding and current row) from tab",
-                    null,
-                    false,
-                    true);
+                            "        Frame forward scan on: tab\n"
+            );
 
             // Test unbounded preceding plan
-            assertQueryNoLeakCheck(
-                    "QUERY PLAN\n" +
-                            "Window\n" +
+            assertPlanNoLeakCheck(
+                    "select ts, i, val, ksum(val) over (partition by i order by ts range between unbounded preceding and 2 second preceding) from tab",
+                    "Window\n" +
                             "  functions: [ksum(val) over (partition by [i] range between unbounded preceding and " + twoSeconds + " preceding)]\n" +
                             "    PageFrame\n" +
                             "        Row forward scan\n" +
-                            "        Frame forward scan on: tab\n",
-                    "explain select ts, i, val, ksum(val) over (partition by i order by ts range between unbounded preceding and 2 second preceding) from tab",
-                    null,
-                    false,
-                    true);
+                            "        Frame forward scan on: tab\n"
+            );
         });
     }
 
@@ -5860,34 +5845,28 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
             // Test unbounded preceding with N preceding end (L847) - uses KSumOverPartitionRowsFrameFunction
             // "rows between unbounded preceding and 1 preceding" triggers frameLoBounded=false
-            assertQueryNoLeakCheck(
+            assertPlanNoLeakCheck(
+                    "select ts, i, val, ksum(val) over (partition by i order by ts rows between unbounded preceding and 1 preceding) from tab",
                     """
-                            QUERY PLAN
                             Window
                               functions: [ksum(val) over (partition by [i] rows between unbounded preceding and 0 preceding)]
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: tab
-                            """,
-                    "explain select ts, i, val, ksum(val) over (partition by i order by ts rows between unbounded preceding and 1 preceding) from tab",
-                    null,
-                    false,
-                    true);
+                            """
+            );
 
             // Test bounded preceding with N preceding end (L853)
-            assertQueryNoLeakCheck(
+            assertPlanNoLeakCheck(
+                    "select ts, i, val, ksum(val) over (partition by i order by ts rows between 3 preceding and 1 preceding) from tab",
                     """
-                            QUERY PLAN
                             Window
                               functions: [ksum(val) over (partition by [i] rows between 3 preceding and 0 preceding)]
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: tab
-                            """,
-                    "explain select ts, i, val, ksum(val) over (partition by i order by ts rows between 3 preceding and 1 preceding) from tab",
-                    null,
-                    false,
-                    true);
+                            """
+            );
         });
     }
 
@@ -6116,30 +6095,24 @@ public class WindowFunctionTest extends AbstractCairoTest {
             String twoSeconds = timestampType == TestTimestampType.MICRO ? "2000000" : "2000000000";
 
             // Test bounded range with current row
-            assertQueryNoLeakCheck(
-                    "QUERY PLAN\n" +
-                            "Window\n" +
+            assertPlanNoLeakCheck(
+                    "select ts, val, ksum(val) over (order by ts range between 10 second preceding and current row) from tab",
+                    "Window\n" +
                             "  functions: [ksum(val) over (range between " + tenSeconds + " preceding and current row)]\n" +
                             "    PageFrame\n" +
                             "        Row forward scan\n" +
-                            "        Frame forward scan on: tab\n",
-                    "explain select ts, val, ksum(val) over (order by ts range between 10 second preceding and current row) from tab",
-                    null,
-                    false,
-                    true);
+                            "        Frame forward scan on: tab\n"
+            );
 
             // Test unbounded preceding with N preceding end
-            assertQueryNoLeakCheck(
-                    "QUERY PLAN\n" +
-                            "Window\n" +
+            assertPlanNoLeakCheck(
+                    "select ts, val, ksum(val) over (order by ts range between unbounded preceding and 2 second preceding) from tab",
+                    "Window\n" +
                             "  functions: [ksum(val) over (range between unbounded preceding and " + twoSeconds + " preceding)]\n" +
                             "    PageFrame\n" +
                             "        Row forward scan\n" +
-                            "        Frame forward scan on: tab\n",
-                    "explain select ts, val, ksum(val) over (order by ts range between unbounded preceding and 2 second preceding) from tab",
-                    null,
-                    false,
-                    true);
+                            "        Frame forward scan on: tab\n"
+            );
         });
     }
 
@@ -6215,34 +6188,28 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, val double) timestamp(ts)", timestampType.getTypeName());
 
             // Test bounded rows with current row
-            assertQueryNoLeakCheck(
+            assertPlanNoLeakCheck(
+                    "select ts, val, ksum(val) over (order by ts rows between 3 preceding and current row) from tab",
                     """
-                            QUERY PLAN
                             Window
                               functions: [ksum(val) over ( rows between 3 preceding and current row)]
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: tab
-                            """,
-                    "explain select ts, val, ksum(val) over (order by ts rows between 3 preceding and current row) from tab",
-                    null,
-                    false,
-                    true);
+                            """
+            );
 
             // Test unbounded rows with N preceding end
-            assertQueryNoLeakCheck(
+            assertPlanNoLeakCheck(
+                    "select ts, val, ksum(val) over (order by ts rows between unbounded preceding and 1 preceding) from tab",
                     """
-                            QUERY PLAN
                             Window
                               functions: [ksum(val) over ( rows between unbounded preceding and 0 preceding)]
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: tab
-                            """,
-                    "explain select ts, val, ksum(val) over (order by ts rows between unbounded preceding and 1 preceding) from tab",
-                    null,
-                    false,
-                    true);
+                            """
+            );
         });
     }
 
@@ -6988,6 +6955,28 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "LEAD(x, 1) OVER (ORDER BY ts DESC) AS lead_desc, " +
                             "LEAD(x, 1) OVER (ORDER BY ts ASC) AS lead_asc, " +
                             "LAG(x, 1) OVER (ORDER BY ts ASC) AS lag_asc " +
+                            "FROM tab",
+                    "ts",
+                    true,
+                    true
+            );
+
+            // Non-null default value travels through the swap. The boundary rows
+            // (first under LAG, last under LEAD) must show -99 from the default.
+            assertQueryNoLeakCheck(
+                    """
+                            ts\tx\tlag_desc_def\tlead_desc_def\tlead_asc_def\tlag_asc_def
+                            1970-01-01T00:00:00.000001Z\t1\t2\t-99\t2\t-99
+                            1970-01-01T00:00:00.000002Z\t2\t3\t1\t3\t1
+                            1970-01-01T00:00:00.000003Z\t3\t4\t2\t4\t2
+                            1970-01-01T00:00:00.000004Z\t4\t5\t3\t5\t3
+                            1970-01-01T00:00:00.000005Z\t5\t-99\t4\t-99\t4
+                            """,
+                    "SELECT ts, x, " +
+                            "LAG(x, 1, -99) OVER (ORDER BY ts DESC) AS lag_desc_def, " +
+                            "LEAD(x, 1, -99) OVER (ORDER BY ts DESC) AS lead_desc_def, " +
+                            "LEAD(x, 1, -99) OVER (ORDER BY ts ASC) AS lead_asc_def, " +
+                            "LAG(x, 1, -99) OVER (ORDER BY ts ASC) AS lag_asc_def " +
                             "FROM tab",
                     "ts",
                     true,
@@ -19686,88 +19675,70 @@ public class WindowFunctionTest extends AbstractCairoTest {
             String twoSeconds = timestampType == TestTimestampType.MICRO ? "2000000" : "2000000000";
 
             // partition + range frame
-            assertQueryNoLeakCheck(
-                    "QUERY PLAN\n" +
-                            "Window\n" +
+            assertPlanNoLeakCheck(
+                    "select ts, i, stddev_pop(val) over (partition by i order by ts range between 10 second preceding and current row) from tab",
+                    "Window\n" +
                             "  functions: [stddev_pop(val) over (partition by [i] range between " + tenSeconds + " preceding and current row)]\n" +
                             "    PageFrame\n" +
                             "        Row forward scan\n" +
-                            "        Frame forward scan on: tab\n",
-                    "explain select ts, i, stddev_pop(val) over (partition by i order by ts range between 10 second preceding and current row) from tab",
-                    null,
-                    false,
-                    true);
+                            "        Frame forward scan on: tab\n"
+            );
 
             // partition + rows frame
-            assertQueryNoLeakCheck(
+            assertPlanNoLeakCheck(
+                    "select ts, i, stddev_pop(val) over (partition by i order by ts rows between 3 preceding and current row) from tab",
                     """
-                            QUERY PLAN
                             Window
                               functions: [stddev_pop(val) over (partition by [i] rows between 3 preceding and current row)]
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: tab
-                            """,
-                    "explain select ts, i, stddev_pop(val) over (partition by i order by ts rows between 3 preceding and current row) from tab",
-                    null,
-                    false,
-                    true);
+                            """
+            );
 
             // no partition + range frame
-            assertQueryNoLeakCheck(
-                    "QUERY PLAN\n" +
-                            "Window\n" +
+            assertPlanNoLeakCheck(
+                    "select ts, stddev_pop(val) over (order by ts range between 10 second preceding and current row) from tab",
+                    "Window\n" +
                             "  functions: [stddev_pop(val) over (range between " + tenSeconds + " preceding and current row)]\n" +
                             "    PageFrame\n" +
                             "        Row forward scan\n" +
-                            "        Frame forward scan on: tab\n",
-                    "explain select ts, stddev_pop(val) over (order by ts range between 10 second preceding and current row) from tab",
-                    null,
-                    false,
-                    true);
+                            "        Frame forward scan on: tab\n"
+            );
 
             // no partition + rows frame
-            assertQueryNoLeakCheck(
+            assertPlanNoLeakCheck(
+                    "select ts, stddev_pop(val) over (order by ts rows between 3 preceding and current row) from tab",
                     """
-                            QUERY PLAN
                             Window
                               functions: [stddev_pop(val) over (rows between 3 preceding and current row)]
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: tab
-                            """,
-                    "explain select ts, stddev_pop(val) over (order by ts rows between 3 preceding and current row) from tab",
-                    null,
-                    false,
-                    true);
+                            """
+            );
 
             // unbounded preceding range
-            assertQueryNoLeakCheck(
-                    "QUERY PLAN\n" +
-                            "Window\n" +
+            assertPlanNoLeakCheck(
+                    "select ts, i, stddev_pop(val) over (partition by i order by ts range between unbounded preceding and 2 second preceding) from tab",
+                    "Window\n" +
                             "  functions: [stddev_pop(val) over (partition by [i] range between unbounded preceding and " + twoSeconds + " preceding)]\n" +
                             "    PageFrame\n" +
                             "        Row forward scan\n" +
-                            "        Frame forward scan on: tab\n",
-                    "explain select ts, i, stddev_pop(val) over (partition by i order by ts range between unbounded preceding and 2 second preceding) from tab",
-                    null,
-                    false,
-                    true);
+                            "        Frame forward scan on: tab\n"
+            );
 
             // unbounded preceding to current row (Welford path)
-            assertQueryNoLeakCheck(
+            assertPlanNoLeakCheck(
+                    "select ts, i, stddev_pop(val) over (partition by i order by ts) from tab",
                     """
-                            QUERY PLAN
                             Window
                               functions: [stddev_pop(val) over (partition by [i] rows between unbounded preceding and current row)]
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: tab
-                            """,
-                    "explain select ts, i, stddev_pop(val) over (partition by i order by ts) from tab",
-                    null,
-                    false,
-                    true);
+                            """
+            );
         });
     }
 

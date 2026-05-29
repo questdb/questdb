@@ -1371,15 +1371,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 continue;
             }
             if (swapLagLeadToken(ast)) {
-                ac.getOrderByDirection().setQuick(0, 1 - direction);
+                ac.getOrderByDirection().setQuick(0, direction == ORDER_ASC ? ORDER_DESC : ORDER_ASC);
             }
         }
     }
 
     private static boolean swapLagLeadToken(ExpressionNode ast) {
-        if (ast == null || ast.token == null) {
-            return false;
-        }
         if (Chars.equalsIgnoreCase(ast.token, "lag")) {
             ast.token = "lead";
             return true;
@@ -9814,8 +9811,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     && allGroupsEncodedEligible) {
                 final IntList sourceMap = new IntList();
                 final ArrayColumnTypes narrowChainTypes = new ArrayColumnTypes();
-                narrowChainTypes.add(ColumnType.LONG);
-                int narrowIdx = 1;
+                int narrowIdx = 0;
                 for (int c = 0, chainColCount = chainTypes.getColumnCount(); c < chainColCount; c++) {
                     final TableColumnMetadata m = deferredWindowMetadata.getQuiet(c);
                     if (m != null) {

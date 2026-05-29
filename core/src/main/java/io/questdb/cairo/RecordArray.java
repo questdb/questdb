@@ -59,8 +59,9 @@ public class RecordArray extends RecordChain {
             auxMem.putLong(recordOffset);
         }
         size++;
-        mem.jumpTo(recordOffset + varOffset);
         varAppendOffset = recordOffset + varOffset + fixOffset;
+        mem.jumpTo(varAppendOffset);
+        mem.jumpTo(recordOffset + varOffset);
         return recordOffset;
     }
 
@@ -74,6 +75,7 @@ public class RecordArray extends RecordChain {
     public void clear() {
         super.clear();
         size = 0L;
+        nextRecordIndex = 0L;
         if (auxMem != null) {
             auxMem.close();
         }
@@ -133,7 +135,7 @@ public class RecordArray extends RecordChain {
     }
 
     private long rowToOffset(long rowIndex) {
-        return auxMem != null ? auxMem.getLong(rowIndex * 8) : rowIndex * fixOffset;
+        return auxMem != null ? auxMem.getLong(rowIndex * Long.BYTES) : rowIndex * fixOffset;
     }
 
     @Override

@@ -39,7 +39,9 @@ import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.DirectLongList;
 import io.questdb.std.IntList;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
@@ -48,9 +50,11 @@ import org.jetbrains.annotations.Nullable;
 
 public class CachedWindowLightRecordCursorFactory extends AbstractRecordCursorFactory {
     private final ObjList<WindowFunction> allFunctions;
+    private final ObjList<WindowFunction> backwardUnorderedFunctions;
     private final RecordCursorFactory base;
     private final GenericRecordMetadata chainMetadata;
     private final CachedWindowLightRecordCursor cursor;
+    private final ObjList<WindowFunction> forwardUnorderedFunctions;
     private final ObjList<ObjList<WindowFunction>> ordered2PassFunctions;
     private final ObjList<ObjList<WindowFunction>> orderedFunctions;
     private final int orderedGroupCount;
@@ -58,7 +62,7 @@ public class CachedWindowLightRecordCursorFactory extends AbstractRecordCursorFa
     private final ObjList<WindowFunction> unordered2PassFunctions;
     @Nullable
     private final ObjList<WindowFunction> unorderedFunctions;
-    private boolean closed = false;
+    private boolean closed;
 
     public CachedWindowLightRecordCursorFactory(
             CairoConfiguration configuration,
@@ -90,19 +94,26 @@ public class CachedWindowLightRecordCursorFactory extends AbstractRecordCursorFa
             // Caller guarantees every group is encoded-sort-eligible; the LIGHT factory does not
             // accept the tree fallback (see SqlCodeGenerator's allGroupsEncodedEligible gate).
             ObjList<WindowSortBuffer> sortBuffers = new ObjList<>(orderedGroupCount);
+            DirectLongList baseRowIds = null;
             try {
                 for (int i = 0; i < orderedGroupCount; i++) {
                     sortBuffers.add(new EncodedWindowSortBuffer(configuration, chainMetadata, sortKeys.getQuick(i)));
                 }
+                baseRowIds = new DirectLongList(
+                        Math.max(configuration.getSqlWindowStorePageSize() / Long.BYTES, 1),
+                        MemoryTag.NATIVE_DEFAULT
+                );
                 this.cursor = new CachedWindowLightRecordCursor(
                         columnIndexes,
                         narrowChain,
                         sortBuffers,
-                        sourceMap
+                        sourceMap,
+                        baseRowIds
                 );
             } catch (Throwable t) {
                 Misc.freeObjList(sortBuffers);
                 Misc.free(narrowChain);
+                Misc.free(baseRowIds);
                 throw t;
             }
             this.allFunctions = new ObjList<>();
@@ -133,6 +144,8 @@ public class CachedWindowLightRecordCursorFactory extends AbstractRecordCursorFa
             ordered2PassFunctions = orderedTmp;
 
             ObjList<WindowFunction> unorderedTmp = null;
+            ObjList<WindowFunction> forwardTmp = null;
+            ObjList<WindowFunction> backwardTmp = null;
             if (unorderedFunctions != null) {
                 allFunctions.addAll(unorderedFunctions);
 
@@ -144,9 +157,22 @@ public class CachedWindowLightRecordCursorFactory extends AbstractRecordCursorFa
                         }
                         unorderedTmp.add(function);
                     }
+                    if (function.getPass1ScanDirection() == WindowFunction.Pass1ScanDirection.FORWARD) {
+                        if (forwardTmp == null) {
+                            forwardTmp = new ObjList<>();
+                        }
+                        forwardTmp.add(function);
+                    } else {
+                        if (backwardTmp == null) {
+                            backwardTmp = new ObjList<>();
+                        }
+                        backwardTmp.add(function);
+                    }
                 }
             }
             this.unordered2PassFunctions = unorderedTmp;
+            this.forwardUnorderedFunctions = forwardTmp;
+            this.backwardUnorderedFunctions = backwardTmp;
 
             this.unorderedFunctions = unorderedFunctions;
         } catch (Throwable th) {
@@ -271,6 +297,7 @@ public class CachedWindowLightRecordCursorFactory extends AbstractRecordCursorFa
     }
 
     class CachedWindowLightRecordCursor implements RecordCursor {
+        private final DirectLongList baseRowIds;
         private final IntList columnIndexes;
         private final LightWindowSPI lightSpi;
         private final RecordArray narrowChain;
@@ -288,14 +315,16 @@ public class CachedWindowLightRecordCursorFactory extends AbstractRecordCursorFa
                 IntList columnIndexes,
                 RecordArray narrowChain,
                 ObjList<WindowSortBuffer> sortBuffers,
-                IntList sourceMap
+                IntList sourceMap,
+                DirectLongList baseRowIds
         ) {
             this.columnIndexes = columnIndexes;
             this.narrowChain = narrowChain;
             this.sortBuffers = sortBuffers;
+            this.baseRowIds = baseRowIds;
             this.recordA = new WindowLightRecord(sourceMap);
             this.recordB = new WindowLightRecord(sourceMap);
-            this.lightSpi = new LightWindowSPI(sourceMap, narrowChain);
+            this.lightSpi = new LightWindowSPI(sourceMap, narrowChain, baseRowIds);
             this.isOpen = true;
         }
 
@@ -313,6 +342,7 @@ public class CachedWindowLightRecordCursorFactory extends AbstractRecordCursorFa
             if (isOpen) {
                 Misc.free(baseCursor);
                 Misc.free(narrowChain);
+                Misc.free(baseRowIds);
                 for (int i = 0, n = sortBuffers.size(); i < n; i++) {
                     Misc.free(sortBuffers.getQuick(i));
                 }
@@ -390,7 +420,7 @@ public class CachedWindowLightRecordCursorFactory extends AbstractRecordCursorFa
             if (orderedGroupCount > 0) {
                 while (baseCursor.hasNext()) {
                     narrowChain.beginRecord();
-                    narrowChain.putLong(baseRecord.getRowId());
+                    baseRowIds.add(baseRecord.getRowId());
                     for (int i = 0; i < orderedGroupCount; i++) {
                         circuitBreaker.statefulThrowExceptionIfTripped();
                         sortBuffers.getQuick(i).put(recordA, rowIndex);
@@ -405,7 +435,7 @@ public class CachedWindowLightRecordCursorFactory extends AbstractRecordCursorFa
                 while (baseCursor.hasNext()) {
                     circuitBreaker.statefulThrowExceptionIfTripped();
                     narrowChain.beginRecord();
-                    narrowChain.putLong(baseRecord.getRowId());
+                    baseRowIds.add(baseRecord.getRowId());
                     rowIndex++;
                 }
             }
@@ -432,41 +462,26 @@ public class CachedWindowLightRecordCursorFactory extends AbstractRecordCursorFa
                 }
             }
 
-            // Pass1 for unordered functions, in base order.
-            // Fused row-outer loop: one positionRecordA() per row per direction.
-            if (unorderedFunctions != null) {
-                final int funcCount = unorderedFunctions.size();
-                boolean hasForward = false;
-                boolean hasBackward = false;
-                for (int j = 0; j < funcCount; j++) {
-                    if (unorderedFunctions.getQuick(j).getPass1ScanDirection() == WindowFunction.Pass1ScanDirection.FORWARD) {
-                        hasForward = true;
-                    } else {
-                        hasBackward = true;
+            // Forward walks via positionRecordA rather than baseCursor.toTop() + hasNext():
+            // upstream pipelines (async filter, sort) make toTop expensive, whereas the
+            // base supports random access by gate.
+            if (forwardUnorderedFunctions != null) {
+                final int fnCount = forwardUnorderedFunctions.size();
+                for (long rIdx = 0; rIdx < size; rIdx++) {
+                    circuitBreaker.statefulThrowExceptionIfTripped();
+                    positionRecordA(rIdx);
+                    for (int j = 0; j < fnCount; j++) {
+                        forwardUnorderedFunctions.getQuick(j).pass1(recordA, rIdx, lightSpi);
                     }
                 }
-                if (hasForward) {
-                    for (long rIdx = 0; rIdx < size; rIdx++) {
-                        circuitBreaker.statefulThrowExceptionIfTripped();
-                        positionRecordA(rIdx);
-                        for (int j = 0; j < funcCount; j++) {
-                            final WindowFunction f = unorderedFunctions.getQuick(j);
-                            if (f.getPass1ScanDirection() == WindowFunction.Pass1ScanDirection.FORWARD) {
-                                f.pass1(recordA, rIdx, lightSpi);
-                            }
-                        }
-                    }
-                }
-                if (hasBackward) {
-                    for (long rIdx = size - 1; rIdx >= 0; rIdx--) {
-                        circuitBreaker.statefulThrowExceptionIfTripped();
-                        positionRecordA(rIdx);
-                        for (int j = 0; j < funcCount; j++) {
-                            final WindowFunction f = unorderedFunctions.getQuick(j);
-                            if (f.getPass1ScanDirection() != WindowFunction.Pass1ScanDirection.FORWARD) {
-                                f.pass1(recordA, rIdx, lightSpi);
-                            }
-                        }
+            }
+            if (backwardUnorderedFunctions != null) {
+                final int fnCount = backwardUnorderedFunctions.size();
+                for (long rIdx = size - 1; rIdx >= 0; rIdx--) {
+                    circuitBreaker.statefulThrowExceptionIfTripped();
+                    positionRecordA(rIdx);
+                    for (int j = 0; j < fnCount; j++) {
+                        backwardUnorderedFunctions.getQuick(j).pass1(recordA, rIdx, lightSpi);
                     }
                 }
             }
@@ -533,8 +548,10 @@ public class CachedWindowLightRecordCursorFactory extends AbstractRecordCursorFa
             size = 0;
             circuitBreaker = executionContext.getCircuitBreaker();
             narrowChain.clear();
+            baseRowIds.clear();
             if (!isOpen) {
                 isOpen = true;
+                baseRowIds.reopen();
                 reopenSortBuffers();
                 reopen(allFunctions);
             }
@@ -548,23 +565,21 @@ public class CachedWindowLightRecordCursorFactory extends AbstractRecordCursorFa
         }
 
         private void positionRecordA(long rowIndex) {
-            final Record narrow = narrowChain.getRecord();
-            narrowChain.recordAtRowIndex(narrow, rowIndex);
-            baseCursor.recordAt(baseCursor.getRecord(), narrow.getLong(0));
+            baseCursor.recordAt(baseCursor.getRecord(), baseRowIds.get(rowIndex));
+            narrowChain.recordAtRowIndex(narrowChain.getRecord(), rowIndex);
             recordA.setRowIndex(rowIndex);
         }
 
         private void positionRecordB(long rowIndex) {
-            final Record narrow = narrowChain.getRecordB();
-            narrowChain.recordAtRowIndex(narrow, rowIndex);
-            baseCursor.recordAt(baseCursor.getRecordB(), narrow.getLong(0));
+            baseCursor.recordAt(baseCursor.getRecordB(), baseRowIds.get(rowIndex));
+            narrowChain.recordAtRowIndex(narrowChain.getRecordB(), rowIndex);
             recordB.setRowIndex(rowIndex);
         }
 
         private void reopen(ObjList<?> list) {
             for (int i = 0, n = list.size(); i < n; i++) {
-                if (list.getQuick(i) instanceof Reopenable) {
-                    ((Reopenable) list.getQuick(i)).reopen();
+                if (list.getQuick(i) instanceof Reopenable r) {
+                    r.reopen();
                 }
             }
         }

@@ -357,55 +357,51 @@ public class EmaWindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, val double) timestamp(ts)", timestampType.getTypeName());
 
             // Non-partitioned alpha mode
-            assertSql(
+            assertPlanNoLeakCheck(
+                    "select ts, val, avg(val, 'alpha', 0.5) over (order by ts) from tab",
                     """
-                            QUERY PLAN
                             Window
                               functions: [avg(val, 'alpha', 0.5) over (rows between unbounded preceding and current row)]
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: tab
-                            """,
-                    "explain select ts, val, avg(val, 'alpha', 0.5) over (order by ts) from tab"
+                            """
             );
 
             // Partitioned period mode
-            assertSql(
+            assertPlanNoLeakCheck(
+                    "select ts, i, val, avg(val, 'period', 10) over (partition by i order by ts) from tab",
                     """
-                            QUERY PLAN
                             Window
                               functions: [avg(val, 'period', 10.0) over (partition by [i] rows between unbounded preceding and current row)]
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: tab
-                            """,
-                    "explain select ts, i, val, avg(val, 'period', 10) over (partition by i order by ts) from tab"
+                            """
             );
 
             // Non-partitioned time-weighted mode
-            assertSql(
+            assertPlanNoLeakCheck(
+                    "select ts, val, avg(val, 'second', 1) over (order by ts) from tab",
                     """
-                            QUERY PLAN
                             Window
                               functions: [avg(val, 'second', 1.0) over (rows between unbounded preceding and current row)]
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: tab
-                            """,
-                    "explain select ts, val, avg(val, 'second', 1) over (order by ts) from tab"
+                            """
             );
 
             // Partitioned time-weighted mode
-            assertSql(
+            assertPlanNoLeakCheck(
+                    "select ts, i, val, avg(val, 'minute', 5) over (partition by i order by ts) from tab",
                     """
-                            QUERY PLAN
                             Window
                               functions: [avg(val, 'minute', 5.0) over (partition by [i] rows between unbounded preceding and current row)]
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: tab
-                            """,
-                    "explain select ts, i, val, avg(val, 'minute', 5) over (partition by i order by ts) from tab"
+                            """
             );
         });
     }

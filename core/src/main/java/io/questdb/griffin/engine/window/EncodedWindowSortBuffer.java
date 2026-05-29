@@ -62,11 +62,16 @@ final class EncodedWindowSortBuffer implements WindowSortBuffer {
             IntList sortColumnFilter
     ) {
         this.encoder = new SortKeyEncoder(chainMetadata, sortColumnFilter);
-        this.entryMem = new DirectLongList(
-                Math.max(configuration.getSqlWindowTreeKeyPageSize() / Long.BYTES, 1),
-                MemoryTag.NATIVE_DEFAULT,
-                true
-        );
+        try {
+            this.entryMem = new DirectLongList(
+                    Math.max(configuration.getSqlWindowTreeKeyPageSize() / Long.BYTES, 1),
+                    MemoryTag.NATIVE_DEFAULT,
+                    true
+            );
+        } catch (Throwable th) {
+            Misc.free(encoder);
+            throw th;
+        }
         this.maxEntryMemBytes = Math.min(
                 configuration.getSqlSortKeyPageSize() * (long) configuration.getSqlSortKeyMaxPages()
                         + configuration.getSqlSortLightValuePageSize() * (long) configuration.getSqlSortLightValueMaxPages(),
@@ -87,21 +92,17 @@ final class EncodedWindowSortBuffer implements WindowSortBuffer {
 
     @Override
     public void finishPut(SqlExecutionCircuitBreaker circuitBreaker) {
-        try {
-            if (count > 1) {
-                Vect.sortEncodedEntries(
-                        entryMem.getAddress(),
-                        count,
-                        keyType.keyLength() / Long.BYTES,
-                        parallelThreshold
-                );
-                circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
-            }
-            startAddr = entryMem.getAddress() + rowIdOffset;
-            toTop();
-        } finally {
-            Misc.free(encoder);
+        if (count > 1) {
+            Vect.sortEncodedEntries(
+                    entryMem.getAddress(),
+                    count,
+                    keyType.keyLength() / Long.BYTES,
+                    parallelThreshold
+            );
+            circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
         }
+        startAddr = entryMem.getAddress() + rowIdOffset;
+        toTop();
     }
 
     @Override

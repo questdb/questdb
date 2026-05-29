@@ -497,8 +497,8 @@ public class CachedWindowRecordCursorFactory extends AbstractRecordCursorFactory
 
         private void reopen(ObjList<?> list) {
             for (int i = 0, n = list.size(); i < n; i++) {
-                if (list.getQuick(i) instanceof Reopenable) {
-                    ((Reopenable) list.getQuick(i)).reopen();
+                if (list.getQuick(i) instanceof Reopenable r) {
+                    r.reopen();
                 }
             }
         }
