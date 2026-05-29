@@ -10921,7 +10921,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testNegativeLimitWindowOrderedByNotTimestamp() throws Exception {
         // https://github.com/questdb/questdb/issues/4748
-        assertMemoryLeak(() -> assertQuery("""
+        assertMemoryLeak(() -> assertQueryNoLeakCheck("""
                         x\trow_number
                         1\t1
                         2\t2
@@ -10941,6 +10941,8 @@ public class WindowFunctionTest extends AbstractCairoTest {
                         )
                         FROM long_sequence(10)
                         limit -10""",
+                null,
+                true,
                 true)
         );
     }

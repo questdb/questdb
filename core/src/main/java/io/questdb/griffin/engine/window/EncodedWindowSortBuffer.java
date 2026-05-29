@@ -62,23 +62,26 @@ final class EncodedWindowSortBuffer implements WindowSortBuffer {
             IntList sortColumnFilter
     ) {
         this.encoder = new SortKeyEncoder(chainMetadata, sortColumnFilter);
+        DirectLongList mem = null;
         try {
-            this.entryMem = new DirectLongList(
+            mem = new DirectLongList(
                     Math.max(configuration.getSqlWindowTreeKeyPageSize() / Long.BYTES, 1),
                     MemoryTag.NATIVE_DEFAULT,
                     true
             );
+            this.maxEntryMemBytes = Math.min(
+                    configuration.getSqlSortKeyPageSize() * (long) configuration.getSqlSortKeyMaxPages()
+                            + configuration.getSqlSortLightValuePageSize() * (long) configuration.getSqlSortLightValueMaxPages(),
+                    MAX_HEAP_SIZE_LIMIT
+            );
+            this.parallelThreshold = configuration.getSqlSortEncodedParallelThreshold();
+            this.entryMem = mem;
+            this.isOpen = true;
         } catch (Throwable th) {
+            Misc.free(mem);
             Misc.free(encoder);
             throw th;
         }
-        this.maxEntryMemBytes = Math.min(
-                configuration.getSqlSortKeyPageSize() * (long) configuration.getSqlSortKeyMaxPages()
-                        + configuration.getSqlSortLightValuePageSize() * (long) configuration.getSqlSortLightValueMaxPages(),
-                MAX_HEAP_SIZE_LIMIT
-        );
-        this.parallelThreshold = configuration.getSqlSortEncodedParallelThreshold();
-        this.isOpen = true;
     }
 
     @Override

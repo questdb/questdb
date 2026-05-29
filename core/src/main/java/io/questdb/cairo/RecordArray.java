@@ -48,9 +48,14 @@ public class RecordArray extends RecordChain {
 
     public RecordArray(@NotNull ColumnTypes columnTypes, RecordSink recordSink, long pageSize, int maxPages) {
         super(columnTypes, recordSink, pageSize, maxPages);
-        this.auxMem = varOffset > 0
-                ? Vm.getCARWInstance(pageSize >> 4, maxPages, MemoryTag.NATIVE_RECORD_CHAIN)
-                : null;
+        try {
+            this.auxMem = varOffset > 0
+                    ? Vm.getCARWInstance(pageSize >> 4, maxPages, MemoryTag.NATIVE_RECORD_CHAIN)
+                    : null;
+        } catch (Throwable th) {
+            super.close();
+            throw th;
+        }
     }
 
     public long beginRecord() {
@@ -105,7 +110,7 @@ public class RecordArray extends RecordChain {
     }
 
     public boolean hasPrev() {
-        if (nextRecordIndex >= 0) {
+        if (nextRecordIndex >= 0 && nextRecordIndex < size) {
             recordA.of(rowToOffset(nextRecordIndex));
             nextRecordIndex--;
             return true;
@@ -137,10 +142,6 @@ public class RecordArray extends RecordChain {
         nextRecordIndex = 0;
     }
 
-    private long rowToOffset(long rowIndex) {
-        return auxMem != null ? auxMem.getLong(rowIndex * Long.BYTES) : rowIndex * fixOffset;
-    }
-
     @Override
     protected RecordChainRecord newChainRecord() {
         return new RecordArrayRecord(columnCount);
@@ -149,6 +150,10 @@ public class RecordArray extends RecordChain {
     @Override
     protected long rowToDataOffset(long row) {
         return row;
+    }
+
+    private long rowToOffset(long rowIndex) {
+        return auxMem != null ? auxMem.getLong(rowIndex * Long.BYTES) : rowIndex * fixOffset;
     }
 
     class RecordArrayRecord extends RecordChainRecord {
