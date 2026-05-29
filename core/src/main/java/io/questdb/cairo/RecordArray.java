@@ -67,11 +67,8 @@ public class RecordArray extends RecordChain {
         varAppendOffset = recordOffset + varOffset + fixOffset;
         // First jumpTo extends pages to the row end so random-access writes
         // via getAddressAtRowIndex land on allocated memory; second rewinds
-        // appendAddress to the fix-region start for sequential recordSink.copy.
         mem.jumpTo(varAppendOffset);
-        if (recordSink != null) {
-            mem.jumpTo(recordOffset + varOffset);
-        }
+        mem.jumpTo(recordOffset + varOffset);
         return recordOffset;
     }
 
@@ -144,6 +141,10 @@ public class RecordArray extends RecordChain {
         nextRecordIndex = 0;
     }
 
+    private long rowToOffset(long rowIndex) {
+        return auxMem != null ? auxMem.getLong(rowIndex * Long.BYTES) : rowIndex * fixOffset;
+    }
+
     @Override
     protected RecordChainRecord newChainRecord() {
         return new RecordArrayRecord(columnCount);
@@ -152,10 +153,6 @@ public class RecordArray extends RecordChain {
     @Override
     protected long rowToDataOffset(long row) {
         return row;
-    }
-
-    private long rowToOffset(long rowIndex) {
-        return auxMem != null ? auxMem.getLong(rowIndex * Long.BYTES) : rowIndex * fixOffset;
     }
 
     class RecordArrayRecord extends RecordChainRecord {
