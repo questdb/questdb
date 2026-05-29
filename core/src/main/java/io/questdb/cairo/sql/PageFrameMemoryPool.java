@@ -566,8 +566,15 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             clearAddresses();
             if (parquetColumns.size() > 0) {
                 decoder.decodeRowGroup(rowGroupBuffers, parquetColumns, rowGroup, rowLo, rowHi);
-                remapColumns();
             }
+            // Always size and zero the page-address lists, even when there are no
+            // parquet columns to decode (every projected column was added after this
+            // partition became parquet). remapColumns() is the only place that does
+            // so; skipping it leaves stale/uninitialized native memory in the lists,
+            // and a record reading an absent column then dereferences a wild address.
+            // With no decoded columns the remap loop is a no-op, so every column
+            // correctly resolves to address 0 (NULL).
+            remapColumns();
         }
 
         public void decodeRemainingColumns(

@@ -1877,6 +1877,83 @@ public class ParquetTest extends AbstractCairoTest {
         });
     }
 
+    // Red regression for a parquet column-top SIGSEGV (originally surfaced by
+    // BackupFuzzTest.testMatViewRefreshAfterBackup as a crash in
+    // PageFrameMemoryRecord.getSymA over a PARQUET frame).
+    //
+    // When a query projects ONLY column(s) absent from a parquet file (added via
+    // ALTER TABLE ADD COLUMN after the partition was converted to parquet),
+    // PageFrameMemoryPool.ParquetBuffers.decode() sees an empty parquetColumns
+    // list and skips remapColumns() - the only place that sizes and zeroes the
+    // page-address lists. The lists keep stale/uninitialized native memory, so the
+    // record reads a wild page address for the absent column instead of 0 (NULL).
+    // (A native column-top reads NULL correctly - the bug is parquet-only.)
+    //
+    // The raw crash relied on malloc returning non-zero garbage in a freshly
+    // allocated buffer. To make the stale read deterministic, lay out enough
+    // column-PRESENT parquet partitions to drain the parquet frame cache free list
+    // (default capacity 8), so the column-ABSENT parquet frame is forced to REUSE
+    // an already-decoded buffer whose slot 0 still holds a valid 's' data pointer:
+    //   - '2024-06-01'..'2024-06-08': 's' present in parquet -> 8 frames that fill
+    //     the cache, each leaving a valid 's' pointer in its buffer's slot 0.
+    //   - '2024-06-09': 's' ABSENT (converted before ADD COLUMN) -> the 9th frame,
+    //     empty parquetColumns -> remapColumns() skipped -> reuses an evicted
+    //     buffer -> slot 0 still points at that partition's 's' keys.
+    //   - '2024-06-10': native (active), 's' is a column-top -> always NULL.
+    // With the bug, '2024-06-09' reads a prior partition's symbol keys and returns
+    // 'AA' instead of NULL. After the fix the absent column reads as NULL.
+    //
+    // '2024-06-09' must be PARQUET and NON-ACTIVE: the active (newest) partition
+    // cannot be converted to parquet. The trailing native '2024-06-10' keeps it
+    // non-active so the conversion is allowed.
+    @Test
+    public void testSelectOnlyAddedColumnAbsentFromParquetPartition() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x (a int, ts timestamp) timestamp(ts) partition by day;");
+
+            // '2024-06-09' is converted to parquet BEFORE 's' is added, so its
+            // parquet file does not contain 's'. The native '2024-06-10' (active)
+            // keeps '2024-06-09' non-active so the conversion is allowed.
+            execute("insert into x(a, ts) values (9, '2024-06-09T00:00:00.000000Z'), (10, '2024-06-10T00:00:00.000000Z');");
+            execute("alter table x convert partition to parquet where ts in '2024-06-09';");
+
+            execute("alter table x add column s symbol;");
+
+            // Eight older single-row parquet partitions with non-null 's'. The
+            // default parquet frame cache holds 8 buffers, so scanning these eight
+            // (frames 0-7) drains the free list; the ninth parquet frame
+            // ('2024-06-09') is then forced to reuse one of these buffers.
+            execute("insert into x(a, ts, s) values " +
+                    "(1, '2024-06-01T00:00:00.000000Z', 'AA'), (2, '2024-06-02T00:00:00.000000Z', 'AA'), " +
+                    "(3, '2024-06-03T00:00:00.000000Z', 'AA'), (4, '2024-06-04T00:00:00.000000Z', 'AA'), " +
+                    "(5, '2024-06-05T00:00:00.000000Z', 'AA'), (6, '2024-06-06T00:00:00.000000Z', 'AA'), " +
+                    "(7, '2024-06-07T00:00:00.000000Z', 'AA'), (8, '2024-06-08T00:00:00.000000Z', 'AA');");
+            execute("alter table x convert partition to parquet where ts < '2024-06-09';");
+
+            // Project ONLY 's' so the '2024-06-09' frame decodes zero parquet
+            // columns. The constant '1 one' keeps the base scan reading just 's'
+            // while rendering the NULL rows as a non-blank '\t1'. The 'AA' rows are
+            // '2024-06-01'..'2024-06-08'; the first '\t1' is '2024-06-09' (the bug
+            // returns 'AA' there); the last '\t1' is the native '2024-06-10'.
+            assertSql(
+                    """
+                            s\tone
+                            AA\t1
+                            AA\t1
+                            AA\t1
+                            AA\t1
+                            AA\t1
+                            AA\t1
+                            AA\t1
+                            AA\t1
+                            \t1
+                            \t1
+                            """,
+                    "select s, 1 one from x"
+            );
+        });
+    }
+
     @Test
     public void testSinglePartition() throws Exception {
         assertMemoryLeak(() -> {
