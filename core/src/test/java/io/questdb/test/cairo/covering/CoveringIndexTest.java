@@ -31,6 +31,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnVersionReader;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.IndexType;
+import io.questdb.cairo.ReaderScanProfile;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableReaderMetadata;
@@ -57,6 +58,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.table.CoveringIndexRecordCursorFactory;
+import io.questdb.griffin.engine.table.TablePageFrameCursor;
 import io.questdb.std.DirectBitSet;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.IntList;
@@ -13086,6 +13088,55 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     null,
                     false
             );
+        });
+    }
+
+    @Test
+    public void testPageFrameCursor_SetScanProfileReachesReader() throws Exception {
+        // The covering page-frame cursor now implements TablePageFrameCursor (it was a
+        // bare PageFrameCursor before), so setScanProfile() is no longer a silent no-op:
+        // it delegates to the live TableReader exposed by getTableReader(). Drive the
+        // cursor directly and assert the profile actually lands on the reader.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_pf_profile (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price),
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_pf_profile
+                    SELECT '2024-01-01T00:00:00'::TIMESTAMP + x * 1_000_000L, 'A', x * 1.5
+                    FROM long_sequence(10)
+                    """);
+            engine.releaseAllWriters();
+
+            // The query wraps the covering factory in a SelectedRecordCursorFactory;
+            // unwrap to the covering factory so we drive its CoveringPageFrameCursor
+            // directly (that is the cursor whose getTableReader/setScanProfile changed).
+            try (RecordCursorFactory factory = select("SELECT sym, price FROM t_pf_profile WHERE sym = 'A'")) {
+                RecordCursorFactory covering = factory instanceof CoveringIndexRecordCursorFactory ? factory : factory.getBaseFactory();
+                assertTrue("expected a covering-index factory, got " + factory.getClass().getSimpleName(),
+                        covering instanceof CoveringIndexRecordCursorFactory);
+
+                try (PageFrameCursor cursor = covering.getPageFrameCursor(sqlExecutionContext, PartitionFrameCursorFactory.ORDER_ASC)) {
+                    assertTrue("covering page-frame cursor must be a TablePageFrameCursor",
+                            cursor instanceof TablePageFrameCursor);
+
+                    TableReader reader = ((TablePageFrameCursor) cursor).getTableReader();
+                    assertNotNull("getTableReader must expose the live reader", reader);
+                    assertEquals(ReaderScanProfile.DEFAULT, reader.getScanProfile());
+
+                    // setScanProfile must delegate through to the reader, not no-op.
+                    cursor.setScanProfile(ReaderScanProfile.SEQUENTIAL_CACHED);
+                    assertEquals(ReaderScanProfile.SEQUENTIAL_CACHED, reader.getScanProfile());
+
+                    // A second profile proves the delegation is live, not a one-shot.
+                    cursor.setScanProfile(ReaderScanProfile.SEQUENTIAL_EVICT);
+                    assertEquals(ReaderScanProfile.SEQUENTIAL_EVICT, reader.getScanProfile());
+                }
+            }
         });
     }
 
