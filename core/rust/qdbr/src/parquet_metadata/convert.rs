@@ -757,47 +757,60 @@ pub(crate) struct SortingCol {
 pub(crate) fn extract_sorting_columns(
     file_metadata: &FileMetaData,
 ) -> ParquetResult<Vec<SortingCol>> {
-    let mut result: Option<Vec<SortingCol>> = None;
+    // Row groups that declare sorting columns must agree with each other, but a
+    // row group that declares NONE is tolerated and skipped rather than treated
+    // as a conflict. An O3 merge copies unchanged row groups through
+    // copy_row_group without re-stamping the partition's designated-timestamp
+    // sort column, so a converted-then-merged partition legitimately mixes
+    // copied groups (no sorting columns) with freshly written ones (the
+    // timestamp sort column). Genuinely conflicting sort orders -- two groups
+    // sorted on different columns -- are still rejected.
+    let mut reference: Option<(usize, Vec<SortingCol>)> = None;
 
     for (rg_idx, rg) in file_metadata.row_groups.iter().enumerate() {
-        let current = match rg.sorting_columns() {
-            Some(cols) => cols
+        let current: Vec<SortingCol> = match rg.sorting_columns() {
+            Some(cols) if !cols.is_empty() => cols
                 .iter()
                 .map(|sc| SortingCol {
                     column_idx: sc.column_idx,
                     descending: sc.descending,
                 })
-                .collect::<Vec<_>>(),
-            None => Vec::new(),
+                .collect(),
+            _ => continue, // no sorting columns -> ignore this row group
         };
 
-        if let Some(ref prev) = result {
-            // Validate consistency.
-            if prev.len() != current.len() {
+        let (ref_idx, prev) = match reference {
+            Some(ref r) => (r.0, &r.1),
+            None => {
+                reference = Some((rg_idx, current));
+                continue;
+            }
+        };
+
+        if prev.len() != current.len() {
+            return Err(parquet_meta_err!(
+                ParquetMetaErrorKind::SchemaMismatch,
+                "sorting columns differ between row groups: rg {} has {} but rg {} has {}",
+                ref_idx,
+                prev.len(),
+                rg_idx,
+                current.len()
+            ));
+        }
+        for (i, (p, c)) in prev.iter().zip(current.iter()).enumerate() {
+            if p.column_idx != c.column_idx || p.descending != c.descending {
                 return Err(parquet_meta_err!(
                     ParquetMetaErrorKind::SchemaMismatch,
-                    "sorting columns differ between row groups: rg 0 has {} but rg {} has {}",
-                    prev.len(),
-                    rg_idx,
-                    current.len()
+                    "sorting column {} differs between row groups {} and {}",
+                    i,
+                    ref_idx,
+                    rg_idx
                 ));
             }
-            for (i, (p, c)) in prev.iter().zip(current.iter()).enumerate() {
-                if p.column_idx != c.column_idx || p.descending != c.descending {
-                    return Err(parquet_meta_err!(
-                        ParquetMetaErrorKind::SchemaMismatch,
-                        "sorting column {} differs between row groups 0 and {}",
-                        i,
-                        rg_idx
-                    ));
-                }
-            }
-        } else {
-            result = Some(current);
         }
     }
 
-    Ok(result.unwrap_or_default())
+    Ok(reference.map(|(_, cols)| cols).unwrap_or_default())
 }
 
 pub(crate) fn detect_designated_timestamp(
@@ -1041,6 +1054,78 @@ mod tests {
 
         let result = convert_from_parquet(&metadata, Some(&bad_meta), 0, 0, None, None);
         assert!(result.is_err());
+    }
+
+    /// Regression: an O3 merge copies unchanged row groups without re-stamping
+    /// the partition's designated-timestamp sort column, so a converted-then-
+    /// merged partition ends up with rg 0 declaring no sorting columns and rg 1
+    /// declaring the timestamp sort column. This is the exact shape Mig941 reads
+    /// from the on-disk footer; extract_sorting_columns used to reject it with
+    /// "rg 0 has 0 but rg 1 has 1" and crash replica bootstrap. It must now
+    /// tolerate the mix while still rejecting genuinely conflicting sort orders.
+    #[test]
+    fn extract_sorting_columns_tolerates_groups_without_sorting() {
+        use parquet2::metadata::{RowGroupMetaData, SortingColumn};
+
+        // Parse a real file to get a valid FileMetaData shell, then overwrite
+        // its row groups to mimic an O3-merged partition.
+        let parquet_data = write_test_parquet(10, CompressionOptions::Uncompressed);
+        let mut cursor = Cursor::new(&parquet_data);
+        let mut metadata = read_metadata_with_size(&mut cursor, parquet_data.len() as u64).unwrap();
+
+        let ts_sort = vec![SortingColumn::new(0, false, false)];
+        metadata.row_groups = vec![
+            // copied: no sort cols
+            RowGroupMetaData::with_sorting_columns(vec![], 10, None, 0),
+            // fresh: ts sort
+            RowGroupMetaData::with_sorting_columns(vec![], 10, Some(ts_sort.clone()), 0),
+        ];
+
+        // Used to error with "rg 0 has 0 but rg 1 has 1"; now tolerated, adopting
+        // the sort columns of the only row group that declares any.
+        let cols = extract_sorting_columns(&metadata)
+            .expect("a mix of empty and non-empty sorting columns must be tolerated");
+        assert_eq!(cols.len(), 1);
+        assert_eq!(cols[0].column_idx, 0);
+        assert!(!cols[0].descending);
+
+        // Two row groups sorted on DIFFERENT columns is a real conflict -> still rejected.
+        metadata.row_groups = vec![
+            RowGroupMetaData::with_sorting_columns(
+                vec![],
+                10,
+                Some(vec![SortingColumn::new(0, false, false)]),
+                0,
+            ),
+            RowGroupMetaData::with_sorting_columns(
+                vec![],
+                10,
+                Some(vec![SortingColumn::new(1, false, false)]),
+                0,
+            ),
+        ];
+        assert!(extract_sorting_columns(&metadata).is_err());
+
+        // Two row groups that declare a DIFFERENT number of sorting columns is
+        // also a real conflict -> still rejected.
+        metadata.row_groups = vec![
+            RowGroupMetaData::with_sorting_columns(
+                vec![],
+                10,
+                Some(vec![SortingColumn::new(0, false, false)]),
+                0,
+            ),
+            RowGroupMetaData::with_sorting_columns(
+                vec![],
+                10,
+                Some(vec![
+                    SortingColumn::new(0, false, false),
+                    SortingColumn::new(1, false, false),
+                ]),
+                0,
+            ),
+        ];
+        assert!(extract_sorting_columns(&metadata).is_err());
     }
 
     fn leak_bytes(data: &[u8]) -> &'static [u8] {

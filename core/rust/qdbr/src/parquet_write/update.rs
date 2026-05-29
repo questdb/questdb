@@ -568,7 +568,8 @@ impl ParquetUpdater {
             adjust_column_chunk_offsets(col, offset_delta);
         }
 
-        let thrift_rg = build_raw_row_group(columns, row_count);
+        let sorting_columns = self.parquet_file.sorting_columns().map(<[_]>::to_vec);
+        let thrift_rg = build_raw_row_group(columns, row_count, sorting_columns);
 
         self.parquet_file
             .write_raw_row_group_with_bloom(&self.copy_buffer, thrift_rg, bloom_bitsets)
@@ -809,7 +810,8 @@ impl ParquetUpdater {
             })
             .collect::<ParquetResult<Vec<_>>>()?;
 
-        let thrift_rg = build_raw_row_group(columns, row_count);
+        let sorting_columns = self.parquet_file.sorting_columns().map(<[_]>::to_vec);
+        let thrift_rg = build_raw_row_group(columns, row_count, sorting_columns);
 
         // Concatenate existing + null bytes and write as one raw row group.
         self.copy_buffer.extend_from_slice(&null_bytes_buf);
@@ -1174,7 +1176,17 @@ fn adjust_column_chunk_offsets(col: &mut ColumnChunk, offset_delta: i64) {
 /// Builds a thrift `RowGroup` from a list of `ColumnChunk`s, computing
 /// `file_offset`, `total_byte_size`, and `total_compressed_size` from the
 /// column metadata.
-fn build_raw_row_group(columns: Vec<ColumnChunk>, num_rows: usize) -> RowGroup {
+///
+/// `sorting_columns` carries the file-level target sort order so that copied
+/// row groups declare the same sorting columns as freshly written ones. Using
+/// the target (not the old footer's own value) is required because ADD/DROP
+/// COLUMN can shift the timestamp index, leaving the old footer's column index
+/// stale; this matches what the inline `_pm` path does.
+fn build_raw_row_group(
+    columns: Vec<ColumnChunk>,
+    num_rows: usize,
+    sorting_columns: Option<Vec<SortingColumn>>,
+) -> RowGroup {
     let total_byte_size: i64 = columns
         .iter()
         .filter_map(|c| c.meta_data.as_ref())
@@ -1194,7 +1206,7 @@ fn build_raw_row_group(columns: Vec<ColumnChunk>, num_rows: usize) -> RowGroup {
         columns,
         total_byte_size,
         num_rows: num_rows as i64,
-        sorting_columns: None,
+        sorting_columns,
         file_offset,
         total_compressed_size: Some(total_compressed_size),
         ordinal: None,
@@ -1555,8 +1567,17 @@ mod tests {
     }
 
     fn make_column<T>(name: &'static str, col_type: ColumnType, values: &[T]) -> Column {
+        make_column_with_id(0, name, col_type, values)
+    }
+
+    fn make_column_with_id<T>(
+        id: i32,
+        name: &'static str,
+        col_type: ColumnType,
+        values: &[T],
+    ) -> Column {
         Column::from_raw_data(
-            0,
+            id,
             name,
             col_type.code(),
             0,
@@ -2136,6 +2157,190 @@ mod tests {
             );
         }
 
+        Ok(())
+    }
+
+    /// Regression for the O3-merge sorting-columns inconsistency: copy_row_group
+    /// must stamp the file-level target sorting columns onto the copied group
+    /// rather than leaving it None. The rewrite flow copies the unchanged row
+    /// group and then appends a fresh O3 group; before the fix the copied group
+    /// declared 0 sorting columns while the fresh group declared the timestamp
+    /// sort column, producing a footer the strict _pm validator (Mig941 path)
+    /// rejects with "rg 0 has 0 but rg 1 has 1". After the fix every row group
+    /// declares identical sorting columns.
+    #[test]
+    fn copy_row_group_preserves_sorting_columns() -> Result<(), Box<dyn Error>> {
+        use crate::allocator::TestAllocatorState;
+        use crate::parquet_metadata::convert::extract_sorting_columns;
+        use parquet2::metadata::SortingColumn;
+
+        // Designated timestamp at column 0, ascending.
+        let sorting = || Some(vec![SortingColumn::new(0, false, false)]);
+
+        // 1. Initial single-row-group file WITH sorting columns -> a freshly
+        //    converted parquet partition.
+        let ts = [1i64, 2, 3, 4];
+        let val = [10i32, 20, 30, 40];
+        let partition = Partition {
+            table: "t".to_string(),
+            columns: vec![
+                make_column("ts", ColumnTypeTag::Timestamp.into_type(), &ts),
+                make_column("val", ColumnTypeTag::Int.into_type(), &val),
+            ],
+        };
+        let src = NamedTempFile::new()?;
+        ParquetWriter::new(src.reopen()?)
+            .with_sorting_columns(sorting())
+            .finish(partition)?;
+        let src_len = src.as_file().metadata()?.len();
+
+        // 2. Rewrite-mode updater (write_file_size == 0 -> fresh output file),
+        //    the same mode the O3 parquet merge uses.
+        let out = NamedTempFile::new()?;
+        let alloc = TestAllocatorState::new();
+        let mut updater = super::ParquetUpdater::new(
+            alloc.allocator(),
+            src.reopen()?, // reader: old file
+            src_len,
+            out.reopen()?, // writer: fresh file
+            0,             // write_file_size == 0 -> rewrite
+            sorting(),     // target sorting columns
+            true,
+            false,
+            CompressionOptions::Uncompressed,
+            None,
+            None,
+            DEFAULT_BLOOM_FILTER_FPP,
+            0.0,
+            None,
+            0,
+            -1,
+        )?;
+
+        // 3. Copy the existing row group, then append a fresh O3 row group.
+        let o3_ts = [5i64, 6, 7];
+        let o3_val = [50i32, 60, 70];
+        let o3 = Partition {
+            table: "t".to_string(),
+            columns: vec![
+                make_column("ts", ColumnTypeTag::Timestamp.into_type(), &o3_ts),
+                make_column("val", ColumnTypeTag::Int.into_type(), &o3_val),
+            ],
+        };
+        updater.copy_row_group(0)?; // copied group: must keep sorting cols
+        updater.insert_row_group(&o3, 1)?; // fresh group: written with sorting cols
+        updater.end(None)?;
+
+        // 4. Every row group must declare identical sorting columns, so Mig941 /
+        //    convert_from_parquet accepts the file.
+        let f = out.reopen()?;
+        let len = f.metadata()?.len();
+        let md = read_metadata_with_size(&mut &f, len)?;
+        assert_eq!(md.row_groups.len(), 2);
+        assert_eq!(
+            md.row_groups[0].sorting_columns(),
+            md.row_groups[1].sorting_columns(),
+            "copied and appended row groups must agree on sorting columns",
+        );
+        // Sanity check: the native call Mig941 makes still accepts the file.
+        extract_sorting_columns(&md).expect("sorting columns must be consistent across row groups");
+        Ok(())
+    }
+
+    /// Same regression as copy_row_group_preserves_sorting_columns, but for the
+    /// ADD COLUMN variant: copy_row_group_with_null_columns must also stamp the
+    /// file-level target sorting columns onto the copied group. The bug report
+    /// motivates using the target (not the old footer's value) precisely because
+    /// ADD/DROP COLUMN shifts the timestamp index, so this path is the one where
+    /// the distinction matters.
+    #[test]
+    fn copy_row_group_with_null_columns_preserves_sorting_columns() -> Result<(), Box<dyn Error>> {
+        use crate::allocator::TestAllocatorState;
+        use crate::parquet_metadata::convert::extract_sorting_columns;
+        use parquet2::metadata::SortingColumn;
+
+        // Designated timestamp at column 0, ascending.
+        let sorting = || Some(vec![SortingColumn::new(0, false, false)]);
+
+        // 1. Initial file with the OLD schema [ts(id=0), val(id=1)] and the
+        //    timestamp sort column.
+        let ts = [1i64, 2, 3, 4];
+        let val = [10i32, 20, 30, 40];
+        let partition = Partition {
+            table: "t".to_string(),
+            columns: vec![
+                make_column_with_id(0, "ts", ColumnTypeTag::Timestamp.into_type(), &ts),
+                make_column_with_id(1, "val", ColumnTypeTag::Int.into_type(), &val),
+            ],
+        };
+        let src = NamedTempFile::new()?;
+        ParquetWriter::new(src.reopen()?)
+            .with_sorting_columns(sorting())
+            .finish(partition)?;
+        let src_len = src.as_file().metadata()?.len();
+
+        // 2. Rewrite-mode updater with the target sort columns.
+        let out = NamedTempFile::new()?;
+        let alloc = TestAllocatorState::new();
+        let mut updater = super::ParquetUpdater::new(
+            alloc.allocator(),
+            src.reopen()?,
+            src_len,
+            out.reopen()?,
+            0, // rewrite
+            sorting(),
+            true,
+            false,
+            CompressionOptions::Uncompressed,
+            None,
+            None,
+            DEFAULT_BLOOM_FILTER_FPP,
+            0.0,
+            None,
+            0,
+            -1,
+        )?;
+
+        // 3. Target schema adds a third column [ts, val, added(id=2)].
+        let added = ColumnTypeTag::Int.into_type();
+        let target = Partition {
+            table: "t".to_string(),
+            columns: vec![
+                make_column_with_id(0, "ts", ColumnTypeTag::Timestamp.into_type(), &ts),
+                make_column_with_id(1, "val", ColumnTypeTag::Int.into_type(), &val),
+                make_column_with_id(2, "added", added, &val),
+            ],
+        };
+        updater.set_target_schema(&target)?;
+
+        // 4. Copy the old row group, backfilling the new column with nulls, then
+        //    append a fresh O3 group in the new 3-column schema.
+        updater.copy_row_group_with_null_columns(0, &[(2, added)])?;
+        let o3_ts = [5i64, 6, 7];
+        let o3_val = [50i32, 60, 70];
+        let o3_added = [1i32, 2, 3];
+        let o3 = Partition {
+            table: "t".to_string(),
+            columns: vec![
+                make_column_with_id(0, "ts", ColumnTypeTag::Timestamp.into_type(), &o3_ts),
+                make_column_with_id(1, "val", ColumnTypeTag::Int.into_type(), &o3_val),
+                make_column_with_id(2, "added", added, &o3_added),
+            ],
+        };
+        updater.insert_row_group(&o3, 1)?;
+        updater.end(None)?;
+
+        // 5. Both row groups must declare identical sorting columns.
+        let f = out.reopen()?;
+        let len = f.metadata()?.len();
+        let md = read_metadata_with_size(&mut &f, len)?;
+        assert_eq!(md.row_groups.len(), 2);
+        assert_eq!(
+            md.row_groups[0].sorting_columns(),
+            md.row_groups[1].sorting_columns(),
+            "copied (with null column) and appended row groups must agree on sorting columns",
+        );
+        extract_sorting_columns(&md).expect("sorting columns must be consistent across row groups");
         Ok(())
     }
 }
