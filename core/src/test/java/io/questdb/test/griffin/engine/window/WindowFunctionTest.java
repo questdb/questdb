@@ -635,7 +635,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCachedWindowLightLagSwapBlockedByMixedSortGroup() throws Exception {
+    public void testCachedWindowLightLagAndAggregateShareOrderedGroup() throws Exception {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, v long) timestamp(ts)", timestampType.getTypeName());
             assertPlanNoLeakCheck(
@@ -647,45 +647,6 @@ public class WindowFunctionTest extends AbstractCairoTest {
                                             Row forward scan
                                             Frame forward scan on: tab
                                     """
-            );
-        });
-    }
-
-    @Test
-    public void testCachedWindowLightLagSwapOnBackwardBaseScan() throws Exception {
-        // SCAN_DIRECTION_BACKWARD branch of rewriteLagLeadForBaseScan.
-        // Inner ORDER BY ts DESC produces a backward base scan; LAG(... ORDER BY ts ASC)
-        // opposes the scan direction, so it must be swapped to LEAD(... ORDER BY ts DESC),
-        // matching the LEAD-on-forward-scan result row-for-row.
-        node1.setProperty(PropertyKey.CAIRO_SQL_WINDOW_CACHED_LIGHT_ENABLED, true);
-        assertMemoryLeak(() -> {
-            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, v long) timestamp(ts)", timestampType.getTypeName());
-            execute("insert into tab values (1, 10), (2, 20), (3, 30), (4, 40), (5, 50)");
-
-            assertPlanNoLeakCheck(
-                    "SELECT ts, v, lag(v, 1) OVER (ORDER BY ts ASC) FROM tab ORDER BY ts DESC",
-                    """
-                            CachedWindowLight
-                              unorderedFunctions: [lead(v, 1, NULL) over ()]
-                                PageFrame
-                                    Row backward scan
-                                    Frame backward scan on: tab
-                            """
-            );
-
-            assertQueryNoLeakCheck(
-                    replaceTimestampSuffix("""
-                            ts\tv\tlag
-                            1970-01-01T00:00:00.000005Z\t50\t40
-                            1970-01-01T00:00:00.000004Z\t40\t30
-                            1970-01-01T00:00:00.000003Z\t30\t20
-                            1970-01-01T00:00:00.000002Z\t20\t10
-                            1970-01-01T00:00:00.000001Z\t10\tnull
-                            """, timestampType.getTypeName()),
-                    "SELECT ts, v, lag(v, 1) OVER (ORDER BY ts ASC) FROM tab ORDER BY ts DESC",
-                    "ts###desc",
-                    true,
-                    true
             );
         });
     }
@@ -7124,7 +7085,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "lag(m, 0) respect nulls over (order by ts desc), " +
                             "from tab order by ts asc",
                     "ts",
-                    false,
+                    true,
                     true
             );
 
@@ -7197,148 +7158,6 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "from tab ",
                     "ts",
                     false,
-                    true
-            );
-        });
-    }
-
-    @Test
-    public void testLagLeadOverDescOnDesignatedTimestampRewrite() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("create table tab (ts timestamp, sym symbol, x long, y long) timestamp(ts)");
-            execute("insert into tab select x::timestamp, 'a', x, x * 10 from long_sequence(5)");
-
-            // LAG over DESC -> LEAD over ASC. LEAD is ONE_PASS so the rewritten form
-            // still uses CachedWindow, but the unorderedFunctions slot means no sort.
-            assertPlanNoLeakCheck(
-                    "SELECT ts, x, LAG(x, 1) OVER (ORDER BY ts DESC) FROM tab",
-                    (this.cacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") +
-                            """
-                                      unorderedFunctions: [lead(x, 1, NULL) over ()]
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: tab
-                                    """
-            );
-
-            // LEAD over DESC -> LAG over ASC. LAG is ZERO_PASS so dismissOrder=true
-            // promotes the column all the way to the streaming Window factory.
-            assertPlanNoLeakCheck(
-                    "SELECT ts, x, LEAD(x, 1) OVER (ORDER BY ts DESC) FROM tab",
-                    """
-                            Window
-                              functions: [lag(x, 1, NULL) over ()]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: tab
-                            """
-            );
-
-            // PARTITION BY + IGNORE NULLS rewrite.
-            assertPlanNoLeakCheck(
-                    "SELECT LAG(x, 1) IGNORE NULLS OVER (PARTITION BY sym ORDER BY ts DESC) FROM tab",
-                    (this.cacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") +
-                            """
-                                      unorderedFunctions: [lead(x, 1, NULL) ignore nulls over (partition by [sym])]
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: tab
-                                    """
-            );
-
-            // Multiple LAG/LEAD on the same (ts, DESC) key are both rewritten:
-            // each rewrite removes its column from the shared key group, so later
-            // siblings still pass the gate.
-            assertPlanNoLeakCheck(
-                    "SELECT LAG(x, 1) OVER (ORDER BY ts DESC), LEAD(y, 1) OVER (ORDER BY ts DESC) FROM tab",
-                    (this.cacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") +
-                            """
-                                      unorderedFunctions: [lead(x, 1, NULL) over (),lag(y, 1, NULL) over ()]
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: tab
-                                    """
-            );
-
-            // Gate: SUM cannot be swapped, so rewriting LAG alone would force it
-            // out of the shared sort group and add an extra chain pass. Gate blocks it.
-            assertPlanNoLeakCheck(
-                    "SELECT LAG(x, 1) OVER (ORDER BY ts DESC), " +
-                            "SUM(x) OVER (ORDER BY ts DESC ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) FROM tab",
-                    (this.cacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") +
-                            """
-                                      orderedFunctions: [[ts desc] => [lag(x, 1, NULL) over (),sum(x) over ( rows between 1 preceding and current row)]]
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: tab
-                                    """
-            );
-
-            // Multi-column ORDER BY: rewrite requires osz == 1, falls through to sort.
-            assertPlanNoLeakCheck(
-                    "SELECT LAG(x, 1) OVER (ORDER BY ts DESC, y ASC) FROM tab",
-                    (this.cacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") +
-                            """
-                                      orderedFunctions: [[ts desc, y] => [lag(x, 1, NULL) over ()]]
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: tab
-                                    """
-            );
-
-            // ORDER BY non-timestamp column: rewrite only fires for designated ts.
-            assertPlanNoLeakCheck(
-                    "SELECT LAG(x, 1) OVER (ORDER BY y DESC) FROM tab",
-                    (this.cacheLightWindowEnabled ? "CachedWindowLight\n" : "CachedWindow\n") +
-                            """
-                                      orderedFunctions: [[y desc] => [lag(x, 1, NULL) over ()]]
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: tab
-                                    """
-            );
-
-            // Per-row correctness: LAG over DESC == LEAD over ASC and vice versa.
-            // First two columns are the rewritten forms; last two are the unrewritten equivalents.
-            assertQueryNoLeakCheck(
-                    """
-                            ts\tx\tlag_desc\tlead_desc\tlead_asc\tlag_asc
-                            1970-01-01T00:00:00.000001Z\t1\t2\tnull\t2\tnull
-                            1970-01-01T00:00:00.000002Z\t2\t3\t1\t3\t1
-                            1970-01-01T00:00:00.000003Z\t3\t4\t2\t4\t2
-                            1970-01-01T00:00:00.000004Z\t4\t5\t3\t5\t3
-                            1970-01-01T00:00:00.000005Z\t5\tnull\t4\tnull\t4
-                            """,
-                    "SELECT ts, x, " +
-                            "LAG(x, 1) OVER (ORDER BY ts DESC) AS lag_desc, " +
-                            "LEAD(x, 1) OVER (ORDER BY ts DESC) AS lead_desc, " +
-                            "LEAD(x, 1) OVER (ORDER BY ts ASC) AS lead_asc, " +
-                            "LAG(x, 1) OVER (ORDER BY ts ASC) AS lag_asc " +
-                            "FROM tab",
-                    "ts",
-                    true,
-                    true
-            );
-
-            // Non-null default value travels through the swap. The boundary rows
-            // (first under LAG, last under LEAD) must show -99 from the default.
-            assertQueryNoLeakCheck(
-                    """
-                            ts\tx\tlag_desc_def\tlead_desc_def\tlead_asc_def\tlag_asc_def
-                            1970-01-01T00:00:00.000001Z\t1\t2\t-99\t2\t-99
-                            1970-01-01T00:00:00.000002Z\t2\t3\t1\t3\t1
-                            1970-01-01T00:00:00.000003Z\t3\t4\t2\t4\t2
-                            1970-01-01T00:00:00.000004Z\t4\t5\t3\t5\t3
-                            1970-01-01T00:00:00.000005Z\t5\t-99\t4\t-99\t4
-                            """,
-                    "SELECT ts, x, " +
-                            "LAG(x, 1, -99) OVER (ORDER BY ts DESC) AS lag_desc_def, " +
-                            "LEAD(x, 1, -99) OVER (ORDER BY ts DESC) AS lead_desc_def, " +
-                            "LEAD(x, 1, -99) OVER (ORDER BY ts ASC) AS lead_asc_def, " +
-                            "LAG(x, 1, -99) OVER (ORDER BY ts ASC) AS lag_asc_def " +
-                            "FROM tab",
-                    "ts",
-                    true,
                     true
             );
         });
@@ -7600,7 +7419,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "lag(m, 0) respect nulls over (partition by i order by ts desc), " +
                             "from tab order by ts asc",
                     "ts",
-                    false,
+                    true,
                     true
             );
 
