@@ -484,6 +484,57 @@ public class TwapGroupByFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTwapRejectsSampleByFillOverNonTimestampOrderedBase() throws Exception {
+        // A SAMPLE BY ... FILL(...) query takes the serial SAMPLE BY path, where TWAP was
+        // previously validated against a hardcoded "ascending timestamp" assumption. A base
+        // ordered by a non-timestamp column reports SCAN_DIRECTION_FORWARD but delivers rows
+        // out of designated-timestamp order: the sort drops the designated timestamp from its
+        // metadata and an outer timestamp(ts) clause re-attaches it by name. Feeding such rows
+        // to TWAP silently produced the plain average instead of the step-function value, so
+        // the compiler must reject the query on every fill mode.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tbl (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO tbl VALUES
+                    (30.0, '2024-01-01T00:00:00.000000Z'),
+                    (20.0, '2024-01-01T00:00:10.000000Z'),
+                    (10.0, '2024-01-01T00:00:30.000000Z')
+                    """);
+            // Oracle: over the real ts-ordered base the step-function TWAP for the single
+            // bucket is (30*10 + 20*20) / 30 = 23.333..., not the plain average (30+20+10)/3
+            // = 20.0 that the reordered base silently produced before the fix.
+            assertQueryNoLeakCheck(
+                    "ts\ttwap\n2024-01-01T00:00:00.000000Z\t23.333333333333332\n",
+                    "SELECT ts, twap(price, ts) FROM tbl SAMPLE BY 1m",
+                    "ts",
+                    true,
+                    true
+            );
+            // FILL(linear) reaches the interpolated branch; FILL(null)/FILL(prev) reach the
+            // other serial branch. Every fill mode must reject the price-ordered base.
+            final String reorderedBase = "FROM (SELECT price, ts FROM tbl ORDER BY price ASC LIMIT 10) timestamp(ts) SAMPLE BY 1m ";
+            for (String fill : new String[]{"FILL(null)", "FILL(prev)", "FILL(linear)"}) {
+                assertExceptionNoLeakCheck(
+                        "SELECT twap(price, ts) " + reorderedBase + fill,
+                        7,
+                        "twap() requires the base query to provide ascending designated timestamp order",
+                        false
+                );
+            }
+            // The same query shape with a genuinely ts-ordered base (timestamp re-attached by
+            // name) is still accepted and returns the correct value -- the fix does not
+            // over-reject legitimate SAMPLE BY FILL queries.
+            assertQueryNoLeakCheck(
+                    "ts\ttwap\n2024-01-01T00:00:00.000000Z\t23.333333333333332\n",
+                    "SELECT ts, twap(price, ts) FROM (SELECT price, ts FROM tbl ORDER BY ts ASC) timestamp(ts) SAMPLE BY 1m FILL(null)",
+                    "ts",
+                    false,
+                    false
+            );
+        });
+    }
+
+    @Test
     public void testTwapSingleRow() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tbl (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
