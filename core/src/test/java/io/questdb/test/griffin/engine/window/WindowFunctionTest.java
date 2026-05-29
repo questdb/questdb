@@ -784,7 +784,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "WHERE v <= 5 OR v >= 62 ORDER BY v",
                     null,
                     true,
-                   false
+                    false
             );
         });
     }
