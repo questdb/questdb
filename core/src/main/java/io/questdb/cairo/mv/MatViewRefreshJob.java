@@ -391,6 +391,15 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                     commitPeriodHi
             );
         }
+        // Publish the staged frozen-zone boundary floor only after the
+        // REPLACE_RANGE commit and view-state success update have landed. The
+        // backfill validator's min(own, published) invariant relies on the
+        // published floor corresponding to actual committed coverage; an orphan
+        // floor from a refresh that aborted pre-commit would clamp the validator
+        // to a region no REPLACE_RANGE covers.
+        if (refreshContext.pendingFrozenBoundaryFloor != Numbers.LONG_NULL) {
+            viewState.setLastRefreshFrozenBoundaryFloor(refreshContext.pendingFrozenBoundaryFloor);
+        }
     }
 
     private void enqueueInvalidateDependentViews(TableToken viewToken, String invalidationReason) {
@@ -616,16 +625,19 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                     rawBoundary = driver.addMonths(boundaryAnchor, refreshLimitHoursOrMonths);
                 }
                 minTs = Math.max(minTs, rawBoundary);
-                // Publish the snapped REPLACE_RANGE.lo before any commit lands. The
+                // Stage the snapped REPLACE_RANGE.lo on the refresh context. The
                 // backfill validator and materialized_views().backfill_max_ts clamp
                 // their accepted floor to min(own, published) -- the published floor
                 // is what refresh actually wipes, so any user backfill the validator
                 // accepts sits strictly below it and survives subsequent REPLACE_RANGE
                 // commits even when ALTER SET REFRESH LIMIT changes the current LIMIT
-                // between this publish and the user commit.
+                // between this publish and the user commit. commitMatView publishes
+                // the staged floor only after the REPLACE_RANGE commit lands, so a
+                // refresh that aborts pre-commit never leaves an orphan floor that
+                // does not correspond to actual REPLACE_RANGE coverage.
                 final TimestampSampler publishSampler = viewDefinition.getTimestampSampler();
                 publishSampler.setOffset(viewDefinition.getFixedOffset());
-                viewState.setLastRefreshFrozenBoundaryFloor(publishSampler.round(rawBoundary));
+                refreshContext.pendingFrozenBoundaryFloor = publishSampler.round(rawBoundary);
                 intersectIntervals(refreshIntervals, minTs, Long.MAX_VALUE);
             }
         }
@@ -1852,6 +1864,12 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         public long approxBucketSize;
         public SampleByIntervalIterator intervalIterator;
         public long naturalStep;
+        // Snapped REPLACE_RANGE.lo computed by findRefreshIntervals, staged for
+        // publish via MatViewState.setLastRefreshFrozenBoundaryFloor only after
+        // the REPLACE_RANGE commit actually lands. Publishing pre-commit would
+        // leave the validator clamped to a floor that no REPLACE_RANGE covers if
+        // the refresh aborts mid-flight.
+        public long pendingFrozenBoundaryFloor = Numbers.LONG_NULL;
         public long periodHi = Numbers.LONG_NULL;
         // Reference to the live refresh intervals list owned by the iterator.
         // Held here so the retry path can recompute stepPerInterval after
@@ -1865,6 +1883,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             approxBucketSize = 0;
             intervalIterator = null;
             naturalStep = 0;
+            pendingFrozenBoundaryFloor = Numbers.LONG_NULL;
             periodHi = Numbers.LONG_NULL;
             refreshIntervals = null;
             stepPerInterval.clear();
