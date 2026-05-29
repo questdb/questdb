@@ -259,9 +259,9 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         // rather than silently returning ascending frames.
         final boolean descending = order == PartitionFrameCursorFactory.ORDER_DESC;
         if (descending && multiKeyPageFrameCursor != null) {
-            // Codegen routes multi-key negative-limit queries to the serial
-            // path (multi-key covering is not globally timestamp-ordered), so a
-            // backward page-frame scan must never reach here.
+            // The multi-key page-frame cursor merges keys forward only; it has no
+            // backward scan. Codegen therefore routes multi-key negative-limit
+            // queries to the serial path, so a backward scan must never reach here.
             throw CairoException.critical(0).put("backward covering scan is not supported for multi-key index queries");
         }
         int configMaxRows = executionContext.getPageFrameMaxRows();
@@ -318,13 +318,13 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
     }
 
     /**
-     * Whether this factory can serve a correct backward (negative-limit)
-     * page-frame scan. Only single-key queries qualify: their forward cursor
-     * is globally timestamp-ordered (partitions ascending, rows ascending
-     * within a partition), so reversing it yields the true last-N rows. The
-     * multi-key cursor interleaves keys per partition and is not globally
-     * timestamp-ordered, so codegen must route its negative limits to the
-     * serial path instead.
+     * Whether this factory can serve a backward (negative-limit) page-frame scan.
+     * Only single-key queries qualify: the single-key cursor implements a genuine
+     * backward scan (DESC partitions, high row-range sub-frames first). The
+     * multi-key cursor merges keys forward only -- it is globally
+     * timestamp-ordered ascending, but has no backward scan -- so codegen routes
+     * its negative limits to the serial path, where LimitRecordCursorFactory
+     * computes last-N via size + skip over the ascending merge.
      */
     public boolean supportsNegativeLimitPageFrame() {
         return singleKeyPageFrameCursor != null;
@@ -417,6 +417,35 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             }
         }
         return result;
+    }
+
+    /**
+     * Open a forward {@link CoveringRowCursor} for a single key over a partition's
+     * row range, or null when the key has no rows there (the index reader returns
+     * EmptyRowCursor, which is not a CoveringRowCursor). Shared by the record and
+     * page-frame multi-key mergers, which hold one such cursor per key at a time.
+     */
+    private static CoveringRowCursor openForwardCoveringCursor(
+            TableReader tableReader,
+            int indexColumnIndex,
+            int[] requiredIncludeIndices,
+            int partitionIndex,
+            int rawSymbolKey,
+            long rowLo,
+            long rowHi
+    ) {
+        IndexReader indexReader = tableReader.getIndexReader(partitionIndex, indexColumnIndex, IndexReader.DIR_FORWARD);
+        RowCursor rowCursor = indexReader.getCursor(
+                TableUtils.toIndexKey(rawSymbolKey),
+                rowLo,
+                rowHi - 1,
+                requiredIncludeIndices
+        );
+        if (rowCursor instanceof CoveringRowCursor crc) {
+            return crc;
+        }
+        Misc.free(rowCursor);
+        return null;
     }
 
     private static abstract class CoveringCursor implements RecordCursor {
@@ -858,7 +887,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             freeBuffers();
         }
 
-        private long allocBuffer(long bytes) {
+        protected long allocBuffer(long bytes) {
             long addr = Unsafe.malloc(bytes, MemoryTag.NATIVE_INDEX_READER);
             allocatedBuffers.add(addr, bytes);
             return addr;
@@ -928,7 +957,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
          * cursor close -- the same leak-on-grow that {@link #ensureVarDataCapacity}
          * fixes.
          */
-        private int growFrameBuffers(long[] addrs, int count, int capacity) {
+        protected int growFrameBuffers(long[] addrs, int count, int capacity) {
             int newCapacity = capacity * 2;
             for (int q = 0; q < queryColCount; q++) {
                 if (queryColToIncludeIdx[q] >= 0) {
@@ -1042,8 +1071,8 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             }
         }
 
-        private void writeCoveredRow(long[] addrs, long[] varDataAddrs, int[] varDataPos, int[] varDataCap,
-                                     int count, CoveringRowCursor crc) {
+        protected void writeCoveredRow(long[] addrs, long[] varDataAddrs, int[] varDataPos, int[] varDataCap,
+                                       int count, CoveringRowCursor crc) {
             for (int q = 0; q < queryColCount; q++) {
                 int includeIdx = queryColToIncludeIdx[q];
                 if (includeIdx < 0) continue;
@@ -1192,56 +1221,60 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
          * that very large keys now produce multiple frames instead of one
          * GiB-sized frame.
          */
+        /**
+         * Allocate the per-frame column and symbol buffers at INITIAL_CAPACITY and
+         * reset var-data positions. Returns the starting row capacity;
+         * {@link #growFrameBuffers} grows it as rows are written. Buffers are
+         * tracked in {@link #allocatedBuffers} and released by {@link #freeBuffers}.
+         */
+        protected int allocFrameBuffers() {
+            int capacity = INITIAL_CAPACITY;
+            Arrays.fill(frameVarDataAddrs, 0);
+            Arrays.fill(frameVarDataPos, 0);
+            Arrays.fill(frameVarDataCap, 0);
+            for (int q = 0; q < queryColCount; q++) {
+                if (queryColToIncludeIdx[q] >= 0) {
+                    if (columnTypeTags[q] == ColumnType.VARCHAR) {
+                        frameAddrs[q] = allocBuffer((long) capacity * VarcharTypeDriver.VARCHAR_AUX_WIDTH_BYTES);
+                        int initDataCap = capacity * 32;
+                        frameVarDataAddrs[q] = allocBuffer(initDataCap);
+                        frameVarDataCap[q] = initDataCap;
+                    } else if (columnTypeTags[q] == ColumnType.STRING || columnTypeTags[q] == ColumnType.BINARY) {
+                        // STRING/BINARY aux: 8 bytes per row (offset), plus sentinel at end
+                        frameAddrs[q] = allocBuffer((long) (capacity + 1) * Long.BYTES);
+                        int initDataCap = capacity * 32;
+                        frameVarDataAddrs[q] = allocBuffer(initDataCap);
+                        frameVarDataCap[q] = initDataCap;
+                    } else if (columnTypeTags[q] == ColumnType.ARRAY) {
+                        // ARRAY aux: 16 bytes per row [offset][size]
+                        frameAddrs[q] = allocBuffer((long) capacity * ArrayTypeDriver.ARRAY_AUX_WIDTH_BYTES);
+                        int initDataCap = capacity * 32;
+                        frameVarDataAddrs[q] = allocBuffer(initDataCap);
+                        frameVarDataCap[q] = initDataCap;
+                    } else {
+                        frameAddrs[q] = allocBuffer((long) capacity * columnSizeBytes[q]);
+                    }
+                }
+            }
+            frameAddrs[queryColCount] = allocBuffer((long) capacity * Integer.BYTES);
+            return capacity;
+        }
+
         protected @Nullable PageFrame fillFrameForKey(int rawSymbolKey, int partitionIndex, long rowLo, long rowHi, int rowCap) {
             final CoveringRowCursor coveringCursor = openOrContinueCoveringCursor(rawSymbolKey, partitionIndex, rowLo, rowHi);
             if (coveringCursor == null) {
                 return null;
             }
-
-            final long[] addrs = frameAddrs;
-            final long[] varDataAddrs = frameVarDataAddrs;
-            final int[] varDataPos = frameVarDataPos;
-            final int[] varDataCap = frameVarDataCap;
-
-            int capacity = INITIAL_CAPACITY;
-            Arrays.fill(varDataAddrs, 0);
-            Arrays.fill(varDataPos, 0);
-            Arrays.fill(varDataCap, 0);
-            for (int q = 0; q < queryColCount; q++) {
-                if (queryColToIncludeIdx[q] >= 0) {
-                    if (columnTypeTags[q] == ColumnType.VARCHAR) {
-                        addrs[q] = allocBuffer((long) capacity * VarcharTypeDriver.VARCHAR_AUX_WIDTH_BYTES);
-                        int initDataCap = capacity * 32;
-                        varDataAddrs[q] = allocBuffer(initDataCap);
-                        varDataCap[q] = initDataCap;
-                    } else if (columnTypeTags[q] == ColumnType.STRING || columnTypeTags[q] == ColumnType.BINARY) {
-                        // STRING/BINARY aux: 8 bytes per row (offset), plus sentinel at end
-                        addrs[q] = allocBuffer((long) (capacity + 1) * Long.BYTES);
-                        int initDataCap = capacity * 32;
-                        varDataAddrs[q] = allocBuffer(initDataCap);
-                        varDataCap[q] = initDataCap;
-                    } else if (columnTypeTags[q] == ColumnType.ARRAY) {
-                        // ARRAY aux: 16 bytes per row [offset][size]
-                        addrs[q] = allocBuffer((long) capacity * ArrayTypeDriver.ARRAY_AUX_WIDTH_BYTES);
-                        int initDataCap = capacity * 32;
-                        varDataAddrs[q] = allocBuffer(initDataCap);
-                        varDataCap[q] = initDataCap;
-                    } else {
-                        addrs[q] = allocBuffer((long) capacity * columnSizeBytes[q]);
-                    }
-                }
-            }
-            addrs[queryColCount] = allocBuffer((long) capacity * Integer.BYTES);
-
+            int capacity = allocFrameBuffers();
             int count = 0;
             boolean cursorExhausted = true;
             try {
                 while (coveringCursor.hasNext()) {
                     coveringCursor.next();
                     if (count >= capacity) {
-                        capacity = growFrameBuffers(addrs, count, capacity);
+                        capacity = growFrameBuffers(frameAddrs, count, capacity);
                     }
-                    writeCoveredRow(addrs, varDataAddrs, varDataPos, varDataCap, count, coveringCursor);
+                    writeCoveredRow(frameAddrs, frameVarDataAddrs, frameVarDataPos, frameVarDataCap, count, coveringCursor);
                     count++;
                     if (count >= rowCap) {
                         cursorExhausted = false;
@@ -1261,31 +1294,41 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             if (count == 0) {
                 return null;
             }
+            // Single key per frame: fill the symbol column uniformly.
+            fillSymbolKey(frameAddrs[queryColCount], rawSymbolKey, count);
+            return finalizeFrame(count, partitionIndex);
+        }
 
-            long symAddr = addrs[queryColCount];
-            fillSymbolKey(symAddr, rawSymbolKey, count);
-
+        /**
+         * Point the reusable {@link #frame} at the filled buffers for {@code count}
+         * rows in {@code partitionIndex}. The symbol buffer
+         * ({@code frameAddrs[queryColCount]}) must already be populated -- uniformly
+         * by {@link #fillSymbolKey} for a single-key frame, or per row by the
+         * multi-key merge.
+         */
+        protected PageFrame finalizeFrame(int count, int partitionIndex) {
+            long symAddr = frameAddrs[queryColCount];
             for (int q = 0; q < queryColCount; q++) {
                 int includeIdx = queryColToIncludeIdx[q];
                 if (includeIdx >= 0 && columnTypeTags[q] == ColumnType.VARCHAR) {
-                    frame.auxPageAddresses[q] = addrs[q];
+                    frame.auxPageAddresses[q] = frameAddrs[q];
                     frame.auxPageSizes[q] = (long) count * VarcharTypeDriver.VARCHAR_AUX_WIDTH_BYTES;
-                    frame.pageAddresses[q] = varDataAddrs[q];
-                    frame.pageSizes[q] = varDataPos[q];
+                    frame.pageAddresses[q] = frameVarDataAddrs[q];
+                    frame.pageSizes[q] = frameVarDataPos[q];
                 } else if (includeIdx >= 0 && (columnTypeTags[q] == ColumnType.STRING || columnTypeTags[q] == ColumnType.BINARY)) {
                     // Write sentinel offset at [count] position
-                    Unsafe.putLong(addrs[q] + (long) count * Long.BYTES, varDataPos[q]);
-                    frame.auxPageAddresses[q] = addrs[q];
+                    Unsafe.putLong(frameAddrs[q] + (long) count * Long.BYTES, frameVarDataPos[q]);
+                    frame.auxPageAddresses[q] = frameAddrs[q];
                     frame.auxPageSizes[q] = (long) (count + 1) * Long.BYTES;
-                    frame.pageAddresses[q] = varDataAddrs[q];
-                    frame.pageSizes[q] = varDataPos[q];
+                    frame.pageAddresses[q] = frameVarDataAddrs[q];
+                    frame.pageSizes[q] = frameVarDataPos[q];
                 } else if (includeIdx >= 0 && columnTypeTags[q] == ColumnType.ARRAY) {
-                    frame.auxPageAddresses[q] = addrs[q];
+                    frame.auxPageAddresses[q] = frameAddrs[q];
                     frame.auxPageSizes[q] = (long) count * ArrayTypeDriver.ARRAY_AUX_WIDTH_BYTES;
-                    frame.pageAddresses[q] = varDataAddrs[q];
-                    frame.pageSizes[q] = varDataPos[q];
+                    frame.pageAddresses[q] = frameVarDataAddrs[q];
+                    frame.pageSizes[q] = frameVarDataPos[q];
                 } else if (includeIdx >= 0) {
-                    frame.pageAddresses[q] = addrs[q];
+                    frame.pageAddresses[q] = frameAddrs[q];
                     frame.pageSizes[q] = (long) count * columnSizeBytes[q];
                     frame.auxPageAddresses[q] = 0;
                     frame.auxPageSizes[q] = 0;
@@ -1804,18 +1847,75 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
     }
 
     private static class MultiKeyCoveringCursor extends CoveringCursor {
+        // Row-id sentinel: the per-key cursor is exhausted, or the key is absent
+        // from the current partition. Real row ids are non-negative.
+        private static final long NO_ROW = -1;
         final IntList multiKeys;
-        private int cachedPartitionIndex;
-        private long cachedRowHi;
-        private long cachedRowLo;
+        // latestBy iteration cursor over multiKeys (used only by hasNextLatestBy).
         private int currentKeyIdx;
+        // Per-key open cursors for the current partition and their peeked head
+        // row ids. The cursors are merged by row id so the record cursor emits
+        // rows in global (ascending designated-timestamp) order within each
+        // partition -- mirroring HeapRowCursorFactory on the non-covering path --
+        // instead of draining one key's posting list before the next.
+        private CoveringRowCursor[] keyCursors;
+        private long[] keyHeads;
+        // The key whose head was emitted last; advanced on the next hasNext().
+        private int selectedKeyIdx = -1;
 
         MultiKeyCoveringCursor(int indexColumnIndex, int multiKeyCapacity, int[] queryColToIncludeIdx,
                                int[] requiredIncludeIndices, int[] symbolIncludeCols, IntList columnIndexes,
                                boolean latestBy, RecordMetadata metadata) {
             super(indexColumnIndex, SymbolTable.VALUE_NOT_FOUND, queryColToIncludeIdx, requiredIncludeIndices, symbolIncludeCols, columnIndexes, latestBy, metadata);
             this.multiKeys = new IntList(multiKeyCapacity);
-            this.cachedPartitionIndex = -1;
+        }
+
+        @Override
+        public void close() {
+            closeKeyCursors();
+            super.close();
+        }
+
+        @Override
+        public boolean hasNext() {
+            if (frameCursor == null) {
+                return false;
+            }
+            if (latestBy) {
+                return hasNextLatestBy();
+            }
+            final int n = multiKeys.size();
+            while (true) {
+                // Advance the cursor we emitted last; we deferred this so its
+                // covered values stayed readable until the caller consumed them.
+                if (selectedKeyIdx >= 0) {
+                    CoveringRowCursor c = keyCursors[selectedKeyIdx];
+                    keyHeads[selectedKeyIdx] = c.hasNext() ? c.next() : NO_ROW;
+                    selectedKeyIdx = -1;
+                }
+                // Pick the smallest head row id across the open per-key cursors.
+                // Two keys never share a row id (a row has one symbol value), so
+                // no tie-breaking is needed.
+                int best = -1;
+                long bestRow = NO_ROW;
+                for (int i = 0; i < n; i++) {
+                    long h = keyHeads[i];
+                    if (h != NO_ROW && (best < 0 || h < bestRow)) {
+                        best = i;
+                        bestRow = h;
+                    }
+                }
+                if (best >= 0) {
+                    selectedKeyIdx = best;
+                    coveringRecord.of(keyCursors[best]);
+                    coveringRecord.setSymbolKey(multiKeys.getQuick(best));
+                    coveringRecord.setRowId(bestRow);
+                    return true;
+                }
+                if (!openNextPartitionCursors()) {
+                    return false;
+                }
+            }
         }
 
         @Override
@@ -1825,36 +1925,9 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
 
         @Override
         boolean advanceKey() {
-            if (multiKeys.size() == 0) {
-                return false;
-            }
-            if (cachedPartitionIndex >= 0) {
-                currentKeyIdx++;
-                while (currentKeyIdx < multiKeys.size()) {
-                    if (tryOpenKey(cachedPartitionIndex, multiKeys.getQuick(currentKeyIdx), cachedRowLo, cachedRowHi)) {
-                        return true;
-                    }
-                    currentKeyIdx++;
-                }
-            }
-            // Advance to next partition and try all keys
-            while (true) {
-                PartitionFrame frame = frameCursor.next();
-                if (frame == null) {
-                    cachedPartitionIndex = -1;
-                    return false;
-                }
-                cachedPartitionIndex = frame.getPartitionIndex();
-                cachedRowLo = frame.getRowLo();
-                cachedRowHi = frame.getRowHi();
-                currentKeyIdx = 0;
-                while (currentKeyIdx < multiKeys.size()) {
-                    if (tryOpenKey(cachedPartitionIndex, multiKeys.getQuick(currentKeyIdx), cachedRowLo, cachedRowHi)) {
-                        return true;
-                    }
-                    currentKeyIdx++;
-                }
-            }
+            // Multi-key iteration is driven by the k-way merge in hasNext(); the
+            // per-key drain model of the base class is not used here.
+            throw new UnsupportedOperationException();
         }
 
         @Override
@@ -1874,14 +1947,84 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         @Override
         void resetIterationState() {
             currentKeyIdx = 0;
-            cachedPartitionIndex = -1;
+            closeKeyCursors();
+            final int n = multiKeys.size();
+            if (keyCursors == null || keyCursors.length < n) {
+                keyCursors = new CoveringRowCursor[n];
+                keyHeads = new long[n];
+            }
+            for (int i = 0; i < n; i++) {
+                keyCursors[i] = null;
+                keyHeads[i] = NO_ROW;
+            }
+        }
+
+        private void closeKeyCursors() {
+            if (keyCursors != null) {
+                for (int i = 0; i < keyCursors.length; i++) {
+                    keyCursors[i] = Misc.free(keyCursors[i]);
+                    keyHeads[i] = NO_ROW;
+                }
+            }
+            selectedKeyIdx = -1;
+        }
+
+        /**
+         * Closes the current partition's per-key cursors and opens the next
+         * partition that holds at least one matching row for any key, priming
+         * each cursor's head row id. Returns false when partitions are exhausted.
+         */
+        private boolean openNextPartitionCursors() {
+            if (multiKeys.size() == 0) {
+                return false;
+            }
+            closeKeyCursors();
+            final int n = multiKeys.size();
+            while (true) {
+                PartitionFrame frame = frameCursor.next();
+                if (frame == null) {
+                    return false;
+                }
+                final int partitionIndex = frame.getPartitionIndex();
+                final long rowLo = frame.getRowLo();
+                final long rowHi = frame.getRowHi();
+                boolean any = false;
+                for (int i = 0; i < n; i++) {
+                    CoveringRowCursor c = openForwardCoveringCursor(tableReader, indexColumnIndex, requiredIncludeIndices, partitionIndex, multiKeys.getQuick(i), rowLo, rowHi);
+                    if (c != null && c.hasNext()) {
+                        keyCursors[i] = c;
+                        keyHeads[i] = c.next();
+                        any = true;
+                    } else {
+                        Misc.free(c);
+                        keyCursors[i] = null;
+                        keyHeads[i] = NO_ROW;
+                    }
+                }
+                if (any) {
+                    return true;
+                }
+                closeKeyCursors();
+            }
         }
     }
 
     private static class MultiKeyCoveringPageFrameCursor extends CoveringPageFrameCursor {
+        // Row-id sentinel: per-key cursor exhausted, or key absent from the
+        // partition being merged. Real row ids are non-negative.
+        private static final long NO_ROW = -1;
         final IntList multiKeys = new IntList();
-        private PartitionFrame cachedPartFrame;
-        private int currentKeyIdx;
+        // Per-key open cursors for the partition currently being merged and their
+        // peeked head row ids. Merging the per-key cursors by row id makes each
+        // emitted frame hold rows in ascending designated-timestamp order (with
+        // keys interleaved), instead of one key's posting list per frame -- so the
+        // parallel filter, LIMIT, and elided ORDER BY ts all see timestamp order.
+        private CoveringRowCursor[] mergeCursors;
+        private long[] mergeHeads;
+        // The partition currently being merged, or -1 when none is open. The merge
+        // state persists across nextImpl() calls so a partition that exceeds
+        // maxRowsPerFrame resumes in the next frame.
+        private int mergePartitionIndex = -1;
 
         MultiKeyCoveringPageFrameCursor(
                 int indexColumnIndex,
@@ -1894,76 +2037,128 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         }
 
         @Override
+        public void close() {
+            closeMergeCursors();
+            super.close();
+        }
+
+        @Override
         @Nullable
         PageFrame nextImpl() {
             if (multiKeys.size() == 0) {
                 isExhausted = true;
                 return null;
             }
-            // Resume a parked cursor first. currentKeyIdx was NOT advanced
-            // when the previous frame was returned (because pendingRowCursor
-            // was still set), so we use the captured pendingSymbolKey /
-            // pendingPartitionIndex to continue the same (key, partition)
-            // tuple. When the resumed cursor exhausts (signalled by
-            // pendingRowCursor going back to null inside fillFrameForKey),
-            // we MUST advance currentKeyIdx here -- the inner while below
-            // never sees this path, so the increment can't happen there.
-            if (pendingRowCursor != null) {
-                PageFrame result = fillFrameForKey(
-                        pendingSymbolKey,
-                        pendingPartitionIndex,
-                        0L, 0L, maxRowsPerFrame);
-                if (pendingRowCursor == null) {
-                    // Resumed cursor drained; advance to next key for
-                    // the current partition. Without this we'd loop back
-                    // into the inner while below with the SAME key index
-                    // and re-open a fresh cursor for the same (key,
-                    // partition) tuple, producing the same frames again.
-                    currentKeyIdx++;
-                }
-                if (result != null) {
-                    return result;
-                }
-            }
             while (true) {
-                while (currentKeyIdx < multiKeys.size()) {
-                    if (cachedPartFrame != null) {
-                        int rawKey = multiKeys.getQuick(currentKeyIdx);
-                        PageFrame result = fillFrameForKey(
-                                rawKey,
-                                cachedPartFrame.getPartitionIndex(),
-                                cachedPartFrame.getRowLo(),
-                                cachedPartFrame.getRowHi(),
-                                maxRowsPerFrame
-                        );
-                        // Only advance to the next key when fillFrameForKey
-                        // signals the parked cursor for this key drained
-                        // (pendingRowCursor cleared) -- otherwise we'd skip
-                        // its remaining rows.
-                        if (pendingRowCursor == null) {
-                            currentKeyIdx++;
-                        }
-                        if (result != null) {
-                            return result;
-                        }
-                    } else {
-                        break;
+                if (mergePartitionIndex >= 0) {
+                    // Continue merging the current partition into the next frame.
+                    PageFrame result = fillMergedFrame(mergePartitionIndex, maxRowsPerFrame);
+                    if (result != null) {
+                        return result;
                     }
+                    closeMergeCursors(); // partition fully merged
                 }
                 PartitionFrame partFrame = frameCursor.next();
                 if (partFrame == null) {
                     isExhausted = true;
                     return null;
                 }
-                cachedPartFrame = partFrame;
-                currentKeyIdx = 0;
+                if (openMergeCursors(partFrame)) {
+                    mergePartitionIndex = partFrame.getPartitionIndex();
+                }
             }
         }
 
         @Override
         void resetIterationState() {
-            currentKeyIdx = 0;
-            cachedPartFrame = null;
+            closeMergeCursors();
+        }
+
+        private void closeMergeCursors() {
+            if (mergeCursors != null) {
+                for (int i = 0; i < mergeCursors.length; i++) {
+                    mergeCursors[i] = Misc.free(mergeCursors[i]);
+                    mergeHeads[i] = NO_ROW;
+                }
+            }
+            mergePartitionIndex = -1;
+        }
+
+        /**
+         * Build one frame of up to {@code rowCap} rows by k-way merging the open
+         * per-key cursors on row id. Each row's covered values come from the
+         * winning key's cursor and its symbol key is written per row. Returns null
+         * once the partition's merge is fully drained.
+         */
+        @Nullable
+        private PageFrame fillMergedFrame(int partitionIndex, int rowCap) {
+            int capacity = allocFrameBuffers();
+            long symAddr = frameAddrs[queryColCount];
+            final int n = multiKeys.size();
+            int count = 0;
+            while (count < rowCap) {
+                // Two keys never share a row id, so the smallest head is unique.
+                int best = -1;
+                long bestRow = NO_ROW;
+                for (int i = 0; i < n; i++) {
+                    long h = mergeHeads[i];
+                    if (h != NO_ROW && (best < 0 || h < bestRow)) {
+                        best = i;
+                        bestRow = h;
+                    }
+                }
+                if (best < 0) {
+                    break; // partition drained
+                }
+                if (count >= capacity) {
+                    capacity = growFrameBuffers(frameAddrs, count, capacity);
+                    symAddr = frameAddrs[queryColCount]; // the symbol buffer may have moved
+                }
+                final CoveringRowCursor c = mergeCursors[best];
+                writeCoveredRow(frameAddrs, frameVarDataAddrs, frameVarDataPos, frameVarDataCap, count, c);
+                Unsafe.putInt(symAddr + (long) count * Integer.BYTES, multiKeys.getQuick(best));
+                count++;
+                // Covered values are copied into the frame buffer, so the winning
+                // cursor can be advanced to its next row immediately.
+                mergeHeads[best] = c.hasNext() ? c.next() : NO_ROW;
+            }
+            if (count == 0) {
+                return null;
+            }
+            return finalizeFrame(count, partitionIndex);
+        }
+
+        /**
+         * Open a forward covering cursor for every key over {@code partFrame}'s row
+         * range and prime each cursor's head row id. Returns true when at least one
+         * key has a matching row in this partition.
+         */
+        private boolean openMergeCursors(PartitionFrame partFrame) {
+            closeMergeCursors();
+            final int n = multiKeys.size();
+            if (mergeCursors == null || mergeCursors.length < n) {
+                mergeCursors = new CoveringRowCursor[n];
+                mergeHeads = new long[n];
+            }
+            final int partitionIndex = partFrame.getPartitionIndex();
+            final long rowLo = partFrame.getRowLo();
+            final long rowHi = partFrame.getRowHi();
+            boolean any = false;
+            for (int i = 0; i < n; i++) {
+                CoveringRowCursor c = openForwardCoveringCursor(
+                        tableReader, indexColumnIndex, requiredIncludeIndices,
+                        partitionIndex, multiKeys.getQuick(i), rowLo, rowHi);
+                if (c != null && c.hasNext()) {
+                    mergeCursors[i] = c;
+                    mergeHeads[i] = c.next();
+                    any = true;
+                } else {
+                    Misc.free(c);
+                    mergeCursors[i] = null;
+                    mergeHeads[i] = NO_ROW;
+                }
+            }
+            return any;
         }
     }
 

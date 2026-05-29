@@ -1928,6 +1928,23 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return null;
     }
 
+    /**
+     * Whether the covering index's forward scan order is the query's final order.
+     * The covering scan yields rows in ascending designated-timestamp order, so
+     * this holds only when there is no ORDER BY (natural timestamp order), or the
+     * sole ORDER BY is the designated timestamp ascending. Any other ORDER BY
+     * (descending, or a different column) forces a downstream sort that would
+     * reorder the scan's output -- meaning a pushed-down LIMIT would truncate the
+     * scan before the sort and feed it the wrong rows.
+     */
+    private boolean coveringScanOrderMatchesQuery(IQueryModel model) {
+        if (model.getOrderByAdvice().size() == 0) {
+            return true;
+        }
+        return isOrderByDesignatedTimestampOnly(model)
+                && getOrderByDirectionOrDefault(model, 0) == IQueryModel.ORDER_DIRECTION_ASCENDING;
+    }
+
     @NotNull
     private RecordCursorFactory createFullFatJoin(
             RecordCursorFactory master,
@@ -11355,18 +11372,41 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     ) throws SqlException {
         if (executionContext.isParallelFilterEnabled() && coveringFactory.supportsPageFrameCursor()) {
             final Function limitLoFunction = getLimitLoFunctionOnly(model, executionContext);
-            // A negative (or unknown-sign bind-variable) limit makes the async
-            // filter drive its backward page-frame path, which requires the base
-            // to honor ORDER_DESC. The covering factory only serves a correct
-            // backward scan for single-key queries; for multi-key it is not
-            // globally timestamp-ordered, so fall back to the serial path where
-            // LimitRecordCursorFactory computes last-N via size + skip.
-            if (limitLoFunction == null
-                    || coveringFactory.supportsNegativeLimitPageFrame()
-                    || !mayBeNegativeLimit(limitLoFunction, executionContext)) {
+            // A pushed-down LIMIT lets the async filter stop early (positive limit)
+            // or scan the tail backward (negative limit). Both are correct only
+            // when the covering forward scan order is the query's final order; if
+            // an ORDER BY forces a downstream sort, a truncated scan would feed the
+            // sort the wrong rows, so we leave the limit to the outer
+            // LimitRecordCursorFactory that runs after the sort.
+            boolean pushLimit = limitLoFunction != null && coveringScanOrderMatchesQuery(model);
+            // A possibly-negative limit makes the async filter drive its backward
+            // page-frame path, which requires the base to honor ORDER_DESC. The
+            // covering factory only serves a correct backward scan for single-key
+            // queries; for multi-key it cannot, so fall back to the serial path
+            // where LimitRecordCursorFactory computes last-N via size + skip.
+            boolean serialFallback = false;
+            if (pushLimit
+                    && !coveringFactory.supportsNegativeLimitPageFrame()
+                    && mayBeNegativeLimit(limitLoFunction, executionContext)) {
+                pushLimit = false;
+                serialFallback = true;
+            }
+            if (!serialFallback) {
+                final Function asyncLimitLoFunction;
+                final int limitLoPos;
+                if (pushLimit) {
+                    asyncLimitLoFunction = limitLoFunction;
+                    limitLoPos = model.getLimitAdviceLo() != null ? model.getLimitAdviceLo().position : 0;
+                } else {
+                    // Not pushed: either there is no limit, or a downstream sort
+                    // reorders our output. Drop the function we created so it does
+                    // not leak (generateLimit applies its own limit on top).
+                    Misc.free(limitLoFunction);
+                    asyncLimitLoFunction = null;
+                    limitLoPos = 0;
+                }
                 IntHashSet filterUsedColumnIndexes = new IntHashSet();
                 collectColumnIndexes(sqlNodeStack, queryMeta, filterExpr, filterUsedColumnIndexes);
-                int limitLoPos = model.getLimitAdviceLo() != null ? model.getLimitAdviceLo().position : 0;
                 return new AsyncFilteredRecordCursorFactory(
                         executionContext.getCairoEngine(),
                         configuration,
@@ -11383,7 +11423,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 queryMeta
                         ),
                         deepClone(expressionNodePool, filterExpr),
-                        limitLoFunction,
+                        asyncLimitLoFunction,
                         limitLoPos,
                         executionContext.getSharedQueryWorkerCount(),
                         SqlHints.hasEnablePreTouchHint(model, model.getName())

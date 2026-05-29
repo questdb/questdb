@@ -3703,11 +3703,12 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     """);
             engine.releaseAllWriters();
 
+            // Rows come back in ascending timestamp order across the keys.
             assertSql("""
                     label
                     hello
-                    foo
                     world
+                    foo
                     """, "SELECT label FROM t_in_string WHERE sym IN ('X', 'Y')");
         });
     }
@@ -3733,12 +3734,12 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     """);
             engine.releaseAllWriters();
 
-            // IN list with covering VARCHAR — results grouped by key (A first, then B)
+            // IN list with covering VARCHAR -- rows in ascending timestamp order.
             assertSql("""
                     name\tprice
                     alice\t10.0
-                    anna\t30.0
                     bob\t20.0
+                    anna\t30.0
                     """, "SELECT name, price FROM t_in_varchar WHERE sym IN ('A', 'B')");
         });
     }
@@ -6494,12 +6495,12 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     """);
             engine.releaseAllWriters();
 
-            // IN list uses CoveringIndex — results grouped by key (A first, then B)
+            // IN list uses CoveringIndex -- rows in ascending timestamp order.
             assertSql("""
                     price
                     10.5
-                    11.5
                     20.5
+                    11.5
                     """, "SELECT price FROM t_in WHERE sym IN ('A', 'B')");
 
             // Verify plan shows CoveringIndex
@@ -6535,14 +6536,14 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     """);
             engine.releaseAllWriters();
 
-            // IN list across 3 partitions — keys grouped per partition (A first, then B)
+            // IN list across 3 partitions -- rows in ascending timestamp order.
             assertSql("""
                     price
                     1.0
                     2.0
                     3.0
-                    6.0
                     5.0
+                    6.0
                     """, "SELECT price FROM t_in_mp WHERE sym IN ('A', 'B')");
         });
     }
@@ -6620,12 +6621,12 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     """);
             engine.releaseAllWriters();
 
-            // IN list with sym in SELECT — sym value should vary per key
+            // IN list with sym in SELECT -- sym varies per row, in timestamp order.
             assertSql("""
                     sym\tprice
                     A\t10.5
-                    A\t11.5
                     B\t20.5
+                    A\t11.5
                     """, "SELECT sym, price FROM t_in_sym WHERE sym IN ('A', 'B')");
         });
     }
@@ -7286,12 +7287,12 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     """);
             engine.releaseAllWriters();
 
-            // SYMBOL include with IN list
+            // SYMBOL include with IN list -- rows in ascending timestamp order.
             assertSql("""
                     sym\ttag
                     A\thot
-                    A\twarm
                     B\tcold
+                    A\twarm
                     """, "SELECT sym, tag FROM t_sym_incl_in WHERE sym IN ('A', 'B')");
         });
     }
@@ -14132,8 +14133,8 @@ public class CoveringIndexTest extends AbstractCairoTest {
             assertSql("""
                     name
                     alpha
-                    delta
                     beta
+                    delta
                     """, "SELECT name FROM t_vw_in WHERE sym IN ('A', 'B') ORDER BY ts");
         });
     }
