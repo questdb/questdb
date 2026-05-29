@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions.groupby;
 
 import io.questdb.cairo.ArrayColumnTypes;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
@@ -224,6 +225,11 @@ public class TwapGroupByFunction extends DoubleFunction implements GroupByFuncti
      * The step-function integration walks consecutive pairs: each price is
      * weighted by the duration until the next observation. When all timestamps
      * are identical (totalDuration == 0), returns the simple arithmetic mean.
+     * <p>
+     * As a runtime backstop against a base factory that slips out-of-order rows
+     * past the compile-time order guards, the integration loop throws if it
+     * observes a timestamp going backward in the compacted (and thus supposedly
+     * sorted) buffer, rather than silently degrading to the arithmetic mean.
      */
     @Override
     public double getDouble(Record rec) {
@@ -254,6 +260,16 @@ public class TwapGroupByFunction extends DoubleFunction implements GroupByFuncti
                 long offset = i * ENTRY_SIZE;
                 long currTs = Unsafe.getLong(ptr + offset);
                 double currPrice = Unsafe.getDouble(ptr + offset + 8);
+                if (currTs < prevTs) {
+                    // After compaction the buffer must be monotonic by timestamp: each batch is a
+                    // forward-scanned page frame (ascending), and compactInPlace orders the batches.
+                    // A strict backward step means the base fed a batch out of designated-timestamp
+                    // order, which the compile-time guards failed to reject. Refuse to integrate
+                    // garbage (the old code silently returned the plain average via the
+                    // totalDuration <= 0 fallback) and surface the contract violation instead.
+                    throw CairoException.nonCritical()
+                            .put("twap() requires the base query to provide ascending designated timestamp order");
+                }
                 weightedSum += prevPrice * (currTs - prevTs);
                 priceSum += currPrice;
                 prevTs = currTs;

@@ -24,6 +24,9 @@
 
 package io.questdb.test.griffin.engine.functions.groupby;
 
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.engine.functions.LongFunction;
 import io.questdb.griffin.engine.functions.constants.DoubleConstant;
 import io.questdb.griffin.engine.functions.constants.LongConstant;
 import io.questdb.griffin.engine.functions.groupby.TwapGroupByFunction;
@@ -105,6 +108,47 @@ public class TwapGroupByFunctionTest extends AbstractCairoTest {
                 func.computeNext(mapValue, null, rowId(3, 0)); // frame 2 skipped: new batch
                 Assert.assertNotEquals("descriptor pointer", 0, mapValue.getLong(3));
                 Assert.assertEquals("descriptor count", 2, mapValue.getLong(4));
+            }
+        });
+    }
+
+    @Test
+    public void testGetDoubleRejectsOutOfOrderTimestampsInBatch() throws Exception {
+        // Runtime backstop. The compile-time guards should keep out-of-order bases away from
+        // twap, but if a factory ever slips descending timestamps into a single batch (same
+        // frame, so compactInPlace cannot reorder them), getDouble must refuse to integrate
+        // garbage and surface the contract violation instead of silently returning the plain
+        // average via the totalDuration <= 0 fallback.
+        assertMemoryLeak(() -> {
+            try (
+                    GroupByAllocator allocator = GroupByAllocatorFactory.createAllocator(configuration);
+                    SimpleMapValue mapValue = new SimpleMapValue(7)
+            ) {
+                // First observation ts = 100, second ts = 50: descending within one frame.
+                LongFunction descendingTs = new LongFunction() {
+                    private int i = 0;
+
+                    @Override
+                    public long getLong(Record rec) {
+                        return i++ == 0 ? 100L : 50L;
+                    }
+                };
+                TwapGroupByFunction func = new TwapGroupByFunction(new DoubleConstant(1.0), descendingTs);
+                func.initValueIndex(0);
+                func.setAllocator(allocator);
+                func.computeFirst(mapValue, null, rowId(0, 0));
+                func.computeNext(mapValue, null, rowId(0, 1)); // same frame: single batch, not reorderable
+                Assert.assertEquals("single batch", 0, mapValue.getLong(3));
+
+                // getDouble reads the MapValue slots through a Record; only getLong is needed.
+                Record view = new Record() {
+                    @Override
+                    public long getLong(int col) {
+                        return mapValue.getLong(col);
+                    }
+                };
+                CairoException e = Assert.assertThrows(CairoException.class, () -> func.getDouble(view));
+                TestUtils.assertContains(e.getFlyweightMessage(), "twap() requires the base query to provide ascending designated timestamp order");
             }
         });
     }

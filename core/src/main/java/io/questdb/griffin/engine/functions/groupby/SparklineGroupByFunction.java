@@ -538,6 +538,20 @@ public class SparklineGroupByFunction extends VarcharFunction implements UnaryFu
         // slot-acquisition order. The pointer is preserved across compaction,
         // so the caller's cache key stays valid.
         SortedRunsMerge.compactInPlace(allocator, scratch, ptr, size, descPtr, descCount, ENTRY_SIZE);
+        // Runtime backstop: after compaction the buffer must be monotonic by timestamp -- each batch
+        // is a forward-scanned page frame (ascending) and compactInPlace orders the batches. A
+        // backward step means the base fed a batch out of designated-timestamp order past the
+        // compile-time guards; the rendered series indexes by position, so it would silently
+        // misrepresent the time order. Surface the contract violation instead.
+        long prevTs = Unsafe.getLong(ptr);
+        for (int i = 1; i < size; i++) {
+            long currTs = Unsafe.getLong(ptr + i * ENTRY_SIZE);
+            if (currTs < prevTs) {
+                throw CairoException.nonCritical().position(functionPosition)
+                        .put(name).put("() requires the base query to provide ascending designated timestamp order");
+            }
+            prevTs = currTs;
+        }
         // Single-pass min+max when either is auto. Halves the pre-render
         // scan cost vs two separate full walks.
         double userMin = minFunc != null ? minFunc.getDouble(null) : Double.NaN;
