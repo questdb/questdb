@@ -1181,7 +1181,7 @@ fn adjust_column_chunk_offsets(col: &mut ColumnChunk, offset_delta: i64) {
 /// row groups declare the same sorting columns as freshly written ones. Using
 /// the target (not the old footer's own value) is required because ADD/DROP
 /// COLUMN can shift the timestamp index, leaving the old footer's column index
-/// stale; for the same reason as the inline `_pm` path.
+/// stale. The inline `_pm` path stamps the target value for the same reason.
 fn build_raw_row_group(
     columns: Vec<ColumnChunk>,
     num_rows: usize,
