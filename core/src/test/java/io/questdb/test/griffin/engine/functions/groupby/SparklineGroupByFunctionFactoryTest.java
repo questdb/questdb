@@ -686,6 +686,60 @@ public class SparklineGroupByFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRejectedInHorizonJoin() throws Exception {
+        // A HORIZON JOIN groups its output by horizon offset (and join key), so
+        // the group-by aggregator does not receive rows in ascending
+        // designated-timestamp order. The join callsite reports the base as
+        // non-ascending, and sparkline() - which appends rows in scan order and
+        // treats each per-frame batch as already key-sorted - is rejected at
+        // compile time.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (sym SYMBOL, price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE prices (sym SYMBOL, price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            assertExceptionNoLeakCheck(
+                    "SELECT t.sym, sparkline(p.price) FROM trades t HORIZON JOIN prices p ON (t.sym = p.sym) RANGE FROM 0s TO 2s STEP 1s AS h",
+                    14,
+                    "sparkline() requires the base query to provide ascending designated timestamp order",
+                    false
+            );
+        });
+    }
+
+    @Test
+    public void testRejectedInMultiHorizonJoin() throws Exception {
+        // Same reasoning as the single-slave HORIZON JOIN, but routed through
+        // the multi-slave code path (RANGE on the last HORIZON JOIN only).
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (sym SYMBOL, price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE prices (sym SYMBOL, price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            assertExceptionNoLeakCheck(
+                    "SELECT t.sym, sparkline(p.price) FROM trades t HORIZON JOIN prices p ON (t.sym = p.sym) HORIZON JOIN prices p2 ON (t.sym = p2.sym) RANGE FROM 0s TO 2s STEP 1s AS h",
+                    14,
+                    "sparkline() requires the base query to provide ascending designated timestamp order",
+                    false
+            );
+        });
+    }
+
+    @Test
+    public void testRejectedInWindowJoin() throws Exception {
+        // A WINDOW JOIN aggregates slave rows within a time window around each
+        // master row, so the aggregator does not see rows in ascending
+        // designated-timestamp order. The join callsite reports the base as
+        // non-ascending and sparkline() is rejected at compile time.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (sym SYMBOL, price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE prices (sym SYMBOL, price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            assertExceptionNoLeakCheck(
+                    "SELECT t.sym, sparkline(p.price) FROM trades t WINDOW JOIN prices p ON (t.sym = p.sym) RANGE BETWEEN 1 MINUTE PRECEDING AND 1 MINUTE FOLLOWING",
+                    14,
+                    "sparkline() requires the base query to provide ascending designated timestamp order",
+                    false
+            );
+        });
+    }
+
+    @Test
     public void testRejectsDescendingScan() throws Exception {
         // The aggregate appends rows in scan order using rowId as the sort
         // key and treats each per-frame batch as already key-sorted. A

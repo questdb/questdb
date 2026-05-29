@@ -331,6 +331,62 @@ public class TwapGroupByFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTwapRejectedInHorizonJoin() throws Exception {
+        // A HORIZON JOIN groups its output by horizon offset (and join key), so
+        // the group-by aggregator does not receive rows in ascending
+        // designated-timestamp order. The join callsite therefore reports the
+        // base as non-ascending, and twap() - which relies on each page frame's
+        // rows already being sorted by the timestamp argument - is rejected at
+        // compile time. The timestamp argument here is the master's designated
+        // timestamp, so the rejection is on scan direction, not on the
+        // timestamp argument itself.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (sym SYMBOL, price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE prices (sym SYMBOL, price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            assertExceptionNoLeakCheck(
+                    "SELECT t.sym, twap(p.price, t.ts) FROM trades t HORIZON JOIN prices p ON (t.sym = p.sym) RANGE FROM 0s TO 2s STEP 1s AS h",
+                    14,
+                    "twap() requires the base query to provide ascending designated timestamp order",
+                    false
+            );
+        });
+    }
+
+    @Test
+    public void testTwapRejectedInMultiHorizonJoin() throws Exception {
+        // Same reasoning as the single-slave HORIZON JOIN, but routed through
+        // the multi-slave code path (RANGE on the last HORIZON JOIN only).
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (sym SYMBOL, price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE prices (sym SYMBOL, price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            assertExceptionNoLeakCheck(
+                    "SELECT t.sym, twap(p.price, t.ts) FROM trades t HORIZON JOIN prices p ON (t.sym = p.sym) HORIZON JOIN prices p2 ON (t.sym = p2.sym) RANGE FROM 0s TO 2s STEP 1s AS h",
+                    14,
+                    "twap() requires the base query to provide ascending designated timestamp order",
+                    false
+            );
+        });
+    }
+
+    @Test
+    public void testTwapRejectedInWindowJoin() throws Exception {
+        // A WINDOW JOIN aggregates slave rows within a time window around each
+        // master row, so the aggregator does not see rows in ascending
+        // designated-timestamp order. The join callsite reports the base as
+        // non-ascending and twap() is rejected at compile time.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (sym SYMBOL, price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE prices (sym SYMBOL, price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            assertExceptionNoLeakCheck(
+                    "SELECT t.sym, twap(p.price, t.ts) FROM trades t WINDOW JOIN prices p ON (t.sym = p.sym) RANGE BETWEEN 1 MINUTE PRECEDING AND 1 MINUTE FOLLOWING",
+                    14,
+                    "twap() requires the base query to provide ascending designated timestamp order",
+                    false
+            );
+        });
+    }
+
+    @Test
     public void testTwapRejectsNonDesignatedTimestamp() throws Exception {
         assertMemoryLeak(() -> {
             // 'ts' is the designated timestamp; 'ts2' is an ordinary timestamp column.
