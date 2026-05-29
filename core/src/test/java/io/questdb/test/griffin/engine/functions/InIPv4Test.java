@@ -199,6 +199,45 @@ public class InIPv4Test extends AbstractCairoTest {
     }
 
     @Test
+    public void testConstantLhsRuntimeConstList() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table test (ip ipv4, ts timestamp) timestamp(ts)");
+            execute(
+                    "insert into test values " +
+                            "('127.0.0.1', 0), " +
+                            "('192.168.0.1', 1000000), " +
+                            "('10.0.0.5', 2000000)"
+            );
+
+            final ObjList<BindVariableTestTuple> tuples = new ObjList<>();
+            // Constant LHS with a bind var in the list keeps constCount < argCount,
+            // so the const-fold is skipped and InIPv4RuntimeConstFunction is built.
+            // The constant key is then evaluated per row via keyFunc.getIPv4(rec).
+            // Bind var resolves to the LHS value, so the constant key is in the set
+            // and every row matches.
+            tuples.add(new BindVariableTestTuple(
+                    "bind var matches constant lhs",
+                    """
+                            ip\tts
+                            127.0.0.1\t1970-01-01T00:00:00.000000Z
+                            192.168.0.1\t1970-01-01T00:00:01.000000Z
+                            10.0.0.5\t1970-01-01T00:00:02.000000Z
+                            """,
+                    bindVariableService -> bindVariableService.setStr(0, "127.0.0.1")
+            ));
+            // Bind var resolves to a value other than the constant key, and the
+            // remaining literal element does not match it either, so no row matches.
+            tuples.add(new BindVariableTestTuple(
+                    "bind var misses constant lhs",
+                    "ip\tts\n",
+                    bindVariableService -> bindVariableService.setStr(0, "1.1.1.1")
+            ));
+
+            assertSql("test where '127.0.0.1'::ipv4 in ($1, '8.8.8.8') order by ts", tuples);
+        });
+    }
+
+    @Test
     public void testInvalidIPv4StringConstant() throws Exception {
         assertException(
                 "test where ip in ('not.an.ip')",

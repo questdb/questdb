@@ -1889,7 +1889,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                 if (heap.hasNext()) {
                     int slot = heap.peekIndex();
                     CoveringRowCursor c = perKeyCursors.getQuick(slot);
-                    // next() on posting cursors is idempotent — returns
+                    // next() on posting cursors is idempotent -- returns
                     // the row-id of the row the cursor is currently
                     // positioned at without advancing.
                     long rowId = c.next();
@@ -1941,7 +1941,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                 if (openPartitionCursors(frame.getPartitionIndex(), frame.getRowLo(), frame.getRowHi())) {
                     return true;
                 }
-                // No key has rows in this partition — try the next one.
+                // No key has rows in this partition -- try the next one.
                 Misc.freeObjListAndClear(perKeyCursors);
                 heap.clear();
             }

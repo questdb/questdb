@@ -1202,7 +1202,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         // flag regardless of its own thread-safety; skip when no slot matches.
         boolean anyMatch = false;
         for (int i = 0, n = projectionFunctions.size(); i < n; i++) {
-            if (flag == GroupByUtils.PROJECTION_FUNCTION_FLAG_ANY || projectionFunctionFlags.get(i) == flag) {
+            if (projectionFunctionFlags.get(i) == flag) {
                 anyMatch = true;
                 break;
             }
@@ -1217,7 +1217,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             perThreadKeyFunctions.add(threadFunctions);
             ObjList<Function> funcs = perThreadFunctions.getQuick(i);
             for (int j = 0, m = funcs.size(); j < m; j++) {
-                if (flag == GroupByUtils.PROJECTION_FUNCTION_FLAG_ANY || projectionFunctionFlags.get(j) == flag) {
+                if (projectionFunctionFlags.get(j) == flag) {
                     threadFunctions.add((T) funcs.getQuick(j));
                 }
             }
@@ -1243,6 +1243,25 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             }
         }
         return null;
+    }
+
+    private static void freeWorkerFunctionsByFlag(
+            IntList projectionFunctionFlags,
+            ObjList<ObjList<Function>> perThreadFunctions,
+            int flag
+    ) {
+        // No per-worker copies were made: workers share the owner functions, nothing to free.
+        if (perThreadFunctions == null) {
+            return;
+        }
+        for (int i = 0, n = perThreadFunctions.size(); i < n; i++) {
+            ObjList<Function> funcs = perThreadFunctions.getQuick(i);
+            for (int j = 0, m = funcs.size(); j < m; j++) {
+                if (projectionFunctionFlags.get(j) == flag) {
+                    Misc.free(funcs.getQuick(j));
+                }
+            }
+        }
     }
 
     private static int getOrderByDirectionOrDefault(IQueryModel model, int index) {
@@ -4511,6 +4530,16 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         GroupByUtils.PROJECTION_FUNCTION_FLAG_VIRTUAL
                 );
 
+                // The HORIZON path compiles its own per-worker GROUP BY functions below, so the
+                // GROUP_BY-flagged slots that the builder produced reach no owner; free them here to
+                // honor the single-owner invariant. The VIRTUAL slots are owned by perWorkerKeyFunctions
+                // above and the COLUMN slots are null.
+                freeWorkerFunctionsByFlag(
+                        projectionFunctionFlags,
+                        perWorkerInnerProjectionFunctions,
+                        GroupByUtils.PROJECTION_FUNCTION_FLAG_GROUP_BY
+                );
+
                 // Compile per-worker GROUP BY functions
                 perWorkerGroupByFunctions = compileWorkerGroupByFunctionsConditionally(
                         executionContext,
@@ -7196,6 +7225,15 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     projectionFunctionFlags,
                     perWorkerInnerProjectionFunctions,
                     GroupByUtils.PROJECTION_FUNCTION_FLAG_VIRTUAL
+            );
+
+            // The HORIZON path compiles its own per-worker GROUP BY functions, so the GROUP_BY-flagged
+            // slots that the builder produced reach no owner; free them here to honor the single-owner
+            // invariant. The VIRTUAL slots are owned by perWorkerKeyFunctions and the COLUMN slots are null.
+            freeWorkerFunctionsByFlag(
+                    projectionFunctionFlags,
+                    perWorkerInnerProjectionFunctions,
+                    GroupByUtils.PROJECTION_FUNCTION_FLAG_GROUP_BY
             );
 
             // Transfer ownership to the factory

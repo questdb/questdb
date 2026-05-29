@@ -68,6 +68,24 @@ public class ModeSymbolGroupByFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testModeConstantOverEmpty() throws Exception {
+        // mode(constant) over a WHERE-folded empty table must return NULL: getInt
+        // yields VALUE_IS_NULL when no rows were aggregated, and SymbolConstant.valueOf
+        // must honour that key. Before the fix the constant was returned verbatim.
+        assertQuery(
+                """
+                        a0
+
+                        """,
+                "select mode(('0.83055')::symbol) a0 from tab where 1 = 0",
+                "create table tab as (select rnd_int() a from long_sequence(10))",
+                null,
+                false,
+                true
+        );
+    }
+
+    @Test
     public void testModeEmpty() throws Exception {
         assertQuery(
                 """
