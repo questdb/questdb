@@ -26,25 +26,61 @@ package io.questdb.test.griffin.engine.functions.groupby;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.ArrayColumnTypes;
+import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.columns.DoubleColumn;
 import io.questdb.griffin.engine.functions.groupby.SparklineGroupByFunction;
 import io.questdb.griffin.engine.groupby.FastGroupByAllocator;
 import io.questdb.griffin.engine.groupby.GroupByAllocator;
 import io.questdb.griffin.engine.groupby.SimpleMapValue;
+import io.questdb.mp.SOCountDownLatch;
 import io.questdb.mp.WorkerPool;
 import io.questdb.std.Numbers;
 import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
+
 public class SparklineGroupByFunctionFactoryTest extends AbstractCairoTest {
+
+    // Shared fixtures for the work-stealing contention regression tests
+    // (testParallelSparklineMatchesUnderContention and its keyed variant) - the
+    // sparkline twin of TwapUnsortedRunReproTest. SparklineGroupByFunction got
+    // the identical per-frame batch-descriptor rework as TwapGroupByFunction for
+    // issue #7123: under cross-query work-stealing a per-slot buffer can
+    // accumulate page frames out of rowId order, and SortedRunsMerge must permute
+    // whole batches back into key order before the value sequence is rendered. A
+    // regression there renders a deterministically wrong sparkline that the
+    // assertSqlCursors(sql, sql) self-comparison tests cannot catch, so these
+    // tests assert an independently-known exact string. Index L of LEVEL_CHARS is
+    // the character value level L renders to under the explicit min=0, max=7.
+    //
+    // No duplicate-key tie variant (twap has one): sparkline sorts by the row id,
+    // which is globally unique, so two batches can never tie on first key. That
+    // (firstKey, lastKey) tie-break is unreachable through sparkline and is
+    // covered directly at the primitive level by SortedRunsMergeTest.
+    private static final int CONTENTION_ITERATIONS = 30;
+    private static final int CONTENTION_THREADS = 8;
+    private static final int FRAMES_PER_LEVEL = 12;
+    private static final int KEY_COUNT = 5; // divides ROWS_PER_FRAME so keys interleave evenly across frames
+    private static final int LEVELS = 8;
+    private static final char[] LEVEL_CHARS = {'▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'};
+    private static final int NON_KEYED_WIDTH = LEVELS * FRAMES_PER_LEVEL; // one rendered char per page frame
+    private static final int ROWS_PER_FRAME = 50; // == CAIRO_SQL_PAGE_FRAME_MAX_ROWS
+    private static final int STEPS_PER_LEVEL = 50;
 
     private static Record recordOf(double value) {
         return new Record() {
@@ -1230,6 +1266,228 @@ public class SparklineGroupByFunctionFactoryTest extends AbstractCairoTest {
                         "sym\tsparkline\nA\t\nB\t\nC\t\nD\t\nE\t\n"
                 );
             }, configuration, LOG);
+        }
+    }
+
+    @Test
+    public void testParallelKeyedSparklineMatchesUnderContention() throws Exception {
+        // Keyed counterpart of testParallelSparklineMatchesUnderContention: a
+        // GROUP BY over a SYMBOL key drives the computeKeyedBatch reduce path,
+        // and the low sharding threshold forces the sharded merge (compactInto)
+        // path. Every key shares the same value sequence, so every group must
+        // render the same staircase; a deviation means the per-frame batch
+        // descriptors were not honoured when merging a key's partial results.
+        // The one-arg sparkline renders one char per row, so every level value
+        // lands on its own char and any out-of-order batch changes the string.
+        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, ROWS_PER_FRAME);
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_ENABLED, "true");
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_WORK_STEALING_THRESHOLD, 1);
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_SHARDING_THRESHOLD, 2);
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_BATCH_SIZE, 8);
+
+        final int steps = LEVELS * STEPS_PER_LEVEL;
+        final String expected = expectedStaircase(STEPS_PER_LEVEL);
+        assertMemoryLeak(() -> {
+            try (WorkerPool pool = new WorkerPool(() -> 2)) {
+                TestUtils.execute(pool, (engine, compiler, sqlExecutionContext) -> {
+                    engine.execute(
+                            "CREATE TABLE tab (key SYMBOL, val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR",
+                            sqlExecutionContext
+                    );
+                    StringBuilder sb = new StringBuilder("INSERT INTO tab VALUES\n");
+                    boolean first = true;
+                    for (int s = 0; s < steps; s++) {
+                        final int level = s / STEPS_PER_LEVEL;
+                        for (int k = 0; k < KEY_COUNT; k++) {
+                            if (!first) {
+                                sb.append(",\n");
+                            }
+                            first = false;
+                            sb.append("('k").append(k).append("', ")
+                                    .append((double) level).append(", ").append((long) s * 1000).append(')');
+                        }
+                    }
+                    engine.execute(sb.toString(), sqlExecutionContext);
+
+                    final CyclicBarrier barrier = new CyclicBarrier(CONTENTION_THREADS);
+                    final SOCountDownLatch latch = new SOCountDownLatch(CONTENTION_THREADS);
+                    final Map<Integer, Throwable> errors = new ConcurrentHashMap<>();
+                    final AtomicInteger mismatches = new AtomicInteger();
+                    final AtomicReference<String> sampleWrongValue = new AtomicReference<>(null);
+
+                    for (int t = 0; t < CONTENTION_THREADS; t++) {
+                        final int threadId = t;
+                        new Thread(() -> {
+                            try {
+                                TestUtils.await(barrier);
+                                for (int iter = 0; iter < CONTENTION_ITERATIONS; iter++) {
+                                    mismatches.addAndGet(countKeyedSparklineMismatches(
+                                            engine, sqlExecutionContext, expected, sampleWrongValue));
+                                }
+                            } catch (Throwable th) {
+                                errors.put(threadId, th);
+                            } finally {
+                                latch.countDown();
+                            }
+                        }, "sparkline-keyed-" + threadId).start();
+                    }
+                    latch.await();
+
+                    for (Map.Entry<Integer, Throwable> e : errors.entrySet()) {
+                        e.getValue().printStackTrace(System.out);
+                    }
+                    Assert.assertTrue("thread errors: " + errors, errors.isEmpty());
+                    Assert.assertEquals(
+                            "every group's sparkline() must render the exact staircase regardless of per-slot "
+                                    + "frame ordering on the keyed (computeKeyedBatch + sharded merge) reduce path. "
+                                    + "Wrong sample: " + sampleWrongValue.get(),
+                            0, mismatches.get()
+                    );
+                }, configuration, LOG);
+            }
+        });
+    }
+
+    @Test
+    public void testParallelSparklineMatchesUnderContention() throws Exception {
+        // Forces the work-stealing contention that broke twap/sparkline in
+        // issue #7123: tiny page frames plus a work-stealing threshold of 1 let
+        // a per-slot buffer accumulate frames out of rowId order, so the render
+        // path (compactInPlace) must sort the batches back before walking the
+        // value sequence. The dataset is LEVELS value levels, each spanning
+        // FRAMES_PER_LEVEL frames; rendering one char per frame yields a strict
+        // staircase whose every character comes from a single level value, so any
+        // batch left out of order changes the string. Unlike the assertSqlCursors
+        // self-comparison tests, this asserts the exact, independently-known output.
+        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, ROWS_PER_FRAME);
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_ENABLED, "true");
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_WORK_STEALING_THRESHOLD, 1);
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_SHARDING_THRESHOLD, 1_000_000);
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_BATCH_SIZE, 8);
+
+        final int rows = NON_KEYED_WIDTH * ROWS_PER_FRAME;
+        final String sql = "SELECT sparkline(val, 0.0, 7.0, " + NON_KEYED_WIDTH + ") FROM tab";
+        final String expected = expectedStaircase(FRAMES_PER_LEVEL);
+        assertMemoryLeak(() -> {
+            try (WorkerPool pool = new WorkerPool(() -> 2)) {
+                TestUtils.execute(pool, (engine, compiler, sqlExecutionContext) -> {
+                    engine.execute(
+                            "CREATE TABLE tab (val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR",
+                            sqlExecutionContext
+                    );
+                    StringBuilder sb = new StringBuilder("INSERT INTO tab VALUES\n");
+                    for (int r = 0; r < rows; r++) {
+                        if (r > 0) {
+                            sb.append(",\n");
+                        }
+                        final int level = r / (FRAMES_PER_LEVEL * ROWS_PER_FRAME);
+                        sb.append('(').append((double) level).append(", ").append((long) r * 1000).append(')');
+                    }
+                    engine.execute(sb.toString(), sqlExecutionContext);
+
+                    final CyclicBarrier barrier = new CyclicBarrier(CONTENTION_THREADS);
+                    final SOCountDownLatch latch = new SOCountDownLatch(CONTENTION_THREADS);
+                    final Map<Integer, Throwable> errors = new ConcurrentHashMap<>();
+                    final AtomicInteger mismatches = new AtomicInteger();
+                    final AtomicInteger threadsThatSawMismatches = new AtomicInteger();
+                    final AtomicReference<String> sampleWrongValue = new AtomicReference<>(null);
+
+                    for (int t = 0; t < CONTENTION_THREADS; t++) {
+                        final int threadId = t;
+                        new Thread(() -> {
+                            int localMismatches = 0;
+                            try {
+                                TestUtils.await(barrier);
+                                for (int iter = 0; iter < CONTENTION_ITERATIONS; iter++) {
+                                    String observed = runSparkline(engine, sqlExecutionContext, sql);
+                                    if (!expected.equals(observed)) {
+                                        localMismatches++;
+                                        sampleWrongValue.compareAndSet(null, observed);
+                                    }
+                                }
+                            } catch (Throwable th) {
+                                errors.put(threadId, th);
+                            } finally {
+                                if (localMismatches > 0) {
+                                    threadsThatSawMismatches.incrementAndGet();
+                                    mismatches.addAndGet(localMismatches);
+                                }
+                                latch.countDown();
+                            }
+                        }, "sparkline-repro-" + threadId).start();
+                    }
+                    latch.await();
+
+                    for (Map.Entry<Integer, Throwable> e : errors.entrySet()) {
+                        e.getValue().printStackTrace(System.out);
+                    }
+                    Assert.assertTrue("thread errors: " + errors, errors.isEmpty());
+                    Assert.assertEquals(
+                            "sparkline() must render the exact staircase on every iteration. Any deviation under "
+                                    + "this contention setup would mean the compaction step in SortedRunsMerge either "
+                                    + "was not invoked or failed to restore key order before the render walk. Observed "
+                                    + "wrong sample: " + sampleWrongValue.get() + " across "
+                                    + threadsThatSawMismatches.get() + " thread(s), " + mismatches.get()
+                                    + " mismatches total over " + CONTENTION_THREADS + " threads x "
+                                    + CONTENTION_ITERATIONS + " iterations.",
+                            0, mismatches.get()
+                    );
+                }, configuration, LOG);
+            }
+        });
+    }
+
+    // Runs the keyed sparkline query and returns the number of groups whose
+    // rendered sparkline deviates from the exact expected staircase; a wrong
+    // group count also counts as a mismatch so a dropped group is caught.
+    private static int countKeyedSparklineMismatches(
+            CairoEngine engine,
+            SqlExecutionContext ctx,
+            String expected,
+            AtomicReference<String> sampleWrongValue
+    ) throws Exception {
+        int mismatches = 0;
+        int groups = 0;
+        try (RecordCursorFactory factory = engine.select("SELECT key, sparkline(val) FROM tab", ctx);
+             RecordCursor cursor = factory.getCursor(ctx)) {
+            final Record record = cursor.getRecord();
+            while (cursor.hasNext()) {
+                groups++;
+                final String observed = Utf8s.toString(record.getVarcharA(1));
+                if (!expected.equals(observed)) {
+                    mismatches++;
+                    sampleWrongValue.compareAndSet(null, observed);
+                }
+            }
+        }
+        if (groups != KEY_COUNT) {
+            mismatches++;
+        }
+        return mismatches;
+    }
+
+    // Builds the expected block-staircase: each of the LEVELS level characters
+    // repeated charsPerLevel times. This is the rendered output for a correctly
+    // key-ordered buffer, derived from the dataset shape rather than from the
+    // render code path.
+    private static String expectedStaircase(int charsPerLevel) {
+        StringBuilder sb = new StringBuilder(LEVELS * charsPerLevel);
+        for (char c : LEVEL_CHARS) {
+            for (int i = 0; i < charsPerLevel; i++) {
+                sb.append(c);
+            }
+        }
+        return sb.toString();
+    }
+
+    private static String runSparkline(CairoEngine engine, SqlExecutionContext ctx, String sql) throws Exception {
+        try (RecordCursorFactory factory = engine.select(sql, ctx);
+             RecordCursor cursor = factory.getCursor(ctx)) {
+            final Record record = cursor.getRecord();
+            if (!cursor.hasNext()) {
+                return null;
+            }
+            return Utf8s.toString(record.getVarcharA(0));
         }
     }
 }
