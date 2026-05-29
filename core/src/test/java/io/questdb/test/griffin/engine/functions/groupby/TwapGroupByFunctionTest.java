@@ -31,6 +31,7 @@ import io.questdb.griffin.engine.groupby.GroupByAllocator;
 import io.questdb.griffin.engine.groupby.GroupByAllocatorFactory;
 import io.questdb.griffin.engine.groupby.SimpleMapValue;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -43,6 +44,33 @@ import org.junit.Test;
  * only at a gap or an out-of-order frame.
  */
 public class TwapGroupByFunctionTest extends AbstractCairoTest {
+
+    @Test
+    public void testComputeNextAfterMergeTripsAssertion() throws Exception {
+        assertMemoryLeak(() -> {
+            try (
+                    GroupByAllocator allocator = GroupByAllocatorFactory.createAllocator(configuration);
+                    SimpleMapValue destValue = new SimpleMapValue(7);
+                    SimpleMapValue srcValue = new SimpleMapValue(7)
+            ) {
+                TwapGroupByFunction func = twapFunction(allocator);
+                // Two partials merged: merge() stamps the terminal -1 sentinel
+                // into the destination's lastFrameId slot.
+                func.computeFirst(destValue, null, rowId(0, 0));
+                func.computeFirst(srcValue, null, rowId(1, 0));
+                func.merge(destValue, srcValue);
+                Assert.assertEquals("lastFrameId sentinel", -1, destValue.getLong(6));
+                // Appending after a merge violates the no-append-after-merge
+                // contract; computeNext asserts against it (CI runs with -ea)
+                // rather than silently reallocating the tight descriptor buffer.
+                AssertionError e = Assert.assertThrows(
+                        AssertionError.class,
+                        () -> func.computeNext(destValue, null, rowId(2, 0))
+                );
+                TestUtils.assertContains(e.getMessage(), "post-merge MapValue");
+            }
+        });
+    }
 
     @Test
     public void testConsecutiveFramesStaySingleBatch() throws Exception {
