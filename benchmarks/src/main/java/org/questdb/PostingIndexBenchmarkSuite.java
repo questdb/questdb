@@ -324,9 +324,9 @@ public class PostingIndexBenchmarkSuite {
                 "rnd_symbol(" + s.keyCount + ", 4, 8, 0), " + s.extraValues + " " +
                 "FROM long_sequence(" + s.batchRows + ")";
         s.engine.execute(sql, s.ctx);
-        s.applyJob.drain();
-        s.checkJob.run();
-        s.applyJob.drain();
+        s.applyJob.drain(0);
+        s.checkJob.run(0);
+        s.applyJob.drain(0);
     }
 
     @Benchmark
@@ -395,9 +395,9 @@ public class PostingIndexBenchmarkSuite {
                 "rnd_symbol(" + s.keyCount + ", 4, 8, 0), " + s.extraValues + " " +
                 "FROM long_sequence(" + WalLargePartitionState.BATCH_ROWS + ")";
         s.engine.execute(sql, s.ctx);
-        s.applyJob.drain();
-        s.checkJob.run();
-        s.applyJob.drain();
+        s.applyJob.drain(0);
+        s.checkJob.run(0);
+        s.applyJob.drain(0);
     }
 
     @Benchmark
@@ -423,9 +423,9 @@ public class PostingIndexBenchmarkSuite {
                 "rnd_symbol(" + s.keyCount + ", 4, 8, 0), " + s.extraValues + " " +
                 "FROM long_sequence(" + WalLargePartitionO3AppendState.BATCH_ROWS + ")";
         s.engine.execute(sql, s.ctx);
-        s.applyJob.drain();
-        s.checkJob.run();
-        s.applyJob.drain();
+        s.applyJob.drain(0);
+        s.checkJob.run(0);
+        s.applyJob.drain(0);
     }
 
     @Benchmark
@@ -451,9 +451,9 @@ public class PostingIndexBenchmarkSuite {
                 "rnd_symbol(" + s.keyCount + ", 4, 8, 0), " + s.extraValues + " " +
                 "FROM long_sequence(" + WalLargePartitionO3State.BATCH_ROWS + ")";
         s.engine.execute(sql, s.ctx);
-        s.applyJob.drain();
-        s.checkJob.run();
-        s.applyJob.drain();
+        s.applyJob.drain(0);
+        s.checkJob.run(0);
+        s.applyJob.drain(0);
     }
 
     @Benchmark
@@ -1708,9 +1708,9 @@ public class PostingIndexBenchmarkSuite {
                     "rnd_symbol(" + keyCount + ", 4, 8, 0), " + extraValues + " " +
                     "FROM long_sequence(" + PRELOAD_ROWS + ")";
             engine.execute(preloadSql, ctx);
-            applyJob.drain();
-            checkJob.run();
-            applyJob.drain();
+            applyJob.drain(0);
+            checkJob.run(0);
+            applyJob.drain(0);
 
             // Drive the chain to the target unsealed gen count. Each
             // fast-lag commit adds one gen via extendHead; auto-seal at
@@ -1724,9 +1724,9 @@ public class PostingIndexBenchmarkSuite {
                         "rnd_symbol(" + keyCount + ", 4, 8, 0), " + extraValues + " " +
                         "FROM long_sequence(" + PREBUILD_BATCH_ROWS + ")";
                 engine.execute(batchSql, ctx);
-                applyJob.drain();
-                checkJob.run();
-                applyJob.drain();
+                applyJob.drain(0);
+                checkJob.run(0);
+                applyJob.drain(0);
             }
 
             queryKeys = sampleKeys(compiler, ctx, "walbench", QUERY_KEY_POOL);
@@ -1838,9 +1838,9 @@ public class PostingIndexBenchmarkSuite {
                     "rnd_symbol(" + keyCount + ", 4, 8, 0), " + extraValues + " " +
                     "FROM long_sequence(" + PRELOAD_ROWS + ")";
             engine.execute(preloadSql, ctx);
-            applyJob.drain();
-            checkJob.run();
-            applyJob.drain();
+            applyJob.drain(0);
+            checkJob.run(0);
+            applyJob.drain(0);
 
             // Sample distinct symbols from the preloaded data for the read
             // benches. Pre-compiling factories does not survive WAL apply
@@ -1958,9 +1958,9 @@ public class PostingIndexBenchmarkSuite {
                         "rnd_symbol(" + keyCount + ", 4, 8, 0), " + extraValues + " " +
                         "FROM long_sequence(" + BATCH_ROWS + ")";
                 engine.execute(batchSql, ctx);
-                applyJob.drain();
-                checkJob.run();
-                applyJob.drain();
+                applyJob.drain(0);
+                checkJob.run(0);
+                applyJob.drain(0);
             }
 
             // Sentinel row in day 2 makes day 1 non-last; subsequent inserts
@@ -1969,9 +1969,9 @@ public class PostingIndexBenchmarkSuite {
                     "VALUES ('2024-01-02T00:00:00.000001Z', '_sentinel_', " +
                     sentinelExtraValues() + ")";
             engine.execute(sentinelSql, ctx);
-            applyJob.drain();
-            checkJob.run();
-            applyJob.drain();
+            applyJob.drain(0);
+            checkJob.run(0);
+            applyJob.drain(0);
         }
 
         @TearDown(Level.Iteration)
@@ -2085,9 +2085,9 @@ public class PostingIndexBenchmarkSuite {
                         "rnd_symbol(" + keyCount + ", 4, 8, 0), " + extraValues + " " +
                         "FROM long_sequence(" + BATCH_ROWS + ")";
                 engine.execute(batchSql, ctx);
-                applyJob.drain();
-                checkJob.run();
-                applyJob.drain();
+                applyJob.drain(0);
+                checkJob.run(0);
+                applyJob.drain(0);
             }
         }
 
@@ -2213,9 +2213,9 @@ public class PostingIndexBenchmarkSuite {
                         "rnd_symbol(" + keyCount + ", 4, 8, 0), " + extraValues + " " +
                         "FROM long_sequence(" + BATCH_ROWS + ")";
                 engine.execute(batchSql, ctx);
-                applyJob.drain();
-                checkJob.run();
-                applyJob.drain();
+                applyJob.drain(0);
+                checkJob.run(0);
+                applyJob.drain(0);
             }
 
             queryKeys = sampleKeys(compiler, ctx, "walbench", QUERY_KEY_POOL);
